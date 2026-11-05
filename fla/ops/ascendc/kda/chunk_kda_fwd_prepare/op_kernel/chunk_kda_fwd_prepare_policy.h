@@ -8,7 +8,6 @@
 #define CHUNK_KDA_FWD_PREPARE_POLICY_H
 
 #include <cstdint>
-#include "arch22/chunk_kda_fwd_prepare_relay_config.h"
 
 #define CHUNK_KDA_FWD_PREPARE_TPL_BF16 10
 #define CHUNK_KDA_FWD_PREPARE_TPL_FP32 30
@@ -32,17 +31,6 @@
 // 只额外搬出 Akk：Aqk/Akk 是公开必选输出，而 qHat/kHat/qRstd/kRstd/betaEff
 // 只有反向重计算路径才需要。
 #define CHUNK_KDA_FWD_PREPARE_OUTPUT_FORWARD 3
-
-// AIV → AIC 跨核 GM 交接的读写侧加固（无条件生效）。
-//
-// V6 把 K_beta_g/V_beta 写进 workspace relay，随后由 AIC 的 C7 读回并计算 W/U；
-// C2/C4 则把 AIV 写好的 Q/K payload 与 V3 产物读进 L1。这些交接只依赖 ready/free
-// 跨核 flag，而 A2/A3 上仅靠 flag 不足以稳定保证写侧对读侧可见。因此在写侧把两份
-// relay clean 出去，并在四个读侧位置先让本核 cache 行失效，再配 DSB。
-//
-// 这层是跨核交接的防御性加固，不是本次竞态的直接修复（直接修复是 C7 的 RHS 专用
-// L1 lane + MTE1_MTE2 事件，见 arch22/chunk_kda_fwd_prepare_cube.h）。去掉它会改变
-// 跨核交接的可见性保证，属于行为变更，需要独立验证后再动。
 
 namespace KdaPrepare {
 
@@ -118,11 +106,6 @@ struct PrepareCompilePolicy {
     static constexpr bool useExp2 = USE_EXP2;
     static constexpr bool safeGate = SAFE_GATE;
     static constexpr OutputMode outputMode = OUTPUT_MODE;
-    // SAFE_GATE is unused by precomputed gate. Its otherwise unreachable
-    // value 1 selects the internal arch22 target variant without changing ABI.
-    static constexpr bool arch22FastLeaf =
-        SAFE_GATE && GATE_MODE == GateMode::PrecomputedStep;
-    static constexpr bool arch22CubeLeaf = arch22FastLeaf;
     // None/Forward/Recompute/Save 四档的搬出集合：
     //   outputAkk          : Akk（None 之外都写）
     //   outputRecomputeAux : qHat/kHat/qRstd/kRstd/betaEff
@@ -162,34 +145,6 @@ constexpr uint32_t kPayload = 0x08400;
 constexpr uint32_t kSlotStride = 0x1A400;
 constexpr uint32_t kArch35SlotStride = kSlotStride;
 
-// Arch22 的 Cube 结果先经 GM 交给 Vector。该区只由 AIC 写：
-// C2 放四段连续 raw score，V3 消费后 C4 复用前 4 KiB 放 T。
-constexpr uint32_t kArch22CubeRelay = 0x1A400;
-constexpr uint32_t kArch22RawScoreBytes = 0x5000;
-constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
-
-// Arch22：V6→C7 的 RHS（K_beta_g/V_beta）改用独立区，不再与 V1 payload 换义地址。
-//
-// 旧布局把 RHS 放在 payload 的 kKBetaG/kVBeta（相对 payload 为 0x7800/0xB800，
-// 即 [30 KiB, 62 KiB)），而 V1 payload 的 Kplus 覆盖 [16 KiB, 32 KiB)、Kminus 覆盖
-// [32 KiB, 72 KiB)——两者落在同一段字节上。C7 正在把 RHS 搬进 L1 时，只要该 slot
-// 的 V1 先写进来（跨核计数错位或任何一次提前放行），读到的就是"半新半旧"的
-// Q/K payload：Kminus = k_hat * E(Gref-G) 大多极小、少量很大，表现为单个
-// (value head, chunk) 的 U 整块异常而同一 Stage 的 W 正常；写侧/读侧 clean 都
-// 修不了它，因为根因是地址复用而不是可见性。
-//
-// RHS reserves64KiB per slot. FP32 uses each complete32KiB matrix lane;
-// the BF16 relay variant uses its first16KiB without changing the offsets.
-constexpr uint32_t kArch22RhsBase = kArch22CubeRelay + kArch22RawScoreBytes;
-constexpr uint32_t kArch22RhsMatrixBytes = 0x8000; // [64,128] * FP32
-constexpr uint32_t kArch22RhsKBetaG = kArch22RhsBase;
-constexpr uint32_t kArch22RhsVBeta = kArch22RhsBase + kArch22RhsMatrixBytes;
-constexpr uint32_t kArch22RhsBytes = 2 * kArch22RhsMatrixBytes;
-// FP32 fallback keeps the inverse unrounded until C7. The BF16 variant
-// consumes the completed inverse from its separate payload/L1 representation.
-constexpr uint32_t kArch22AkkFp32 = kArch22RhsBase + kArch22RhsBytes;
-constexpr uint32_t kArch22SlotStride = kArch22AkkFp32 + 0x4000;
-
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;
 constexpr uint32_t kNegX1 = 0x2000;
@@ -198,14 +153,6 @@ constexpr uint32_t kAkk = 0x5800;
 constexpr uint32_t kKBetaG = 0x7800;
 constexpr uint32_t kVBeta = 0xB800;
 
-constexpr uint32_t kArch22SlotCount = 4;
-constexpr uint32_t kArch22WorkgroupStride =
-    kArch22SlotCount * kArch22SlotStride;
-static_assert(kArch22SlotStride == Arch22RelayConfig::kSlotBytes);
-static_assert(kArch22SlotCount == Arch22RelayConfig::kSlotsPerWorkgroup);
-static_assert(kPayload + kAkk + 64 * 64 * 2 <= kArch22CubeRelay);
-static_assert(kArch22RhsKBetaG + 64 * 128 * 2 <= kArch22RhsVBeta);
-static_assert(kArch22RhsVBeta + 64 * 128 * 2 <= kArch22AkkFp32);
 constexpr uint32_t kArch35SlotCount = 4;
 constexpr uint32_t kArch35WorkgroupStride =
     kArch35SlotCount * kSlotStride;
@@ -255,18 +202,6 @@ constexpr uint32_t kRhsVBeta = 0x4000;
 constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1
 
-namespace Arch22L1 {
-// C2 结束后，各 head lane 中 [16,32) KiB 已不再使用；C4 的 B 只占前 4 KiB。
-// Completed FP32/BF16 Akk stays live through this head's C7 LoadData;
-// the next work's C2 may overwrite it only after the existing L1-free token.
-constexpr uint32_t kAkkInHeadLane = 0x4000;
-// 一次 C7 只消费一个 pair。两个 FP32 RHS lane 共用原来的 128 KiB 区域，
-// pair 之间由 rhsLaneFree_ 的 MTE1_MTE2 事件保护，C2/C4 不访问此区域。
-constexpr uint32_t kRhsLane[2] = {0x5C000, 0x6C000};
-constexpr uint32_t kRhsVBeta = 0x8000;
-static_assert(kRhsLane[1] + 0x10000 <= L1::kCapacity);
-} // namespace Arch22L1
-
 namespace Arch35Ub {
 constexpr uint32_t kCapacity = 0x3E000; // 248 KiB
 constexpr uint32_t kComputeSlotBytes = 0x1C000;
@@ -314,52 +249,7 @@ constexpr uint32_t kGLast = 0x1400;
 constexpr uint32_t kVfScratch = 0x1600;
 } // namespace Arch35Ub
 
-namespace Arch22Ub {
-constexpr uint32_t kHardwareBytes = 0x30000; // 192 KiB
-constexpr uint32_t kUsableBytes = 0x2E000;   // 末尾 8 KiB 保留
-constexpr uint32_t kPrivateBytes = 0x12000;
-constexpr uint32_t kPrivateBase[2] = {0x00000, 0x1C000};
-constexpr uint32_t kSharedBase = 0x12000;
-constexpr uint32_t kSharedG = kSharedBase;
-constexpr uint32_t kSharedScratch = kSharedBase + 0x8000;
 
-constexpr uint32_t kQ = 0x0000;
-constexpr uint32_t kK = 0x4000;
-constexpr uint32_t kGateOrKMinus = 0x8000;
-constexpr uint32_t kKMinus[4] = {0x8000, 0x9000, 0xB000, 0xE000};
-// A2/A3 先把 sequence-major beta 按 32 Byte 行距搬入，再 Gather 成
-// 连续标量；head-major beta 直接写入 kBetaRaw。
-constexpr uint32_t kBetaRawStrided = 0x10000;
-constexpr uint32_t kBetaRaw = 0x10800;
-constexpr uint32_t kBetaEff = 0x10A00;
-constexpr uint32_t kDtBias = 0x10C00;
-constexpr uint32_t kALog = 0x10E00;
-constexpr uint32_t kQRstd = 0x10F00;
-constexpr uint32_t kKRstd = 0x11000;
-constexpr uint32_t kGLast = 0x11200;
-constexpr uint32_t kBetaGatherOffsets = kSharedScratch + 0x1F00;
-
-constexpr uint32_t kV3Aqk = 0x0000;
-constexpr uint32_t kV3Lkk = 0x2000;
-constexpr uint32_t kV3Leaf0 = 0x6000;
-constexpr uint32_t kV3Leaf1 = 0x7000;
-constexpr uint32_t kV3B = 0x8000;
-constexpr uint32_t kV3X0 = 0x9000;
-constexpr uint32_t kV3X1 = 0xA000;
-constexpr uint32_t kV3NegX1 = 0xB000;
-constexpr uint32_t kV3CompactRaw = 0xD000;
-constexpr uint32_t kV3AkkPack = 0xE000;
-// V3 读取 compact raw 时，betaEff 放在已经结束 G 生命周期的共享区。
-// 不能复用 kBetaEff=0x10200，它位于 compact raw [0xD000,0x12000) 内。
-constexpr uint32_t kV3BetaEff = kSharedBase;
-
-constexpr uint32_t kV6Qg = 0x0000;
-constexpr uint32_t kV6Kg = 0x4000;
-constexpr uint32_t kV6VBeta = 0x8000;
-constexpr uint32_t kV6KBetaG = 0xC000;
-// V6 正序消费 FP32 G 后，将 BF16 qgScaled 压缩写入同一共享区低 16 KiB。
-constexpr uint32_t kV6QgScaled = kSharedG;
-} // namespace Arch22Ub
 
 } // namespace KdaPrepare
 

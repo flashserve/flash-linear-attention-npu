@@ -1,0 +1,1154 @@
+# Public API contract for operator review.
+# contract_version is the contract-file format version. baseline identifies
+# the immutable release and file used for historical compatibility comparison.
+# Deprecated/sunset operators from _DEPRECATED_OPS and the old
+# npu_causal_conv1d interface are excluded.
+# The operator inventory follows the model operators in docs/op_list.md.
+# Utility exports such as fast_gelu_custom are intentionally out of scope.
+contract_version: 1
+baseline:
+  tag: v26.9.1
+  source: torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py
+scope:
+  source: docs/op_list.md
+  exclude_deprecated: true
+  active_operator_count: 26
+operators:
+  causal_conv1d_fn:
+    python: fla_npu.ops.ascendc.causal_conv1d_fn
+    stable_op: npu_causal_conv1d_fn
+    signature:
+      positional_or_keyword:
+        x:
+          required: true
+        weight:
+          required: true
+        bias:
+          required: true
+        conv_states:
+          default: null
+        query_start_loc:
+          default: null
+        cache_indices:
+          default: null
+        has_initial_state:
+          default: null
+        activation:
+          default: silu
+        pad_slot_id:
+          default: -1
+        null_block_id:
+          default: 0
+        block_idx_first_scheduled_token:
+          default: null
+        block_idx_last_scheduled_token:
+          default: null
+        initial_state_idx:
+          default: null
+        num_computed_tokens:
+          default: null
+        block_size_to_align:
+          default: 0
+        metadata:
+          default: null
+        validate_data:
+          default: false
+      keyword_only:
+        query_start_loc_cpu:
+          default: null
+        cache_indices_cpu:
+          default: null
+        has_initial_state_cpu:
+          default: null
+        head_num:
+          default: 0
+    returns:
+    - Tensor
+  causal_conv1d_update:
+    python: fla_npu.ops.ascendc.causal_conv1d_update
+    stable_op: npu_causal_conv1d_update
+    signature:
+      positional_or_keyword:
+        x:
+          required: true
+        conv_state:
+          required: true
+        weight:
+          required: true
+        bias:
+          default: null
+        activation:
+          default: null
+        conv_state_indices:
+          default: null
+        num_accepted_tokens:
+          default: null
+        query_start_loc:
+          default: null
+        max_query_len:
+          default: -1
+        null_block_id:
+          default: 0
+        block_idx_last_scheduled_token:
+          default: null
+        initial_state_idx:
+          default: null
+        validate_data:
+          default: false
+        out:
+          default: null
+      keyword_only:
+        conv_state_indices_cpu:
+          default: null
+        num_accepted_tokens_cpu:
+          default: null
+        query_start_loc_cpu:
+          default: null
+    returns:
+    - Tensor
+  causal_conv1d_bwd:
+    python: fla_npu.ops.ascendc.causal_conv1d_bwd
+    stable_op: npu_causal_conv1d_bwd
+    signature:
+      positional_or_keyword:
+        x:
+          required: true
+        y:
+          required: true
+        weight:
+          required: true
+        dy:
+          required: true
+        initial_state:
+          default: null
+        dht:
+          default: null
+      keyword_only:
+        query_start_loc:
+          default: null
+        activation:
+          default: 0
+        input_layout:
+          default: BSND
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+  chunk_gated_delta_rule_bwd_dhu:
+    python: fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_dhu
+    stable_op: npu_chunk_gated_delta_rule_bwd_dhu
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        w:
+          required: true
+        d_o:
+          required: true
+        dv:
+          required: true
+        scale:
+          required: true
+        chunk_size:
+          required: true
+      keyword_only:
+        g:
+          default: null
+        gK:
+          default: null
+        h0:
+          default: null
+        dht:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        use_exp2:
+          default: false
+        transpose_state_layout:
+          default: false
+    returns:
+    - Tensor
+    - Tensor?
+    - Tensor
+  chunk_gated_delta_rule_bwd:
+    python: fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd
+    stable_op: npu_chunk_gated_delta_rule_bwd
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        A:
+          required: true
+        d_o:
+          required: true
+        scale:
+          required: true
+      keyword_only:
+        chunk_size:
+          default: 64
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        initial_state:
+          default: null
+        dht:
+          default: null
+        q_rstd:
+          default: null
+        k_rstd:
+          default: null
+        beta_raw:
+          default: null
+        use_exp2:
+          default: false
+        use_qk_l2norm_in_kernel:
+          default: false
+        use_gate_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        return_intermediate_states:
+          default: false
+        state_v_first:
+          default: false
+        a_log:
+          default: null
+        dt_bias:
+          default: null
+        layout:
+          default: BNSD
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor?
+    - Tensor?
+    - Tensor?
+  chunk_gated_delta_rule_fwd_prepare:
+    python: fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_prepare
+    stable_op: npu_chunk_gated_delta_rule_fwd_prepare
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        chunk_size:
+          default: 64
+      keyword_only:
+        use_qk_l2norm_in_kernel:
+          default: false
+        use_gate_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        use_exp2:
+          default: false
+        a_log:
+          default: null
+        dt_bias:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        output_a:
+          default: true
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+  chunk_gated_delta_rule_bwd_finalize:
+    python: fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_finalize
+    stable_op: npu_chunk_gated_delta_rule_bwd_finalize
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        v_new:
+          required: true
+        do:
+          required: true
+        du:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        h:
+          required: true
+        dh:
+          required: true
+        a:
+          required: true
+      keyword_only:
+        q_rstd:
+          default: null
+        k_rstd:
+          default: null
+        beta_raw:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        scale:
+          default: null
+        chunk_size:
+          default: 64
+        use_qk_l2_norm_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        use_gate_in_kernel:
+          default: false
+        state_v_first:
+          default: false
+        use_exp2:
+          default: true
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+  pre_process_bwd_kernel_merged:
+    python: fla_npu.ops.ascendc.pre_process_bwd_kernel_merged
+    stable_op: npu_pre_process_bwd_kernel_merged
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        w:
+          required: true
+        d_o:
+          required: true
+        dv:
+          required: true
+        scale:
+          required: true
+        chunk_size:
+          required: true
+      keyword_only:
+        g:
+          default: null
+        gk:
+          default: null
+        cu_seqlens:
+          default: null
+    returns:
+    - Tensor
+  chunk_gdn_bwd_intra:
+    python: fla_npu.ops.ascendc.chunk_gdn_bwd_intra
+    stable_op: npu_chunk_gdn_bwd_intra
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        A:
+          required: true
+        d_o:
+          required: true
+        scale:
+          required: true
+        chunk_size:
+          required: true
+      keyword_only:
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        use_exp2:
+          default: true
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+  chunk_fwd_o:
+    python: fla_npu.ops.ascendc.chunk_fwd_o
+    stable_op: npu_chunk_fwd_o
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        h:
+          required: true
+        scale:
+          required: true
+      keyword_only:
+        g:
+          default: null
+        g_gamma:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        chunk_size:
+          default: null
+        transpose_state_layout:
+          default: false
+        use_exp2:
+          default: false
+        output_layout:
+          default: BNSD
+    returns:
+    - Tensor
+  chunk_gated_delta_rule_fwd_h:
+    python: fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h
+    stable_op: npu_chunk_gated_delta_rule_fwd_h
+    signature:
+      positional_or_keyword:
+        k:
+          required: true
+        w:
+          required: true
+        u:
+          required: true
+        g:
+          default: null
+      keyword_only:
+        gk:
+          default: null
+        initial_state:
+          default: null
+        output_final_state:
+          default: false
+        chunk_size:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        state_v_first:
+          default: false
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor?
+  pre_process_fwd_kernel_merged:
+    python: fla_npu.ops.ascendc.pre_process_fwd_kernel_merged
+    stable_op: npu_pre_process_fwd_kernel_merged
+    signature:
+      positional_or_keyword:
+        k:
+          required: true
+        w:
+          required: true
+        u:
+          required: true
+        g:
+          default: null
+      keyword_only:
+        gk:
+          default: null
+        bg:
+          default: null
+        v:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_size:
+          default: null
+    returns:
+    - Tensor
+  chunk_fwd_h:
+    python: fla_npu.ops.ascendc.chunk_fwd_h
+    stable_op: npu_chunk_fwd_h
+    signature:
+      positional_or_keyword:
+        k:
+          required: true
+        w:
+          required: true
+        u:
+          required: true
+      keyword_only:
+        g:
+          default: null
+        gk:
+          default: null
+        initial_state:
+          default: null
+        output_final_state:
+          default: false
+        chunk_size:
+          default: 64
+        save_new_value:
+          default: true
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        use_exp2:
+          default: false
+        state_v_first:
+          default: false
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor?
+  chunk_kda_fwd_finalize:
+    python: fla_npu.ops.ascendc.chunk_kda_fwd_finalize
+    stable_op: npu_chunk_kda_fwd_finalize
+    signature:
+      positional_or_keyword:
+        qg_scaled:
+          required: true
+        aqk:
+          required: true
+        v_new:
+          required: true
+        h:
+          required: true
+      keyword_only:
+        output_layout:
+          default: BSND
+        state_v_first:
+          default: false
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+    returns:
+    - Tensor
+  chunk_kda_fwd_prepare:
+    python: fla_npu.ops.ascendc.chunk_kda_fwd_prepare
+    stable_op: npu_chunk_kda_fwd_prepare
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        scale:
+          required: true
+        chunk_size:
+          default: 64
+      keyword_only:
+        layout:
+          default: BSND
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        safe_gate:
+          default: false
+        lower_bound:
+          default: null
+        use_gate_in_kernel:
+          default: false
+        A_log:
+          default: null
+        dt_bias:
+          default: null
+        epsilon:
+          default: 1.0e-06
+        use_qk_l2norm_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        use_exp2:
+          default: true
+        backward_mode:
+          default: save
+    returns:
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+  recurrent_gated_delta_rule:
+    python: fla_npu.ops.ascendc.recurrent_gated_delta_rule
+    stable_op: npu_recurrent_gated_delta_rule
+    signature:
+      positional_or_keyword:
+        query:
+          required: true
+        key:
+          required: true
+        value:
+          required: true
+        state:
+          required: true
+      keyword_only:
+        beta:
+          required: true
+        scale:
+          default: 1.0
+        actual_seq_lengths:
+          required: true
+        ssm_state_indices:
+          required: true
+        num_accepted_tokens:
+          default: null
+        g:
+          default: null
+        gk:
+          default: null
+    returns:
+    - Tensor
+  chunk_gated_delta_rule_fwd:
+    python: fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd
+    stable_op: npu_chunk_gated_delta_rule_fwd
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+      keyword_only:
+        initial_state:
+          default: null
+        output_final_state:
+          default: false
+        chunk_size:
+          default: 64
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        scale:
+          default: null
+        use_exp2:
+          default: false
+        use_qk_l2norm_in_kernel:
+          default: false
+        use_gate_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        disable_recompute:
+          default: true
+        return_intermediate_states:
+          default: false
+        state_v_first:
+          default: false
+        a_log:
+          default: null
+        dt_bias:
+          default: null
+        layout:
+          default: BNSD
+    returns:
+    - Tensor
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor
+    - Tensor
+    - Tensor?
+    - Tensor?
+  solve_tri:
+    python: fla_npu.ops.ascendc.solve_tri
+    stable_op: npu_solve_tri
+    signature:
+      positional_or_keyword:
+        x:
+          required: true
+      keyword_only:
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        layout:
+          default: bsnd
+    returns:
+    - Tensor
+  chunk_kda_fwd:
+    python: fla_npu.ops.ascendc.chunk_kda_fwd
+    stable_op: npu_chunk_kda_fwd
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        scale:
+          required: true
+        chunk_size:
+          default: 64
+      keyword_only:
+        layout:
+          default: BSND
+        initial_state:
+          default: null
+        output_final_state:
+          default: false
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        safe_gate:
+          default: false
+        lower_bound:
+          default: null
+        use_gate_in_kernel:
+          default: false
+        A_log:
+          default: null
+        dt_bias:
+          default: null
+        disable_recompute:
+          default: false
+        return_intermediate_states:
+          default: false
+        state_v_first:
+          default: false
+        epsilon:
+          default: 1.0e-06
+        use_qk_l2norm_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        use_exp2:
+          default: true
+        q_hat_out:
+          default: null
+        k_hat_out:
+          default: null
+        q_rstd_out:
+          default: null
+        k_rstd_out:
+          default: null
+        beta_eff_out:
+          default: null
+    returns:
+    - Tensor
+    - Tensor?
+    - Tensor?
+    - Tensor
+    - Tensor
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+    - Tensor?
+  chunk_kda_bwd:
+    python: fla_npu.ops.ascendc.chunk_kda_bwd
+    stable_op: npu_chunk_kda_bwd
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        beta:
+          required: true
+        gk:
+          required: true
+        Aqk:
+          required: true
+        Akk:
+          required: true
+        w:
+          required: true
+        qg:
+          required: true
+        kg:
+          required: true
+        v_new:
+          required: true
+        h:
+          required: true
+        d_o:
+          required: true
+        scale:
+          required: true
+      keyword_only:
+        raw_g:
+          default: null
+        A_log:
+          default: null
+        dt_bias:
+          default: null
+        initial_state:
+          default: null
+        dht:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        chunk_size:
+          default: 64
+        safe_gate:
+          default: true
+        lower_bound:
+          default: -5.0
+        use_gate_in_kernel:
+          default: true
+        disable_recompute:
+          default: true
+        use_exp2:
+          default: true
+        state_v_first:
+          default: false
+        implementation:
+          default: auto
+        q_rstd:
+          default: null
+        k_rstd:
+          default: null
+        input_layout:
+          default: BNSD
+        output_layout:
+          default: BNSD
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor?
+    - Tensor
+    - Tensor?
+  chunk_kda_bwd_intra:
+    python: fla_npu.ops.ascendc.chunk_kda_bwd_intra
+    stable_op: npu_chunk_kda_bwd_intra
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        gk:
+          required: true
+        beta:
+          required: true
+        dAqk:
+          required: true
+        dAkk:
+          required: true
+        dq:
+          required: true
+        dk:
+          required: true
+        db:
+          required: true
+        dg:
+          required: true
+      keyword_only:
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        chunk_size:
+          default: 64
+        safe_gate:
+          default: true
+        layout:
+          default: BSND
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+  chunk_kda_bwd_recompute:
+    python: fla_npu.ops.ascendc.chunk_kda_bwd_recompute
+    stable_op: npu_chunk_kda_bwd_recompute
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        a:
+          required: true
+        chunk_size:
+          required: true
+      keyword_only:
+        A_log:
+          default: null
+        dt_bias:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        use_gate_in_kernel:
+          default: true
+        use_exp2:
+          default: true
+        lower_bound:
+          default: -5.0
+        input_layout:
+          default: BNSD
+    returns:
+    - Tensor?
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+  chunk_kda_bwd_prepare:
+    python: fla_npu.ops.ascendc.chunk_kda_bwd_prepare
+    stable_op: npu_chunk_kda_bwd_prepare
+    signature:
+      positional_or_keyword:
+        aqk:
+          required: true
+        v_new:
+          required: true
+        d_o:
+          required: true
+        h:
+          required: true
+      keyword_only:
+        scale:
+          required: true
+        layout:
+          required: true
+        chunk_size:
+          default: 64
+        state_v_first:
+          default: false
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+  chunk_kda_bwd_finalize:
+    python: fla_npu.ops.ascendc.chunk_kda_bwd_finalize
+    stable_op: npu_chunk_kda_bwd_finalize
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        gk:
+          required: true
+        raw_g:
+          required: true
+        beta:
+          required: true
+        a_log:
+          required: true
+        dt_bias:
+          required: true
+        akk:
+          required: true
+        v_new:
+          required: true
+        h:
+          required: true
+        dh:
+          required: true
+        dv_scan:
+          required: true
+        d_aqk:
+          required: true
+        dq_raw:
+          required: true
+      keyword_only:
+        scale:
+          required: true
+        lower_bound:
+          default: -5.0
+        chunk_size:
+          default: 64
+        safe_gate:
+          default: true
+        use_gate_in_kernel:
+          default: true
+        use_exp2:
+          default: true
+        state_v_first:
+          default: false
+        q_rstd:
+          default: null
+        k_rstd:
+          default: null
+        cu_seqlens:
+          default: null
+        chunk_indices:
+          default: null
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        output_layout:
+          default: null
+    returns:
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+    - Tensor
+  merge_fwd_bwd_kernel:
+    python: fla_npu.ops.ascendc.merge_fwd_bwd_kernel
+    stable_op: npu_merge_fwd_bwd_kernel
+    signature:
+      positional_or_keyword:
+        h:
+          required: true
+        ag_hm:
+          required: true
+        pre_or_post_num_ranks:
+          required: true
+        rank:
+          required: true
+      keyword_only:
+        forward:
+          default: true
+        state_v_first:
+          default: false
+    returns:
+    - Tensor
+  recurrent_kda:
+    python: fla_npu.ops.ascendc.recurrent_kda
+    stable_op: npu_recurrent_kda
+    signature:
+      positional_or_keyword:
+        q:
+          required: true
+        k:
+          required: true
+        v:
+          required: true
+        g:
+          required: true
+        beta:
+          required: true
+        initial_state:
+          default: null
+      keyword_only:
+        cu_seqlens:
+          default: null
+        ssm_state_indices:
+          default: null
+        A_log:
+          default: null
+        dt_bias:
+          default: null
+        num_accepted_tokens:
+          default: null
+        layout:
+          default: BSND
+        scale:
+          default: null
+        output_final_state:
+          default: false
+        inplace_final_state:
+          default: true
+        use_qk_l2norm_in_kernel:
+          default: false
+        use_gate_in_kernel:
+          default: false
+        use_beta_sigmoid_in_kernel:
+          default: false
+        allow_neg_eigval:
+          default: false
+        safe_gate:
+          default: false
+        lower_bound:
+          default: null
+        state_v_first:
+          default: false
+    returns:
+    - Tensor
+    - Tensor?

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""校验 chunk_gated_delta_rule_fwd 的稳定 ACLNN ABI 与 ctypes 映射。"""
+"""校验 chunk_gated_delta_rule_fwd 的稳定 ACLNN ABI 与 Stable adapter 映射。"""
 
 from __future__ import annotations
 
-import ast
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -15,7 +15,7 @@ HEADER = ROOT / (
     "op_host/op_api/aclnn_chunk_gated_delta_rule_fwd.h"
 )
 IMPLEMENTATION = HEADER.with_suffix(".cpp")
-CTYPES = ROOT / "torch_custom/fla_npu/fla_npu/ops/ascendc/_aclnn_ctypes.py"
+STABLE = ROOT / "torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py"
 PREPARE_API = ROOT / (
     "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare/"
     "op_host/op_api/aclnn_chunk_gated_delta_rule_fwd_prepare.cpp"
@@ -69,18 +69,10 @@ EXPECTED_PARAMETERS = (
     "executor",
 )
 
-EXPECTED_CTYPES = (
-    *("ctypes.c_void_p",) * 10,
-    "ctypes.c_char_p",
-    "ctypes.c_double",
-    "ctypes.c_int64",
-    "ctypes.c_bool",
-    "ctypes.c_bool",
-    "ctypes.c_bool",
-    "ctypes.c_bool",
-    *("ctypes.c_void_p",) * 10,
-    "ctypes.POINTER(ctypes.c_uint64)",
-    "ctypes.POINTER(ctypes.c_void_p)",
+EXPECTED_TYPES = (
+    *("const aclTensor *",) * 8, *("const aclIntArray *",) * 2,
+    "const char *", "double", "int64_t", * ("bool",) * 4,
+    *("const aclTensor *",) * 10, "uint64_t *", "aclOpExecutor **",
 )
 
 
@@ -102,50 +94,35 @@ def _parameter_names() -> tuple[str, ...]:
     return tuple(names)
 
 
-def _expression_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return f"{_expression_name(node.value)}.{node.attr}"
-    if isinstance(node, ast.Call) and _expression_name(node.func) == "ctypes.POINTER":
-        if len(node.args) != 1:
-            raise RuntimeError("ctypes.POINTER 参数数量异常")
-        return f"ctypes.POINTER({_expression_name(node.args[0])})"
-    raise RuntimeError(f"无法解析 ctypes 类型表达式：{ast.dump(node)}")
-
-
-def _ctypes_signature() -> tuple[str, ...]:
-    tree = ast.parse(CTYPES.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == "_GET_WORKSPACE_ARGTYPES"
-                   for target in node.targets):
-            continue
-        if not isinstance(node.value, ast.Dict):
-            break
-        for key, value in zip(node.value.keys, node.value.values):
-            if isinstance(key, ast.Constant) and key.value == SYMBOL:
-                if not isinstance(value, ast.List):
-                    raise RuntimeError(f"{SYMBOL} ctypes 签名不是列表")
-                return tuple(_expression_name(item) for item in value.elts)
-    raise RuntimeError(f"未找到 {SYMBOL} 的 ctypes 签名")
+def _check_stable_adapter():
+    path = ROOT / "torch_custom/fla_npu/tools/op_abi_validate.py"
+    spec = importlib.util.spec_from_file_location("gdn_abi_validate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    calls = module.adapter_calls(ROOT / "torch_custom/fla_npu/csrc/src")
+    if SYMBOL not in calls:
+        raise SystemExit(f"missing Stable adapter for {SYMBOL}")
+    headers = module.parse_headers(HEADER.parent, {SYMBOL})
+    problems = module.compare(headers[SYMBOL], calls[SYMBOL][1])
+    if problems:
+        raise SystemExit(f"Stable adapter ABI mismatch: {problems}")
+    text = HEADER.read_text(encoding="utf-8")
+    body = re.search(rf"{SYMBOL}GetWorkspaceSize\s*\((.*?)\);", text, re.S).group(1)
+    actual = tuple(re.sub(r"\s+", " ", re.sub(r"[A-Za-z_]\w*\s*$", "", declaration).strip())
+                   for declaration in body.split(","))
+    canonical = lambda value: re.sub(r"\s*\*\s*", "*", value)
+    if tuple(map(canonical, actual)) != tuple(map(canonical, EXPECTED_TYPES)):
+        raise SystemExit(f"ACLNN full parameter types changed: {actual}")
 
 
 def main() -> None:
     parameters = _parameter_names()
-    ctypes_signature = _ctypes_signature()
+    _check_stable_adapter()
     if parameters != EXPECTED_PARAMETERS:
         raise SystemExit(
             "ACLNN 参数合同不一致：\n"
             f"expected={EXPECTED_PARAMETERS}\nactual={parameters}"
         )
-    if ctypes_signature != EXPECTED_CTYPES:
-        raise SystemExit(
-            "ctypes 参数合同不一致：\n"
-            f"expected={EXPECTED_CTYPES}\nactual={ctypes_signature}"
-        )
-
     implementation = IMPLEMENTATION.read_text(encoding="utf-8")
     required_patterns = {
         "final-state selector": r"const\s+bool\s+outputFinalState\s*=\s*"
@@ -173,7 +150,7 @@ def main() -> None:
     forbidden_exp2_guards = {
         "prepare ACLNN": (prepare_api, r"CHECK_COND\(params\.useExp2"),
         "prepare tiling": (prepare_tiling, r"if\s*\(\s*!useExp2\s*\)"),
-        "prepare Torch wrapper": (CTYPES.read_text(encoding="utf-8"),
+        "prepare Torch wrapper": (STABLE.read_text(encoding="utf-8"),
                                   r"use_exp2 currently only supports True"),
     }
     rejected = [
@@ -187,8 +164,11 @@ def main() -> None:
         prepare_kernel,
     ) is None:
         raise SystemExit("prepare kernel 缺少 useExp2 对应的累计缩放选择")
-    if len(re.findall(r"useExp2\s*!=\s*0\s*\?\s*kGdnLn2\s*:\s*1\.0f", prepare_kernel)) != 2:
-        raise SystemExit("prepare kernel 缺少非 exp2 模式的局部指数换底选择")
+    for helper in (r"GateLowerLVF", r"ScaleRowsBetaExp2gVF<InDtype,"):
+        prefix = helper + (r"\s*" if "<" in helper else r"<")
+        pattern = r"if\s*\(useExp2\s*!=\s*0\)\s*\{\s*" + prefix + r"true>.*?}\s*else\s*\{\s*" + prefix + r"false>"
+        if re.search(pattern, prepare_kernel, re.S) is None:
+            raise SystemExit(f"prepare kernel 缺少 useExp2 分支选择: {helper}")
     if implementation.count("params.useExp2") < 4:
         raise SystemExit("大融合新路径未完整透传 useExp2")
 

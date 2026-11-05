@@ -260,14 +260,13 @@ def test_npu_fp32_beta_against_reference(head_dim, heads, seqlen):
 
 
 def _check_npu_bsnd_boundary_against_reference(
-    *, force_segmented=False, beta_dtype=torch.bfloat16
+    *, beta_dtype=torch.bfloat16, seqlen=65
 ):
     from fla_npu.ops.ascendc import chunk_kda_bwd_intra
-    from fla_npu.ops.ascendc import _aclnn_ctypes as ascendc_ctypes
 
     torch.manual_seed(11)
     device = torch.device("npu:0")
-    batch, seqlen, heads, head_dim = 1, 65, 2, 128
+    batch, heads, head_dim = 1, 2, 128
     shape = (batch, seqlen, heads, head_dim)
     q = (torch.randn(shape) * 0.1).to(torch.bfloat16).to(device)
     k = (torch.randn(shape) * 0.1).to(torch.bfloat16).to(device)
@@ -287,16 +286,10 @@ def _check_npu_bsnd_boundary_against_reference(
         q.cpu(), k.cpu(), gk.cpu(), beta.cpu(), d_aqk.cpu(), d_akk.cpu(),
         dq.cpu(), dk.cpu(), db.cpu(), dg.cpu(), layout="BSND"
     )
-    old_budget = ascendc_ctypes._KDA_BSND_TRANSPOSE_WORKSPACE_BUDGET_BYTES
-    if force_segmented:
-        ascendc_ctypes._KDA_BSND_TRANSPOSE_WORKSPACE_BUDGET_BYTES = 1
-    try:
-        actual = chunk_kda_bwd_intra(
-            q, k, gk, beta, d_aqk, d_akk, dq, dk, db, dg,
-            chunk_size=64, safe_gate=True, layout="BSND"
-        )
-    finally:
-        ascendc_ctypes._KDA_BSND_TRANSPOSE_WORKSPACE_BUDGET_BYTES = old_budget
+    actual = chunk_kda_bwd_intra(
+        q, k, gk, beta, d_aqk, d_akk, dq, dk, db, dg,
+        chunk_size=64, safe_gate=True, layout="BSND"
+    )
     torch.npu.synchronize()
     for name, got, want in zip(("dq", "dk", "db", "dg"), actual, expected):
         torch.testing.assert_close(
@@ -316,17 +309,17 @@ def test_npu_bsnd_boundary_against_reference():
     os.getenv("FLA_NPU_RUN_CHUNK_KDA_BWD_INTRA", "0") != "1",
     reason="requires a built OPP and an NPU runtime",
 )
-def test_npu_bsnd_segmented_views_against_reference():
-    _check_npu_bsnd_boundary_against_reference(force_segmented=True)
+def test_npu_bsnd_multiple_tail_chunks_against_reference():
+    _check_npu_bsnd_boundary_against_reference(seqlen=129)
 
 
 @pytest.mark.skipif(
     os.getenv("FLA_NPU_RUN_CHUNK_KDA_BWD_INTRA", "0") != "1",
     reason="requires a built OPP and an NPU runtime",
 )
-def test_npu_bsnd_segmented_fp32_beta_against_reference():
+def test_npu_bsnd_fp32_beta_against_reference():
     _check_npu_bsnd_boundary_against_reference(
-        force_segmented=True, beta_dtype=torch.float32
+        beta_dtype=torch.float32
     )
 
 
@@ -338,7 +331,7 @@ def test_npu_bsnd_segmented_fp32_beta_against_reference():
 def test_npu_rejects_unsupported_layout(layout):
     from fla_npu.ops.ascendc import chunk_kda_bwd_intra
 
-    with pytest.raises(RuntimeError, match="dense BSND/BNSD or varlen TND"):
+    with pytest.raises((RuntimeError, ValueError), match="layout"):
         chunk_kda_bwd_intra(
             *([None] * 10), chunk_size=64, safe_gate=True, layout=layout
         )

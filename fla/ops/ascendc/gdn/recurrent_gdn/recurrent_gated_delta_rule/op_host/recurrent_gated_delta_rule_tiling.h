@@ -26,6 +26,7 @@ using namespace RecurrentGatedDeltaRule;
 struct RecurrentGatedDeltaRuleCompileInfo {
     uint64_t aivNum{0UL};
     uint64_t ubSize{0UL};
+    bool isA5{false};
 };
 
 struct RecurrentGatedDeltaRuleInfo {
@@ -61,6 +62,7 @@ protected:
     RecurrentGatedDeltaRuleTilingContext BuildProcessorContext() const;
 
     ge::graphStatus CheckContext();
+    ge::graphStatus GetVersion();
     ge::graphStatus AnalyzeDtype();
     ge::graphStatus AnalyzeShapes();
     ge::graphStatus CalUbSize();
@@ -71,7 +73,7 @@ protected:
     bool CheckFormat(ge::Format format, const std::string &Desc);
 
     RecurrentGatedDeltaRuleCompileInfo compileInfo_;
-    RecurrentGatedDeltaRuleTilingData tilingData_;
+    RecurrentGatedDeltaRuleTilingData tilingData_{};
     RecurrentGatedDeltaRuleInfo inputParams_;
 };
 

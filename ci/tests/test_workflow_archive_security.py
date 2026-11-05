@@ -28,19 +28,6 @@ def _python_blocks():
     return blocks
 
 
-def _function_nodes(name):
-    nodes = []
-    for block in _python_blocks():
-        tree = ast.parse(block)
-        nodes.extend(
-            node
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == name
-        )
-    return nodes
-
-
 def _load_archive_functions():
     block = next(block for block in _python_blocks() if "def extract_archive" in block)
     tree = ast.parse(block)
@@ -49,14 +36,14 @@ def _load_archive_functions():
         for node in tree.body
         if isinstance(node, (ast.Import, ast.ImportFrom))
         or isinstance(node, ast.FunctionDef)
-        and node.name in {"extract_archive", "copy_case_file"}
+        and node.name == "extract_archive"
     ]
     namespace = {}
     exec(
         compile(ast.Module(body=wanted, type_ignores=[]), str(WORKFLOW_PATH), "exec"),
         namespace,
     )
-    return namespace["extract_archive"], namespace["copy_case_file"]
+    return namespace["extract_archive"]
 
 
 def _tar_info(name, member_type=tarfile.REGTYPE, data=b"", linkname=""):
@@ -76,13 +63,6 @@ def _write_archive(path, members):
             archive.addfile(info, source)
 
 
-class WorkflowSourceConsistencyTest(unittest.TestCase):
-    def test_a2_and_a5_case_copy_implementations_match(self):
-        nodes = _function_nodes("copy_case_file")
-        self.assertEqual(len(nodes), 2)
-        self.assertEqual(ast.dump(nodes[0]), ast.dump(nodes[1]))
-
-
 @unittest.skipUnless(
     getattr(os, "O_NOFOLLOW", 0) and getattr(os, "O_DIRECTORY", 0),
     "safe archive handling requires Linux open flags",
@@ -90,18 +70,15 @@ class WorkflowSourceConsistencyTest(unittest.TestCase):
 class WorkflowArchiveSecurityTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        extract_archive, copy_case_file = _load_archive_functions()
+        extract_archive = _load_archive_functions()
         cls.extract_archive = staticmethod(extract_archive)
-        cls.copy_case_file = staticmethod(copy_case_file)
 
-    def test_valid_archive_extracts_and_case_copy_succeeds(self):
+    def test_valid_archive_extracts(self):
         with tempfile.TemporaryDirectory() as temp:
             temp_path = Path(temp)
             archive_path = temp_path / "valid.tar.gz"
             destination = temp_path / "repo"
-            preserved = temp_path / "preserved" / "example_st_cases.json"
             destination.mkdir()
-            preserved.parent.mkdir()
             members = [
                 _tar_info("root/", tarfile.DIRTYPE),
                 _tar_info("root/ci/", tarfile.DIRTYPE),
@@ -119,8 +96,6 @@ class WorkflowArchiveSecurityTest(unittest.TestCase):
                 b'{"cases": []}',
             )
             self.assertTrue((destination / "bin" / "run.sh").stat().st_mode & stat.S_IXUSR)
-            self.assertTrue(self.copy_case_file(destination, preserved))
-            self.assertEqual(preserved.read_bytes(), b'{"cases": []}')
 
     def test_unsafe_archive_members_are_rejected(self):
         unsafe_cases = [
@@ -244,62 +219,6 @@ class WorkflowArchiveSecurityTest(unittest.TestCase):
             symlink_destination.symlink_to(real_destination, target_is_directory=True)
             with self.assertRaises(RuntimeError):
                 self.extract_archive(archive_path, symlink_destination)
-
-    def test_case_copy_missing_invalid_and_symlink_paths(self):
-        with tempfile.TemporaryDirectory() as temp:
-            temp_path = Path(temp)
-            repo = temp_path / "repo"
-            output_dir = temp_path / "output"
-            repo.mkdir()
-            (repo / "ci").mkdir()
-            output_dir.mkdir()
-
-            self.assertFalse(
-                self.copy_case_file(repo, output_dir / "missing.json")
-            )
-            self.assertFalse((output_dir / "missing.json").exists())
-
-            case_path = repo / "ci" / "example_st_cases.json"
-            case_path.write_text("not json", encoding="utf-8")
-            with self.assertRaises(ValueError):
-                self.copy_case_file(repo, output_dir / "invalid.json")
-            self.assertFalse((output_dir / "invalid.json").exists())
-            case_path.unlink()
-
-            outside = temp_path / "outside.json"
-            outside.write_text('{"secret": true}', encoding="utf-8")
-            case_path.symlink_to(outside)
-            with self.assertRaises(OSError):
-                self.copy_case_file(repo, output_dir / "symlink.json")
-
-    def test_case_copy_rejects_ci_symlink_fifo_and_existing_output(self):
-        with tempfile.TemporaryDirectory() as temp:
-            temp_path = Path(temp)
-            repo = temp_path / "repo"
-            outside_ci = temp_path / "outside-ci"
-            output_dir = temp_path / "output"
-            repo.mkdir()
-            outside_ci.mkdir()
-            output_dir.mkdir()
-            (outside_ci / "example_st_cases.json").write_text("{}", encoding="utf-8")
-            (repo / "ci").symlink_to(outside_ci, target_is_directory=True)
-            with self.assertRaises(OSError):
-                self.copy_case_file(repo, output_dir / "ci-symlink.json")
-
-            (repo / "ci").unlink()
-            (repo / "ci").mkdir()
-            case_path = repo / "ci" / "example_st_cases.json"
-            os.mkfifo(case_path)
-            with self.assertRaises(RuntimeError):
-                self.copy_case_file(repo, output_dir / "fifo.json")
-            case_path.unlink()
-
-            case_path.write_text("{}", encoding="utf-8")
-            existing_output = output_dir / "existing.json"
-            existing_output.write_text("keep", encoding="utf-8")
-            with self.assertRaises(FileExistsError):
-                self.copy_case_file(repo, existing_output)
-            self.assertEqual(existing_output.read_text(encoding="utf-8"), "keep")
 
 
 if __name__ == "__main__":

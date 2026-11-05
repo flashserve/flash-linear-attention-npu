@@ -69,6 +69,10 @@ struct Arch22ChunkGatedDeltaRuleFwdTrailer {
     uint64_t aWorkspaceOffset;
     uint64_t solveWorkspaceOffset;
     uint64_t gCumsumBhtOffset;
+    // Stage P batches exp(g_last) per value head; only raw_g_layout=1 uses it.
+    uint64_t gLastExpOffset;
+    // Stage P prepares exp(g_last - g) in BHT for the private H V1 consumer.
+    uint64_t gDecayOffset;
     // 仅 DAV_2201 的分层 FP32 Solve 使用；其余架构保持零值且不访问。
     uint64_t solveFp32InputOffset;
     uint64_t solveD16Offset;

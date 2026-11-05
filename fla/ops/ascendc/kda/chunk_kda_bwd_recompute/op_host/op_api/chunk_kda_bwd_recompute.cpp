@@ -28,7 +28,7 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, int64_t chunkSize,
     bool useGateInKernel, bool useExp2, double lowerBound, const char *inputLayout,
     const aclTensor *wOut, const aclTensor *uOut,
-    const aclTensor *qgOut, const aclTensor *kgOut, const aclTensor *gkOut, aclOpExecutor *executor)
+    const aclTensor *qgOut, const aclTensor *kgOut, const aclTensor *gkOut, aclOpExecutor *executor, const char *modelLayout, bool qkHeadMajor)
 {
     L0_DFX(ChunkKdaBwdRecompute, q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional,
            chunkIndicesOptional, chunkSize, useGateInKernel, useExp2, lowerBound, inputLayout,
@@ -55,7 +55,7 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
         ChunkKdaBwdRecompute,
         OP_INPUT(q, k, v, g, beta, a, aLogOptional, dtBiasOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(wOut, uOut, qgOut, kgOut, gkOut),
-        OP_ATTR(chunkSize, useGateInKernel, useExp2, static_cast<float>(lowerBound), inputLayout));
+        OP_ATTR(chunkSize, useGateInKernel, useExp2, static_cast<float>(lowerBound), inputLayout, modelLayout, qkHeadMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdRecompute failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
