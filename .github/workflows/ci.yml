@@ -137,32 +137,6 @@ jobs:
               }
             };
 
-            const getMatchingExecutionRun = async (status, { workflowRef, workflowSha }) => {
-              const runPrefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
-              const targetUrl = status?.target_url || '';
-              if (!targetUrl.startsWith(runPrefix)) return null;
-              const match = targetUrl.slice(runPrefix.length).match(/^(\d+)(?:\/attempts\/\d+)?\/?$/);
-              const runId = Number(match?.[1]);
-              if (!Number.isSafeInteger(runId) || runId <= 0 || runId === Number(context.runId)) return null;
-              try {
-                const { data: run } = await github.rest.actions.getWorkflowRun({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: runId,
-                });
-                // A PR workflow runs at its fixed merge commit, while ordinary
-                // runs use the base commit. Both identities are validated below.
-                if (run.head_sha !== workflowSha || run.head_branch !== workflowRef ||
-                    run.event !== 'workflow_dispatch' ||
-                    !['.github/workflows/ci.yml', `.github/workflows/ci.yml@${workflowRef}`].includes(run.path) ||
-                    run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
-                return run;
-              } catch (error) {
-                core.warning(`Unable to inspect NPU CI workflow run; allowing a replacement run: ${error.message}`);
-                return null;
-              }
-            };
-
             prNumber = Number(workflowInputs.pr_number);
             ciMode = workflowInputs.ci_mode || 'quick';
             ops = workflowInputs.ops || '';
@@ -193,7 +167,7 @@ jobs:
             if (workflowSource === 'pr-merge') {
               ({ data: workflowCommit } = await github.rest.repos.getCommit({ ...context.repo, ref: workflowSha }));
             }
-            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, workflowSha, workflowSource, workflowCommit });
+            auth.requirePullRequestBase({ pr, branch: baseBranch, workflowRef, workflowSha, workflowSource, workflowCommit });
             auth.requireDispatchIdentity({ pr, inputs: workflowInputs, workflowSha,
               required: actor === 'github-actions[bot]' || workflowSource === 'pr-merge',
               rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
@@ -212,8 +186,8 @@ jobs:
                 return;
               }
             }
-            if (auth.containsWorkflowChanges(changedFiles) && workflowSource !== 'pr-merge') {
-              throw new Error('PR 修改了 .github/workflows/ci.yml；当前运行仍使用目标分支定义。请使用更新后的 /run-npu-ci 分发器，从固定 PR 合并提交启动，不能用旧 workflow 验证新 YAML。');
+            if (auth.containsCiChanges(changedFiles) && workflowSource !== 'pr-merge') {
+              throw new Error('PR 修改了 ci/ 或 .github/ 的 CI 代码；请使用更新后的 /run-npu-ci 评论入口，从固定 PR 合并版本执行当前 PR 的 CI。');
             }
             core.info(`CI workflow source=${workflowSource}; ref=${workflowRef}; workflow=${workflowSha}; base=${baseSha}; head=${pr.head.sha}`);
 
@@ -229,102 +203,7 @@ jobs:
             const requestKey = requestScope === 'all'
               ? 'all'
               : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10);
-            const requestedModeSuffix = `(${ciMode},${requestKey},A2+A5)`;
-            const isInitialWorkflowAttempt = process.env.NPU_CI_RUN_ATTEMPT === '1';
             const checkContexts = requestScope === 'all' ? requiredCheckContexts : [scopedCheckContext];
-            const finalContextName = requestScope === 'all'
-              ? requiredCheckContexts.at(-1)[0]
-              : scopedCheckContext[0];
-            const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: pr.head.sha,
-              per_page: 100,
-            });
-            const compareStatusRecency = (a, b) =>
-              new Date(b.created_at) - new Date(a.created_at) || Number(b.id || 0) - Number(a.id || 0);
-            const latestStatusForContext = (statusContext) => statuses
-              .filter((status) => status.context === statusContext)
-              .sort(compareStatusRecency)[0];
-            const finalCiStatuses = statuses
-              .filter((status) => status.context === finalContextName)
-              .sort(compareStatusRecency);
-            const latestExecutionCi = finalCiStatuses[0];
-            const latestExecutionMatchesRequest = Boolean(
-              latestExecutionCi &&
-              (latestExecutionCi.description || '').includes(requestedModeSuffix)
-            );
-            const matchingExecutionRun = latestExecutionMatchesRequest
-              ? await getMatchingExecutionRun(latestExecutionCi, { workflowRef, workflowSha }) : null;
-            const allContextsPassedInSameRun = Boolean(
-              latestExecutionCi &&
-              latestExecutionCi.target_url &&
-              checkContexts.every(([statusContext]) => {
-                const latestStatus = latestStatusForContext(statusContext);
-                return latestStatus &&
-                  latestStatus.state === 'success' &&
-                  latestStatus.target_url === latestExecutionCi.target_url;
-              })
-            );
-            if (isInitialWorkflowAttempt &&
-                matchingExecutionRun && latestExecutionCi.state === 'success' &&
-                allContextsPassedInSameRun) {
-              core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
-              commentId = await createRunComment(
-                pr,
-                [
-                  `本次 NPU CI 请求已经在 \`${pr.head.sha}\` 上通过，不会重复运行。`,
-                  '',
-                  `- 请求模式：\`${ciMode}\``,
-                  `- 触发人：@${requestedBy}`,
-                  `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
-                  '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
-                  requestScope === 'all'
-                    ? '- 分项结果：6/6 通过'
-                    : '- 类型：定向编译诊断；仅执行 01-02，未改写 01-06 合入门禁状态',
-                ].join('\n')
-              );
-              core.setOutput('should_run', 'false');
-              core.setOutput('pr_number', String(prNumber));
-              core.setOutput('base_ref', pr.base.ref);
-              core.setOutput('head_repo', pr.head.repo.full_name);
-              core.setOutput('head_sha', pr.head.sha);
-              core.setOutput('ci_mode', ciMode);
-              core.setOutput('ops', ops);
-              core.setOutput('comment_id', commentId);
-              core.setOutput('workflow_ref', workflowRef);
-              core.setOutput('requested_by', requestedBy);
-              return;
-            }
-            if (matchingExecutionRun && latestExecutionCi.state === 'pending' &&
-                ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(matchingExecutionRun.status)) {
-              core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
-              commentId = await createRunComment(
-                pr,
-                [
-                  `NPU CI 已在验证 \`${pr.head.sha}\`，本次评论不会重复启动新任务。`,
-                  '',
-                  `- 请求模式：\`${ciMode}\``,
-                  `- 触发人：@${requestedBy}`,
-                  `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
-                  '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
-                  '- 当前状态：排队或运行中',
-                  '- 执行方式：按顺序执行；前置失败时后续项跳过',
-                  latestExecutionCi.target_url ? `- 运行链接：[查看已有 NPU CI](${latestExecutionCi.target_url})` : '',
-                ].filter(Boolean).join('\n')
-              );
-              core.setOutput('should_run', 'false');
-              core.setOutput('pr_number', String(prNumber));
-              core.setOutput('base_ref', pr.base.ref);
-              core.setOutput('head_repo', pr.head.repo.full_name);
-              core.setOutput('head_sha', pr.head.sha);
-              core.setOutput('ci_mode', ciMode);
-              core.setOutput('ops', ops);
-              core.setOutput('comment_id', commentId);
-              core.setOutput('workflow_ref', workflowRef);
-              core.setOutput('requested_by', requestedBy);
-              return;
-            }
 
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const pendingResults = await Promise.allSettled(checkContexts.map(([statusContext, label]) =>

@@ -44,12 +44,14 @@ const context = {actor:settings.actor || 'ci-user',serverUrl:'https://github.com
   repo:{owner:'example',repo:'repo'},payload:{repository:{default_branch:'main'},
     action:settings.action || 'synchronize',pull_request:pr,issue:{number:pr.number},
     changes:settings.changes,
-    comment:{body:settings.command || '/run-npu-ci quick'},
+    comment:{id:100,body:settings.command || '/run-npu-ci quick'},
     inputs:{pr_number:'527',ci_mode:'quick',...settings.inputs}}};
 const listFiles = () => {};
 const listStatuses = () => {};
 const listComments = () => {};
+const listWorkflowRuns = () => {};
 let prReads = 0;
+let dispatchedRun;
 const github = {
   paginate: async (endpoint) => endpoint === listFiles ? files : endpoint === listStatuses ? settings.statuses || [] : [],
   rest:{
@@ -102,13 +104,17 @@ const github = {
     },
     issues:{listComments,createComment:async (payload) => {record('comment',payload);return {data:{id:123}};},
       updateComment:async (payload) => record('comment',payload)},
-    actions:{createWorkflowDispatch:async (payload) => {
+    actions:{listWorkflowRuns,createWorkflowDispatch:async (payload) => {
         if (settings.accepted_inputs && Object.keys(payload.inputs).some((name) => !settings.accepted_inputs.includes(name))) {
           throw new Error('422 Unexpected inputs: ' + Object.keys(payload.inputs).filter((name) => !settings.accepted_inputs.includes(name)).join(','));
         }
         record('dispatch',payload);
+        dispatchedRun = {id:1000,event:'workflow_dispatch',display_title:`NPU CI · PR #${pr.number}`,
+          repository:{full_name:'example/repo'},head_branch:payload.ref,
+          head_sha:payload.inputs.expected_workflow_sha || pr.base.sha,path:'.github/workflows/ci.yml',status:'completed'};
+        return {status:200,data:{workflow_run_id:dispatchedRun.id}};
       },
-      getWorkflowRun:async () => ({data:{status:'in_progress'}})},
+      getWorkflowRun:async () => ({data:dispatchedRun})},
   },
 };
 const core = {notice:(payload) => record('notice',payload),info:(payload) => record('info',payload),warning:(payload) => record('warning',payload),
@@ -152,23 +158,27 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
                 rejected = self.run_entry("helper_tag", pr_number=527, workflow_sha=workflow_sha)
                 self.assertIn("无效", rejected["error"])
 
-    def protected_base_args(self, **changes):
+    def pull_request_base_args(self, **changes):
         return {"branch":{"protected":True,"commit":{"sha":"c" * 40}},
                 "workflowRef":"npu-ci/pr-527/" + "d" * 40, "workflowSha":"d" * 40,
                 "workflowSource":"pr-merge",
                 "workflowCommit":{"sha":"d" * 40,"parents":[{"sha":"c" * 40},{"sha":"a" * 40}]},
                 **changes}
 
-    def test_pr_workflow_identity_accepts_exact_merge_of_protected_base_and_head(self):
-        result = self.run_entry(method="requireProtectedBase", args=self.protected_base_args())
+    def test_pr_workflow_identity_accepts_exact_merge_of_base_and_head(self):
+        result = self.run_entry(method="requirePullRequestBase", args=self.pull_request_base_args())
         self.assertNotIn("error", result)
 
-    def test_pr_workflow_identity_rejects_unprotected_or_moved_base(self):
-        for branch in ({"protected":False,"commit":{"sha":"c" * 40}},
-                       {"protected":True,"commit":{"sha":"e" * 40}},
+    def test_pr_workflow_identity_accepts_unprotected_base(self):
+        args = self.pull_request_base_args(branch={"protected":False,"commit":{"sha":"c" * 40}})
+        result = self.run_entry(method="requirePullRequestBase", args=args)
+        self.assertNotIn("error", result)
+
+    def test_pr_workflow_identity_rejects_moved_or_invalid_base(self):
+        for branch in ({"protected":True,"commit":{"sha":"e" * 40}},
                        {"protected":True,"commit":{"sha":"invalid"}}):
             with self.subTest(branch=branch):
-                result = self.run_entry(method="requireProtectedBase", args=self.protected_base_args(branch=branch))
+                result = self.run_entry(method="requirePullRequestBase", args=self.pull_request_base_args(branch=branch))
                 self.assertIn("error", result)
 
     def test_pr_workflow_identity_rejects_wrong_tag_or_workflow_commit(self):
@@ -181,7 +191,7 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
                         {"workflowCommit":{"sha":"e" * 40,"parents":[{"sha":"c" * 40},{"sha":"a" * 40}]}},
                         {"workflowCommit":None}):
             with self.subTest(changes=changes):
-                result = self.run_entry(method="requireProtectedBase", args=self.protected_base_args(**changes))
+                result = self.run_entry(method="requirePullRequestBase", args=self.pull_request_base_args(**changes))
                 self.assertIn("error", result)
 
     def test_pr_workflow_identity_rejects_other_parent_order_or_history(self):
@@ -192,37 +202,40 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
                         [{"sha":"c" * 40},{"sha":"a" * 40},{"sha":"e" * 40}],
                         [{"sha":"c" * 40},{}]):
             with self.subTest(parents=parents):
-                args = self.protected_base_args(workflowCommit={"sha":"d" * 40,"parents":parents})
-                result = self.run_entry(method="requireProtectedBase", args=args)
+                args = self.pull_request_base_args(workflowCommit={"sha":"d" * 40,"parents":parents})
+                result = self.run_entry(method="requirePullRequestBase", args=args)
                 self.assertIn("error", result)
 
     def test_manual_source_selection_cannot_bypass_fixed_workflow_identity(self):
         for workflow_source in ("base", "head", "", "PR-MERGE", None):
             with self.subTest(workflow_source=workflow_source):
-                result = self.run_entry(method="requireProtectedBase",
-                                        args=self.protected_base_args(workflowSource=workflow_source))
+                result = self.run_entry(method="requirePullRequestBase",
+                                        args=self.pull_request_base_args(workflowSource=workflow_source))
                 self.assertIn("error", result)
 
     def test_base_workflow_identity_retains_strict_branch_and_commit_contract(self):
         base_args = {"branch":{"protected":True,"commit":{"sha":"c" * 40}}}
-        result = self.run_entry(method="requireProtectedBase", args=base_args)
+        result = self.run_entry(method="requirePullRequestBase", args=base_args)
         self.assertNotIn("error", result)
         for changes in ({"workflowRef":"other"}, {"workflowSha":"d" * 40},
                         {"workflowRef":"npu-ci/pr-527/" + "d" * 40,"workflowSha":"d" * 40}):
             with self.subTest(changes=changes):
-                result = self.run_entry(method="requireProtectedBase", args={**base_args, **changes})
+                result = self.run_entry(method="requirePullRequestBase", args={**base_args, **changes})
                 self.assertIn("error", result)
 
-    def test_workflow_change_detection_handles_both_rename_paths_and_only_ci_yaml(self):
-        for file in (".github/workflows/ci.yml",
+    def test_ci_change_detection_handles_code_scope_and_both_rename_paths(self):
+        for file in ("ci/run.sh", ".github/workflows/ci-contract-tests.yml",
+                     ".github/scripts/publish_npu_ci_status.js", ".github/workflows/ci.yml",
                      {"filename":"other.yml","previous_filename":".github/workflows/ci.yml","status":"renamed"},
-                     {"filename":".github/workflows/ci.yml","previous_filename":"other.yml","status":"renamed"}):
+                     {"filename":"ci/run.sh","previous_filename":"outside/run.sh","status":"renamed"},
+                     {"filename":"outside/run.sh","previous_filename":"ci/run.sh","status":"renamed"}):
             with self.subTest(file=file):
-                result = self.run_entry("helper_files", method="containsWorkflowChanges", files=[file])
+                result = self.run_entry("helper_files", method="containsCiChanges", files=[file])
                 self.assertTrue(result["result"])
-        for file in ("ci/run.sh", ".github/workflows/ci-contract-tests.yml", ".github/workflows/ci.yml.md"):
+        for file in ("ci/README.MD", ".github/notes.md", ".github/workflows/ci.yml.md",
+                     "fla/ops/example.cpp", "ci-tools/run.sh", ".github-backup/ci.yml"):
             with self.subTest(file=file):
-                result = self.run_entry("helper_files", method="containsWorkflowChanges", files=[file])
+                result = self.run_entry("helper_files", method="containsCiChanges", files=[file])
                 self.assertFalse(result["result"])
 
     def test_shared_changed_files_are_returned_after_snapshot_validation(self):
@@ -235,6 +248,8 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
         self.assertNotIn("error", result)
         self.assertEqual(len(self.records(result, "dispatch")), 1)
         self.assertEqual(self.records(result, "permission"), [])
+        self.assertEqual(sum(item["path"] == ".github/npu-ci-users.json"
+                             for item in self.records(result, "content")), 1)
         allowlist = self.records(result, "content")[0]
         self.assertEqual((allowlist["path"], allowlist["ref"]), (".github/npu-ci-users.json", "main"))
 
@@ -289,11 +304,27 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
                 self.assertIn("不支持", self.records(result, "failed")[0])
                 self.assertEqual(self.records(result, "dispatch"), [])
 
-    def test_unprotected_pr_base_cannot_supply_executable_workflow(self):
+    def test_new_unprotected_target_branch_uses_inherited_workflow_without_tag(self):
+        for branch in ("new-maintenance", "release/new-maintenance"):
+            with self.subTest(branch=branch):
+                dispatched = self.run_entry("dispatch", base_ref=branch, protected=False)
+                self.assertNotIn("error", dispatched)
+                dispatch = self.records(dispatched, "dispatch")[0]
+                self.assertEqual(dispatch["ref"], branch)
+                self.assertEqual(dispatch["inputs"]["workflow_source"], "base")
+                self.assertEqual(dispatch["inputs"]["expected_base_ref"], branch)
+                self.assertEqual(self.records(dispatched, "create_ref"), [])
+                prepared = self.run_entry("prepare", actor="github-actions[bot]", base_ref=branch,
+                                          protected=False, inputs=dispatch["inputs"])
+                self.assertNotIn("error", prepared)
+                self.assertIn({"name":"should_run","value":"true"}, self.records(prepared, "output"))
+
+    def test_new_unprotected_target_rejects_moved_base_at_both_entry_points(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):
-                result = self.run_entry(entry, base_ref="malicious", protected=False)
-                self.assertIn("受保护", result["error"])
+                result = self.run_entry(entry, base_ref="new-maintenance", protected=False,
+                                        branch_sha="e" * 40)
+                self.assertIn("已变化", result["error"])
                 self.assertEqual(self.records(result, "dispatch"), [])
                 self.assertEqual(self.records(result, "status"), [])
 
@@ -406,10 +437,13 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
         self.assertNotIn("error", result)
         self.assertEqual(self.records(result, "commit"), [])
 
-    def test_prepare_rejects_base_source_for_workflow_changes(self):
-        result = self.run_entry("prepare", files=[".github/workflows/ci.yml"], permissions={"ci-author":"admin"})
-        self.assertIn("不能用旧 workflow", result["error"])
-        self.assertEqual(self.records(result, "status"), [])
+    def test_prepare_rejects_base_source_for_any_ci_code_changes(self):
+        for filename in (".github/workflows/ci.yml", ".github/scripts/publish_npu_ci_status.js",
+                         "ci/run_checks.sh"):
+            with self.subTest(filename=filename):
+                result = self.run_entry("prepare", files=[filename], permissions={"ci-author":"admin"})
+                self.assertIn("固定 PR 合并版本", result["error"])
+                self.assertEqual(self.records(result, "status"), [])
 
     def test_prepare_pr_merge_always_requires_admin_author_even_without_ci_files(self):
         result = self.run_entry("prepare", **self.pr_workflow_options(
@@ -482,15 +516,19 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
         self.assertEqual(self.records(result, "status"), [])
         self.assertIn("profile unavailable", self.records(result, "warning")[0])
 
-    def test_rerun_preserves_initial_authorization_without_reloading_allowlist(self):
+    def test_rerun_preserves_initial_authorization_without_reauthorizing_requester(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):
                 snapshot = {"expected_head_sha":"a"*40, "expected_base_ref":"main",
                             "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-                result = self.run_entry(entry, attempt=2, list_error=True, inputs=snapshot)
+                # The dispatcher reads current users to recognize newer authorized
+                # comments; it must not reauthorize this already accepted request.
+                result = self.run_entry(entry, attempt=2, list_error=entry == "prepare",
+                                        users=["another-ci-user"], inputs=snapshot)
                 self.assertNotIn("error", result)
-                self.assertFalse(any(item["path"] == ".github/npu-ci-users.json"
-                                     for item in self.records(result, "content")))
+                list_reads = [item for item in self.records(result, "content")
+                              if item["path"] == ".github/npu-ci-users.json"]
+                self.assertEqual(len(list_reads), 1 if entry == "dispatch" else 0)
                 self.assertEqual(self.records(result, "permission"), [])
                 if entry == "dispatch":
                     self.assertEqual(len(self.records(result, "dispatch")), 1)
@@ -528,7 +566,9 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
     def test_listed_reader_can_run_admin_author_ci_changes_without_confirmation(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):
-                result = self.run_entry(entry, files=["ci/run_checks.sh"], permissions={"ci-author":"admin"})
+                options = self.pr_workflow_options(files=["ci/run_checks.sh"]) if entry == "prepare" else {
+                    "files":["ci/run_checks.sh"], "permissions":{"ci-author":"admin"}}
+                result = self.run_entry(entry, **options)
                 self.assertNotIn("error", result)
                 self.assertEqual(self.records(result, "failed"), [])
                 self.assertEqual(self.records(result, "permission"), ["ci-author"])
@@ -557,7 +597,7 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
                 self.assertEqual([item["state"] for item in self.records(result, "status")], ["failure"] * 6)
 
     def test_default_status_preserves_admin_author_execution_but_rejects_non_admin_author(self):
-        prepared = self.run_entry("prepare", files=["ci/run_checks.sh"], permissions={"ci-author":"admin"})
+        prepared = self.run_entry("prepare", **self.pr_workflow_options(files=["ci/run_checks.sh"]))
         statuses = self.records(prepared, "status")
         allowed = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses, permissions={"ci-author":"admin"})
         self.assertEqual(self.records(allowed, "status"), [])

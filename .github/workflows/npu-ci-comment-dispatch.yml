@@ -25,6 +25,10 @@ jobs:
   dispatch:
     name: 选择 NPU CI workflow 版本
     environment: npu-ci-dispatch
+    concurrency:
+      group: npu-ci-dispatch-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+      queue: max
     if: >-
       github.event.issue.pull_request &&
       github.actor != 'github-actions[bot]' &&
@@ -58,49 +62,22 @@ jobs:
             const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
             const workflow = require(process.env.NPU_CI_WORKFLOW_SCRIPT || './.github/scripts/npu_ci_workflow.js');
-            const body = (context.payload.comment.body || '').trim();
-            const command = body.match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
+            let command;
+            try {
+              command = workflow.parseCiCommand(context.payload.comment.body);
+            } catch (error) {
+              core.setFailed(error.message);
+              return;
+            }
             if (!command) {
               core.notice('评论包含 /run-npu-ci，但命令格式不正确，跳过。');
               return;
             }
 
-            const parts = command[1] ? command[1].trim().split(/\s+/) : [];
-            let ciMode = 'quick';
-            let modeProvided = false;
-            let ops = '';
-            let opsProvided = false;
-            for (const part of parts) {
-              if (part === 'quick' || part === 'full') {
-                if (modeProvided) {
-                  core.setFailed('CI 模式只能指定一次。');
-                  return;
-                }
-                ciMode = part;
-                modeProvided = true;
-              } else if (part.startsWith('ops=')) {
-                if (opsProvided) {
-                  core.setFailed('ops 参数只能指定一次。');
-                  return;
-                }
-                ops = part.slice('ops='.length);
-                opsProvided = true;
-              } else {
-                core.setFailed(`不支持的 NPU CI 参数：${part}`);
-                return;
-              }
-            }
-
-            const opsItems = ops.split(',').map((item) => item.trim());
-            if ((opsProvided && !ops.trim()) ||
-                (ops.trim() && opsItems.some((item) =>
-                  !item || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(item)))) {
-              core.setFailed('ops 参数必须是以逗号分隔的合法非空算子名。');
-              return;
-            }
-
+            const { ciMode, ops } = command;
             const actor = context.actor;
-            await auth.authorizeCiRequest({ github, context, requestedBy: actor });
+            const ciUsers = await auth.authorizeCiRequest({ github, context, requestedBy: actor })
+              || await auth.loadCiUsers({ github, context });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -111,7 +88,7 @@ jobs:
             auth.requireOpenPullRequest(pr);
             const targetRef = pr.base.ref;
             const { data: baseBranch } = await github.rest.repos.getBranch({ ...context.repo, branch: targetRef });
-            auth.requireProtectedBase({ pr, branch: baseBranch });
+            auth.requirePullRequestBase({ pr, branch: baseBranch });
 
             const files = await auth.listPrFiles({ github, context, pr });
             if (auth.containsCiChanges(files)) {
@@ -134,8 +111,16 @@ jobs:
             // it through workflow inputs or the PR job environment.
             const refGithub = process.env.NPU_CI_DISPATCH_TOKEN
               ? new github.constructor({ auth: process.env.NPU_CI_DISPATCH_TOKEN }) : github;
+            const isCurrentRequest = () => workflow.isLatestCiComment({ github, context, prNumber, users: ciUsers });
             const execution = await workflow.dispatchNpuWorkflow({
               github, refGithub, context, pr, baseBranch, files,
+              isCurrentRequest,
+              beforeDispatch: async (selected) => {
+                const statusContexts = ops.trim() ? [checks.diagnostic.context]
+                  : selected.source === 'base'
+                    ? await checks.readBranchContexts({ github, context, pr }) : checks.contexts;
+                return workflow.replaceActiveNpuRuns({ github, context, pr, execution: selected, statusContexts, isCurrentRequest });
+              },
               inputs: {
                 pr_number: String(prNumber),
                 ci_mode: ciMode,
@@ -147,6 +132,13 @@ jobs:
                 expected_workflow_sha: baseBranch.commit.sha,
               },
             });
+
+            if (execution.skipped) {
+              core.notice(execution.reason === 'duplicate'
+                ? `当前 PR commit 已有 NPU CI #${execution.runId} 排队或运行，忽略重复命令并保留原任务。`
+                : '已有更新的已授权 NPU CI 命令评论，本次旧请求不再启动任务。');
+              return;
+            }
 
             core.notice(
               `已将 PR #${prNumber} 的 NPU CI 分发到 \`${execution.ref}\`，` +

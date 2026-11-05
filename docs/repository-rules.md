@@ -56,7 +56,7 @@ A2/A5 统一使用 Git 获取源码：先直连 checkout prepare 固定的 base 
 
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
-新版 CI 在复用成功结果或等待已有任务前，还会读取该任务的运行信息，确认目标分支及 base commit 与本次请求一致；无法确认时启动新验证。最终发布结果前再次检查 PR 状态和 head/base，运行期间目标分支切换或 base commit 更新会使本次结果失效。
+新版评论入口在分发前检查活动任务：相同 head、目标分支和基线已有任务时忽略重复命令，保留原任务；版本变化时取消并等待旧运行结束，再启动最新版本。没有活动任务时允许重新触发，不复用已完成的旧成功。最终发布前再次校验当前 PR 状态和版本。
 
 默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。默认评论分发和新版手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
@@ -66,8 +66,8 @@ Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状�
 
 新版 CI 设备上的 A2/A5 一律使用当前 PR 合并结果中的 `ci/`，不再检出或叠加可信 CI 目录。默认分支的评论分发器先完成触发名单、PR 作者 Admin、目标分支及固定版本检查，再选择实际 workflow 来源：
 
-- 未修改 `.github/workflows/ci.yml` 时，继续使用 PR 目标分支的 workflow；仅修改 `ci/` 也走这条路径。未更新 CI 的旧目标分支保持兼容。
-- 修改 `.github/workflows/ci.yml` 时，使用固定 base/head 的 PR merge commit，创建指向该 commit 的临时 tag `npu-ci/pr-<编号>/<40 位 merge SHA>`，并从这个 tag 分发 PR 自身的 workflow。PR YAML 中必须声明 `workflow_source` 和完整 `expected_*` 输入，分发值为 `workflow_source=pr-merge`；缺少契约时明确失败，提示先补齐当前 PR 的 workflow。设备任务开始前的 checkout、代理回退等 Actions 步骤也会采用 PR 修改。
+- 没有非 Markdown 的 `ci/` 或 `.github/` 改动时，直接使用 PR 目标分支 workflow，不创建临时 tag。未更新 CI 的旧目标分支保持兼容。
+- 修改 `ci/` 或 `.github/` 的 CI 代码时，使用固定 base/head 的 PR merge commit，创建指向该 commit 的临时 tag `npu-ci/pr-<编号>/<40 位 merge SHA>`，从该 tag 分发 PR 自身的 workflow，包括仅修改 hosted JS 的情况。PR YAML 中必须声明 `workflow_source` 和完整 `expected_*` 输入，分发值为 `workflow_source=pr-merge`；缺少契约时明确失败，提示先补齐当前 PR 的 workflow。
 
 默认分发器使用 `npu-ci-dispatch` Environment，通过其中的可选 secret `NPU_CI_DISPATCH_TOKEN` 创建临时引用；该凭据需要仓库 Contents 和 Workflows 写权限。管理员须预先创建此环境，将部署规则设为自定义规则，仅允许 branch 类型的 `main`，不允许任何 tag，再添加 secret。不要将同名凭据放入仓库级或组织级 Actions secrets：PR workflow 通过主仓库 tag 执行，可能显式引用这些凭据。分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行，设备和汇总 job 不使用此 Environment。未配置凭据时尝试当前 workflow 的 `GITHUB_TOKEN`，权限不足会明确报错。新的分发器须先合入默认分支一次，之后即可在 CI 修改合入前验证 PR YAML；仅更新 PR 不能改变默认分支正在执行的分发器。
 
@@ -94,15 +94,17 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 ```
 
-默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。默认分支上的 `NPU CI 评论分发` 校验请求后，按上述规则选择目标分支或固定 PR merge tag 上的 `.github/workflows/ci.yml`，不支持用户通过 `ci_ref` 或 `branch` 覆盖。Actions 页面、CLI 和 REST 的普通手动分发选择 PR 当前目标分支；验证 PR 修改后的 YAML 应使用评论入口，由分发器创建固定引用。
+默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，新版 CI 不要求目标分支预先设置保护；旧分支仍执行其原有检查。默认分支上的 `NPU CI 评论分发` 校验请求后，按上述规则选择目标分支或固定 PR merge tag 上的 `.github/workflows/ci.yml`，不支持用户通过 `ci_ref` 或 `branch` 覆盖。Actions 页面、CLI 和 REST 的普通手动分发选择 PR 当前目标分支；验证 PR 修改后的 YAML 应使用评论入口，由分发器创建固定引用。
 
-评论分发读取所选 workflow 声明的输入，仅发送其支持的参数。未修改 CI YAML 的旧分支无需更新 CI 或声明新版契约即可触发；修改 CI YAML 的 PR 则须满足 `pr-merge` 契约。分发器自动附带支持的 `expected_*` 版本快照，由 prepare 校验，用户无需手填。
+评论分发读取所选 workflow 声明的输入，仅发送其支持的参数。没有 CI 代码改动的 PR，无需更新旧目标分支或声明新版契约即可触发；修改 CI 代码的 PR 须满足 `pr-merge` 契约。分发器自动附带支持的 `expected_*` 版本快照，由 prepare 校验，用户无需手填。
 
 名单及 CI 修改作者 Admin 规则在默认评论入口校验，旧分支仍执行自己的权限检查和 CI 流程。例如旧 workflow 仍要求 `requested_by` 为 Admin 时，默认入口通过后也须满足该要求；不会自动获得新版名单、快照或重跑行为。
 
 带 `ops=` 的触发是编译定向诊断：只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，不执行 GDR 精度或后续安装分项；它只发布 `NPU CI / A2+A5 / 定向诊断`，不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
-如果当前 commit 的 6 个 aggregate context 已由同一次 A2+A5 run 通过，且模式、算子范围和 workflow 版本匹配，重复触发会跳过设备执行。同一 PR 通过 workflow concurrency 串行化，`cancel-in-progress: false`，重复评论不会取消正在运行的任务；排队请求进入 prepare 后再做去重。GitHub 默认保留一个运行和一个排队请求，较新的排队请求可能替换较早的请求。每次进入 prepare 并生成触发反馈时新建评论，汇总仅更新本次 `comment_id`，不覆盖前一次运行的评论。runner 宿主机还会用设备锁避免多个任务抢同一张卡。
+同一 PR 的评论分发器串行处理并跳过较旧评论，相同版本的活动 NPU 任务只保留最新的一个；重复命令即使改变模式或 ops 也不打断它。head、目标分支或 base 变化时，取消并等待旧 run 整体结束，再重置状态并分发最新版本。分发后用新机器人评论登记 run ID 和 PR head，支持旧分支 prepare 尚未启动时去重。新版 `ci.yml` 使用 `cancel-in-progress: false`，版本替换由分发器决定；取消的旧 run 完成汇总后才会启动新 run。历史 Actions 记录保留，不影响其他 PR 或出包任务。runner 设备锁继续防止物理卡被同时占用。
+
+本版合入 main 后，从更新后的 main 新建目标分支无需修改仓库文件、配置专用 Secret 或设置分支保护即可运行 CI；分支创建者仍须满足主仓库分支名单。当前尚未更新的 main 和此前派生的旧分支保留旧 prepare 的保护要求，默认分发器不能替它们改写条件。个人 fork 中作为 PR 源分支的新分支不受主仓库分支创建名单限制。
 
 从 PR 到 A2/A5 的事件、YAML 来源、Secret 范围和每个 CI 文件的用途见 [`NPU-CI流程与文件说明.md`](NPU-CI流程与文件说明.md)。
 

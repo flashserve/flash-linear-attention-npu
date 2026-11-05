@@ -36,9 +36,14 @@ class WorkflowConfigurationTest(unittest.TestCase):
         self.assertEqual(self.dispatch["permissions"]["actions"], "write")
         self.assertEqual(self.dispatch["permissions"]["contents"], "write")
         self.assertEqual(self.dispatch["jobs"]["dispatch"]["environment"], "npu-ci-dispatch")
+        dispatch_concurrency = self.dispatch["jobs"]["dispatch"]["concurrency"]
+        self.assertFalse(dispatch_concurrency["cancel-in-progress"])
+        self.assertEqual(dispatch_concurrency["queue"], "max")
         self.assertTrue(all("environment" not in job for job in self.ci["jobs"].values()))
-        # A duplicate request must not cancel the already-running device jobs.
+        # The dispatcher decides whether the PR commit actually changed.
         self.assertFalse(self.ci["concurrency"]["cancel-in-progress"])
+        self.assertIn("inputs.pr_number", self.ci["concurrency"]["group"])
+        self.assertIn("always()", self.ci["jobs"]["finalize"]["if"])
 
     def test_hosted_control_checkout_uses_fixed_workflow_revision(self):
         jobs = [self.dispatch["jobs"]["dispatch"], self.ci["jobs"]["prepare"],

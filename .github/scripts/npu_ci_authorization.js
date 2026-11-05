@@ -17,19 +17,16 @@ function buildPrWorkflowTag(prNumber, workflowSha) {
   return `npu-ci/pr-${prNumber}/${workflowSha}`;
 }
 
-function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha,
+function requirePullRequestBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha,
   workflowSource = 'base', workflowCommit }) {
   requireOpenPullRequest(pr);
-  if (branch?.protected !== true) {
-    throw new Error('NPU CI 只允许验证 PR 当前受保护的目标分支。');
-  }
   if (![pr.head.sha, pr.base.sha, branch.commit?.sha, workflowSha].every((sha) => /^[0-9a-f]{40}$/.test(sha || '')) ||
       branch.commit.sha !== pr.base.sha) {
     throw new Error('PR base 或 workflow commit 已变化，请重新触发 NPU CI。');
   }
   if (workflowSource === 'base') {
     if (workflowRef !== pr.base.ref || workflowSha !== pr.base.sha) {
-      throw new Error('目标分支模式的 workflow 必须来自 PR 当前受保护的目标分支和固定 commit。');
+      throw new Error('目标分支模式的 workflow 必须来自 PR 当前目标分支和固定 commit。');
     }
     return;
   }
@@ -109,7 +106,7 @@ async function authorizeCiRequest({ github, context, requestedBy = context.actor
   // GitHub reruns continue the original authorized request. The device job
   // independently checks that its PR state and prepared commits still match.
   if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) return;
-  await requireAuthorizedCiUser({ github, context, username: requestedBy });
+  return requireAuthorizedCiUser({ github, context, username: requestedBy });
 }
 
 async function listPrFiles({ github, context, pr }) {
@@ -135,10 +132,6 @@ function containsCiChanges(files) {
     !/\.md$/i.test(path) && /^(?:ci|\.github)(?:\/|$)/.test(path)));
 }
 
-function containsWorkflowChanges(files) {
-  return files.some((file) => [file.filename, file.previous_filename].includes('.github/workflows/ci.yml'));
-}
-
 async function hasCiChanges(request) {
   return containsCiChanges(await listPrFiles(request));
 }
@@ -159,5 +152,5 @@ async function requireCiAuthorAdmin({ github, context, pr }) {
 }
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
-  requireOpenPullRequest, buildPrWorkflowTag, requireProtectedBase, requireDispatchIdentity, selectDispatchInputs,
-  listPrFiles, containsCiChanges, containsWorkflowChanges, hasCiChanges, requireCiAuthorAdmin };
+  requireOpenPullRequest, buildPrWorkflowTag, requirePullRequestBase, requireDispatchIdentity, selectDispatchInputs,
+  listPrFiles, containsCiChanges, hasCiChanges, requireCiAuthorAdmin };

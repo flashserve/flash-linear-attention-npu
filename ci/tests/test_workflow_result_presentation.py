@@ -659,22 +659,17 @@ globalThis.core = {
         *,
         mode="quick",
         ops="",
-        workflow_run_status="completed",
-        workflow_run=None,
-        workflow_run_error=False,
         run_attempt="1",
         files=None,
         pr_author="ci-admin-author",
         author_permission="admin",
         expected_snapshot=None,
         workflow_source="base",
-        workflow_sha=None,
-        workflow_ref=None,
         existing_comments=None,
     ):
         sha = "a" * 40
-        workflow_sha = workflow_sha or ("d" * 40 if workflow_source == "pr-merge" else "c" * 40)
-        workflow_ref = workflow_ref or (f"npu-ci/pr-527/{workflow_sha}" if workflow_source == "pr-merge" else "main")
+        workflow_sha = ("d" if workflow_source == "pr-merge" else "c") * 40
+        workflow_ref = f"npu-ci/pr-527/{workflow_sha}" if workflow_source == "pr-merge" else "main"
         if workflow_source == "pr-merge" and expected_snapshot is None:
             expected_snapshot = {"expected_head_sha": sha, "expected_base_ref": "main",
                                  "expected_base_sha": "c" * 40, "expected_workflow_sha": workflow_sha}
@@ -706,7 +701,10 @@ globalThis.context = {
 };
 globalThis.github = {
   paginate: async (endpoint) => {
-    if (endpoint === statusEndpoint) return JSON.parse(process.env.PREPARE_STATUSES);
+    if (endpoint === statusEndpoint) {
+      record('status-list', {});
+      return JSON.parse(process.env.PREPARE_STATUSES);
+    }
     if (endpoint === filesEndpoint) return files;
     if (endpoint === commentEndpoint) {
       record('comment-list', {});
@@ -715,13 +713,6 @@ globalThis.github = {
     return [];
   },
   rest: {
-    actions: {
-      getWorkflowRun: async (payload) => {
-        record('workflow_run', payload);
-        if (process.env.PREPARE_WORKFLOW_RUN_ERROR === '1') throw new Error('run API unavailable');
-        return { data: JSON.parse(process.env.PREPARE_WORKFLOW_RUN) };
-      },
-    },
     issues: {
       createComment: async (payload) => {
         record('comment', payload);
@@ -792,15 +783,6 @@ globalThis.core = {
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
                     "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
                     "NPU_CI_CHECKS_SCRIPT": str(CHECKS_SCRIPT_PATH),
-                    "PREPARE_WORKFLOW_RUN": json.dumps(workflow_run if workflow_run is not None else {
-                        "status": workflow_run_status,
-                        "event": "workflow_dispatch",
-                        "path": ".github/workflows/ci.yml",
-                        "head_sha": workflow_sha,
-                        "head_branch": workflow_ref,
-                        "repository": {"full_name": "example/repo"},
-                    }),
-                    "PREPARE_WORKFLOW_RUN_ERROR": "1" if workflow_run_error else "0",
                     "PREPARE_STATUSES": json.dumps(statuses),
                     "PREPARE_EXISTING_COMMENTS": json.dumps(existing_comments or []),
                     "RECORD_FILE": str(record_file),
@@ -1256,197 +1238,34 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertIsNone(record)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_does_not_reuse_final_success_with_failed_or_missing_sibling(self):
-        target_url = "https://github.com/example/repo/actions/runs/88"
-
-        def statuses_with(*, failed_context=None, missing_context=None):
-            return [
-                {
-                    "id": index + 1,
-                    "context": context_name,
-                    "state": "failure" if context_name == failed_context else "success",
-                    "description": f"result (quick,all,A2+A5)",
-                    "target_url": target_url,
-                    "created_at": f"2026-09-14T00:00:{index:02d}Z",
-                }
-                for index, context_name in enumerate(STATUS_CONTEXTS)
-                if context_name != missing_context
-            ]
-
-        variants = {
-            "failed": statuses_with(failed_context=STATUS_CONTEXTS[2]),
-            "missing": statuses_with(missing_context=STATUS_CONTEXTS[2]),
-        }
-        for name, statuses in variants.items():
-            with self.subTest(name=name):
-                completed, records = self._run_prepare_script(statuses)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                outputs = {
-                    item["payload"]["name"]: item["payload"]["value"]
-                    for item in records
-                    if item["kind"] == "output"
-                }
-                self.assertEqual(outputs["should_run"], "true")
-                pending = [item for item in records if item["kind"] == "status"]
-                self.assertEqual(len(pending), 6)
-                self.assertTrue(all(item["payload"]["state"] == "pending" for item in pending))
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_reuses_only_complete_same_run_success(self):
-        target_url = "https://github.com/example/repo/actions/runs/88"
-        statuses = [
-            {
-                "id": index + 1,
-                "context": context_name,
-                "state": "success",
-                "description": "result (quick,all,A2+A5)",
-                "target_url": target_url,
-                "created_at": f"2026-09-14T00:00:{index:02d}Z",
-            }
-            for index, context_name in enumerate(STATUS_CONTEXTS)
-        ]
-
-        completed, records = self._run_prepare_script(statuses)
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        outputs = {
-            item["payload"]["name"]: item["payload"]["value"]
-            for item in records
-            if item["kind"] == "output"
-        }
-        self.assertEqual(outputs["should_run"], "false")
-        self.assertFalse(any(item["kind"] == "status" for item in records))
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_pr_workflow_reuse_requires_same_merge_execution(self):
-        statuses = [{
-            "context": name, "state": "success",
-            "description": "result (quick,all,A2+A5)",
-            "target_url": "https://github.com/example/repo/actions/runs/88",
-            "created_at": "2026-09-14T00:00:00Z",
-        } for name in STATUS_CONTEXTS]
-        for source in ("pr-merge", "pr-merge-suffixed", "base"):
-            with self.subTest(previous_source=source):
-                is_merge = source.startswith("pr-merge")
-                run = {
-                    "status": "completed", "event": "workflow_dispatch",
-                    "path": ".github/workflows/ci.yml" + (
-                        "@npu-ci/pr-527/" + "d" * 40 if source == "pr-merge-suffixed" else ""),
-                    "head_sha": ("d" if is_merge else "c") * 40,
-                    "head_branch": "npu-ci/pr-527/" + "d" * 40 if is_merge else "main",
-                    "repository": {"full_name": "example/repo"},
-                }
-                completed, records = self._run_prepare_script(
-                    statuses, workflow_source="pr-merge", workflow_run=run)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertIn({"kind": "output", "payload": {
-                    "name": "should_run", "value": "false" if is_merge else "true",
-                }}, records)
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_reuse_requires_current_base_and_workflow_run_identity(self):
-        run = {
-            "status": "completed", "event": "workflow_dispatch",
-            "path": ".github/workflows/ci.yml", "head_sha": "c" * 40,
-            "head_branch": "main", "repository": {"full_name": "example/repo"},
-        }
-        variants = {
-            "old_base": {"workflow_run": {**run, "head_sha": "b" * 40}},
-            "old_base_branch": {"workflow_run": {**run, "head_branch": "maintenance"}},
-            "other_event": {"workflow_run": {**run, "event": "push"}},
-            "other_workflow": {"workflow_run": {**run, "path": ".github/workflows/package.yml"}},
-            "other_workflow_ref": {"workflow_run": {**run, "path": ".github/workflows/ci.yml@other"}},
-            "other_repository": {"workflow_run": {**run, "repository": {"full_name": "example/other"}}},
-            "missing_base": {"workflow_run": {key: value for key, value in run.items() if key != "head_sha"}},
-            "missing_branch": {"workflow_run": {key: value for key, value in run.items() if key != "head_branch"}},
-            "missing_identity": {"workflow_run": {"status": "completed"}},
-            "run_api_error": {"workflow_run_error": True},
-        }
-        for ops in ("", "chunk_fwd_o"):
-            key = hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
-            contexts = [SCOPED_STATUS_CONTEXT] if ops else STATUS_CONTEXTS
-            for state in ("success", "pending"):
-                statuses = [{
-                    "id": index + 1, "context": status_context, "state": state,
-                    "description": f"result (quick,{key},A2+A5)",
-                    "target_url": "https://github.com/example/repo/actions/runs/88",
-                    "created_at": f"2026-09-14T00:00:{index:02d}Z",
-                } for index, status_context in enumerate(contexts)]
-                for name, options in variants.items():
-                    with self.subTest(scope=ops or "all", state=state, variant=name):
-                        run_options = dict(options)
-                        if "workflow_run" in run_options:
-                            run_options["workflow_run"] = {
-                                **run_options["workflow_run"],
-                                "status": "in_progress" if state == "pending" else "completed",
-                            }
-                        completed, records = self._run_prepare_script(
-                            statuses, ops=ops, workflow_run_status="in_progress", **run_options)
-                        self.assertEqual(completed.returncode, 0, completed.stderr)
-                        self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
-                        pending = [item["payload"] for item in records if item["kind"] == "status"]
-                        self.assertEqual(len(pending), len(contexts))
-                        self.assertTrue(all(item["state"] == "pending" for item in pending))
-                        self.assertEqual(sum(item["kind"] == "workflow_run" for item in records), 1)
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_does_not_follow_other_repository_status_urls(self):
-        for target_url in (
-            "https://github.com/example/other/actions/runs/88",
-            "https://github.com.evil.example/example/repo/actions/runs/88",
-        ):
-            statuses = [{
-                "context": status_context, "state": "success",
-                "description": "result (quick,all,A2+A5)",
-                "target_url": target_url, "created_at": "2026-09-14T00:00:00Z",
-            } for status_context in STATUS_CONTEXTS]
-            with self.subTest(target_url=target_url):
-                completed, records = self._run_prepare_script(statuses)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
-                self.assertFalse(any(item["kind"] == "workflow_run" for item in records))
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_reuses_same_base_pending_run_with_one_api_read(self):
-        for ops in ("", "chunk_fwd_o"):
-            key = hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
-            statuses = [{
-                "context": SCOPED_STATUS_CONTEXT if ops else STATUS_CONTEXTS[-1],
-                "state": "pending", "description": f"result (quick,{key},A2+A5)",
-                "target_url": "https://github.com/example/repo/actions/runs/88",
-                "created_at": "2026-09-14T00:00:00Z",
-            }]
-            with self.subTest(scope=ops or "all"):
-                completed, records = self._run_prepare_script(
-                    statuses, ops=ops, workflow_run_status="in_progress")
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "false"}}, records)
-                self.assertFalse(any(item["kind"] == "status" for item in records))
-                self.assertEqual(sum(item["kind"] == "workflow_run" for item in records), 1)
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_reuses_published_scoped_success_for_admin_author_ci_changes(self):
-        ops = "chunk_fwd_o"
-        files = [{"filename": "ci/run_checks.sh", "status": "modified"}]
-        prepared, initial_records = self._run_prepare_script(
-            [], ops=ops, files=files)
-        self.assertEqual(prepared.returncode, 0, prepared.stderr)
-        outputs = {item["payload"]["name"]: item["payload"]["value"]
-                   for item in initial_records if item["kind"] == "output"}
-        self.assertEqual(outputs["should_run"], "true")
-        published, _, final_records = self._run_finalize_script(ops=ops)
-        self.assertEqual(published.returncode, 0, published.stderr)
-        statuses = [item["payload"] for item in final_records if item["kind"] == "status"]
-        self.assertEqual(len(statuses), 1)
-        self.assertEqual(statuses[0]["context"], SCOPED_STATUS_CONTEXT)
-        self.assertEqual(statuses[0]["state"], "success")
-        self.assertNotIn("ci-ok=", statuses[0]["description"])
-
-        completed, records = self._run_prepare_script(
-            statuses, ops=ops, files=files)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "false"}}, records)
-        self.assertFalse(any(item["kind"] == "status" for item in records))
+    def test_prepare_starts_fresh_for_every_authorized_request(self):
+        for mode in ("quick", "full"):
+            for ops in ("", "chunk_fwd_o"):
+                key = hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
+                contexts = [SCOPED_STATUS_CONTEXT] if ops else STATUS_CONTEXTS
+                for previous_state in ("success", "pending"):
+                    previous = [{
+                        "context": name, "state": previous_state,
+                        "description": f"result ({mode},{key},A2+A5)",
+                        "target_url": "https://github.com/example/repo/actions/runs/88",
+                        "created_at": "2026-09-14T00:00:00Z",
+                    } for name in contexts]
+                    for source in ("base", "pr-merge"):
+                        with self.subTest(mode=mode, ops=ops, state=previous_state, source=source):
+                            files = [{"filename": "ci/run_checks.sh", "status": "modified"}] if source == "pr-merge" else []
+                            completed, records = self._run_prepare_script(
+                                previous, mode=mode, ops=ops, workflow_source=source, files=files)
+                            self.assertEqual(completed.returncode, 0, completed.stderr)
+                            self.assertIn({"kind": "output", "payload": {
+                                "name": "should_run", "value": "true"}}, records)
+                            pending = [item["payload"] for item in records if item["kind"] == "status"]
+                            self.assertEqual([item["context"] for item in pending], list(contexts))
+                            self.assertTrue(all(item["state"] == "pending" for item in pending))
+                            self.assertTrue(all(item["target_url"] ==
+                                "https://github.com/example/repo/actions/runs/99" for item in pending))
+                            self.assertTrue(all(f"({mode},{key},A2+A5)" in item["description"] for item in pending))
+                            self.assertFalse(any(item["kind"] == "status-list" for item in records))
+                            self.assertEqual(sum(item["kind"] == "comment-create" for item in records), 1)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_authorized_requester_cannot_run_ci_changes_from_non_admin_author(self):
@@ -1462,71 +1281,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                          ["ci-admin-author"])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_does_not_reuse_older_scoped_success(self):
-        op_a = "chunk_fwd_o"
-        op_b = "chunk_fwd_h"
-        key_a = hashlib.sha256(op_a.encode()).hexdigest()[:10]
-        key_b = hashlib.sha256(op_b.encode()).hexdigest()[:10]
-        statuses = [
-            {
-                "id": 1,
-                "context": SCOPED_STATUS_CONTEXT,
-                "state": "success",
-                "description": f"result (quick,{key_a},A2+A5)",
-                "target_url": "https://github.com/example/repo/actions/runs/80",
-                "created_at": "2026-09-14T00:00:00Z",
-            },
-            {
-                "id": 2,
-                "context": SCOPED_STATUS_CONTEXT,
-                "state": "failure",
-                "description": f"result (quick,{key_b},A2+A5)",
-                "target_url": "https://github.com/example/repo/actions/runs/81",
-                "created_at": "2026-09-14T00:00:01Z",
-            },
-        ]
-
-        completed, records = self._run_prepare_script(statuses, ops=op_a)
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        outputs = {
-            item["payload"]["name"]: item["payload"]["value"]
-            for item in records
-            if item["kind"] == "output"
-        }
-        self.assertEqual(outputs["should_run"], "true")
-        pending = [item for item in records if item["kind"] == "status"]
-        self.assertEqual(len(pending), 1)
-        self.assertEqual(pending[0]["payload"]["context"], SCOPED_STATUS_CONTEXT)
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_does_not_treat_current_rerun_as_an_existing_active_run(self):
-        current_run_pending = [
-            {
-                "id": 1,
-                "context": STATUS_CONTEXTS[-1],
-                "state": "pending",
-                "description": "等待执行 (quick,all,A2+A5)",
-                "target_url": "https://github.com/example/repo/actions/runs/99",
-                "created_at": "2026-09-14T00:00:00Z",
-            }
-        ]
-        completed, records = self._run_prepare_script(
-            current_run_pending,
-            workflow_run_status="in_progress",
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        outputs = {
-            item["payload"]["name"]: item["payload"]["value"]
-            for item in records
-            if item["kind"] == "output"
-        }
-        self.assertEqual(outputs["should_run"], "true")
-        pending = [item for item in records if item["kind"] == "status"]
-        self.assertEqual(len(pending), len(STATUS_CONTEXTS))
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_prepare_rerun_does_not_reuse_previous_attempt_success(self):
+    def test_prepare_rerun_with_fixed_snapshot_starts_new_attempt(self):
         target_url = "https://github.com/example/repo/actions/runs/99"
         previous_success = [
             {
