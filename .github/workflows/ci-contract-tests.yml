@@ -35,3 +35,6 @@ jobs:
 
       - name: 执行分阶段调度集成测试
         run: bash ci/tests/test_run_checks_stage_pipeline.sh
+
+      - name: 执行 A2/A5 设备检测回归测试
+        run: bash ci/tests/test_detect_npu.sh

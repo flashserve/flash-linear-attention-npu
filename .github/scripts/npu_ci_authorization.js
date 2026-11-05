@@ -9,14 +9,34 @@ function requireOpenPullRequest(pr) {
   if (pr.draft) throw new Error(`PR #${pr.number} 仍是草稿，请先标记为 ready for review。`);
 }
 
-function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha }) {
-  requireOpenPullRequest(pr);
-  if (workflowRef !== pr.base.ref || branch.protected !== true) {
-    throw new Error('NPU CI 只允许在 PR 当前受保护的目标分支执行，不支持其他 CI 定义分支。');
+function buildPrWorkflowTag(prNumber, workflowSha) {
+  if (!Number.isSafeInteger(prNumber) || prNumber < 1 || typeof workflowSha !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(workflowSha)) {
+    throw new Error('无法生成固定的 PR workflow 标签：PR 编号或 workflow commit 无效。');
   }
+  return `npu-ci/pr-${prNumber}/${workflowSha}`;
+}
+
+function requirePullRequestBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha,
+  workflowSource = 'base', workflowCommit }) {
+  requireOpenPullRequest(pr);
   if (![pr.head.sha, pr.base.sha, branch.commit?.sha, workflowSha].every((sha) => /^[0-9a-f]{40}$/.test(sha || '')) ||
-      branch.commit.sha !== pr.base.sha || workflowSha !== pr.base.sha) {
+      branch.commit.sha !== pr.base.sha) {
     throw new Error('PR base 或 workflow commit 已变化，请重新触发 NPU CI。');
+  }
+  if (workflowSource === 'base') {
+    if (workflowRef !== pr.base.ref || workflowSha !== pr.base.sha) {
+      throw new Error('目标分支模式的 workflow 必须来自 PR 当前目标分支和固定 commit。');
+    }
+    return;
+  }
+  if (workflowSource !== 'pr-merge') throw new Error(`不支持的 NPU CI workflow 来源：${workflowSource}`);
+  // The tag selects the YAML before any job starts. Verify its commit is the
+  // exact merge preview of this request; a matching tag name alone is not proof.
+  if (workflowRef !== buildPrWorkflowTag(pr.number, workflowSha) || workflowCommit?.sha !== workflowSha ||
+      !Array.isArray(workflowCommit.parents) || workflowCommit.parents.length !== 2 ||
+      workflowCommit.parents[0]?.sha !== pr.base.sha || workflowCommit.parents[1]?.sha !== pr.head.sha) {
+    throw new Error('PR workflow 标签或合并版本不匹配；必须使用当前固定 base/head 的 PR 合并 commit，请重新触发 NPU CI。');
   }
 }
 
@@ -86,10 +106,10 @@ async function authorizeCiRequest({ github, context, requestedBy = context.actor
   // GitHub reruns continue the original authorized request. The device job
   // independently checks that its PR state and prepared commits still match.
   if (Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1) return;
-  await requireAuthorizedCiUser({ github, context, username: requestedBy });
+  return requireAuthorizedCiUser({ github, context, username: requestedBy });
 }
 
-async function hasCiChanges({ github, context, pr }) {
+async function listPrFiles({ github, context, pr }) {
   const files = await github.paginate(github.rest.pulls.listFiles, {
     ...context.repo, pull_number: pr.number, per_page: 100,
   });
@@ -104,8 +124,16 @@ async function hasCiChanges({ github, context, pr }) {
   requireOpenPullRequest(current);
   if (current.head.sha !== pr.head.sha || current.base.sha !== pr.base.sha || current.base.ref !== pr.base.ref ||
       current.changed_files !== pr.changed_files) throw new Error(`PR #${pr.number} 在检查过程中已变化，请重新触发。`);
+  return files;
+}
+
+function containsCiChanges(files) {
   return files.some((file) => [file.filename, file.previous_filename].filter(Boolean).some((path) =>
     !/\.md$/i.test(path) && /^(?:ci|\.github)(?:\/|$)/.test(path)));
+}
+
+async function hasCiChanges(request) {
+  return containsCiChanges(await listPrFiles(request));
 }
 
 async function requireCiAuthorAdmin({ github, context, pr }) {
@@ -124,5 +152,5 @@ async function requireCiAuthorAdmin({ github, context, pr }) {
 }
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
-  requireOpenPullRequest, requireProtectedBase, requireDispatchIdentity, selectDispatchInputs,
-  hasCiChanges, requireCiAuthorAdmin };
+  requireOpenPullRequest, buildPrWorkflowTag, requirePullRequestBase, requireDispatchIdentity, selectDispatchInputs,
+  listPrFiles, containsCiChanges, hasCiChanges, requireCiAuthorAdmin };

@@ -63,19 +63,15 @@ export CI_ROOT="${CI_ROOT:-$HOME/ci}"
     需要 GitHub 管理员用 `scripts/github/apply_branch_protection.sh` 应用到 GitHub 分支保护规则。
 
 11. **多个 NPU CI 同时触发时有两层保护。**
-    同一 PR 的触发先通过 workflow concurrency 串行化，再由 `prepare` 根据带 `A2+A5` 契约的状态去重。每台 runner 宿主机还会用 `${CI_ROOT}/tmp/npu-locks/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。
+    同一 PR 相同版本已有任务时忽略重复评论，保留原任务；head、目标分支或 base 变化时先取消并等待旧 run，再启动最新版本。`cancel-in-progress: false` 避免绕过去重直接杀掉活动任务。每台 runner 宿主机还会用 `${CI_ROOT}/tmp/npu-locks/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。
 
 12. **CI 容器内日志默认只保留 7 天。**
     每次 NPU CI 容器启动时都会执行 `ci/cleanup_ci_logs.sh`，删除超过 7 天的 CI/Ascend/NPU 日志。这个策略只管理 CI 容器和仓库工作目录里的日志，不等同于 GitHub Actions 网页日志保留时间。
 
-13. **A5 源码通过 GitHub API 归档下载。**
-    A5 runner 不依赖 `github.com` 的 Git smart-HTTP：workflow 会从 `api.github.com` / `codeload.github.com` 下载精确 test-merge commit，并校验 test-merge 的父提交必须对应 prepare 固定的 base/head。归档解包前会拒绝绝对路径、路径穿越、重复成员、链接和特殊文件。A5 网络策略至少需要允许这两个 HTTPS 域名。prepare 会读取目标分支当前 tip 并固定为不可变 SHA；评论触发由默认分支分发到 PR 当前受保护的目标分支，Actions 调度及权限检查使用该分支固定的 `github.workflow_sha`；A2/A5 设备一律执行 PR 合并结果中的 `ci/`，不会覆盖成其他 commit 的 CI 目录。
+13. **A2/A5 统一使用 Git，先直连，失败后启用代理重试。**
+    两个平台均先 checkout prepare 固定的 base commit，失败后调用主机 `CI_PROXY_SCRIPT` 的 `proxyon` 再重试，最多执行 3 次 checkout；随后获取目标分支与 PR head 的 Git ref，并在固定 base 上本地合并 PR。fetch 同样支持直连失败后启用代理重试。A5 不再单独下载 API 源码归档。prepare 固定目标分支当前 tip；A2/A5 一律执行 PR 合并结果中的 `ci/`。默认评论分发器先检查名单及 CI 修改作者 Admin 权限；未修改 `ci/`、`.github/` 的非 Markdown 文件时直接使用目标分支 workflow，不创建 tag；修改这些 CI 代码时通过固定 PR merge tag 执行 PR 自身的 workflow，使源码获取前的 Actions 步骤也能在合入前验证。
 
-    归档解包与用例文件读取的安全边界测试仅依赖 Python 和仓库 requirements，可在 Linux 环境执行：
-
-    ```sh
-    python3 ci/tests/test_workflow_archive_security.py
-    ```
+    设备端在源码获取后仅使用本地 Git 校验目标分支 ref、PR head ref、固定 base/head commit 和合并结果祖先，不调用 GitHub API。PR 的 open、draft、merged 状态及目标分支是否切换，仍由 GitHub-hosted prepare 和 finalize 联网检查；本地 Git 无法获知这些实时 GitHub 元数据。
 
 ## 流程图
 
@@ -98,42 +94,7 @@ flowchart TD
 
 触发权限独立保存在默认分支 `.github/npu-ci-users.json`，与仓库读写权限分离。默认评论入口和新版手动执行均校验初次触发人的名单；PR 自身修改名单不会生效。评论触发不要求仓库 write 权限，Actions 页面、CLI 或 REST 手动分发还须满足 GitHub 的仓库 write 权限要求。默认评论入口和新版 CI 对非 Markdown 的 `ci/` 或 `.github/` 变更校验 PR 作者（`pr.user.login`）的仓库 Admin 权限，否则门禁直接失败。作者无需在名单中，但初次触发人仍须在名单中；名单内只读用户在新版 CI 中可触发 Admin 作者的 PR，名单内 Admin 无法替非 Admin 作者放行。新版设备流程一律执行 PR 合并后的 `ci/`。Actions 重跑权限由 GitHub 平台控制，新版 CI 重跑仍校验 PR 状态和固定 head/base/workflow 版本。
 
-评论触发总流程，下图设备执行和汇总部分以新版 CI 为例，旧分支按自己的 workflow 执行：
-
-```mermaid
-flowchart TD
-    A["授权账号在 PR 评论 /run-npu-ci"] --> B["默认分支评论分发 workflow"]
-    B --> C{"触发人是否在默认分支 CI 名单中"}
-    C -- "否" --> D["直接失败：无权触发"]
-    C -- "是" --> E["校验受保护的 PR 目标分支并读取 workflow 输入"]
-    E --> F["仅分发目标 workflow 支持的参数"]
-    F --> G["准备 NPU CI：解析 PR 和 head commit"]
-    G --> H{"当前 commit 是否已通过 NPU CI"}
-    H -- "是" --> I["更新机器人评论：已通过，不重复运行"]
-    H -- "否" --> J{"当前 commit 是否已有 NPU CI pending/running"}
-    J -- "是" --> K["更新机器人评论：已在运行，不重复启动"]
-    J -- "否" --> L["写入 6 个分项 pending 状态"]
-    L --> M["A2 runner / ascend910b"]
-    L --> N["A5 runner / ascend950：API 下载并校验源码归档"]
-    M --> O["A2 顺序执行 01-05；失败后跳过后续"]
-    N --> P["A5 顺序执行 01-05；失败后跳过后续"]
-    O --> Q["上传带本次 run 身份的分项和精度结果"]
-    P --> Q
-    Q --> R["GitHub-hosted finalize 校验并发布 6 个最终状态"]
-```
-
-同一 PR + 同一 commit 重复触发流程：
-
-```mermaid
-flowchart LR
-    A["第一次评论"] --> B["创建 pending 状态"]
-    B --> C["runner 开始或排队运行"]
-    D["第二次评论"] --> E["prepare 读取当前 head commit 状态"]
-    E --> F{"已有 active pending?"}
-    F -- "是" --> G["只更新同一条机器人评论"]
-    G --> H["不启动新的 runner job"]
-    F -- "否" --> I["允许重新触发"]
-```
+从 PR、评论到 A2/A5 的唯一流程图和逐文件说明见 [NPU CI 流程与文件说明](NPU-CI流程与文件说明.md)。相同版本的活动任务不重复启动；版本变化时替换旧运行，同一 PR 只保留一个最新活动任务。
 
 runner 宿主机 NPU 加锁流程：
 
@@ -291,15 +252,17 @@ A2/A5 job 统一设置 `CI_TMPDIR=/tmp/fla-npu-ci`。A5 Triton/BiShengIR 编译�
 
 `ci/run_ci_container.sh` 在宿主机注册 `EXIT` 收尾：通过 Docker `--cidfile` 记录本次创建的容器 ID，仅停止该容器，再用无网络 helper 容器将源码及本次 `CI_HOST_TMPDIR` 的所有权归还调用用户，最后释放设备锁。正常退出、失败、中断及 stale-commit 监控提前 `docker rm -f` 的路径均执行收尾；原始非零退出码保留，成功运行后的收尾失败也会使 CI 失败。目录准备与权限收尾都在入口脚本中完成，无需新增 workflow 步骤或宿主机 `sudo`。
 
-现有 workflow 清理步骤只删除本次 `CI_HOST_TMPDIR` 和 A5 的精确源码归档目录 `${CI_ROOT}/tmp/fla-npu-source-<run>-<attempt>`，并校验目录边界及符号链接。A2 的 Example/ST 配置中转使用 `TMPDIR` 下的独立 `mktemp` 目录，由该步骤自己的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
+现有 workflow 清理步骤只删除本次 `CI_HOST_TMPDIR`，并校验目录边界及符号链接。Example/ST 配置中转使用 `TMPDIR` 下的独立 `mktemp` 目录，由该步骤自己的 `EXIT` trap 清理。静态 `TMPDIR` 根目录始终保留。
 
 缓存固定使用 `CI_CACHE_ROOT=${CI_ROOT}/cache_root`；NPU 锁固定使用 `${CI_ROOT}/tmp/npu-locks`，跨运行共享，不能按 run 分开。单次运行的收尾保留共享缓存与锁文件，不递归修改它们的所有权。
 
 Stage 耗时统一保存在每台服务器的 `${CI_ROOT}/results/ci-timings/stage-timings.csv`（workflow 通过 `CI_TIMING_ROOT` 配置）。总表每行对应一个 `(run_id, run_attempt, platform, stage)`，包含 commit、SOC、状态、退出码、UTC 起止时间和 `duration_seconds`，历史 CI 行持续保留。只记录当前 5 个执行 stage，`scoped-overlay` 已暂停；GitHub-hosted 汇总校验不在此表内。每次 stage 状态变化即加锁更新总表、同步落盘并原子替换，失败也保留，工作区与临时目录清理不会删除它。被强制终止的 stage 保留 `running` 和开始时间，耗时留空；`skipped/not_run` 耗时也留空，不写成 0。启用前须在 A2、A5 分别创建下述可写目录；总表由各自服务器维护，不自动跨机合并。
 
-源码获取保持原有顺序：A5 直接通过 GitHub API 准备源码；A2 第一次 checkout 先直连，只有失败后才执行原有“启动代理并获取端口”步骤，再按原顺序等待并重试。runner 服务的 GitHub 控制连接继续使用代理；A5 API 和 A2 首次 checkout 的步骤环境会清空继承的 HTTP/HTTPS/ALL/Git 代理变量，并设置 `NO_PROXY=*`，确保这两次源码访问直连。
+源码获取对 A2/A5 使用相同流程：第一次 checkout 先直连，只有失败后才执行“启动代理并获取端口”，等待后使用代理重试，最多执行 3 次 checkout。随后 fetch 目标分支和 PR head，在固定 base 上本地合并 PR；fetch 失败也会启用代理重试。首次 checkout 清空继承的 HTTP/HTTPS/ALL/Git 代理变量，并设置 `NO_PROXY=*`。若 checkout 未启用代理，首次 fetch 也先直连；已启用代理则沿用。源码获取后才执行本地 Git 版本检查，不在设备校验步骤中调用 GitHub API。
 
-A2 代理回退读取普通用户配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 `ubuntu` 读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
+A2/A5 代理回退均读取主机配置 `CI_PROXY_SCRIPT=${CI_ROOT}/vpn-proxy.sh`，调用 `proxyon`，校验变量不含 CR/LF，再通过 `GITHUB_ENV` 将代理地址与端口传递给后续步骤。管理员须提前在两台主机部署 `nelvko/clashctl` 到 `${CI_ROOT}/clashctl`，并将提供的 `vpn-proxy.sh` 适配副本放到上述位置：运行时配置和二进制路径指向该目录，日志写入 `${CI_ROOT}/tmp/mihomo.log`，权限允许 runner 服务账号读取配置、执行二进制和写日志。脚本属于主机部署配置，不提交到仓库；workflow 不读取 `/root`、不修改 `HOME` 或全局 Git 配置。
+
+runner 服务连接 GitHub、下载 `actions/checkout` 等 action 发生在 workflow 的任何 step 之前，仍须保证 runner 自身网络或服务级代理可用。源码首次直连只约束 checkout/fetch 的步骤环境，不禁止为 runner 服务配置代理；否则 job 可能尚未执行源码重试步骤，就在初始化下载 action 时失败。
 
 A2/A5 workflow 固定设置 `CI_JOBS=16` 和 `CI_CPACK_JOBS=16`，全量与局部 OPP 构建均使用 `-j16`。`ci/run_checks.sh` 的默认并行度也为 16，并将该值导出为 PyTorch/Ninja 使用的 `MAX_JOBS`；CPack、CMake 和 Make 使用同一并行度设置，cmake/scripts/prepare.sh 也遵循 CMAKE_BUILD_PARALLEL_LEVEL，避免内部 prepare 阶段重新按 CPU 数放大并行度。`FLA_NPU_BUILD_ARGS` 追加 `-j16`，覆盖 wheel 打包内部再次调用 `build.sh` 时的并行度。
 
@@ -650,7 +613,7 @@ bash scripts/github/apply_branch_protection.sh main
 
 机器人也会在 PR 评论区写入或更新一条提示，说明可以请求 CI 触发名单中的账号使用 `/run-npu-ci quick` / `/run-npu-ci full` 触发。
 
-评论触发在默认入口要求请求人在 CI 名单中；新版 Actions 页面、CLI 或 REST 手动分发还要求仓库 write 权限，CI 名单不会授予这项平台权限。详见 GitHub 的[手动运行 workflow 权限说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)。REST 的 fine-grained token 另需 `Actions: write`，classic PAT 或 OAuth token 需 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。默认评论入口和新版 workflow 均只接受 open、未合并且非草稿的 PR，目标分支必须受分支保护。
+评论触发在默认入口要求请求人在 CI 名单中；新版 Actions 页面、CLI 或 REST 手动分发还要求仓库 write 权限，CI 名单不会授予这项平台权限。详见 GitHub 的[手动运行 workflow 权限说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)。REST 的 fine-grained token 另需 `Actions: write`，classic PAT 或 OAuth token 需 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。默认评论入口和新版 workflow 均只接受 open、未合并且非草稿的 PR，新版不要求目标分支预先设置保护，旧分支仍执行自己的原有条件。
 
 触发后，GitHub 机器人会在 PR 评论区写入一条 NPU CI 状态评论。刚触发时显示“已开始”，A2、A5 都结束后由 `finalize` 更新同一条评论为“通过”或“失败”，并给出双平台分项汇总。全部通过时只显示平台结论和精度用例计数，不重复展开成功 Tensor 的逐项指标；失败时才显示真实编译错误、运行异常、失败精度指标和带 `CI_STAGE` 的复现命令。每个平台的分项按顺序执行，前置失败后续标记为未执行。如果 Actions 页面能看到 workflow 已触发，但 PR 下没有机器人评论，检查仓库 `Settings -> Actions -> General` 中的 `Workflow permissions` 是否允许 workflow 请求写权限。本 workflow 通过 job 级 `permissions` 申请 PR 读取、issue comment 写入和 commit status 写入权限。
 
@@ -677,11 +640,28 @@ bash scripts/github/apply_branch_protection.sh main
 
 带 `ops=` 的命令只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，并发布 `NPU CI / A2+A5 / 定向诊断`；它不执行 GDR 精度或后续安装分项，也不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
-评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理，只分发到 PR 当前受保护的目标分支 `pr.base.ref`，不支持 `ci_ref` 或 `branch` 覆盖。分发器读取目标 workflow 声明的输入，仅发送其支持的参数；旧维护分支无需更新 CI 或声明新版契约即可触发。分发器按目标声明自动附带支持的 `expected_*` 版本快照，由目标 prepare 校验，用户无需手填。Actions、CLI 或 REST 手动分发也应选择 PR 当前目标分支。
+评论触发由默认分支上的 `NPU CI 评论分发` workflow 处理，先检查名单、PR 状态、目标分支和 CI 修改作者 Admin 权限，再选择 workflow 来源：没有 `ci/` 或 `.github/` 的非 Markdown 改动时直接使用目标分支 `pr.base.ref`，不创建 tag；修改这些 CI 代码时使用固定 base/head 的 PR merge commit，通过临时 tag `npu-ci/pr-<编号>/<40 位 merge SHA>` 运行 PR 自身的 workflow。PR YAML 必须声明 `workflow_source` 和完整 `expected_*` 输入，分发值为 `workflow_source=pr-merge`，缺少契约时明确失败。这样 PR 中的 checkout、代理回退等 Actions 步骤可以在合入前运行。
+
+没有 CI 代码改动的 PR，其旧目标分支无需更新 CI 或声明新版契约即可触发。分发器按所选 workflow 的声明自动附带支持的版本快照，用户无需手填，也不能用 `ci_ref` 或 `branch` 覆盖。Actions、CLI 或 REST 普通手动分发仍选择 PR 当前目标分支；验证 PR 自身修改的 YAML 使用评论入口。
+
+默认分发器的 job 使用 `npu-ci-dispatch` Environment，创建临时引用时优先使用其中的 secret `NPU_CI_DISPATCH_TOKEN`，需要仓库 Contents 和 Workflows 写权限；未配置凭据时尝试 `GITHUB_TOKEN`，权限不足时明确报错。环境须在启用新版分发器之前创建并限制来源：
+
+1. 打开仓库 `Settings → Environments`，创建 `npu-ci-dispatch`。
+2. 在 `Deployment branches and tags` 中选择 `Selected branches and tags`，仅添加 branch 类型的 `main`，不添加 tag 规则。
+3. 在该环境的 `Environment secrets` 中添加 `NPU_CI_DISPATCH_TOKEN`；凭据仅经加密上传，不写入 Git 文件、日志或 Actions artifacts。
+4. 不在仓库级或组织级 Actions secrets 中保存同名凭据。PR workflow 运行在主仓库的临时 tag 上，可能显式读取这些 Secret；仅“不主动传递”不足以隔离凭据。专用环境的来源限制用于阻止 PR tag job 直接取得它。
+
+分发器不会通过 inputs 或 job 环境将此 token 转交给 PR 运行，设备和汇总 job 不使用该环境。此限制不替代对管理员及默认分支 workflow 的信任：有管理权限的人仍可能修改环境规则。首次启用须先将分发器合入默认分支一次；之后 PR 的 workflow 修改无需先合入目标分支即可验证。
+
+默认分支另有 `NPU CI 临时 workflow 引用清理` workflow，收到 `NPU CI` 完成事件后，只通过 GitHub API 核对本仓库运行、精确 tag 名和目标 SHA，再删除对应临时 tag；不检出或执行 PR 代码。同一 tag 仍有其他运行排队或执行时暂不删除，PR 后续更新不妨碍旧运行清理，也不会删除无关引用。
+
+创建 tag 后若分发失败，会保留固定引用供重试，避免删除并发请求使用的 tag。放弃重试时，管理员确认没有相关运行后可删除错误消息中列出的精确 tag。
 
 名单和 CI 修改作者 Admin 规则由默认评论入口检查。旧分支仍执行自己的权限检查及 CI 流程，例如仍要求 `requested_by` 为 Admin 的分支，还须满足该要求；默认分发通过不会替换旧 workflow 的规则。
 
-对于支持四个 `expected_*` 快照的新版 workflow，评论触发后版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，请新建 `Run workflow`。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍校验原 PR 状态和固定 head/base。旧 workflow 的重跑行为保持原样。
+对于支持四个 `expected_*` 快照的新版 workflow，评论触发后版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，请新建 `Run workflow`。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍离线校验固定 head/base 和合并结果，finalize 再联网检查当前 PR 元数据。旧 workflow 的重跑行为保持原样。
+
+已经创建的 Actions run 即使重跑，也使用原 run 的 workflow 版本。需要采用 PR 中新的 Actions 步骤时，应重新评论触发，生成对应固定 PR merge workflow 的新运行；旧 run 的 `Re-run` 不会自动采用修复。仅使用目标分支 workflow 的手动运行，仍需先将修复合入该目标分支。
 
 PR 新建或 push 新 commit 后，当前 head commit 会先出现默认状态：
 
@@ -701,13 +681,13 @@ NPU CI / A2+A5 / 06 报告与 commit 校验 pending
 
 成功后，上述 6 个状态都会变成 success。发生失败时，真正失败的分项会显示关键原因，依赖它的后续分项显示未执行；PR 评论和 Actions Summary 给出对应 `CI_STAGE` 复现命令。
 
-PR 评论区也会出现或更新一条机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。
+prepare 会新建本次运行的机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。finalize 只更新本次保存的 comment_id，不覆盖前一次运行的评论。
 
-只有当前 head commit 的同一次 Actions run 已让 6 个 A2+A5 分项状态全部通过，重复触发才会跳过，不再占用 NPU。旧版状态或单平台状态不会命中该去重条件。
+当前版本没有活动任务时，新命令允许重新执行，包括失败后重试。相同版本仍在排队或运行时，分发器忽略重复命令，不启动新的 NPU run。
 
-如果当前 head commit 已经有 NPU CI 处于排队或运行中，重复评论也会跳过，不会再启动新的 self-hosted runner job。机器人评论会更新为“已在运行”，并指向已有 Actions run。
+同一 PR 连续收到命令时，分发器串行检查最新合法授权请求。相同 head、目标分支和基线保留原任务；版本变化时取消并等待旧 run 结束，再重置状态、创建新运行。旧请求晚排到会跳过，不能反向取消新请求。取消或等待失败则明确报错，不同时启动另一套设备任务。分发后新建机器人评论登记任务与 PR head；prepare 的触发反馈也使用本次新评论。
 
-不同 PR 或不同 commit 的 NPU CI 可以同时被触发。每次触发都会分别调度一个 A2 job 和一个 A5 job；真正到各 runner 宿主机执行时，`ci/run_ci_container.sh` 会为选中的物理 NPU 加文件锁，workflow 将锁目录设为 `${CI_ROOT}/tmp/npu-locks`。如果所有候选 NPU 都被锁住，job 会等待并重试。
+不同 PR 的 NPU CI 可以并行调度；同一 PR 即使 head commit 不同也只保留最新运行。每次正常执行调度一个 A2 job 和一个 A5 job；真正到各 runner 宿主机执行时，`ci/run_ci_container.sh` 会为选中的物理 NPU 加文件锁，workflow 将锁目录设为 `${CI_ROOT}/tmp/npu-locks`。如果所有候选 NPU 都被锁住，job 会等待并重试。
 
 锁相关环境变量：
 
@@ -811,7 +791,9 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 - 发送评论的人是否在默认分支 CI 名单中
 - `NPU CI 评论分发` workflow 是否启用
 - PR 是否 open、未合并且非草稿，当前目标分支是否受分支保护
-- PR 目标分支是否存在声明 `workflow_dispatch` 的 `.github/workflows/ci.yml`；无需同步新版输入或契约
+- 没有 CI 代码改动时，PR 目标分支是否存在声明 `workflow_dispatch` 的 `.github/workflows/ci.yml`；旧分支无需同步新版输入或契约
+- 修改 CI YAML 时，PR merge 版本是否支持 `workflow_source=pr-merge` 和完整 `expected_*` 输入；默认分支是否已启用新的分发器
+- `npu-ci-dispatch` Environment 是否已创建且仅允许 branch 类型的 `main`，环境 secret `NPU_CI_DISPATCH_TOKEN` 是否具有临时引用所需权限
 - 目标旧 workflow 是否还有自己的权限要求，例如 `requested_by` 必须为 Admin
 - 修改非 Markdown 的 `ci/` 或 `.github/` 文件时，PR 创建者是否具有仓库 Admin 权限
 - Actions 页面是否先出现 `NPU CI 评论分发`，随后出现新的 `NPU CI` run
@@ -842,9 +824,9 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 ### 多个 NPU CI 同时触发怎么办
 
-同一 PR 的同一 head commit 如果已经有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再启动新任务。
+同一 PR 相同版本已有任务时忽略重复命令；版本变化时取消旧 run 并等待其汇总结束，再创建新运行。`cancel-in-progress: false`，是否替换由分发器根据版本决定，不影响其他 PR 或出包。prepare 新建本次评论，finalize 仅更新该评论。更完整的事件与文件说明见 [NPU CI 流程与文件说明](NPU-CI流程与文件说明.md)。
 
-不同 PR 或不同 commit 同时触发时，GitHub Actions 可能把它们分配给不同 self-hosted runner。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
+不同 PR 同时执行时，GitHub Actions 可能把它们分配给不同 self-hosted runner；同一 PR 的不同 commit 只保留最新运行。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
 
 ```text
 ${CI_ROOT}/tmp/npu-locks/fla-npu-ci-npu-0.lock
