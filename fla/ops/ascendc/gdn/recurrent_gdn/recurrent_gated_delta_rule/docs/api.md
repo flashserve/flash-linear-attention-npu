@@ -1,11 +1,11 @@
 # RecurrentGatedDeltaRule 接口与支持范围
 
-## A2/A3
+## 统一接口
 
 公开 Python 入口为 `fla_npu.ops.ascendc.recurrent_gated_delta_rule`。
 输入 Q/K 为 BF16 `[T,HK,128]`，V 为 BF16 `[T,HV,128]`，State 为
 BF16/FP32 `[Cstate,HV,128,128]`，beta 为 BF16/FP32 `[T,HV]`。
-T、HK、HV、Cstate 均为正数；HV 是 HK 的整数倍，比例为 1–16。
+T、HK、HV、Cstate 均为正数；HV/HK 必须是 1–16 范围内的整数。
 Q/K/V 允许正 stride 的 view，但最后一维 stride 必须为 1，token stride 不小于 128；
 State 最后一维 stride 为 1，行 stride 不小于 128，不允许内部重叠或与输入重叠。
 storage offset 与实际 backing storage 一并保留，State 原地更新。
@@ -29,14 +29,17 @@ storage offset 与实际 backing storage 一并保留，State 原地更新。
 
 保留 `aclnnRecurrentGatedDeltaRule` 和 `aclnnRecurrentGatedDeltaRuleV2` 两套 host ABI。
 前者维持历史参数表（BF16 beta、FP32 g、无融合开关），后者暴露完整融合契约。
-两者在 A2/A3 上均执行 `op_kernel/arch22/recurrent_gated_delta_rule.h`，不存在旧 kernel 回退。
+两者在 A2/A3 上均执行 `op_kernel/arch22/recurrent_gated_delta_rule.h`，在 A5 上均执行
+`op_kernel/arch35/recurrent_gated_delta_rule.h`，不存在旧 kernel 回退。
 Python `_stable.py` 无论融合开关是否关闭，始终调用同一个 Stable-ABI adapter，
 adapter 使用 V2 host ABI；V2 只保留为接口名称。
 
-## A5
+## 架构分派
 
-A5 使用独立 `arch35` 实现及历史 host ABI；本次不扩展其融合支持范围。
-历史接口参数说明参见 [ACLNN 文档](aclnnRecurrentGatedDeltaRule.md)。
+A2/A3 和 A5 共享上述 host、dtype、shape、stride 与融合属性契约。差异仅位于 kernel：
+A2/A3 使用 arch22 的 8-token 窗口实现；A5 使用 arch35 的 4-token ping-pong、三 State
+bank 流水实现。A5 编译不启用 `--cce-auto-sync=on`，跨 MTE2/Vector/MTE3 依赖由 kernel
+显式同步。历史接口参数说明参见 [ACLNN 文档](aclnnRecurrentGatedDeltaRule.md)。
 
 ## 校验与异常
 

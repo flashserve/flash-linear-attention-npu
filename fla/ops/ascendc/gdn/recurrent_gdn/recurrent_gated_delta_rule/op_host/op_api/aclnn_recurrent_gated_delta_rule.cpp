@@ -103,9 +103,6 @@ static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
     if (params.g != nullptr) {
         if (!rgdn_check::Type(params.g, G_TYPE_SUPPORT_LIST, "g", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
-    if (params.gk != nullptr) {
-        if (!rgdn_check::Type(params.gk, G_TYPE_SUPPORT_LIST, "gk", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    }
     if (params.num_accepted_tokens != nullptr) {
         if (!rgdn_check::Type(params.num_accepted_tokens, ACC_TO_TYPE_SUPPORT_LIST, "num_accepted_tokens", op::ToString(ACC_TO_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
@@ -116,6 +113,11 @@ static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
 
 static aclnnStatus CheckParams(RecurrentGatedDeltaRuleParams &params)
 {
+    if (params.gk != nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecurrentGatedDeltaRule", "gk", "gk is not supported");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // 检查输入参数是否在支持的数据类型范围内
     if (!(CheckDtypeVaild(params))) { return ACLNN_ERR_PARAM_INVALID; };
 
@@ -179,9 +181,6 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     auto ssmStateIndices_ = l0op::Contiguous(ssmStateIndices, uniqueExecutor.get());
     if (g != nullptr) {
         g = l0op::Contiguous(g, uniqueExecutor.get());
-    }
-    if (gk != nullptr) {
-        gk = l0op::Contiguous(gk, uniqueExecutor.get());
     }
     if (numAcceptedTokens != nullptr) {
         numAcceptedTokens = l0op::Contiguous(numAcceptedTokens, uniqueExecutor.get());

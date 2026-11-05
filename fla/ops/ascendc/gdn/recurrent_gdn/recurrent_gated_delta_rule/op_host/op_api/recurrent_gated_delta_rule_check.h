@@ -152,7 +152,7 @@ inline bool Check(const Params &p)
         if (!input.second) { OP_LOGE_WITH_INVALID_INPUT(entity, input.first); return false; }
     }
     if (p.gk) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, "gk", "non-null gk is supported only by V1; V2 requires gk=nullptr");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, "gk", "gk is not supported");
         return false;
     }
     if (!std::isfinite(p.scale)) {
@@ -210,7 +210,7 @@ inline bool Check(const Params &p)
     }
     if (hv % hk || hv / hk > 16) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(entity,"query.HK,value.HV",
-            std::to_string(hk)+","+std::to_string(hv),"HV must be a multiple of HK and HV/HK must be in [1,16]");
+            std::to_string(hk)+","+std::to_string(hv),"HV/HK must be an integer in [1,16]");
         return false;
     }
     if (b > std::numeric_limits<int64_t>::max() / hv) {

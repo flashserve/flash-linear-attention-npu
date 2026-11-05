@@ -1,4 +1,4 @@
-# RecurrentGatedDeltaRule A2/A3 统一实现
+# RecurrentGatedDeltaRule 统一实现
 
 方案设计规则版本：V2
 
@@ -6,11 +6,12 @@
 
 接口契约见 [api.md](api.md)。将既有融合实现迁入 arch22，移除历史 A2/A3 kernel，
 保留两个 host ABI。该迁移不改变融合实现的计算、任务划分、地址规划和同步协议。
-`useV2` 仅区别 host 参数契约，不再选择 A2/A3 实现；A5 继续使用 arch35。
+`useV2` 仅区别 host 参数契约和 dtype 校验，不再选择不同 kernel。A2/A3 与 A5
+分别编译 arch22 和 arch35，但各架构内部的 V1/V2 host ABI 进入同一实现。
 CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；固定原输入值域及混合容差。
 性能采用 msprof `Task Duration(us)`，本次没有额外性能提升目标。
 
-## 2. Stage 0–N 完整详设
+## 2. A2/A3 Stage 0–N 完整详设
 
 令 B 为请求数，T 为总 token 数，HK/HV 为 QK/value head 数，K=V=128。
 任务域为 `[0,B*HV)`：`batch=task/HV`，`hv=task%HV`，`hk=hv/(HV/HK)`。
@@ -55,3 +56,19 @@ V 内读写复用使用 PIPE_V barrier；跨 pipe 依赖由硬事件表达。
 200 条合法精度用例，覆盖 8 个模板 dtype 组合、12 个合法开关组合、变长/零长度序列、
 accepted token、State padding/offset/转置、QKV 行 padding、窗口 8/9/16/17 边界。
 确定性和内存各使用 50 条代表用例；额外验证 gk 拒绝与两个 host ABI 的有效控制。
+
+## 3. A5 arch35 流水
+
+A5 任务域同样为 `[0,B*HV)`，每个 work 只处理一个 batch 的一个 value head。
+每 tile 为 4 token，Q/K/V、beta 和可选 g 使用双输入 buffer；递推 State 使用三个
+FP32 bank 轮换。MTE2 预取下一 tile 或下一 task 的初始 State，Vector 顺序推进 token，
+MTE3 写回已完成 token 的 out 和 checkpoint。State 为 BF16 时额外使用一份 State IO
+buffer，BF16 舍入不反馈到后续 token。
+
+A5 使用静态 UB Tensor，显式 mutex 管理 MTE2/Vector/MTE3 所有权，不依赖
+`--cce-auto-sync=on`。VF 按 tiling dtype 与融合属性模板化，单次调用完成 gate/beta
+处理、两行 State 并行更新、output dot-product 和 State 写回。rank-1/rank-2 State
+索引、accepted token、Q/K/V stride 和 State stride 均直接由统一 tiling 数据驱动。
+
+A5 回归使用 223 条 ATK 矩阵，并使用 issue 679 的 36 个模型 shape 检查性能；最终
+验收数据必须来自合并后的统一算子，不能沿用 standalone V2 的历史记录。

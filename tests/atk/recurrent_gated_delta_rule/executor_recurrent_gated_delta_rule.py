@@ -126,21 +126,20 @@ def _apply_input_layout(
     layout_names = {
         "contiguous": (),
         "noncontiguous_qkv_beta_g": ("query", "key", "value", "beta", "g"),
-        "noncontiguous_gk_metadata": (
-            "gk",
+        "noncontiguous_qkv": ("query", "key", "value"),
+        "noncontiguous_metadata": (
             "actual_seq_lengths",
             "ssm_state_indices",
             "num_accepted_tokens",
         ),
         "noncontiguous_qk": ("query", "key"),
-        "noncontiguous_v_gates": ("value", "beta", "g", "gk"),
+        "noncontiguous_v_beta_g": ("value", "beta", "g"),
         "noncontiguous_all": (
             "query",
             "key",
             "value",
             "beta",
             "g",
-            "gk",
             "actual_seq_lengths",
             "ssm_state_indices",
             "num_accepted_tokens",
@@ -202,20 +201,34 @@ def build_inputs(
     state_dtype = _orig_dtype(state_dtype_name)
     low_precision_dtype = torch.bfloat16
     state_calc_dtype = state_dtype
-    gate_calc_dtype = torch.float32
+    g_dtype_name = str(spec.get("g_dtype", "fp32"))
+    g_calc_dtype = _orig_dtype(g_dtype_name)
+    beta_dtype_name = str(spec.get("beta_dtype", "bf16"))
+    beta_dtype = _orig_dtype(beta_dtype_name)
 
-    state_indices = [
-        int(value)
-        for value in spec.get("state_indices", list(range(total_tokens)))
-    ]
-    if len(state_indices) != total_tokens:
-        raise ValueError(
-            f"{OP_NAME}: state_indices must contain T entries, "
-            f"got {len(state_indices)} for T={total_tokens}."
-        )
+    state_indices_spec = spec.get("state_indices", list(range(total_tokens)))
+    index_rank = int(spec.get("ssm_state_indices_rank", 1))
+    if index_rank == 2:
+        state_width = int(spec.get("state_index_width", max(seq_lengths, default=1)))
+        if isinstance(state_indices_spec, list) and state_indices_spec and isinstance(state_indices_spec[0], list):
+            state_indices = [[int(value) for value in row] for row in state_indices_spec]
+        else:
+            flat = [int(value) for value in state_indices_spec]
+            if len(flat) != len(seq_lengths) * state_width:
+                raise ValueError(f"{OP_NAME}: 2-D state_indices must contain B*W entries.")
+            state_indices = [flat[i * state_width:(i + 1) * state_width] for i in range(len(seq_lengths))]
+        if len(state_indices) != len(seq_lengths) or any(len(row) != state_width for row in state_indices):
+            raise ValueError(f"{OP_NAME}: 2-D state_indices must have shape [B, W].")
+    else:
+        state_indices = [int(value) for value in state_indices_spec]
+        if len(state_indices) != total_tokens:
+            raise ValueError(
+                f"{OP_NAME}: state_indices must contain T entries, "
+                f"got {len(state_indices)} for T={total_tokens}."
+            )
 
     gate_mode = str(spec.get("gate_mode", "g"))
-    if gate_mode not in {"g", "gk", "both", "none"}:
+    if gate_mode not in {"none", "g"}:
         raise ValueError(f"{OP_NAME}: unsupported gate_mode {gate_mode!r}.")
 
     gate_profile = str(spec.get("gate_profile", "random"))
@@ -226,11 +239,11 @@ def build_inputs(
         gate_min, gate_max = 0.5, 2.0
 
     g = None
-    if gate_mode in {"g", "both"}:
+    if gate_mode == "g":
         g = -_rand(
             (total_tokens, value_heads),
-            "fp32",
-            gate_calc_dtype,
+            g_dtype_name,
+            g_calc_dtype,
             device,
             seed + 6,
             gate_min,
@@ -243,26 +256,9 @@ def build_inputs(
                 value_heads,
                 dtype=torch.float32,
                 device=device,
-            ).to(gate_calc_dtype)
+            ).to(g_calc_dtype)
             g.copy_(values.view(1, -1).expand_as(g))
-            _quantize_input_(g, "fp32")
-
-    gk = None
-    if gate_mode in {"gk", "both"}:
-        gk = -_rand(
-            (total_tokens, value_heads, key_dim),
-            "fp32",
-            gate_calc_dtype,
-            device,
-            seed + 7,
-            gate_min,
-            gate_max,
-        )
-        if gate_profile == "column_pulse":
-            gk.fill_(-0.001)
-            for value_head in range(value_heads):
-                gk[:, value_head, (value_head * 17) % key_dim] = -0.05
-            _quantize_input_(gk, "fp32")
+            _quantize_input_(g, g_dtype_name)
 
     accepted_tokens = spec.get("accepted_tokens")
     if accepted_tokens is not None:
@@ -305,15 +301,15 @@ def build_inputs(
         ),
         "beta": _rand(
             (total_tokens, value_heads),
-            "bf16",
-            low_precision_dtype,
+            beta_dtype_name,
+            beta_dtype,
             device,
             seed + 5,
             0.1,
             0.9,
         ),
         "g": g,
-        "gk": gk,
+        "gk": None,
         "actual_seq_lengths": _int_tensor(
             [prefix_tokens, *seq_lengths], device, torch.int32
         ),
@@ -324,7 +320,18 @@ def build_inputs(
             else _int_tensor(accepted_tokens, device, torch.int32)
         ),
         "scale": float(spec.get("scale", 1.0 / math.sqrt(key_dim))),
+        "A_log": None,
+        "dt_bias": None,
+        "use_qk_l2norm_in_kernel": bool(spec.get("use_qk_l2norm_in_kernel", False)),
+        "use_gate_in_kernel": bool(spec.get("use_gate_in_kernel", False)),
+        "use_beta_sigmoid_in_kernel": bool(spec.get("use_beta_sigmoid_in_kernel", False)),
+        "allow_neg_eigval": bool(spec.get("allow_neg_eigval", False)),
     }
+
+    if inputs["use_gate_in_kernel"]:
+        inputs["A_log"] = _randn((value_heads,), "fp32", torch.float32, device, seed + 8, scale=0.1)
+        if bool(spec.get("with_dt_bias", True)):
+            inputs["dt_bias"] = _randn((value_heads,), "fp32", torch.float32, device, seed + 9, scale=0.1)
 
     if str(spec.get("data_profile", "random")) == "traceable_gva":
         _add_head_offsets(inputs["query"], 0.01, "bf16")
@@ -338,9 +345,9 @@ def build_inputs(
             value_heads,
             dtype=torch.float32,
             device=device,
-        ).to(torch.bfloat16).to(low_precision_dtype)
+        ).to(beta_dtype).to(inputs["beta"].dtype)
         inputs["beta"].copy_(values.view(1, -1).expand_as(inputs["beta"]))
-        _quantize_input_(inputs["beta"], "bf16")
+        _quantize_input_(inputs["beta"], beta_dtype_name)
 
     state_profile = str(spec.get("state_profile", "random"))
     if state_profile.startswith("pulse_hv"):
@@ -371,18 +378,6 @@ def run_cpu(spec: dict[str, Any]):
         # avoids severe nested-parallelism overhead for the per-head reference.
         torch.set_num_threads(1)
         inputs = build_inputs(spec, torch.device("cpu"))
-        if spec.get("arch22"):
-            if spec.get("use_qk_l2norm_in_kernel"):
-                for name in ("query", "key"):
-                    x = inputs[name].float()
-                    inputs[name] = x / torch.sqrt((x * x).sum(-1, keepdim=True) + 1e-6)
-            if spec.get("use_gate_in_kernel"):
-                inputs["g"] = -inputs["A_log"].exp()[None, :] * torch.nn.functional.softplus(
-                    inputs["g"].float() + inputs["dt_bias"][None, :])
-            if spec.get("use_beta_sigmoid_in_kernel"):
-                inputs["beta"] = inputs["beta"].float().sigmoid()
-                if spec.get("allow_neg_eigval"):
-                    inputs["beta"] *= 2
         outputs = None
         repeat_calls = int(spec.get("repeat_calls", 1))
         for call_index in range(repeat_calls):
@@ -398,12 +393,19 @@ def run_cpu(spec: dict[str, Any]):
                 num_accepted_tokens=inputs["num_accepted_tokens"],
                 g=inputs["g"],
                 gk=inputs["gk"],
+                use_qk_l2norm_in_kernel=inputs["use_qk_l2norm_in_kernel"],
+                use_gate_in_kernel=inputs["use_gate_in_kernel"],
+                A_log=inputs["A_log"],
+                dt_bias=inputs["dt_bias"],
+                use_beta_sigmoid_in_kernel=inputs["use_beta_sigmoid_in_kernel"],
+                allow_neg_eigval=inputs["allow_neg_eigval"],
             )
             if call_index + 1 < repeat_calls:
                 inputs["state"].copy_(outputs[1])
         if outputs is None:
             raise RuntimeError(f"{OP_NAME}: repeat_calls must be positive.")
-        return outputs
+        prefix_tokens = int(inputs["actual_seq_lengths"][0].item())
+        return outputs[0][prefix_tokens:], outputs[1]
     finally:
         torch.set_num_threads(previous_threads)
 
@@ -426,18 +428,17 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
             num_accepted_tokens=inputs["num_accepted_tokens"],
             g=inputs["g"],
             gk=inputs["gk"],
-            **({name: spec.get(name, False) for name in (
-                "use_qk_l2norm_in_kernel", "use_gate_in_kernel",
-                "use_beta_sigmoid_in_kernel", "allow_neg_eigval")} | {
-                    "A_log": inputs.get("A_log"), "dt_bias": inputs.get("dt_bias")}
-                if spec.get("arch22") else {}),
+            A_log=inputs["A_log"],
+            dt_bias=inputs["dt_bias"],
+            use_qk_l2norm_in_kernel=inputs["use_qk_l2norm_in_kernel"],
+            use_gate_in_kernel=inputs["use_gate_in_kernel"],
+            use_beta_sigmoid_in_kernel=inputs["use_beta_sigmoid_in_kernel"],
+            allow_neg_eigval=inputs["allow_neg_eigval"],
         )
     if out is None:
         raise RuntimeError(f"{OP_NAME}: repeat_calls must be positive.")
     prefix_tokens = int(inputs["actual_seq_lengths"][0].item())
-    if prefix_tokens > 0:
-        out[:prefix_tokens].zero_()
-    return out, inputs["state"]
+    return out[prefix_tokens:], inputs["state"]
 
 
 @register("executor_recurrent_gated_delta_rule")
