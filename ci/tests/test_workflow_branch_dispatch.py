@@ -45,7 +45,10 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
 
         self.assertEqual(list(triggers), ["workflow_dispatch"])
         self.assertNotIn("issue_comment:", self.ci_text)
-        self.assertIn("requested_by", triggers["workflow_dispatch"]["inputs"])
+        self.assertEqual(set(triggers["workflow_dispatch"]["inputs"]), {
+            "pr_number", "ci_mode", "ops", "requested_by", "expected_head_sha",
+            "expected_base_ref", "expected_base_sha", "expected_workflow_sha",
+        })
         self.assertIn("${{ github.ref_name }}", self.ci_text)
         self.assertIn("${{ github.workflow_sha }}", self.ci_text)
 
@@ -58,11 +61,11 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
         self.assertIn("ref: targetRef", self.dispatch_script)
         self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("workflow_dispatch", self.dispatch_script)
+        self.assertIn("auth.selectDispatchInputs(workflowText, {", self.dispatch_script)
 
     def _run_dispatch(self, comment):
         encoded_workflow = base64.b64encode(
-            b"name: NPU CI\non:\n  workflow_dispatch:\n"
+            CI_WORKFLOW_PATH.read_bytes()
         ).decode("ascii")
         wrapper = f"""
 const fs = require('fs');
@@ -77,11 +80,13 @@ globalThis.context = {{
   repo: {{ owner: 'example', repo: 'repo' }},
 }};
 globalThis.github = {{
+  paginate: async () => [],
   rest: {{
     repos: {{
       getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
-      getBranch: async (payload) => ({{ data: {{ name: payload.branch }} }}),
-      getContent: async () => ({{
+      getBranch: async (payload) => ({{ data: {{ name: payload.branch, protected: true, commit: {{sha: 'c'.repeat(40)}} }} }}),
+      get: async () => ({{ data: {{ default_branch: 'main' }} }}),
+      getContent: async (payload) => payload.path === '.github/npu-ci-users.json' ? ({{ data: {{ type: 'file', content: Buffer.from(JSON.stringify({{users:['ci-admin']}})).toString('base64') }} }}) : ({{
         data: {{
           type: 'file',
           encoding: 'base64',
@@ -92,8 +97,8 @@ globalThis.github = {{
     pulls: {{
       get: async () => ({{
         data: {{
-          draft: false,
-          base: {{ ref: 'main' }},
+          number: 527, changed_files: 0, draft: false, state: 'open',
+          base: {{ sha: 'c'.repeat(40), ref: 'main' }},
           head: {{ sha: 'a'.repeat(40) }},
         }},
       }}),
@@ -108,7 +113,9 @@ globalThis.core = {{
   setFailed: (message) => record('failed', message),
 }};
 (async () => {{
+  await (async () => {{
 {self.dispatch_script}
+  }})();
   fs.writeFileSync(process.env.RECORD_FILE, JSON.stringify(records), 'utf8');
 }})().catch((error) => {{
   console.error(error && error.stack || error);
@@ -119,6 +126,9 @@ globalThis.core = {{
             record_file = Path(temp_dir) / "records.json"
             env = os.environ.copy()
             env["PR_COMMENT"] = comment
+            env["NPU_CI_RUN_ATTEMPT"] = '1'
+            env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_authorization.js')
+            env["NPU_CI_CHECKS_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_checks.js')
             env["RECORD_FILE"] = str(record_file)
             completed = subprocess.run(
                 ["node"],
@@ -144,17 +154,16 @@ globalThis.core = {{
         self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "quick")
         self.assertEqual(dispatches[0]["inputs"]["requested_by"], "ci-admin")
 
-    def test_comment_can_select_another_ci_definition_branch(self):
+    def test_comment_cannot_select_another_ci_definition_branch(self):
         completed, records = self._run_dispatch(
             "/run-npu-ci full ci_ref=release-v2 ops=chunk_fwd_o"
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
-        self.assertEqual(len(dispatches), 1)
-        self.assertEqual(dispatches[0]["ref"], "release-v2")
-        self.assertEqual(dispatches[0]["inputs"]["ci_mode"], "full")
-        self.assertEqual(dispatches[0]["inputs"]["ops"], "chunk_fwd_o")
+        self.assertEqual(dispatches, [])
+        failures = [item["payload"] for item in records if item["kind"] == "failed"]
+        self.assertIn("不支持", failures[0])
 
 
 if __name__ == "__main__":

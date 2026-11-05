@@ -4,13 +4,15 @@ ARG PREWARM_THIRD_PARTY=true
 ARG INSTALL_TORCH_NPU=true
 ARG PYPI_INDEX_URL=https://repo.huaweicloud.com/repository/pypi/simple
 ARG TORCH_VERSION=2.12.0
-ARG TORCH_WHL=torch-2.12.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl
-ARG TORCH_WHL_URL=https://download-r2.pytorch.org/whl/cpu/torch-2.12.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl
-ARG TORCH_WHL_SHA256=5e3dc83725581fa38b7b2e45c58692e30b2a3cde19191af54b675ffcac3840a6
+# Optional overrides are complete filename / HTTPS URL / SHA256 triples.
+# Empty values select the pinned CPython 3.12 wheels for the native CPU below.
+ARG TORCH_WHL=
+ARG TORCH_WHL_URL=
+ARG TORCH_WHL_SHA256=
 ARG TORCH_NPU_VERSION=2.12.0
-ARG TORCH_NPU_WHL=torch_npu-2.12.0-cp312-cp312-manylinux_2_28_x86_64.whl
-ARG TORCH_NPU_WHL_URL=https://repo.huaweicloud.com/repository/pypi/packages/1b/f8/4d6a9b64ee204c0a8326e8237982fea56b9cf9d79b9ced77d2193f433e36/torch_npu-2.12.0-cp312-cp312-manylinux_2_28_x86_64.whl
-ARG TORCH_NPU_WHL_SHA256=acb39467b740c9dc24165b0002f3531521615d396d9386134689ce59221006c1
+ARG TORCH_NPU_WHL=
+ARG TORCH_NPU_WHL_URL=
+ARG TORCH_NPU_WHL_SHA256=
 ARG TRITON_ASCEND_VERSION=3.2.1
 ARG TRITON_ASCEND_INDEX_URL=https://triton-ascend.osinfra.cn/pypi/simple
 
@@ -25,7 +27,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-lc"]
 
-RUN test "$(uname -m)" = "x86_64" && \
+RUN case "$(uname -m)" in x86_64|aarch64) ;; \
+      *) echo '[CI][ERROR] A5 requires native x86_64 or aarch64 Linux.' >&2; exit 2 ;; esac && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       bash \
@@ -64,40 +67,52 @@ RUN set -e; \
     pip_retry python3 -m pip install 'setuptools>=70.1,<82' wheel; \
     pip_retry python3 -m pip install -r /tmp/fla-ci/requirements.txt
 
-RUN set -e; \
+RUN set -euo pipefail; \
     if [[ "${INSTALL_TORCH_NPU}" == "true" ]]; then \
-      curl --http1.1 -fL -C - \
-        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 1800 \
-        --retry 100 --retry-all-errors --retry-delay 1 \
-        -o "/tmp/${TORCH_WHL}" \
-        "${TORCH_WHL_URL}"; \
-      echo "${TORCH_WHL_SHA256}  /tmp/${TORCH_WHL}" | sha256sum -c -; \
-      for attempt in $(seq 1 20); do \
-        python3 -m pip install "/tmp/${TORCH_WHL}" && break; \
-        [[ "$attempt" == 20 ]] && exit 1; \
-        echo "[CI][pip][WARN] torch install attempt ${attempt} failed; retrying" >&2; \
-        sleep $((attempt * 2)); \
-      done; \
-      rm -f "/tmp/${TORCH_WHL}"; \
-      python3 -c 'from importlib import metadata; assert metadata.version("torch").split("+", 1)[0] == "'"${TORCH_VERSION}"'"; print("torch", metadata.version("torch"))'; \
-    fi
-
-RUN set -e; \
-    if [[ "${INSTALL_TORCH_NPU}" == "true" ]]; then \
-      curl --http1.1 -fL -C - \
-        --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 1800 \
-        --retry 100 --retry-all-errors --retry-delay 1 \
-        -o "/tmp/${TORCH_NPU_WHL}" \
-        "${TORCH_NPU_WHL_URL}"; \
-      echo "${TORCH_NPU_WHL_SHA256}  /tmp/${TORCH_NPU_WHL}" | sha256sum -c -; \
-      for attempt in $(seq 1 20); do \
-        python3 -m pip install "/tmp/${TORCH_NPU_WHL}" && break; \
-        [[ "$attempt" == 20 ]] && exit 1; \
-        echo "[CI][pip][WARN] torch_npu install attempt ${attempt} failed; retrying" >&2; \
-        sleep $((attempt * 2)); \
-      done; \
-      rm -f "/tmp/${TORCH_NPU_WHL}"; \
-      python3 -c 'from importlib import metadata; assert metadata.version("torch-npu") == "'"${TORCH_NPU_VERSION}"'"; print("torch-npu", metadata.version("torch-npu"))'; \
+      python3 -c 'import sys; assert sys.version_info[:2] == (3, 12), "A5 CI requires CPython 3.12"'; \
+      [[ "$TORCH_VERSION" == 2.12.0 && "$TORCH_NPU_VERSION" == 2.12.0 ]] || { \
+        echo '[CI][ERROR] A5 CI requires matching torch 2.12.0 and torch_npu 2.12.0; do not reuse A2 wheels.' >&2; exit 2; }; \
+      native_arch="$(uname -m)"; \
+      case "$native_arch" in \
+        x86_64) \
+          torch_sha=5e3dc83725581fa38b7b2e45c58692e30b2a3cde19191af54b675ffcac3840a6; \
+          npu_path=1b/f8/4d6a9b64ee204c0a8326e8237982fea56b9cf9d79b9ced77d2193f433e36; \
+          npu_sha=acb39467b740c9dc24165b0002f3531521615d396d9386134689ce59221006c1 ;; \
+        aarch64) \
+          torch_sha=ce2ddb880b0813fcc91a737f08fdd973a8115a74c64ccb34e9c09a7964b4d448; \
+          npu_path=36/50/c5edb71fde47d302059420b62da8737ccc71eafc526f0c31833015162af8; \
+          npu_sha=6ebd04ca1facecef7618c34fb4f300b486a5f728e887f8aa5dec1154c140b888 ;; \
+        *) echo "[CI][ERROR] Unsupported A5 CPU: $native_arch" >&2; exit 2 ;; \
+      esac; \
+      install_wheel() { \
+        local prefix="$1" package="$2" expected_version="$3" expected_wheel="$4" default_url="$5" default_sha="$6"; \
+        local name_var="${prefix}_WHL" url_var="${prefix}_WHL_URL" sha_var="${prefix}_WHL_SHA256"; \
+        local wheel="${!name_var}" url="${!url_var}" digest="${!sha_var}"; \
+        if [[ -z "$wheel$url$digest" ]]; then \
+          wheel="$expected_wheel"; url="$default_url"; digest="$default_sha"; \
+        fi; \
+        if [[ "$wheel" != "$expected_wheel" || "$url" != https://* || ! "$digest" =~ ^[0-9a-fA-F]{64}$ ]]; then \
+          echo "[CI][ERROR] ${prefix}: provide a complete filename/HTTPS URL/SHA256 triple for ${native_arch}, CPython 3.12 and version ${expected_version}." >&2; exit 2; \
+        fi; \
+        curl --http1.1 -fL -C - \
+          --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 1800 \
+          --retry 100 --retry-all-errors --retry-delay 1 -o "/tmp/$wheel" "$url"; \
+        echo "$digest  /tmp/$wheel" | sha256sum -c -; \
+        for attempt in $(seq 1 20); do \
+          python3 -m pip install "/tmp/$wheel" && break; \
+          [[ "$attempt" == 20 ]] && exit 1; \
+          echo "[CI][pip][WARN] ${package} install attempt ${attempt} failed; retrying" >&2; \
+          sleep $((attempt * 2)); \
+        done; \
+        rm -f "/tmp/$wheel"; \
+        python3 -c 'from importlib import metadata; import sys; actual = metadata.version(sys.argv[1]); assert actual.split("+", 1)[0] == sys.argv[2], (actual, sys.argv[2]); print(sys.argv[1], actual)' "$package" "$expected_version"; \
+      }; \
+      install_wheel TORCH torch "$TORCH_VERSION" \
+        "torch-${TORCH_VERSION}+cpu-cp312-cp312-manylinux_2_28_${native_arch}.whl" \
+        "https://download-r2.pytorch.org/whl/cpu/torch-2.12.0%2Bcpu-cp312-cp312-manylinux_2_28_${native_arch}.whl" "$torch_sha"; \
+      install_wheel TORCH_NPU torch-npu "$TORCH_NPU_VERSION" \
+        "torch_npu-${TORCH_NPU_VERSION}-cp312-cp312-manylinux_2_28_${native_arch}.whl" \
+        "https://repo.huaweicloud.com/repository/pypi/packages/${npu_path}/torch_npu-2.12.0-cp312-cp312-manylinux_2_28_${native_arch}.whl" "$npu_sha"; \
     fi
 
 RUN set -e; \

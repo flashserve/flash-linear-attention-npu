@@ -106,6 +106,13 @@ def _build_state(
 def _make_noncontiguous(tensor: torch.Tensor | None) -> torch.Tensor | None:
     if tensor is None or tensor.ndim == 0:
         return tensor
+    if tensor.ndim == 3:
+        # Legal Q/K/V row padding: the innermost feature axis stays contiguous.
+        storage = torch.empty((*tensor.shape[:-1], tensor.shape[-1] + 16),
+                              dtype=tensor.dtype, device=tensor.device)
+        view = storage[..., :tensor.shape[-1]]
+        view.copy_(tensor)
+        return view
     storage_shape = (*tensor.shape[:-1], tensor.shape[-1] * 2)
     storage = torch.empty(storage_shape, dtype=tensor.dtype, device=tensor.device)
     view = storage[..., ::2]
@@ -208,7 +215,7 @@ def build_inputs(
         )
 
     gate_mode = str(spec.get("gate_mode", "g"))
-    if gate_mode not in {"g", "gk", "both"}:
+    if gate_mode not in {"g", "gk", "both", "none"}:
         raise ValueError(f"{OP_NAME}: unsupported gate_mode {gate_mode!r}.")
 
     gate_profile = str(spec.get("gate_profile", "random"))
@@ -345,6 +352,13 @@ def build_inputs(
     if state_profile != "random":
         _quantize_input_(inputs["state"], state_dtype_name)
 
+    if spec.get("arch22"):
+        inputs["beta"] = inputs["beta"].to(_orig_dtype(spec["beta_dtype"]))
+        if inputs["g"] is not None:
+            inputs["g"] = inputs["g"].to(_orig_dtype(spec["g_dtype"]))
+        if spec.get("use_gate_in_kernel"):
+            inputs["A_log"] = _randn((value_heads,), "fp32", torch.float32, device, seed + 8, scale=0.5)
+            inputs["dt_bias"] = _randn((value_heads,), "fp32", torch.float32, device, seed + 9, scale=0.2)
     return _apply_input_layout(
         inputs, str(spec.get("input_layout", "contiguous"))
     )
@@ -357,6 +371,18 @@ def run_cpu(spec: dict[str, Any]):
         # avoids severe nested-parallelism overhead for the per-head reference.
         torch.set_num_threads(1)
         inputs = build_inputs(spec, torch.device("cpu"))
+        if spec.get("arch22"):
+            if spec.get("use_qk_l2norm_in_kernel"):
+                for name in ("query", "key"):
+                    x = inputs[name].float()
+                    inputs[name] = x / torch.sqrt((x * x).sum(-1, keepdim=True) + 1e-6)
+            if spec.get("use_gate_in_kernel"):
+                inputs["g"] = -inputs["A_log"].exp()[None, :] * torch.nn.functional.softplus(
+                    inputs["g"].float() + inputs["dt_bias"][None, :])
+            if spec.get("use_beta_sigmoid_in_kernel"):
+                inputs["beta"] = inputs["beta"].float().sigmoid()
+                if spec.get("allow_neg_eigval"):
+                    inputs["beta"] *= 2
         outputs = None
         repeat_calls = int(spec.get("repeat_calls", 1))
         for call_index in range(repeat_calls):
@@ -400,6 +426,11 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
             num_accepted_tokens=inputs["num_accepted_tokens"],
             g=inputs["g"],
             gk=inputs["gk"],
+            **({name: spec.get(name, False) for name in (
+                "use_qk_l2norm_in_kernel", "use_gate_in_kernel",
+                "use_beta_sigmoid_in_kernel", "allow_neg_eigval")} | {
+                    "A_log": inputs.get("A_log"), "dt_bias": inputs.get("dt_bias")}
+                if spec.get("arch22") else {}),
         )
     if out is None:
         raise RuntimeError(f"{OP_NAME}: repeat_calls must be positive.")

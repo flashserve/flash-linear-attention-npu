@@ -554,58 +554,38 @@ def stream_probe(device_index: int) -> tuple[int, int]:
 
 
 def npu_recurrent_gated_delta_rule(
-    query,
-    key,
-    value,
-    state,
-    *,
-    beta,
-    scale=1.0,
-    actual_seq_lengths,
-    ssm_state_indices,
-    num_accepted_tokens=None,
-    g=None,
-    gk=None,
+    query, key, value, state, *, beta, scale=1.0, actual_seq_lengths,
+    ssm_state_indices, num_accepted_tokens=None, g=None, gk=None,
+    use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None,
+    dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False,
 ):
-    """Recurrent GDN forward; mutates ``state`` in place like the other paths."""
+    """Route every supported call to the fused RecurrentGDN implementation.
 
-    # The reference refuses a call that supplies neither gate; the kernel does
-    # not.  Measured on 910B3: without this check the launcher returned the
-    # ungated result instead of raising -- exactly the failure mode this path
-    # must not have, i.e. silently different numbers rather than an error.  Same
-    # shape as the use_exp2 refusal repeated in npu_chunk_gated_delta_rule_bwd.
-    if g is None and gk is None:
-        raise RuntimeError(
-            "npu_recurrent_gated_delta_rule: either g or gk must be provided.")
+    Fusion flags select arithmetic only; disabling them never selects the
+    historical kernel. The two ACLNN host ABIs share arch22 on A2/A3.
+    """
+    if gk is not None:
+        raise ValueError("gk is reserved; only scalar gate g is supported.")
+    from ._recurrent_gdn import validate_recurrent_gdn
 
-    # Hot path: a decode step walks this operator some thirty times, so it is
-    # written without helper calls and reads the op cache directly (the first
-    # call is what loads the library).  See the note above `_INC_VERSION`.
-    if state is not None and state.requires_grad:
+    scale = validate_recurrent_gdn(query, key, value, state, beta=beta, scale=scale,
+        actual_seq_lengths=actual_seq_lengths, ssm_state_indices=ssm_state_indices,
+        num_accepted_tokens=num_accepted_tokens, g=g, gk=gk, A_log=A_log,
+        dt_bias=dt_bias, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        use_gate_in_kernel=use_gate_in_kernel,
+        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+        allow_neg_eigval=allow_neg_eigval)
+    if state.requires_grad:
         _refuse_grad_state("npu_recurrent_gated_delta_rule", state)
-    stream = _current_stream_ptr()
-    op = _OP_CACHE.get("npu_recurrent_gated_delta_rule")
-    if op is None:
-        op = _op("npu_recurrent_gated_delta_rule")
-    result = op(
-        query,
-        key,
-        value,
-        state,
-        beta,
-        actual_seq_lengths,
-        ssm_state_indices,
-        num_accepted_tokens,
-        g,
-        gk,
-        float(scale),
-        stream,
-    )
-    if state is not None:
-        bump = _INC_VERSION
-        if bump is None:
-            bump = _increment_version()
-        bump((state,))
+    result = _op("npu_recurrent_gated_delta_rule")(
+        query, key, value, state, beta, actual_seq_lengths, ssm_state_indices,
+        num_accepted_tokens, g, gk, A_log, dt_bias, scale,
+        use_qk_l2norm_in_kernel, use_gate_in_kernel,
+        use_beta_sigmoid_in_kernel, allow_neg_eigval, _current_stream_ptr())
+    bump = _INC_VERSION
+    if bump is None:
+        bump = _increment_version()
+    bump((state,))
     return result
 
 

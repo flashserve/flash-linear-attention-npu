@@ -5,6 +5,7 @@ allocation/dtype/alias contracts are verified on the real C++ Stable adapter
 with --npu. ACLNN C prototypes are independently checked by op_abi_validate.
 """
 from __future__ import annotations
+from contextlib import contextmanager
 import importlib.util
 import inspect
 import itertools
@@ -18,6 +19,18 @@ ASCENDC_DIR = Path(__file__).resolve().parents[1] / "fla_npu/ops/ascendc"
 spec = importlib.util.spec_from_file_location("stable_contract", ASCENDC_DIR / "_stable.py")
 STABLE = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(STABLE)
+
+
+@contextmanager
+def recurrent_validation():
+    """Mock only RecurrentGDN metadata validation for forwarding tests."""
+    package = types.ModuleType("recurrent_abi_contract")
+    package.__path__ = [str(ASCENDC_DIR)]
+    helper = types.ModuleType("recurrent_abi_contract._recurrent_gdn")
+    helper.validate_recurrent_gdn = mock.Mock(return_value=0.25)
+    with mock.patch.object(STABLE, "__package__", package.__name__), \
+         mock.patch.dict(sys.modules, {package.__name__: package, helper.__name__: helper}):
+        yield helper.validate_recurrent_gdn
 
 
 class FakeTensor:
@@ -71,20 +84,64 @@ class StableAbiContractTest(unittest.TestCase):
                 STABLE.npu_chunk_gated_delta_rule_fwd(*(object() for _ in range(5)), **options)
         self.launch.assert_not_called()
 
-    def test_recurrent_requires_gate_before_launch(self):
-        with self.assertRaisesRegex(RuntimeError, "either g or gk"):
-            STABLE.npu_recurrent_gated_delta_rule(None, None, None, None, beta=None,
-                                                actual_seq_lengths=None, ssm_state_indices=None)
+    def test_recurrent_rejects_gk_before_validation_and_launch(self):
+        with recurrent_validation() as validate:
+            for gate in (None, object()):
+                with self.subTest(g=gate), self.assertRaisesRegex(ValueError, "gk is reserved"):
+                    STABLE.npu_recurrent_gated_delta_rule(
+                        None, None, None, None, beta=None, actual_seq_lengths=None,
+                        ssm_state_indices=None, g=gate, gk=object())
+            validate.assert_not_called()
         self.launch.assert_not_called()
 
     def test_recurrent_tensor_order_and_one_state_version_bump(self):
-        values = [FakeTensor((1,)) for _ in range(10)]
-        with mock.patch.object(STABLE, "_OP_CACHE", {}), mock.patch.object(STABLE, "_INC_VERSION") as bump:
-            STABLE.npu_recurrent_gated_delta_rule(*values[:4], beta=values[4],
-                actual_seq_lengths=values[5], ssm_state_indices=values[6],
-                num_accepted_tokens=values[7], g=values[8], gk=values[9], scale=0.25)
-            self.assertEqual(self.launch.call_args.args, (*values, 0.25, 123))
-            bump.assert_called_once_with((values[3],))
+        values = [FakeTensor((1,)) for _ in range(11)]
+        with recurrent_validation() as validate, mock.patch.object(STABLE, "_INC_VERSION") as bump:
+            for gate in (None, values[8]):
+                for norm, fused_gate, sigmoid, negative in itertools.product((False, True), repeat=4):
+                    if (negative and not sigmoid) or (fused_gate and gate is None):
+                        continue
+                    with self.subTest(g=gate, norm=norm, fused_gate=fused_gate,
+                                      sigmoid=sigmoid, negative=negative):
+                        self.launch.reset_mock()
+                        validate.reset_mock()
+                        bump.reset_mock()
+                        flags = dict(use_qk_l2norm_in_kernel=norm, use_gate_in_kernel=fused_gate,
+                                     use_beta_sigmoid_in_kernel=sigmoid, allow_neg_eigval=negative)
+                        STABLE.npu_recurrent_gated_delta_rule(
+                            *values[:4], beta=values[4], actual_seq_lengths=values[5],
+                            ssm_state_indices=values[6], num_accepted_tokens=values[7],
+                            g=gate, scale=0.25, A_log=values[9], dt_bias=values[10], **flags)
+                        self.launch.assert_called_once_with(
+                            *values[:8], gate, None, values[9], values[10], 0.25,
+                            norm, fused_gate, sigmoid, negative, 123)
+                        validate.assert_called_once_with(
+                            *values[:4], beta=values[4], scale=0.25, actual_seq_lengths=values[5],
+                            ssm_state_indices=values[6], num_accepted_tokens=values[7], g=gate,
+                            gk=None, A_log=values[9], dt_bias=values[10], **flags)
+                        bump.assert_called_once_with((values[3],))
+
+    def test_recurrent_validation_failure_prevents_launch_and_version_bump(self):
+        values = [FakeTensor((1,)) for _ in range(7)]
+        with recurrent_validation() as validate, mock.patch.object(STABLE, "_INC_VERSION") as bump:
+            validate.side_effect = ValueError("invalid RecurrentGDN metadata")
+            with self.assertRaisesRegex(ValueError, "invalid RecurrentGDN metadata"):
+                STABLE.npu_recurrent_gated_delta_rule(
+                    *values[:4], beta=values[4], actual_seq_lengths=values[5],
+                    ssm_state_indices=values[6])
+            bump.assert_not_called()
+        self.launch.assert_not_called()
+
+    def test_recurrent_grad_state_rejected_before_launch(self):
+        values = [FakeTensor((1,)) for _ in range(7)]
+        values[3].requires_grad = True
+        with recurrent_validation(), mock.patch.object(STABLE, "_INC_VERSION") as bump:
+            with self.assertRaisesRegex(RuntimeError, "must not require gradients"):
+                STABLE.npu_recurrent_gated_delta_rule(
+                    *values[:4], beta=values[4], actual_seq_lengths=values[5],
+                    ssm_state_indices=values[6])
+            bump.assert_not_called()
+        self.launch.assert_not_called()
 
     def test_gdn_intra_signature_has_no_debug_stage(self):
         self.assertNotIn("debug_stage", inspect.signature(STABLE.npu_chunk_gdn_bwd_intra).parameters)
