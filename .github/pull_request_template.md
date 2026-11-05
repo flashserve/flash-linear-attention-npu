@@ -13,17 +13,19 @@
 > 5. `NPU CI / A2+A5 / 05 GDR Example/ST`
 > 6. `NPU CI / A2+A5 / 06 报告与 commit 校验`
 >
-> 每个平台按上述顺序执行前 5 个分项；任一前置分项失败时，后续分项会标记为未执行，不再继续运行。任一平台 job 失败后，仍在排队或运行的另一平台 job 会被取消，避免继续占用 NPU；汇总结果仍按失败收敛。失败结果会保留关键报错，并给出带 `CI_STAGE=<分项>` 的容器复现命令。汇总任务最后执行第 6 项。合入前，当前 head commit 的 6 个状态和自动执行的 `CI 契约测试` 必须全部成功，并且满足 GitHub 分支保护要求的 2 个 approval；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要仓库 Admin 权限账号重新触发。即使已有 2 个 approval，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
+> 每个平台按上述顺序执行前 5 个分项；任一前置分项失败时，后续分项会标记为未执行，不再继续运行。任一平台 job 失败后，仍在排队或运行的另一平台 job 会被取消，避免继续占用 NPU；汇总结果仍按失败收敛。失败结果会保留关键报错，并给出带 `CI_STAGE=<分项>` 的容器复现命令。汇总任务最后执行第 6 项。合入前，当前 head commit 的 6 个状态和自动执行的 `CI 契约测试` 必须全部成功，并且满足 GitHub 分支保护要求的 2 个 approval；如果本 PR 后续更新了 commit，旧 commit 的 CI 结果不再有效，需要 CI 触发名单中的账号重新触发。即使已有 2 个 approval，只要当前 commit 未完成 NPU CI，仍不可合入（`weinachuan` 可按仓库保护规则 bypass）。
 >
 > 触发方式：
 >
-> - GitHub `Actions` 页面选择 `NPU CI`，在 `Branch` 下拉框选择 CI 定义分支，点击 `Run workflow`，填写本 PR 编号。
-> - 在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`；默认使用 PR 目标分支的 `ci.yml`，必要时可追加 `ci_ref=<branch>`。
+> - 同时具有仓库 write 权限的 CI 名单账号可在 GitHub `Actions` 页面选择 `NPU CI`，将 `Branch` 设为本 PR 当前受保护的目标分支，点击 `Run workflow`，填写本 PR 编号。
+> - CI 名单账号可在 PR 评论区发送 `/run-npu-ci quick` 或 `/run-npu-ci full`，无需仓库 write 权限；仅使用 PR 当前受保护目标分支的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。
 > - 同一 PR 的同一 commit 如果已有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再次占用 NPU。
 > - NPU CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例；当前 `case1_current_default` 保持原始 shape。新增 GVA、`Vdim=256` 等场景时，请在用例文件中显式填写 `B`、`T`、`chunk_size`、`query_head`、`value_head`、`Kdim`、`Vdim` 等 shape 字段，以及 `gate_source`、`gate_function`、`initial_state`、`output_final_state`、`qk_l2norm` 等行为字段。
 > - Example ST 必须使用与平台匹配的已验证 PyTorch/`torch_npu` 组合；A2 与 A5 不得混用 wheel、Python ABI 或 CANN 镜像，也不要拉取 `op-plugin` 重新编译。
 > - 修改算子 `def`、`aclnn` 接口入参类型，或修改 `torch` 接口入参类型等导致不满足 ABI 一致性的改动，必须由 `weinachuan` 在当前 head commit 上检视通过；ABI 敏感路径已由 CODEOWNERS 指向 `weinachuan`。
 > - NPU CI 部署与排障教程见 [`docs/Fla-npu仓CI部署教程.md`](docs/Fla-npu仓CI部署教程.md)。
+
+CI 初次触发权由默认分支 `.github/npu-ci-users.json` 名单管理。仅接受 open、未合并且非草稿的 PR。非 Markdown 的 `ci/` 或 `.github/` 变更只允许仓库 Admin 创建的 PR；作者无需在名单中，初次触发人仍须在名单中。名单内只读用户可触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行。重跑保留 PR 状态和版本一致性检查。A2/A5 直接验证当前 PR 的 `ci/`，不覆盖可信 CI 目录。
 
 ## 关联 Issue / 背景
 
@@ -167,7 +169,7 @@ bash build_and_test.sh
 python examples/flash_gated_delta_rule.py
 ```
 
-也可以由仓库 Admin 权限账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
+也可以由 CI 触发名单中的账号触发 CI 验证：`/run-npu-ci quick`。CI 会执行 `ci/example_st_cases.json` 中启用的 Example/ST 用例，默认覆盖当前 `case1_current_default`，仅覆盖容器内逻辑设备号 `--device`。
 
 通过标准:
 
