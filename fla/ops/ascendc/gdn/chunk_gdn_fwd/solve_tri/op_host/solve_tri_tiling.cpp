@@ -251,7 +251,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
         usedCoreNum = 1;
     }
 
-    // Get input dtype: 0=fp16, 1=bf16, 2=fp32
+    // Get input dtype: 0=fp16, 1=bf16
     const auto *inputDesc = context->GetInputDesc(INPUT_X_IDX);
     const auto *outputDesc = context->GetOutputDesc(OUTPUT_X_OUT_IDX);
     if (inputDesc == nullptr || outputDesc == nullptr) {
@@ -262,14 +262,8 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     int64_t dtypeMode = 0;  // default fp16
     if (inputDtype == ge::DT_BF16) {
         dtypeMode = 1;
-    } else if (inputDtype == ge::DT_FLOAT) {
-        dtypeMode = 2;
-        if (ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
-            OP_LOGE(context->GetNodeName(), "SolveTri FP32 input is not supported on Ascend950.");
-            return ge::GRAPH_FAILED;
-        }
     } else if (inputDtype != ge::DT_FLOAT16) {
-        OP_LOGE(context->GetNodeName(), "SolveTri input dtype must be FP16, BF16 or FP32, got %d.",
+        OP_LOGE(context->GetNodeName(), "SolveTri input dtype must be FP16 or BF16, got %d.",
                 static_cast<int>(inputDtype));
         return ge::GRAPH_FAILED;
     }
