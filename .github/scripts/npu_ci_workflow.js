@@ -72,7 +72,7 @@ async function selectWorkflowExecution({ github, context, pr, baseBranch, files,
   const required = ['pr_number', 'requested_by', 'expected_head_sha', 'expected_base_ref',
     'expected_base_sha', 'expected_workflow_sha', 'workflow_source'];
   if (required.some((name) => !selectedInputs[name])) {
-    throw new Error(`PR #${pr.number} 修改了 ${WORKFLOW_PATH}，但新 workflow 缺少 workflow_source 或固定版本输入；请将完整的 PR workflow 分发契约同步到该文件后重新触发。`);
+    throw new Error(`PR #${pr.number} 修改了 ci/ 或 .github/ 下的 CI 控制文件，但 PR workflow 缺少 workflow_source 或固定版本输入；请将完整的 PR workflow 分发契约同步到 ${WORKFLOW_PATH} 后重新触发。`);
   }
   return { ref: auth.buildPrWorkflowTag(pr.number, mergeSha), source: 'pr-merge',
     workflowSha: mergeSha, inputs: selectedInputs };
