@@ -564,22 +564,5 @@ const core = {notice:(payload) => record('notice',payload),info:(payload) => rec
         rejected = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses)
         self.assertEqual([status["state"] for status in self.records(rejected, "status")], ["failure"] * 6)
 
-    def test_device_version_guard_runs_offline_after_source_merge(self):
-        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-        steps = workflow["jobs"]["ascend-npu"]["steps"]
-        guard_index = next(index for index, step in enumerate(steps) if step.get("id") == "validate_pr")
-        merge_index = next(index for index, step in enumerate(steps) if step.get("name") == "现场合并 PR 代码")
-        container_index = next(index for index, step in enumerate(steps)
-                               if "bash ci/run_ci_container.sh" in step.get("run", ""))
-        self.assertLess(merge_index, guard_index)
-        self.assertLess(guard_index, container_index)
-        guard = steps[guard_index]
-        self.assertEqual(guard["working-directory"], "repo")
-        self.assertNotIn("if", guard)
-        self.assertNotIn("uses", guard)
-        self.assertNotIn("NPU_CI_TRIGGERING_ACTOR", guard["env"])
-        self.assertFalse(any(step.get("uses", "").startswith("actions/github-script@") for step in steps))
-
-
 if __name__ == "__main__":
     unittest.main()

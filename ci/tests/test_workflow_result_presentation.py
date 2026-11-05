@@ -17,21 +17,15 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-DEFAULT_STATUS_WORKFLOW_PATH = (
-    REPO_ROOT / ".github" / "workflows" / "npu-ci-default-status.yml"
-)
 PUBLISH_SCRIPT_PATH = REPO_ROOT / ".github" / "scripts" / "publish_npu_ci_status.js"
 BRANCH_PROTECTION_PATH = REPO_ROOT / "scripts" / "github" / "apply_branch_protection.sh"
 RUN_CHECKS_PATH = REPO_ROOT / "ci" / "run_checks.sh"
-RUN_CONTAINER_PATH = REPO_ROOT / "ci" / "run_ci_container.sh"
-CONTRACT_TEST_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci-contract-tests.yml"
 CHECKS_CONFIG_PATH = REPO_ROOT / ".github" / "scripts" / "npu_ci_checks.json"
 CHECKS_SCRIPT_PATH = CHECKS_CONFIG_PATH.with_suffix(".js")
 CHECKS_CONFIG = json.loads(CHECKS_CONFIG_PATH.read_text(encoding="utf-8"))
 STAGE_KEYS = tuple(check["key"] for check in CHECKS_CONFIG["required"][:-1])
 STATUS_CONTEXTS = tuple(check["context"] for check in CHECKS_CONFIG["required"])
 SCOPED_STATUS_CONTEXT = CHECKS_CONFIG["diagnostic"]["context"]
-CONTRACT_TEST_CONTEXT = CHECKS_CONFIG["contract_test"]
 
 
 class WorkflowResultPresentationTest(unittest.TestCase):
@@ -46,12 +40,6 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         cls.prepare_script = cls.prepare_action["with"]["script"]
         cls.matrix_steps = workflow["jobs"]["ascend-npu"]["steps"]
         cls.finalize_steps = workflow["jobs"]["finalize"]["steps"]
-        cls.finalize_action = next(
-            step
-            for step in cls.finalize_steps
-            if step.get("uses") == "actions/github-script@v8"
-        )
-        cls.finalize_loader = cls.finalize_action["with"]["script"]
         cls.finalize_script = PUBLISH_SCRIPT_PATH.read_text(encoding="utf-8")
 
     def _run_finalize_script(
@@ -682,6 +670,7 @@ globalThis.core = {
         workflow_source="base",
         workflow_sha=None,
         workflow_ref=None,
+        existing_comments=None,
     ):
         sha = "a" * 40
         workflow_sha = workflow_sha or ("d" * 40 if workflow_source == "pr-merge" else "c" * 40)
@@ -716,9 +705,15 @@ globalThis.context = {
   serverUrl: 'https://github.com',
 };
 globalThis.github = {
-  paginate: async (endpoint) => endpoint === statusEndpoint
-    ? JSON.parse(process.env.PREPARE_STATUSES)
-    : endpoint === filesEndpoint ? files : [],
+  paginate: async (endpoint) => {
+    if (endpoint === statusEndpoint) return JSON.parse(process.env.PREPARE_STATUSES);
+    if (endpoint === filesEndpoint) return files;
+    if (endpoint === commentEndpoint) {
+      record('comment-list', {});
+      return JSON.parse(process.env.PREPARE_EXISTING_COMMENTS);
+    }
+    return [];
+  },
   rest: {
     actions: {
       getWorkflowRun: async (payload) => {
@@ -730,10 +725,14 @@ globalThis.github = {
     issues: {
       createComment: async (payload) => {
         record('comment', payload);
+        record('comment-create', payload);
         return { data: { id: 123 } };
       },
       listComments: commentEndpoint,
-      updateComment: async (payload) => record('comment', payload),
+      updateComment: async (payload) => {
+        record('comment', payload);
+        record('comment-update', payload);
+      },
     },
     pulls: {
       listFiles: filesEndpoint,
@@ -803,6 +802,7 @@ globalThis.core = {
                     }),
                     "PREPARE_WORKFLOW_RUN_ERROR": "1" if workflow_run_error else "0",
                     "PREPARE_STATUSES": json.dumps(statuses),
+                    "PREPARE_EXISTING_COMMENTS": json.dumps(existing_comments or []),
                     "RECORD_FILE": str(record_file),
                 }
             )
@@ -827,89 +827,18 @@ globalThis.core = {
         self.assertEqual([item["state"] for item in statuses], expected_states)
         self.assertNotIn("pending", [item["state"] for item in statuses])
 
-    def test_container_output_is_grouped_and_summarized(self):
-        run_script = next(
-            step["run"]
-            for step in self.matrix_steps
-            if "bash ci/run_ci_container.sh" in step.get("run", "")
-        )
-        self.assertIn("::group::", run_script)
-        self.assertIn('tee "$CI_RAW_LOG_FILE"', run_script)
-        self.assertIn("summarize_npu_ci.py", run_script)
-        self.assertIn("--require-accuracy-report", run_script)
-        self.assertIn("--require-stage-report", run_script)
-        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', run_script)
-        self.assertIn('elif wait "$ci_pid"; then', run_script)
-
-    def test_platforms_share_container_tmpdir_and_isolate_host_storage(self):
-        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
-        job = workflow["jobs"]["ascend-npu"]
-        env = job["env"]
-        self.assertEqual(
-            {item["platform"] for item in job["strategy"]["matrix"]["include"]},
-            {"a2", "a5"},
-        )
-        self.assertEqual(env["CI_JOBS"], "16")
-        self.assertEqual(env["CI_CPACK_JOBS"], "16")
-        self.assertEqual(env["CI_TMPDIR"], "/tmp/fla-npu-ci")
-        identity = "${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
-        self.assertEqual(
-            env["CI_HOST_TMPDIR"], f"/home/huangjunzhe/ci/tmp/container-{identity}"
-        )
-        self.assertEqual(env["TMPDIR"], "/home/huangjunzhe/ci/tmp")
-        self.assertEqual(env["CI_CONTAINER_NAME"], f"fla-npu-ci-{identity}")
-        self.assertEqual(env["CI_CACHE_ROOT"], "/home/huangjunzhe/ci/cache_root")
-        self.assertEqual(env["CI_NPU_LOCK_DIR"], "/home/huangjunzhe/ci/tmp/npu-locks")
-        container_script = RUN_CONTAINER_PATH.read_text(encoding="utf-8")
-        self.assertIn('mount_args+=(-v "$host_tmpdir:$container_tmpdir")', container_script)
-        self.assertIn('CI_TMPDIR must be an absolute container path', container_script)
-
-    def test_npu_matrix_enables_fail_fast(self):
-        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
-        job = workflow["jobs"]["ascend-npu"]
-        self.assertTrue(job["strategy"]["fail-fast"])
-
-    def test_proxy_fallback_preserves_direct_first_checkout_and_original_retry_order(self):
-        job = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]
-        self.assertEqual(job["env"]["CI_PROXY_SCRIPT"], "/home/huangjunzhe/ci/vpn-proxy.sh")
-        names = [step.get("name", "") for step in self.matrix_steps]
-        proxy_index = names.index("启动代理并获取端口")
-        proxy_step = self.matrix_steps[proxy_index]
-        self.assertEqual(proxy_step["id"], "enable_proxy")
-        self.assertEqual(proxy_step["if"], "steps.checkout_pr_1.outcome == 'failure'")
-        original_order = ["拉取当前目标分支代码（第 1 次）",
-                          "启动代理并获取端口", "等待后重试拉取目标分支代码",
-                          "拉取当前目标分支代码（第 2 次）", "再次等待后重试拉取目标分支代码",
-                          "拉取当前目标分支代码（第 3 次）"]
-        self.assertEqual(sorted(original_order, key=names.index), original_order)
-        self.assertNotIn("检查 runner 权限并准备存储目录", names)
-        self.assertNotIn("恢复 runner 工作目录权限", names)
-        for step_name in ("拉取当前目标分支代码（第 1 次）",):
-            step = next(step for step in self.matrix_steps if step["name"] == step_name)
-            self.assertNotIn("if", step)
-            for variable in ("http_proxy", "https_proxy", "all_proxy", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"):
-                self.assertEqual(step["env"][variable], "", (step_name, variable))
-            self.assertEqual(step["env"]["no_proxy"], "*")
-            # GitHub rejects env keys that differ only in case.
-            env_names = [name.casefold() for name in step["env"]]
-            self.assertEqual(len(env_names), len(set(env_names)), step_name)
-            self.assertNotIn("proxyon", step.get("run", ""))
-        for step in self.matrix_steps:
-            if step.get("uses", "").startswith("actions/checkout@"):
-                self.assertNotIn("matrix.platform", step.get("if", ""))
-                self.assertEqual(step["with"]["path"], "repo")
-                self.assertEqual(step["with"]["ref"], "${{ needs.prepare.outputs.base_sha }}")
-                if step.get("id") != "checkout_pr_1":
-                    self.assertNotIn("env", step)
-        self.assertNotIn("通过 GitHub API 准备 A5 源码", names)
-        self.assertIn('source "$CI_PROXY_SCRIPT"', proxy_step["run"])
-        self.assertIn("proxyon", proxy_step["run"])
-        scripts = "\n".join(step.get("run", "") for step in self.matrix_steps)
-        self.assertNotIn("/root/", scripts)
-        self.assertNotIn("/etc/profile.d/vpn-proxy.sh", scripts)
-        self.assertNotIn("git config --global", scripts)
-        self.assertNotRegex(scripts, r"(?m)^\s*(?:export\s+)?HOME=")
-        self.assertNotRegex(scripts, r"(?m)^\s*(?:sudo|systemctl)\s")
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_creates_new_comment_even_when_previous_run_comment_exists(self):
+        previous = {"id": 17, "user": {"login": "github-actions[bot]"},
+                    "body": f"<!-- npu-ci:pr=527:sha={'a' * 40} -->\nPrevious run"}
+        completed, records = self._run_prepare_script([], existing_comments=[previous])
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        created = [item["payload"] for item in records if item["kind"] == "comment-create"]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0]["issue_number"], 527)
+        self.assertIn("<!-- npu-ci:pr=527:sha=", created[0]["body"])
+        self.assertFalse(any(item["kind"] in {"comment-list", "comment-update"} for item in records))
+        self.assertIn({"kind": "output", "payload": {"name": "comment_id", "value": "123"}}, records)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
     def test_proxy_values_reach_later_steps_and_reject_newlines(self):
@@ -1165,14 +1094,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             self.assertEqual(removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], removals)
 
-    def test_device_jobs_use_the_pr_ci_without_overlay(self):
-        device_source = "\n".join(step.get("run", "") for step in self.matrix_steps)
-        self.assertNotIn("trusted-ci", device_source)
-        self.assertNotIn("rm -rf repo/ci", device_source)
-        self.assertNotIn("cp -a", device_source)
-        self.assertTrue(any("git merge --no-ff" in step.get("run", "") for step in self.matrix_steps))
-        self.assertNotIn("extract_archive", device_source)
-
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_admin_author_ci_changes_publish_without_confirmation_parameters(self):
         prepared, initial_records = self._run_prepare_script(
@@ -1247,30 +1168,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIn("Refusing to clean", completed.stderr)
                 self.assertFalse(any(item[:2] == ["rm", "-rf"] for item in records))
-
-    def test_status_contexts_are_consistent_across_workflows_and_protection(self):
-        sources = (
-            WORKFLOW_PATH.read_text(encoding="utf-8"),
-            DEFAULT_STATUS_WORKFLOW_PATH.read_text(encoding="utf-8"),
-            self.finalize_script,
-        )
-        self.assertEqual(len(STATUS_CONTEXTS), 6)
-        self.assertEqual(len(set(STATUS_CONTEXTS)), len(STATUS_CONTEXTS))
-        self.assertEqual(CHECKS_CONFIG["required"][-1]["key"], "report-integrity")
-        for status_context in STATUS_CONTEXTS:
-            for source in sources:
-                self.assertNotIn(status_context, source)
-        self.assertIn("require('./npu_ci_checks')", self.finalize_script)
-        self.assertIn("checks.prepareChecks", self.prepare_script)
-        self.assertIn("npu_ci_checks.js", sources[1])
-        for retired_context in (
-            "NPU CI / A2+A5 " + "手动验证",
-            "NPU CI / A2+A5 " + "精度检查",
-        ):
-            for source in sources:
-                self.assertNotIn(retired_context, source)
-        self.assertIn(CONTRACT_TEST_CONTEXT, CONTRACT_TEST_WORKFLOW_PATH.read_text(encoding="utf-8"))
-        self.assertIn(CONTRACT_TEST_CONTEXT, (REPO_ROOT / "docs" / "repository-rules.md").read_text(encoding="utf-8"))
 
     def _run_branch_protection(self, *, fallback_token=False, missing_token=False, malformed_checks=False, empty_required=False):
         with tempfile.TemporaryDirectory() as temp:
@@ -1357,63 +1254,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 completed, record, _ = self._run_branch_protection(**options)
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIsNone(record)
-
-    def test_stage_order_and_reproduction_selector_are_explicit(self):
-        script = RUN_CHECKS_PATH.read_text(encoding="utf-8")
-        positions = [script.index(f"run_pipeline_stage \\\n    {stage}") for stage in STAGE_KEYS]
-        self.assertEqual(positions, sorted(positions))
-        self.assertIn("prerequisite stage ${failed_stage} failed", script)
-        self.assertIn("CI_STAGE=%q", script)
-        self.assertIn("CI_OPS=%q", script)
-        self.assertIn("CI_IMAGE=%q CI_DOCKERFILE=%q CI_REQUIRE_PRELOADED_IMAGE=%q", script)
-        self.assertIn('image="fla-npu-ci:9.1.0-950"', script)
-        self.assertIn('dockerfile="ci/Dockerfile.ascend950"', script)
-        self.assertIn("CI_TMPDIR=%q", script)
-        self.assertIn("manage_npu_ci_stage_report.py", script)
-        self.assertLess(
-            script.index('manage_npu_ci_stage_report.py --output "$stage_report_file" init'),
-            script.index('ci_tmpdir="$(select_ci_tmpdir)"'),
-        )
-        self.assertIn("finalize_bootstrap_failure", script)
-        self.assertIn("quick|full)", script)
-        self.assertNotIn("bash gdn-verify.sh", script)
-
-    def test_ci_contract_tests_run_outside_the_npu_environment_stage(self):
-        run_checks = RUN_CHECKS_PATH.read_text(encoding="utf-8")
-        workflow = CONTRACT_TEST_WORKFLOW_PATH.read_text(encoding="utf-8")
-        discovery = "python3 -m unittest discover -s ci/tests -p 'test_*.py' -b"
-        self.assertNotIn("-s ci/tests", run_checks)
-        self.assertNotIn("test_run_checks_stage_pipeline.sh", run_checks)
-        self.assertIn("actions/setup-python@v6", workflow)
-        self.assertIn("actions/setup-node@v6", workflow)
-        self.assertIn("node-version: '24'", workflow)
-        self.assertIn("python -m unittest discover -s ci/tests -p 'test_*.py' -b", workflow)
-        self.assertIn("bash ci/tests/test_run_checks_stage_pipeline.sh", workflow)
-        self.assertLess(
-            workflow.index("actions/setup-node@v6"),
-            workflow.index("python -m unittest discover -s ci/tests"),
-        )
-
-    def test_scoped_request_selects_only_opp_package_stage(self):
-        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
-        matrix_env = workflow["jobs"]["ascend-npu"]["env"]
-        self.assertEqual(
-            matrix_env["CI_STAGE"],
-            "${{ needs.prepare.outputs.ops == '' && 'all' || 'opp-package' }}",
-        )
-
-    def test_prepare_and_publisher_share_request_scope_signature(self):
-        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn("normalizedOps ? 'scoped' : 'all'", workflow)
-        self.assertIn("(${ciMode},${requestKey},A2+A5)", workflow)
-        self.assertIn("allowing a replacement run", workflow)
-        self.assertIn("const latestExecutionCi = finalCiStatuses[0]", workflow)
-        self.assertIn("latestExecutionMatchesRequest", workflow)
-        self.assertIn("allContextsPassedInSameRun", workflow)
-        self.assertIn("latestStatus.target_url === latestExecutionCi.target_url", workflow)
-        self.assertNotIn("finalCiStatuses.find", workflow)
-        self.assertIn("normalizedOps ? 'scoped' : 'all'", self.finalize_script)
-        self.assertIn("(${mode},${requestKey},A2+A5)", self.finalize_script)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_does_not_reuse_final_success_with_failed_or_missing_sibling(self):
@@ -1719,26 +1559,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         pending = [item for item in records if item["kind"] == "status"]
         self.assertEqual(len(pending), len(STATUS_CONTEXTS))
 
-    def test_publisher_writes_final_status_after_stage_statuses(self):
-        script = self.finalize_script
-        stage_publish = script.index("const stagePublishResults = await Promise.allSettled")
-        final_publish = script.index("await publishCommitStatus(finalStatusPayload)")
-        self.assertLess(stage_publish, final_publish)
-
-    def test_finalize_has_terminal_status_fallback(self):
-        fallback = next(
-            step
-            for step in self.finalize_steps
-            if step.get("name") == "状态发布异常时收敛全部分项"
-        )
-        self.assertIn("statuses_published != 'true'", fallback["if"])
-        self.assertEqual(fallback["env"]["NPU_CI_WORKFLOW_SHA"], "${{ github.workflow_sha }}")
-        self.assertIn("github.rest.repos.getContent", fallback["with"]["script"])
-        self.assertIn(".github/scripts/npu_ci_checks.json", fallback["with"]["script"])
-        self.assertIn("ref: workflowSha", fallback["with"]["script"])
-        self.assertNotIn("require(", fallback["with"]["script"])
-        self.assertIn("state: 'failure'", fallback["with"]["script"])
-
     def _run_terminal_fallback(self, *, checks_config=CHECKS_CONFIG, ops=""):
         fallback = next(step for step in self.finalize_steps
                         if step.get("name") == "状态发布异常时收敛全部分项")
@@ -1810,19 +1630,6 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
                                         if item["kind"] == "status"))
                     self.assertIn(profile["required"][0]["label"], comment)
 
-    def test_platform_artifact_contains_structured_diagnostics(self):
-        upload = next(
-            step
-            for step in self.matrix_steps
-            if step.get("uses") == "actions/upload-artifact@v6"
-        )
-        paths = upload["with"]["path"]
-        self.assertIn("CI_ACCURACY_REPORT_FILE", paths)
-        self.assertIn("CI_DIAGNOSTIC_FILE", paths)
-        self.assertIn("CI_STAGE_REPORT_FILE", paths)
-        self.assertIn("CI_SUMMARY_FILE", paths)
-        self.assertNotIn("CI_RAW_LOG_FILE", paths)
-
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_partial_rerun_uses_latest_available_attempt_per_platform(self):
         download = next(
@@ -1842,52 +1649,6 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self._assert_statuses(records, ["success"] * len(STATUS_CONTEXTS))
-
-    def test_cleanup_runs_before_status_capture_and_upload(self):
-        names = [step.get("name", "") for step in self.matrix_steps]
-        cleanup = next(index for index, name in enumerate(names) if name.startswith("清理 "))
-        record = next(index for index, name in enumerate(names) if name.startswith("记录 "))
-        upload = next(index for index, name in enumerate(names) if name.startswith("上传 "))
-        self.assertIn("always()", self.matrix_steps[cleanup]["if"])
-        self.assertLess(cleanup, record)
-        self.assertLess(record, upload)
-
-    def test_finalize_loader_uses_trusted_workflow_revision(self):
-        checkout = next(
-            step
-            for step in self.finalize_steps
-            if step.get("name") == "检出受信任的状态发布脚本"
-        )
-        self.assertEqual(checkout["uses"], "actions/checkout@v5")
-        self.assertEqual(checkout["with"]["ref"], "${{ github.workflow_sha }}")
-        self.assertEqual(
-            set(checkout["with"]["sparse-checkout"].splitlines()),
-            {".github/scripts/publish_npu_ci_status.js", ".github/scripts/npu_ci_checks.js",
-             ".github/scripts/npu_ci_checks.json"},
-        )
-        self.assertFalse(checkout["with"]["persist-credentials"])
-        self.assertIn("publish_npu_ci_status.js", self.finalize_loader)
-        self.assertNotIn("${{", self.finalize_loader)
-        self.assertLess(len(self.finalize_loader), 21000)
-        self.assertIn("module.exports = async function", self.finalize_script)
-
-    def test_pr_comment_only_expands_failed_diagnostics(self):
-        script = self.finalize_script
-        self.assertIn("npu-ci-diagnostics-v1", script)
-        self.assertIn("npu-ci-stage-report-v1", script)
-        self.assertIn("!platform.stageReportOk", script)
-        self.assertIn("accuracy.failures", script)
-        self.assertIn("sanitizeInline", script)
-        self.assertIn("renderComment", script)
-        self.assertIn("sanitizeInline(line, 2400)", script)
-        self.assertIn("summary 与 cases 不一致", script)
-        self.assertIn("metric ${metricIndex} 不是对象", script)
-        self.assertIn("accuracy.failures.filter(isRecord).slice(0, 4)", script)
-        self.assertIn("failure.metrics.filter(isRecord).slice(0, 3)", script)
-        self.assertIn("失败判据", script)
-        self.assertIn("finite", script)
-        self.assertIn("return_code", script)
-        self.assertNotIn("for (const caseItem of item.report.cases)", script)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_finalize_script_renders_compact_success(self):

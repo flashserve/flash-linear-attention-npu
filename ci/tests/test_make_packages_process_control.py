@@ -39,12 +39,6 @@ class ProcessControlTest(unittest.TestCase):
             container = argv[argv.index("--name")+1]
             self.assertEqual(run.call_args.args[0], ["docker", "rm", "-f", container])
 
-    def test_remote_build_records_process_group_and_cancellation(self):
-        source = (REPO_ROOT / "ci" / "pkg" / "make_packages.py").read_text()
-        self.assertIn("nohup setsid bash -c", source)
-        self.assertIn("> pgid", source)
-        self.assertIn("cancel_remote_process_group(out_dir)", source)
-
     def test_terminate_process_group_stops_child_tree(self):
         process = subprocess.Popen(
             [

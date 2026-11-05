@@ -53,7 +53,7 @@ on:
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   prepare:
@@ -117,38 +117,13 @@ jobs:
             let ciMode = 'quick';
             let ops = '';
             let commentId = '';
-            const upsertComment = async (pr, body) => {
+            const createRunComment = async (pr, body) => {
               if (!prNumber || !pr) {
                 return '';
               }
               const marker = `<!-- npu-ci:pr=${prNumber}:sha=${pr.head.sha} -->`;
               const fullBody = `${marker}\n${body}`;
               try {
-                const comments = await github.paginate(github.rest.issues.listComments, {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  per_page: 100,
-                });
-                const existing = comments
-                  .filter((comment) =>
-                    comment.user &&
-                    comment.user.type === 'Bot' &&
-                    typeof comment.body === 'string' &&
-                    comment.body.includes(marker)
-                  )
-                  .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
-
-                if (existing) {
-                  await github.rest.issues.updateComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    comment_id: existing.id,
-                    body: fullBody,
-                  });
-                  return String(existing.id);
-                }
-
                 const { data: comment } = await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -157,7 +132,7 @@ jobs:
                 });
                 return String(comment.id);
               } catch (error) {
-                core.warning(`Unable to create or update PR comment: ${error.message}`);
+                core.warning(`Unable to create NPU CI run comment: ${error.message}`);
                 return '';
               }
             };
@@ -232,7 +207,7 @@ jobs:
                   ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
                   description: 'CI 文件变更仅允许仓库 Admin 作者提交', target_url: pr.html_url,
                 })));
-                await upsertComment(pr, `NPU CI 拒绝执行。\n\n原因及修改建议：${error.message}`);
+                await createRunComment(pr, `NPU CI 拒绝执行。\n\n原因及修改建议：${error.message}`);
                 core.setFailed(error.message);
                 return;
               }
@@ -295,7 +270,7 @@ jobs:
                 matchingExecutionRun && latestExecutionCi.state === 'success' &&
                 allContextsPassedInSameRun) {
               core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
-              commentId = await upsertComment(
+              commentId = await createRunComment(
                 pr,
                 [
                   `本次 NPU CI 请求已经在 \`${pr.head.sha}\` 上通过，不会重复运行。`,
@@ -324,7 +299,7 @@ jobs:
             if (matchingExecutionRun && latestExecutionCi.state === 'pending' &&
                 ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(matchingExecutionRun.status)) {
               core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
-              commentId = await upsertComment(
+              commentId = await createRunComment(
                 pr,
                 [
                   `NPU CI 已在验证 \`${pr.head.sha}\`，本次评论不会重复启动新任务。`,
@@ -367,7 +342,7 @@ jobs:
             if (pendingFailures.length > 0) {
               core.warning(`有 ${pendingFailures.length} 个 NPU CI 分项状态未能写入 pending；最终汇总会再次发布全部状态。`);
             }
-            commentId = await upsertComment(
+            commentId = await createRunComment(
               pr,
               [
                 `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
@@ -853,7 +828,7 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - name: 检出受信任的状态发布脚本
+      - name: 检出固定 workflow 版本的状态发布脚本
         uses: actions/checkout@v5
         with:
           ref: ${{ github.workflow_sha }}

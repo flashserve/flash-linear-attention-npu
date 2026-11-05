@@ -102,7 +102,9 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 
 带 `ops=` 的触发是编译定向诊断：只顺序执行第 01 项环境契约和第 02 项指定算子 OPP 构建，不执行 GDR 精度或后续安装分项；它只发布 `NPU CI / A2+A5 / 定向诊断`，不会写入或覆盖 01-06 正式门禁状态。用于合入门禁的运行必须省略 `ops`。
 
-如果当前 commit 的 6 个 aggregate context 已由同一次 A2+A5 run 通过，重复触发会被跳过，不会再次占用 NPU。同一 PR 的触发通过 workflow concurrency 串行化；同一 commit 已有 A2+A5 NPU CI 处于排队或运行中时，重复评论只会更新机器人评论为“已在运行”，不会启动新的 runner job。runner 宿主机还会用 `/tmp/fla-npu-ci-npu-<id>.lock` 对物理 NPU 加锁，避免多个任务抢同一张卡。
+如果当前 commit 的 6 个 aggregate context 已由同一次 A2+A5 run 通过，且模式、算子范围和 workflow 版本匹配，重复触发会跳过设备执行。同一 PR 通过 workflow concurrency 串行化，`cancel-in-progress: false`，重复评论不会取消正在运行的任务；排队请求进入 prepare 后再做去重。GitHub 默认保留一个运行和一个排队请求，较新的排队请求可能替换较早的请求。每次进入 prepare 并生成触发反馈时新建评论，汇总仅更新本次 `comment_id`，不覆盖前一次运行的评论。runner 宿主机还会用设备锁避免多个任务抢同一张卡。
+
+从 PR 到 A2/A5 的事件、YAML 来源、Secret 范围和每个 CI 文件的用途见 [`NPU-CI流程与文件说明.md`](NPU-CI流程与文件说明.md)。
 
 仓库管理员应将上述 6 个 context 和 `CI 契约测试` 都配置为 `main` 分支必需状态检查。分项 context 使用带 `A2+A5` 的独立名称，避免旧版状态或 A2-only 历史成功状态被误认为已经覆盖当前门禁。`CI 契约测试` 在普通 GitHub-hosted runner 上自动执行 Python、Node 状态发布逻辑及分阶段调度测试，用于保护 CI 代码本身。
 

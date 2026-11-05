@@ -109,9 +109,9 @@ flowchart TD
     Y --> F
     F --> G["准备 NPU CI：解析 PR 和 head commit"]
     G --> H{"当前 commit 是否已通过 NPU CI"}
-    H -- "是" --> I["更新机器人评论：已通过，不重复运行"]
+    H -- "是" --> I["新建本次评论：已通过，不重复运行"]
     H -- "否" --> J{"当前 commit 是否已有 NPU CI pending/running"}
-    J -- "是" --> K["更新机器人评论：已在运行，不重复启动"]
+    J -- "是" --> K["新建本次评论：已在运行，不重复启动"]
     J -- "否" --> L["写入 6 个分项 pending 状态"]
     L --> M["A2 runner / ascend910b"]
     L --> N["A5 runner / ascend950"]
@@ -723,11 +723,11 @@ NPU CI / A2+A5 / 06 报告与 commit 校验 pending
 
 成功后，上述 6 个状态都会变成 success。发生失败时，真正失败的分项会显示关键原因，依赖它的后续分项显示未执行；PR 评论和 Actions Summary 给出对应 `CI_STAGE` 复现命令。
 
-PR 评论区也会出现或更新一条机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。
+prepare 会新建本次运行的机器人评论，包含触发人、模式、Example ST 要求和 Actions run 链接。finalize 只更新本次保存的 comment_id，不覆盖前一次运行的评论。
 
 只有当前 head commit 的同一次 Actions run 已让 6 个 A2+A5 分项状态全部通过，重复触发才会跳过，不再占用 NPU。旧版状态或单平台状态不会命中该去重条件。
 
-如果当前 head commit 已经有 NPU CI 处于排队或运行中，重复评论也会跳过，不会再启动新的 self-hosted runner job。机器人评论会更新为“已在运行”，并指向已有 Actions run。
+同一 PR 的 NPU run 串行执行，重复评论不会取消正在运行的任务。后续请求先排队，进入 prepare 后检查是否已有同模式、范围和 workflow 版本的成功结果；匹配则跳过设备。GitHub 默认只保留一个 running 和一个 pending，更新的 pending 可能替换较早的 pending。每次实际进入 prepare 的触发反馈使用新评论。
 
 不同 PR 或不同 commit 的 NPU CI 可以同时被触发。每次触发都会分别调度一个 A2 job 和一个 A5 job；真正到各 runner 宿主机执行时，`ci/run_ci_container.sh` 会为选中的物理 NPU 加文件锁，workflow 将锁目录设为 `${CI_ROOT}/tmp/npu-locks`。如果所有候选 NPU 都被锁住，job 会等待并重试。
 
@@ -866,7 +866,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 ### 多个 NPU CI 同时触发怎么办
 
-同一 PR 的同一 head commit 如果已经有 NPU CI 在排队或运行，重复评论只会更新机器人评论，不会再启动新任务。
+同一 PR 的 NPU run 通过 `cancel-in-progress: false` 串行化，重复评论不会杀掉正在运行的任务。后续请求排队，进入 prepare 后复用匹配的成功结果；若前次失败则允许重试。prepare 新建本次评论，finalize 仅更新该评论。更完整的事件与文件说明见 [NPU CI 流程与文件说明](NPU-CI流程与文件说明.md)。
 
 不同 PR 或不同 commit 同时触发时，GitHub Actions 可能把它们分配给不同 self-hosted runner。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
 
