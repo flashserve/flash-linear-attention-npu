@@ -71,6 +71,11 @@ const github = {
             settings.branch_checks || require(process.env.NPU_CI_CHECKS_SCRIPT.replace(/\.js$/, '.json'))
           )).toString('base64')}};
         }
+        if (!settings.split_workflows &&
+            (request.path === '.github/workflows/npu-ci-a2.yml' ||
+             request.path === '.github/workflows/npu-ci-a5.yml')) {
+          throw Object.assign(new Error('Not Found'), {status:404});
+        }
         return {data:{type:'file',content:Buffer.from(settings.workflow_text ?? require('fs').readFileSync('.github/workflows/ci.yml','utf8')).toString('base64')}};
       },
       getCollaboratorPermissionLevel:async ({username}) => {

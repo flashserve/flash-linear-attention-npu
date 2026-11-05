@@ -61,9 +61,11 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
         self.assertIn("ref: targetRef", self.dispatch_script)
         self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
-        self.assertIn("auth.selectDispatchInputs(workflowText, {", self.dispatch_script)
+        self.assertIn("auth.selectDispatchInputs(", self.dispatch_script)
+        self.assertIn("dispatchRequest", self.dispatch_script)
 
-    def _run_dispatch(self, comment):
+    def _run_dispatch(self, comment, available_workflows=None):
+        available = available_workflows or '.github/workflows/ci.yml'
         encoded_workflow = base64.b64encode(
             CI_WORKFLOW_PATH.read_bytes()
         ).decode("ascii")
@@ -86,13 +88,27 @@ globalThis.github = {{
       getCollaboratorPermissionLevel: async () => ({{ data: {{ permission: 'admin' }} }}),
       getBranch: async (payload) => ({{ data: {{ name: payload.branch, protected: true, commit: {{sha: 'c'.repeat(40)}} }} }}),
       get: async () => ({{ data: {{ default_branch: 'main' }} }}),
-      getContent: async (payload) => payload.path === '.github/npu-ci-users.json' ? ({{ data: {{ type: 'file', content: Buffer.from(JSON.stringify({{users:['ci-admin']}})).toString('base64') }} }}) : ({{
-        data: {{
-          type: 'file',
-          encoding: 'base64',
-          content: '{encoded_workflow}',
-        }},
-      }}),
+      getContent: async (payload) => {{
+        if (payload.path === '.github/npu-ci-users.json') {{
+          return {{ data: {{ type: 'file', content: Buffer.from(JSON.stringify({{users:['ci-admin']}})).toString('base64') }} }};
+        }}
+        const available = (process.env.AVAILABLE_WORKFLOWS || '.github/workflows/ci.yml')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+        if (!available.includes(payload.path)) {{
+          const error = new Error('Not Found');
+          error.status = 404;
+          throw error;
+        }}
+        return {{
+          data: {{
+            type: 'file',
+            encoding: 'base64',
+            content: '{encoded_workflow}',
+          }},
+        }};
+      }},
     }},
     pulls: {{
       get: async () => ({{
@@ -130,6 +146,7 @@ globalThis.core = {{
             env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_authorization.js')
             env["NPU_CI_CHECKS_SCRIPT"] = str(REPO_ROOT / '.github/scripts/npu_ci_checks.js')
             env["RECORD_FILE"] = str(record_file)
+            env["AVAILABLE_WORKFLOWS"] = available
             completed = subprocess.run(
                 ["node"],
                 input=wrapper,
@@ -164,6 +181,37 @@ globalThis.core = {{
         self.assertEqual(dispatches, [])
         failures = [item["payload"] for item in records if item["kind"] == "failed"]
         self.assertIn("不支持", failures[0])
+
+    def test_comment_dispatches_split_platform_workflows_when_available(self):
+        completed, records = self._run_dispatch(
+            "/run-npu-ci quick",
+            available_workflows=(
+                ".github/workflows/ci.yml,"
+                ".github/workflows/npu-ci-a2.yml,"
+                ".github/workflows/npu-ci-a5.yml"
+            ),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
+        self.assertEqual(
+            [item["workflow_id"] for item in dispatches],
+            ["npu-ci-a2.yml", "npu-ci-a5.yml"],
+        )
+        for item in dispatches:
+            self.assertEqual(item["ref"], "main")
+            self.assertEqual(item["inputs"]["pr_number"], "527")
+            self.assertEqual(item["inputs"]["ci_mode"], "quick")
+
+    def test_comment_falls_back_to_legacy_combined_workflow(self):
+        completed, records = self._run_dispatch(
+            "/run-npu-ci quick",
+            available_workflows=".github/workflows/ci.yml",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
+        self.assertEqual([item["workflow_id"] for item in dispatches], ["ci.yml"])
 
 
 if __name__ == "__main__":
