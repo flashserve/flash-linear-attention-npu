@@ -43,12 +43,12 @@ from stable_build_policy import (  # noqa: E402
 from fla_npu_artifacts import (  # noqa: E402
     get_distribution_name,
     get_package_version,
+    get_soc,
     get_wheel_build_tag,
     get_wheel_platform_tag,
 )
 
 
-DEFAULT_SOC = "ascend910b"
 DEFAULT_VENDOR_NAME = "fla_npu"
 MIN_PYTHON = (3, 9)
 # Version promises are shared with scripts/check_npu_env.py and the wheel's
@@ -197,7 +197,7 @@ def _check_build_environment():
     except Exception as exc:
         failures.append(f"torch link libraries: {exc}")
 
-    print(f"[fla-npu build][OK] FLA_NPU_SOC={os.getenv('FLA_NPU_SOC', DEFAULT_SOC)}")
+    print(f"[fla-npu build][OK] FLA_NPU_SOC={get_soc()}")
     print(f"[fla-npu build][OK] FLA NPU vendor={DEFAULT_VENDOR_NAME}")
 
     if failures:
@@ -255,7 +255,7 @@ def _check_ops_filter(ops_filter):
 
 
 def _build_run_package():
-    soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
+    soc = get_soc()
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
     _check_ops_filter(ops_filter)
     build_out = REPO_ROOT / "build_out"

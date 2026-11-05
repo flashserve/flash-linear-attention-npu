@@ -883,8 +883,9 @@ package_static() {
 
 function process_soc_input(){
     local input_string="$1"
-    input_string=$(echo "$input_string" | sed 's/ascend950/ascend950/g')
     local value_part="${input_string#*=}"
+    # Normalize before validation, architecture selection and packaging.
+    value_part="${value_part,,}"
     ASCEND_SOC_UNITS="${value_part//,/;}"
 
     declare -A SOC_HARDWARE_MAP=(
@@ -1161,7 +1162,7 @@ while [[ $# -gt 0 ]]; do
         shift
         ;;
     -c|--compute-unit)
-        ascend_compute_unit="$2"
+        ascend_compute_unit="${2,,}"
         shift 2
         ;;
     --soc=*)
