@@ -729,7 +729,7 @@ prepare 会新建本次运行的机器人评论，包含触发人、模式、Exa
 
 同一 PR 的 NPU run 串行执行，重复评论不会取消正在运行的任务。后续请求先排队，进入 prepare 后检查是否已有同模式、范围和 workflow 版本的成功结果；匹配则跳过设备。GitHub 默认只保留一个 running 和一个 pending，更新的 pending 可能替换较早的 pending。每次实际进入 prepare 的触发反馈使用新评论。
 
-不同 PR 或不同 commit 的 NPU CI 可以同时被触发。每次触发都会分别调度一个 A2 job 和一个 A5 job；真正到各 runner 宿主机执行时，`ci/run_ci_container.sh` 会为选中的物理 NPU 加文件锁，workflow 将锁目录设为 `${CI_ROOT}/tmp/npu-locks`。如果所有候选 NPU 都被锁住，job 会等待并重试。
+不同 PR 的 NPU CI 可以并行调度；同一 PR 即使 head commit 不同也仍然串行。未被去重复用的运行会调度一个 A2 job 和一个 A5 job；真正到各 runner 宿主机执行时，`ci/run_ci_container.sh` 会为选中的物理 NPU 加文件锁，workflow 将锁目录设为 `${CI_ROOT}/tmp/npu-locks`。如果所有候选 NPU 都被锁住，job 会等待并重试。
 
 锁相关环境变量：
 
@@ -868,7 +868,7 @@ Custom OPP op_api lib: /usr/local/Ascend/.../opp/vendors/fla_npu_transformer/op_
 
 同一 PR 的 NPU run 通过 `cancel-in-progress: false` 串行化，重复评论不会杀掉正在运行的任务。后续请求排队，进入 prepare 后复用匹配的成功结果；若前次失败则允许重试。prepare 新建本次评论，finalize 仅更新该评论。更完整的事件与文件说明见 [NPU CI 流程与文件说明](NPU-CI流程与文件说明.md)。
 
-不同 PR 或不同 commit 同时触发时，GitHub Actions 可能把它们分配给不同 self-hosted runner。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
+不同 PR 同时执行时，GitHub Actions 可能把它们分配给不同 self-hosted runner；同一 PR 的不同 commit 仍排队串行。runner 宿主机会用 `flock` 给物理 NPU 加锁，避免多个任务抢同一张卡。workflow 使用的锁文件如下：
 
 ```text
 ${CI_ROOT}/tmp/npu-locks/fla-npu-ci-npu-0.lock
