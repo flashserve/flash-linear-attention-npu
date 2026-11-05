@@ -34,7 +34,8 @@ def read_public_version(repo_root: Path) -> str:
 
 
 def get_soc() -> str:
-    return os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
+    """Return the canonical spelling shared by build and preflight consumers."""
+    return os.getenv("FLA_NPU_SOC", DEFAULT_SOC).lower()
 
 
 def _run_git(repo_root: Path, args: list[str]) -> str:

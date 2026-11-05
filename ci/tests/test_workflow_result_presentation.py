@@ -3,6 +3,7 @@ import ast
 import hashlib
 import json
 import os
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -1107,15 +1108,16 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 tree = ast.parse(setup_path.read_text(encoding="utf-8"))
                 builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_build_run_package")
                 wheel_commands = []
+                artifacts = runpy.run_path(str(REPO_ROOT / "scripts/fla_npu_artifacts.py"))
                 namespace = {
                     "os": os, "shutil": shutil, "shlex": shlex,
-                    "REPO_ROOT": root, "DEFAULT_SOC": soc, "DEFAULT_VENDOR_NAME": "fla_npu",
+                    "REPO_ROOT": root, "get_soc": artifacts["get_soc"], "DEFAULT_VENDOR_NAME": "fla_npu",
                     "_check_ops_filter": lambda value: None,
                     "_run": lambda command, cwd: wheel_commands.append(command),
                     "_find_single_run_package": lambda: root / "fake.run",
                 }
                 exec(compile(ast.Module(body=[builder], type_ignores=[]), str(setup_path), "exec"), namespace)
-                with mock.patch.dict(os.environ, builds[0]["env"], clear=True):
+                with mock.patch.dict(os.environ, {**builds[0]["env"], "FLA_NPU_SOC": soc}, clear=True):
                     namespace["_build_run_package"]()
                 command = wheel_commands[0]
                 self.assertEqual(command[:2], ["bash", "build.sh"])
