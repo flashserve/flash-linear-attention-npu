@@ -26,6 +26,10 @@
      const aclTensor *actualCuSeqlens = nullptr;
      if (cuSeqlensOptional) {
          actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
+         if (actualCuSeqlens == nullptr) {
+             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens to tensor failed.");
+             return nullptr;
+         }
          const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
          const_cast<aclTensor *>(actualCuSeqlens)->SetViewFormat(Format::FORMAT_ND);
          const_cast<aclTensor *>(actualCuSeqlens)->SetOriginalFormat(Format::FORMAT_ND);
@@ -34,6 +38,10 @@
      const aclTensor *actualChunkIndices = nullptr;
      if (chunkIndicesOptional) {
          actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
+         if (actualChunkIndices == nullptr) {
+             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices to tensor failed.");
+             return nullptr;
+         }
          const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
          const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
          const_cast<aclTensor *>(actualChunkIndices)->SetOriginalFormat(Format::FORMAT_ND);
@@ -51,6 +59,5 @@
      }
      return xOut;
  }
- 
+
  }  // namespace l0op
- 

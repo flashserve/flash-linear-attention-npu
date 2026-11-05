@@ -12,10 +12,9 @@
      {
          this->Input("x")
              .ParamType(REQUIRED)
-             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
+             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT})
              .FormatList({ge::FORMAT_ND})
              .AutoContiguous();
- 
          this->Input("cu_seqlens")
              .ParamType(OPTIONAL)
              .DataTypeList({ge::DT_INT64})
@@ -30,7 +29,7 @@
  
          this->Output("x_out")
              .ParamType(REQUIRED)
-             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
+             .DataType({ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT})
              .FormatList({ge::FORMAT_ND})
              .AutoContiguous();
  
@@ -44,7 +43,7 @@
              .DynamicRankSupportFlag(false)
              .DynamicShapeSupportFlag(true)
              .NeedCheckSupportFlag(false)
-             .PrecisionReduceFlag(true)
+             .PrecisionReduceFlag(false)
              .ExtendCfgInfo("opFile.value", "solve_tri")
              .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
  
@@ -55,4 +54,3 @@
 };
  OP_ADD(SolveTri);
  }  // namespace ops
- 
