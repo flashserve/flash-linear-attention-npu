@@ -184,6 +184,11 @@ private:
         auto betaRaw = ub_.GetWithOffset<Beta>(kWindowTokens, kRawBaseOffset + bank * kRawBankBytes + kRawBetaOffset);
         auto gateRaw = ub_.GetWithOffset<Gate>(kWindowTokens, kRawBaseOffset + bank * kRawBankBytes + kRawGateOffset);
         const uint64_t keyHead = head / (td_.valueHeads / td_.keyHeads);
+        if (rawPending_[bank]) {
+            WaitFlag<HardEvent::V_MTE2>(rawFree_[bank]);
+            rawPending_[bank] = false;
+        }
+        CopyInput(bank, kQueryInput, start, keyHead, count);
         CopyWindowMeta(bank, batch, head, start, position, count);
         WaitFlag<HardEvent::MTE2_V>(ready_[bank][kQueryInput]);
         CopyInput(bank, kKeyInput, start, keyHead, count);
@@ -468,27 +473,11 @@ private:
         LoadState(static_cast<uint64_t>(initial), head);
         const float aLog = td_.hasALog ? aLog_.GetValue(head) : 0.0f;
         const float bias = td_.hasDtBias ? bias_.GetValue(head) : 0.0f;
-        const uint64_t keyHead = head / (td_.valueHeads / td_.keyHeads);
         uint32_t src = 0;
-        if (rawPending_[0]) {
-            WaitFlag<HardEvent::V_MTE2>(rawFree_[0]);
-            rawPending_[0] = false;
-        }
-        CopyInput(0, kQueryInput, start, keyHead, length < kWindowTokens ? length : kWindowTokens);
         for (uint32_t position = 0; position < length; position += kWindowTokens) {
             const uint32_t bank = (position / kWindowTokens) % kBufferCount;
             const uint32_t count = length - position < kWindowTokens ? length - position : kWindowTokens;
             PrepareWindow(bank, batch, head, start + position, position, count, aLog, bias);
-            if (position + count < length) {
-                const uint32_t nextCount =
-                    length - position - count < kWindowTokens ? length - position - count : kWindowTokens;
-                const uint32_t nextBank = 1 - bank;
-                if (rawPending_[nextBank]) {
-                    WaitFlag<HardEvent::V_MTE2>(rawFree_[nextBank]);
-                    rawPending_[nextBank] = false;
-                }
-                CopyInput(nextBank, kQueryInput, start + position + count, keyHead, nextCount);
-            }
             for (uint32_t token = 0; token < count; ++token) {
                 ProcessToken(token, head, start + position + token, src, 1 - src);
                 src = 1 - src;
