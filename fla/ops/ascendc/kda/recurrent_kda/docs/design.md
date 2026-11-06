@@ -85,14 +85,6 @@ o_t = S @ q_t
 - `torch_custom/fla_npu/csrc/src/stable_recurrent_kda.cpp` + `fla_npu/ops/ascendc/_stable.py`：提供解耦的 Python 入口（Stable-ABI 适配层），不注册 legacy `torch.ops.npu`；纯 ctypes 执行后端及回退已删除。
 - legacy `torch.ops.npu.npu_recurrent_kda` 不属于当前支持范围，不作为公共接口维护。
 
-### 5.1 非原位状态池
-
-不返回状态时，Stable ABI 直接把原始初值传给 ACLNN，两个状态标志均为 False，kernel 只读
-初始状态并返回注意力输出。ACLNN 所需的状态输出描述符复用输入状态的存储描述。
-
-返回状态时，包装层复制初始状态池后复用原位写回。返回池的 shape、dtype 和槽位规则与
-输入一致，未写槽位保留初值。该行为适用于 A2/A3/A5；CPU 标杆沿用完整状态池规则。
-
 ## 6. Tiling 设计
 
 ### 6.1 任务划分

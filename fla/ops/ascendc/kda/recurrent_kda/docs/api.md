@@ -135,13 +135,11 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
               safe_gate=False, lower_bound=None, state_v_first=False)
 ```
 
-稳定入口经 Stable-ABI 适配层调用 aclnn，不依赖 legacy `torch.ops.npu` 注册。调用时需要显式
-传入 `initial_state`。建议在创建 NPU 张量前导入 `fla_npu`，以便配套 OPP 和 op API 提前加载。
-满足约束的非连续 state 与 Q/K/V view 按实际 stride 和 storage offset 访问。
-
-原位模式直接更新输入状态，且在请求返回状态时返回同一个张量。非原位模式保持输入状态不变。
-`output_final_state=False` 时只读初始状态，第二返回值为 `None`；为 `True` 时返回独立状态池，
-与 `initial_state` 的 shape、dtype 一致，仍按原有槽位写回，未写槽位保留原值。
+稳定入口经 Stable-ABI 适配层调用 aclnn（纯 Python `ctypes` 直调保留为参考实现与回退），不依赖 legacy `torch.ops.npu` 注册。`initial_state=None` 仅在
+`inplace_final_state=False` 时有效，此时 wrapper 创建与 `state_v_first` 对应布局的全零 FP32 状态；原位模式必须
+显式传入 state。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
+同样保留 storage offset 并直接读取，不满足时自动连续化。原位模式返回与输入相同 storage/stride
+的 state，非原位模式保持输入不变并返回独立 state。
 
 ### 4.2 调用示例
 
