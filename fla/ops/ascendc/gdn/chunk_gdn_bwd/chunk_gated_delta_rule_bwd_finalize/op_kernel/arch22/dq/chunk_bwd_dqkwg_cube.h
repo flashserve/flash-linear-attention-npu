@@ -355,13 +355,16 @@ public:
             {
                 BlockMmadPart3 blockMmadPart3(resource);
                 for (uint32_t h = hBegin; h < hEnd; h++) {
-                    uint64_t dvOffset = params.qkvSequenceMajor
+                    // dO is kept in the internal head-major layout by the
+                    // composite launcher; v follows the public q/k/v layout.
+                    uint64_t doOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
+                    uint64_t vOffset = params.qkvSequenceMajor
                         ? (batchToken * params.HV + h) * params.V
                         : (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
 
-                    auto tensorDo = tla::MakeTensor(gmDo[dvOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
-                    auto tensorV = tla::MakeTensor(gmV[dvOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
+                    auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
+                    auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
                     auto tensorDs = tla::MakeTensor(gmDs[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
 
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
