@@ -43,7 +43,7 @@ constexpr uint32_t DATA_BLOCK_BYTES = 32;
 #define RKDA_ENABLE_ADD_FOLD_REDUCE  1
 #endif
 
-struct RKDAInitParams {
+struct RKDALegacyInitParams {
     GM_ADDR query;
     GM_ADDR key;
     GM_ADDR value;
@@ -59,10 +59,196 @@ struct RKDAInitParams {
     GM_ADDR finalState;
 };
 
+__simd_vf__ inline void MatVecMulRegbase(
+    __ubuf__ float *cubeAddr, __ubuf__ float *vecAddr, __ubuf__ float *dstAddr,
+    uint16_t rowNum, uint16_t colLoopTimes, uint32_t colLength, uint32_t alignK)
+{
+    RegTensor<float> cube;
+    RegTensor<float> vec;
+    RegTensor<float> dst;
+    MaskReg pregLoop;
+    for (uint16_t j = 0; j < colLoopTimes; j++) {
+        pregLoop = UpdateMask<float>(colLength);
+        DataCopy(vec, vecAddr + j * V_LENGTH);
+        for (uint16_t i = 0; i < rowNum; i ++) {
+            DataCopy(cube, cubeAddr + i * alignK + j * V_LENGTH);
+            Mul(dst, cube, vec, pregLoop);
+            DataCopy(dstAddr + i * alignK + j * V_LENGTH, dst, pregLoop);
+        }
+    }
+}
+
+__simd_vf__ inline void DecayMatVecReduce128Regbase(
+    __ubuf__ float *stateAddr, __ubuf__ float *gateAddr, __ubuf__ float *vecAddr,
+    __ubuf__ float *dstAddr, uint16_t rowNum, uint32_t alignK)
+{
+    RegTensor<float> state0;
+    RegTensor<float> state1;
+    RegTensor<float> gate0;
+    RegTensor<float> gate1;
+    RegTensor<float> vec0;
+    RegTensor<float> vec1;
+    RegTensor<float> product0;
+    RegTensor<float> product1;
+    RegTensor<float> sum;
+    MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+    DataCopy<float, LoadDist::DIST_DINTLV_B32>(gate0, gate1, gateAddr);
+    DataCopy<float, LoadDist::DIST_DINTLV_B32>(vec0, vec1, vecAddr);
+    for (uint16_t i = 0; i < rowNum; ++i) {
+        DataCopy<float, LoadDist::DIST_DINTLV_B32>(state0, state1, stateAddr + i * alignK);
+        Mul(state0, state0, gate0, pregFull);
+        Mul(state1, state1, gate1, pregFull);
+        Mul(product0, state0, vec0, pregFull);
+        Mul(product1, state1, vec1, pregFull);
+        Add(product0, product0, product1, pregFull);
+        ReduceSum(sum, product0, pregFull);
+        DataCopy<float, StoreDist::DIST_INTLV_B32>(
+            stateAddr + i * alignK, state0, state1, pregFull);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
+    }
+}
+
+__simd_vf__ inline void ProcessKQRegbase(
+    __ubuf__ float *cubeAddr, __ubuf__ float *vec1Addr, __ubuf__ float *vec2Addr,
+    __ubuf__ float *dst1Addr, __ubuf__ float *dst2Addr, uint16_t rowNum, uint16_t colLoopTimes,
+    uint32_t colLength, uint32_t alignK)
+{
+    RegTensor<float> cube;
+    RegTensor<float> vec1;
+    RegTensor<float> vec2;
+    RegTensor<float> dst1;
+    RegTensor<float> dst2;
+    MaskReg pregLoop;
+    for (uint16_t j = 0; j < colLoopTimes; j++) {
+        pregLoop = UpdateMask<float>(colLength);
+        DataCopy(vec1, vec1Addr + j * V_LENGTH);
+        DataCopy(vec2, vec2Addr + j * V_LENGTH);
+        for (uint16_t i = 0; i < rowNum; i ++) {
+            DataCopy<float, LoadDist::DIST_BRC_B32>(cube, cubeAddr + i);
+            DataCopy(dst1, dst1Addr + i * alignK + j * V_LENGTH);
+            Mul(cube, cube, vec1, pregLoop);
+            Add(dst1, dst1, cube, pregLoop);
+            Mul(dst2, dst1, vec2, pregLoop);
+            DataCopy(dst1Addr + i * alignK + j * V_LENGTH, dst1, pregLoop);
+            DataCopy(dst2Addr + i * alignK + j * V_LENGTH, dst2, pregLoop);
+        }
+    }
+}
+
+template <bool useSigmoid, bool allowNeg>
+__simd_vf__ inline void ProcessDeltaKQReduce128Regbase(
+    __ubuf__ float *dotAddr, __ubuf__ float *vAddr, __ubuf__ float *betaAddr,
+    __ubuf__ float *kAddr, __ubuf__ float *stateAddr, __ubuf__ float *qAddr,
+    __ubuf__ float *attnAddr, uint16_t rowNum, uint32_t alignK)
+{
+    RegTensor<float> delta;
+    RegTensor<float> value;
+    RegTensor<float> beta;
+    RegTensor<float> k0;
+    RegTensor<float> k1;
+    RegTensor<float> q0;
+    RegTensor<float> q1;
+    RegTensor<float> state0;
+    RegTensor<float> state1;
+    RegTensor<float> update;
+    RegTensor<float> dot0;
+    RegTensor<float> dot1;
+    RegTensor<float> sum;
+    RegTensor<float> one;
+    MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+    DataCopy<float, LoadDist::DIST_BRC_B32>(beta, betaAddr);
+    if constexpr (useSigmoid) {
+        Muls(beta, beta, -1.0f, pregFull);
+        Exp(beta, beta, pregFull);
+        Adds(beta, beta, 1.0f, pregFull);
+        Duplicate(one, 1.0f);
+        Div(beta, one, beta, pregFull);
+        if constexpr (allowNeg) {
+            Muls(beta, beta, 2.0f, pregFull);
+        }
+    }
+    DataCopy<float, LoadDist::DIST_DINTLV_B32>(k0, k1, kAddr);
+    DataCopy<float, LoadDist::DIST_DINTLV_B32>(q0, q1, qAddr);
+    for (uint16_t i = 0; i < rowNum; ++i) {
+        DataCopy<float, LoadDist::DIST_BRC_B32>(delta, dotAddr + i);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(value, vAddr + i);
+        Sub(delta, value, delta, pregFull);
+        Mul(delta, delta, beta, pregFull);
+        DataCopy<float, LoadDist::DIST_DINTLV_B32>(state0, state1, stateAddr + i * alignK);
+        Mul(update, delta, k0, pregFull);
+        Add(state0, state0, update, pregFull);
+        Mul(dot0, state0, q0, pregFull);
+
+        Mul(update, delta, k1, pregFull);
+        Add(state1, state1, update, pregFull);
+        Mul(dot1, state1, q1, pregFull);
+
+        Add(dot0, dot0, dot1, pregFull);
+        ReduceSum(sum, dot0, pregFull);
+        DataCopy<float, StoreDist::DIST_INTLV_B32>(
+            stateAddr + i * alignK, state0, state1, pregFull);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(attnAddr + i, sum, pregFull);
+    }
+}
+
+__simd_vf__ inline void ReduceSum64Regbase(
+    __ubuf__ float *dstAddr, __ubuf__ float *srcAddr, uint16_t rowNum,
+    uint32_t colLength, uint32_t alignK)
+{
+    RegTensor<float> src;
+    RegTensor<float> sum;
+    MaskReg pregLoop = UpdateMask<float>(colLength);
+    for (uint16_t i = 0;i < rowNum;i ++) {
+        DataCopy(src, srcAddr + i * alignK);
+        ReduceSum(sum, src, pregLoop);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregLoop);
+    }
+}
+
+__simd_vf__ inline void ReduceSum128Regbase(
+    __ubuf__ float *dstAddr, __ubuf__ float *srcAddr, uint16_t rowNum,
+    uint32_t colLength, uint32_t alignK)
+{
+    RegTensor<float> src1;
+    RegTensor<float> src2;
+    RegTensor<float> sum;
+    MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+    MaskReg pregLoop = UpdateMask<float>(colLength);
+    for (uint16_t i = 0;i < rowNum;i ++) {
+        DataCopy(src1, srcAddr + i * alignK);
+        DataCopy(src2, srcAddr + i * alignK + V_LENGTH);
+        Add<float, MaskMergeMode::MERGING>(src1, src1, src2, pregLoop);
+        ReduceSum(sum, src1, pregFull);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
+    }
+}
+
+__simd_vf__ inline void ReduceSumRegbase(
+    __ubuf__ float *dstAddr, __ubuf__ float *srcAddr, uint16_t rowNum,
+    uint16_t colLoopTimes, uint32_t alignK)
+{
+    RegTensor<float> src;
+    RegTensor<float> tmp;
+    RegTensor<float> sum;
+    MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
+    MaskReg pregLoop;
+    for (uint16_t i = 0;i < rowNum;i ++) {
+        uint32_t colLength = alignK;
+        Duplicate(tmp, 0.0f);
+        for (uint16_t j = 0; j < colLoopTimes; j++) {
+            pregLoop = UpdateMask<float>(colLength);
+            DataCopy(src, srcAddr + i * alignK + j * V_LENGTH);
+            Add<float, MaskMergeMode::MERGING>(tmp, tmp, src, pregLoop);
+        }
+        ReduceSum(sum, tmp, pregFull);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
+    }
+}
+
 template <typename inType, typename outType, typename stateType>
-class RKDA {
+class RKDALegacy {
 public:
-    __aicore__ inline explicit RKDA(const RecurrentKdaTilingData *tilingData)
+    __aicore__ inline explicit RKDALegacy(const RecurrentKdaTilingData *tilingData)
     {
         B_ = tilingData->b;
         T_ = tilingData->t;
@@ -120,7 +306,7 @@ public:
         eventMte3ToVInitialized_ = false;
     }
 
-    __aicore__ inline void Init(const RKDAInitParams &initParams, TPipe *pipe)
+    __aicore__ inline void Init(const RKDALegacyInitParams &initParams, TPipe *pipe)
     {
         uint64_t blockDim = GetBlockNum();
         blockIdx = GetBlockIdx();
@@ -132,7 +318,7 @@ public:
         InitLocalBuffers();
     }
 
-    __aicore__ inline void SetGlobalTensors(const RKDAInitParams &initParams)
+    __aicore__ inline void SetGlobalTensors(const RKDALegacyInitParams &initParams)
     {
         queryGm_.SetGlobalBuffer((__gm__ inType *)initParams.query);
         keyGm_.SetGlobalBuffer((__gm__ inType *)initParams.key);
@@ -510,6 +696,8 @@ private:
             PipeBarrier<PIPE_V>();
             ReduceSumDispatch(deltaInUb, broadTmpInUb, 1);
             PipeBarrier<PIPE_V>();
+            Adds(deltaInUb, deltaInUb, 1e-6f, 1);
+            PipeBarrier<PIPE_V>();
             Sqrt(deltaInUb, deltaInUb, 1);
             PipeBarrier<PIPE_V>();
             SyncVToS();
@@ -761,22 +949,7 @@ private:
         uint16_t rowNum = static_cast<uint16_t>(rows);
         uint16_t colLoopTimes = static_cast<uint16_t>(Ceil(alignK_, V_LENGTH));
         uint32_t colLength = alignK_;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> cube;
-            RegTensor<float> vec;
-            RegTensor<float> dst;
-            MaskReg pregLoop;
-            for (uint16_t j = 0; j < colLoopTimes; j++) {
-                pregLoop = UpdateMask<float>(colLength);
-                DataCopy(vec, vecAddr + j * V_LENGTH);
-                for (uint16_t i = 0; i < rowNum; i ++) {
-                    DataCopy(cube, cubeAddr + i * alignK_ + j * V_LENGTH);
-                    Mul(dst, cube, vec, pregLoop);
-                    DataCopy(dstAddr + i * alignK_ + j * V_LENGTH, dst, pregLoop);
-                }
-            }
-        }
+        MatVecMulRegbase(cubeAddr, vecAddr, dstAddr, rowNum, colLoopTimes, colLength, alignK_);
     }
 
     __aicore__ inline void DecayMatVecReduce128(LocalTensor<float> &stateTensor,
@@ -789,33 +962,7 @@ private:
         __ubuf__ float *vecAddr = (__ubuf__ float *)vecTensor.GetPhyAddr();
         __ubuf__ float *dstAddr = (__ubuf__ float *)dstTensor.GetPhyAddr();
         uint16_t rowNum = static_cast<uint16_t>(rows);
-        __VEC_SCOPE__
-        {
-            RegTensor<float> state0;
-            RegTensor<float> state1;
-            RegTensor<float> gate0;
-            RegTensor<float> gate1;
-            RegTensor<float> vec0;
-            RegTensor<float> vec1;
-            RegTensor<float> product0;
-            RegTensor<float> product1;
-            RegTensor<float> sum;
-            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
-            DataCopy<float, LoadDist::DIST_DINTLV_B32>(gate0, gate1, gateAddr);
-            DataCopy<float, LoadDist::DIST_DINTLV_B32>(vec0, vec1, vecAddr);
-            for (uint16_t i = 0; i < rowNum; ++i) {
-                DataCopy<float, LoadDist::DIST_DINTLV_B32>(state0, state1, stateAddr + i * alignK_);
-                Mul(state0, state0, gate0, pregFull);
-                Mul(state1, state1, gate1, pregFull);
-                Mul(product0, state0, vec0, pregFull);
-                Mul(product1, state1, vec1, pregFull);
-                Add(product0, product0, product1, pregFull);
-                ReduceSum(sum, product0, pregFull);
-                DataCopy<float, StoreDist::DIST_INTLV_B32>(
-                    stateAddr + i * alignK_, state0, state1, pregFull);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
-            }
-        }
+        DecayMatVecReduce128Regbase(stateAddr, gateAddr, vecAddr, dstAddr, rowNum, alignK_);
     }
 
     __aicore__ inline void ProcessKQ(const LocalTensor<float> &cubeTensor, const LocalTensor<float> &vec1Tensor,
@@ -831,29 +978,7 @@ private:
         uint16_t rowNum = static_cast<uint16_t>(rows);
         uint16_t colLoopTimes = static_cast<uint16_t>(Ceil(alignK_, V_LENGTH));
         uint32_t colLength = alignK_;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> cube;
-            RegTensor<float> vec1;
-            RegTensor<float> vec2;
-            RegTensor<float> dst1;
-            RegTensor<float> dst2;
-            MaskReg pregLoop;
-            for (uint16_t j = 0; j < colLoopTimes; j++) {
-                pregLoop = UpdateMask<float>(colLength);
-                DataCopy(vec1, vec1Addr + j * V_LENGTH);
-                DataCopy(vec2, vec2Addr + j * V_LENGTH);
-                for (uint16_t i = 0; i < rowNum; i ++) {
-                    DataCopy<float, LoadDist::DIST_BRC_B32>(cube, cubeAddr + i);
-                    DataCopy(dst1, dst1Addr + i * alignK_ + j * V_LENGTH);
-                    Mul(cube, cube, vec1, pregLoop);
-                    Add(dst1, dst1, cube, pregLoop);
-                    Mul(dst2, dst1, vec2, pregLoop);
-                    DataCopy(dst1Addr + i * alignK_ + j * V_LENGTH, dst1, pregLoop);
-                    DataCopy(dst2Addr + i * alignK_ + j * V_LENGTH, dst2, pregLoop);
-                }
-            }
-        }
+        ProcessKQRegbase(cubeAddr, vec1Addr, vec2Addr, dst1Addr, dst2Addr, rowNum, colLoopTimes, colLength, alignK_);
     }
 
     template <bool useSigmoid, bool allowNeg>
@@ -876,57 +1001,7 @@ private:
         __ubuf__ float *qAddr = (__ubuf__ float *)qTensor.GetPhyAddr();
         __ubuf__ float *attnAddr = (__ubuf__ float *)attnTensor.GetPhyAddr();
         uint16_t rowNum = static_cast<uint16_t>(rows);
-        __VEC_SCOPE__
-        {
-            RegTensor<float> delta;
-            RegTensor<float> value;
-            RegTensor<float> beta;
-            RegTensor<float> k0;
-            RegTensor<float> k1;
-            RegTensor<float> q0;
-            RegTensor<float> q1;
-            RegTensor<float> state0;
-            RegTensor<float> state1;
-            RegTensor<float> update;
-            RegTensor<float> dot0;
-            RegTensor<float> dot1;
-            RegTensor<float> sum;
-            RegTensor<float> one;
-            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
-            DataCopy<float, LoadDist::DIST_BRC_B32>(beta, betaAddr);
-            if constexpr (useSigmoid) {
-                Muls(beta, beta, -1.0f, pregFull);
-                Exp(beta, beta, pregFull);
-                Adds(beta, beta, 1.0f, pregFull);
-                Duplicate(one, 1.0f);
-                Div(beta, one, beta, pregFull);
-                if constexpr (allowNeg) {
-                    Muls(beta, beta, 2.0f, pregFull);
-                }
-            }
-            DataCopy<float, LoadDist::DIST_DINTLV_B32>(k0, k1, kAddr);
-            DataCopy<float, LoadDist::DIST_DINTLV_B32>(q0, q1, qAddr);
-            for (uint16_t i = 0; i < rowNum; ++i) {
-                DataCopy<float, LoadDist::DIST_BRC_B32>(delta, dotAddr + i);
-                DataCopy<float, LoadDist::DIST_BRC_B32>(value, vAddr + i);
-                Sub(delta, value, delta, pregFull);
-                Mul(delta, delta, beta, pregFull);
-                DataCopy<float, LoadDist::DIST_DINTLV_B32>(state0, state1, stateAddr + i * alignK_);
-                Mul(update, delta, k0, pregFull);
-                Add(state0, state0, update, pregFull);
-                Mul(dot0, state0, q0, pregFull);
-
-                Mul(update, delta, k1, pregFull);
-                Add(state1, state1, update, pregFull);
-                Mul(dot1, state1, q1, pregFull);
-
-                Add(dot0, dot0, dot1, pregFull);
-                ReduceSum(sum, dot0, pregFull);
-                DataCopy<float, StoreDist::DIST_INTLV_B32>(
-                    stateAddr + i * alignK_, state0, state1, pregFull);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(attnAddr + i, sum, pregFull);
-            }
-        }
+        ProcessDeltaKQReduce128Regbase<useSigmoid, allowNeg>(dotAddr, vAddr, betaAddr, kAddr, stateAddr, qAddr, attnAddr, rowNum, alignK_);
     }
 
     __aicore__ inline void ProcessDeltaKQReduce128Dispatch(const LocalTensor<float> &dotTensor,
@@ -958,61 +1033,19 @@ private:
     __aicore__ inline void ReduceSum64(__ubuf__ float* dstAddr, __ubuf__ float* srcAddr, uint16_t rowNum)
     {
         uint32_t colLength = alignK_;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> src;
-            RegTensor<float> sum;
-            MaskReg pregLoop = UpdateMask<float>(colLength);
-            for (uint16_t i = 0;i < rowNum;i ++) {
-                DataCopy(src, srcAddr + i * alignK_);
-                ReduceSum(sum, src, pregLoop);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregLoop);
-            }
-        }
+        ReduceSum64Regbase(dstAddr, srcAddr, rowNum, colLength, alignK_);
     }
 
     __aicore__ inline void ReduceSum128(__ubuf__ float* dstAddr, __ubuf__ float* srcAddr, uint16_t rowNum)
     {
         uint32_t colLength = alignK_ - V_LENGTH;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> src1;
-            RegTensor<float> src2;
-            RegTensor<float> sum;
-            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
-            MaskReg pregLoop = UpdateMask<float>(colLength);
-            for (uint16_t i = 0;i < rowNum;i ++) {
-                DataCopy(src1, srcAddr + i * alignK_);
-                DataCopy(src2, srcAddr + i * alignK_ + V_LENGTH);
-                Add<float, MaskMergeMode::MERGING>(src1, src1, src2, pregLoop);
-                ReduceSum(sum, src1, pregFull);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
-            }
-        }
+        ReduceSum128Regbase(dstAddr, srcAddr, rowNum, colLength, alignK_);
     }
 
     __aicore__ inline void ReduceSumVF(__ubuf__ float* dstAddr, __ubuf__ float* srcAddr, uint16_t rowNum)
     {
         uint16_t colLoopTimes = static_cast<uint16_t>(Ceil(alignK_, V_LENGTH));
-        __VEC_SCOPE__
-        {
-            RegTensor<float> src;
-            RegTensor<float> tmp;
-            RegTensor<float> sum;
-            MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
-            MaskReg pregLoop;
-            for (uint16_t i = 0;i < rowNum;i ++) {
-                uint32_t colLength = alignK_;
-                Duplicate(tmp, 0.0f);
-                for (uint16_t j = 0; j < colLoopTimes; j++) {
-                    pregLoop = UpdateMask<float>(colLength);
-                    DataCopy(src, srcAddr + i * alignK_ + j * V_LENGTH);
-                    Add<float, MaskMergeMode::MERGING>(tmp, tmp, src, pregLoop);
-                }
-                ReduceSum(sum, tmp, pregFull);
-                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstAddr + i, sum, pregFull);
-            }
-        }
+        ReduceSumRegbase(dstAddr, srcAddr, rowNum, colLoopTimes, alignK_);
     }
 
     __aicore__ inline void ReduceSumDispatch(LocalTensor<float> &dstTensor, LocalTensor<float> &srcTensor,
