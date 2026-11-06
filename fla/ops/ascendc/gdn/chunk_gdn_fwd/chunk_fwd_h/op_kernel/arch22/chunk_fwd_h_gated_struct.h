@@ -8,7 +8,7 @@
  */
 
 /*!
- * \file chunk_gated_delta_rule_fwd_h_struct.h
+ * \file chunk_fwd_h_gated_struct.h
  * \brief Plain tiling data struct for chunk_gated_delta_rule_fwd_h.
  *
  * The aclnn/ascendc framework auto-generates a kernel-side tiling struct named
