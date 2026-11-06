@@ -665,8 +665,7 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
         const uint64_t offset = ((batch * tiling_.T + token) * heads + head) * dim;
         DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)),
                              0, static_cast<uint32_t>((heads - 1) * dim * sizeof(kType)), 0};
-        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
-        DataCopyPad(outTensor[offset], srcTensor, cp, pad);
+        DataCopyPad(outTensor[offset], srcTensor, cp);
     }
     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx_]);
     curOutputPingPong_ ^= 1U;

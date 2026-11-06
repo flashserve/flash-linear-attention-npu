@@ -618,9 +618,8 @@ __aicore__ inline void A2FinalizeQkTail(
                 const DataCopyExtParams outputCopy{
                     static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
                     static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0};
-                const AscendC::DataCopyPadExtParams<QT> outputPad{false, 0, 0, 0};
-                AscendC::DataCopyPad(dqGm[qkPublicOffset], dqInput, outputCopy, outputPad);
-                AscendC::DataCopyPad(dkGm[qkPublicOffset], dkInput, outputCopy, outputPad);
+                AscendC::DataCopyPad(dqGm[qkPublicOffset], dqInput, outputCopy);
+                AscendC::DataCopyPad(dkGm[qkPublicOffset], dkInput, outputCopy);
             } else {
                 AscendC::DataCopy(dqGm[offset], dqInput, count);
                 AscendC::DataCopy(dkGm[offset], dkInput, count);

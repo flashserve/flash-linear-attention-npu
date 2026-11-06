@@ -285,8 +285,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsOu
     }
     DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(DataType)),
                          0, static_cast<uint32_t>((heads - 1) * K * sizeof(DataType)), 0};
-    DataCopyPadExtParams<DataType> pad{false, 0, 0, 0};
-    DataCopyPad(dst[offset], src, cp, pad);
+    DataCopyPad(dst[offset], src, cp);
 }
 
 template <typename DataType, typename GType>
