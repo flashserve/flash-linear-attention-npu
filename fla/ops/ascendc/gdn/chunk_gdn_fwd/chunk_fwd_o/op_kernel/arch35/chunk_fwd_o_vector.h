@@ -26,17 +26,6 @@ constexpr CastTrait CHUNK_FWD_O_FP32_TO_B16_PACK = {
     AscendC::RoundMode::CAST_RINT,
 };
 
-__simd_callee__ inline void LoadGateFloatPair(RegTensor<float> &zero, RegTensor<float> &one, __ubuf__ float *src)
-{
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(zero, one, src);
-}
-
-__simd_callee__ inline void StoreGateFloatPair(__ubuf__ float *dst, RegTensor<float> &zero, RegTensor<float> &one,
-                                              MaskReg &maskF32)
-{
-    StoreAlign<float, StoreDist::DIST_INTLV_B32>(dst, zero, one, maskF32);
-}
-
 __simd_vf__ inline void PadGateInput64VF(__ubuf__ float *gAddr, uint16_t validRows)
 {
     RegTensor<float> gReg;
@@ -57,23 +46,22 @@ __simd_vf__ inline void Stage1Gate64VF(__ubuf__ float *gateAAddr, __ubuf__ float
     constexpr uint16_t kBt = static_cast<uint16_t>(CHUNK_FWD_O_A5_BT);
     MaskReg maskFull32 = CreateMask<float, MaskPattern::ALL>();
 
-    RegTensor<float> gZeroReg;
-    RegTensor<float> gOneReg;
+    // One row and the gate scratch each contain exactly one VL (64 FP32).
+    // Interleaved register-pair loads/stores transfer 128 FP32 and overrun both.
+    RegTensor<float> gReg;
     RegTensor<float> gRowReg;
-    RegTensor<float> rowGateZeroReg;
-    RegTensor<float> rowGateOneReg;
+    RegTensor<float> rowGateReg;
 
-    LoadGateFloatPair(gZeroReg, gOneReg, gAddr);
+    LoadAlign(gReg, gAddr);
 
     for (uint16_t row = 0; row < kBt; ++row) {
-        LoadIn<float, true>(gRowReg, gAddr + row);
-        SubFloatTwoReg(rowGateZeroReg, rowGateOneReg, gRowReg, gRowReg, gZeroReg, gOneReg, maskFull32);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(gRowReg, gAddr + row);
+        Sub(rowGateReg, gRowReg, gReg, maskFull32);
         if constexpr (UseExp2) {
-            Muls(rowGateZeroReg, rowGateZeroReg, CHUNK_FWD_O_LN2, maskFull32);
-            Muls(rowGateOneReg, rowGateOneReg, CHUNK_FWD_O_LN2, maskFull32);
+            Muls(rowGateReg, rowGateReg, CHUNK_FWD_O_LN2, maskFull32);
         }
-        ExpFloatTwoReg(rowGateZeroReg, rowGateOneReg, rowGateZeroReg, rowGateOneReg, maskFull32);
-        StoreGateFloatPair(gateAAddr + static_cast<uint32_t>(row) * kBt, rowGateZeroReg, rowGateOneReg, maskFull32);
+        Exp(rowGateReg, rowGateReg, maskFull32);
+        StoreAlign(gateAAddr + static_cast<uint32_t>(row) * kBt, rowGateReg, maskFull32);
     }
 }
 
