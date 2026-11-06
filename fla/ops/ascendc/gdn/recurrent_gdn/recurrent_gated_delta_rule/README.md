@@ -84,7 +84,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 | `value` | 输入 | 必选 | 公式中的 $v$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv, Dv)` | 支持 |
 | `beta` | 输入 | 必选 | 公式中的 $\beta$；不支持空 Tensor | - | `BFLOAT16` | `ND` | `(T, Nv)` | 支持 |
 | `stateRef` | 输入&输出 | 必选 | 状态矩阵 $S$，算子执行后原地更新；不支持空 Tensor | - | `BFLOAT16`、`FLOAT32` | `ND` | `(BlockNum, Nv, Dv, Dk)` | CANN 版本大于等于 9.1.0 后支持，其余版本不支持 |
-| `actualSeqLengths` | 输入 | 必选 | 序列长度；不支持空 Tensor，首元素代表无效前缀长度，其余 $B$ 个元素代表各 batch 的有效序列长度 | 首元素不小于 0，其余元素取值范围 `[0, 8]`，全部 $B+1$ 个元素之和等于 $T$ | `INT32` | `ND` | `(B+1,)` | 支持 |
+| `actualSeqLengths` | 输入 | 必选 | 序列长度；不支持空 Tensor，首元素代表无效前缀长度，其余 $B$ 个元素代表各 batch 的有效序列长度 | 首元素不小于 0，其余元素取值范围 `[0, 16]`，全部 $B+1$ 个元素之和等于 $T$ | `INT32` | `ND` | `(B+1,)` | 支持 |
 | `ssmStateIndices` | 输入 | 必选 | 输入序列到状态矩阵的映射索引，`state[ssmStateIndices[i]]` 表示第 $i$ 个 token 对应的状态块；不支持空 Tensor | 取值范围 `[0, BlockNum)`，且所有元素互不重复 | `INT32` | `ND` | `(T,)` | 支持 |
 | `g` | 输入 | 可选 | 标量衰减系数 $\alpha_t = e^g$ | 传 `nullptr` 时等价于全 0（$\alpha_t = 1$，即无标量衰减） | `FLOAT32` | `ND` | `(T, Nv)` | 支持 |
 | `gk` | 输入 | 可选 | 逐维衰减系数 $\alpha_{kt} = e^{gk}$ | 传 `nullptr` 时等价于全 0（$\alpha_{kt} = \mathbf{1}$，即无逐维衰减） | `FLOAT32` | `ND` | `(T, Nv, Dk)` | 支持 |
@@ -115,7 +115,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 - `ssmStateIndices` 为长度 $T$ 的一维 INT32 张量，取值范围 `[0, BlockNum)`，且所有元素互不重复。
 - `query/key/value/beta/out` 仅支持 `BFLOAT16`。
 - $N_k$、$N_v$ 不超过 256，$D_k$、$D_v$ 仅支持 128，且 $N_v$ 必须是 $N_k$ 的整数倍。
-- 无效前缀长度不得为负；每个序列的有效 token 数 $L_i$（即 `actualSeqLengths[i+1]`，$i \in [0, B)$）须满足 $0 \le L_i \le 8$。
+- 无效前缀长度不得为负；每个序列的有效 token 数 $L_i$（即 `actualSeqLengths[i+1]`，$i \in [0, B)$）须满足 $0 \le L_i \le 16$。
 
 ### 3.5 补充说明
 
@@ -232,7 +232,7 @@ def test_recurrent_gated_delta_rule_varlen():
     ssm_state_indices  = torch.arange(T, dtype=torch.int32).to(device)
 
     # 各序列实际接受的 token 数不同（投机推理验证结果）
-    # 需满足 num_accepted_tokens[i] <= actual_seq_lengths[i + 1] <= 8
+    # 需满足 num_accepted_tokens[i] <= actual_seq_lengths[i + 1] <= 16
     num_accepted_tokens = torch.tensor([2, 1, 2, 1], dtype=torch.int32).to(device)
 
     out = recurrent_gated_delta_rule(
@@ -279,3 +279,5 @@ recurrent_gated_delta_rule/
     ├── recurrent_gated_delta_rule.h
     └── recurrent_gated_delta_rule.cpp
 ```
+
+超过 16 的有效序列长度不受支持，调用方必须在调用前校验。当前 kernel 遇到此输入会提前返回，不能依赖输出有效，也不能将其视为保证返回参数错误的接口。

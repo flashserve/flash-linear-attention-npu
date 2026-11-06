@@ -11,7 +11,7 @@
 - `ssmStateIndices` 为 `(T,)` 的 INT32 张量，取值范围为 `[0, BlockNum)`，且所有元素互不重复。
 - `g` 如提供，shape 为 `(T, Nv)`；`gk` 如提供，shape 为 `(T, Nv, Dk)`。两者均为 FP32，且至少提供一个。
 - `numAcceptedTokens` 如提供，shape 为 `(B,)`，每项取值范围为 `[1, actualSeqLengths[i+1]]`。
-- `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk=128`、`Dv=128`；每条有效序列长度不超过 8。
+- `Nv` 必须是 `Nk` 的整数倍；`Nk <= 256`、`Nv <= 256`、`Dk=128`、`Dv=128`；每条有效序列长度不超过 16。
 - 泛化矩阵覆盖连续 state、transpose 非连续 state、head padding、block padding、复合 padding 和 storage offset；同时覆盖 Q/K/V/gate/metadata 的合法非连续视图。
 
 ## 标杆来源
@@ -83,3 +83,5 @@ python3 tests/atk/recurrent_gated_delta_rule/gen_recurrent_gated_delta_rule.py -
 GEN_CASES_DTYPE_NUMBERS=200 \
 bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule -scope=gen_cases
 ```
+
+超过 16 的有效序列长度不受支持，调用方必须在调用前校验。当前 kernel 遇到此输入会提前返回，不能依赖输出有效，也不能将其视为保证返回参数错误的接口。
