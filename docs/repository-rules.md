@@ -17,9 +17,11 @@
 
 ## 合入检视
 
-PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能力处理，不再设置自定义检视 status。仓库管理员应在分支保护中配置 required approvals 为 `2`，并保留 stale review dismiss 和 last push approval。
+PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能力处理，不再设置自定义检视 status。
 
-`.github/CODEOWNERS` 用于 GitHub 原生 Code Owners review。全仓默认请求维护账号检视，ABI 敏感路径会在 `CODEOWNERS` 末尾覆盖为仅 `@weinachuan`。
+仓库级 branch ruleset `Code Owners review` 以 `~ALL` 为目标，自动覆盖既有分支和后续新建分支，并启用 required Code Owners review。`.github/CODEOWNERS` 的全仓 Code Owner 池固定为 `@weinachuan`、`@weiwei-612`、`@chen-linxin`、`@Ensley0304`；ABI 敏感路径会在 `CODEOWNERS` 末尾覆盖为仅 `@weinachuan`。从已更新分支新建的分支会继承该配置。
+
+required Code Owners review 保证每个 PR 至少获得一名 Code Owner approval；其他具备仓库 `write` 权限的账号仍可按 GitHub 原生规则提供普通 approval，但不会被加入 Code Owner 池。
 
 ## ABI 兼容性
 
