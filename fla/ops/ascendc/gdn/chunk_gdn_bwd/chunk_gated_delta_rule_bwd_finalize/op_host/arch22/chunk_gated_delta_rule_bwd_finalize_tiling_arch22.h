@@ -117,7 +117,7 @@ ge::graphStatus ValidateShape(gert::TilingContext *, const char *parameter,
 
 ge::graphStatus ValidateShapes(gert::TilingContext *context,
                                GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData &tiling,
-                               bool stateVFirst)
+                               bool stateVFirst, bool qkvSequenceMajor)
 {
     // 先检查真实输入 rank，再提取 shape；错误报告保留具体参数和 actual/expected。
     const gert::StorageShape *shapes[] = {
@@ -143,10 +143,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape &a = shapes[INPUT_A_IDX]->GetStorageShape();
     const gert::Shape &h = shapes[INPUT_H_IDX]->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = q.GetDim(1);
-    tiling.T = q.GetDim(2);
+    tiling.HK = qkvSequenceMajor ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = qkvSequenceMajor ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = v.GetDim(1);
+    tiling.HV = qkvSequenceMajor ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -183,14 +183,21 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "k.shape", shapes[INPUT_K_IDX]->GetStorageShape(),
-                      {tiling.B, tiling.HK, tiling.T, tiling.K}, INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
+                      qkvSequenceMajor ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HK, tiling.K}
+                                        : std::initializer_list<int64_t>{tiling.B, tiling.HK, tiling.T, tiling.K},
+                      INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-    const size_t valueIndices[] = {INPUT_V_IDX, INPUT_V_NEW_IDX, INPUT_DO_IDX, INPUT_DU_IDX};
-    for (const size_t index : valueIndices) {
+    if (ValidateShape(context, "v.shape", shapes[INPUT_V_IDX]->GetStorageShape(),
+                      qkvSequenceMajor ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HV, tiling.V}
+                                        : std::initializer_list<int64_t>{tiling.B, tiling.HV, tiling.T, tiling.V},
+                      INPUT_V_IDX) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    for (const size_t index : {INPUT_V_NEW_IDX, INPUT_DO_IDX, INPUT_DU_IDX}) {
         if (ValidateShape(context, (std::string(names[index]) + ".shape").c_str(),
                           shapes[index]->GetStorageShape(), {tiling.B, tiling.HV, tiling.T, tiling.V}, index) !=
-                ge::GRAPH_SUCCESS) {
+            ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
     }
@@ -230,7 +237,10 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
+    const bool *qkvSequenceMajor = attrs->GetAttrPointer<bool>(7);
+    const bool qkvSequenceMajorValue = qkvSequenceMajor == nullptr ? false : *qkvSequenceMajor;
+    tiling->qkvSequenceMajor = qkvSequenceMajorValue ? 1 : 0;
+    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, qkvSequenceMajorValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
 
     const double *scale = attrs->GetAttrPointer<double>(0);
