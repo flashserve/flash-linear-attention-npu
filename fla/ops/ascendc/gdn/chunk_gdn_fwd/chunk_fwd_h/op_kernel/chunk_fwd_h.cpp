@@ -14,8 +14,8 @@
 #include "arch22/chunk_fwd_h_cube.h"
 #include "arch22/chunk_fwd_h_vec.h"
 // gated 复用（仅 A2/arch22）：复用 chunk_gated_delta_rule_fwd_h 的 preload kernel。
-#include "gated_reuse/chunk_gated_delta_rule_fwd_h_struct.h"
-#include "gated_reuse/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
+#include "arch22/chunk_fwd_h_gated_struct.h"
+#include "arch22/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
 #endif
 
 #include "kernel_operator.h"
