@@ -34,20 +34,21 @@ K-first 参考 x8-pr 的 UpdateKFirstColumns，保持紧凑 [K,V] 存储，沿�
 | State 2 | [131072,196608) | 同上 |
 | 输入/out 槽 0 | [196608,202880) | q/k/v 各 1024 B，gate 2048 B，beta 128 B，out 1024 B |
 | 输入/out 槽 1 | [202880,209152) | 同上 |
-| dt_bias | [209152,209664) | 一个 head 的 128 个 FP32 bias |
-| VF scratch | [209664,210176) | V-first：128个 prediction/residual 顺序复用；K-first：128个 alpha*k 系数 |
+| dt_bias 槽 0 | [209152,209664) | 一个 head 的 128 个 FP32 bias |
+| dt_bias 槽 1 | [209664,210176) | 下一有效任务的 bias，与槽 0 交替 |
+| VF scratch | [210176,210688) | V-first：128个 prediction/residual 顺序复用；K-first：128个 alpha*k 系数 |
 
-V-first/K-first FP32/BF16 均合计210176 B，即205.25 KiB。全部起点按32 B对齐，BF16 State 每 bank 有效数据为32 KiB，但保留64 KiB地址跨度。scratch只由当前VF的Vector访问。V-first 首遍StoreUnAlignPost后批量读 prediction，计算 residual 后覆盖同一 scratch，再逐行广播；K-first 存入 alpha*k 后按 K 行广播，第二遍不再使用该 scratch。两种布局的用途互斥，V-first 两次写后各执行一处 VST→VLD 屏障，K-first 系数写后执行一处，下一 token 可复用。K-first 每 token State UB 读取为 FP32 128 KiB/BF16 64 KiB、写入为 FP32 64 KiB/BF16 32 KiB；不增加 GM 字节或同步资源。L1、L0和算法workspace均为零；运行时系统workspace保留原ABI需求。
+V-first/K-first FP32/BF16 均合计210688 B，即205.75 KiB。全部起点按32 B对齐，BF16 State 每 bank 有效数据为32 KiB，但保留64 KiB地址跨度。scratch只由当前VF的Vector访问。V-first 首遍StoreUnAlignPost后批量读 prediction，计算 residual 后覆盖同一 scratch，再逐行广播；K-first 存入 alpha*k 后按 K 行广播，第二遍不再使用该 scratch。两种布局的用途互斥，V-first 两次写后各执行一处 VST→VLD 屏障，K-first 系数写后执行一处，下一 token 可复用。K-first 每 token State UB 读取为 FP32 128 KiB/BF16 64 KiB、写入为 FP32 64 KiB/BF16 32 KiB；不增加 GM 字节或同步资源。L1、L0和算法workspace均为零；运行时系统workspace保留原ABI需求。
 
-输入由 MTE2 生产，当前 tile VF 消费；out 由 VF 生产，MTE3 消费。bias 由 MTE2 生产，当前任务的全部 VF 消费。State 在 VF 更新后可供下一 token 与 MTE3 并行读取。每 token 都要读写完整 State，indexed 模式还要每 token 搬出 State。连续 State 用单块 DataCopy，非连续 GM 用 128 行 DataCopyPad；使用默认 L2 策略。
+输入由 MTE2 生产，当前 tile VF 消费；out 由 VF 生产，MTE3 消费。bias 由 MTE2 生产，当前任务的全部 VF 消费；两个槽按有效任务交替，空任务不推进槽号。State 在 VF 更新后可供下一 token 与 MTE3 并行读取。每 token 都要读写完整 State，indexed 模式还要每 token 搬出 State。连续 State 用单块 DataCopy，非连续 GM 用 128 行 DataCopyPad；使用默认 L2 策略。
 
 ## 同步与生命周期
 
-engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、parameter[10]，共八个。input 保护 MTE2→V→MTE2；out 保护 V→MTE3→V；State 保护 V 更新、MTE3 读取和 MTE2 覆盖。V 只读取旧 State 时允许 MTE3 同时读。parameter 保护 KDA 向量 bias 的跨任务复用。
+engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、parameter[10,11]，共九个。input 保护 MTE2→V→MTE2；out 保护 V→MTE3→V；State 保护 V 更新、MTE3 读取和 MTE2 覆盖。V 只读取旧 State 时允许 MTE3 同时读。parameter 分别保护两个向量 bias 槽的跨任务复用；未开启 raw gate 或未传入 dt_bias 时，不执行参数锁操作。
 
-任务入口等待 V→MTE2 握手，选择 (current+1)%3 的 bank 搬入初态；然后提交 bias 和首 tile 输入，Vector 持有参数锁直到任务结束。每个 token 锁住目标 bank，执行 VF，再按需提交 State 搬出。tile 完成后释放输入/out 锁并提交整个 tile out。
+任务入口等待 V→MTE2 握手，选择 (current+1)%3 的 bank 搬入初态；然后向当前参数槽提交 bias 和首 tile 输入，Vector 持有该槽参数锁直到任务结束。相邻有效任务选择不同参数槽，下一任务输入搬入无需等待当前任务释放参数槽；再次复用同一槽时仍须等待其上一个消费者释放。每个 token 锁住目标 bank，执行 VF，再按需提交 State 搬出。tile 完成后释放输入/out 锁并提交整个 tile out。
 
-倒数第二个 token VF 后发布 V→MTE2，保证下一任务所需 bank 已完成最后一次 Vector 读取。T=1 时下一任务所用 bank 不参与当前 VF，可提前发布。下一任务初态搬入允许与当前末 token VF 重叠；其后参数覆盖仍由 parameter Mutex 保护。结尾关闭未消费的握手，用 PipeBarrier<PIPE_ALL> 保证最后搬出完成。无 MTE3_S。
+倒数第二个 token VF 后发布 V→MTE2，保证下一任务所需 bank 已完成最后一次 Vector 读取。T=1 时下一任务所用 bank 不参与当前 VF，可提前发布。下一任务初态搬入允许与当前末 token VF 重叠；其后参数搬入使用另一参数槽，覆盖旧槽时仍由该槽独立的 parameter Mutex 保护。结尾关闭未消费的握手，用 PipeBarrier<PIPE_ALL> 保证最后搬出完成。无 MTE3_S。
 
 沿用参考 PR 的逐 tile 提交方式，不额外引入 x8-pr 的 lookahead 输入预取。不同物理输入/out 槽可在复用保护下覆盖搬运与计算；是否形成有效流水重叠须由设备采集确认。
 

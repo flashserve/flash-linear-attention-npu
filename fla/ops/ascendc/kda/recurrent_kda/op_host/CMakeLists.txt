@@ -26,7 +26,7 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         OP_NAME RecurrentKda
         OPTIONS --cce-auto-sync=off
                 --cce-long-scbz=true
-                -mllvm=-cce-aicore-jump-expand=false
+                -mllvm -cce-aicore-jump-expand=false
     )
 endif()
 

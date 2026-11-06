@@ -729,7 +729,7 @@ private:
         // stand-pr follows PR1083: three banks and per-slot q/k/v/g/beta/out.
         const uint64_t capacity = ctx_.ubSize;
         constexpr uint64_t x = 4;
-        constexpr uint64_t bytes = 3 * 65536 + 2 * (4 * x * 128 * 2 + x * 128 * 4 + x * 32) + 512 + 512;
+        constexpr uint64_t bytes = 3 * 65536 + 2 * (4 * x * 128 * 2 + x * 128 * 4 + x * 32) + 2 * 512 + 512;
         OP_CHECK_IF(bytes > capacity,
                     ReportInvalid("UB/shape", "A5 UB cannot hold the specified recurrent KDA banks and raw slots."),
                     return ge::GRAPH_FAILED);
