@@ -19,12 +19,12 @@ FP64 golden 和同精度 benchmark。
 | 算子路径 | TilingKey | 选择与源码证据 | 本子套件用例 |
 | --- | --- | --- | --- |
 | 既有 `ChunkKdaFwd` 非 fused 路径 | `1/2` | `fla/ops/ascendc/kda/chunk_kda_fwd/op_host/chunk_kda_fwd_tiling.cpp` 按模板条件执行 `SetTilingKey(... ? 2 : 1)` | 不由 chunk32 子套件新增；仍归父套件 |
-| `ChunkKdaFwd` chunk32 分支 | `32` | 公开 V2 host 在 `chunkSize == 32` 时选择 `RunChunkKdaFwd32Fused`；`op_host/chunk_kda_fwd_tiling.cpp` 执行 `SetTilingKey(32)` | accuracy 0–39、performance 0–1、mss 0–4 |
+| `ChunkKdaFwdFused` | 默认 | 公开 V2 host 在 `chunkSize == 32` 时选择 `RunChunkKdaFwd32Fused`，经 `l0op::KdaChunkForwardFused` 启动独立 L0 算子；`chunk_kda_fwd_fused_tiling.cpp` 不设 TilingKey | accuracy 0–39、performance 0–1、mss 0–4 |
 
 公开运行选择证据位于
 `fla/ops/ascendc/kda/chunk_kda_fwd/op_host/op_api/aclnn_chunk_kda_fwd.cpp` 的
-`aclnnChunkKdaFwdV2GetWorkspaceSize`：chunk32 分支进入同一 `ChunkKdaFwd` 的 key 32，不经过
-key 1/2 的旧 TilingData 或独立 fused 算子。
+`aclnnChunkKdaFwdV2GetWorkspaceSize`：chunk32 分支进入独立 L0 算子 `ChunkKdaFwdFused`
+（`fla/ops/ascendc/kda/chunk_kda_fwd_fused/`），不经过 `ChunkKdaFwd` 的 key 1/2。
 
 ## ATK 元数据与冻结用例
 
@@ -38,7 +38,7 @@ key 1/2 的旧 TilingData 或独立 fused 算子。
 | --- | ---: | --- |
 | `atk_chunk_kda_fwd_chunk32.json` | 135 | id 0–33：layout、长序列、尾块、initial/final state；id 34–35：FP32 g/beta + GVA + final_state；id 36–39：NTD/TND varlen、空序列、canonical indices、BF16/FP32 g/beta；id 40：T=128、H=HV=96 单 group 同步回归；id 41–134：94 条 fused compatible 回归 |
 | `atk_chunk_kda_fwd_chunk32_perf.json` | 2 | B=1、H=HV=96、K=V=128、T=8192，BF16/FP32 g/beta |
-| `atk_chunk_kda_fwd_chunk32_mss.json` | 5 | `ChunkKdaFwd` key 32 的 dense、state、尾块和两种 varlen layout 代表用例 |
+| `atk_chunk_kda_fwd_chunk32_mss.json` | 5 | `ChunkKdaFwdFused`（经 V2 路由）的 dense、state、尾块和两种 varlen layout 代表用例 |
 
 静态校验命令：
 

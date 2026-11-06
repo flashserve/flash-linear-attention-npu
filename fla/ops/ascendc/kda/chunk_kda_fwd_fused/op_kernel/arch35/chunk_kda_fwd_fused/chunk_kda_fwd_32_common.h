@@ -4,7 +4,7 @@
 
 #include "kernel_operator.h"
 
-// 与 op_host/chunk_kda_fwd_tiling.h 的 ChunkKdaFwd32TilingData 一致。
+// 与 op_host/chunk_kda_fwd_fused_tiling.h 的 ChunkKdaFwdFusedTilingData 一致。
 struct KdaFd32TilingData {
     uint64_t nChunks;
     uint64_t scaleBf16;

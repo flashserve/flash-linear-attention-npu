@@ -9,6 +9,7 @@
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
+#include "../../../chunk_kda_fwd_fused/op_host/op_api/chunk_kda_fwd_fused.h"
 
 #include <algorithm>
 #include <cstring>
@@ -477,7 +478,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "aqkOut must not be nullptr.");
     CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
                "chunkSize only supports 64 on the three-stage path "
-               "(32 is handled by the ChunkKdaFwd key-32 kernel).");
+               "(32 is handled by the ChunkKdaFwdFused kernel).");
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
@@ -667,7 +668,8 @@ bool IsAscend950()
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
 // ==================== chunk32 大融合路由(issue #829)====================
-// chunkSize==32 → ChunkKdaFwd key-32 单 kernel 大融合。
+// chunkSize==32 → 独立 L0 算子 ChunkKdaFwdFused 单 kernel 大融合,仅由
+// aclnnChunkKdaFwdV2 路由至此(V1 对 chunk_size=32 明确拒绝)。
 // chunk32 没有第二条实现路径,不满足融合 kernel 契约即报错。
 // kernel 契约:[B*H,T,K] 头连续 bf16(batch 拍平进头维);K=V=128;任意 T>0
 // (尾块核内钳制);HV % H == 0;dense batch 使用单启动任务循环;
@@ -1158,7 +1160,7 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
         CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    const aclTensor *fused = l0op::KdaChunkForward32(
+    const aclTensor *fused = l0op::KdaChunkForwardFused(
         qNtd, kNtd, vNtd, gNtd, betaNtd, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTmp, finalStateTmp,
         nullptr /* dense 无 cu_seqlens */, executor);
@@ -1260,7 +1262,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         CHECK_RET(finalStateTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 
-    const aclTensor *fused = l0op::KdaChunkForward32(
+    const aclTensor *fused = l0op::KdaChunkForwardFused(
         qTok, kTok, vTok, gTok, betaTok, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTok, finalStateTmp,
         params.cuSeqlensOptional, executor,
@@ -1279,8 +1281,8 @@ aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *exec
                                   "chunkSize=32 requires Ascend950 (DAV_3510)");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // chunk32 kernel 的 epsilon 由 tiling 固定写入 1e-6(KdaChunkForward32 无
-    // epsilon 参数,公开算子 def 也无此 attr);调用方提供其它值会被静默丢弃,
+    // chunk32 kernel 的 epsilon 由 tiling 固定写入 1e-6(ChunkKdaFwdFused 的
+    // def 无此 attr);调用方提供其它值会被静默丢弃,
     // 因此显式拒绝,与文档的"chunk32 epsilon 固定 1e-6"契约一致。
     constexpr float KDA32_FIXED_EPSILON = 1.0e-6F;
     const float epsilonFp32 = static_cast<float>(params.epsilon);
@@ -1355,15 +1357,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     if (params.chunkSize == 32) {
-        // chunk32 → 单 kernel 大融合(issue #829),独立校验与执行路径;
-        // 产出 attn_out + 可选 final_state,不产出中间量,契约不满足时由路由内部报错。
-        // 返回码直接传播:参数校验返回 PARAM_* 状态,执行阶段的 l0op/launcher
-        // 等内部失败返回各自的 INNER 状态,不统一映射为 PARAM_INVALID。
-        aclnnStatus fusedRet = RunChunkKdaFwd32Fused(params, executorPtr);
-        CHECK_RET(fusedRet == ACLNN_SUCCESS, fusedRet);
-        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
-        uniqueExecutor.ReleaseTo(executor);
-        return ACLNN_SUCCESS;
+        // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
+        // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
+        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkSize", "32",
+                                  "chunkSize=32 is only supported via aclnnChunkKdaFwdV2");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
@@ -1644,8 +1642,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     if (params.chunkSize == 32) {
-        // issue #829:公开入口 aclnnChunkKdaFwdV2 同样接受 chunk_size=32,
-        // 走与 V1 相同的单 kernel 大融合路径。V2 特有的反向保存值出口在 chunk32
+        // issue #829:chunk_size=32 由独立 L0 算子 ChunkKdaFwdFused 承载。
+        // V2 特有的反向保存值出口在 chunk32
         // 无意义,必须全空;kernel 语义固定(核内 L2norm/sigmoid、exp2),
         // 显式请求与之矛盾的开关直接拒绝,不静默误算。
         const aclTensor *savedOutputs[] = {params.qHatOut, params.kHatOut, params.qRstdOut,

@@ -75,7 +75,7 @@ outputs = chunk_kda_fwd(
 发起调用前按 fla-org 参考实现拒绝，不会静默忽略；具体字段语义见
 [归一化 / gate 开关](#归一化--gate-开关)。
 
-`chunk_size=32` 使用 `ChunkKdaFwd` 内 `op_kernel/arch35/chunk_kda_fwd_chunk32/` 的单 kernel 大融合实现（issue #829）。当前契约：
+`chunk_size=32` 使用独立 L0 算子 `ChunkKdaFwdFused`（`fla/ops/ascendc/kda/chunk_kda_fwd_fused/`，issue #829）的单 kernel 大融合实现，由 `aclnnChunkKdaFwdV2` 路由；`aclnnChunkKdaFwd`（V1）收到 `chunk_size=32` 返回 `ACLNN_ERR_PARAM_INVALID`。当前契约：
 
 - q/k/v 为 BF16，`K=V=128`；g/beta 各自可为 BF16 或 FP32，任一为 FP32 时 host 将两者
   统一上转 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
@@ -241,13 +241,13 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 
 `aclnnChunkKdaFwdV2GetWorkspaceSize/aclnnChunkKdaFwdV2` 同时承接两类实现：chunk64 在
 同一个 executor 内组合 `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize`；chunk32
-则转入 `RunChunkKdaFwd32Fused`，由 `ChunkKdaFwd` 的 key 32 单次启动融合 kernel。入口关系如下：
+则转入 `RunChunkKdaFwd32Fused`，单次启动独立 L0 算子 `ChunkKdaFwdFused`。入口关系如下：
 
 | 调用场景 | 公开入口 | 实际实现 |
 | --- | --- | --- |
 | chunk64 私有 L0 路径 | `aclnnChunkKdaFwdGetWorkspaceSize` | 外层 `ChunkKdaFwd`，固定默认组合（调用方预先归一化 q/k、预先 sigmoid beta、`exp2` 门控） |
 | chunk64 三算子组合 | `aclnnChunkKdaFwdV2GetWorkspaceSize` | `ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize`，由 5 个可选开关控制 |
-| chunk32 大融合 | `aclnnChunkKdaFwdV2GetWorkspaceSize`（Python 主路径）；V1 也有同实现分支 | `RunChunkKdaFwd32Fused -> ChunkKdaFwd` key 32，核内 L2 norm/beta sigmoid/safe gate |
+| chunk32 大融合 | `aclnnChunkKdaFwdV2GetWorkspaceSize`（唯一入口；V1 对 chunk_size=32 明确拒绝） | `RunChunkKdaFwd32Fused -> l0op::KdaChunkForwardFused -> ChunkKdaFwdFused`，核内 L2 norm/beta sigmoid/safe gate |
 
 chunk64 V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、
 `cu_seqlens` 严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
