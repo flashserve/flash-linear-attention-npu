@@ -66,10 +66,8 @@ constexpr const char* kSchemaRecurrentKda =
 // must match _stable._ENUM["npu_recurrent_kda"]["layout"].
 constexpr const char* kRecurrentKdaLayoutNames[] = {"BSND", "TND"};
 
-// Returns (attn_out, final_state).  Mirrors the ctypes wrapper:
-//  * inplace_final_state=True  -> the kernel writes the caller's initial_state;
-//  * inplace_final_state=False, output_final_state=False -> read-only state;
-//  * the Python wrapper handles returning a state tensor.
+// The caller's state is read-only in non-inplace mode. When that mode
+// requests a final state, ACLNN writes into a separate output pool.
 void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
                        AtenTensorHandle v, AtenTensorHandle g,
                        AtenTensorHandle beta, AtenTensorHandle initial_state,
@@ -83,11 +81,8 @@ void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
                        bool use_qk_l2norm_in_kernel, bool use_gate_in_kernel,
                        bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval,
                        bool safe_gate, double lower_bound,
-                       bool state_v_first, int64_t stream, Tensor* out) {
-  if (!inplace_final_state && output_final_state) {
-    throw std::invalid_argument(
-        "fla_npu(stable): non-inplace state output requires the Python wrapper");
-  }
+                       bool state_v_first, int64_t stream, Tensor* out,
+                       std::optional<Tensor>* final_state) {
   auto& rt = fla_npu_stable::Runtime::instance();
   auto get_ws = reinterpret_cast<KdaGetWorkspaceFn>(
       rt.symbol("aclnnRecurrentKdaGetWorkspaceSize"));
@@ -100,6 +95,9 @@ void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
   *out = allocate_like(v_meta);
 
   const TensorMeta state_meta = meta_of_handle(initial_state);
+  if (output_final_state && !inplace_final_state) {
+    final_state->emplace(allocate_like(state_meta));
+  }
   AclTensorView v_q(meta_of_handle(q), kAclFormatNd);
   AclTensorView v_k(meta_of_handle(k), kAclFormatNd);
   AclTensorView v_v(v_meta, kAclFormatNd);
@@ -112,8 +110,10 @@ void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
   AclTensorView v_dtb(meta_optional_handle(dt_bias), kAclFormatNd);
   AclTensorView v_accepted(meta_optional_handle(num_accepted_tokens), kAclFormatNd);
   AclTensorView v_out(meta_of(*out), kAclFormatNd);
-  // ACLNN requires an output descriptor even when state writes are disabled.
-  AclTensorView v_final(state_meta, kAclFormatNd);
+  // ACLNN requires a descriptor even when there is no separate output.
+  AclTensorView v_final = final_state->has_value()
+      ? AclTensorView(meta_of(**final_state), kAclFormatNd)
+      : AclTensorView(state_meta, kAclFormatNd);
 
   uint64_t workspace_size = 0;
   aclOpExecutor* executor = nullptr;
@@ -207,6 +207,7 @@ void boxed_recurrent_kda(StableIValue* stack, uint64_t num_inputs,
   const int64_t stream = to<int64_t>(stack[22]);
 
   Tensor out;
+  std::optional<Tensor> final_state;
   run_recurrent_kda(
       q, k, v, g, beta, initial_state,
       cu_seqlens.has_value()
@@ -225,11 +226,10 @@ void boxed_recurrent_kda(StableIValue* stack, uint64_t num_inputs,
       layout, scale, output_final_state, inplace_final_state,
       use_qk_l2norm_in_kernel, use_gate_in_kernel,
       use_beta_sigmoid_in_kernel, allow_neg_eigval, safe_gate, lower_bound,
-      state_v_first, stream, &out);
+      state_v_first, stream, &out, &final_state);
   stack[0] = from(out);
-  // Python returns the caller's state in inplace mode. Avoid boxing its
-  // handle again, since the dispatcher already owns the input reference.
-  stack[1] = from(std::nullopt);
+  // Python returns the original tensor in inplace mode.
+  stack[1] = from(final_state);
 }
 
 }  // namespace
