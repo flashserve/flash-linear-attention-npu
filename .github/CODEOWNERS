@@ -1,0 +1,11 @@
+# 全仓默认请求以下账号检视。
+* @weinachuan @weiwei-612 @chen-linxin @Ensley0304
+
+# ABI-sensitive interfaces require @weinachuan as code owner.
+chunk_gated_delta_rule/**/op_host/*_def.cpp @weinachuan
+chunk_gated_delta_rule/**/op_host/op_api/aclnn_*.h @weinachuan
+chunk_gated_delta_rule/**/op_host/op_api/aclnn_*.cpp @weinachuan
+torch_custom/fla_npu/npu_custom.yaml @weinachuan
+torch_custom/fla_npu/test_native_functions.yaml @weinachuan
+torch_custom/fla_npu/deprecated.yaml @weinachuan
+torch_custom/fla_npu/op_plugin/ops/opapi/** @weinachuan
