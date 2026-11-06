@@ -3,6 +3,7 @@
 The committed accuracy matrix is frozen by detailed-design ID:
   * 0-99: RGDR-P001 through RGDR-P100
   * 100-199: RGDR-G001 through RGDR-G100
+  * 200-222: RGDR-V001 through RGDR-V023 (A5 V2)
 
 All positive cases use dimensions aligned to the 32B BF16 transfer block;
 unaligned dimensions are invalid and are covered by op_host interception tests.
@@ -54,10 +55,11 @@ STATE_LAYOUTS = {
 }
 INPUT_LAYOUTS = {
     "contiguous",
+    "noncontiguous_qkv",
     "noncontiguous_qkv_beta_g",
-    "noncontiguous_gk_metadata",
+    "noncontiguous_metadata",
     "noncontiguous_qk",
-    "noncontiguous_v_gates",
+    "noncontiguous_v_beta_g",
     "noncontiguous_all",
 }
 
@@ -70,7 +72,7 @@ def _profile(name: str, **overrides) -> dict:
         "HV": 1,
         "K": 128,
         "V": 128,
-        "gate_mode": "both",
+        "gate_mode": "g",
         "state_dtype": "fp32",
         "state_layout": "contiguous",
         "input_layout": "contiguous",
@@ -95,7 +97,7 @@ def _build_positive_profiles() -> list[dict]:
     add("minimal_g_bf16_state", seq_lengths=[1], gate_mode="g", state_dtype="bf16")
     add("minimal_g_fp32_state", seq_lengths=[1], gate_mode="g", design_routes="P+A+D")
     add("two_token_g", gate_mode="g", state_dtype="bf16")
-    add("two_token_gk", gate_mode="gk", state_dtype="bf16")
+    add("two_token_g_variant", gate_mode="g", state_dtype="bf16")
     add("two_token_both", state_dtype="bf16", design_routes="P+A+D")
     add("a2_a3_add_fold_k128", seq_lengths=[3], state_dtype="bf16", platform_focus="ascend910b,ascend910_93")
 
@@ -140,7 +142,7 @@ def _build_positive_profiles() -> list[dict]:
         (32, 96, "heads_32_96", "P+A"),
         (48, 96, "heads_48_96", "P+A"),
         (64, 128, "heads_64_128", "P+A"),
-        (1, 256, "heads_1_256", "P+A"),
+        (16, 256, "heads_16_256", "P+A"),
         (256, 256, "heads_256_256", "P+A"),
     ]
     for key_heads, value_heads, name, routes in head_shapes:
@@ -169,14 +171,14 @@ def _build_positive_profiles() -> list[dict]:
     add("a2_baseline_matrix", seq_lengths=[8], state_dtype="bf16", platform_focus="ascend910b", design_routes="P")
     add("a3_baseline_matrix", seq_lengths=[3, 2, 1], accepted_tokens=[2, 1, 1], HK=2, HV=4, gate_mode="g", platform_focus="ascend910_93", design_routes="P")
     add("aclnn_example_shape", seq_lengths=[2], HK=2, HV=4, design_routes="A")
-    add("fast_mutable_baseline_shape", seq_lengths=[2], HK=2, HV=4, design_routes="D")
-    add("fast_functional_baseline_shape", seq_lengths=[2], HK=2, HV=4, state_layout="head_padded", design_routes="F")
+    add("mutable_baseline_shape", seq_lengths=[2], HK=2, HV=4, design_routes="D")
+    add("functional_baseline_shape", seq_lengths=[2], HK=2, HV=4, state_layout="head_padded", design_routes="F")
     add("four_route_g_bf16_shape", gate_mode="g", state_dtype="bf16", design_routes="P+A+D+F")
-    add("four_route_gk_fp32_shape", gate_mode="gk", design_routes="P+A+D+F")
+    add("four_route_g_fp32_shape_variant", gate_mode="g", design_routes="P+A+D+F")
     add("four_route_both_gva3_varlen", seq_lengths=[2, 1], HK=2, HV=6, design_routes="P+A+D+F")
     add("four_route_accepted_prefix_gva2", prefix_tokens=1, seq_lengths=[2, 3], accepted_tokens=[1, 3], HK=2, HV=4, design_routes="P+A+D+F")
     add("noncontiguous_qkv_beta_g", HK=2, HV=4, gate_mode="g", input_layout="noncontiguous_qkv_beta_g", design_routes="P")
-    add("noncontiguous_gk_metadata", seq_lengths=[2, 1], HK=2, HV=4, input_layout="noncontiguous_gk_metadata", design_routes="P")
+    add("noncontiguous_metadata", seq_lengths=[2, 1], HK=2, HV=4, input_layout="noncontiguous_metadata", design_routes="P")
     add("nondefault_stream_shape", HK=32, HV=96, platform_focus="all", design_routes="P", stream_mode="nondefault")
     add("reuse_state_two_calls", HK=2, HV=4, repeat_calls=2, design_routes="P")
     add("independent_stream_state_shape", seq_lengths=[2, 1], HK=2, HV=4, design_routes="P", stream_mode="independent")
@@ -184,21 +186,21 @@ def _build_positive_profiles() -> list[dict]:
 
     # P071-P082: gate, state layout and input layout cross coverage.
     add("bf16_state_head_padding_g", HK=2, HV=4, gate_mode="g", state_dtype="bf16", state_layout="head_padded")
-    add("bf16_state_block_padding_gk", seq_lengths=[2, 1], HK=2, HV=4, gate_mode="gk", state_dtype="bf16", state_layout="block_padded")
+    add("bf16_state_block_padding_g_variant", seq_lengths=[2, 1], HK=2, HV=4, gate_mode="g", state_dtype="bf16", state_layout="block_padded")
     add("bf16_state_head_block_padding_both", HK=2, HV=6, state_dtype="bf16", state_layout="head_block_padded")
     add("bf16_state_noncontiguous_both", HK=2, HV=8, state_dtype="bf16", state_layout="noncontiguous")
-    add("fp32_state_head_padding_gk", HK=2, HV=6, gate_mode="gk", state_layout="head_padded")
+    add("fp32_state_head_padding_g_variant", HK=2, HV=6, gate_mode="g", state_layout="head_padded")
     add("fp32_state_block_padding_both", seq_lengths=[2, 1], HK=2, HV=8, state_layout="block_padded")
     add("fp32_state_noncontiguous_g", HK=4, HV=8, gate_mode="g", state_layout="noncontiguous")
     add("noncontiguous_qk_g", HK=2, HV=4, gate_mode="g", input_layout="noncontiguous_qk")
-    add("noncontiguous_v_gates_gk", HK=2, HV=6, gate_mode="gk", input_layout="noncontiguous_v_gates")
+    add("noncontiguous_v_beta_g", HK=2, HV=6, gate_mode="g", input_layout="noncontiguous_v_beta_g")
     add("noncontiguous_all_both", seq_lengths=[2, 1], HK=2, HV=8, input_layout="noncontiguous_all")
     add("head_padding_noncontiguous_qkv", HK=2, HV=4, state_layout="head_padded", input_layout="noncontiguous_qkv_beta_g")
-    add("accepted_noncontiguous_gk_metadata", seq_lengths=[3], accepted_tokens=[2], HK=2, HV=6, gate_mode="gk", input_layout="noncontiguous_gk_metadata")
+    add("accepted_noncontiguous_metadata", seq_lengths=[3], accepted_tokens=[2], HK=2, HV=6, gate_mode="g", input_layout="noncontiguous_metadata")
 
     # P083-P091: longer metadata chains, index permutations and scale values.
     add("sixteen_single_token_sequences", seq_lengths=[1] * 16, HK=2, HV=4, gate_mode="g")
-    add("alternating_zero_length_sequences", seq_lengths=[1, 0] * 8, HK=2, HV=4, gate_mode="gk")
+    add("alternating_zero_length_sequences", seq_lengths=[1, 0] * 8, HK=2, HV=4, gate_mode="g")
     add("long_prefix_max_mtp", prefix_tokens=8, seq_lengths=[8], HK=2, HV=4)
     add("eight_max_mtp_sequences", seq_lengths=[8] * 8, HK=1, HV=2, state_dtype="bf16")
     add("increasing_lengths_and_accepted", seq_lengths=list(range(1, 9)), accepted_tokens=list(range(1, 9)), HK=2, HV=4)
@@ -206,7 +208,7 @@ def _build_positive_profiles() -> list[dict]:
     add("prefix_accepted_sparse_indices", prefix_tokens=4, seq_lengths=[2, 3], accepted_tokens=[1, 3], block_num=10,
         state_indices=[8, 7, 6, 5, 0, 2, 4, 1, 3], HK=2, HV=4)
     add("unit_scale", seq_lengths=[4], HK=2, HV=4, scale=1.0, gate_mode="g")
-    add("small_scale", seq_lengths=[4], HK=2, HV=4, scale=0.03125, gate_mode="gk")
+    add("small_scale", seq_lengths=[4], HK=2, HV=4, scale=0.03125, gate_mode="g")
 
     # P092-P096: additional divisible head mappings.
     add("heads_5_10", HK=5, HV=10, data_profile="traceable_gva")
@@ -253,8 +255,8 @@ def _build_gva_profiles() -> list[dict]:
         (24, 96, "gva_24_96", "ascend950", "P+A"),
         (1, 8, "gva_1_8", "all", "P+A"),
         (6, 96, "gva_6_96", "ascend950", "P+A"),
-        (3, 96, "gva_3_96", "ascend950", "P+A"),
-        (1, 256, "gva_1_256", "all", "P+A"),
+        (5, 80, "gva_5_80", "ascend950", "P+A"),
+        (16, 256, "gva_16_256", "all", "P+A"),
         (256, 256, "gva_256_256", "all", "P+A+D"),
     ]
     for key_heads, value_heads, name, platform, routes in mappings:
@@ -263,16 +265,16 @@ def _build_gva_profiles() -> list[dict]:
     # G017-G032: gate and state dtype.
     add("gva_g_bf16_state", HK=2, HV=8, gate_mode="g", state_dtype="bf16")
     add("gva_g_fp32_state", HK=2, HV=8, gate_mode="g")
-    add("gva_gk_bf16_state", HK=2, HV=8, gate_mode="gk", state_dtype="bf16")
-    add("gva_gk_fp32_state", HK=2, HV=8, gate_mode="gk")
+    add("gva_g_bf16_state_variant", HK=2, HV=8, gate_mode="g", state_dtype="bf16")
+    add("gva_g_fp32_state_variant", HK=2, HV=8, gate_mode="g")
     add("gva_both_bf16_state", HK=2, HV=8, state_dtype="bf16")
     add("gva_both_fp32_state", HK=2, HV=8)
     add("gva_per_head_g", HK=2, HV=6, gate_mode="g", gate_profile="per_head")
-    add("gva_gk_column_pulse", HK=2, HV=6, gate_mode="gk", gate_profile="column_pulse")
+    add("gva_g_column_profile", HK=2, HV=6, gate_mode="g", gate_profile="column_pulse")
     add("gva_near_zero_g", HK=32, HV=96, gate_mode="g", gate_profile="near_zero", platform_focus="ascend950")
     add("gva_strong_decay_g", HK=32, HV=96, gate_mode="g", gate_profile="strong_decay", platform_focus="ascend950")
-    add("gva_near_zero_gk", HK=24, HV=96, gate_mode="gk", gate_profile="near_zero", platform_focus="ascend950")
-    add("gva_strong_decay_gk", HK=24, HV=96, gate_mode="gk", gate_profile="strong_decay", platform_focus="ascend950")
+    add("gva_near_zero_g_variant", HK=24, HV=96, gate_mode="g", gate_profile="near_zero", platform_focus="ascend950")
+    add("gva_strong_decay_g_variant", HK=24, HV=96, gate_mode="g", gate_profile="strong_decay", platform_focus="ascend950")
     add("gva_per_head_beta", HK=1, HV=8, beta_profile="per_head")
     add("gva_state_pulse_hv2", HK=2, HV=6, state_profile="pulse_hv2")
     add("gva_state_pulse_hv3", HK=2, HV=6, state_profile="pulse_hv3")
@@ -317,31 +319,31 @@ def _build_gva_profiles() -> list[dict]:
     add("gva_three_route_shape", HK=2, HV=8, design_routes="P+A+D")
     add("gva_mutable_functional_shape", HK=2, HV=6, state_layout="head_padded", design_routes="D+F")
     add("gva_noncontiguous_qk", HK=2, HV=8, input_layout="noncontiguous_qk", design_routes="P")
-    add("gva_noncontiguous_v_gates", HK=2, HV=8, input_layout="noncontiguous_v_gates", design_routes="P")
+    add("gva_noncontiguous_v_beta_g", HK=2, HV=8, input_layout="noncontiguous_v_beta_g", design_routes="P")
     add("gva_nondefault_stream_shape", HK=32, HV=96, stream_mode="nondefault", design_routes="P")
     add("gva_all_complex_views", HK=24, HV=96, state_layout="head_block_padded", input_layout="noncontiguous_all", design_routes="P+A+D+F")
 
     # G066-G075: additional GVA ratios and upper head-count boundaries.
     add("gva_5_10", HK=5, HV=10, gate_mode="g")
-    add("gva_7_14", HK=7, HV=14, gate_mode="gk")
+    add("gva_7_14", HK=7, HV=14, gate_mode="g")
     add("gva_10_20", HK=10, HV=20)
     add("gva_12_36", HK=12, HV=36)
     add("gva_16_48", HK=16, HV=48, gate_mode="g")
-    add("gva_25_100", HK=25, HV=100, gate_mode="gk")
+    add("gva_25_100", HK=25, HV=100, gate_mode="g")
     add("gva_32_128", HK=32, HV=128)
     add("gva_64_256", seq_lengths=[1], HK=64, HV=256, state_dtype="bf16")
     add("gva_128_256", seq_lengths=[1], HK=128, HV=256, gate_mode="g", state_dtype="bf16")
-    add("gva_4_256", seq_lengths=[1], HK=4, HV=256, gate_mode="gk", state_dtype="bf16")
+    add("gva_15_240", seq_lengths=[1], HK=15, HV=240, gate_mode="g", state_dtype="bf16")
 
     # G076-G083: gate, state dtype and numerical-profile cross coverage.
     add("gva_g_bf16_head_padding", HK=4, HV=12, gate_mode="g", state_dtype="bf16", state_layout="head_padded")
     add("gva_g_fp32_block_padding", seq_lengths=[2, 1], HK=4, HV=12, gate_mode="g", state_layout="block_padded")
-    add("gva_gk_bf16_head_block_padding", HK=6, HV=18, gate_mode="gk", state_dtype="bf16", state_layout="head_block_padded")
-    add("gva_gk_fp32_noncontiguous_state", HK=6, HV=18, gate_mode="gk", state_layout="noncontiguous")
+    add("gva_g_bf16_head_block_padding_variant", HK=6, HV=18, gate_mode="g", state_dtype="bf16", state_layout="head_block_padded")
+    add("gva_g_fp32_noncontiguous_state_variant", HK=6, HV=18, gate_mode="g", state_layout="noncontiguous")
     add("gva_both_bf16_near_zero", HK=8, HV=24, state_dtype="bf16", gate_profile="near_zero")
     add("gva_both_fp32_strong_decay", HK=8, HV=24, gate_profile="strong_decay")
     add("gva_per_head_gate_and_beta", HK=4, HV=12, gate_mode="g", gate_profile="per_head", beta_profile="per_head")
-    add("gva_gk_pulse_traceable_state", HK=6, HV=18, gate_mode="gk", gate_profile="column_pulse", state_profile="traceable")
+    add("gva_g_profile_traceable_state", HK=6, HV=18, gate_mode="g", gate_profile="column_pulse", state_profile="traceable")
 
     # G084-G091: long varlen, accepted-token and state-index chains.
     add("gva_sixteen_single_token_sequences", seq_lengths=[1] * 16, HK=4, HV=12)
@@ -356,10 +358,10 @@ def _build_gva_profiles() -> list[dict]:
 
     # G092-G099: combined state and input views plus repeat calls.
     add("gva_bf16_head_padding_noncontiguous_qk", HK=4, HV=12, state_dtype="bf16", state_layout="head_padded", input_layout="noncontiguous_qk")
-    add("gva_fp32_block_padding_noncontiguous_v", HK=4, HV=12, state_layout="block_padded", input_layout="noncontiguous_v_gates")
+    add("gva_fp32_block_padding_noncontiguous_v", HK=4, HV=12, state_layout="block_padded", input_layout="noncontiguous_v_beta_g")
     add("gva_bf16_head_block_noncontiguous_all", HK=4, HV=12, state_dtype="bf16", state_layout="head_block_padded", input_layout="noncontiguous_all")
     add("gva_fp32_noncontiguous_state_and_qkv", HK=4, HV=12, state_layout="noncontiguous", input_layout="noncontiguous_qkv_beta_g")
-    add("gva_accepted_noncontiguous_metadata", seq_lengths=[3], accepted_tokens=[2], HK=4, HV=12, gate_mode="gk", input_layout="noncontiguous_gk_metadata")
+    add("gva_accepted_noncontiguous_metadata", seq_lengths=[3], accepted_tokens=[2], HK=4, HV=12, gate_mode="g", input_layout="noncontiguous_metadata")
     add("gva_head_padding_repeat_two", HK=4, HV=12, state_layout="head_padded", repeat_calls=2)
     add("gva_block_padding_repeat_three", seq_lengths=[1], HK=4, HV=12, state_layout="block_padded", repeat_calls=3)
     add("gva_large_complex_views", HK=16, HV=48, state_layout="head_block_padded", input_layout="noncontiguous_all")
@@ -372,22 +374,102 @@ def _build_gva_profiles() -> list[dict]:
     return profiles
 
 
+def _build_v2_profiles() -> list[dict]:
+    profiles: list[dict] = []
+
+    def add(name: str, **overrides) -> None:
+        profile = _profile(name, **overrides)
+        profile["design_id"] = f"RGDR-V{len(profiles) + 1:03d}"
+        profile["tags"] = "accuracy,generalization,v2,positive"
+        profile["platform_focus"] = "ascend950"
+        profile["soc"] = "ascend950"
+        profiles.append(profile)
+
+    # Three fixed seeds for each major V2 branch family.
+    add("v2_no_gate_fp32_state", gate_mode="none", seq_lengths=[4])
+    add("v2_no_gate_bf16_state", gate_mode="none", seq_lengths=[3], state_dtype="bf16")
+    add("v2_no_gate_prefix_zero_length", gate_mode="none", prefix_tokens=2,
+        seq_lengths=[0, 2], HK=2, HV=4)
+
+    add("v2_qk_norm_beta_sigmoid", gate_mode="none", seq_lengths=[4],
+        use_qk_l2norm_in_kernel=True, use_beta_sigmoid_in_kernel=True)
+    add("v2_beta_sigmoid_allow_negative", gate_mode="none", seq_lengths=[3],
+        use_beta_sigmoid_in_kernel=True, allow_neg_eigval=True, beta_dtype="fp32")
+    add("v2_qk_norm_bf16_state_gva", gate_mode="none", seq_lengths=[2, 1],
+        HK=2, HV=4, state_dtype="bf16", use_qk_l2norm_in_kernel=True)
+
+    add("v2_raw_gate_with_bias", gate_mode="g", seq_lengths=[4],
+        use_gate_in_kernel=True, with_dt_bias=True)
+    add("v2_raw_gate_without_bias", gate_mode="g", seq_lengths=[3],
+        use_gate_in_kernel=True, with_dt_bias=False)
+    add("v2_raw_bf16_gate_gva", gate_mode="g", seq_lengths=[2], HK=2, HV=4,
+        g_dtype="bf16", use_gate_in_kernel=True, with_dt_bias=True)
+
+    add("v2_rank2_indices_single", gate_mode="none", seq_lengths=[4],
+        ssm_state_indices_rank=2, state_index_width=4,
+        state_indices=[[0, 1, 2, 3]])
+    add("v2_rank2_indices_varlen", gate_mode="none", seq_lengths=[3, 2], HK=2, HV=4,
+        ssm_state_indices_rank=2, state_index_width=3,
+        state_indices=[[0, 1, 2], [3, 4, 5]])
+    add("v2_rank2_indices_accepted", gate_mode="none", seq_lengths=[3, 2],
+        accepted_tokens=[2, 1], ssm_state_indices_rank=2, state_index_width=3,
+        state_indices=[[5, 0, 4], [2, 1, 3]])
+
+    add("v2_noncontiguous_qkv", gate_mode="none", seq_lengths=[4],
+        input_layout="noncontiguous_qkv")
+    add("v2_noncontiguous_state", gate_mode="none", seq_lengths=[3], HK=2, HV=4,
+        state_layout="noncontiguous")
+    add("v2_strided_qkv_padded_state_bf16", gate_mode="none", seq_lengths=[2, 1],
+        HK=2, HV=4, state_dtype="bf16", state_layout="head_block_padded",
+        input_layout="noncontiguous_qkv")
+
+    # V016-V023: every (State, g, beta) dtype TilingKey instance.
+    for state_dtype in ("bf16", "fp32"):
+        for g_dtype in ("bf16", "fp32"):
+            for beta_dtype in ("bf16", "fp32"):
+                add(
+                    f"v2_tiling_key_{state_dtype}_{g_dtype}_{beta_dtype}",
+                    gate_mode="g",
+                    seq_lengths=[2],
+                    state_dtype=state_dtype,
+                    g_dtype=g_dtype,
+                    beta_dtype=beta_dtype,
+                )
+
+    return profiles
+
+
 def _finalize(profile: dict, case_id: int) -> dict:
     spec = deepcopy(profile)
+    # P/G IDs are retained for traceability, but V2 has no Gk mode.
+    spec["gate_mode"] = "none" if spec.get("gate_mode") == "none" else "g"
     prefix_tokens = int(spec.get("prefix_tokens", 0))
     seq_lengths = [int(value) for value in spec["seq_lengths"]]
     total_tokens = prefix_tokens + sum(seq_lengths)
-    state_indices = [
-        int(value) for value in spec.get("state_indices", range(total_tokens))
-    ]
-    minimum_blocks = max(state_indices, default=0) + 1
+    index_rank = int(spec.get("ssm_state_indices_rank", 1))
+    if index_rank == 2:
+        state_width = int(spec.get("state_index_width", max(seq_lengths, default=1)))
+        raw_indices = spec.get("state_indices", range(len(seq_lengths) * state_width))
+        if isinstance(raw_indices, list) and raw_indices and isinstance(raw_indices[0], list):
+            state_indices = [[int(value) for value in row] for row in raw_indices]
+        else:
+            flat_indices = [int(value) for value in raw_indices]
+            state_indices = [
+                flat_indices[row * state_width:(row + 1) * state_width]
+                for row in range(len(seq_lengths))
+            ]
+        flattened_indices = [value for row in state_indices for value in row]
+    else:
+        state_indices = [int(value) for value in spec.get("state_indices", range(total_tokens))]
+        flattened_indices = state_indices
+    minimum_blocks = max(flattened_indices, default=0) + 1
     spec.update(
         {
             "op": OP_NAME,
             "case_id": case_id,
             "seed": SEED_BASE + case_id,
             "route": "ascendc",
-            "soc": "all",
+            "soc": str(spec.get("soc", "all")),
             "dtype": "bf16",
             "B": len(seq_lengths),
             "T": total_tokens,
@@ -404,7 +486,9 @@ def _validate_specs(specs: list[dict]) -> None:
     positive_count = sum(str(spec["design_id"]).startswith("RGDR-P") for spec in specs)
     gva_count = sum(str(spec["design_id"]).startswith("RGDR-G") for spec in specs)
     expected_ids = [f"RGDR-P{index:03d}" for index in range(1, positive_count + 1)]
+    v2_count = sum(str(spec["design_id"]).startswith("RGDR-V") for spec in specs)
     expected_ids += [f"RGDR-G{index:03d}" for index in range(1, gva_count + 1)]
+    expected_ids += [f"RGDR-V{index:03d}" for index in range(1, v2_count + 1)]
     actual_ids = [str(spec["design_id"]) for spec in specs]
     if actual_ids != expected_ids:
         raise ValueError("detailed-design IDs are missing, duplicated or out of order")
@@ -426,19 +510,36 @@ def _validate_specs(specs: list[dict]) -> None:
             raise ValueError(f"{spec['design_id']}: invalid HK/HV range")
         if int(spec["HV"]) % int(spec["HK"]) != 0:
             raise ValueError(f"{spec['design_id']}: HV must be divisible by HK")
+        if int(spec["HV"]) // int(spec["HK"]) > 16:
+            raise ValueError(f"{spec['design_id']}: HV/HK must be in [1,16]")
         if int(spec["K"]) != DIM_REQUIRED or int(spec["V"]) != DIM_REQUIRED:
             raise ValueError(f"{spec['design_id']}: K/V must equal {DIM_REQUIRED}")
-        if spec["gate_mode"] not in {"g", "gk", "both"}:
+        if spec["gate_mode"] not in {"none", "g"}:
             raise ValueError(f"{spec['design_id']}: invalid gate_mode")
+        if spec.get("g_dtype", "fp32") not in {"bf16", "fp32"}:
+            raise ValueError(f"{spec['design_id']}: invalid g_dtype")
+        if spec.get("beta_dtype", "bf16") not in {"bf16", "fp32"}:
+            raise ValueError(f"{spec['design_id']}: invalid beta_dtype")
         if spec["state_dtype"] not in {"bf16", "fp32"}:
             raise ValueError(f"{spec['design_id']}: invalid state_dtype")
         if spec["state_layout"] not in STATE_LAYOUTS:
             raise ValueError(f"{spec['design_id']}: invalid state_layout")
         if spec["input_layout"] not in INPUT_LAYOUTS:
             raise ValueError(f"{spec['design_id']}: invalid input_layout")
-        state_indices = [int(value) for value in spec["state_indices"]]
-        if len(state_indices) != int(spec["T"]):
-            raise ValueError(f"{spec['design_id']}: state_indices length must equal T")
+        if int(spec.get("ssm_state_indices_rank", 1)) == 2:
+            state_width = int(spec.get("state_index_width", 0))
+            rows = spec["state_indices"]
+            if len(rows) != len(seq_lengths) or state_width <= 0 or any(
+                len(row) != state_width for row in rows
+            ):
+                raise ValueError(f"{spec['design_id']}: rank-2 state_indices must be [B, W]")
+            if any(length > state_width for length in seq_lengths):
+                raise ValueError(f"{spec['design_id']}: rank-2 state width must cover each sequence")
+            state_indices = [int(value) for row in rows for value in row]
+        else:
+            state_indices = [int(value) for value in spec["state_indices"]]
+            if len(state_indices) != int(spec["T"]):
+                raise ValueError(f"{spec['design_id']}: state_indices length must equal T")
         if any(value < 0 or value >= int(spec["block_num"]) for value in state_indices):
             raise ValueError(f"{spec['design_id']}: state index out of range")
         if len(set(state_indices)) != len(state_indices):
@@ -453,7 +554,7 @@ def _validate_specs(specs: list[dict]) -> None:
 
 
 def build_specs() -> list[dict]:
-    profiles = _build_positive_profiles() + _build_gva_profiles()
+    profiles = _build_positive_profiles() + _build_gva_profiles() + _build_v2_profiles()
     specs = [_finalize(profile, case_id) for case_id, profile in enumerate(profiles)]
     _validate_specs(specs)
     return specs
@@ -554,11 +655,14 @@ def main() -> None:
         default=Path(__file__).with_name(f"atk_{OP_NAME}.json"),
     )
     parser.add_argument("--summary", action="store_true")
+    parser.add_argument("--tiling-key-only", action="store_true")
     args = parser.parse_args()
 
     specs = build_specs()
+    if args.tiling_key_only:
+        specs = [spec for spec in specs if spec["design_id"] >= "RGDR-V016"]
     payloads = [
-        _case_payload(case_id, spec) for case_id, spec in enumerate(specs)
+        _case_payload(int(spec["case_id"]), spec) for spec in specs
     ]
     args.output.write_text(
         json.dumps(payloads, ensure_ascii=False, indent=2) + "\n",

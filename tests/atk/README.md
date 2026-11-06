@@ -107,6 +107,12 @@ npu-smi info
 如果环境需要仓内 Python 包路径，请在调用脚本前自行设置。`run_test_cpu.sh` 不会修改
 `PYTHONPATH`。
 
+本工程的设备执行使用 ATK `npu` 后端调用 FLA Stable wrapper，CPU 标杆使用 `cpu`。
+目录级 `atk_backend_policy.json` 对所有算子禁用 `pyaclnn`；安装包含
+[ATK 公共入口检查](https://gitcode.com/Ascend/ATK/merge_requests/57)的版本后，原生命令
+中的 `--backend pyaclnn`（包括 `aclnn` 别名）会在启动任务前报错，提示改用
+`--backend npu`。旧版 ATK 不读取此配置；仓库的 `run_test_cpu.sh` 始终使用 `npu`。
+
 脚本启动时会校验 ATK 版本不低于 `26.8.8`（由 `REQUIRED_ATK_VERSION` 控制），低于该版本
 直接退出；请确保 `atk --version` 输出的版本号满足要求。
 

@@ -2,7 +2,7 @@ name: NPU CI 默认状态
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
 
 jobs:
   mark-not-run:
@@ -14,78 +14,74 @@ jobs:
       statuses: write
       contents: read
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: |
+            .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 写入未执行状态并提示触发人
+        id: mark_default_status
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
         with:
           github-token: ${{ github.token }}
           script: |
-            const pr = context.payload.pull_request;
-            if (!pr) {
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
+            const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
+            const eventPr = context.payload.pull_request;
+            if (!eventPr) {
               core.notice('没有找到 Pull Request 事件信息。');
               return;
             }
+            if (context.payload.action === 'edited' && !context.payload.changes?.base) {
+              core.notice('PR 标题或说明更新不改变 NPU CI 状态。');
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: eventPr.number });
 
             const defaultBranch = context.payload.repository.default_branch;
             const baseRef = pr.base.ref;
-            const defaultContexts = [
-              'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-              'NPU CI / A2+A5 / 02 全量 OPP 构建',
-              'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-              'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-              'NPU CI / A2+A5 / 05 GDR Example/ST',
-              'NPU CI / A2+A5 / 06 报告与 commit 校验',
-            ];
-            // pull_request_target 只执行默认分支上的 workflow，任何 base 分支的 PR
-            // 都由本 workflow 写入“未执行”占位状态。为了让每个分支的 PR 显示各自的
-            // 流程，非默认分支的门禁 context 从该分支自己的 npu-ci-default-status.yml
-            // 中提取（与该分支 ci.yml 会更新的状态一一对应），避免老分支 PR 一直
-            // 停留在新版门禁的 pending（Waiting for status to be reported）。
+            const defaultContexts = checks.contexts;
+            // Read maintenance profiles as data at the current PR's fixed base SHA;
+            // the shared reader also supports branches using the older YAML profile.
             let checkContexts = null;
             if (baseRef === defaultBranch) {
               checkContexts = defaultContexts;
             } else {
               try {
-                const { data: branchStatusWorkflow } = await github.rest.repos.getContent({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  path: '.github/workflows/npu-ci-default-status.yml',
-                  ref: baseRef,
-                });
-                if (!Array.isArray(branchStatusWorkflow) &&
-                    branchStatusWorkflow.type === 'file' &&
-                    branchStatusWorkflow.content) {
-                  const branchStatusText = Buffer
-                    .from(branchStatusWorkflow.content, branchStatusWorkflow.encoding || 'base64')
-                    .toString('utf8');
-                  const extracted = [];
-                  const seen = new Set();
-                  for (const match of branchStatusText.matchAll(/'NPU CI \/ [^']+'/g)) {
-                    const statusContext = match[0].slice(1, -1);
-                    if (!seen.has(statusContext)) {
-                      seen.add(statusContext);
-                      extracted.push(statusContext);
-                    }
-                  }
-                  if (extracted.length > 0) {
-                    checkContexts = extracted;
-                    core.notice(`base 分支 \`${baseRef}\` 的 NPU CI 门禁：${extracted.join('、')}`);
-                  }
-                }
+                checkContexts = await checks.readBranchContexts({ github, context, pr });
+                core.notice(`base 分支 \`${baseRef}\` 的 NPU CI 门禁：${checkContexts.join('、')}`);
               } catch (error) {
-                core.warning(`无法读取 \`${baseRef}\` 分支的 npu-ci-default-status.yml：${error.message}`);
+                core.warning(`无法读取 \`${baseRef}\` 分支的 NPU CI 检查项定义：${error.message}`);
               }
             }
-            if (!checkContexts) {
-              core.notice(`无法确定 base 分支 \`${baseRef}\` 的 NPU CI 门禁，跳过写入默认状态。`);
-              return;
-            }
+            if (!checkContexts) throw new Error(`无法确定 base 分支 \`${baseRef}\` 的 NPU CI 门禁。`);
 
+            const ciModified = await auth.hasCiChanges({ github, context, pr });
+            let ciAuthorError = '';
+            if (ciModified) {
+              try {
+                await auth.requireCiAuthorAdmin({ github, context, pr });
+              } catch (error) {
+                ciAuthorError = error.message;
+              }
+            }
             const marker = `<!-- npu-ci:pr=${pr.number}:sha=${pr.head.sha} -->`;
             const isCommitUpdate = context.payload.action === 'synchronize';
-            const pendingDescription = isCommitUpdate
+            const pendingDescription = ciAuthorError
+              ? '拒绝：CI 代码变更仅允许仓库 Admin 创建的 PR' : isCommitUpdate
               ? '未执行：commit 已变化，请重新触发 /run-npu-ci quick'
-              : '未执行：请仓库 Admin 评论 /run-npu-ci quick';
-            const title = isCommitUpdate
+              : '未执行：请授权 CI 账号评论 /run-npu-ci quick';
+            const title = ciAuthorError ? `NPU CI 拒绝执行：\`${pr.head.sha}\`。` : isCommitUpdate
               ? `PR commit 已变化，NPU CI 已重置为未执行：\`${pr.head.sha}\`。`
               : `NPU CI 暂未执行：\`${pr.head.sha}\`。`;
 
@@ -136,17 +132,17 @@ jobs:
               checkContexts.includes(status.context) &&
               /\/actions\/runs\/\d+/.test(status.target_url || '')
             );
-            if (executionStatus) {
+            if (executionStatus && !ciAuthorError && context.payload.action !== 'edited') {
               core.notice(`当前 head commit 已经有 NPU CI 执行状态：${executionStatus.state}。`);
               return;
             }
-            const missingContexts = checkContexts.filter((statusContext) => !latestByContext.has(statusContext));
+            const missingContexts = checkContexts.filter((statusContext) => ciAuthorError || context.payload.action === 'edited' || !latestByContext.has(statusContext));
             const pendingResults = await Promise.allSettled(missingContexts.map((statusContext) =>
               github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: pr.head.sha,
-                state: 'pending',
+                state: ciAuthorError ? 'failure' : 'pending',
                 context: statusContext,
                 description: pendingDescription,
                 target_url: pr.html_url,
@@ -154,7 +150,7 @@ jobs:
             ));
             const pendingFailures = pendingResults.filter((result) => result.status === 'rejected');
             if (pendingFailures.length > 0) {
-              core.warning(`有 ${pendingFailures.length} 个 NPU CI 默认状态写入失败。`);
+              throw new Error(`有 ${pendingFailures.length} 个 NPU CI 默认状态写入失败。`);
             }
 
             const isDefaultProfile = checkContexts.length === defaultContexts.length &&
@@ -166,13 +162,15 @@ jobs:
               marker,
               title,
               '',
-              '- 当前状态：未执行',
+              ciAuthorError ? '- 当前状态：拒绝执行' : '- 当前状态：未执行',
               isCommitUpdate ? '- 原因：PR head commit 已变化，旧 commit 的 NPU CI 结果不再生效' : '',
               baseRef === defaultBranch ? '' : `- CI 定义分支：\`${baseRef}\`（评论触发的 NPU CI 在该分支的定义上执行）`,
               requirementLine,
               isDefaultProfile ? '- 执行方式：按顺序执行；前置失败时后续项跳过' : '',
-              '- 触发命令：仓库 Admin 权限账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
-              '- 可请求触发的 CI 账号：仓库 Admin 权限账号',
+              '- 触发命令：授权账号在本 PR 评论 `/run-npu-ci quick` 或 `/run-npu-ci full`',
+              '- 可请求触发的 CI 账号：默认分支 `.github/npu-ci-users.json` 名单',
+              ciAuthorError ? `- 原因及修改建议：${ciAuthorError}` : '',
+              ciModified && !ciAuthorError ? '- CI 代码变更：PR 作者为仓库 Admin，可由 CI 名单账号正常触发' : '',
               '- Example ST：必跑',
             ].filter(Boolean).join('\n');
 
@@ -210,3 +208,86 @@ jobs:
             } catch (error) {
               core.warning(`Unable to create or update PR comment: ${error.message}`);
             }
+
+      - name: 默认状态异常时使旧 CI 结果失效
+        if: ${{ always() && (failure() || cancelled()) }}
+        uses: actions/github-script@v8
+        env:
+          NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            // This also runs when checkout or module loading failed. Read the
+            // shared definition as data from the fixed workflow commit.
+            if (context.payload.action === 'edited' && !context.payload.changes?.base) return;
+            const eventPr = context.payload.pull_request;
+            if (!eventPr) throw new Error('缺少 PR 信息，无法使旧 NPU CI 状态失效。');
+            let pr = eventPr;
+            try {
+              ({ data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: eventPr.number }));
+            } catch (error) {
+              core.warning(`无法读取当前 PR，使用事件中的 head 使旧状态失效：${error.message}`);
+            }
+            const sha = pr.head?.sha;
+            if (!/^[0-9a-f]{40}$/.test(sha || '')) throw new Error('缺少有效 PR head，无法使旧 NPU CI 状态失效。');
+            const contexts = new Set();
+            const readText = async (path, ref) => {
+              const { data: file } = await github.rest.repos.getContent({ ...context.repo, path, ref });
+              if (!file || Array.isArray(file) || file.type !== 'file' || !file.content) throw new Error('检查项定义不是可读取的文件。');
+              return Buffer.from(file.content, file.encoding || 'base64').toString('utf8');
+            };
+            const readContexts = async (ref, allowLegacy = false) => {
+              if (!/^[0-9a-f]{40}$/.test(ref || '')) throw new Error('无法确定固定检查项 commit。');
+              try {
+                const definition = JSON.parse(await readText('.github/scripts/npu_ci_checks.json', ref));
+                if (!Array.isArray(definition.required) || !definition.required.length ||
+                    definition.required.some((item) => typeof item?.context !== 'string' || !item.context.startsWith('NPU CI / '))) {
+                  throw new Error('NPU CI required context 列表无效。');
+                }
+                return definition.required.map((item) => item.context);
+              } catch (error) {
+                if (!allowLegacy || error.status !== 404) throw error;
+              }
+              const text = await readText('.github/workflows/npu-ci-default-status.yml', ref);
+              const legacy = [...text.matchAll(/'NPU CI \/ [^']+'/g)].map((match) => match[0].slice(1, -1));
+              if (!legacy.length) throw new Error('目标分支没有可识别的 NPU CI 检查项。');
+              return legacy;
+            };
+            const definitionErrors = [];
+            const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
+            try {
+              (await readContexts(workflowSha)).forEach((name) => contexts.add(name));
+            } catch (error) {
+              definitionErrors.push(error);
+              core.warning(`无法读取固定检查项定义，将尝试使历史 NPU CI 状态失效：${error.message}`);
+            }
+            if (pr.base?.sha !== workflowSha) {
+              try {
+                (await readContexts(pr.base?.sha, true)).forEach((name) => contexts.add(name));
+              } catch (error) {
+                definitionErrors.push(error);
+                core.warning(`无法读取当前目标分支检查项，将使其他已知 NPU CI 状态失效：${error.message}`);
+              }
+            }
+            let historyError;
+            try {
+              const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef,
+                { ...context.repo, ref: sha, per_page: 100 });
+              // Include old maintenance profiles and real success statuses,
+              // even when their current branch definition cannot be read.
+              for (const status of statuses) {
+                if (typeof status.context === 'string' && status.context.startsWith('NPU CI / ')) contexts.add(status.context);
+              }
+            } catch (error) {
+              historyError = error;
+              core.warning(`无法读取历史状态，将使已知 NPU CI 检查项失效：${error.message}`);
+            }
+            if (!contexts.size) throw new Error('无法确定任何 NPU CI 检查项，旧结果可能未失效；请管理员检查 GitHub API 后重新触发。');
+            const results = await Promise.allSettled([...contexts].map((statusContext) =>
+              github.rest.repos.createCommitStatus({ ...context.repo, sha, state: 'failure', context: statusContext,
+                description: 'CI 状态校验异常，旧结果已失效；修复后重新触发 NPU CI', target_url: pr.html_url || eventPr.html_url })));
+            const failed = results.filter((result) => result.status === 'rejected');
+            if (failed.length || definitionErrors.length || historyError) {
+              throw new Error(`NPU CI 异常收敛未完整完成（状态写入失败 ${failed.length} 项）；请检查 GitHub API 权限和服务后重新触发。`);
+            }
+            core.setFailed('无法确认当前 PR 的 CI 状态，旧 NPU CI 结果已失效；请修复前置错误后重新触发。');
