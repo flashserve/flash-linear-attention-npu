@@ -50,6 +50,9 @@ python3() {
     printf 'python3' >>"$CI_TEST_COMMAND_LOG"
     printf ' %q' "$@" >>"$CI_TEST_COMMAND_LOG"
     printf '\n' >>"$CI_TEST_COMMAND_LOG"
+    if [[ "$entrypoint" == "scripts/build_wheel.py" && -n "${CI_TEST_BUILD_ENV_LOG:-}" ]]; then
+        "$CI_TEST_REAL_PYTHON3" -c 'import json, os, sys; print(json.dumps({"args": sys.argv[1:], "env": {key: os.environ.get(key) for key in ("MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL", "MAKEFLAGS", "FLA_NPU_BUILD_ARGS")}}))' "$@" >>"$CI_TEST_BUILD_ENV_LOG"
+    fi
     if [[ "${CI_TEST_FAIL_STAGE_ONE:-false}" == "true" && \
           "$entrypoint" == "tests/test_wheel_environment.py" ]]; then
         echo "injected environment contract failure" >&2

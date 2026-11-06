@@ -879,19 +879,17 @@ fi
 if [[ "$change_scope" == "tests-only" ]]; then
     torch_adapter_enabled=true
 fi
+torch_adapter_label="install the OPP and build the PyTorch adapter"
+torch_adapter_command=build_pytorch_adapter
 if [[ "$change_scope" == "tests-only" ]]; then
-    run_pipeline_stage \
-        torch-adapter \
-        "install the prebuilt OPP and run tests without compiling" \
-        "$torch_adapter_enabled" \
-        run_tests_only
-else
-    run_pipeline_stage \
-        torch-adapter \
-        "install the OPP and build the PyTorch adapter" \
-        "$torch_adapter_enabled" \
-        build_pytorch_adapter
+    torch_adapter_label="install the prebuilt OPP and run tests without compiling"
+    torch_adapter_command=run_tests_only
 fi
+run_pipeline_stage \
+    torch-adapter \
+    "$torch_adapter_label" \
+    "$torch_adapter_enabled" \
+    "$torch_adapter_command"
 
 gdr_example_enabled="${CI_RUN_EXAMPLE_ST:-true}"
 if [[ "$requested_stage" != "all" || "$change_scope" == "tests-only" ]]; then

@@ -1075,7 +1075,11 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             with self.subTest(soc=soc), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 (root / "ci/tests").mkdir(parents=True)
-                for source in (RUN_CHECKS_PATH, REPO_ROOT / "ci/manage_npu_ci_stage_report.py"):
+                for source in (
+                    RUN_CHECKS_PATH,
+                    REPO_ROOT / "ci/classify_changes.py",
+                    REPO_ROOT / "ci/manage_npu_ci_stage_report.py",
+                ):
                     shutil.copyfile(source, root / "ci" / source.name)
                 (root / "ci/tests/parallelism.sh").write_text(
                     fixture.replace("ascend910b", soc), encoding="utf-8"
@@ -1094,8 +1098,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 )
                 self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
                 builds = [json.loads(line) for line in build_log.read_text().splitlines()]
-                self.assertTrue(any("--pkg" in item["args"] and "-j16" in item["args"] for item in builds))
-                self.assertTrue(any(item["args"] == ["build.sh"] for item in builds))
+                self.assertTrue(any(item["args"] == ["scripts/build_wheel.py"] for item in builds))
                 for build in builds:
                     self.assertEqual(build["env"], {
                         "MAX_JOBS": "16", "CMAKE_BUILD_PARALLEL_LEVEL": "16", "MAKEFLAGS": "-j16",
