@@ -90,11 +90,13 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
 
     const auto &kShape = k->GetViewShape();
     const auto &uShape = u->GetViewShape();
+    const size_t headDim = qkvSequenceMajor ? 2 : 1;
+    const size_t sequenceDim = qkvSequenceMajor ? 1 : 2;
     const int64_t logicalBatch = kShape.GetDim(0);
-    const int64_t logicalKHeads = kShape.GetDim(1);
-    const int64_t logicalSeqlen = kShape.GetDim(2);
+    const int64_t logicalKHeads = kShape.GetDim(headDim);
+    const int64_t logicalSeqlen = kShape.GetDim(sequenceDim);
     const int64_t logicalKDim = kShape.GetDim(3);
-    const int64_t logicalVHeads = uShape.GetDim(1);
+    const int64_t logicalVHeads = uShape.GetDim(headDim);
     const int64_t logicalVDim = uShape.GetDim(3);
     const aclTensor *finalStateOutKernel = finalStateOut;
     if (finalStateOutKernel == nullptr) {
