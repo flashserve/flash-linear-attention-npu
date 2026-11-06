@@ -628,17 +628,18 @@ def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
     """Same slot order as the ten-tuple, with disabled exports left as None."""
 
     export_ga = bool(spec.get("disable_recompute", False))
-    # Chunk32 always normalises. Public hats, rstd and beta_eff follow the
-    # same switch as g_cumsum and A. h stays off on the inference launch.
+    # Chunk32 always normalises, so public hats follow disable_recompute.
+    # beta_eff is required on, and h follows its own switch.
     export_l2 = export_ga
-    out_h = export_ga and bool(spec.get("out_h", False))
+    export_beta = True
+    out_h = bool(spec.get("out_h", False))
     state_dtype = _state_dtype(spec)
     return (
         _cpu(o, torch.bfloat16),
         _cpu(state, state_dtype),
         _cpu(g_cumsum, torch.float32) if export_ga else None,
         _cpu(a, torch.bfloat16) if export_ga else None,
-        _cpu(beta_eff, torch.float32) if export_l2 else None,
+        _cpu(beta_eff, torch.float32) if export_beta else None,
         _cpu(h, torch.bfloat16) if out_h else None,
         _cpu(q_hat, torch.bfloat16) if export_l2 else None,
         _cpu(k_hat, torch.bfloat16) if export_l2 else None,
