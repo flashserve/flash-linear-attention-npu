@@ -96,7 +96,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const int64_t logicalKHeads = kShape.GetDim(headDim);
     const int64_t logicalSeqlen = kShape.GetDim(sequenceDim);
     const int64_t logicalKDim = kShape.GetDim(3);
-    const int64_t logicalVHeads = uShape.GetDim(headDim);
+    // u is an internal head-major [B,HV,T,V] tensor even when the public
+    // q/k/v tensors are sequence-major; only k follows qkvSequenceMajor here.
+    const int64_t logicalVHeads = uShape.GetDim(1);
     const int64_t logicalVDim = uShape.GetDim(3);
     const aclTensor *finalStateOutKernel = finalStateOut;
     if (finalStateOutKernel == nullptr) {
