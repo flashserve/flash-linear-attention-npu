@@ -1683,21 +1683,17 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
                                    dt_bias=None, layout="BNSD"):
     """Fused GDN forward: `o` plus the intermediates the backward consumes.
 
-    ``disable_recompute=False`` is the inference launch for every chunk size.
-    The ten-tuple then keeps ``o`` and an optional ``final_state``; g_cumsum,
-    A, beta_eff, h, q_hat, k_hat and both rstd are None. The kernel still
-    normalises when asked. It just does not hand those tensors back.
+    ``disable_recompute`` gates g_cumsum, A and the q/k hats. ``False`` leaves
+    those slots None; the kernel still normalises when asked. ``True`` exports
+    g_cumsum and A. q_hat and k_hat are allocated when the kernel normalises,
+    and are the caller's own q/k when chunk 64/128 leaves normalisation off.
 
-    ``disable_recompute=True`` exports g_cumsum and A. q_hat and k_hat are
-    allocated when the kernel normalises, and are the caller's own q/k when
-    chunk 64/128 leaves normalisation off. h still follows
-    ``return_intermediate_states``. beta_eff follows
-    ``use_beta_sigmoid_in_kernel``.
+    ``h`` follows ``return_intermediate_states``. ``beta_eff`` follows
+    ``use_beta_sigmoid_in_kernel``. Neither waits on ``disable_recompute``.
 
     Chunk 32 runs L2 and beta sigmoid inside the kernel. It requires
     ``use_exp2=False``, ``use_qk_l2norm_in_kernel=True`` and
-    ``use_beta_sigmoid_in_kernel=True``. Those hats and beta_eff come back
-    only on the recompute launch.
+    ``use_beta_sigmoid_in_kernel=True``, so ``beta_eff`` is always returned.
     """
 
     # Gate-in-kernel is unsupported by this kernel build, and the reference

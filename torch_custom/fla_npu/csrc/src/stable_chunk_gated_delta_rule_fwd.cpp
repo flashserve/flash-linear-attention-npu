@@ -115,17 +115,15 @@ run_npu_chunk_gated_delta_rule_fwd(
         {layout_math::sequences(cu, batch), heads, state_tail_k, state_tail_v},
         state_dtype, q_meta);
   }
-  // disable_recompute=false is the inference launch for every chunk size:
-  // the ten-tuple keeps o and optional final_state, and every other slot is
-  // null. That leaves chunk 32 on the specialised kernel. Hats are real
-  // tensors only when the kernel normalises; otherwise a recompute launch
-  // returns the caller's q/k.
+  // disable_recompute only gates g_cumsum, A and the q/k hats. h and beta_eff
+  // stay on their own switches. Chunk 32 requires in-kernel beta sigmoid, so
+  // beta_eff is always allocated there and that launch leaves the fast kernel.
   const bool is_chunk32 = chunk_size == 32;
   const bool export_ga = disable_recompute;
-  const bool export_h = disable_recompute && return_intermediate_states;
+  const bool export_h = return_intermediate_states;
   const bool export_l2 = disable_recompute &&
                          (is_chunk32 || use_qk_l2norm_in_kernel);
-  const bool export_beta = disable_recompute && use_beta_sigmoid_in_kernel;
+  const bool export_beta = use_beta_sigmoid_in_kernel;
   std::optional<Tensor> out_beta_eff;
   if (export_beta) {
     out_beta_eff =
