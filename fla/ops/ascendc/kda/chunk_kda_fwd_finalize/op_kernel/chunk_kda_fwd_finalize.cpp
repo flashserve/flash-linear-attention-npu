@@ -8,7 +8,6 @@
 #include "chunk_kda_fwd_finalize_tiling_key.h"
 #include "chunk_kda_fwd_finalize_kernel.h"
 
-
 template <bool USE_AIV_INPUT_MOVER>
 __global__ __aicore__ void chunk_kda_fwd_finalize(
     GM_ADDR qg_scaled, GM_ADDR aqk, GM_ADDR v_new, GM_ADDR h,
