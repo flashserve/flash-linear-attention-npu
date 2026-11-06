@@ -359,8 +359,18 @@ private:
         const gert::Shape qShape = ctx_.qShape->GetStorageShape();
         const gert::Shape kShape = ctx_.kShape->GetStorageShape();
         const gert::Shape wShape = ctx_.wShape->GetStorageShape();
-        const gert::Shape dOShape = ctx_.dOShape->GetStorageShape();
+        gert::Shape dOShape = ctx_.dOShape->GetStorageShape();
         const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
+        doTokenMajor_ = ctx_.isArch35 && dOShape.GetDimNum() == DIM_NUM_4 &&
+                        dvShape.GetDimNum() == DIM_NUM_4 &&
+                        dOShape.GetDim(DIM_0) == dvShape.GetDim(DIM_0) &&
+                        dOShape.GetDim(DIM_1) == dvShape.GetDim(DIM_2) &&
+                        dOShape.GetDim(DIM_2) == dvShape.GetDim(DIM_1) &&
+                        dOShape.GetDim(DIM_3) == dvShape.GetDim(DIM_3) &&
+                        dvShape.GetDim(DIM_1) != dvShape.GetDim(DIM_2);
+        if (doTokenMajor_) {
+            dOShape = dvShape;
+        }
 
         if (CompareShape(qShape, kShape, CGDR_BWD_DHU_INPUT_Q_NAME,
                          CGDR_BWD_DHU_INPUT_K_NAME, DIM_NUM_4) != ge::GRAPH_SUCCESS) {
@@ -378,6 +388,11 @@ private:
         tiling_.HV = static_cast<int64_t>(dvShape.GetDim(DIM_1));
         tiling_.V = static_cast<int64_t>(dvShape.GetDim(DIM_3));
         tiling_.scale = static_cast<float>(ctx_.scale);
+        if (doTokenMajor_ && tiling_.V > 0 &&
+            tiling_.HV > std::numeric_limits<uint32_t>::max() / tiling_.V) {
+            OP_LOGE(ctx_.nodeName, "invalid d_o: token-major row stride exceeds uint32_t; HV*V must fit");
+            return ge::GRAPH_FAILED;
+        }
 
         if (CompareDim(qShape, wShape, CGDR_BWD_DHU_INPUT_Q_NAME,
                        CGDR_BWD_DHU_INPUT_W_NAME, DIM_0) != ge::GRAPH_SUCCESS) {
@@ -572,7 +587,8 @@ private:
         using namespace GDN;
         tilingKey_ = GET_TPL_TILING_KEY(
             static_cast<uint64_t>(DtypeKey(ctx_.qDataType)), static_cast<uint64_t>(DtypeKey(ctx_.gDataType)),
-            static_cast<uint64_t>(tiling_.V), static_cast<uint64_t>(ctx_.hasGk ? 1 : 0));
+            static_cast<uint64_t>(tiling_.V), static_cast<uint64_t>(ctx_.hasGk ? 1 : 0),
+            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0));
         return ge::GRAPH_SUCCESS;
     }
 
@@ -581,6 +597,7 @@ private:
     size_t workspaceSize_ = 0;
     uint32_t blockDim_ = 1;
     uint32_t tilingKey_ = 1U;
+    bool doTokenMajor_ = false;
 };
 
 } // namespace optiling

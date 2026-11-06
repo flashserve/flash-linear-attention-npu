@@ -1,4 +1,5 @@
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 import os
 from typing import Optional
@@ -277,7 +278,7 @@ def test_recompute_w_u_fwd(
 
     # 将张量移到 NPU 并调用反向算子
     if chunk_indices != None:
-        w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+        w, u = ascendc_ops.npu_recompute_w_u_fwd(
             k.npu(),
             v.npu(),
             beta.npu(),
@@ -289,7 +290,7 @@ def test_recompute_w_u_fwd(
             chunk_indices=chunk_indices
         )
     else:
-        w, u = torch.ops.npu.npu_recompute_w_u_fwd(
+        w, u = ascendc_ops.npu_recompute_w_u_fwd(
             k.npu(),
             v.npu(),
             beta.npu(),

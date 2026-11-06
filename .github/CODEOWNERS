@@ -5,7 +5,6 @@
 fla/ops/**/op_host/*_def.cpp @weinachuan
 fla/ops/**/op_host/op_api/aclnn_*.h @weinachuan
 fla/ops/**/op_host/op_api/aclnn_*.cpp @weinachuan
-torch_custom/fla_npu/npu_custom.yaml @weinachuan
-torch_custom/fla_npu/test_native_functions.yaml @weinachuan
-torch_custom/fla_npu/deprecated.yaml @weinachuan
-torch_custom/fla_npu/op_plugin/ops/opapi/** @weinachuan
+torch_custom/fla_npu/csrc/src/stable_*.cpp @weinachuan
+torch_custom/fla_npu/csrc/include/stable/** @weinachuan
+torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py @weinachuan

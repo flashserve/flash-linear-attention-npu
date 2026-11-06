@@ -68,17 +68,21 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
               ACLNN_ERR_PARAM_INVALID);
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(gk, "gk"),
-             {rawG, "raw_g"}, {dtBias, "dt_bias"}, {dAqk, "d_aqk"},
-             {dqRaw, "dq_raw"}, {dGOut, "d_g"}, {dALogOut, "d_a_log"},
-             {dDtBiasOut, "d_dt_bias"}}) {
+             {dAqk, "d_aqk"}, {dqRaw, "dq_raw"}, {aLog, "a_log"},
+             {dtBias, "dt_bias"}, {dALogOut, "d_a_log"}, {dDtBiasOut, "d_dt_bias"}}) {
         CHECK_RET(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS,
                   ACLNN_ERR_PARAM_INVALID);
     }
-    CHECK_COND(aLog != nullptr && IsContiguous(aLog), ACLNN_ERR_PARAM_INVALID,
-               "a_log must be a contiguous tensor");
-    CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT ||
-                   aLog->GetDataType() == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "a_log must be FP32 or BF16");
+    for (const auto &item : {
+             std::pair<const aclTensor *, const aclTensor *>(rawG, dGOut)}) {
+        CHECK_COND(item.first && (item.first->GetDataType() == DataType::DT_FLOAT ||
+                       item.first->GetDataType() == DataType::DT_BF16),
+                   ACLNN_ERR_PARAM_INVALID, "gate parameters must be BF16 or FP32");
+        CHECK_RET(CheckRequired(item.first, item.first->GetDataType(), "gate parameter") == ACLNN_SUCCESS,
+                  ACLNN_ERR_PARAM_INVALID);
+        CHECK_RET(CheckRequired(item.second, item.first->GetDataType(), "gate gradient") == ACLNN_SUCCESS,
+                  ACLNN_ERR_PARAM_INVALID);
+    }
     CHECK_COND((qRstdOptional == nullptr) == (kRstdOptional == nullptr),
                ACLNN_ERR_PARAM_INVALID, "q_rstd and k_rstd must appear together");
     if (qRstdOptional != nullptr) {
@@ -97,10 +101,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
                    (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") == 0 ||
                     std::strcmp(outputLayout, rank3 ? "TND" : "BSND") == 0),
                ACLNN_ERR_PARAM_INVALID, "output_layout does not match input rank");
-#ifdef KDA_BWD_STAGES_ARCH22
-    CHECK_COND(aLog->GetDataType() == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "A2/A3 requires FP32 a_log");
-#endif
     CHECK_COND(!useBetaSigmoidInKernel || beta->GetDataType() == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "beta sigmoid backward requires saved FP32 beta_eff");
     CHECK_COND(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)) &&
