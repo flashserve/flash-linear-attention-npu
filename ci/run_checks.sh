@@ -546,7 +546,18 @@ install_custom_opp_package() {
     local vendor_name="fla_npu"
     local vendor_dir="fla_npu_transformer"
     local op_api_lib=""
+    local package_dir=""
+    package_dir="$(python3 - <<'PY'
+import importlib.util
+from pathlib import Path
+
+spec = importlib.util.find_spec("fla_npu")
+if spec is not None and spec.origin is not None:
+    print(Path(spec.origin).resolve().parent)
+PY
+)"
     for candidate in \
+        "${package_dir}/opp/vendors/${vendor_dir}/op_api/lib" \
         "${ASCEND_OPP_PATH:-}/vendors/${vendor_dir}/op_api/lib" \
         "/usr/local/Ascend/vendors/${vendor_dir}/op_api/lib"; do
         if [[ -d "$candidate" ]]; then
