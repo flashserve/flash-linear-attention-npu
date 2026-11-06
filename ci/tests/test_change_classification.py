@@ -33,6 +33,12 @@ class ChangeClassificationTests(unittest.TestCase):
             ("tests-only", []),
         )
 
+    def test_documentation_and_tests_are_tests_only(self):
+        self.assertEqual(
+            self.classify("docs/开发者指南.md", "tests/test_example.py"),
+            ("tests-only", []),
+        )
+
     def test_nested_operator_names_are_extracted(self):
         self.assertEqual(
             self.classify(
@@ -45,6 +51,30 @@ class ChangeClassificationTests(unittest.TestCase):
     def test_unknown_ascendc_file_falls_back_to_full(self):
         self.assertEqual(
             self.classify("fla/ops/ascendc/CMakeLists.txt"),
+            ("full", []),
+        )
+
+    def test_documentation_and_operators_are_partial(self):
+        self.assertEqual(
+            self.classify(
+                "docs/开发者指南.md",
+                "fla/ops/ascendc/kda/chunk_kda_bwd/op_host/foo.cpp",
+            ),
+            ("partial", ["chunk_kda_bwd"]),
+        )
+
+    def test_tests_and_operators_are_partial(self):
+        self.assertEqual(
+            self.classify(
+                "tests/test_example.py",
+                "fla/ops/ascendc/kda/chunk_kda_bwd/op_host/foo.cpp",
+            ),
+            ("partial", ["chunk_kda_bwd"]),
+        )
+
+    def test_documentation_and_unrelated_source_are_full(self):
+        self.assertEqual(
+            self.classify("docs/开发者指南.md", "torch_custom/fla_npu/fla_npu.py"),
             ("full", []),
         )
 

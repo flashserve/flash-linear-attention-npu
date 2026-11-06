@@ -1381,6 +1381,13 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertIn("quick|full)", script)
         self.assertNotIn("bash gdn-verify.sh", script)
 
+        tests_only_body = script.split("run_tests_only()", 1)[1].split(
+            "run_gdr_example_st()", 1
+        )[0]
+        self.assertIn("install_latest_arch_wheel", tests_only_body)
+        self.assertNotIn("test.sh", tests_only_body)
+        self.assertIn("existing GDR/Example-ST stage", tests_only_body)
+
     def test_ci_contract_tests_run_outside_the_npu_environment_stage(self):
         run_checks = RUN_CHECKS_PATH.read_text(encoding="utf-8")
         workflow = CONTRACT_TEST_WORKFLOW_PATH.read_text(encoding="utf-8")

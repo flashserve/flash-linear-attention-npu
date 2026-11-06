@@ -119,20 +119,32 @@ def classify_paths(paths: Sequence[str], repo_root: Path | None = None) -> tuple
 
     normalised = sorted({_normalise(path) for path in paths if _normalise(path)})
     root = Path(repo_root or Path(__file__).resolve().parents[1])
-    if normalised and all(_is_documentation(path) for path in normalised):
-        return "docs-only", []
-    if normalised and all(_is_test_only(path) for path in normalised):
-        return "tests-only", []
+    if not normalised:
+        return "full", []
 
+    has_documentation = any(_is_documentation(path) for path in normalised)
+    has_tests = any(_is_test_only(path) for path in normalised)
     operators: set[str] = set()
-    if normalised:
-        for path in normalised:
-            operator = operator_for_path(path, root)
-            if operator is None:
-                return "full", []
+    has_other = False
+    for path in normalised:
+        if _is_documentation(path) or _is_test_only(path):
+            continue
+        operator = operator_for_path(path, root)
+        if operator is None:
+            has_other = True
+        else:
             operators.add(operator)
-        if operators:
-            return "partial", sorted(operators)
+
+    # Documentation is neutral when mixed with tests or operator sources.
+    # Any unrelated source/configuration change still requires a full build.
+    if has_other:
+        return "full", []
+    if operators:
+        return "partial", sorted(operators)
+    if has_tests:
+        return "tests-only", []
+    if has_documentation:
+        return "docs-only", []
     return "full", []
 
 

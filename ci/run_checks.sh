@@ -692,15 +692,12 @@ build_pytorch_adapter() {
 
 run_tests_only() {
     # tests-only changes use the latest architecture wheel as the runtime
-    # base. No source build, wheel build, or local adapter compilation occurs.
+    # base. The existing GDR/Example-ST stage below remains the test entry
+    # point; this preparation stage must not add a new torch_custom test set.
     install_latest_arch_wheel
     configure_installed_fla_npu_opp
     check_example_python_deps
-    local test_args=(--device "$ci_test_device")
-    if [[ -n "${CI_TEST_OP:-}" ]]; then
-        test_args+=(--op "$CI_TEST_OP")
-    fi
-    (cd torch_custom/fla_npu/test && bash test.sh "${test_args[@]}")
+    echo "[CI] Tests-only scope prepared the base wheel; existing Example-ST cases provide test execution."
 }
 
 run_gdr_example_st() {
