@@ -123,7 +123,9 @@ def classify_paths(paths: Sequence[str], repo_root: Path | None = None) -> tuple
         return "full", []
 
     has_documentation = any(_is_documentation(path) for path in normalised)
-    has_tests = any(_is_test_only(path) for path in normalised)
+    has_tests = any(
+        _is_test_only(path) and not _is_documentation(path) for path in normalised
+    )
     operators: set[str] = set()
     has_other = False
     for path in normalised:

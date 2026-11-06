@@ -23,7 +23,10 @@ class ChangeClassificationTests(unittest.TestCase):
 
     def test_documentation_only_is_a_noop(self):
         self.assertEqual(
-            self.classify("README.md", "LICENSES/LICENSE", "docs/开发者指南.md"),
+            self.classify(
+                "README.md", "LICENSES/LICENSE", "docs/开发者指南.md",
+                "ci/README.md", ".github/README.md", "tests/README.md",
+            ),
             ("docs-only", []),
         )
 
