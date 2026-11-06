@@ -59,13 +59,13 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 
 Python 稳定入口固定返回
 `(o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)` 十元组。
-启用 `use_qk_l2norm_in_kernel` 时，q_hat/k_hat 为归一化结果，shape/layout/dtype 与输入一致，
-q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变；关闭时 q_hat/k_hat 分别为原始 q/k
-对象的别名（不分配、不复制），q_rstd/k_rstd 为 None。新增四项不受 disable_recompute 控制。
+`disable_recompute` 同时决定 g_cumsum、A 和 q_hat、k_hat、两个 rstd。为 `false` 时这六项为 None。
+为 `true` 且核内做了 L2 时，q_hat/k_hat 是新分配的归一化结果，shape/layout/dtype 与输入一致，
+q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变。`chunkSize=64/128` 且 `true`、关闭核内 L2 时，
+q_hat/k_hat 是原始 q/k 的别名，两个 rstd 为 None。`chunkSize=32` 不能关闭核内 L2。
 旧六项解包调用需要迁移。rstd 的头数为 Hk，不扩展到 Hv；变长模式使用物理 batch/token 维度。
-`disable_recompute=True` 时导出 g_cumsum/A，否则这两项为 None。
 `output_final_state`、`use_beta_sigmoid_in_kernel` 和 `return_intermediate_states`
-分别控制 final_state、beta_eff 和 h 是否为 None。
+分别控制 final_state、beta_eff 和 h 是否为 None，这三项不看 `disable_recompute`。
 h 的 shape 为 dense `[B,NT,Hv,K,V]`，带 cu_seqlens 的 packed 为 `[1,total_NT,Hv,K,V]`；
 `state_v_first=True` 时末两维为 `[V,K]`。A5 prepare 路径导出遵循此契约，旧融合路径仍不导出 h。
 
@@ -131,7 +131,7 @@ BSND/TND 的旧 `[B,T,Hk]` rstd 输出 descriptor 不再接受。
 ### 直接串联示例
 
 以下代码使用调用方准备的 BSND Q/K/V、BSN g/beta 及上游梯度 d_o，K=V=128、chunk_size=64。
-`use_qk_l2norm` 可取 True 或 False；关闭时返回的 q_hat/k_hat 就是原始输入。
+示例保持 `disable_recompute=True`。`use_qk_l2norm` 可取 True 或 False；此时关闭核内 L2，返回的 q_hat/k_hat 就是原始输入。`disable_recompute=False` 时这四项为 None。
 
 ```python
 from fla_npu.ops.ascendc import (
