@@ -268,10 +268,10 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsIn
         DataCopy(dst, src[offset], rows * K);
         return;
     }
-    DataCopyPad(dst, src[offset],
-        {static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(DataType)),
-         static_cast<uint32_t>((heads - 1) * K * sizeof(DataType) / UB_BLOCK_SIZE), 0, 0},
-        {false, 0, 0, 0});
+    DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(DataType)),
+                         static_cast<uint32_t>((heads - 1) * K * sizeof(DataType)), 0, 0};
+    DataCopyPadExtParams<DataType> pad{false, 0, 0, 0};
+    DataCopyPad(dst, src[offset], cp, pad);
 }
 
 template <typename DataType, typename GType>
@@ -283,10 +283,10 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsOu
         DataCopy(dst[offset], src, rows * K);
         return;
     }
-    DataCopyPad(dst[offset], src,
-        {static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(DataType)), 0,
-         static_cast<uint32_t>((heads - 1) * K * sizeof(DataType) / UB_BLOCK_SIZE), 0},
-        {false, 0, 0, 0});
+    DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(DataType)),
+                         0, static_cast<uint32_t>((heads - 1) * K * sizeof(DataType)), 0};
+    DataCopyPadExtParams<DataType> pad{false, 0, 0, 0};
+    DataCopyPad(dst[offset], src, cp, pad);
 }
 
 template <typename DataType, typename GType>

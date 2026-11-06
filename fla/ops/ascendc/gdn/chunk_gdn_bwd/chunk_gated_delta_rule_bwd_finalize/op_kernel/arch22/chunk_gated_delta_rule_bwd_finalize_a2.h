@@ -11,6 +11,7 @@ struct ChunkBwdDqkwgTilingData {
     uint32_t mul0RowNum, aicCoreNum, hkPartitions;
     uint64_t wsMm3Offset, wsMm4Offset, wsMm6Offset, wsMm5Offset;
     uint64_t wsMm7Offset, wsDsTempOffset, wsDgLastOffset, isVarLen;
+    bool qkvSequenceMajor = false;
 };
 
 #include "dq/chunk_bwd_dqkwg_cube.h"
@@ -95,6 +96,7 @@ __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
         d.B, d.numChunks, d.HV, d.HK, d.aicCoreNum, 1,
         t.isVariable != 0 || d.T % d.BT == 0));
     d.isVarLen = t.isVariable;
+    d.qkvSequenceMajor = t.qkvSequenceMajor != 0;
     const uint64_t btk = d.aicCoreNum * d.HV * d.BT * d.K * sizeof(bfloat16_t);
     const uint64_t btb = d.aicCoreNum * d.HV * d.BT * d.BT * sizeof(bfloat16_t);
     uint64_t offset = 0;
@@ -580,9 +582,10 @@ __aicore__ inline void A2FinalizeQkTail(
                 if (t.qkvSequenceMajor != 0) {
                     const DataCopyExtParams qkCopy{
                         static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)),
-                        static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT) / UB_ALIGN_BYTES), 0, 0};
-                    AscendC::DataCopyPad(qInput, qGm[qkPublicOffset], qkCopy, {false, 0, 0, 0});
-                    AscendC::DataCopyPad(kInput, kGm[qkPublicOffset], qkCopy, {false, 0, 0, 0});
+                        static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0, 0};
+                    const AscendC::DataCopyPadExtParams<QT> qkPad{false, 0, 0, 0};
+                    AscendC::DataCopyPad(qInput, qGm[qkPublicOffset], qkCopy, qkPad);
+                    AscendC::DataCopyPad(kInput, kGm[qkPublicOffset], qkCopy, qkPad);
                 } else {
                     AscendC::DataCopy(qInput, qGm[offset], count);
                     AscendC::DataCopy(kInput, kGm[offset], count);
@@ -614,9 +617,10 @@ __aicore__ inline void A2FinalizeQkTail(
             if (t.qkvSequenceMajor != 0) {
                 const DataCopyExtParams outputCopy{
                     static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
-                    static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT) / UB_ALIGN_BYTES), 0};
-                AscendC::DataCopyPad(dqGm[qkPublicOffset], dqInput, outputCopy, {false, 0, 0, 0});
-                AscendC::DataCopyPad(dkGm[qkPublicOffset], dkInput, outputCopy, {false, 0, 0, 0});
+                    static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0};
+                const AscendC::DataCopyPadExtParams<QT> outputPad{false, 0, 0, 0};
+                AscendC::DataCopyPad(dqGm[qkPublicOffset], dqInput, outputCopy, outputPad);
+                AscendC::DataCopyPad(dkGm[qkPublicOffset], dkInput, outputCopy, outputPad);
             } else {
                 AscendC::DataCopy(dqGm[offset], dqInput, count);
                 AscendC::DataCopy(dkGm[offset], dkInput, count);

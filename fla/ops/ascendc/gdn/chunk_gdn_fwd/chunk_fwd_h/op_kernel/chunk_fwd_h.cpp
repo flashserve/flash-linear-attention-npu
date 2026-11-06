@@ -105,7 +105,7 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 }
 #endif
 
-template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
+template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST, bool QKV_SEQUENCE_MAJOR>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
@@ -156,7 +156,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 
 #ifndef TORCH_MODE
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16, bool QKV_SEQUENCE_MAJOR>
 __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
@@ -204,8 +204,9 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.gatedNumSeqOffset = static_cast<uint64_t>(tilingData->gatedNumSeqOffset);
     args.tiling.gatedNumChunksOffset = static_cast<uint64_t>(tilingData->gatedNumChunksOffset);
     using Traits = GDN::FwdHKernelTraits<
-        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
+        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16,
+        QKV_SEQUENCE_MAJOR>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
-                      Traits::STATE_V_FIRST_VALUE>(args);
+                      Traits::STATE_V_FIRST_VALUE, QKV_SEQUENCE_MAJOR>(args);
 }
 #endif

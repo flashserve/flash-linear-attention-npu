@@ -543,10 +543,10 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
         const uint64_t batch = (cuSeqlens_ == nullptr) ? base / headTokens : 0;
         const uint64_t token = (cuSeqlens_ == nullptr) ? base % headTokens : base;
         const uint64_t offset = ((batch * tiling_.T + token) * heads + head) * dim;
-        DataCopyPad(dstTensor, inputTensor[offset],
-            {static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)),
-             static_cast<uint32_t>((heads - 1) * dim * sizeof(kType) / PRONE_BLOCK_BYTES_32), 0, 0},
-            {false, 0, 0, 0});
+        DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)),
+                             static_cast<uint32_t>((heads - 1) * dim * sizeof(kType)), 0, 0};
+        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
+        DataCopyPad(dstTensor, inputTensor[offset], cp, pad);
     }
     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToVEvent_[inputIdx_]);
     curInputPingPong_ ^= 1U;
@@ -663,10 +663,10 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
         const uint64_t batch = (cuSeqlens_ == nullptr) ? base / headTokens : 0;
         const uint64_t token = (cuSeqlens_ == nullptr) ? base % headTokens : base;
         const uint64_t offset = ((batch * tiling_.T + token) * heads + head) * dim;
-        DataCopyPad(outTensor[offset], srcTensor,
-            {static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)), 0,
-             static_cast<uint32_t>((heads - 1) * dim * sizeof(kType) / PRONE_BLOCK_BYTES_32), 0},
-            {false, 0, 0, 0});
+        DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)),
+                             0, static_cast<uint32_t>((heads - 1) * dim * sizeof(kType)), 0};
+        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
+        DataCopyPad(outTensor[offset], srcTensor, cp, pad);
     }
     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx_]);
     curOutputPingPong_ ^= 1U;
