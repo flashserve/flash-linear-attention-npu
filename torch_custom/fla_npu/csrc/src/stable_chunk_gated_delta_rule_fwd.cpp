@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <stdexcept>
 #include <tuple>
 #include <vector>
 
@@ -64,8 +63,7 @@ constexpr const char* kSchema_chunk_gated_delta_rule_fwd =
     "bool use_exp2, bool use_qk_l2norm_in_kernel, "
     "bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, "
     "bool disable_recompute, bool output_final_state, "
-    "bool return_intermediate_states, bool state_v_first, "
-    "bool is_out_l2norm, int stream) "
+    "bool return_intermediate_states, bool state_v_first, int stream) "
     "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, "
     "Tensor?, Tensor?)";
 
@@ -80,13 +78,7 @@ run_npu_chunk_gated_delta_rule_fwd(
     int64_t layout, double scale, int64_t chunk_size, bool use_exp2,
     bool use_qk_l2norm_in_kernel, bool use_beta_sigmoid_in_kernel,
     bool allow_neg_eigval, bool disable_recompute, bool output_final_state,
-    bool return_intermediate_states, bool state_v_first, bool is_out_l2norm,
-    int64_t stream) {
-  if ((chunk_size == 64 || chunk_size == 128) && !is_out_l2norm) {
-    throw std::runtime_error(
-        "npu_chunk_gated_delta_rule_fwd: is_out_l2norm=False is not supported "
-        "when chunk_size is 64 or 128.");
-  }
+    bool return_intermediate_states, bool state_v_first, int64_t stream) {
   namespace layout_math = fla_npu_stable::stable::layout_math;
   const TensorMeta q_meta = meta_of(q);
   const TensorMeta k_meta = meta_of(k);
@@ -123,17 +115,17 @@ run_npu_chunk_gated_delta_rule_fwd(
         {layout_math::sequences(cu, batch), heads, state_tail_k, state_tail_v},
         state_dtype, q_meta);
   }
-  // Chunk32 always normalises and applies beta inside the kernel. The public
-  // tensors are allocated only for the slots the caller asked to see.
-  // is_out_l2norm=False with no g_cumsum/A/h is the inference launch: every
-  // intermediate stays null so the kernel takes the specialised path.
-  // On chunk32, beta_eff is tied to that same launch, matching the ctypes path.
+  // disable_recompute=false is the inference launch for every chunk size:
+  // the ten-tuple keeps o and optional final_state, and every other slot is
+  // null. That leaves chunk 32 on the specialised kernel. Hats are real
+  // tensors only when the kernel normalises; otherwise a recompute launch
+  // returns the caller's q/k.
   const bool is_chunk32 = chunk_size == 32;
-  const bool export_l2 = is_chunk32 ? is_out_l2norm : use_qk_l2norm_in_kernel;
-  const bool export_beta = use_beta_sigmoid_in_kernel &&
-                           !(is_chunk32 && !is_out_l2norm);
   const bool export_ga = disable_recompute;
-  const bool export_h = return_intermediate_states;
+  const bool export_h = disable_recompute && return_intermediate_states;
+  const bool export_l2 = disable_recompute &&
+                         (is_chunk32 || use_qk_l2norm_in_kernel);
+  const bool export_beta = disable_recompute && use_beta_sigmoid_in_kernel;
   std::optional<Tensor> out_beta_eff;
   if (export_beta) {
     out_beta_eff =
@@ -153,17 +145,15 @@ run_npu_chunk_gated_delta_rule_fwd(
         state_tail_k, state_tail_v};
     out_h = allocate_sizes(h_shape, q_meta.scalar_type, q_meta);
   }
-  // The Q/K normalisation results are part of the public tuple now.  The
-  // reference allocates them only when the kernel does the normalisation;
-  // otherwise the hats *are* the caller's q/k and both rstd slots stay null.
-  // Chunk32 always normalises, and writes the hats only when is_out_l2norm
-  // is set. The inference launch leaves both slots null.
+  // Real hats exist only when the kernel normalises and the caller asked to
+  // keep the intermediates. Closing in-kernel L2 on chunk 64/128 still
+  // aliases the inputs. The inference launch leaves both slots null.
   std::optional<Tensor> out_q_hat;
   std::optional<Tensor> out_k_hat;
   if (export_l2) {
     out_q_hat = allocate_sizes(q_meta.sizes, q_meta.scalar_type, q_meta);
     out_k_hat = allocate_sizes(k_meta.sizes, k_meta.scalar_type, k_meta);
-  } else if (!is_chunk32) {
+  } else if (disable_recompute && !is_chunk32) {
     out_q_hat = q;
     out_k_hat = k;
   }
