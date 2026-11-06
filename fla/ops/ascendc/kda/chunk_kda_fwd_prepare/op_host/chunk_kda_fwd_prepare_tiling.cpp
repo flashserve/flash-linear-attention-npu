@@ -555,13 +555,18 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool isAscend9201 =
+        platform.GetCurNpuArch() == NpuArch::DAV_9201;
+    // 3510 与 9201 都不走 arch22 target 变体；Matches 的 arch35 参数语义是
+    // "非 arch22 新架构"，按并集传入，避免 9201 误命中 arch22 快速路径。
+    const bool isNonArch22 = isAscend950 || isAscend9201;
     const bool useArch22TargetVariant =
         KdaPrepare::Arch22TargetConfig::Matches({
             static_cast<uint64_t>(shape.batch),
             static_cast<uint64_t>(shape.seqLen),
             static_cast<uint64_t>(shape.qkHeadNum),
             static_cast<uint64_t>(shape.valueHeadNum), totalChunks,
-            isAscend950, isVarLen, shape.sequenceMajor,
+            isNonArch22, isVarLen, shape.sequenceMajor,
             betaDesc->GetDataType() == ge::DT_BF16,
             *useNormPtr, *useBetaPtr && !*allowNegPtr, !*useGatePtr,
             *useExp2Ptr, outputMode == CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE});
@@ -576,10 +581,13 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.isVarLen = isVarLen;
     scheduleContext.targetPipeline = useArch22TargetVariant;
     scheduleContext.workspaceSlotBytes =
-        isAscend950 ? CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES
+        isAscend9201 ? CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES
+        : isAscend950 ? CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES
         : (useArch22TargetVariant
                ? KdaPrepare::Arch22TargetConfig::kSlotBytes
                : CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES);
+    scheduleContext.slotsPerWorkgroup =
+        isAscend9201 ? 3 : CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),
@@ -614,7 +622,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         outputMode);
     const auto pipeline = useArch22TargetVariant
         ? PreparePipeline::Target : PreparePipeline::Generic;
-    const uint64_t tilingKey = isAscend950 ? legacyTilingKey
+    const uint64_t tilingKey = isNonArch22 ? legacyTilingKey
         : RuntimeKey::Encode(gateDtypeToken, betaDtypeToken, pipeline);
 
     ChunkKdaFwdPrepareTilingData tiling;
