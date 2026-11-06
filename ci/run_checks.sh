@@ -17,6 +17,8 @@ cd "$repo_dir"
 ci_mode="${CI_MODE:-quick}"
 ci_soc="${CI_SOC:-${NPU_SOC:-ascend910b}}"
 ci_ops="${CI_OPS:-}"
+change_scope="${CI_CHANGE_SCOPE:-}"
+change_ops="${CI_CHANGE_OPS:-}"
 if [[ "$ci_soc" == "unknown" ]]; then
     ci_soc="ascend910b"
 fi
@@ -80,6 +82,114 @@ finalize_bootstrap_failure() {
 
 trap finalize_bootstrap_failure EXIT
 python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" init
+
+classify_changed_files() {
+    local classification_output=""
+    local base_ref="" head_ref=""
+
+    if [[ -n "${CI_CHANGED_FILES:-}" ]]; then
+        if ! classification_output="$(printf '%s\n' "$CI_CHANGED_FILES" | python3 ci/classify_changes.py --paths-from-stdin)"; then
+            classification_output=""
+        fi
+    else
+        # The workflow creates a no-ff merge commit. Its first parent is the
+        # base actually tested and the merge commit contains the PR tree.
+        if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+            base_ref="HEAD^1"
+            head_ref="HEAD"
+        elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            base_ref="HEAD~1"
+            head_ref="HEAD"
+        fi
+        if [[ -n "$base_ref" ]]; then
+            if ! classification_output="$(python3 ci/classify_changes.py --git-range "$base_ref" "$head_ref")"; then
+                classification_output=""
+            fi
+        fi
+    fi
+
+    if [[ -n "$classification_output" ]]; then
+        change_scope="$(sed -n '1p' <<<"$classification_output")"
+        change_ops="$(sed -n '2p' <<<"$classification_output")"
+    fi
+    case "$change_scope" in
+        docs-only|tests-only|partial|full) ;;
+        *)
+            echo "[CI][WARN] Could not classify changed files; using full compilation." >&2
+            change_scope="full"
+            change_ops=""
+            ;;
+    esac
+
+    # Preserve the old /run-npu-ci ops=... contract as an explicit override;
+    # automatic file classification is used when no filter was requested.
+    if [[ -n "${CI_OPS:-}" ]]; then
+        change_scope="partial"
+        change_ops="$CI_OPS"
+        ci_ops="$CI_OPS"
+    else
+        case "$change_scope" in
+            docs-only|tests-only|full) ci_ops="" ;;
+            partial) ci_ops="$change_ops" ;;
+        esac
+    fi
+    export CI_CHANGE_SCOPE="$change_scope"
+    export CI_CHANGE_OPS="$change_ops"
+    echo "[CI] changed-file scope=$change_scope ops=${change_ops:-<none>}"
+}
+
+write_docs_only_reports() {
+    local stage
+    local accuracy_report_file="${CI_ACCURACY_REPORT_FILE:-.ci-tmp/gdr_accuracy_report-${CI_ACCURACY_PLATFORM:-local}.json}"
+    mkdir -p "$(dirname "$accuracy_report_file")"
+    for stage in environment-contracts opp-package standalone-layout torch-adapter gdr-example-st; do
+        python3 ci/manage_npu_ci_stage_report.py \
+            --output "$stage_report_file" \
+            update \
+            --stage "$stage" \
+            --status skipped \
+            --reason "documentation-only change; compilation and tests are not required"
+    done
+    python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize
+    ACCURACY_REPORT_FILE="$accuracy_report_file" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["ACCURACY_REPORT_FILE"])
+payload = {
+    "schema": "gdr-accuracy-report-v1",
+    "complete": True,
+    "status": "skipped",
+    "classification": "docs-only",
+    "metadata": {},
+    "summary": {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "not_run": 0,
+        "accuracy_total": 0,
+        "accuracy_passed": 0,
+        "accuracy_failed": 0,
+        "accuracy_not_run": 0,
+    },
+    "cases": [],
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+PY
+    echo "[CI] Documentation-only change: reports written; compilation and tests skipped."
+}
+
+classify_changed_files
+if [[ "$change_scope" == "docs-only" ]]; then
+    write_docs_only_reports
+    exit 0
+fi
+if [[ "$change_scope" == "partial" ]]; then
+    echo "[CI] Partial operator scope selected: ${change_ops}"
+fi
+
 python3 ci/manage_npu_ci_stage_report.py \
     --output "$stage_report_file" \
     update \
@@ -425,7 +535,13 @@ install_custom_opp_package() {
 
     echo "[CI] Installing custom OPP package: ${run_file}"
     chmod +x "${run_file}"
-    "${run_file}" --quiet
+    if [[ "$change_scope" == "partial" ]]; then
+        # Overlay selected kernels into the architecture base wheel so all
+        # unmodified operators remain available to the tests.
+        "${run_file}" --install --quiet
+    else
+        "${run_file}" --quiet
+    fi
 
     local vendor_name="fla_npu"
     local vendor_dir="fla_npu_transformer"
@@ -510,15 +626,43 @@ check_environment_contracts() {
     python3 torch_custom/fla_npu/test/test_ascendc_mutation_contract.py -b
 }
 
-ops_arg=()
-if [[ -n "$ci_ops" ]]; then
-    ops_arg=(--ops="$ci_ops")
-fi
+install_latest_arch_wheel() {
+    local package_tier
+    case "$ci_soc" in
+        ascend910b) package_tier="a2" ;;
+        ascend910_93) package_tier="a3" ;;
+        ascend950) package_tier="a5" ;;
+        *)
+            echo "[CI][ERROR] No prebuilt flash-linear-attention-npu tier for CI_SOC=$ci_soc" >&2
+            return 2
+            ;;
+    esac
+    local wheel_index="https://mirrors.huaweicloud.com/ascend/repos/pypi/nightly/flash-linear-attention-npu-${package_tier}/latest/"
+    local package_name="flash-linear-attention-npu-${package_tier}"
+    echo "[CI] Installing latest ${package_name} wheel from ${wheel_index}"
+    PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install \
+        --pre \
+        --force-reinstall \
+        --no-cache-dir \
+        --no-deps \
+        --no-index \
+        --find-links "$wheel_index" \
+        "${package_name}==0.*"
+}
+
 build_opp_run_package() {
+    if [[ "$change_scope" == "partial" ]]; then
+        install_latest_arch_wheel
+    fi
     bash ci/prepare_ci_cache.sh
     case "$ci_mode" in
         quick|full)
-            bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu "${ops_arg[@]}" -j"$ci_jobs"
+            if [[ "$change_scope" == "partial" ]]; then
+                bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu \
+                    --ops="$ci_ops" -j"$ci_jobs"
+            else
+                FLA_NPU_SOC="$ci_soc" python3 scripts/build_wheel.py
+            fi
             ;;
         *)
             echo "[CI][ERROR] Unsupported CI_MODE: $ci_mode" >&2
@@ -530,6 +674,10 @@ build_opp_run_package() {
 build_pytorch_adapter() {
     install_custom_opp_package
     check_example_python_deps
+    if [[ "$change_scope" == "partial" ]]; then
+        echo "[CI] Keeping the architecture base wheel and overlaying only the selected operators"
+        return 0
+    fi
     build_torch_custom
 
     if [[ "${CI_RUN_TORCH_TESTS:-false}" == "true" || \
@@ -540,6 +688,19 @@ build_pytorch_adapter() {
         fi
         (cd torch_custom/fla_npu/test && bash test.sh "${test_args[@]}")
     fi
+}
+
+run_tests_only() {
+    # tests-only changes use the latest architecture wheel as the runtime
+    # base. No source build, wheel build, or local adapter compilation occurs.
+    install_latest_arch_wheel
+    configure_installed_fla_npu_opp
+    check_example_python_deps
+    local test_args=(--device "$ci_test_device")
+    if [[ -n "${CI_TEST_OP:-}" ]]; then
+        test_args+=(--op "$CI_TEST_OP")
+    fi
+    (cd torch_custom/fla_npu/test && bash test.sh "${test_args[@]}")
 }
 
 run_gdr_example_st() {
@@ -684,17 +845,21 @@ run_pipeline_stage \
     true \
     check_environment_contracts
 
+opp_package_enabled=true
+if [[ "$change_scope" == "tests-only" ]]; then
+    opp_package_enabled=false
+fi
 run_pipeline_stage \
     opp-package \
     "build the target-SOC OPP run package" \
-    true \
+    "$opp_package_enabled" \
     build_opp_run_package
 
 standalone_layout_enabled=false
-if [[ "$requested_stage" != "all" || \
+if [[ "$change_scope" != "tests-only" && ( "$requested_stage" != "all" || \
       "${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" == "true" || \
       "${CI_RUN_WHEEL_API_CHECK:-false}" == "true" || \
-      "$ci_mode" == "full" ]]; then
+      "$ci_mode" == "full" ) ]]; then
     standalone_layout_enabled=true
 fi
 run_pipeline_stage \
@@ -711,14 +876,25 @@ if [[ "$requested_stage" != "all" || \
       "$ci_mode" == "full" ]]; then
     torch_adapter_enabled=true
 fi
-run_pipeline_stage \
-    torch-adapter \
-    "install the OPP and build the PyTorch adapter" \
-    "$torch_adapter_enabled" \
-    build_pytorch_adapter
+if [[ "$change_scope" == "tests-only" ]]; then
+    torch_adapter_enabled=true
+fi
+if [[ "$change_scope" == "tests-only" ]]; then
+    run_pipeline_stage \
+        torch-adapter \
+        "install the prebuilt OPP and run tests without compiling" \
+        "$torch_adapter_enabled" \
+        run_tests_only
+else
+    run_pipeline_stage \
+        torch-adapter \
+        "install the OPP and build the PyTorch adapter" \
+        "$torch_adapter_enabled" \
+        build_pytorch_adapter
+fi
 
 gdr_example_enabled="${CI_RUN_EXAMPLE_ST:-true}"
-if [[ "$requested_stage" != "all" ]]; then
+if [[ "$requested_stage" != "all" || "$change_scope" == "tests-only" ]]; then
     gdr_example_enabled=true
 fi
 run_pipeline_stage \

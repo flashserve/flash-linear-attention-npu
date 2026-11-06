@@ -60,6 +60,15 @@ python3() {
         echo "injected Stable coverage failure" >&2
         return 26
     fi
+    if [[ "$entrypoint" == "scripts/build_wheel.py" ]]; then
+        if [[ "${CI_TEST_FAIL_STAGE:-}" == "opp-package" ]]; then
+            echo "injected OPP package failure" >&2
+            return 24
+        fi
+        mkdir -p build_out
+        printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
+        chmod +x build_out/fla_npu_linux-stage-test.run
+    fi
     if [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
     elif [[ "$entrypoint" == "ci/run_example_st_cases.py" ]]; then
@@ -140,7 +149,7 @@ run_case() {
         "$case_repo/torch_custom/fla_npu/test" \
         "$fake_package_dir/opp/vendors/fla_npu_transformer/op_api/lib" \
         "$fake_opp_dir/vendors/fla_npu_transformer/op_api/lib"
-    cp ci/run_checks.sh ci/manage_npu_ci_stage_report.py "$case_repo/ci/"
+    cp ci/run_checks.sh ci/classify_changes.py ci/manage_npu_ci_stage_report.py "$case_repo/ci/"
     touch "$fake_package_dir/opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so"
     : >"$command_log"
     set +e
@@ -194,7 +203,7 @@ run_case() {
 
     if [[ "$name" == "scoped" ]]; then
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
-        grep -Fq 'bash build.sh --pkg --soc=ascend910b' "$command_log"
+        grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
     elif [[ "$name" == "prerequisite-failure" ]]; then
         if grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"; then
             echo "The OPP stage ran after the environment stage failed." >&2
@@ -228,8 +237,8 @@ run_case() {
         grep -Fq '[CI][REPRO] CI_STAGE=environment-contracts' "$output_log"
         grep -Fq 'bash ci/run_ci_container.sh' "$output_log"
     else
-        grep -Fq 'bash build.sh --pkg --soc=ascend910b' "$command_log"
-        grep -Fq 'bash build.sh' "$command_log"
+        grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
+        grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
         grep -Fq 'python3 ci/run_example_st_cases.py' "$command_log"
     fi
 }
