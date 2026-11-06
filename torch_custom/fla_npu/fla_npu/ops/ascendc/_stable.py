@@ -1680,28 +1680,24 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
                                    disable_recompute=True,
                                    return_intermediate_states=False,
                                    state_v_first=False, a_log=None,
-                                   dt_bias=None, layout="BNSD",
-                                   is_out_l2norm=None):
+                                   dt_bias=None, layout="BNSD"):
     """Fused GDN forward: `o` plus the intermediates the backward consumes.
 
-    ``is_out_l2norm`` defaults to false for chunk 32: the L2 results stay
-    inside the kernel. Chunk 64 and 128 ignore an omitted value and keep
-    exporting from ``use_qk_l2norm_in_kernel``. Passing false explicitly is
-    refused for those two sizes. Chunk 32 uses false, together with
-    ``disable_recompute=False`` and ``return_intermediate_states=False``, for
-    the inference launch, which returns only ``o`` and an optional
-    ``final_state``. Setting any of those three the other way exports the
-    corresponding intermediate.
+    ``disable_recompute=False`` is the inference launch for every chunk size.
+    The ten-tuple then keeps ``o`` and an optional ``final_state``; g_cumsum,
+    A, beta_eff, h, q_hat, k_hat and both rstd are None. The kernel still
+    normalises when asked. It just does not hand those tensors back.
 
-    The tuple is fixed at ten slots -- `(o, final_state, g_cumsum, A, beta_eff,
-    h, q_hat, k_hat, q_rstd, k_rstd)` -- carrying `None` in the slots the flags
-    switch off, exactly like the reference.  `q_hat`/`k_hat` are the caller's
-    own q/k when the kernel is not asked to normalise them.
+    ``disable_recompute=True`` exports g_cumsum and A. q_hat and k_hat are
+    allocated when the kernel normalises, and are the caller's own q/k when
+    chunk 64/128 leaves normalisation off. h still follows
+    ``return_intermediate_states``. beta_eff follows
+    ``use_beta_sigmoid_in_kernel``.
 
     Chunk 32 runs L2 and beta sigmoid inside the kernel. It requires
     ``use_exp2=False``, ``use_qk_l2norm_in_kernel=True`` and
-    ``use_beta_sigmoid_in_kernel=True``. ``beta_eff`` is returned together
-    with the L2 hats, and stays `None` on the inference launch.
+    ``use_beta_sigmoid_in_kernel=True``. Those hats and beta_eff come back
+    only on the recompute launch.
     """
 
     # Gate-in-kernel is unsupported by this kernel build, and the reference
@@ -1732,14 +1728,6 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: a_log and dt_bias must be None "
             "while gate-in-kernel is unsupported.")
-    if is_out_l2norm is None:
-        # Omitted. Chunk 32 stays inside the kernel. Chunk 64/128 must not see
-        # this omission as an explicit false, or every existing call is refused.
-        is_out_l2norm = int(chunk_size) != 32
-    elif int(chunk_size) in (64, 128) and not bool(is_out_l2norm):
-        raise RuntimeError(
-            "npu_chunk_gated_delta_rule_fwd: is_out_l2norm=False is not supported "
-            "when chunk_size is 64 or 128.")
     if scale is None:
         scale = float(k.shape[-1]) ** -0.5
     return _op("npu_chunk_gated_delta_rule_fwd")(
@@ -1751,7 +1739,6 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
         bool(use_beta_sigmoid_in_kernel), bool(allow_neg_eigval),
         bool(disable_recompute), bool(output_final_state),
         bool(return_intermediate_states), bool(state_v_first),
-        bool(is_out_l2norm),
         _current_stream_ptr(),
     )
 

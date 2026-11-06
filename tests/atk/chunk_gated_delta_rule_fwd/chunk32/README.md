@@ -27,7 +27,7 @@ atk case -f chunk_gated_delta_rule_fwd_chunk32.yaml \
 
 执行器是 `executor_chunk_gated_delta_rule_fwd_chunk32.py`。NPU 侧是 DUT，CPU 侧只认 `mixed_tolerance_bm`。
 
-十元组里，`out_l2=false` 时 q_hat、k_hat、两个 rstd 和 `beta_eff` 为 None。`disable_recompute=false` 时 g_cumsum 和 A 为 None。`out_h=false` 时 h 为 None。`beta_eff` 跟着 `out_l2`，不单独打开。
+十元组里，`disable_recompute=false` 时 g_cumsum、A、q_hat、k_hat、两个 rstd、`beta_eff` 和 h 都是 None。`true` 时导出 g_cumsum、A、q_hat、k_hat、两个 rstd 和 `beta_eff`；h 还要 `out_h=true`。`out_l2` 不再单独决定公开 hats。
 
 ## 环境变量
 

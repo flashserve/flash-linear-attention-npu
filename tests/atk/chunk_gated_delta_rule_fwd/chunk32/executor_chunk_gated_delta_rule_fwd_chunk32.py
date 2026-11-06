@@ -627,21 +627,23 @@ def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
           h=None, q_hat=None, k_hat=None, q_rstd=None, k_rstd=None):
     """Same slot order as the ten-tuple, with disabled exports left as None."""
 
-    out_l2 = bool(spec.get("out_l2", False))
     export_ga = bool(spec.get("disable_recompute", False))
-    out_h = bool(spec.get("out_h", False))
+    # Chunk32 always normalises. Public hats, rstd and beta_eff follow the
+    # same switch as g_cumsum and A. h stays off on the inference launch.
+    export_l2 = export_ga
+    out_h = export_ga and bool(spec.get("out_h", False))
     state_dtype = _state_dtype(spec)
     return (
         _cpu(o, torch.bfloat16),
         _cpu(state, state_dtype),
         _cpu(g_cumsum, torch.float32) if export_ga else None,
         _cpu(a, torch.bfloat16) if export_ga else None,
-        _cpu(beta_eff, torch.float32) if out_l2 else None,
+        _cpu(beta_eff, torch.float32) if export_l2 else None,
         _cpu(h, torch.bfloat16) if out_h else None,
-        _cpu(q_hat, torch.bfloat16) if out_l2 else None,
-        _cpu(k_hat, torch.bfloat16) if out_l2 else None,
-        _cpu(q_rstd, torch.float32) if out_l2 else None,
-        _cpu(k_rstd, torch.float32) if out_l2 else None,
+        _cpu(q_hat, torch.bfloat16) if export_l2 else None,
+        _cpu(k_hat, torch.bfloat16) if export_l2 else None,
+        _cpu(q_rstd, torch.float32) if export_l2 else None,
+        _cpu(k_rstd, torch.float32) if export_l2 else None,
     )
 
 
@@ -764,7 +766,6 @@ def run_npu(spec: dict[str, Any], tensors: tuple):
             return_intermediate_states=inputs["out_h"],
             state_v_first=inputs["state_v_first"],
             layout=inputs["layout"],
-            is_out_l2norm=inputs["out_l2"],
         )
         torch.npu.synchronize()
         return _pack(spec, *outputs)

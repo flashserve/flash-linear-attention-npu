@@ -696,7 +696,6 @@
           "bool(output_final_state)",
           "bool(return_intermediate_states)",
           "bool(state_v_first)",
-          "bool(is_out_l2norm)",
           "_current_stream_ptr()"
         ]
       }
@@ -1082,7 +1081,7 @@
       "return": null
     },
     "npu_chunk_gated_delta_rule_fwd": {
-      "arguments": "q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD', is_out_l2norm=None",
+      "arguments": "q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD'",
       "return": null
     },
     "npu_chunk_local_cumsum": {
@@ -1185,8 +1184,8 @@
     "recompute_w_u_fwd": "(k, v, beta, A, chunk_size, *, g=None, gk=None, cu_seqlens=None, chunk_indices=None)",
     "npu_recurrent_gated_delta_rule": "(query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False)",
     "recurrent_gated_delta_rule": "(query, key, value, state, *, beta, scale=1.0, actual_seq_lengths, ssm_state_indices, num_accepted_tokens=None, g=None, gk=None, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, A_log=None, dt_bias=None, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False)",
-    "npu_chunk_gated_delta_rule_fwd": "(q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD', is_out_l2norm=None)",
-    "chunk_gated_delta_rule_fwd": "(q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD', is_out_l2norm=None)",
+    "npu_chunk_gated_delta_rule_fwd": "(q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD')",
+    "chunk_gated_delta_rule_fwd": "(q, k, v, g, beta, *, initial_state=None, output_final_state=False, chunk_size=64, cu_seqlens=None, chunk_indices=None, scale=None, use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, disable_recompute=True, return_intermediate_states=False, state_v_first=False, a_log=None, dt_bias=None, layout='BNSD')",
     "npu_chunk_local_cumsum": "(g, chunk_size, *, cu_seqlens=None, chunk_indices_out=None, reverse=False, scale=1.0, head_first=True, output_dtype='float32')",
     "chunk_local_cumsum": "(g, chunk_size, *, cu_seqlens=None, chunk_indices_out=None, reverse=False, scale=1.0, head_first=True, output_dtype='float32')",
     "npu_chunk_scaled_dot_kkt": "(k, g, beta, *, cu_seqlens=None, chunk_indices=None, chunk_size=64)",
