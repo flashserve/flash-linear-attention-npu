@@ -250,6 +250,10 @@ public:
         auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(qkStride, params.BT);
         auto layoutBTxV = LayoutRowMajor::MakeLayout<ElementA>(params.BT, vStride);
         auto layoutVxBT = LayoutColMajor::MakeLayout<ElementA>(vStride, params.BT);
+        // dO, dV-local and dW are internal head-major tensors even when the
+        // public q/k/v tensors use sequence-major layout.
+        auto layoutBTxKHead = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.K);
+        auto layoutBTxVHead = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.V);
         auto layoutBTxBT = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutBTxBT_T = LayoutColMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutVxK = LayoutColMajor::MakeLayout<ElementA>(params.V, params.K);
@@ -303,9 +307,9 @@ public:
                     uint64_t hOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t dwOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.K;
 
-                    auto tensorDv = tla::MakeTensor(gmDv[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                    auto tensorDv = tla::MakeTensor(gmDv[dvOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[hOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{}); // h^T
-                    auto tensorDw = tla::MakeTensor(gmDw[dwOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                    auto tensorDw = tla::MakeTensor(gmDw[dwOffset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
 
                     auto tensorBlockDv = GetTile(tensorDv, tla::MakeCoord(0, 0),
                                                     tla::MakeShape(actualBlockShape1.m(), actualBlockShape1.k()));
@@ -356,7 +360,7 @@ public:
                         : (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
 
-                    auto tensorDo = tla::MakeTensor(gmDo[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                    auto tensorDo = tla::MakeTensor(gmDo[dvOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorV = tla::MakeTensor(gmV[dvOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
                     auto tensorDs = tla::MakeTensor(gmDs[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
 
@@ -379,7 +383,7 @@ public:
                     uint64_t hOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
-                    auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                    auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[hOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
                     auto tensorMm4 = tla::MakeTensor(gmMm4[mm4Offset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
 
