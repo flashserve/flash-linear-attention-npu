@@ -19,11 +19,14 @@ ROLE_PATTERN = re.compile(
 )
 
 
-def audit_roles(log_text: str, expected_cases: int) -> dict:
+def audit_roles(log_text: str, expected_cases: int, remote_golden: bool = False) -> dict:
     if expected_cases <= 0:
         raise ValueError("expected_cases 必须是正整数")
     observations = ROLE_PATTERN.findall(log_text)
-    expected_count = expected_cases * len(RUNTIME_ROLE_ORDER)
+    expected_roles = ["dut", "benchmark"]
+    if not remote_golden:
+        expected_roles.append("golden")
+    expected_count = expected_cases * len(expected_roles)
     failures = []
     if len(observations) != expected_count:
         failures.append(f"role_count={len(observations)} != {expected_count}")
@@ -32,12 +35,12 @@ def audit_roles(log_text: str, expected_cases: int) -> dict:
         roles_by_case.setdefault(int(case_id_text), []).append(role)
     if len(roles_by_case) != expected_cases:
         failures.append(f"case_count={len(roles_by_case)} != {expected_cases}")
-    expected_roles = sorted(RUNTIME_ROLE_ORDER)
+    expected_roles = sorted(expected_roles)
     for case_id, roles in sorted(roles_by_case.items()):
         if sorted(roles) != expected_roles:
             failures.append(
                 f"case={case_id} roles={roles} "
-                f"expected_once_each={list(RUNTIME_ROLE_ORDER)}"
+                f"expected_once_each={expected_roles}"
             )
     return {
         "schema": "gdn-atk-runtime-role-contract/v1",
@@ -56,10 +59,12 @@ def main() -> int:
     parser.add_argument("task_log", type=Path)
     parser.add_argument("--expected-cases", type=int, required=True)
     parser.add_argument("--json-out", type=Path, required=True)
+    parser.add_argument("--remote-golden", action="store_true")
     args = parser.parse_args()
     result = audit_roles(
         args.task_log.read_text(encoding="utf-8", errors="replace"),
         args.expected_cases,
+        args.remote_golden,
     )
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
     args.json_out.write_text(
