@@ -115,49 +115,42 @@ run_npu_chunk_gated_delta_rule_fwd(
         {layout_math::sequences(cu, batch), heads, state_tail_k, state_tail_v},
         state_dtype, q_meta);
   }
-  // disable_recompute only gates g_cumsum, A and the q/k hats. h and beta_eff
-  // stay on their own switches. Chunk 32 requires in-kernel beta sigmoid, so
-  // beta_eff is always allocated there and that launch leaves the fast kernel.
-  const bool is_chunk32 = chunk_size == 32;
-  const bool export_ga = disable_recompute;
-  const bool export_h = return_intermediate_states;
-  const bool export_l2 = disable_recompute &&
-                         (is_chunk32 || use_qk_l2norm_in_kernel);
-  const bool export_beta = use_beta_sigmoid_in_kernel;
   std::optional<Tensor> out_beta_eff;
-  if (export_beta) {
+  if (use_beta_sigmoid_in_kernel) {
     out_beta_eff =
         allocate_sizes({batch, tokens, heads}, kFloat, meta_of(beta));
   }
   std::optional<Tensor> out_g_cumsum;
   std::optional<Tensor> out_a;
-  if (export_ga) {
+  if (disable_recompute) {
     out_g_cumsum = allocate_sizes({batch, tokens, heads}, kFloat, meta_of(g));
     out_a = allocate_sizes({batch, heads, tokens, chunk_size},
                            q_meta.scalar_type, q_meta);
   }
   std::optional<Tensor> out_h;
-  if (export_h) {
+  if (return_intermediate_states) {
     const std::vector<int64_t> h_shape = {
         batch, layout_math::chunks(cu, ci, chunk_size, tokens), heads,
         state_tail_k, state_tail_v};
     out_h = allocate_sizes(h_shape, q_meta.scalar_type, q_meta);
   }
-  // Real hats exist only when the kernel normalises and the caller asked to
-  // keep the intermediates. Closing in-kernel L2 on chunk 64/128 still
-  // aliases the inputs. The inference launch leaves both slots null.
+  // Real hats only when the caller keeps intermediates and the kernel
+  // normalises. disable_recompute=false leaves both slots null. Chunk 64/128
+  // with normalisation off still returns the caller's q/k.
   std::optional<Tensor> out_q_hat;
   std::optional<Tensor> out_k_hat;
-  if (export_l2) {
+  if (disable_recompute &&
+      (chunk_size == 32 || use_qk_l2norm_in_kernel)) {
     out_q_hat = allocate_sizes(q_meta.sizes, q_meta.scalar_type, q_meta);
     out_k_hat = allocate_sizes(k_meta.sizes, k_meta.scalar_type, k_meta);
-  } else if (disable_recompute && !is_chunk32) {
+  } else if (disable_recompute) {
     out_q_hat = q;
     out_k_hat = k;
   }
   std::optional<Tensor> out_q_rstd;
   std::optional<Tensor> out_k_rstd;
-  if (export_l2) {
+  if (disable_recompute &&
+      (chunk_size == 32 || use_qk_l2norm_in_kernel)) {
     // BNS regardless of the input layout -- the kernel enforces this shape.
     out_q_rstd = allocate_sizes({batch, key_heads, tokens}, kFloat, q_meta);
     out_k_rstd = allocate_sizes({batch, key_heads, tokens}, kFloat, q_meta);
@@ -176,8 +169,8 @@ run_npu_chunk_gated_delta_rule_fwd(
       out_tensor(meta_of(out_o)),
       out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
                                              : TensorMeta()),
-      out_tensor(export_l2 ? meta_of(*out_q_hat) : TensorMeta()),
-      out_tensor(export_l2 ? meta_of(*out_k_hat) : TensorMeta()),
+      out_tensor(out_q_rstd.has_value() ? meta_of(*out_q_hat) : TensorMeta()),
+      out_tensor(out_k_rstd.has_value() ? meta_of(*out_k_hat) : TensorMeta()),
       out_tensor(out_q_rstd.has_value() ? meta_of(*out_q_rstd) : TensorMeta()),
       out_tensor(out_k_rstd.has_value() ? meta_of(*out_k_rstd) : TensorMeta()),
       out_tensor(out_beta_eff.has_value() ? meta_of(*out_beta_eff)
