@@ -128,7 +128,17 @@ INFRASTRUCTURE_RE = re.compile(
     r"timed out waiting for an unlocked npu|runner.*(?:offline|lost|disconnect)|"
     r"connection (?:reset|refused|timed out)|network is unreachable|"
     r"temporary failure in name resolution|failed to (?:download|fetch)|"
-    r"disk quota exceeded)"
+    r"disk quota exceeded|"
+    # NPU device bring-up failures: the runner cannot attach the selected card,
+    # which is an environment problem rather than an operator defect.
+    r"pta call acl api failed|err00100|"
+    r"aclrt(?:setdevice|createcontext|resetdevice)\b.*(?:fail|error)|"
+    r"acl_error_rt_(?:device_occupied|device_unavailable|device_error)|"
+    r"the device is occupied|device[ _]occupied|"
+    r"drv_error_\w+|"
+    # Host-side lock files: another account owns the shared lock path.
+    r"fla-npu-ci-npu-\d+\.lock|"
+    r"cannot (?:open|create).{0,40}\.lock\b)"
 )
 RUNTIME_RE = re.compile(
     r"(?i)(?:^\s*\[(?:ERROR|FAIL|FATAL|TIMEOUT)\]|\[CI\]\[ERROR\]|"
@@ -372,9 +382,18 @@ def extract_diagnostics(log_file: Path, enabled: bool = True) -> dict[str, list[
             (line.strip() for line in reversed(traceback_lines) if line.strip()),
             "Python traceback",
         )
+        # A traceback triggered by an NPU bring-up failure (ACL/PTA/driver error)
+        # is an environment problem, not an operator defect. torch_npu prints the
+        # traceback first and the `ERR00100 PTA call acl api failed` line after it,
+        # so the whole block must be reclassified instead of being kept as runtime.
+        category = (
+            "infrastructure"
+            if any(INFRASTRUCTURE_RE.search(item) for item in traceback_lines)
+            else "runtime"
+        )
         _add_block(
-            diagnostics["runtime"],
-            seen["runtime"],
+            diagnostics[category],
+            seen[category],
             final_line,
             traceback_lines,
             priority=True,

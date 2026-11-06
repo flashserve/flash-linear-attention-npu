@@ -698,6 +698,30 @@ RuntimeError: ACL kernel launch failed
                 self.assertEqual(return_code, 1)
                 self.assertEqual(payload["accuracy"]["status"], "not_available")
 
+    def test_npu_device_init_acl_error_is_classified_as_infrastructure(self):
+        log = (
+            "Traceback (most recent call last):\n"
+            '  File "examples/flash_gated_delta_rule.py", line 1952, in _main\n'
+            "    torch.npu.set_device(args.device)\n"
+            "[ERROR] 2026-11-04-09:41:04 (PID:40203, Device:0, RankID:-1) "
+            "ERR00100 PTA call acl api failed\n"
+        )
+        return_code, payload, _, _ = self._run(log, exit_code=1, require_stage_report=False)
+
+        self.assertEqual(return_code, 1)
+        self.assertTrue(payload["diagnostics"]["infrastructure"])
+        self.assertFalse(payload["diagnostics"]["compile"])
+
+    def test_npu_lock_permission_error_is_classified_as_infrastructure(self):
+        log = (
+            "ci/run_ci_container.sh: line 74: /tmp/fla-npu-ci-npu-0.lock: "
+            "Permission denied\n"
+        )
+        return_code, payload, _, _ = self._run(log, exit_code=1, require_stage_report=False)
+
+        self.assertEqual(return_code, 1)
+        self.assertTrue(payload["diagnostics"]["infrastructure"])
+
     def test_required_missing_accuracy_report_is_infrastructure_failure(self):
         return_code, payload, _, markdown = self._run(
             "CI completed without report\n",

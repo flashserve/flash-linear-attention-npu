@@ -50,7 +50,7 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 5. `NPU CI / A2+A5 / 05 GDR Example/ST`
 6. `NPU CI / A2+A5 / 06 报告与 commit 校验`
 
-一次触发固定并行验证 A2（`ascend910b`）和 A5（`ascend950`）。每个平台内部按顺序执行前 5 个分项；任一分项失败时，后续分项标记为未执行，不再继续运行。任一平台 job 失败后，Actions 会取消仍在排队或运行的另一平台 job，避免继续占用 NPU；汇总结果仍按失败收敛。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的分项及精度结果；GitHub-hosted 汇总 job 校验两平台结果后发布 6 个 aggregate context，其中第 6 项负责报告完整性和 PR commit 一致性。6 个 context 必须来自同一次 A2+A5 Actions run；任一平台缺席、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
+一次触发会同时启动 `NPU CI · A2`（`ascend910b`）和 `NPU CI · A5`（`ascend950`）两个**独立 workflow**。两个平台各自排队、各自执行前 5 个分项，**互不取消**：任一平台失败都不会打断另一平台。每个平台内部按顺序执行前 5 个分项；任一分项失败时，该平台后续分项标记为未执行。每个平台 job 结束时会在 PR head commit 上写一条辅助状态 `NPU CI / A2 平台执行` / `NPU CI / A5 平台执行`（含跑 ID 与请求模式，**不是**合入门禁 context）；`NPU CI 汇总` workflow 在两个平台都产出终态后下载两侧 artifact，校验平台、SOC、commit、run 身份后发布 6 个 aggregate context 并更新 PR 评论。重跑时按平台跳过：某个平台在当前 head commit 上以相同请求通过过，就只补跑另一个平台；评论命令追加 `force=true` 可强制重跑。旧维护分支如果没有拆分后的 workflow，评论分发会自动回退到该分支的 `ci.yml`。可执行分项失败时，关键诊断会给出 `CI_STAGE=<分项>`、CI 模式和目标 SOC 对应的 `bash ci/run_ci_container.sh` 复现命令。两个 self-hosted job 只上传带平台、SOC、commit、Actions run 和 attempt 身份的分项及精度结果；GitHub-hosted 汇总 job 校验两平台结果后发布 6 个 aggregate context，其中第 6 项负责报告完整性和 PR commit 一致性。6 个 context 必须来自同一次 A2+A5 Actions run；任一平台缺席、任一已执行分项失败、后续分项未执行、精度未通过或报告身份不匹配，都不能满足门禁。
 
 A5 job 使用 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5` 标签，不限制 CPU 架构，可由 x64 或 ARM64 原生 A5 runner 承接。一次触发仍只有 A2、A5 两个设备 job；A5 只选择一台匹配 runner，不增加第三项架构门禁。每台 A5 需预置 `fla-npu-ci:9.1.0-950` 的本机原生架构镜像，并使用配套 CANN 9.1.0、Python 3.12、PyTorch/torch_npu 2.12.0；不得用 QEMU 或跨架构镜像替代原生 NPU 验证。
 
