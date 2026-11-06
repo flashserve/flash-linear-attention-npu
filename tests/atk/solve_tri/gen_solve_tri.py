@@ -259,7 +259,7 @@ def _spec(index: int, profile: dict) -> dict:
             "case_id": index,
             "seed": 20260817 + index,
             "route": "ascendc",
-            "soc": "ascend950",
+            "soc": profile.get("soc", "ascend910b"),
         }
     )
     return spec
