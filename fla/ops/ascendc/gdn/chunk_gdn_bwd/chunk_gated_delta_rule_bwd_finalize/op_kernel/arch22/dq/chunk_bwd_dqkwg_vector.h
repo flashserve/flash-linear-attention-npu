@@ -857,7 +857,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
             }
             {
                 auto tensorDqOut = outQue1.DeQue<DataType>();
-                CopyQkRowsOut(gmDq, dqOutOffset, tensorDqOut, real_BT, HK);
+                DataCopy(gmDq[dqOutOffset], tensorDqOut, actual_dqSize);
                 outQue1.FreeTensor(tensorDqOut);
             }
         }
@@ -1098,7 +1098,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
             inQue1.FreeTensor(tensorDqSum);
 
             tensorDqOut = outQue1.DeQue<DataType>();
-            CopyQkRowsOut(gmDq, dqOutOffset, tensorDqOut, real_BT, HK);
+            DataCopy(gmDq[dqOutOffset], tensorDqOut, actual_dqSize);
             outQue1.FreeTensor(tensorDqOut);
             if (BT == 64) {
                 // 最后一个HV的只读Q消费已完成，再允许复用resident所在buffer。
@@ -1284,7 +1284,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
             }
             {
                 auto tensorDkOut = outQue1.DeQue<DataType>();
-                CopyQkRowsOut(gmDk, dkOutOffset, tensorDkOut, real_BT, HK);
+                DataCopy(gmDk[dkOutOffset], tensorDkOut, actual_dkSize);
                 outQue1.FreeTensor(tensorDkOut);
             }
         }
@@ -1573,7 +1573,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
             inQue1.FreeTensor(tensorDkSum);
 
             tensorDkOut = outQue1.DeQue<DataType>();
-            CopyQkRowsOut(gmDk, dkOutOffset, tensorDkOut, real_BT, HK);
+            DataCopy(gmDk[dkOutOffset], tensorDkOut, actual_dkSize);
             outQue1.FreeTensor(tensorDkOut);
             if (BT == 64) {
                 inQue2.FreeTensor(tensorKResident);
