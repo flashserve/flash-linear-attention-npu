@@ -537,7 +537,7 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
     inputIdx_ = curInputPingPong_;
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vToMte2Event_[inputIdx_]);
     if (!qkvSequenceMajor_) {
-        DataCopy(dstTensor, inputTensor[base * dim], rows * dim);
+        DataCopy(dstTensor, inputTensor[(head * tiling_.T + base) * dim], rows * dim);
     } else {
         const uint64_t headTokens = heads * tiling_.T;
         const uint64_t batch = (cuSeqlens_ == nullptr) ? base / headTokens : 0;
@@ -657,7 +657,7 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
     if (!qkvSequenceMajor_) {
-        DataCopy(outTensor[base * dim], srcTensor, rows * dim);
+        DataCopy(outTensor[(head * tiling_.T + base) * dim], srcTensor, rows * dim);
     } else {
         const uint64_t headTokens = heads * tiling_.T;
         const uint64_t batch = (cuSeqlens_ == nullptr) ? base / headTokens : 0;
@@ -733,7 +733,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       static_cast<uint32_t>(tiling_.kVecRow);
 
         inputIdx_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
-                                     keyBase_ + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
+                                     task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * K_DIM, inputIdx_);
         PipeBarrier<PIPE_V>();
         Mul(scaleFp32Tensor_, betaAllFp32Tensor_[rowOffset_], gExpAllFp32Tensor_[rowOffset_], curRow_);
@@ -773,7 +773,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       static_cast<uint32_t>(tiling_.vVecRow);
 
         inputIdx_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
-                                     valueBase_ + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
+                                     task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * V_DIM, inputIdx_);
         PipeBarrier<PIPE_V>();
         Brcb(brcbFp32Tensor_, betaAllFp32Tensor_[rowOffset_],
@@ -948,7 +948,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         repeatStride_ = K_DIM * sizeof(float32_t) / PRONE_BLOCK_BYTES_32;
 
         inputIdxA_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
-                                      keyBase_ + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
+                                      task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
         inputIdxB_ =
             CopyInRows<kType>(gmDkb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxA_], curRow_ * K_DIM, inputIdxA_);
@@ -1078,7 +1078,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         inputIdxA_ =
             CopyInRows<kType>(gmDvb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * V_DIM, curRow_ * V_DIM);
         inputIdxB_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
-                                      valueBase_ + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
+                                      task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
         CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curRow_ * V_DIM, inputIdxA_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curRow_ * V_DIM, inputIdxB_);
         PipeBarrier<PIPE_V>();
@@ -1111,7 +1111,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
         CastOutputRows(calcFp32BTensor_, curRow_ * V_DIM);
-        CopyPublicRowsOut(dvTensor_, outputBuf_[outputIdx_], valueBase_ + rowOffset_, hv,
+        CopyPublicRowsOut(dvTensor_, outputBuf_[outputIdx_], task.valueBos + rowOffset_, hv,
                           tiling_.HV, V_DIM, curRow_);
     }
 

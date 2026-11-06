@@ -603,8 +603,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 uint64_t keyOffset = keyBase * K_DIM;
                 if (qkvSequenceMajor_) {
                     const uint64_t headTokens = static_cast<uint64_t>(tiling_.HK) * tiling_.T;
-                    const uint64_t batch = (cuSeqlens_ == nullptr) ? keyBase / headTokens : 0;
-                    const uint64_t token = (cuSeqlens_ == nullptr) ? keyBase % headTokens : keyBase;
+                    const uint64_t batch = (cuSeqlens_ == nullptr) ? task.keyBos / headTokens : 0;
+                    const uint64_t token = (cuSeqlens_ == nullptr) ? task.keyBos % headTokens : task.keyBos;
                     keyOffset = ((batch * tiling_.T + token) * tiling_.HK + hk) * K_DIM;
                 }
                 gmK.SetGlobalBuffer((__gm__ kType *)k_ + keyOffset);
