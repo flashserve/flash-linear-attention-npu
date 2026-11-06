@@ -11,6 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / ".github/scripts/npu_ci_authorization.js"
+MAIN_WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
 
 def workflow_script(filename, job, step_id=None):
@@ -70,8 +71,12 @@ const github = {
             settings.branch_checks || require(process.env.NPU_CI_CHECKS_SCRIPT.replace(/\.js$/, '.json'))
           )).toString('base64')}};
         }
-        return {data:{type:'file',content:Buffer.from(settings.workflow_text ?? require('fs').readFileSync('.github/workflows/ci.yml','utf8')).toString('base64')}};
+        const targetWorkflow = settings.workflow_text ?? require('fs').readFileSync('.github/workflows/ci.yml','utf8');
+        const defaultWorkflow = settings.default_workflow_text ?? targetWorkflow;
+        const workflow = request.ref === 'main' ? defaultWorkflow : targetWorkflow;
+        return {data:{type:'file',content:Buffer.from(workflow).toString('base64')}};
       },
+      get:async () => ({data:{default_branch:'main'}}),
       getCollaboratorPermissionLevel:async ({username}) => {
         record('permission',username);
         if (settings.permission_error) throw new Error('permission unavailable');
@@ -184,7 +189,7 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 self.assertEqual(self.records(result, "dispatch"), [])
                 self.assertEqual(self.records(result, "status"), [])
 
-    def test_legacy_workflow_dispatches_only_its_four_declared_inputs(self):
+    def test_legacy_workflow_uses_trusted_default_branch_workflow(self):
         # These interfaces match the inspected v26.9.0, v26.9.1 and v26.10.0
         # workflows; the first two also have issue_comment before dispatch.
         declared = {"pr_number":{"required":True}, "ci_mode":{"required":False,"default":"quick"},
@@ -199,28 +204,39 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                         workflow["env"] = {"NPU_CI_DISPATCH_CONTRACT":contract}
                     result = self.run_entry("dispatch", base_ref=branch,
                                             workflow_text=yaml.safe_dump(workflow,sort_keys=False),
-                                            accepted_inputs=list(declared))
+                                            default_workflow_text=MAIN_WORKFLOW)
                     self.assertNotIn("error", result)
                     dispatch = self.records(result, "dispatch")[0]
-                    self.assertEqual(dispatch["ref"], branch)
-                    self.assertEqual(dispatch["inputs"], {"pr_number":"527", "ci_mode":"quick", "ops":"", "requested_by":"ci-user"})
+                    self.assertEqual(dispatch["ref"], "main")
+                    self.assertEqual(dispatch["inputs"]["workflow_source_ref"], "main")
+                    self.assertEqual(dispatch["inputs"]["requested_by"], "ci-user")
 
     def test_partially_updated_workflow_receives_supported_snapshot_fields_only(self):
         current = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         partial = current.replace("      expected_head_sha:", "      ignored_head_sha:")
         allowed = ["pr_number", "ci_mode", "ops", "requested_by", "expected_base_ref", "expected_base_sha", "expected_workflow_sha"]
-        result = self.run_entry("dispatch", workflow_text=partial, accepted_inputs=allowed)
+        result = self.run_entry("dispatch", workflow_text=partial,
+                                default_workflow_text=MAIN_WORKFLOW,
+                                accepted_inputs=["pr_number", "ci_mode", "ops", "requested_by",
+                                                 "expected_head_sha", "expected_base_ref", "expected_base_sha",
+                                                 "expected_workflow_sha", "workflow_source_ref"])
         self.assertNotIn("error", result)
         inputs = self.records(result, "dispatch")[0]["inputs"]
-        self.assertEqual(set(inputs), set(allowed))
-        self.assertNotIn("expected_head_sha", inputs)
+        self.assertEqual(self.records(result, "dispatch")[0]["ref"], "main")
+        self.assertEqual(set(inputs), {
+            "pr_number", "ci_mode", "ops", "requested_by", "expected_head_sha",
+            "expected_base_ref", "expected_base_sha", "expected_workflow_sha", "workflow_source_ref",
+        })
+        self.assertEqual(inputs["workflow_source_ref"], "main")
 
     def test_workflow_with_no_inputs_can_dispatch_without_new_contract(self):
         for text in ("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch: {}\n"):
             with self.subTest(workflow=text):
-                result = self.run_entry("dispatch", workflow_text=text, accepted_inputs=[])
+                result = self.run_entry("dispatch", workflow_text=text,
+                                        default_workflow_text=MAIN_WORKFLOW)
                 self.assertNotIn("error", result)
-                self.assertEqual(self.records(result, "dispatch")[0]["inputs"], {})
+                self.assertEqual(self.records(result, "dispatch")[0]["ref"], "main")
+                self.assertEqual(self.records(result, "dispatch")[0]["inputs"]["workflow_source_ref"], "main")
 
     def test_missing_dispatch_entry_is_still_a_configuration_error(self):
         result = self.run_entry("dispatch", workflow_text="on:\n  push:\n")
@@ -278,6 +294,65 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
             with self.subTest(options=options):
                 result = self.run_entry("prepare", **options)
                 self.assertNotIn("error", result)
+
+    def test_trusted_default_workflow_can_run_an_old_target_branch(self):
+        result = self.run_entry(
+            "prepare",
+            base_ref="v26.10.0",
+            workflow_ref="main",
+            inputs={
+                "requested_by": "ci-user",
+                "expected_head_sha": "a" * 40,
+                "expected_base_ref": "v26.10.0",
+                "expected_base_sha": "c" * 40,
+                "expected_workflow_sha": "d" * 40,
+                "workflow_source_ref": "main",
+            },
+        )
+        self.assertNotIn("error", result)
+        self.assertIn({"name": "should_run", "value": "true"}, self.records(result, "output"))
+
+    def test_old_target_only_gets_obsolete_placeholder_contexts_completed(self):
+        extra_context = "NPU CI / v26.10.0 / 07 目标 commit 校验"
+        profile = {
+            "required": [
+                {"context": context}
+                for context in [
+                    "NPU CI / A2+A5 / 01 环境、wheel 与运行时契约",
+                    "NPU CI / A2+A5 / 02 全量 OPP 构建",
+                    "NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局",
+                    "NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配",
+                    "NPU CI / A2+A5 / 05 GDR Example/ST",
+                    "NPU CI / A2+A5 / 06 报告与 commit 校验",
+                    extra_context,
+                ]
+            ]
+        }
+        result = self.run_entry(
+            "prepare",
+            base_ref="v26.10.0",
+            workflow_ref="main",
+            branch_checks=profile,
+            statuses=[{
+                "context": extra_context,
+                "state": "pending",
+                "target_url": "https://github.com/example/repo/pull/527",
+                "created_at": "2026-11-05T00:00:00Z",
+            }],
+            inputs={
+                "requested_by": "ci-user",
+                "expected_head_sha": "a" * 40,
+                "expected_base_ref": "v26.10.0",
+                "expected_base_sha": "c" * 40,
+                "expected_workflow_sha": "d" * 40,
+                "workflow_source_ref": "main",
+            },
+        )
+        self.assertNotIn("error", result)
+        completed = [status for status in self.records(result, "status")
+                     if status["context"] == extra_context]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0]["state"], "success")
 
     def test_ci_documentation_does_not_need_admin_author(self):
         result = self.run_entry("dispatch", files=["ci/README.MD", ".github/notes.md"])
