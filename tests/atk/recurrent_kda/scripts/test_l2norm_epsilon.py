@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-os.environ.setdefault("FLA_NPU_STABLE_ABI", "ctypes")
+os.environ.setdefault("FLA_NPU_STABLE_ABI", "stable")
 
 import torch
 import torch_npu

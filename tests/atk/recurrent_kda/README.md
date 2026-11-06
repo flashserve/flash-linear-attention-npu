@@ -39,3 +39,17 @@ bash tests/atk/run_test_cpu.sh -op=recurrent_kda -scope=gen_cases
 ```
 
 `gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，生成器会把不支持 FP16 的算子改回合法 BF16 用例。
+
+`atk_recurrent_kda_rollback.json` 包含 18 个上一步接受数为 5、状态窗口为 6 的回归用例，当前查询长度覆盖 1/2/6，包含两种布局、状态精度和元数据 dtype，各用三个固定 seed。缩短当前窗口不应改变初态列；CPU 标杆沿用原有逐 token 递推，使用 `mixed_tolerance_bm` 与 CPU 高精度 golden 比较。
+
+```bash
+cd tests/atk/recurrent_kda
+atk node --name npu_dut --backend npu --devices 0 \
+    node --name cpu_golden --backend cpu \
+    task -c atk_recurrent_kda_rollback.json -p executor_recurrent_kda_longseq.py \
+    --task accuracy --bm_device cpu --gm_init_flag
+```
+
+## 定向回归结果
+
+Ascend910_9362（A3）、CANN 9.2.1 上，以上 18 个固定 `(case, seed)` 用例均通过 `mixed_tolerance_bm`。未修复版本通过 6 个当前长度为 6 的控制用例，12 个缩窗用例失败。CPU 递推沿用 `34e36de0` 的 `executor_recurrent_kda.py`，未修改公式或放宽精度判据。本记录仅覆盖此次状态窗口修复，不代表全量算子或 A5 硬件验收。

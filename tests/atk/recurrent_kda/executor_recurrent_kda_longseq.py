@@ -114,6 +114,15 @@ def specifications():
     for seed in [20261020, 20261021]:
         spec = dict(long_tail, seed=seed, case_id=len(cases))
         cases.append(spec)
+    for tokens in [1, 2, 6]:
+        for v_first in [False, True]:
+            for seed in [20261017, 20261018, 20261019]:
+                spec = dict(cases[0], T=tokens, layout="BSND" if v_first else "TND",
+                            state_v_first=v_first, state_dtype="bf16" if v_first else "fp32",
+                            V=128, indices="unique", state_window=6, accepted=5,
+                            metadata_dtype="int32" if v_first else "int64", inplace=True,
+                            norm=True, raw_gate=True, seed=seed, case_id=len(cases))
+                cases.append(spec)
     return cases
 
 
@@ -141,22 +150,24 @@ def make_inputs(spec, device):
     accepted = None
     state_capacity = len(lengths)
     if spec.get("indices"):
-        max_step = max(lengths) + 2
+        state_windows = [spec.get("state_window", n) for n in lengths]
+        max_step = spec.get("state_window", max(lengths) + 2)
         indices = torch.full((len(lengths), max_step), -1, dtype=meta_dtype)
         cursor = 0
-        for seq, length in enumerate(lengths):
-            for token in range(length):
+        for seq, (length, window) in enumerate(zip(lengths, state_windows)):
+            for token in range(window):
                 slot = token if spec["indices"] == "unique" else token % 3
                 # Explicitly repeat the destination across a window boundary and at the tail.
                 if spec["indices"] == "repeat" and (token in [7, 8] or token >= length - 2):
                     slot = 0
                 indices[seq, token] = cursor + slot
-            cursor += max(length, 1) if spec["indices"] == "unique" else 3
+            cursor += max(window, 1) if spec["indices"] == "unique" else 3
         state_capacity = cursor + 2
         if spec.get("indices_packed"):
             indices = torch.cat([indices[i, :n] for i, n in enumerate(lengths)])
         accepted = torch.tensor(
-            [min(spec.get("accepted", 1), n) if n else 0 for n in lengths], dtype=meta_dtype)
+            [min(spec.get("accepted", 1), window) if n else 0
+             for n, window in zip(lengths, state_windows)], dtype=meta_dtype)
     tail = (vdim, 128) if spec["state_v_first"] else (128, vdim)
     state = normal((state_capacity, hv, *tail), 0.02).to(DTYPES[spec["state_dtype"]])
     if spec.get("initial_none"):
@@ -262,9 +273,10 @@ def generate(path):
     output = []
     for spec in specifications():
         case = copy.deepcopy(template)
-        case["standard"]["acc"] = {"cv_fused_double_benchmark": {
-            "max_re_ratio": 5, "avg_re_ratio": 1.5,
-            "root_mean_squared_ratio": 1.5, "number_count_radio": 4}}
+        if "state_window" not in spec:
+            case["standard"]["acc"] = {"cv_fused_double_benchmark": {
+                "max_re_ratio": 5, "avg_re_ratio": 1.5,
+                "root_mean_squared_ratio": 1.5, "number_count_radio": 4}}
         case.update(id=spec["case_id"], default_seed=spec["seed"],
                     name=f"recurrent_kda_longseq_{spec['case_id']:03d}",
                     api_type="executor_recurrent_kda_longseq")
