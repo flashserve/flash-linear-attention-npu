@@ -2,7 +2,7 @@
 
 作者：zzy1205。更新日期：2026-11-06。当前主干基线：`a13871e8`（初始实现基线 `fb3d47dd`）。
 
-本文维护已实现的架构、接口、兼容边界和验收要求，组织方式参照
+本文区分当前实现、目标兼容边界和验收要求；待补齐能力不计为已支持。组织方式参照
 [OPP 增量叠加层设计](../OPP叠加层增量设计.md)。机器、命令、失败修正和结果见
 [A2 验证记录](../../experimental/validation-a2-20261103.md)，用例定义见
 [A2 功能与隔离验证方案](../../experimental/_tests/a2_isolation/README.md)。
@@ -103,6 +103,52 @@ distribution 按 SoC 分档，例如 `flash-linear-attention-npu-experimental-a2
 | dispatcher | `fla_npu_stable` | `fla_npu_experimental_stable` |
 | launcher | `libfla_npu_stable.so` | `libfla_npu_experimental_stable.so` |
 
+### 3.1 build.sh 参数兼容边界
+
+目标约定：在主干已有、可用的构建命令及参数组合上增加 `--experimental`，切换算子来源、
+依赖闭包和制品身份，其余构建参数保持对应语义；experimental overlay 不支持。
+准确开关名为 `--experimental`，不是 `--experiment`。该开关本身不替代 `--pkg` 等构建动作。
+不能把当前实现的额外限制当作长期设计边界，也不能把“解析器接受参数”当作该功能已适配通过。
+
+以下选择规则以 custom OPP 构建 `bash build.sh --pkg --experimental ...` 为例：
+
+| 参数 | 实验模式语义 | 当前实现与证据 |
+| --- | --- | --- |
+| `--ops=fused_recurrent_rwkv8` | 选择指定实验算子及其传递实验依赖 | 已实现；RWKV8 单算子 A2 构建、打包与装载已验证 |
+| `--ops=op_a,op_b` | 一次选择多个实验算子，合并依赖闭包并去重；`op_a/op_b` 须为实际存在的名称 | 框架已支持多算子选择、依赖和注册；当前用临时夹具验证，不声明本轮真实多算子 NPU 验收 |
+| 不传 `--ops` | 选择全部实验算子 | 已实现默认全选；CMake 默认选择为 `ALL` |
+| `--ops=all` / `--ops=ALL` | 与不传 `--ops` 的全选集合相同 | 已实现；本轮 A2 显式 `--ops=all` 构建与包审计已验证 |
+| `--experimental --list-ops` | 只列出实验算子，不列正式算子及 `_` 开头的框架目录 | 已实现此顺序；反序 `--list-ops --experimental` 会提前列出正式集合，属于待修复缺陷 |
+| 正式算子名或不存在的实验算子名 | 明确失败，不回落到正式集合或偷偷改为全编 | 已有名称及闭包校验 |
+
+“全编”仅指实验集合及其依赖。当前真实实验集合只有 `fused_recurrent_rwkv8`，因此本轮
+单算子和全编的集合相同，不能据此推断多个真实实验算子的联合构建或执行已验收。
+
+其余参数的目标与当前差距如下；未逐项列出的主干有效构建参数也属于上述兼容目标。
+
+| 参数或功能 | 目标边界 | 当前状态 |
+| --- | --- | --- |
+| `--soc`、`-j`、`-O`、`--build-type`、`--verbose`、`--bisheng_flags`、`--oom` 等编译选项 | 继续控制所选实验算子的目标、并行度和编译行为 | 复用主干解析与传递路径；不代表全部取值、组合及 SoC 都已实测 |
+| `--kernel_template_input` 等带组合限制的参数 | 保留主干校验；例如模板输入只允许指定单个算子 | 不因实验模式放宽原有约束 |
+| vendor 与 SoC 范围 | 保留主干现有约束，并使用独立实验身份 | 本轮基线固定正式 vendor 为 `fla_npu`、实验 vendor 为 `fla_npu_experimental`；custom 构建路径及实验 wheel 按单 SoC 使用，不承诺逗号分隔多 SoC 构建 |
+| `--static` | 对主干有效的静态构建组合提供实验对应能力，保持源码和制品隔离 | 当前被实验构建模式检查明确拒绝，待适配；不是 overlay 之外的永久排除项 |
+| `--jit` | 对主干有效的 JIT 组合提供实验对应能力，并匹配相应包审计规则 | 存在参数及 custom 构建分支；尚未完成实验制品端到端适配与验收，不能宣称完整支持 |
+| `--ophost`、`--opapi`、`--opgraph`、`--opkernel` 等分目标构建 | 对主干有效组合只处理实验集合 | 尚未完成逐入口、逐产物的完整验证 |
+| UT、`--example`、`--run_example` 及相关 PR 测试入口 | 从实验树选择测试及示例，使用实验制品，不借用正式算子入口 | `--example` 当前明确拒绝；其余入口尚未完整适配与验证 |
+| 参数顺序及 `--PR_PKG` 等提前处理入口 | 等价参数顺序得到同一模式和算子集合 | `--list-ops`、`--PR_PKG` 等需补齐模式预解析及顺序回归 |
+| overlay | 明确不支持 | 不增加实验 overlay 构建、安装、选择或运行回落能力 |
+
+本节约束的是 `build.sh` 的构建参数兼容性，不扩大正式 wheel 打包入口、实验 `.run` 安装器
+或运行时的支持范围。正式 wheel 仍拒绝实验参数；实验安装器仍要求独立空目录；wheel 内嵌
+OPP 配套、固定实验身份、分进程装载等约束继续按第 4–6 节执行。
+
+参数兼容验收必须分别记录名称发现、实际构建、包内容与适用的执行结果，并覆盖单选、多选、
+默认全选、显式全选、传递依赖、参数顺序以及错误参数。共同支持的构建组合须对照正式模式
+检查原有功能不回归；主干本身不支持的组合无需在实验模式新增。上述缺口补齐并验证前，
+不得将当前版本描述为“除 overlay 外，build.sh 全部功能已等价支持”。
+
+### 3.2 源码与依赖闭包
+
 算子名匹配 `[A-Za-z0-9][A-Za-z0-9_.-]*`，`all/ALL` 保留；`_` 开头目录为框架目录。
 根 `CMakeLists.txt` 标记算子，`<op>_depends` 声明依赖。`all` 展开为确定集合；
 host 挂载、kernel 复制、adapter 注册和审计消费同一解析结果。
@@ -146,7 +192,7 @@ host 挂载、kernel 复制、adapter 注册和审计消费同一解析结果。
 export FLA_NPU_DISABLE_PTH=1
 bash build.sh --experimental --list-ops
 bash build.sh --pkg --experimental --soc=ascend910b --ops=fused_recurrent_rwkv8 -j4
-# 全量使用 --ops=all；同一 checkout 的构建串行执行。
+# 不传 --ops 或显式 --ops=all 均选择全部实验算子；同一 checkout 的构建串行执行。
 
 # 目标必须是绝对空目录或尚不存在的目录，父目录必须存在。
 bash build_out/fla_npu_experimental_linux-$(uname -m).run \
@@ -223,6 +269,7 @@ ATK 及 worker 可能先导入 `torch_npu`。本轮在专用、一次性 ATK 环
 
 | 检视组 | 主要文件 | 必查条件 |
 | --- | --- | --- |
+| 参数兼容 | `build.sh`、构建选项与相关契约测试 | 按第 3.1 节区分兼容目标、已实现机制、实际验证与待补齐项；覆盖选择规则及参数顺序 |
 | 构建闭包 | `cmake/experimental.cmake`、`scripts/check_build_ops.py` | 名称、依赖、common、真实路径、空集合与负例 |
 | ABI / 包 | `build.sh`、`scripts/experimental_manifest.py`、实验安装器 | 两阶段配对、adapter 覆盖、哈希、产物集合及错误安装 |
 | launcher | `experimental/_framework/build.py`、通用编译器/Runtime | 独立注册、指纹、ELF 门禁、自有符号不回落、队列/stream 生命周期 |
