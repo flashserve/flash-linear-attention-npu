@@ -190,8 +190,8 @@ def build_inputs(
     use_qk_l2norm = _as_bool(spec.get("use_qk_l2norm", False))
     if use_qk_l2norm:
         norm_dtype = compute_dtype or torch.float32
-        q_rstd = torch.rsqrt((q.to(norm_dtype) * q.to(norm_dtype)).sum(-1) + 1.0e-6)
-        k_rstd = torch.rsqrt((k.to(norm_dtype) * k.to(norm_dtype)).sum(-1) + 1.0e-6)
+        q_rstd = torch.rsqrt((q.to(norm_dtype) * q.to(norm_dtype)).sum(-1) + 1.0e-6).to(torch.float32)
+        k_rstd = torch.rsqrt((k.to(norm_dtype) * k.to(norm_dtype)).sum(-1) + 1.0e-6).to(torch.float32)
     else:
         q_rstd = k_rstd = None
 
