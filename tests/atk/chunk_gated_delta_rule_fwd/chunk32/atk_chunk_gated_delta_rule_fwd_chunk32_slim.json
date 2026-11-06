@@ -202,17 +202,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -462,17 +451,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -742,17 +720,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -1002,17 +969,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -1282,17 +1238,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -1542,17 +1487,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -1822,17 +1756,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -2082,17 +2005,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -2362,17 +2274,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -2622,17 +2523,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -2902,17 +2792,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -3162,17 +3041,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -3442,17 +3310,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -3702,17 +3559,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -3982,17 +3828,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -4242,17 +4077,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -4522,17 +4346,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -4782,17 +4595,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -5062,17 +4864,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -5322,17 +5113,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -5602,17 +5382,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -5862,17 +5631,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -6142,17 +5900,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -6212,7 +5959,7 @@
     {
         "id": 23,
         "default_seed": null,
-        "name": "chunk_gated_delta_rule_fwd_chunk32_0023_slim_export_l2",
+        "name": "chunk_gated_delta_rule_fwd_chunk32_0023_slim_export_off",
         "aclnn_name": "ChunkGatedDeltaRuleFwd",
         "triton_name": null,
         "kernel_name": null,
@@ -6407,17 +6154,6 @@
                 "dtype": "bool",
                 "shape": null,
                 "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": true,
                 "backward": false,
                 "align_32B": null,
                 "outlier_values": null
@@ -6672,17 +6408,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -6952,17 +6677,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -7022,7 +6736,7 @@
     {
         "id": 26,
         "default_seed": null,
-        "name": "chunk_gated_delta_rule_fwd_chunk32_0026_slim_export_l2_ga",
+        "name": "chunk_gated_delta_rule_fwd_chunk32_0026_slim_export_ga_b",
         "aclnn_name": "ChunkGatedDeltaRuleFwd",
         "triton_name": null,
         "kernel_name": null,
@@ -7217,17 +6931,6 @@
                 "dtype": "bool",
                 "shape": null,
                 "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": true,
                 "backward": false,
                 "align_32B": null,
                 "outlier_values": null
@@ -7292,7 +6995,7 @@
     {
         "id": 27,
         "default_seed": null,
-        "name": "chunk_gated_delta_rule_fwd_chunk32_0027_slim_export_l2_h",
+        "name": "chunk_gated_delta_rule_fwd_chunk32_0027_slim_export_h_b",
         "aclnn_name": "ChunkGatedDeltaRuleFwd",
         "triton_name": null,
         "kernel_name": null,
@@ -7487,17 +7190,6 @@
                 "dtype": "bool",
                 "shape": null,
                 "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": true,
                 "backward": false,
                 "align_32B": null,
                 "outlier_values": null
@@ -7752,17 +7444,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -8032,17 +7713,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": true,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -8292,17 +7962,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -8572,17 +8231,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -8832,17 +8480,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",
@@ -9112,17 +8749,6 @@
                 "outlier_values": null
             },
             {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
                 "name": "disable_recompute",
                 "type": "attr",
                 "required": true,
@@ -9377,17 +9003,6 @@
                 "dtype": "bool",
                 "shape": null,
                 "range_values": true,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": false,
                 "backward": false,
                 "align_32B": null,
                 "outlier_values": null

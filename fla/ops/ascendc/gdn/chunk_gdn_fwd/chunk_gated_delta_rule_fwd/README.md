@@ -94,17 +94,16 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
 - A5 三算子路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
-- `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。`disable_recompute` 只控制 g_cumsum、A 和 q_hat、k_hat。`false` 时这几项为 None。`h` 仍由 `return_intermediate_states` 控制，`beta_eff` 仍由 `use_beta_sigmoid_in_kernel` 控制。`chunkSize=32` 必须开核内 beta sigmoid，所以 `beta_eff` 总会交回，这一路不会进推理快核。aLog/dtBias 必须为空。稳定入口仍返回十元组。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
+- `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。aLog/dtBias 必须为空。稳定入口仍返回十元组。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
 
-### `disable_recompute` 与 q_hat、k_hat
+### `disable_recompute`
 
-`disable_recompute` 在原来的 g_cumsum、A 之外，再决定要不要把 q_hat、k_hat 交给调用方。`false` 时 g_cumsum、A、q_hat、k_hat 和两个 rstd 是 None。核内该做的 L2 仍然做。
+`disable_recompute` 决定是否交出 g_cumsum、A 和 q_hat、k_hat。
 
-`true` 时导出 g_cumsum 和 A。核内做了 L2 时同时分配 q_hat、k_hat 和两个 rstd。`chunkSize=64/128` 关闭 `useQkL2norm` 时，q_hat、k_hat 仍是输入 q、k 的别名，两个 rstd 为 None。
-
-`h` 只看 `return_intermediate_states`。`beta_eff` 只看 `use_beta_sigmoid_in_kernel`。这两个开关不看 `disable_recompute`。`chunkSize=32` 必须 `use_beta_sigmoid_in_kernel=true`，所以 `beta_eff` 总会分配；写出它会置上 `0x10000000`，推理快核要求这个高半字节为 0，因此这一路走通用核。
+- `chunkSize=32` 不能关闭核内 L2。`false` 时 g_cumsum、A、q_hat、k_hat 和两个 rstd 为 None；`true` 时这些都是新分配的张量。
+- `chunkSize=64/128`：`false` 时同样为 None。`true` 时交出 g_cumsum 和 A；`useQkL2norm=true` 时 q_hat、k_hat 和两个 rstd 新分配，`useQkL2norm=false` 时 q_hat、k_hat 是输入 q、k 的别名，两个 rstd 为 None。
 
 ## 验证
 

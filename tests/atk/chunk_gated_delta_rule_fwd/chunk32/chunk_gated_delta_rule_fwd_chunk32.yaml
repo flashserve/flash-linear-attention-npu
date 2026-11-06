@@ -6,7 +6,7 @@ aclnn_name: ChunkGatedDeltaRuleFwd
 generate: generator_chunk_gated_delta_rule_fwd_chunk32
 # 形状和开关由 gen_chunk_gated_delta_rule_fwd_chunk32.py 按套件逐条写死。
 # 默认生成精度套。其它套件设置 CHUNK32_ATK_SUITE=slim|perf|mss|dc，并用 -dt 对齐条数。
-dtype_numbers: 1121
+dtype_numbers: 1085
 extra_numbers: 0
 standard:
   acc:
@@ -152,16 +152,6 @@ inputs:
       invalid:
         values: []
   - name: state_v_first
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
-  - name: out_l2
     type: attr
     required: true
     dtypes:
