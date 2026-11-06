@@ -159,6 +159,21 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
+    ge::graphStatus CompareDimPair(const gert::Shape &shape1, const gert::Shape &shape2,
+                                   const char *inputName1, const char *inputName2,
+                                   size_t dimIndex1, size_t dimIndex2)
+    {
+        size_t shapeDim1 = shape1.GetDim(dimIndex1);
+        size_t shapeDim2 = shape2.GetDim(dimIndex2);
+        OP_CHECK_IF(shapeDim1 != shapeDim2,
+                    OP_LOGE(ctx_.nodeName,
+                            "Compare input shape of %s dim %zu and %s dim %zu failed, "
+                            "the lengths should be same, but got %zu and %zu.",
+                            inputName1, dimIndex1, inputName2, dimIndex2, shapeDim1, shapeDim2),
+                    return ge::GRAPH_FAILED);
+        return ge::GRAPH_SUCCESS;
+    }
+
     ge::graphStatus CommonTiling()
     {
         const gert::Shape qStorageShape = ctx_.qShape->GetStorageShape();
@@ -171,8 +186,8 @@ public:
         OP_CHECK_IF(CompareDim(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME, DIM_0) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareDim(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME,
-                               ctx_.qkvSequenceMajor ? DIM_1 : DIM_2) !=
+        OP_CHECK_IF(CompareDimPair(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME,
+                                   ctx_.qkvSequenceMajor ? DIM_1 : DIM_2, DIM_2) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(dOStorageShape, gStorageShape, INPUT_DO_NAME, INPUT_G_NAME, G_DIM_NUM) !=
