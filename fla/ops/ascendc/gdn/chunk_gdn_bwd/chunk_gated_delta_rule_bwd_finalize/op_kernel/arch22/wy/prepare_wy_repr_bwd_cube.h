@@ -37,7 +37,8 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 class PrepareWyReprBwdCubeProcess {
 public:
     __aicore__ inline PrepareWyReprBwdCubeProcess(GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens,
-                                                  GM_ADDR chunkIndices, GM_ADDR workspace);
+                                                  GM_ADDR chunkIndices, GM_ADDR workspace,
+                                                  bool qkvSequenceMajor = false);
     __aicore__ inline void Init(const GDN::PrepareWyReprBwdTilingData &tiling);
     __aicore__ inline void Process();
 
@@ -327,15 +328,18 @@ private:
     uint32_t curL1_ = 0;
     uint32_t curL0_ = 0;
     uint32_t curL0C_ = 0;
+    bool qkvSequenceMajor_ = false;
     Arch::CrossCoreFlag vecToCubeFlag_{PREPARE_WY_REPR_BWD_VEC_TO_CUBE_FLAG_READY};
     Arch::CrossCoreFlag cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY};
 };
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
 __aicore__ inline PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::PrepareWyReprBwdCubeProcess(
-    GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace)
+    GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
+    bool qkvSequenceMajor)
     : k_(k), A_(A), dw_(dw), du_(du), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), workspace_(workspace)
 {
+    qkvSequenceMajor_ = qkvSequenceMajor;
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
@@ -420,7 +424,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     LayoutTagAT tagAT = LayoutTagAT::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDw tagDw = LayoutTagDw::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
     LayoutTagDu tagDu = LayoutTagDu::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
-    LayoutTagK tagK = LayoutTagK::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
+    LayoutTagK tagK = LayoutTagK::MakeLayout<kType>(CHUNK_SIZE,
+        qkvSequenceMajor_ ? static_cast<uint64_t>(tiling_.HK) * K_DIM : K_DIM);
     LayoutTagKbgT tagKbgT = LayoutTagKbgT::MakeLayout<kType>(K_DIM, CHUNK_SIZE);
     LayoutTagVbT tagVbT = LayoutTagVbT::MakeLayout<kType>(V_DIM, CHUNK_SIZE);
     LayoutTagDkbg tagDkbg = LayoutTagDkbg::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
@@ -595,7 +600,14 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 gmAT.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
                 gmDw.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
                 gmDu.SetGlobalBuffer((__gm__ kType *)du_ + valueBase * V_DIM);
-                gmK.SetGlobalBuffer((__gm__ kType *)k_ + keyBase * K_DIM);
+                uint64_t keyOffset = keyBase * K_DIM;
+                if (qkvSequenceMajor_) {
+                    const uint64_t headTokens = static_cast<uint64_t>(tiling_.HK) * tiling_.T;
+                    const uint64_t batch = (cuSeqlens_ == nullptr) ? keyBase / headTokens : 0;
+                    const uint64_t token = (cuSeqlens_ == nullptr) ? keyBase % headTokens : keyBase;
+                    keyOffset = ((batch * tiling_.T + token) * tiling_.HK + hk) * K_DIM;
+                }
+                gmK.SetGlobalBuffer((__gm__ kType *)k_ + keyOffset);
                 gmDkbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbgOffset));
                 gmDvb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dvbOffset));
                 gmKkt.SetGlobalBuffer((__gm__ kType *)kktBase);

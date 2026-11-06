@@ -148,17 +148,19 @@ public:
         uint64_t aicCoreNum = 0; // CV 深融合 blockDim (cube/vector 共用), 由 host tiling 给出
         uint32_t hkPartitions = 1;
         bool isVarLen = false;
+        bool qkvSequenceMajor = false;
 
         CATLASS_DEVICE
         Params(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen,
                GM_ADDR chunk_indices, GM_ADDR dq, GM_ADDR dk, GM_ADDR dw,GM_ADDR workspace, uint64_t B, uint64_t HV, uint64_t HK,
                uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, uint64_t n_ratio, bool isVarLen,
-               uint64_t wsMm3, uint64_t wsMm4, uint64_t wsMm6, uint64_t wsMm5, uint64_t wsMm7, uint64_t wsDsTemp)
+               uint64_t wsMm3, uint64_t wsMm4, uint64_t wsMm6, uint64_t wsMm5, uint64_t wsMm7, uint64_t wsDsTemp,
+               bool qkv_sequence_major = false)
             : ptrQ(q), ptrK(k), ptrV(v), ptrH(h), ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLens(cu_seqlen),
               ptrChunkIndices(chunk_indices), ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrWorkspace(workspace),
               wsMm3Offset(wsMm3), wsMm4Offset(wsMm4), wsMm6Offset(wsMm6), wsMm5Offset(wsMm5),
               wsMm7Offset(wsMm7), wsDsTempOffset(wsDsTemp), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT),
-              numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen)
+              numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen), qkvSequenceMajor(qkv_sequence_major)
         {
         }
     };
@@ -242,10 +244,12 @@ public:
         }
 
         // Layout 创建
-        auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.K);
-        auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(params.K, params.BT);
-        auto layoutBTxV = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.V);
-        auto layoutVxBT = LayoutColMajor::MakeLayout<ElementA>(params.V, params.BT);
+        const uint64_t qkStride = params.qkvSequenceMajor ? params.HK * params.K : params.K;
+        const uint64_t vStride = params.qkvSequenceMajor ? params.HV * params.V : params.V;
+        auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, qkStride);
+        auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(qkStride, params.BT);
+        auto layoutBTxV = LayoutRowMajor::MakeLayout<ElementA>(params.BT, vStride);
+        auto layoutVxBT = LayoutColMajor::MakeLayout<ElementA>(vStride, params.BT);
         auto layoutBTxBT = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutBTxBT_T = LayoutColMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutVxK = LayoutColMajor::MakeLayout<ElementA>(params.V, params.K);
@@ -280,6 +284,8 @@ public:
             uint32_t chunkIdx = loopIdx % scheduleNumChunks;
             uint64_t bos_hk =
                         bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(params.HV - params.HK) * params.T;
+            const uint64_t token = params.isVarLen ? bos : bos - static_cast<uint64_t>(bIdx) * params.HV * params.T;
+            const uint64_t batchToken = params.isVarLen ? token : static_cast<uint64_t>(bIdx) * params.T + token;
 
             GemmCoord actualBlockShape1{actual_chunk_len, K, V};                    // [BT, V] @ [V, K]
             GemmCoord actualBlockShape2{actual_chunk_len, actual_chunk_len, K};     // [BT, K] @ [K, BT]
@@ -322,7 +328,9 @@ public:
                     }
                     // GVA: q/k 为 HK 头; hv_idx=h -> hk_idx=h/n_ratio, 并把 HV-based bos 修正为 HK-based
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t qkOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
+                    uint64_t qkOffset = params.qkvSequenceMajor
+                        ? (batchToken * params.HK + hk_idx) * params.K
+                        : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
 
                     auto tensorQ = tla::MakeTensor(gmQ[qkOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
@@ -343,7 +351,9 @@ public:
             {
                 BlockMmadPart3 blockMmadPart3(resource);
                 for (uint32_t h = hBegin; h < hEnd; h++) {
-                    uint64_t dvOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
+                    uint64_t dvOffset = params.qkvSequenceMajor
+                        ? (batchToken * params.HV + h) * params.V
+                        : (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
 
                     auto tensorDo = tla::MakeTensor(gmDo[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
@@ -390,7 +400,9 @@ public:
                     // GVA: k 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t kOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
+                    uint64_t kOffset = params.qkvSequenceMajor
+                        ? (batchToken * params.HK + hk_idx) * params.K
+                        : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
                     auto tensorDsTemp = tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
@@ -413,7 +425,9 @@ public:
                 BlockMmadPart5 blockMmadPart5(resource);
                 for (uint32_t h = hBegin; h < hEnd; h++) {
                     // --- Part5: dk_inner = v @ dh ---
-                    uint64_t vOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
+                    uint64_t vOffset = params.qkvSequenceMajor
+                        ? (batchToken * params.HV + h) * params.V
+                        : (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t dhOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
@@ -437,7 +451,9 @@ public:
                     // GVA: q 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t qOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
+                    uint64_t qOffset = params.qkvSequenceMajor
+                        ? (batchToken * params.HK + hk_idx) * params.K
+                        : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
                     auto tensorDsTemp =tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
@@ -512,6 +528,7 @@ private:
     uint64_t aicCoreNum; // CV 深融合 blockDim (cube/vector 共用)
     uint32_t hkPartitions = 1;
     bool isVarLen;
+    bool qkvSequenceMajor = false;
 
     // Workspace 偏移
     uint64_t wsMm3Offset;
@@ -537,6 +554,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const Chu
     aicCoreNum = tiling.aicCoreNum;
     hkPartitions = tiling.hkPartitions;
     isVarLen = (tiling.isVarLen == 1);
+    qkvSequenceMajor = (tiling.qkvSequenceMajor != 0);
     wsMm3Offset = tiling.wsMm3Offset;
     wsMm4Offset = tiling.wsMm4Offset;
     wsMm6Offset = tiling.wsMm6Offset;
@@ -605,7 +623,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
     typename MatmulKernelTiled::Params params(ptrQ, ptrK, ptrV, ptrH, ptrDo, ptrDh, ptrDv, ptrCuSeqLen,
                                                 ptrChunkIndices, ptrDq, ptrDk, ptrDw, ptrWorkspace, B, HV, HK, T, K, V, BT,
                                                 numChunks, n_ratio, isVarLen, wsMm3Offset, wsMm4Offset, wsMm6Offset,
-                                                wsMm5Offset, wsMm7Offset, wsDsTempOffset);
+                                                wsMm5Offset, wsMm7Offset, wsDsTempOffset, qkvSequenceMajor);
     params.aicCoreNum = aicCoreNum;
     params.hkPartitions = hkPartitions;
     kernel(params);

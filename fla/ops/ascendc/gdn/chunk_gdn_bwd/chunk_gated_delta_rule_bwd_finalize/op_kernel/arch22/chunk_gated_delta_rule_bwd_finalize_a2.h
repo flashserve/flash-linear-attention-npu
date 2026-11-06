@@ -569,9 +569,24 @@ __aicore__ inline void A2FinalizeQkTail(
             AscendC::DataCopy(dqInput, dq1Gm[offset], count);
             AscendC::DataCopy(dkInput, dk1Gm[offset], count);
             AscendC::DataCopy(dkWyInput, dk2Gm[offset], count);
+            uint64_t qkPublicOffset = static_cast<uint64_t>(offset);
+            if (t.qkvSequenceMajor != 0) {
+                const uint64_t headTokens = static_cast<uint64_t>(t.HK) * t.T;
+                const uint64_t batch = (cuSeqlens == nullptr) ? task.keyBos / headTokens : 0;
+                const uint64_t token = (cuSeqlens == nullptr) ? task.keyBos % headTokens : task.keyBos;
+                qkPublicOffset = ((batch * t.T + token + row) * t.HK + hk) * K;
+            }
             if constexpr (USE_QK_L2NORM) {
-                AscendC::DataCopy(qInput, qGm[offset], count);
-                AscendC::DataCopy(kInput, kGm[offset], count);
+                if (t.qkvSequenceMajor != 0) {
+                    const DataCopyExtParams qkCopy{
+                        static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)),
+                        static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT) / UB_ALIGN_BYTES), 0, 0};
+                    AscendC::DataCopyPad(qInput, qGm[qkPublicOffset], qkCopy, {false, 0, 0, 0});
+                    AscendC::DataCopyPad(kInput, kGm[qkPublicOffset], qkCopy, {false, 0, 0, 0});
+                } else {
+                    AscendC::DataCopy(qInput, qGm[offset], count);
+                    AscendC::DataCopy(kInput, kGm[offset], count);
+                }
             }
             AscendC::PipeBarrier<PIPE_ALL>();
             AscendC::Cast(gradK, dkInput, AscendC::RoundMode::CAST_NONE, count);
@@ -596,8 +611,16 @@ __aicore__ inline void A2FinalizeQkTail(
             }
             // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
             AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::DataCopy(dqGm[offset], dqInput, count);
-            AscendC::DataCopy(dkGm[offset], dkInput, count);
+            if (t.qkvSequenceMajor != 0) {
+                const DataCopyExtParams outputCopy{
+                    static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
+                    static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT) / UB_ALIGN_BYTES), 0};
+                AscendC::DataCopyPad(dqGm[qkPublicOffset], dqInput, outputCopy, {false, 0, 0, 0});
+                AscendC::DataCopyPad(dkGm[qkPublicOffset], dkInput, outputCopy, {false, 0, 0, 0});
+            } else {
+                AscendC::DataCopy(dqGm[offset], dqInput, count);
+                AscendC::DataCopy(dkGm[offset], dkInput, count);
+            }
             AscendC::PipeBarrier<PIPE_ALL>();
         }
     }
@@ -606,7 +629,7 @@ __aicore__ inline void A2FinalizeQkTail(
 
 template <typename QT, typename GT, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
-          bool ENABLE_MHA_OWNER = false>
+          bool ENABLE_MHA_OWNER = false, bool QKV_SEQUENCE_MAJOR = false>
 __aicore__ inline void A2FinalizeRun(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR vNew, GM_ADDR dO, GM_ADDR du,
     GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR a,
@@ -663,7 +686,8 @@ __aicore__ inline void A2FinalizeRun(
     const auto wyTiling = A2FinalizeWyTiling(t);
     if ASCEND_IS_AIC {
         PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE> cube(
-            k, a, workspace + layout.dwOffset, du, cuSeqlens, chunkIndices, stageWorkspace);
+            k, a, workspace + layout.dwOffset, du, cuSeqlens, chunkIndices, stageWorkspace,
+            t.qkvSequenceMajor != 0);
         cube.Init(wyTiling);
         cube.Process();
     }
@@ -673,7 +697,7 @@ __aicore__ inline void A2FinalizeRun(
             k, v, workspace + layout.betaOffset, workspace + layout.gOffset,
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
             workspace + layout.dbetaOffset, workspace + layout.dgWyOffset, stageWorkspace);
-        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum));
+        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum), t.qkvSequenceMajor != 0);
         vec.Process();
         AscendC::PipeBarrier<PIPE_ALL>();
         pipe.Reset();
