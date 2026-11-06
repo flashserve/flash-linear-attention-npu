@@ -21,7 +21,7 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 仓库级 branch ruleset `Code Owners review` 以 `~ALL` 为目标，自动覆盖既有分支和后续新建分支，并启用 required Code Owners review。`.github/CODEOWNERS` 的全仓 Code Owner 池固定为 `@weinachuan`、`@weiwei-612`、`@chen-linxin`、`@Ensley0304`；ABI 敏感路径会在 `CODEOWNERS` 末尾覆盖为仅 `@weinachuan`。从已更新分支新建的分支会继承该配置。
 
-required Code Owners review 保证每个 PR 至少获得一名 Code Owner approval；其他具备仓库 `write` 权限的账号仍可按 GitHub 原生规则提供普通 approval，但不会被加入 Code Owner 池。
+required Code Owners review 保证每个 PR 至少获得一名 Code Owner approval。`Code Owner Approval / 2 designated reviewers` status check 进一步要求两名不同指定 Code Owner 在当前 PR 上保持有效 approval；其他账号的 approval 保留在 PR 中但不计入这两名，因此一个指定 Code Owner 加一个名单外 approval 不能通过门禁。
 
 ## ABI 兼容性
 
