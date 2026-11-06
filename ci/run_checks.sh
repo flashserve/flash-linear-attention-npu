@@ -536,9 +536,18 @@ install_custom_opp_package() {
     echo "[CI] Installing custom OPP package: ${run_file}"
     chmod +x "${run_file}"
     if [[ "$change_scope" == "partial" ]]; then
-        # Overlay selected kernels into the architecture base wheel so all
-        # unmodified operators remain available to the tests.
-        "${run_file}" --install --quiet
+        # A partial run package contains only selected operators. Install it
+        # into a temporary root, then register that vendor as a package-local
+        # overlay so the complete architecture wheel remains the fallback for
+        # every unmodified operator.
+        local staging_dir="$TMPDIR/fla-npu-partial-opp"
+        rm -rf -- "$staging_dir"
+        mkdir -p "$staging_dir"
+        "${run_file}" --install-path="$staging_dir" --quiet
+        python3 -m fla_npu_opp_manage \
+            --overlay \
+            --source "$staging_dir/vendors/fla_npu_transformer" \
+            --force
     else
         "${run_file}" --quiet
     fi
@@ -602,6 +611,7 @@ PY
 configure_installed_fla_npu_opp() {
     local package_dir
     local vendor_dir
+    local env_script
     package_dir="$(python3 - <<'PY'
 import importlib.util
 from pathlib import Path
@@ -617,9 +627,20 @@ PY
         echo "[CI][ERROR] Installed fla_npu OPP is incomplete." >&2
         return 1
     fi
-    export ASCEND_CUSTOM_OPP_PATH="${vendor_dir}${ASCEND_CUSTOM_OPP_PATH:+:${ASCEND_CUSTOM_OPP_PATH}}"
+    env_script="${vendor_dir}/bin/set_env.bash"
+    if [[ -f "$env_script" ]]; then
+        # Preserve the generated overlay-first order and multi-library Stable
+        # lookup, falling back to the base vendor for unmodified operators.
+        set +u
+        source "$env_script"
+        set -u
+    else
+        # Keep compatibility with older wheels that predate the environment
+        # script and only expose a single package-local vendor.
+        export ASCEND_CUSTOM_OPP_PATH="${vendor_dir}${ASCEND_CUSTOM_OPP_PATH:+:${ASCEND_CUSTOM_OPP_PATH}}"
+        export FLA_NPU_OP_API_LIB="${vendor_dir}/op_api/lib/libcust_opapi.so"
+    fi
     export FLA_NPU_OPP_PATH="${package_dir}/opp"
-    export FLA_NPU_OP_API_LIB="${vendor_dir}/op_api/lib/libcust_opapi.so"
     export LD_LIBRARY_PATH="${vendor_dir}/op_api/lib:${LD_LIBRARY_PATH:-}"
 }
 
