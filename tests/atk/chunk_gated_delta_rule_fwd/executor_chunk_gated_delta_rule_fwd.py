@@ -202,6 +202,9 @@ def run_npu(role: str, inputs, case: GdnCase):
         cu_seqlens=cu_values,
         chunk_indices=chunk_indices,
         scale=case.scale,
+        # This suite compares g_cumsum and A. Those stay on with recompute
+        # enabled. q_hat follows the same switch and is not compared here.
+        disable_recompute=True,
     )
     return _public_outputs((o, final_state, g_cumsum, a), case, "融合算子")
 

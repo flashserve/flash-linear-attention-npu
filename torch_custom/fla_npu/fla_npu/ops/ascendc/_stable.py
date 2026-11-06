@@ -1499,16 +1499,39 @@ def npu_chunk_gated_delta_rule_fwd(q, k, v, g, beta, *, initial_state=None,
                                    dt_bias=None, layout="BNSD"):
     """Fused GDN forward: `o` plus the intermediates the backward consumes.
 
-    The tuple is fixed at ten slots -- `(o, final_state, g_cumsum, A, beta_eff,
-    h, q_hat, k_hat, q_rstd, k_rstd)` -- carrying `None` in the slots the flags
-    switch off, exactly like the reference.  `q_hat`/`k_hat` are the caller's
-    own q/k when the kernel is not asked to normalise them.
+    ``disable_recompute`` gates g_cumsum, A and the q/k hats. ``False`` leaves
+    those slots None; the kernel still normalises when asked. ``True`` exports
+    g_cumsum and A. q_hat and k_hat are allocated when the kernel normalises,
+    and are the caller's own q/k when chunk 64/128 leaves normalisation off.
+
+    ``h`` follows ``return_intermediate_states``. ``beta_eff`` follows
+    ``use_beta_sigmoid_in_kernel``. Neither waits on ``disable_recompute``.
+
+    Chunk 32 runs L2 and beta sigmoid inside the kernel. It requires
+    ``use_exp2=False``, ``use_qk_l2norm_in_kernel=True`` and
+    ``use_beta_sigmoid_in_kernel=True``, so ``beta_eff`` is always returned.
     """
 
     # Gate-in-kernel is unsupported by this kernel build, and the reference
     # refuses the flag together with a_log/dt_bias before the launch.  Dropping
     # them here instead would turn a rejected call into a silently different
     # one, so the refusal is repeated.
+    if int(chunk_size) == 32:
+        if (bool(use_exp2) or not bool(use_qk_l2norm_in_kernel)
+                or not bool(use_beta_sigmoid_in_kernel)):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires "
+                "use_exp2=False, use_qk_l2norm_in_kernel=True and "
+                "use_beta_sigmoid_in_kernel=True.")
+        if int(v.shape[-1]) != 128:
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd: chunk_size=32 requires V=128.")
+        torch = _modules()[0]
+        if initial_state is not None and initial_state.dtype not in (
+                torch.bfloat16, torch.float32):
+            raise RuntimeError(
+                "npu_chunk_gated_delta_rule_fwd: chunk_size=32 initial_state "
+                "must be bfloat16 or float32.")
     if use_gate_in_kernel:
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd: use_gate_in_kernel=True is not "
