@@ -295,9 +295,9 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     auto keyDtype = context_->GetInputDesc(KEY_INDEX)->GetDataType();
     auto valueDtype = context_->GetInputDesc(VALUE_INDEX)->GetDataType();
     OP_CHECK_IF(queryDtype != ge::DT_BF16 || keyDtype != ge::DT_BF16 || valueDtype != ge::DT_BF16,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "query/key/value",
-                    "expected BF16; actual query=" + std::to_string(queryDtype) + ", key=" +
-                    std::to_string(keyDtype) + ", value=" + std::to_string(valueDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "query/key/value",
+                    std::to_string(queryDtype) + "/" + std::to_string(keyDtype) + "/" + std::to_string(valueDtype),
+                    "all three inputs must be BF16"),
                 return ge::GRAPH_FAILED);
 
     auto gateDtype = context_->GetInputDesc(GATE_INDEX)->GetDataType();
@@ -305,47 +305,45 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     OP_CHECK_IF((gateDtype != ge::DT_FLOAT && gateDtype != ge::DT_BF16 && gateDtype != ge::DT_FLOAT16) ||
                     (betaDtype != ge::DT_FLOAT && betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT16),
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gate/beta",
-                    "expected FP32/BF16/FP16; actual gate=" + std::to_string(gateDtype) +
-                    ", beta=" + std::to_string(betaDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "gate/beta",
+                    std::to_string(gateDtype) + "/" + std::to_string(betaDtype),
+                    "both inputs must be FP32/BF16/FP16"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "initial_state",
-                    "expected BF16/FP32; actual=" + std::to_string(stateDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "initial_state",
+                    std::to_string(stateDtype), "BF16/FP32"),
                 return ge::GRAPH_FAILED);
     if (context_->GetOptionalInputDesc(CU_SEQLENS_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(CU_SEQLENS_INDEX)->GetDataType();
         OP_CHECK_IF(dtype != ge::DT_INT32 && dtype != ge::DT_INT64,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "cu_seqlens",
-                        "expected INT32/INT64; actual=" + std::to_string(dtype)),
+                    OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "cu_seqlens",
+                        std::to_string(dtype), "INT32/INT64"),
                     return ge::GRAPH_FAILED);
     }
     if (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType();
         OP_CHECK_IF(dtype != ge::DT_INT32 && dtype != ge::DT_INT64,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "ssm_state_indices",
-                        "expected INT32/INT64; actual=" + std::to_string(dtype)),
+                    OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "ssm_state_indices",
+                        std::to_string(dtype), "INT32/INT64"),
                     return ge::GRAPH_FAILED);
     }
     if (context_->GetOptionalInputDesc(A_LOG_INDEX) != nullptr) {
         OP_CHECK_IF(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType() != ge::DT_FLOAT,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "A_log",
-                        "expected FP32; actual=" + std::to_string(
-                            context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType())),
+                    OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "A_log",
+                        std::to_string(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType()), "FP32"),
                     return ge::GRAPH_FAILED);
     }
     if (tilingData_.hasDtBias) {
         OP_CHECK_IF(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType() != ge::DT_FLOAT,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "dt_bias",
-                        "expected FP32; actual=" + std::to_string(
-                            context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType())),
+                    OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "dt_bias",
+                        std::to_string(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType()), "FP32"),
                     return ge::GRAPH_FAILED);
     }
     if (context_->GetOptionalInputDesc(ACC_TOKEN_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(ACC_TOKEN_INDEX)->GetDataType();
         OP_CHECK_IF(dtype != ge::DT_INT32 && dtype != ge::DT_INT64,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "num_accepted_tokens",
-                        "expected INT32/INT64; actual=" + std::to_string(dtype)),
+                    OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "num_accepted_tokens",
+                        std::to_string(dtype), "INT32/INT64"),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -360,8 +358,8 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeShapes()
 bool RecurrentKdaTiling::CheckFormat(ge::Format format, const std::string &desc)
 {
     if (format == ge::FORMAT_FRACTAL_NZ) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), desc.c_str(),
-            "expected a plain format; actual FORMAT_FRACTAL_NZ=" + std::to_string(format));
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context_->GetNodeName(), desc,
+            "FORMAT_FRACTAL_NZ", "expected a plain format");
         return false;
     }
     return true;

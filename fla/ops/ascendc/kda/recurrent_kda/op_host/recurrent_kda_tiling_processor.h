@@ -366,8 +366,8 @@ private:
     bool CheckDim(const gert::Shape &shape, const size_t dim, const std::string &dimDesc) const
     {
         if (shape.GetDimNum() != dim) {
-            ReportInvalid("query/key/value/gate/beta", "The number of dimensions of %s should be %zu, but it is %zu",
-                    dimDesc.c_str(), dim, shape.GetDimNum());
+            OP_LOGE_FOR_INVALID_SHAPEDIM(ctx_.nodeName, dimDesc,
+                std::to_string(shape.GetDimNum()), std::to_string(dim));
             return false;
         }
         return true;
@@ -434,7 +434,7 @@ private:
     ge::graphStatus CheckOptionalGateShapes(int64_t hvNum, int64_t kDim) const
     {
         OP_CHECK_IF(ctx_.useGateInKernel && !ctx_.hasALog,
-                    ReportInvalid("A_log", "use_gate_in_kernel=true requires A_log."),
+                    OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "A_log"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(!ctx_.useGateInKernel && (ctx_.hasALog || ctx_.hasDtBias || ctx_.safeGate),
                     ReportInvalid("use_gate_in_kernel", "A_log, dt_bias and safe_gate require use_gate_in_kernel=true."),
@@ -652,7 +652,8 @@ private:
                             tiling.nv, tiling.nk),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(tiling.safeGate && !(tiling.lowerBound >= -5.0f && tiling.lowerBound < 0.0f),
-                    ReportInvalid("lower_bound", "lower_bound must be in [-5, 0) when safe_gate is true."),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "lower_bound",
+                        std::to_string(tiling.lowerBound), "must be in [-5, 0) when safe_gate is true"),
                     return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }
