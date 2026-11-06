@@ -643,41 +643,38 @@ def npu_recurrent_kda(
 
     layout_code = _char_code("npu_recurrent_kda", "layout", layout)
 
-    # The contract only covers the in-place form: with
-    # `inplace_final_state=False` the caller's tensor is not written (the
-    # recursion below runs the kernel on a scratch state instead), which is the
-    # same split the dispatch layer's MUTATION_FLAGS entry declares.
     if (inplace_final_state and initial_state is not None
             and initial_state.requires_grad):
         _refuse_grad_state("npu_recurrent_kda", initial_state)
     if not inplace_final_state:
-        # Run the same kernel with a scratch state and return it, leaving the
-        # caller's tensor untouched. The stable launcher only
-        # exposes the inplace form (handing the caller's handle back as a second
-        # output trips over shared ownership), so build the scratch here -- which
-        # is also what keeps the mutation contract honest: the caller's tensor is
-        # genuinely not written, and the dispatch layer's MUTATION_FLAGS entry
-        # already skips the version bump for this case.
         if initial_state is None:
             raise RuntimeError(
                 "npu_recurrent_kda: inplace_final_state=False requires "
                 "initial_state (no shape to build the scratch from)")
-        import torch
+        a5_state_output = False
+        if output_final_state:
+            import torch
 
-        # The recurrent kernel reads the initial state before updating it.
-        # Preserve the full pool, including slots not written by this call.
-        scratch = initial_state.detach().clone()
-        out, _ = npu_recurrent_kda(
-            q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
-            ssm_state_indices=ssm_state_indices, A_log=A_log, dt_bias=dt_bias,
-            num_accepted_tokens=num_accepted_tokens, layout=layout, scale=scale,
-            output_final_state=False, inplace_final_state=True,
-            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-            use_gate_in_kernel=use_gate_in_kernel,
-            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-            allow_neg_eigval=allow_neg_eigval, safe_gate=safe_gate,
-            lower_bound=lower_bound, state_v_first=state_v_first)
-        return out, (scratch if output_final_state else None)
+            device_index = q.device.index
+            if device_index is None:
+                device_index = torch.npu.current_device()
+            a5_state_output = "Ascend950" in str(torch.npu.get_device_name(device_index))
+        if a5_state_output:
+            # A5 retains its existing full-pool output contract.
+            scratch = initial_state.detach().clone()
+            out, _ = npu_recurrent_kda(
+                q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
+                ssm_state_indices=ssm_state_indices, A_log=A_log, dt_bias=dt_bias,
+                num_accepted_tokens=num_accepted_tokens, layout=layout, scale=scale,
+                output_final_state=False, inplace_final_state=True,
+                use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+                use_gate_in_kernel=use_gate_in_kernel,
+                use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
+                allow_neg_eigval=allow_neg_eigval, safe_gate=safe_gate,
+                lower_bound=lower_bound, state_v_first=state_v_first)
+            return out, scratch
+        if initial_state.requires_grad:
+            initial_state = initial_state.detach()
 
     scale_value = (128.0 ** -0.5) if scale is None else float(scale)
     lower = -5.0 if lower_bound is None else float(lower_bound)
@@ -719,7 +716,7 @@ def npu_recurrent_kda(
         # second output without a double ownership release, so return the
         # caller's object here.
         final_state = initial_state
-    if initial_state is not None:
+    if inplace_final_state and initial_state is not None:
         bump = _INC_VERSION
         if bump is None:
             bump = _increment_version()
