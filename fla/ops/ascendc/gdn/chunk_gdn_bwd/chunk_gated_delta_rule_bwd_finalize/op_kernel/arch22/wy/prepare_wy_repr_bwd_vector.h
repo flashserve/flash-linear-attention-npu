@@ -1055,8 +1055,10 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             PipeBarrier<PIPE_V>();
         }
         CastOutputRows(calcFp32ATensor_, curRow_ * K_DIM);
-        CopyPublicRowsOut(dkTensor_, outputBuf_[outputIdx_], keyBase_ + rowOffset_, hk,
-                          tiling_.HK, K_DIM, curRow_);
+        // dkTensor_ is the internal head-major workspace consumed by the
+        // A2 Q/K tail; only the public dv output uses sequence-major scatter.
+        CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (keyBase_ + rowOffset_) * K_DIM,
+                    curRow_ * K_DIM);
     }
     if constexpr (HEAD_OWNER) {
         if (subBlockIdx_ == 0) {
