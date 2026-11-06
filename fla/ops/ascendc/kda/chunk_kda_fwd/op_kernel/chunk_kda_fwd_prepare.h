@@ -388,6 +388,9 @@ private:
     __aicore__ inline uint64_t ScoreRefToken(uint64_t start, uint64_t curT, uint64_t rowBegin,
                                              uint64_t rowCount) const
     {
+        if constexpr (SAFE_GATE) {
+            return start + rowBegin;
+        }
         uint64_t ref = rowBegin + rowCount / 2;
         if (ref >= curT) {
             ref = curT - 1;
@@ -418,12 +421,15 @@ private:
     {
         constexpr float expInputMax =
             IsSameType<SCORE_T, bfloat16_t>::value ? KDA_SCORE_EXP_INPUT_MAX : KDA_EXP_INPUT_MAX;
-        constexpr float expInputMin =
-            IsSameType<SCORE_T, bfloat16_t>::value ? KDA_SCORE_EXP_INPUT_MIN : KDA_EXP_INPUT_MIN;
         Mins(tensor, tensor, expInputMax, count);
         PipeBarrier<PIPE_V>();
-        Maxs(tensor, tensor, expInputMin, count);
-        PipeBarrier<PIPE_V>();
+        if constexpr (!SAFE_GATE) {
+            constexpr float expInputMin =
+                IsSameType<SCORE_T, bfloat16_t>::value ? KDA_SCORE_EXP_INPUT_MIN : KDA_EXP_INPUT_MIN;
+            Maxs(tensor, tensor, expInputMin, count);
+            PipeBarrier<PIPE_V>();
+        }
+        // Bounded-gate history may underflow; a positive floor inflates causal scores.
     }
 
     template <typename OutputT>
@@ -607,15 +613,16 @@ private:
         SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Events_[slot]);
     }
 
-    template <typename CopyT>
+    template <typename CopyT, int FloatOffset = 0>
     __aicore__ inline void LoadAsFloatRow(GlobalTensor<CopyT> &src, uint64_t srcOffset, LocalTensor<float> &dst,
                                           uint64_t count)
     {
+        static_assert(FloatOffset == 0 || IsSameType<CopyT, float>::value);
         if constexpr (IsSameType<CopyT, float>::value) {
             CopyVectorIn(dst, src, srcOffset, count);
             SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-            Adds(dst, dst, 0.0f, static_cast<uint32_t>(count));
+            Adds(dst, dst, static_cast<float>(FloatOffset), static_cast<uint32_t>(count));
             PipeBarrier<PIPE_V>();
             SetFlag<HardEvent::V_MTE2>(vToMte2Event_);
             WaitFlag<HardEvent::V_MTE2>(vToMte2Event_);
@@ -696,7 +703,10 @@ private:
                                                     uint64_t scoreSlot)
     {
         LocalTensor<float> refFp32 = exp2Buf_.Get<float>();
-        LoadAsFloatRow(gk_, KVOffset(b, hv, refToken, 0, K_), refFp32, K_);
+        // Center the 31 * 5 / ln(2) span of a 32-row bounded-gate group.
+        // Both factor exponents are bounded by 112 without reading a future gate.
+        LoadAsFloatRow<GK_T, SAFE_GATE ? -112 : 0>(
+            gk_, KVOffset(b, hv, refToken, 0, K_), refFp32, K_);
 
         uint64_t qwBegin = scoreRowBegin + (scoreRowCount * subBlockIdx) / subBlockNum;
         uint64_t qwEnd = scoreRowBegin + (scoreRowCount * (subBlockIdx + 1)) / subBlockNum;
