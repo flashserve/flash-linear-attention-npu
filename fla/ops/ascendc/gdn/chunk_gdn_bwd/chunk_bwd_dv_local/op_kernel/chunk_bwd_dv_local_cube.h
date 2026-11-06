@@ -143,14 +143,10 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
     using BlockMmadV = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeV, L0TileShapeV, ElementA,
                                                            ElementB, ElementC, void, TileCopyV>;
 
-    auto layoutA_QK = qkvSequenceMajor
-                          ? tla::MakeLayoutFromTag(Catlass::layout::RowMajor(
-                                strategy.chunkSize, K, H_qk * K))
-                          : tla::MakeLayout<ElementA, Catlass::layout::RowMajor>(strategy.chunkSize, K);
-    auto layoutB_QK = qkvSequenceMajor
-                          ? tla::MakeLayoutFromTag(Catlass::layout::ColumnMajor(
-                                K, strategy.chunkSize, H_qk * K))
-                          : tla::MakeLayout<ElementB, Catlass::layout::ColumnMajor>(K, strategy.chunkSize);
+    auto layoutA_QK = tla::MakeLayoutFromTag(Catlass::layout::RowMajor(
+        strategy.chunkSize, K, qkvSequenceMajor ? H_qk * K : K));
+    auto layoutB_QK = tla::MakeLayoutFromTag(Catlass::layout::ColumnMajor(
+        K, strategy.chunkSize, qkvSequenceMajor ? H_qk * K : K));
     auto layoutC_QK = tla::MakeLayout<ElementC, Catlass::layout::RowMajor>(strategy.chunkSize, strategy.chunkSize);
     auto layoutA_V = tla::MakeLayout<ElementA, LayoutTagA_V>(strategy.chunkSize, strategy.chunkSize);
     auto layoutB_V = tla::MakeLayout<ElementB, LayoutTagB_V>(strategy.chunkSize, V);
