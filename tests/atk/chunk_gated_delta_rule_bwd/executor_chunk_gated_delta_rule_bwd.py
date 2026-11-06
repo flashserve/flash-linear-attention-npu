@@ -67,19 +67,40 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _randn(shape, seed: int, scale: float, dtype: torch.dtype, device: torch.device):
+def _randn(
+    shape,
+    seed: int,
+    scale: float,
+    dtype: torch.dtype,
+    device: torch.device,
+    compute_dtype: torch.dtype | None = None,
+):
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
     value = torch.randn(tuple(shape), generator=generator, dtype=torch.float32) * float(scale)
-    return value.to(dtype).to(device)
+    value = value.to(dtype)
+    if compute_dtype is not None:
+        value = value.to(compute_dtype)
+    return value.to(device)
 
 
-def _rand(shape, seed: int, low: float, high: float, dtype: torch.dtype, device: torch.device):
+def _rand(
+    shape,
+    seed: int,
+    low: float,
+    high: float,
+    dtype: torch.dtype,
+    device: torch.device,
+    compute_dtype: torch.dtype | None = None,
+):
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
     value = torch.rand(tuple(shape), generator=generator, dtype=torch.float32)
     value = value * (float(high) - float(low)) + float(low)
-    return value.to(dtype).to(device)
+    value = value.to(dtype)
+    if compute_dtype is not None:
+        value = value.to(compute_dtype)
+    return value.to(device)
 
 
 def _canonical_metadata(spec: dict[str, Any]):
@@ -97,7 +118,8 @@ def _canonical_metadata(spec: dict[str, Any]):
 
 
 def _gate_values(batch: int, heads: int, tokens: int, seqlens, seed: int,
-                 dtype: torch.dtype, device: torch.device):
+                 dtype: torch.dtype, device: torch.device,
+                 compute_dtype: torch.dtype | None = None):
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
     steps = -(torch.rand((batch, heads, tokens), generator=generator) * 0.01 + 0.001)
@@ -115,10 +137,15 @@ def _gate_values(batch: int, heads: int, tokens: int, seqlens, seed: int,
                 gate[physical_batch, :, chunk_begin:chunk_end] = torch.cumsum(
                     steps[physical_batch, :, chunk_begin:chunk_end], dim=-1
                 )
-    return gate.to(dtype).to(device)
+    gate = gate.to(dtype)
+    if compute_dtype is not None:
+        gate = gate.to(compute_dtype)
+    return gate.to(device)
 
 
-def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
+def build_inputs(
+    spec: dict[str, Any], device: torch.device, high_precision: bool = False
+) -> dict[str, Any]:
     batch, key_heads, value_heads, tokens = (
         int(spec[name]) for name in ("B", "HK", "HV", "T")
     )
@@ -133,40 +160,47 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
         else torch.bfloat16
     )
     seed = int(spec.get("seed", 20260911))
+    compute_dtype = torch.float64 if high_precision else None
     seqlens, cu_seqlens, chunk_indices = _canonical_metadata(spec)
     if seqlens is not None and (batch != 1 or sum(seqlens) != tokens):
         raise ValueError("varlen cases require B=1 and sum(seqlens)=T")
 
-    q = _randn((batch, key_heads, tokens, DIM), seed + 1, 0.12, torch.bfloat16, device)
-    k = _randn((batch, key_heads, tokens, DIM), seed + 2, 0.12, torch.bfloat16, device)
-    v = _randn((batch, value_heads, tokens, DIM), seed + 3, 0.05, torch.bfloat16, device)
-    g = _gate_values(batch, value_heads, tokens, seqlens, seed + 4, g_dtype, device)
+    q = _randn((batch, key_heads, tokens, DIM), seed + 1, 0.12, torch.bfloat16, device, compute_dtype)
+    k = _randn((batch, key_heads, tokens, DIM), seed + 2, 0.12, torch.bfloat16, device, compute_dtype)
+    v = _randn((batch, value_heads, tokens, DIM), seed + 3, 0.05, torch.bfloat16, device, compute_dtype)
+    g = _gate_values(batch, value_heads, tokens, seqlens, seed + 4, g_dtype, device, compute_dtype)
     use_beta_sigmoid = _as_bool(spec.get("use_beta_sigmoid", False))
     beta_raw = (
-        _randn((batch, value_heads, tokens), seed + 5, 0.5, beta_dtype, device)
+        _randn((batch, value_heads, tokens), seed + 5, 0.5, beta_dtype, device, compute_dtype)
         if use_beta_sigmoid
         else None
     )
-    beta = torch.sigmoid(beta_raw.float()).to(beta_dtype) if beta_raw is not None else _rand(
-        (batch, value_heads, tokens), seed + 5, 0.1, 0.9, beta_dtype, device
-    )
-    a = _randn((batch, value_heads, tokens, CHUNK_SIZE), seed + 6, 0.02, torch.bfloat16, device)
-    d_o = _randn((batch, value_heads, tokens, DIM), seed + 7, 0.12, torch.bfloat16, device)
+    if beta_raw is not None:
+        beta = torch.sigmoid(beta_raw.to(compute_dtype or torch.float32)).to(beta_dtype)
+        if compute_dtype is not None:
+            beta = beta.to(compute_dtype)
+    else:
+        beta = _rand(
+            (batch, value_heads, tokens), seed + 5, 0.1, 0.9,
+            beta_dtype, device, compute_dtype
+        )
+    a = _randn((batch, value_heads, tokens, CHUNK_SIZE), seed + 6, 0.02, torch.bfloat16, device, compute_dtype)
+    d_o = _randn((batch, value_heads, tokens, DIM), seed + 7, 0.12, torch.bfloat16, device, compute_dtype)
 
     use_qk_l2norm = _as_bool(spec.get("use_qk_l2norm", False))
-    q_rstd = torch.rsqrt((q.float() * q.float()).sum(-1) + 1.0e-6) if use_qk_l2norm else None
-    k_rstd = torch.rsqrt((k.float() * k.float()).sum(-1) + 1.0e-6) if use_qk_l2norm else None
+    q_rstd = torch.rsqrt((q.float() * q.float()).sum(-1) + 1.0e-6).to(torch.float32) if use_qk_l2norm else None
+    k_rstd = torch.rsqrt((k.float() * k.float()).sum(-1) + 1.0e-6).to(torch.float32) if use_qk_l2norm else None
 
     sequences = batch if seqlens is None else len(seqlens)
     with_state = _as_bool(spec.get("with_state", False))
     with_dht = _as_bool(spec.get("with_dht", False))
     initial_state = (
-        _randn((sequences, value_heads, DIM, DIM), seed + 8, 0.02, torch.bfloat16, device)
+        _randn((sequences, value_heads, DIM, DIM), seed + 8, 0.02, torch.bfloat16, device, compute_dtype)
         if with_state
         else None
     )
     dht = (
-        _randn((sequences, value_heads, DIM, DIM), seed + 9, 0.02, torch.bfloat16, device)
+        _randn((sequences, value_heads, DIM, DIM), seed + 9, 0.02, torch.bfloat16, device, compute_dtype)
         if with_dht
         else None
     )
@@ -184,8 +218,8 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
         "beta_raw": beta_raw,
         "initial_state": initial_state,
         "dht": dht,
-        "a_log": _randn((value_heads,), seed + 10, 0.1, torch.float32, device) if reserved else None,
-        "dt_bias": _randn((value_heads,), seed + 11, 0.1, torch.float32, device) if reserved else None,
+        "a_log": _randn((value_heads,), seed + 10, 0.1, torch.float32, device, compute_dtype) if reserved else None,
+        "dt_bias": _randn((value_heads,), seed + 11, 0.1, torch.float32, device, compute_dtype) if reserved else None,
         "seqlens": seqlens,
         "cu_seqlens": cu_seqlens,
         "chunk_indices": chunk_indices,
@@ -193,7 +227,7 @@ def build_inputs(spec: dict[str, Any], device: torch.device) -> dict[str, Any]:
     }
 
 
-def _intra_reference(inputs: dict[str, Any], use_exp2: bool):
+def _intra_reference(inputs: dict[str, Any], use_exp2: bool, high_precision: bool):
     intra_inputs = {
         "q": inputs["q"],
         "k": inputs["k"],
@@ -205,24 +239,29 @@ def _intra_reference(inputs: dict[str, Any], use_exp2: bool):
         "scale": inputs["scale"],
         "chunk_size": CHUNK_SIZE,
         "use_exp2": use_exp2,
-        "main_dtype": torch.bfloat16,
+        "main_dtype": torch.float64 if high_precision else torch.bfloat16,
         "cu_seqlens": inputs["cu_seqlens"],
         "chunk_indices": inputs["chunk_indices"],
     }
-    return tuple(tensor.to(torch.bfloat16) for tensor in _INTRA._cpu_ref(intra_inputs))
+    outputs = _INTRA._cpu_ref(intra_inputs)
+    return tuple(tensor.to(torch.float64 if high_precision else torch.bfloat16) for tensor in outputs)
 
 
-def run_cpu(spec: dict[str, Any]):
-    inputs = build_inputs(spec, torch.device("cpu"))
+def run_cpu(spec: dict[str, Any], high_precision: bool = False):
+    inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
     g_dtype = inputs["g"].dtype
     beta_dtype = inputs["beta"].dtype
-    gate_dtype = torch.float32 if torch.float32 in (g_dtype, beta_dtype) else torch.bfloat16
+    gate_dtype = (
+        torch.float64
+        if high_precision
+        else (torch.float32 if torch.float32 in (g_dtype, beta_dtype) else torch.bfloat16)
+    )
     inputs["g"] = inputs["g"].to(gate_dtype)
     inputs["beta"] = inputs["beta"].to(gate_dtype)
     if inputs["beta_raw"] is not None:
         inputs["beta_raw"] = inputs["beta_raw"].to(gate_dtype)
     use_exp2 = _as_bool(spec.get("use_exp2", False))
-    w, u, dv_local = _intra_reference(inputs, use_exp2)
+    w, u, dv_local = _intra_reference(inputs, use_exp2, high_precision)
     fwd_inputs = _FWD_H.PreparedInputs(
         k=inputs["k"],
         w=w,
@@ -236,16 +275,19 @@ def run_cpu(spec: dict[str, Any]):
     )
     h, v_new, _ = _FWD_H._reference(
         fwd_inputs, output_final_state=False, use_exp2=use_exp2, state_v_first=False,
+        compute_dtype=torch.float64 if high_precision else None,
     )
     dh, dh0, dv2 = _DHU.chunk_gated_delta_rule_bwd_dhu_cpu(
         inputs["q"], inputs["k"], w, inputs["d_o"], dv_local,
         cu_seqlens=inputs["cu_seqlens"], chunk_indices=inputs["chunk_indices"],
         g=inputs["g"], h0=inputs["initial_state"], dht=inputs["dht"],
-        scale=inputs["scale"], chunk_size=CHUNK_SIZE, golden_mode="npu", use_exp2=use_exp2,
+        scale=inputs["scale"], chunk_size=CHUNK_SIZE,
+        golden_mode="fp64" if high_precision else "npu", use_exp2=use_exp2,
         nt_first=True,
     )
-    dh = dh.to(torch.bfloat16)
-    dh0 = dh0.to(torch.bfloat16) if dh0 is not None else None
+    if not high_precision:
+        dh = dh.to(torch.bfloat16)
+        dh0 = dh0.to(torch.bfloat16) if dh0 is not None else None
     outputs = _FINALIZE.chunk_gated_delta_rule_bwd_finalize_golden(
         inputs["q"], inputs["k"], inputs["v"], v_new, inputs["d_o"], dv2,
         inputs["g"], inputs["beta"], h, dh, inputs["A"],
@@ -256,6 +298,7 @@ def run_cpu(spec: dict[str, Any]):
         use_qk_l2_norm_in_kernel=_as_bool(spec.get("use_qk_l2norm", False)),
         use_beta_sigmoid_in_kernel=_as_bool(spec.get("use_beta_sigmoid", False)),
         use_gate_in_kernel=False, state_v_first=False, use_exp2=use_exp2, nt_first=True,
+        compute_dtype=torch.float64 if high_precision else None,
     )
     state_v_first = _as_bool(spec.get("state_v_first", False))
     if dh0 is not None and state_v_first:
@@ -265,8 +308,11 @@ def run_cpu(spec: dict[str, Any]):
         dq, dk, dv = (
             tensor.transpose(1, 2).contiguous() for tensor in (dq, dk, dv)
         )
-    d_beta = d_beta.transpose(1, 2).contiguous().to(beta_dtype)
-    d_g = d_g.transpose(1, 2).contiguous().to(g_dtype)
+    d_beta = d_beta.transpose(1, 2).contiguous()
+    d_g = d_g.transpose(1, 2).contiguous()
+    if not high_precision:
+        d_beta = d_beta.to(beta_dtype)
+        d_g = d_g.to(g_dtype)
     return dq, dk, dv, d_beta, d_g, dh0, None, None
 
 
@@ -317,14 +363,36 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
 class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
+        self.task_name = str(getattr(task_result, "name", "") or "")
+        self.is_benchmark_task = bool(getattr(task_result, "is_benchmark_task", False))
+        self.high_precision = self.device == "cpu" and self.is_benchmark_task
+        if self.device in {"npu", "pyaclnn"}:
+            self.role = "dut"
+        elif self.device == "cpu" and self.is_benchmark_task:
+            self.role = "golden"
+        elif self.device == "cpu" and self.task_name == "cpu_lowp":
+            self.role = "benchmark"
+        else:
+            raise RuntimeError(
+                f"{OP_NAME} 无法识别 ATK 角色：device={self.device!r}, "
+                f"name={self.task_name!r}, is_benchmark_task={self.is_benchmark_task}"
+            )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         del with_output
         spec = _case_spec(input_data, OP_NAME)
+        print(
+            f"[gdn-double-atk] case={spec.get('case_id', '?')} role={self.role} "
+            f"target={'cpu_fp64' if self.role == 'golden' else ('cpu_fp32' if self.role == 'benchmark' else OP_NAME)}",
+            flush=True,
+        )
         if self.device == "cpu":
-            outputs = run_cpu(spec)
+            outputs = run_cpu(spec, high_precision=self.high_precision)
         elif self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         else:
             raise RuntimeError(f"{OP_NAME} only supports CPU golden and NPU DUT nodes")
-        return _finite_tuple(outputs, golden=self.device == "cpu")
+        normalized = _finite_tuple(outputs, golden=False)
+        if self.role == "benchmark":
+            normalized = tuple(output.float() for output in normalized)
+        return normalized

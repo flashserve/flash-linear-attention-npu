@@ -1,13 +1,19 @@
 # ChunkGatedDeltaRuleBwd ATK 测试说明
 
 本目录验证 `chunk_gated_delta_rule_bwd` 融合接口。NPU 节点只调用一次公开融合接口；
-CPU 节点使用同一组冻结输入，独立串联四个阶段的 CPU 标杆，比较最终有效梯度。
+CPU 节点使用同一组冻结输入，独立串联四个阶段，并提供 FP64 golden 与 FP32
+同精度 benchmark 两条 CPU 标杆；NPU DUT 与两条标杆均比较最终有效梯度。
 
 ## 标杆与输出
 
 CPU 标杆依次计算 `ChunkGdnBwdIntra`、`ChunkFwdH`、
-`ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize`。阶段边界按照
-NPU 接口的数据类型量化，避免把 NPU 中间结果作为标杆。
+`ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize`。FP64 golden 保留
+双精度阶段计算，FP32 benchmark 按 BF16 输入、FP32 累加和阶段落盘规则复现同精度链，
+避免把 NPU 中间结果作为标杆。
+
+精度使用 ATK 原生 `cv_fused_double_benchmark`，采用 L1 误差比标准：
+`max_re_ratio=5`、`avg_re_ratio=1.5`、`root_mean_squared_ratio=1.5`，不使用
+`mixed_tolerance_bm`。
 
 有效输出顺序为 `dq, dk, dv, d_beta, d_g`；传入 `initial_state` 时额外比较
 `dh0`。其中 `d_beta` 和 `d_g` 固定使用 BSND `[B,T,HV]`，其余有效输出跟随
@@ -34,4 +40,7 @@ GEN_CASES_DTYPE_NUMBERS=12 bash tests/atk/run_test_cpu.sh \
   -op=chunk_gated_delta_rule_bwd -scope=gen_cases
 bash tests/atk/run_test_cpu.sh \
   -op=chunk_gated_delta_rule_bwd -soc=ascend950 -npu_device_id=0 -scope=accuracy
+
+# CPU 双标杆：NPU DUT + CPU FP32 benchmark + CPU FP64 golden
+bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 ```

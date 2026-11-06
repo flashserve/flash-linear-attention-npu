@@ -5,6 +5,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     use_qk_l2_norm_in_kernel=False, use_beta_sigmoid_in_kernel=False,
     use_gate_in_kernel=False, state_v_first=False, use_exp2=True,
     nt_first=False,
+    compute_dtype=None,
 ):
     """CPU reference for the fused gated-delta-rule backward finalize range.
 
@@ -122,6 +123,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
 
     head_ratio = value_heads // key_heads
     work_dtype = q.dtype
+    calc_dtype = torch.float64 if work_dtype == torch.float64 else torch.float32
     g_fp32 = g.float()
     beta_fp32 = beta.float()
     gate_exp = torch.exp2 if use_exp2 else torch.exp
@@ -142,19 +144,19 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     d_a1 = torch.zeros(matrix_shape, dtype=work_dtype)
     a2 = torch.zeros(matrix_shape, dtype=work_dtype)
     dv = torch.empty_like(v)
-    db_v_partial = torch.empty(scalar_shape, dtype=torch.float32)
+    db_v_partial = torch.empty(scalar_shape, dtype=calc_dtype)
     d_a2 = torch.zeros(matrix_shape, dtype=work_dtype)
     dkbg0 = torch.empty(hv_vector_shape, dtype=work_dtype)
     d_a = torch.zeros(matrix_shape, dtype=work_dtype)
-    db_v = torch.empty(scalar_shape, dtype=torch.float32)
-    dg_prepare = torch.empty(scalar_shape, dtype=torch.float32)
+    db_v = torch.empty(scalar_shape, dtype=calc_dtype)
+    dg_prepare = torch.empty(scalar_shape, dtype=calc_dtype)
     dkb = torch.empty(hv_vector_shape, dtype=work_dtype)
     dkb_t = torch.empty(hv_vector_shape, dtype=work_dtype)
-    state_term = torch.empty((batch, value_heads, state_chunk_num), dtype=torch.float32)
+    state_term = torch.empty((batch, value_heads, state_chunk_num), dtype=calc_dtype)
     ds0 = torch.zeros(matrix_shape, dtype=work_dtype)
     dk_prepare = torch.empty(hv_vector_shape, dtype=work_dtype)
-    db_prepare = torch.empty(scalar_shape, dtype=torch.float32)
-    dbeta = torch.empty(scalar_shape, dtype=torch.float32)
+    db_prepare = torch.empty(scalar_shape, dtype=calc_dtype)
+    dbeta = torch.empty(scalar_shape, dtype=calc_dtype)
     ds = torch.zeros(matrix_shape, dtype=work_dtype)
     do_g = torch.empty_like(v)
     v_decay = torch.empty_like(v)
@@ -162,7 +164,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     dk_base = torch.empty(hv_vector_shape, dtype=work_dtype)
     dk_intra = torch.empty(hv_vector_shape, dtype=work_dtype)
     dk_raw_hv = torch.empty(hv_vector_shape, dtype=work_dtype)
-    dg = torch.empty(scalar_shape, dtype=torch.float32)
+    dg = torch.empty(scalar_shape, dtype=calc_dtype)
     dq = torch.empty_like(q)
     dk = torch.empty_like(k)
 
