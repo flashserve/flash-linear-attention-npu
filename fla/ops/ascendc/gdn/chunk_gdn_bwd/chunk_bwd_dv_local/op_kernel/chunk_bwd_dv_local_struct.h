@@ -148,6 +148,7 @@ struct ChunkBwdDvLocalTilingData {
     int64_t chunkSize;
     int64_t chunkNumForT;
     float scale;
+    int64_t qkvSequenceMajor;
 };
 
 } // namespace GDN

@@ -37,7 +37,8 @@ struct FwdHGateDTypeTraits<CHUNK_FWD_H_TPL_FP32> {
 };
 
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16,
+          bool QKV_SEQUENCE_MAJOR>
 struct FwdHKernelTraits {
     static_assert(V_DIM == static_cast<int>(FWD_H_V), "ChunkFwdH only supports V=128.");
     using GateT = typename FwdHGateDTypeTraits<D_T_G>::type;
@@ -187,6 +188,7 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.useInitialState = tilingData->useInitialState;
     args.tiling.storeFinalState = tilingData->storeFinalState;
     args.tiling.isVariedLen = tilingData->isVariedLen;
+    args.tiling.qkvSequenceMajor = QKV_SEQUENCE_MAJOR;
     args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
     args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
     args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);

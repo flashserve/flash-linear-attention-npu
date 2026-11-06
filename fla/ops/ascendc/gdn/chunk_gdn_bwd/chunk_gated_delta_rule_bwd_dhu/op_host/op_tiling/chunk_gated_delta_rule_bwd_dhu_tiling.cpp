@@ -96,6 +96,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     const int32_t *chunkSizePtr = attrPtr->GetAttrPointer<int32_t>(CGDR_BWD_DHU_ATTR_CHUNK_SIZE_IDX);
     const bool *useExp2Ptr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_USE_EXP2_IDX);
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_STATE_V_FIRST_IDX);
+    const bool *qkvSequenceMajorPtr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_QKV_SEQUENCE_MAJOR_IDX);
 
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
@@ -117,6 +118,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         hasGk,
         useExp2Ptr != nullptr ? *useExp2Ptr : false,
         stateVFirstPtr != nullptr ? *stateVFirstPtr : false,
+        qkvSequenceMajorPtr != nullptr ? *qkvSequenceMajorPtr : false,
         h0InputShape != nullptr,
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
         true,

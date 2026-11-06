@@ -29,9 +29,11 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     int64_t chunkSize,
     const aclTensor *wOut,
     const aclTensor *uOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor,
+    bool qkvSequenceMajor)
 {
-    L0_DFX(RecomputeWUFwd, k, v, beta, a, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize, wOut, uOut);
+    L0_DFX(RecomputeWUFwd, k, v, beta, a, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize,
+           qkvSequenceMajor, wOut, uOut);
     
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -56,7 +58,7 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RecomputeWUFwd,
         OP_INPUT(k, v, beta, a, g, gk, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(wOut, uOut),
-        OP_ATTR(chunkSize));
+        OP_ATTR(chunkSize, qkvSequenceMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr};

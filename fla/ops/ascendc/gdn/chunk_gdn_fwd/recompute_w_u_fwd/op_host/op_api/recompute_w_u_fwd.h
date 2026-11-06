@@ -24,7 +24,8 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     int64_t chunkSize,
     const aclTensor *wOut,
     const aclTensor *uOut,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor,
+    bool qkvSequenceMajor = false);
 }
 
 #endif

@@ -96,6 +96,7 @@ public:
         this->Attr("logical_v_heads").AttrType(REQUIRED).Int(1);
         this->Attr("logical_k_dim").AttrType(REQUIRED).Int(1);
         this->Attr("logical_v_dim").AttrType(REQUIRED).Int(1);
+        this->Attr("qkv_sequence_major").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aicore_config;
         aicore_config.DynamicCompileStaticFlag(true)

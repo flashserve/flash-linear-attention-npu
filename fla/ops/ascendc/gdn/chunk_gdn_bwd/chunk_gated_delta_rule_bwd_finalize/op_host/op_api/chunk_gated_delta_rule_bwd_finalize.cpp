@@ -47,14 +47,14 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor, bool qkvSequenceMajor)
 {
     L0_DFX(ChunkGatedDeltaRuleBwdFinalize, q, k, v, vNew, dO, du, g, beta, h, dh, a,
            qRstdOptional, kRstdOptional, betaRawOptional,
            cuSeqlensOptional, chunkIndicesOptional,
            scale, chunkSize, useQkL2NormInKernel,
            useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
-           dqOut, dkOut, dvOut, dbetaOut, dgOut);
+           qkvSequenceMajor, dqOut, dkOut, dvOut, dbetaOut, dgOut);
 
     const aclTensor *cuSeqlens = ConvertIntArray(cuSeqlensOptional, executor);
     const aclTensor *chunkIndices = ConvertIntArray(chunkIndicesOptional, executor);
@@ -71,7 +71,8 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
                  cuSeqlens, chunkIndices),
         OP_OUTPUT(dqOut, dkOut, dvOut, dbetaOut, dgOut),
         OP_ATTR(scale, chunkSize, useQkL2NormInKernel,
-                useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2));
+                useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+                qkvSequenceMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(OP_NAME, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};

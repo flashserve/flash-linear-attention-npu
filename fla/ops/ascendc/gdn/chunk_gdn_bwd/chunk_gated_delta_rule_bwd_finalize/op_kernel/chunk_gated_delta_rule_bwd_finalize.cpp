@@ -25,9 +25,10 @@ struct DTypeTraits<TPL_FP32> { using type = float; };
 #ifndef TORCH_MODE
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
 template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool QKV_SEQUENCE_MAJOR>
 #else
-template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2>
+template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
+          bool QKV_SEQUENCE_MAJOR>
 #endif
 __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR v_new, GM_ADDR dO, GM_ADDR du,
@@ -51,12 +52,14 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     using GType = typename GDN::DTypeTraits<D_T_G>::type;
     if constexpr (ENABLE_MHA_OWNER) {
-        GDN::A2FinalizeRun<QType, GType, 128, 64, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, true>(
+        GDN::A2FinalizeRun<QType, GType, 128, 64, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, true,
+                           QKV_SEQUENCE_MAJOR>(
             q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw,
             cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData);
     } else {
     #define GDN_RUN_A2(V, BT) \
-        GDN::A2FinalizeRun<QType, GType, V, BT, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2>( \
+        GDN::A2FinalizeRun<QType, GType, V, BT, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, false, \
+                           QKV_SEQUENCE_MAJOR>( \
             q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw, \
             cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData)
         if (tilingData.chunkSize == 64) {
@@ -100,7 +103,8 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
         using BetaType = GType;
         AscendC::TPipe pipe;
         GDN::ChunkGatedDeltaRuleBwdFinalizeVector<
-            QType, GType, BetaType, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2> vec;
+            QType, GType, BetaType, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2,
+            QKV_SEQUENCE_MAJOR> vec;
         // 跨 stage 的矩阵/向量中间量使用独立 workspace 区域。
         vec.Init(q, k, v, v_new, dO, g, beta, h, dh,
                  q_rstd, k_rstd, dq, dk, dg, cu_seqlens, chunk_indices,

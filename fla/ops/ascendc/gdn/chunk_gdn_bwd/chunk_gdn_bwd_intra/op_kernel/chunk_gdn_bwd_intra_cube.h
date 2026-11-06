@@ -187,18 +187,22 @@ private:
             WaitScoreFree(r);
         }
         const int64_t hk = (meta.hvBegin + r) / G;
-        const uint64_t gmOffset =
-            ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
-                 tiling_->seqlen + meta.tokenStart) * tiling_->keyDim;
+        const uint64_t gmOffset = tiling_->qkvSequenceMajor != 0
+            ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen + meta.tokenStart) *
+                   tiling_->qkHeads + hk) * tiling_->keyDim
+            : ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
+                   tiling_->seqlen + meta.tokenStart) * tiling_->keyDim;
+        const uint32_t qkvStride = tiling_->qkvSequenceMajor != 0
+            ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128U;
         auto l1K = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_K_BASE + r * L1_SLOT_BYTES);
         auto l1Q = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_Q_BASE + r * L1_SLOT_BYTES);
         auto gmK = tla::MakeTensor(
-            kGm_[gmOffset], tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, 128),
+            kGm_[gmOffset], tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, qkvStride),
             Catlass::Arch::PositionGM{});
         auto gmQ = tla::MakeTensor(
-            qGm_[gmOffset], tla::MakeLayout<MainT, LayoutCM>(128, meta.validTokens),
+            qGm_[gmOffset], tla::MakeLayout<MainT, LayoutCM>(qkvStride, meta.validTokens),
             Catlass::Arch::PositionGM{});
         auto tensorL1K = tla::MakeTensor(
             l1K, tla::MakeLayout<MainT, typename ScoreTile::LayoutTagL1A>(64, 128),

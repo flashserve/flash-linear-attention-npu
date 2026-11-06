@@ -40,10 +40,12 @@ public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR dO, GM_ADDR dh, GM_ADDR dv2,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
-                                bool doTokenMajor = false)
+                                bool doTokenMajor = false,
+                                bool qkvSequenceMajor = false)
     {
         (void)q;
         (void)doTokenMajor;
+        qkvSequenceMajor_ = qkvSequenceMajor;
         k_ = k;
         w_ = w;
         dO_ = dO;
@@ -152,16 +154,20 @@ public:
                         headOffset + 1 < headCnt && (hv / HRatio_) == ((hv + 1) / HRatio_);
                     const bool releaseKAfterUse = !nextHeadUsesSameK;
                     const int64_t hq = hv / HRatio_;
-                    const int64_t kBase = ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
+                    const int64_t kBase = qkvSequenceMajor_
+                        ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
+                        : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
                     const int64_t dhBase =
                         ((chunkInfo.bIdx * totalChunkNum_ + chunkInfo.outputChunkIdx) * HV_ + hv) * K_ * V_;
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
 
-                    LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_, K_);
+                    LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_,
+                        qkvSequenceMajor_ ? HK_ * K_ : K_);
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
-                    LayoutTagQGT tagQGT = LayoutTagQGT::MakeLayout<DT>(K_, chunkSize_);
+                    LayoutTagQGT tagQGT = LayoutTagQGT::MakeLayout<DT>(
+                        qkvSequenceMajor_ ? HK_ * K_ : K_, chunkSize_);
                     LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, V_DIM);
                     LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<DT>(K_, V_DIM);
 
@@ -773,6 +779,7 @@ private:
     uint32_t curL0C_ = 0;
     uint32_t nextKResidentSlot_ = 0;
     bool cachedKResidentValid_ = false;
+    bool qkvSequenceMajor_ = false;
     int64_t cachedKResidentBase_ = 0;
     uint32_t cachedKResidentSlot_ = 0;
 };

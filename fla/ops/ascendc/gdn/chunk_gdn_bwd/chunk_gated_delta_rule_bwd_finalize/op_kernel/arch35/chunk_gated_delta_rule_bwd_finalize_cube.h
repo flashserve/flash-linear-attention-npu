@@ -51,6 +51,7 @@ public:
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
+        qkvSequenceMajor_ = tiling_->qkvSequenceMajor != 0;
         coreIdx_ = static_cast<int64_t>(AscendC::GetBlockIdx());
         coreNum_ = static_cast<int64_t>(AscendC::GetBlockNum());
         stateChunkNum_ = tiling_->isVariable != 0 ? tiling_->totalChunkNum : tiling_->chunkNumForT;
@@ -848,8 +849,9 @@ private:
         const uint32_t localHv = static_cast<uint32_t>(headOffset / AIV_COUNT_2);
         const uint32_t l1Event = static_cast<uint32_t>(headOffset);
         const int64_t hk = hv / tiling_->headRatio;
-        const int64_t kBase =
-            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
+        const int64_t kBase = qkvSequenceMajor_
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
 
         AscendC::GlobalTensor<DT> gmDA0;
         AscendC::GlobalTensor<DT> gmK;
@@ -857,7 +859,12 @@ private:
             reinterpret_cast<__gm__ DT *>(dA0_) + WorkspaceHeadOffset(headOffset));
         gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
         auto tensorGmDA0 = tla::MakeTensor(gmDA0, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
-        auto tensorGmK = tla::MakeTensor(gmK, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmK = qkvSequenceMajor_
+                             ? tla::MakeTensor(gmK,
+                                   tla::MakeLayoutFromTag(LayoutRowMajor(
+                                       CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128)),
+                                   Catlass::Arch::PositionGM{})
+                             : tla::MakeTensor(gmK, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto blockGmDA0 = tla::GetTile(
             tensorGmDA0, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
         auto blockGmK = tla::GetTile(
@@ -1402,8 +1409,9 @@ private:
         const uint32_t doGEvent = L1_RESIDENT_HEAD_COUNT_4 +
             (static_cast<uint32_t>(headOffset) & 1U);
         const uint32_t dhEvent = L1_RESIDENT_HEAD_COUNT_4 + BANK_COUNT_2 + dhSlot;
-        const int64_t qBase =
-            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
+        const int64_t qBase = qkvSequenceMajor_
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * K_SIZE_128
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
         const int64_t workspaceBase = WorkspaceHeadOffset(headOffset);
         const int64_t stateBase =
             ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
@@ -1419,7 +1427,12 @@ private:
         gmDs.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dsIn_) + workspaceBase);
         gmDoG.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(doGIn_) + workspaceBase);
         gmVDecay.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vDecayIn_) + workspaceBase);
-        auto tensorGmQ = tla::MakeTensor(gmQ, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmQ = qkvSequenceMajor_
+                             ? tla::MakeTensor(gmQ,
+                                   tla::MakeLayoutFromTag(LayoutRowMajor(
+                                       CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128)),
+                                   Catlass::Arch::PositionGM{})
+                             : tla::MakeTensor(gmQ, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDs = tla::MakeTensor(gmDs, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDoG = tla::MakeTensor(gmDoG, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmVDecay = tla::MakeTensor(gmVDecay, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
@@ -1719,6 +1732,7 @@ private:
     const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling_ = nullptr;
     int64_t coreIdx_ = 0;
     int64_t coreNum_ = 1;
+    bool qkvSequenceMajor_ = false;
     int64_t stateChunkNum_ = 0;
     int64_t workspaceGroupRound_ = 0;
     uint32_t l0ASlot_ = 0;

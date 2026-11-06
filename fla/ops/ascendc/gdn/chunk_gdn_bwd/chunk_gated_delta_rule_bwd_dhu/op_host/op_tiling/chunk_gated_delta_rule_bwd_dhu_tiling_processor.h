@@ -82,6 +82,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     bool hasGk;
     bool useExp2;
     bool stateVFirst;
+    bool qkvSequenceMajor;
     bool hasDh0;
     bool isArch35;
     bool stage0Debug;
@@ -356,8 +357,16 @@ private:
 
     ge::graphStatus CommonTiling()
     {
-        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
-        const gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        gert::Shape qShape = ctx_.qShape->GetStorageShape();
+        gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        if (ctx_.qkvSequenceMajor) {
+            const int64_t tokens = qShape.GetDim(DIM_1);
+            qShape.SetDim(DIM_1, qShape.GetDim(DIM_2));
+            qShape.SetDim(DIM_2, tokens);
+            const int64_t kTokens = kShape.GetDim(DIM_1);
+            kShape.SetDim(DIM_1, kShape.GetDim(DIM_2));
+            kShape.SetDim(DIM_2, kTokens);
+        }
         const gert::Shape wShape = ctx_.wShape->GetStorageShape();
         gert::Shape dOShape = ctx_.dOShape->GetStorageShape();
         const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
@@ -447,6 +456,7 @@ private:
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
+        tiling_.qkvSequenceMajor = ctx_.qkvSequenceMajor ? 1 : 0;
 
         if (tiling_.K != K_SIZE_128) {
             return ge::GRAPH_FAILED;
@@ -588,7 +598,8 @@ private:
         tilingKey_ = GET_TPL_TILING_KEY(
             static_cast<uint64_t>(DtypeKey(ctx_.qDataType)), static_cast<uint64_t>(DtypeKey(ctx_.gDataType)),
             static_cast<uint64_t>(tiling_.V), static_cast<uint64_t>(ctx_.hasGk ? 1 : 0),
-            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0));
+            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0),
+            static_cast<uint64_t>(ctx_.qkvSequenceMajor ? 1 : 0));
         return ge::GRAPH_SUCCESS;
     }
 

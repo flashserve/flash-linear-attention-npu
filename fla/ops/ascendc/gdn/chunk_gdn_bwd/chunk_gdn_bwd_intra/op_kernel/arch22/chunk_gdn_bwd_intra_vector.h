@@ -75,14 +75,36 @@ private:
         const uint32_t rows = m.validTokens > begin ? m.validTokens - begin : 0;
         const uint32_t count = (rows < VECTOR_PART_TOKENS ? rows : VECTOR_PART_TOKENS) * HEAD_DIM;
         if (count == 0) return;
-        const uint64_t vv = ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv)
-            * t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
+        const uint64_t vv = t_->qkvSequenceMajor != 0
+            ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
+               t_->valueHeads + hv) * HEAD_DIM
+            : ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv) *
+               t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
         if (loadK) {
-            const uint64_t kk = ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / G)
-                * t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
-            AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
+            const uint64_t kk = t_->qkvSequenceMajor != 0
+                ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
+                   t_->qkHeads + hv / G) * HEAD_DIM
+                : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / G) *
+                   t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
+            if (t_->qkvSequenceMajor == 0) {
+                AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
+            } else {
+                AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),
+                    static_cast<uint32_t>(HEAD_DIM * sizeof(MainT)),
+                    static_cast<uint32_t>((t_->qkHeads - 1) * HEAD_DIM * sizeof(MainT)), 0, 0};
+                AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+                AscendC::DataCopyPad(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], cp, pad);
+            }
         }
-        AscendC::DataCopy(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], count);
+        if (t_->qkvSequenceMajor == 0) {
+            AscendC::DataCopy(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], count);
+        } else {
+            AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(HEAD_DIM * sizeof(MainT)),
+                static_cast<uint32_t>((t_->valueHeads - 1) * HEAD_DIM * sizeof(MainT)), 0, 0};
+            AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], cp, pad);
+        }
     }
 
     template <typename T>

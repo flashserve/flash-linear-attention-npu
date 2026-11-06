@@ -24,7 +24,8 @@ const aclTensor * ChunkBwdDvLocal(
     double scale,
     int64_t chunkSize,
     const aclTensor *out,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor,
+    bool qkvSequenceMajor = false);
 }
 
 #endif

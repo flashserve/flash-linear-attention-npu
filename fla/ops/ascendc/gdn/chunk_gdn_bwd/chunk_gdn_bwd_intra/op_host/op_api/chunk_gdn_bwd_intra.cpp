@@ -29,10 +29,12 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
     const aclTensor *dO, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize,
     bool useExp2, const aclTensor *wOut, const aclTensor *uOut,
-    const aclTensor *dvLocalOut, aclOpExecutor *executor)
+    const aclTensor *dvLocalOut, aclOpExecutor *executor,
+    bool qkvSequenceMajor)
 {
     L0_DFX(ChunkGdnBwdIntra, q, k, v, g, beta, a, dO, cuSeqlensOptional,
-           chunkIndicesOptional, scale, chunkSize, useExp2, wOut, uOut, dvLocalOut);
+           chunkIndicesOptional, scale, chunkSize, useExp2, qkvSequenceMajor,
+           wOut, uOut, dvLocalOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     const aclTensor *actualChunkIndices = nullptr;
@@ -51,7 +53,7 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
         ChunkGdnBwdIntra,
         OP_INPUT(q, k, v, g, beta, a, dO, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(wOut, uOut, dvLocalOut),
-        OP_ATTR(scale, chunkSize, useExp2));
+        OP_ATTR(scale, chunkSize, useExp2, qkvSequenceMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGdnBwdIntra failed.");
         return {nullptr, nullptr, nullptr};

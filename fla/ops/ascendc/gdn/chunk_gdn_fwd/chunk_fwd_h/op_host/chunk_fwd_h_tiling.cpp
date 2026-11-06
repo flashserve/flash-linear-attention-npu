@@ -57,6 +57,7 @@ static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
 static constexpr size_t ATTR_SEQ_CHUNK_COUNTS_IDX = 11;
+static constexpr size_t ATTR_QKV_SEQUENCE_MAJOR_IDX = 12;
 
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
@@ -111,6 +112,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     bool saveNewValue = *(attrPtr->GetAttrPointer<bool>(ATTR_SAVE_NEW_VALUE_IDX));
     bool useExp2 = *(attrPtr->GetAttrPointer<bool>(ATTR_USE_EXP2_IDX));
     bool stateVFirst = *(attrPtr->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_IDX));
+    bool qkvSequenceMajor = attrPtr->GetAttrPointer<bool>(ATTR_QKV_SEQUENCE_MAJOR_IDX) != nullptr &&
+        *(attrPtr->GetAttrPointer<bool>(ATTR_QKV_SEQUENCE_MAJOR_IDX));
     int64_t logicalBatch = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_BATCH_IDX));
     int64_t logicalSeqlen = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_SEQLEN_IDX));
     int64_t logicalKHeads = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_HEADS_IDX));
@@ -150,6 +153,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
     tilingCtx.useInitialState = useInitialState;
     tilingCtx.storeFinalState = storeFinalState;
+    tilingCtx.qkvSequenceMajor = qkvSequenceMajor;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
@@ -229,7 +233,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
         static_cast<uint64_t>(stateVFirst ? 1 : 0),
         static_cast<uint64_t>(storeFinalState ? 1 : 0),
-        static_cast<uint64_t>(denseT16Eligible ? 1 : 0));
+        static_cast<uint64_t>(denseT16Eligible ? 1 : 0),
+        static_cast<uint64_t>(qkvSequenceMajor ? 1 : 0));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
@@ -250,6 +255,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_isVariedLen(plainTiling.isVariedLen);
     tiling.set_shapeBatch(plainTiling.shapeBatch);
     tiling.set_tokenBatch(plainTiling.tokenBatch);
+    tiling.set_qkvSequenceMajor(plainTiling.qkvSequenceMajor);
     tiling.set_vWorkspaceOffset(plainTiling.vWorkspaceOffset);
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);

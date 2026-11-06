@@ -29,9 +29,11 @@ const aclTensor * ChunkBwdDvLocal(
     double scale,
     int64_t chunkSize,
     const aclTensor *out,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor,
+    bool qkvSequenceMajor)
 {
-    L0_DFX(ChunkBwdDvLocal, q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, out);
+    L0_DFX(ChunkBwdDvLocal, q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional,
+           chunkIndicesOptional, scale, chunkSize, qkvSequenceMajor, out);
     
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -56,7 +58,7 @@ const aclTensor * ChunkBwdDvLocal(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkBwdDvLocal,
         OP_INPUT(q, k, dO, g, gGammaOptional, aOptional, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(out),
-        OP_ATTR(scale, chunkSize));
+        OP_ATTR(scale, chunkSize, qkvSequenceMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;

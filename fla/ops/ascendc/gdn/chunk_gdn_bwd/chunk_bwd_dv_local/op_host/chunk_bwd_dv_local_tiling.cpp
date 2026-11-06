@@ -57,6 +57,7 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_CHUNK_INDICES_IDX),
         *(attrPtr->GetAttrPointer<double>(CHUNK_BWD_DV_LOCAL_ATTR_SCALE_IDX)),
         *(attrPtr->GetAttrPointer<int32_t>(CHUNK_BWD_DV_LOCAL_ATTR_CHUNK_SIZE_IDX)),
+        attrPtr->GetAttrPointer<bool>(2) != nullptr && *attrPtr->GetAttrPointer<bool>(2),
     };
 
     ChunkBwdDvLocalTilingProcessor processor(ctx, *tiling);

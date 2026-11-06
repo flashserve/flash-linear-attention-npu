@@ -78,6 +78,7 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
         cuSeqlensData,
         chunkIndicesData,
         *(attrPtr->GetAttrPointer<int32_t>(0)),
+        attrPtr->GetAttrPointer<bool>(1) != nullptr && *attrPtr->GetAttrPointer<bool>(1),
         kDesc->GetDataType(),
         betaDesc->GetDataType(),
         ubSize,

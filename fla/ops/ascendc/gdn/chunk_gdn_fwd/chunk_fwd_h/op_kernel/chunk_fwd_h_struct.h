@@ -37,6 +37,7 @@ struct ChunkFwdHPlainTilingData {
     int64_t isVariedLen;
     int64_t shapeBatch;
     int64_t tokenBatch;
+    bool qkvSequenceMajor;
     int64_t vWorkspaceOffset;
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;

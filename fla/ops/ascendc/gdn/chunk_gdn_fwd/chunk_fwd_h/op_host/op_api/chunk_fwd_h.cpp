@@ -53,11 +53,12 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor,
+    bool qkvSequenceMajor)
 {
     L0_DFX(ChunkFwdH, k, w, u, g, gkOptional, initialStateOptional, cuSeqlensOptional,
            chunkIndicesOptional, outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
-           hOut, vNewOut, finalStateOut);
+           hOut, vNewOut, finalStateOut, qkvSequenceMajor);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -129,7 +130,8 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         OP_OUTPUT(hOut, vNewOut, finalStateOutKernel),
         OP_ATTR(outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
                 logicalBatch, logicalSeqlen,
-                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr));
+                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr,
+                qkvSequenceMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};

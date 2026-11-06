@@ -41,6 +41,7 @@ struct RecomputeWUFwdTilingData {
     int64_t kbgExpVecRow;
     int64_t interleavedVecRow;
     int64_t isVariable;
+    int64_t qkvSequenceMajor;
 };
 
 } // namespace GDN

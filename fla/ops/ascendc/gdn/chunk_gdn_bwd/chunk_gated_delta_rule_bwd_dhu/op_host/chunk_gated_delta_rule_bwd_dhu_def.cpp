@@ -122,6 +122,7 @@ public:
         this->Attr("chunk_size").AttrType(OPTIONAL).Int(64);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("qkv_sequence_major").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

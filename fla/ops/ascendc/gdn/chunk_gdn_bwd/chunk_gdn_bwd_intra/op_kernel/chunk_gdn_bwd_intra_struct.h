@@ -30,6 +30,7 @@ struct ChunkGdnBwdIntraTilingData {
     // 运行时路径和算子属性。
     int64_t isVarlen;
     int64_t useExp2;
+    int64_t qkvSequenceMajor;
     float scale;
     uint32_t reserved;
 };

@@ -416,8 +416,10 @@ private:
         const uint64_t vectorOffset =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
                 tiling_->seqlen + meta.tokenStart;
-        const uint64_t vdoOffset =
-            (vectorOffset + rowBegin) * tiling_->valueDim;
+        const uint64_t vdoOffset = tiling_->qkvSequenceMajor != 0
+            ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
+                meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
+            : (vectorOffset + rowBegin) * tiling_->valueDim;
 
         // MTE2 等待 Vector 释放输入 slot；搬完后把 A/g/beta/v/d_o 一并交给 Vector。
         AscendC::Mutex::Lock<PIPE_MTE2>(inputMutex_[slot]);
@@ -430,10 +432,19 @@ private:
         vectorCopy.blockLen = static_cast<uint32_t>(meta.validTokens * sizeof(BetaT));
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaLocal, betaGm_[vectorOffset], vectorCopy, betaPad);
-        const uint32_t vdoElements =
-            static_cast<uint32_t>(rows * tiling_->valueDim);
-        AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
-        AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
+        const uint32_t vdoElements = static_cast<uint32_t>(rows * tiling_->valueDim);
+        if (tiling_->qkvSequenceMajor == 0) {
+            AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
+            AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
+        } else {
+            const uint32_t rowBytes = static_cast<uint32_t>(tiling_->valueDim * sizeof(MainT));
+            const uint32_t rowGap = static_cast<uint32_t>((tiling_->valueHeads - 1) *
+                                                           tiling_->valueDim * sizeof(MainT));
+            AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows), rowBytes, rowGap, 0, 0};
+            AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(vLocal, vGm_[vdoOffset], copy, pad);
+            AscendC::DataCopyPad(dOLocal, dOGm_[vdoOffset], copy, pad);
+        }
         AscendC::Mutex::Unlock<PIPE_MTE2>(inputMutex_[slot]);
     }
 
@@ -441,6 +452,12 @@ private:
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t firstSlot,
         uint32_t count)
     {
+        if (tiling_->qkvSequenceMajor != 0) {
+            for (uint32_t offset = 0; offset < count; ++offset) {
+                PrefetchStage1Input(meta, static_cast<int64_t>(firstSlot + offset));
+            }
+            return;
+        }
         constexpr uint32_t PART_ROWS = 32;
         constexpr uint32_t ROW_ELEMENTS = 64;
         const uint32_t rowBegin = static_cast<uint32_t>(part_) * PART_ROWS;

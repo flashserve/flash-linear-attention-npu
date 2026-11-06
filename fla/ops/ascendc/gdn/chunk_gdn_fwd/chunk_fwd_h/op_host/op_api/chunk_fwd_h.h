@@ -30,7 +30,8 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor,
+    bool qkvSequenceMajor = false);
 }
 
 #endif

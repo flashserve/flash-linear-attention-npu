@@ -306,7 +306,8 @@ public:
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
                                 GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
-                                AscendC::TPipe *pipe)
+                                AscendC::TPipe *pipe,
+                                bool qkvSequenceMajor = false)
     {
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(gate));
@@ -328,6 +329,7 @@ public:
         workspaceStateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace));
 
         tiling_ = tilingData;
+        qkvSequenceMajor_ = qkvSequenceMajor;
         pipe_ = pipe;
         B_ = tiling_->B;
         HK_ = tiling_->HK;
@@ -527,8 +529,9 @@ public:
                     const int64_t hq = hv / HRatio_;
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
                     const int64_t stateBase = StateWorkspaceFloatOffset(workspaceBase, 0);
-                    const int64_t qBase =
-                        ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
+                    const int64_t qBase = qkvSequenceMajor_
+                        ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
+                        : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dhBase = DhOffset(chunkInfo.bIdx, hv, chunkInfo.outputChunkIdx);
                     if (headOffset % subBlockNum_ != subBlockIdx_) {
                         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
@@ -645,7 +648,8 @@ public:
                         for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                             const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
                             const uint32_t qIdx = CopyInRows(
-                                qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset * K_,
+                                qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset *
+                                    (qkvSequenceMajor_ ? HK_ * K_ : K_),
                                 static_cast<uint32_t>(curRows * K_));
                             AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                             CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);
@@ -956,7 +960,16 @@ private:
     {
         const uint32_t inputIdx = curQInputPingPong_;
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
-        AscendC::DataCopy(dstTensor, inputTensor[inputOffset], elements);
+        if (qkvSequenceMajor_) {
+            const uint32_t rows = elements / static_cast<uint32_t>(K_);
+            AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(K_ * sizeof(CopyType)),
+                static_cast<uint32_t>((HK_ - 1) * K_ * sizeof(CopyType)), 0, 0};
+            AscendC::DataCopyPadExtParams<CopyType> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(dstTensor, inputTensor[inputOffset], copy, pad);
+        } else {
+            AscendC::DataCopy(dstTensor, inputTensor[inputOffset], elements);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[inputIdx]);
         curQInputPingPong_ ^= 1U;
         return inputIdx;
@@ -1184,6 +1197,7 @@ private:
     AscendC::GlobalTensor<DT> dv2Gm_;
     AscendC::GlobalTensor<DT> workspaceGm_;
     AscendC::GlobalTensor<float> workspaceStateGm_;
+    bool qkvSequenceMajor_ = false;
 
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::TBuf<AscendC::TPosition::VECCALC> matrixCvPing_;

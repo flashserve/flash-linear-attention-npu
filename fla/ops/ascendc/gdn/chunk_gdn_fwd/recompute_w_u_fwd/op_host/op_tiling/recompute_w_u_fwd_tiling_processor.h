@@ -80,6 +80,7 @@ struct RecomputeWUFwdTilingContext {
     const int64_t *cuSeqlensData;
     const int64_t *chunkIndicesData;
     int32_t chunkSize;
+    bool qkvSequenceMajor;
     ge::DataType kDtype;
     ge::DataType betaDtype;
     uint64_t ubSize;
@@ -266,8 +267,10 @@ public:
         const gert::Shape AStorageShape = ctx_.aShape->GetStorageShape();
         const gert::Shape gStorageShape = ctx_.gShape->GetStorageShape();
         B = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0));
-        Hk = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
-        Hv = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
+        Hk = static_cast<int64_t>(ctx_.qkvSequenceMajor ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)
+                                                         : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
+        Hv = static_cast<int64_t>(ctx_.qkvSequenceMajor ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)
+                                                         : vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
         OP_CHECK_IF(Hk <= 0 || Hv <= 0,
                     OP_LOGE(ctx_.nodeName,
                             "Invalid head dim: Hk and Hv must be positive, but got Hk=%ld, Hv=%ld.", Hk, Hv),
@@ -281,7 +284,10 @@ public:
                     OP_LOGE(ctx_.nodeName, "Compare B: v B=%ld vs k B=%ld mismatch.",
                             vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0), kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
+        OP_CHECK_IF((ctx_.qkvSequenceMajor ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+                                           : vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) !=
+                        (ctx_.qkvSequenceMajor ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+                                               : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
                     OP_LOGE(ctx_.nodeName, "Compare T: v T=%ld vs k T=%ld mismatch.",
                             vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2), kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
                     return ge::GRAPH_FAILED);
@@ -292,7 +298,9 @@ public:
                     OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs g B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
                             gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
+        OP_CHECK_IF((ctx_.qkvSequenceMajor ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+                                           : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) !=
+                        gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                     OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs g T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                             gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
                     return ge::GRAPH_FAILED);
@@ -300,7 +308,9 @@ public:
                     OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs A B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
                             AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
+        OP_CHECK_IF((ctx_.qkvSequenceMajor ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+                                           : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) !=
+                        AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                     OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs A T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                             AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
                     return ge::GRAPH_FAILED);
@@ -314,7 +324,8 @@ public:
         OP_CHECK_IF(gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
                     OP_LOGE(ctx_.nodeName, "Compare head: g H=%ld must equal Hv=%ld.", gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1), Hv),
                     return ge::GRAPH_FAILED);
-        T = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2));
+        T = static_cast<int64_t>(ctx_.qkvSequenceMajor ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+                                                       : vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_3));
         OP_CHECK_IF(K != RECOMPUTE_W_U_FWD_K_DIM_128,
                     OP_LOGE(ctx_.nodeName, "K must be 128, but got %ld.", K), return ge::GRAPH_FAILED);
@@ -326,6 +337,7 @@ public:
         tiling_.T = T;
         tiling_.K = K;
         tiling_.V = V;
+        tiling_.qkvSequenceMajor = ctx_.qkvSequenceMajor ? 1 : 0;
         OP_CHECK_IF(V != RECOMPUTE_W_U_FWD_V_DIM_128 && V != RECOMPUTE_W_U_FWD_V_DIM_256,
                     OP_LOGE(ctx_.nodeName,
                             "Check value dim V failed: only %ld or %ld is supported, but get %ld.",

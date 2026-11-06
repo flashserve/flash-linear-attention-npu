@@ -1427,7 +1427,7 @@ __simd_vf__ inline void Stage15NormVF(
 }
 
 template <typename DT, typename GT, typename BT, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID,
-          bool USE_EXP2>
+          bool USE_EXP2, bool QKV_SEQUENCE_MAJOR>
 class ChunkGatedDeltaRuleBwdFinalizeVector {
 public:
     __aicore__ inline void Init(
@@ -1478,6 +1478,7 @@ public:
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
+        qkvSequenceMajor_ = QKV_SEQUENCE_MAJOR;
         pipe_ = pipe;
         stateChunkNum_ = tiling_->isVariable != 0 ? tiling_->totalChunkNum : tiling_->chunkNumForT;
         coreIdx_ = static_cast<int64_t>(AscendC::GetBlockIdx()) / AIV_COUNT_2;
@@ -1713,9 +1714,12 @@ public:
                     hv = hvBase + headOffset;
                     hk = hv / tiling_->headRatio;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    kOffset =
-                        ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
-                    vOffset = ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
+                    kOffset = QKV_SEQUENCE_MAJOR
+                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
+                                   : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
+                    vOffset = QKV_SEQUENCE_MAJOR
+                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HV + hv) * tiling_->V
+                                   : ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
 
                     // g 的物理区在 Stage 8 被重新解释为 dgPrepare。必须等上一轮
                     // Stage 8 的最终 MTE3 完成，才能让本轮 MTE2 覆盖整个 slot。
@@ -1730,8 +1734,21 @@ public:
                     AscendC::DataCopyPad(beta_[streamSlot_], betaGm_[gOffset],
                         {1, static_cast<uint32_t>(chunk.chunkLen * sizeof(BT)), 0, 0, 0},
                         {false, 0, 0, 0});
-                    AscendC::DataCopy(k_[streamSlot_], kGm_[kOffset], chunk.chunkLen * K_SIZE_128);
-                    AscendC::DataCopy(v_[streamSlot_], vGm_[vOffset], chunk.chunkLen * V_SIZE_128);
+                    if constexpr (QKV_SEQUENCE_MAJOR) {
+                        AscendC::DataCopyPad(k_[streamSlot_], kGm_[kOffset],
+                            {static_cast<uint16_t>(chunk.chunkLen),
+                             static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
+                             static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                            {false, 0, 0, 0});
+                        AscendC::DataCopyPad(v_[streamSlot_], vGm_[vOffset],
+                            {static_cast<uint16_t>(chunk.chunkLen),
+                             static_cast<uint32_t>(V_SIZE_128 * sizeof(DT)),
+                             static_cast<uint32_t>((tiling_->HV - 1) * V_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                            {false, 0, 0, 0});
+                    } else {
+                        AscendC::DataCopy(k_[streamSlot_], kGm_[kOffset], chunk.chunkLen * K_SIZE_128);
+                        AscendC::DataCopy(v_[streamSlot_], vGm_[vOffset], chunk.chunkLen * V_SIZE_128);
+                    }
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[streamSlot_]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[streamSlot_]);
 
@@ -1864,8 +1881,17 @@ public:
                     // Stage 6 已得到最终 dv。后续 Stage 只消费 db_v_partial，
                     // 不再需要 dv 的中间副本，因此直接写算子输出，避免借用
                     // workspace 后又被 Stage 12 的调试数据覆盖。
-                    AscendC::DataCopyPad(
-                        dkStage12OutGm_[vOffset], dvb_[streamSlot_], vectorCopyParams);
+                    if constexpr (QKV_SEQUENCE_MAJOR) {
+                        const AscendC::DataCopyExtParams dvOutputCopyParams = {
+                            static_cast<uint16_t>(chunk.chunkLen),
+                            static_cast<uint32_t>(V_SIZE_128 * sizeof(DT)),
+                            0,
+                            static_cast<uint32_t>((tiling_->HV - 1) * V_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0};
+                        AscendC::DataCopyPad(dkStage12OutGm_[vOffset], dvb_[streamSlot_], dvOutputCopyParams);
+                    } else {
+                        AscendC::DataCopyPad(
+                            dkStage12OutGm_[vOffset], dvb_[streamSlot_], vectorCopyParams);
+                    }
                     // db_v_partial 保留在 UB，Stage 8 将在原地累加 db0。
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[streamSlot_]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[streamSlot_]);
@@ -2049,14 +2075,22 @@ public:
                     hk = hv / tiling_->headRatio;
                     localHv = hv - hk * tiling_->headRatio;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    qOffset = ((chunk.bIdx * tiling_->HK + hk) * tiling_->T +
-                        chunk.tokenStart) * tiling_->K;
+                    qOffset = QKV_SEQUENCE_MAJOR
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
                     // G=3/4 时同一 AIV 会处理同一 HK 的两个 HV，第二个 HV
                     // 直接复用本 AIV 在 slot0 中已经驻留的 q，不重复读 GM。
                     qSlot = tiling_->headRatio >= 3 ? 0U : streamSlot_;
                     if (tiling_->headRatio < 3 || localHv < AIV_COUNT_2) {
-                        AscendC::DataCopy(
-                            qStage14_[qSlot], qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                        if constexpr (QKV_SEQUENCE_MAJOR) {
+                            AscendC::DataCopyPad(qStage14_[qSlot], qGm_[qOffset],
+                                {static_cast<uint16_t>(chunk.chunkLen),
+                                 static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
+                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                                {false, 0, 0, 0});
+                        } else {
+                            AscendC::DataCopy(qStage14_[qSlot], qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                        }
                         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
                         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
                     }
@@ -2161,19 +2195,32 @@ public:
                 for (stage15Output = 0; stage15Output < stage15OutputCount; ++stage15Output) {
                     stage15FirstHead = stage15Begin + stage15Output * tiling_->headRatio;
                     stage15Hk = (hvBase + stage15FirstHead) / tiling_->headRatio;
-                    qOffset = ((chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T +
-                        chunk.tokenStart) * tiling_->K;
+                    qOffset = QKV_SEQUENCE_MAJOR
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + stage15Hk) * tiling_->K
+                                  : ((chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
+                    const int64_t rstdOffset = (chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T + chunk.tokenStart;
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
                     if constexpr (USE_QK_L2NORM) {
-                        AscendC::DataCopy(
-                            qStage15_, qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
-                        AscendC::DataCopy(
-                            kStage15_, kGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                        if constexpr (QKV_SEQUENCE_MAJOR) {
+                            AscendC::DataCopyPad(qStage15_, qGm_[qOffset],
+                                {static_cast<uint16_t>(chunk.chunkLen),
+                                 static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
+                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                                {false, 0, 0, 0});
+                            AscendC::DataCopyPad(kStage15_, kGm_[qOffset],
+                                {static_cast<uint16_t>(chunk.chunkLen),
+                                 static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
+                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                                {false, 0, 0, 0});
+                        } else {
+                            AscendC::DataCopy(qStage15_, qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                            AscendC::DataCopy(kStage15_, kGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                        }
                         AscendC::DataCopyPad(qRstdStage15_,
-                            qRstdGm_[qOffset / K_SIZE_128], scalarCopyParams,
+                            qRstdGm_[rstdOffset], scalarCopyParams,
                             {false, 0, 0, 0});
                         AscendC::DataCopyPad(kRstdStage15_,
-                            kRstdGm_[qOffset / K_SIZE_128], scalarCopyParams,
+                            kRstdGm_[rstdOffset], scalarCopyParams,
                             {false, 0, 0, 0});
                     }
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
@@ -2191,8 +2238,18 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
-                    AscendC::DataCopyPad(dqOutGm_[qOffset], dqAcc_[stage15Output], vectorCopyParams);
-                    AscendC::DataCopyPad(dkOutGm_[qOffset], dkAcc_[stage15Output], vectorCopyParams);
+                    if constexpr (QKV_SEQUENCE_MAJOR) {
+                        const AscendC::DataCopyExtParams outputCopyParams = {
+                            static_cast<uint16_t>(chunk.chunkLen),
+                            static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
+                            0,
+                            static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0};
+                        AscendC::DataCopyPad(dqOutGm_[qOffset], dqAcc_[stage15Output], outputCopyParams);
+                        AscendC::DataCopyPad(dkOutGm_[qOffset], dkAcc_[stage15Output], outputCopyParams);
+                    } else {
+                        AscendC::DataCopyPad(dqOutGm_[qOffset], dqAcc_[stage15Output], vectorCopyParams);
+                        AscendC::DataCopyPad(dkOutGm_[qOffset], dkAcc_[stage15Output], vectorCopyParams);
+                    }
                 }
                 // 所有 Stage 14/15 MTE3 已发射，下一任务组 Stage 0 才能
                 // 覆盖 Stage 12/13/14 共用的两份大 UB slot。
@@ -2349,6 +2406,7 @@ private:
     AscendC::GlobalTensor<float> kRstdGm_;
     AscendC::GlobalTensor<DT> dqOutGm_;
     AscendC::GlobalTensor<DT> dkOutGm_;
+    bool qkvSequenceMajor_ = false;
     AscendC::GlobalTensor<GT> dgOutGm_;
     AscendC::GlobalTensor<DT> kbgOutGm_;
     AscendC::GlobalTensor<DT> vbOutGm_;

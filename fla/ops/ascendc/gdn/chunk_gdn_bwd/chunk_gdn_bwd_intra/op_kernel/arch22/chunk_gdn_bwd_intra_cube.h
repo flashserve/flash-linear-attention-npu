@@ -53,12 +53,17 @@ public:
             for (int64_t r = 0; r < m.validHeads; ++r) {
                 if (!ChunkGdnBwdIntraScoreLeader<G>(m.hvBegin, r)) continue;
                 const int64_t hk = (m.hvBegin + r) / G;
-                const uint64_t qk = ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hk)
-                    * t_->seqlen + m.tokenStart) * HEAD_DIM;
+                const uint64_t qk = t_->qkvSequenceMajor != 0
+                    ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart) *
+                       t_->qkHeads + hk) * HEAD_DIM
+                    : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hk) *
+                       t_->seqlen + m.tokenStart) * HEAD_DIM;
+                const uint32_t qkStride = t_->qkvSequenceMajor != 0
+                    ? static_cast<uint32_t>(t_->qkHeads * HEAD_DIM) : HEAD_DIM;
                 auto kGm = tla::MakeTensor(k_[qk], tla::MakeLayout<MainT,
-                    Catlass::layout::RowMajor>(CHUNK_TOKENS, HEAD_DIM), Catlass::Arch::PositionGM{});
+                    Catlass::layout::RowMajor>(CHUNK_TOKENS, qkStride), Catlass::Arch::PositionGM{});
                 auto qGm = tla::MakeTensor(q_[qk], tla::MakeLayout<MainT,
-                    Catlass::layout::ColumnMajor>(HEAD_DIM, CHUNK_TOKENS), Catlass::Arch::PositionGM{});
+                    Catlass::layout::ColumnMajor>(qkStride, CHUNK_TOKENS), Catlass::Arch::PositionGM{});
                 auto score = tla::MakeTensor(ws_[Record(core, t_->cg, r) + S_OFFSET],
                     tla::MakeLayout<MainT, Catlass::layout::RowMajor>(CHUNK_TOKENS, CHUNK_TOKENS),
                     Catlass::Arch::PositionGM{});

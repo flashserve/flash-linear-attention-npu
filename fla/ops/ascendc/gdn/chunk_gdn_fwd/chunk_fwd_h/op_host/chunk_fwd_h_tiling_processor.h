@@ -53,6 +53,7 @@ struct ChunkFwdHTilingContext {
     bool useInitialState;
     // attrs
     bool storeFinalState;
+    bool qkvSequenceMajor = false;
     int64_t chunkSize;
     // P1: per-sequence chunk counts read from cu_seqlens on host (aclnn/l0op layer);
     // nullptr / zero count means dense path — kernel keeps uniform head partition.

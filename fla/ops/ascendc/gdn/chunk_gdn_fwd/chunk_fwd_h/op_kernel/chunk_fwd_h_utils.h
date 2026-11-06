@@ -267,6 +267,10 @@ __aicore__ inline uint64_t FwdHKOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t physicalBatch, uint32_t kh,
                                        uint32_t tokenBegin)
 {
+    if (tiling.qkvSequenceMajor) {
+        return ((static_cast<uint64_t>(physicalBatch) * tiling.seqlen + tokenBegin) *
+                tiling.kNumHead + kh) * FWD_H_K;
+    }
     return ((static_cast<uint64_t>(physicalBatch) * tiling.kNumHead + kh) * tiling.seqlen +
             tokenBegin) * FWD_H_K;
 }
