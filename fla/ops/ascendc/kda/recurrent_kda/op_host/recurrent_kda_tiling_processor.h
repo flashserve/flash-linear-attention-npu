@@ -709,7 +709,9 @@ private:
         if (ctx_.stateVFirst == 0) {
             coeff += stateDtypeSize * aDk; // K-first state transpose buffer.
         }
-        coeff += static_cast<int64_t>(stateOutBufferNum) * stateDtypeSize * aDk;
+        const bool compactFinalState = ctx_.isA5 == 0 && ctx_.inplaceFinalState == 0 && ctx_.outputFinalState == 1;
+        const int64_t stateOutDtypeSize = compactFinalState ? sizeof(float) : stateDtypeSize;
+        coeff += static_cast<int64_t>(stateOutBufferNum) * stateOutDtypeSize * aDk;
         coeff += static_cast<int64_t>(attnOutBufferNum) * 2;
         coeff += CalcComputeUbCoeff(aDk);
         return coeff;

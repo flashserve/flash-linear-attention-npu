@@ -37,7 +37,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | 名称 | Shape | Dtype | 说明 |
 | --- | --- | --- | --- |
 | `out` | 与 `v` 相同 | BF16 | recurrent 输出 |
-| `final_state` | 与 `initial_state` 同 shape/dtype | FP32/BF16 | 原位模式与输入 alias；非原位模式为独立输出；`output_final_state=False` 时 Python 主入口不返回 state |
+| `final_state` | 原位模式和 A5 沿用状态池；A2/A3 非原位为 `[M,HV,K,V]` 或 `[M,HV,V,K]` | A2/A3 非原位为 FP32，其他与输入一致 | A2/A3 非原位的 `M` 为有索引时的 token 容量，或无索引时的逻辑序列数。 |
 
 ### 2.3 属性
 
@@ -94,7 +94,8 @@ aclnnStatus aclnnRecurrentKda(void *workspace, uint64_t workspaceSize, aclOpExec
 `GetWorkspaceSize` 完成参数校验、Q/K/V stride 判定、其余非 state tensor 连续化预处理和 executor
 创建；第二段在传入 stream 上异步执行。满足约束的非连续 Q/K/V 与 state 均通过 `CreateView` 保留
 shape、storage、stride 和 offset，kernel 按 tiling
-中的真实 stride 直接访问。原位模式直接写回输入 view；非原位模式直接写入 `finalState` view。原位模式若调用者
+中的真实 stride 直接访问。原位模式直接写回输入 view。A2/A3 非原位且返回状态时，调用者传入独立、连续的 FP32
+`finalState`，按下文形状分配。原位模式若调用者
 另外传入独立的 `finalState` 输出，仅为该输出保留一次必要的 `ViewCopy`。`cuSeqlensOptional` 为空时，BSND
 按 batch 行划分序列，TND 视为一条序列；提供时仅在 host 检查 rank/dtype，具体 offset 值由 device kernel 读取，
 因而可在 ACLGraph capture/replay 中变化。首项必须为 0，offset 必须单调不减，末项不得超过输入 token capacity，
@@ -135,11 +136,18 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
               safe_gate=False, lower_bound=None, state_v_first=False)
 ```
 
-稳定入口经 Stable-ABI 适配层调用 aclnn（纯 Python `ctypes` 直调保留为参考实现与回退），不依赖 legacy `torch.ops.npu` 注册。`initial_state=None` 仅在
-`inplace_final_state=False` 时有效，此时 wrapper 创建与 `state_v_first` 对应布局的全零 FP32 状态；原位模式必须
-显式传入 state。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
+稳定入口经 Stable-ABI 适配层调用 aclnn，不依赖 legacy `torch.ops.npu` 注册。当前 Stable ABI
+入口需要显式传入 `initial_state`。请在首次创建 NPU 张量之前导入 `fla_npu`，确保配套 OPP
+及 op API 在运行时初始化前加载。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
 同样保留 storage offset 并直接读取，不满足时自动连续化。原位模式返回与输入相同 storage/stride
-的 state，非原位模式保持输入不变并返回独立 state。
+的 state。非原位模式保持输入不变。若 `output_final_state=False`，第二返回值为 `None`。
+若 `output_final_state=True`，A2/A3 返回独立的 FP32 状态：
+
+- 有 `ssm_state_indices` 时，首维为 token 容量（BSND 为 `B*T`，TND 为 `T`），有效位置按
+  token 顺序对应递推后的状态。索引只用于定位输入池中的初始状态。
+- 无 `ssm_state_indices` 时，首维为逻辑序列数，每条非空序列输出其末状态。
+- 尾维由 `state_v_first` 决定。padding 和无计算位置没有定义。
+  A5 仍返回完整的独立状态池，未更新槽位保留原值。
 
 ### 4.2 调用示例
 

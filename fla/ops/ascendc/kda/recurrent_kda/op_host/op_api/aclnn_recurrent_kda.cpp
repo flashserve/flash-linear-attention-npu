@@ -12,6 +12,7 @@
  * \brief
  */
 #include "aclnn_recurrent_kda.h"
+#include "acl/acl_rt.h"
 #include "recurrent_kda.h"
 
 #include "aclnn_kernels/common/op_error_check.h"
@@ -239,7 +240,17 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
     return true;
 }
 
-bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
+bool UsesCompactFinalState(const RecurrentKdaParams &params)
+{
+    if (params.inplaceFinalState || !params.outputFinalState) {
+        return false;
+    }
+    const char *soc = aclrtGetSocName();
+    return soc != nullptr && (std::strstr(soc, "Ascend910B") != nullptr ||
+        std::strstr(soc, "Ascend910C") != nullptr || std::strstr(soc, "Ascend910_93") != nullptr);
+}
+
+bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, bool compactFinalState)
 {
     if (!SameShape(params.query, params.key)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: query and key must have identical shape.");
@@ -331,7 +342,20 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: attnOut shape must match value.");
         return false;
     }
-    if (!SameShape(params.finalState, params.initialStateRef)) {
+    if (compactFinalState) {
+        const int64_t outputStates = params.ssmStateIndicesOptional == nullptr ? seqNum : totalTokens;
+        if (Rank(params.finalState) != 4 || Dim(params.finalState, DIM0) != outputStates ||
+            Dim(params.finalState, DIM1) != hv ||
+            Dim(params.finalState, DIM2) != Dim(params.initialStateRef, DIM2) ||
+            Dim(params.finalState, DIM3) != Dim(params.initialStateRef, DIM3) ||
+            !IsContiguous(params.finalState) ||
+            params.finalState->GetStorageAddr() == params.initialStateRef->GetStorageAddr()) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "npu_recurrent_kda: non-inplace finalState must be independent, contiguous and have %ld states.",
+                outputStates);
+            return false;
+        }
+    } else if (!SameShape(params.finalState, params.initialStateRef)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: finalState shape must match initialStateRef.");
         return false;
     }
@@ -393,7 +417,7 @@ bool CheckNotNull(const RecurrentKdaParams &params)
     return true;
 }
 
-bool CheckDtypeValid(const RecurrentKdaParams &params)
+bool CheckDtypeValid(const RecurrentKdaParams &params, bool compactFinalState)
 {
     OP_CHECK_DTYPE_NOT_SUPPORT(params.query, QKV_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.key, QKV_TYPE_SUPPORT_LIST, return false);
@@ -403,8 +427,10 @@ bool CheckDtypeValid(const RecurrentKdaParams &params)
     OP_CHECK_DTYPE_NOT_SUPPORT(params.initialStateRef, STATE_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.attnOut, QKV_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.finalState, STATE_TYPE_SUPPORT_LIST, return false);
-    if (params.finalState->GetDataType() != params.initialStateRef->GetDataType()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: finalState dtype must match initialStateRef.");
+    const auto expectedFinalDtype = compactFinalState ? op::DataType::DT_FLOAT : params.initialStateRef->GetDataType();
+    if (params.finalState->GetDataType() != expectedFinalDtype) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: finalState must be FP32 for non-inplace output, "
+                "otherwise match initialStateRef.");
         return false;
     }
     if (params.cuSeqlensOptional != nullptr) {
@@ -556,10 +582,11 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
                               allowNegEigval, safeGate, lowerBound, stateVFirst, attnOut, finalState};
 
     CHECK_RET(CheckNotNull(params), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtypeValid(params), ACLNN_ERR_PARAM_INVALID);
+    const bool compactFinalState = UsesCompactFinalState(params);
+    CHECK_RET(CheckDtypeValid(params, compactFinalState), ACLNN_ERR_PARAM_INVALID);
     RecurrentKdaLayout parsedLayout = RecurrentKdaLayout::BSND;
     CHECK_RET(ParseLayout(params.layout, parsedLayout), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params, parsedLayout), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShape(params, parsedLayout, compactFinalState), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckQkvMaterializationSafety(params.query, parsedLayout, "query") &&
                   CheckQkvMaterializationSafety(params.key, parsedLayout, "key") &&
                   CheckQkvMaterializationSafety(params.value, parsedLayout, "value"),
