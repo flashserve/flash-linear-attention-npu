@@ -396,7 +396,12 @@ class FunctionApi(BaseApi):
             outputs = run_npu(spec, input_data)
         else:
             raise RuntimeError(f"{OP_NAME} only supports CPU golden and NPU DUT nodes")
-        normalized = _finite_tuple(outputs, golden=False)
+        # Keep FP64 accumulation inside the golden chain, then normalize all
+        # visible outputs to FP32 so ATK compares the three roles with one
+        # dtype.  This does not alter the FP32 benchmark computation.
+        normalized = _finite_tuple(outputs, golden=self.role == "golden")
+        if self.role == "dut":
+            normalized = tuple(output.float() for output in normalized)
         if self.role == "benchmark":
             normalized = tuple(output.float() for output in normalized)
         return normalized
