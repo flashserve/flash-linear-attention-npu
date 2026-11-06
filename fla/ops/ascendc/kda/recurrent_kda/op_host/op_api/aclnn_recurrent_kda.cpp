@@ -252,9 +252,13 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
     if (cuSeqlens == nullptr) {
         return true;
     }
-    if (Rank(cuSeqlens) != 1 || Dim(cuSeqlens, DIM0) < 2) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "cu_seqlens",
-            "expected 1D with at least two elements; actual " + TensorDescription(cuSeqlens));
+    if (Rank(cuSeqlens) != 1) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM(opName, "cu_seqlens", std::to_string(Rank(cuSeqlens)), "1");
+        return false;
+    }
+    if (Dim(cuSeqlens, DIM0) < 2) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(opName, "cu_seqlens",
+            op::ToString(cuSeqlens->GetViewShape()).GetString(), "expected at least two elements");
         return false;
     }
     return true;
@@ -275,8 +279,10 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
     int64_t vDim = 0;
     if (layout == RecurrentKdaLayout::TND) {
         if (Rank(params.query) != 3 || Rank(params.value) != 3 || Rank(params.gate) != 3 || Rank(params.beta) != 2) {
-            ReportInvalid(params, "query/key/value/gate/beta",
-                    "npu_recurrent_kda: TND expects q/k [T,H,K], v [T,HV,V], g [T,HV,K], beta [T,HV].");
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON("aclnnRecurrentKda", "query/value/gate/beta",
+                std::to_string(Rank(params.query)) + "/" + std::to_string(Rank(params.value)) + "/" +
+                    std::to_string(Rank(params.gate)) + "/" + std::to_string(Rank(params.beta)),
+                "TND expects q/k [T,H,K], v [T,HV,V], g [T,HV,K], beta [T,HV]");
             return false;
         }
         totalTokens = Dim(params.query, DIM0);
@@ -293,8 +299,10 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         }
     } else {
         if (Rank(params.query) != 4 || Rank(params.value) != 4 || Rank(params.gate) != 4 || Rank(params.beta) != 3) {
-            ReportInvalid(params, "query/key/value/gate/beta",
-                    "npu_recurrent_kda: BSND expects q/k [B,T,H,K], v [B,T,HV,V], g [B,T,HV,K], beta [B,T,HV].");
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON("aclnnRecurrentKda", "query/value/gate/beta",
+                std::to_string(Rank(params.query)) + "/" + std::to_string(Rank(params.value)) + "/" +
+                    std::to_string(Rank(params.gate)) + "/" + std::to_string(Rank(params.beta)),
+                "BSND expects q/k [B,T,H,K], v [B,T,HV,V], g [B,T,HV,K], beta [B,T,HV]");
             return false;
         }
         batch = Dim(params.query, DIM0);
@@ -394,7 +402,7 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         return false;
     }
     if (params.useGateInKernel && params.aLogOptional == nullptr) {
-        ReportInvalid(params, "A_log", "A_log is required when use_gate_in_kernel=True.");
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentKda", "A_log");
         return false;
     }
     if (!params.useGateInKernel &&
@@ -417,7 +425,8 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         }
     }
     if (params.safeGate && !(params.lowerBound >= -5.0 && params.lowerBound < 0.0)) {
-        ReportInvalid(params, "lower_bound", "npu_recurrent_kda: lower_bound must be in [-5, 0) when safe_gate=True.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRecurrentKda", "lower_bound",
+            std::to_string(params.lowerBound), "must be in [-5, 0) when safe_gate=True");
         return false;
     }
     return true;
@@ -459,7 +468,9 @@ bool CheckDtypeValid(const RecurrentKdaParams &params)
     if (!check(params.attnOut, "attnOut", QKV_TYPE_SUPPORT_LIST)) return false;
     if (!check(params.finalState, "finalState", STATE_TYPE_SUPPORT_LIST)) return false;
     if (params.finalState->GetDataType() != params.initialStateRef->GetDataType()) {
-        ReportInvalid(params, "finalState", "npu_recurrent_kda: finalState dtype must match initialStateRef.");
+        OP_LOGE_FOR_INVALID_DTYPE("aclnnRecurrentKda", "finalState",
+            op::ToString(params.finalState->GetDataType()).GetString(),
+            op::ToString(params.initialStateRef->GetDataType()).GetString());
         return false;
     }
     if (!check(params.cuSeqlensOptional, "cu_seqlens", INT_TYPE_SUPPORT_LIST)) return false;
@@ -742,7 +753,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         params.useGateInKernel, params.useBetaSigmoidInKernel, params.allowNegEigval,
         params.safeGate, params.lowerBound, params.stateVFirst, params.attnOut,
         finalStateForKernel, executorPtr);
-    if (result[0] != nullptr && result[1] != nullptr && result[2] == nullptr) {
+    // The launcher reports the root error. Do not dereference failed outputs or
+    // return success when all outputs are null.
+    if (result[0] == nullptr || result[1] == nullptr || result[2] == nullptr) {
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.inplaceFinalState && params.outputFinalState &&
