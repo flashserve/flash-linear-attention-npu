@@ -762,8 +762,10 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
         if ((h & 1) != subBlockIdx) {
             continue;
         }
-        uint64_t qkOffset = QkOffset(h, bos, loopIdx);    // q (HK)
-        uint64_t dqOutOffset = qkOffset; // dq (HK)
+        uint64_t qkOffset = QkOffset(h, bos, loopIdx);    // public q (HK)
+        // dQ workspace remains head-major; only the public q/dq tensors use
+        // sequence-major addressing.
+        uint64_t dqOutOffset = (static_cast<uint64_t>(h) * T + bos) * K;
         uint64_t gOffset = (h * T + bos);
         uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -889,8 +891,10 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
         if ((hk_idx & 1) != subBlockIdx) {
             continue;
         }
-        uint64_t qkOffset = QkOffset(hk_idx, bos, loopIdx);    // q (HK)
-        uint64_t dqOutOffset = qkOffset; // dq (HK)
+        uint64_t qkOffset = QkOffset(hk_idx, bos, loopIdx);    // public q (HK)
+        // dQ workspace remains head-major; only the public q/dq tensors use
+        // sequence-major addressing.
+        uint64_t dqOutOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K;
         uint64_t gOffset = (static_cast<uint64_t>(h) * T + bos);
         uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -1124,8 +1128,10 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
         if ((h & 1) != subBlockIdx) {
             continue;
         }
-        uint64_t kOffset = QkOffset(h, bos, loopIdx);     // k (HK)
-        uint64_t dkOutOffset = kOffset; // dk (HK)
+        uint64_t kOffset = QkOffset(h, bos, loopIdx);     // public k (HK)
+        // dK workspace remains head-major; only the public k/dk tensors use
+        // sequence-major addressing.
+        uint64_t dkOutOffset = (static_cast<uint64_t>(h) * T + bos) * K;
         uint64_t gOffset = (h * T + bos);
         uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -1323,8 +1329,10 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
         if ((hk_idx & 1) != subBlockIdx) {
             continue;
         }
-        uint64_t kOffset = QkOffset(hk_idx, bos, loopIdx);     // k (HK)
-        uint64_t dkOutOffset = kOffset; // dk (HK)
+        uint64_t kOffset = QkOffset(hk_idx, bos, loopIdx);     // public k (HK)
+        // dK workspace remains head-major; only the public k/dk tensors use
+        // sequence-major addressing.
+        uint64_t dkOutOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K;
         uint64_t gOffset = (static_cast<uint64_t>(h) * T + bos);
         uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
