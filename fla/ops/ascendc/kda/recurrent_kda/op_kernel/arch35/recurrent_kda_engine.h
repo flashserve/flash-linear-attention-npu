@@ -18,17 +18,19 @@ constexpr uint32_t DIM = 128;
 constexpr uint32_t TOKEN_TILE = 4;
 constexpr uint32_t STATE_BANKS = 3;
 constexpr uint32_t INPUT_BUFFERS = 2;
+constexpr uint32_t PARAMETER_BUFFERS = 2;
 constexpr uint32_t STATE_BYTES = DIM * DIM * sizeof(float);
 constexpr uint32_t TILE_VECTOR_BYTES = TOKEN_TILE * DIM * sizeof(float);
 constexpr uint32_t TILE_SCALAR_BYTES = TOKEN_TILE * 32;
 constexpr uint32_t PREDICTION_BYTES = DIM * sizeof(float);
 constexpr uint32_t UB_BYTES = 3 * STATE_BYTES +
-    2 * (4 * TOKEN_TILE * DIM * sizeof(bfloat16_t) + TILE_VECTOR_BYTES + TILE_SCALAR_BYTES) + 512;
+    2 * (4 * TOKEN_TILE * DIM * sizeof(bfloat16_t) + TILE_VECTOR_BYTES + TILE_SCALAR_BYTES) +
+    PARAMETER_BUFFERS * DIM * sizeof(float);
 static_assert(UB_BYTES + PREDICTION_BYTES <= 256 * 1024, "stand-pr UB exceeds A5 capacity");
 constexpr uint8_t INPUT_MUTEX[2] = {3, 4};
 constexpr uint8_t OUTPUT_MUTEX[2] = {5, 6};
 constexpr uint8_t STATE_MUTEX[3] = {7, 8, 9};
-constexpr uint8_t PARAMETER_MUTEX = 10;
+constexpr uint8_t PARAMETER_MUTEX[PARAMETER_BUFFERS] = {10, 11};
 constexpr CastTrait TO_FLOAT_ZERO = {RegLayout::ZERO, SatMode::SAT, MaskMergeMode::ZEROING, RoundMode::CAST_NONE};
 constexpr CastTrait TO_FLOAT_ONE = {RegLayout::ONE, SatMode::SAT, MaskMergeMode::ZEROING, RoundMode::CAST_NONE};
 constexpr CastTrait TO_B16_ZERO = {RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::MERGING, RoundMode::CAST_RINT};
@@ -425,6 +427,8 @@ public:
         const uint64_t taskCount = uint64_t(tiling_->b) * tiling_->nv;
         uint32_t currentBank = 0;
         uint32_t tileIndex = 0;
+        uint32_t parameterBuffer = 0;
+        const bool usesBias = tiling_->hasDtBias && tiling_->useGateInKernel;
         bool stateReadyEvent = true;
         SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
         for (uint64_t task = GetBlockIdx(); task < taskCount; task += GetBlockNum()) {
@@ -443,17 +447,19 @@ public:
             Mutex::Lock<PIPE_MTE2>(STATE_MUTEX[currentBank]);
             CopyStateIn(currentBank, initialSlot, head);
             Mutex::Unlock<PIPE_MTE2>(STATE_MUTEX[currentBank]);
-            // KDA has a 128-element bias rather than GDN's scalar bias.
-            // One parameter buffer is protected for the entire request/head.
-            Mutex::Lock<PIPE_MTE2>(PARAMETER_MUTEX);
-            if (tiling_->hasDtBias && tiling_->useGateInKernel) DataCopy(biasUb_, biasGm_[head * DIM], DIM);
-            Mutex::Unlock<PIPE_MTE2>(PARAMETER_MUTEX);
+            // Alternate only for executed tasks, including across empty requests.
+            // A second slot lets the next task's input DMA pass the current VF.
+            if (usesBias) {
+                Mutex::Lock<PIPE_MTE2>(PARAMETER_MUTEX[parameterBuffer]);
+                DataCopy(biasUb_[parameterBuffer], biasGm_[head * DIM], DIM);
+                Mutex::Unlock<PIPE_MTE2>(PARAMETER_MUTEX[parameterBuffer]);
+            }
             const float aLog = tiling_->useGateInKernel ? aLogGm_.GetValue(head) : 0.0f;
             if (hasFollowingTask && taskTokens == 1) {
                 SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
                 stateReadyEvent = true;
             }
-            Mutex::Lock<PIPE_V>(PARAMETER_MUTEX);
+            if (usesBias) Mutex::Lock<PIPE_V>(PARAMETER_MUTEX[parameterBuffer]);
             for (int64_t start = sequenceBegin_; start < sequenceEnd_; start += TOKEN_TILE) {
                 const uint16_t rows = static_cast<uint16_t>((sequenceEnd_ - start < TOKEN_TILE ? sequenceEnd_ - start : TOKEN_TILE));
                 const uint32_t buffer = tileIndex++ % INPUT_BUFFERS;
@@ -463,7 +469,7 @@ public:
                 for (uint16_t token = 0; token < rows; ++token) {
                     const uint32_t nextBank = (currentBank + 1) % STATE_BANKS;
                     Mutex::Lock<PIPE_V>(STATE_MUTEX[nextBank]);
-                    ComputeToken(buffer, token, currentBank, nextBank, aLog);
+                    ComputeToken(buffer, token, currentBank, nextBank, aLog, parameterBuffer);
                     Mutex::Unlock<PIPE_V>(STATE_MUTEX[nextBank]);
                     const int64_t position = start + token;
                     // The spare next-task bank was last read by this penultimate VF.
@@ -489,7 +495,8 @@ public:
                 DataCopyPad(outputGm_[outOffset], outputTile_[buffer], outputParams);
                 Mutex::Unlock<PIPE_MTE3>(OUTPUT_MUTEX[buffer]);
             }
-            Mutex::Unlock<PIPE_V>(PARAMETER_MUTEX);
+            if (usesBias) Mutex::Unlock<PIPE_V>(PARAMETER_MUTEX[parameterBuffer]);
+            parameterBuffer = (parameterBuffer + 1) % PARAMETER_BUFFERS;
         }
         // Close the V->MTE2 handshake even if trailing tasks were empty/invalid.
         if (stateReadyEvent) WaitFlag<HardEvent::V_MTE2>(EVENT_ID0);
@@ -517,8 +524,10 @@ private:
             outputTile_[buffer] = LocalTensor<bfloat16_t>(TPosition::VECCALC, offset, TOKEN_TILE * DIM);
             offset += TOKEN_TILE * DIM * sizeof(bfloat16_t);
         }
-        biasUb_ = LocalTensor<float>(TPosition::VECCALC, offset, DIM);
-        offset += DIM * sizeof(float);
+        for (uint32_t buffer = 0; buffer < PARAMETER_BUFFERS; ++buffer) {
+            biasUb_[buffer] = LocalTensor<float>(TPosition::VECCALC, offset, DIM);
+            offset += DIM * sizeof(float);
+        }
         predictionScratchUb_ = LocalTensor<float>(TPosition::VECCALC, offset, DIM);
     }
 
@@ -639,7 +648,8 @@ private:
         Mutex::Unlock<PIPE_MTE2>(INPUT_MUTEX[buffer]);
     }
 
-    __aicore__ inline void ComputeToken(uint32_t buffer, uint16_t token, uint32_t source, uint32_t target, float aLog)
+    __aicore__ inline void ComputeToken(uint32_t buffer, uint16_t token, uint32_t source, uint32_t target,
+        float aLog, uint32_t parameterBuffer)
     {
         __ubuf__ float* predictionScratch = (__ubuf__ float*)predictionScratchUb_.GetPhyAddr();
         RecurrentKdaTokenVf<State, Gate, Beta, V_FIRST, FUSED>(
@@ -649,7 +659,7 @@ private:
             (__ubuf__ bfloat16_t*)valueTile_[buffer][token * DIM].GetPhyAddr(),
             (__ubuf__ Gate*)gateTile_[buffer][token * DIM].GetPhyAddr(),
             (__ubuf__ Beta*)betaTile_[buffer][token * (32 / sizeof(Beta))].GetPhyAddr(),
-            (__ubuf__ float*)biasUb_.GetPhyAddr(),
+            (__ubuf__ float*)biasUb_[parameterBuffer].GetPhyAddr(),
             (__ubuf__ bfloat16_t*)outputTile_[buffer][token * DIM].GetPhyAddr(),
             tiling_->scale, aLog, tiling_->a5VfFlags, tiling_->lowerBound, predictionScratch);
     }
@@ -667,7 +677,7 @@ private:
     LocalTensor<bfloat16_t> queryTile_[INPUT_BUFFERS], keyTile_[INPUT_BUFFERS], valueTile_[INPUT_BUFFERS], outputTile_[INPUT_BUFFERS];
     LocalTensor<Gate> gateTile_[INPUT_BUFFERS];
     LocalTensor<Beta> betaTile_[INPUT_BUFFERS];
-    LocalTensor<float> biasUb_;
+    LocalTensor<float> biasUb_[PARAMETER_BUFFERS];
     LocalTensor<float> predictionScratchUb_;
     uint64_t cachedRequest_ = uint64_t(-1);
     int64_t sequenceBegin_ = 0, sequenceEnd_ = 0;
