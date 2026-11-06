@@ -2,7 +2,7 @@
     {
         "id": 0,
         "default_seed": null,
-        "name": "chunk_gated_delta_rule_fwd_chunk32_0000_dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_l21_ga1_h1",
+        "name": "chunk_gated_delta_rule_fwd_chunk32_0000_dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_ga1_h1",
         "aclnn_name": "ChunkGatedDeltaRuleFwd",
         "triton_name": null,
         "kernel_name": null,
@@ -184,17 +184,6 @@
             },
             {
                 "name": "state_v_first",
-                "type": "attr",
-                "required": true,
-                "dtype": "bool",
-                "shape": null,
-                "range_values": true,
-                "backward": false,
-                "align_32B": null,
-                "outlier_values": null
-            },
-            {
-                "name": "out_l2",
                 "type": "attr",
                 "required": true,
                 "dtype": "bool",

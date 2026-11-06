@@ -39,7 +39,6 @@ def _spec(
     seqlens: str = "",
     allow_neg: bool = False,
     state_v_first: bool = False,
-    out_l2: bool = False,
     disable_recompute: bool = False,
     out_h: bool = False,
     g_mode: str = "normal",
@@ -67,7 +66,6 @@ def _spec(
         "seqlens": seqlens,
         "allow_neg_eigval": allow_neg,
         "state_v_first": state_v_first,
-        "out_l2": out_l2,
         "disable_recompute": disable_recompute,
         "out_h": out_h,
         "g_mode": g_mode,
@@ -79,12 +77,12 @@ def _spec(
 
 def _key(layout: str, k_heads: int, v_heads: int, tokens: int, state: str,
          seqlens: str, allow_neg: bool, state_v_first: bool, batch: int,
-         out_l2: bool = False, disable_recompute: bool = False, out_h: bool = False,
+         disable_recompute: bool = False, out_h: bool = False,
          g_mode: str = "normal") -> str:
     head = "gva" if v_heads > k_heads else "mha"
     packed = "var" if seqlens else "fix"
     seq = "" if not seqlens else "_seq" + seqlens.replace(",", "-")
-    exports = f"_l2{int(out_l2)}_ga{int(disable_recompute)}_h{int(out_h)}"
+    exports = f"_ga{int(disable_recompute)}_h{int(out_h)}"
     gate = "" if g_mode == "normal" else f"_{g_mode}"
     return (
         f"{layout.lower()}_{head}_{packed}_B{batch}_H{k_heads}x{v_heads}"
@@ -95,9 +93,8 @@ def _key(layout: str, k_heads: int, v_heads: int, tokens: int, state: str,
 def accuracy_specs() -> list[dict]:
     """Covering set. BNSD/NTD are fully crossed; BSND/TND and the exports are sampled.
 
-    Optional exports are ``out_l2`` (q_hat/k_hat/rstd and beta_eff),
-    ``disable_recompute`` (g_cumsum and A) and ``out_h``. The inference launch
-    leaves all three off. T stays at or under 8192.
+    ``disable_recompute`` exports g_cumsum, A and the q/k hats together.
+    ``out_h`` still exports h on its own. T stays at or under 8192.
     """
 
     negs = (False, True)
@@ -107,16 +104,16 @@ def accuracy_specs() -> list[dict]:
     specs: list[dict] = []
 
     def add(layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first,
-            out_l2=False, disable_recompute=False, out_h=False, g_mode="normal") -> None:
+            disable_recompute=False, out_h=False, g_mode="normal") -> None:
         specs.append(
             _spec(
                 case_key=_key(
                     layout, hk, hv, tokens, state, seqlens, allow_neg, state_v_first, batch,
-                    out_l2, disable_recompute, out_h, g_mode,
+                    disable_recompute, out_h, g_mode,
                 ),
                 layout=layout, batch=batch, k_heads=hk, v_heads=hv, tokens=tokens,
                 state=state, seqlens=seqlens, allow_neg=allow_neg, state_v_first=state_v_first,
-                out_l2=out_l2, disable_recompute=disable_recompute, out_h=out_h,
+                disable_recompute=disable_recompute, out_h=out_h,
                 g_mode=g_mode, seed=SEED_BASE + len(specs),
             )
         )
@@ -170,13 +167,9 @@ def accuracy_specs() -> list[dict]:
 
     # Each export switch, and the combinations, on the layouts those switches touch.
     export_modes = (
-        (True, False, False),
-        (False, True, False),
-        (False, False, True),
-        (True, True, False),
-        (True, False, True),
-        (False, True, True),
-        (True, True, True),
+        (True, False),
+        (False, True),
+        (True, True),
     )
     export_rows = (
         # layout, hk, hv, batch, tokens, state, seqlens, neg, sv
@@ -187,12 +180,12 @@ def accuracy_specs() -> list[dict]:
         ("BSND", 2, 8, 1, 96, "none", "", True, False),
         ("TND", 4, 4, 1, 80, "bf16", "48,32", False, True),
     )
-    for out_l2, disable_recompute, out_h in export_modes:
+    for disable_recompute, out_h in export_modes:
         for row in export_rows:
             layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first = row
             add(
                 layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first,
-                out_l2, disable_recompute, out_h,
+                disable_recompute, out_h,
             )
     # The block above is the original 300. Everything after it fills the holes
     # and keeps those seeds stable.
@@ -255,12 +248,12 @@ def accuracy_specs() -> list[dict]:
         ("BNSD", 4, 4, 2, 64, "none", "", False, False),
         ("BSND", 4, 4, 2, 64, "none", "", False, False),
     )
-    for out_l2, disable_recompute, out_h in export_modes:
+    for disable_recompute, out_h in export_modes:
         for row in export_shapes:
             layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first = row
             add(
                 layout, hk, hv, batch, tokens, state, seqlens, allow_neg, state_v_first,
-                out_l2, disable_recompute, out_h,
+                disable_recompute, out_h,
             )
 
     # g=-4 pushes every prefix past -80, so gate and v_new take exp(diff).
@@ -311,52 +304,49 @@ def slim_specs() -> list[dict]:
     Each row is a single combination. The full matrix stays in accuracy_specs.
     """
 
-    # layout, B, HK, HV, T, state, seqlens, neg, sv, l2, ga, h, g_mode, key
+    # layout, B, HK, HV, T, state, seqlens, neg, sv, ga, h, g_mode, key
     rows = [
-        ("BNSD", 1, 4, 4, 128, "none", "", False, False, False, False, False, "normal", "bnsd_mha_aligned"),
-        ("BNSD", 1, 2, 8, 128, "none", "", False, False, False, False, False, "normal", "bnsd_gva"),
-        ("BNSD", 1, 4, 4, 100, "none", "", False, False, False, False, False, "normal", "bnsd_tail"),
-        ("BNSD", 2, 4, 4, 64, "none", "", False, False, False, False, False, "normal", "bnsd_batch2"),
-        ("BSND", 1, 4, 4, 128, "none", "", False, False, False, False, False, "normal", "bsnd_aligned"),
-        ("BSND", 1, 4, 4, 100, "none", "", False, False, False, False, False, "normal", "bsnd_tail"),
-        ("BSND", 2, 4, 4, 64, "none", "", False, False, False, False, False, "normal", "bsnd_batch2"),
-        ("NTD", 1, 4, 4, 128, "none", "", False, False, False, False, False, "normal", "ntd_fixed"),
-        ("NTD", 1, 4, 4, 128, "none", "64,64", False, False, False, False, False, "normal", "ntd_var_aligned"),
-        ("NTD", 1, 4, 4, 100, "none", "40,60", False, False, False, False, False, "normal", "ntd_var_uneven"),
-        ("TND", 1, 4, 4, 128, "none", "", False, False, False, False, False, "normal", "tnd_fixed"),
-        ("TND", 1, 4, 4, 128, "none", "64,64", False, False, False, False, False, "normal", "tnd_var_aligned"),
-        ("TND", 1, 4, 4, 100, "none", "40,60", False, False, False, False, False, "normal", "tnd_var_uneven"),
-        ("BNSD", 1, 4, 4, 32, "none", "", False, False, False, False, False, "normal", "single_chunk"),
-        ("BNSD", 1, 4, 4, 20, "none", "", False, False, False, False, False, "normal", "single_chunk_tail"),
-        ("NTD", 1, 4, 4, 32, "none", "16,16", False, False, False, False, False, "normal", "varlen_single"),
-        ("NTD", 1, 4, 4, 20, "none", "12,8", False, False, False, False, False, "normal", "varlen_single_partial"),
-        ("TND", 1, 4, 4, 32, "none", "16,16", False, False, False, False, False, "normal", "tnd_varlen_single"),
-        ("BNSD", 1, 4, 4, 64, "bf16", "", False, False, False, False, False, "normal", "state_bf16"),
-        ("BNSD", 1, 4, 4, 64, "fp32", "", False, False, False, False, False, "normal", "state_fp32"),
-        ("BNSD", 1, 4, 4, 64, "zero", "", False, False, False, False, False, "normal", "state_zero"),
-        ("BNSD", 1, 4, 4, 64, "none", "", True, False, False, False, False, "normal", "allow_neg"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, True, False, False, False, "normal", "state_v_first"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, True, False, False, "normal", "export_l2"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, False, True, False, "normal", "export_ga"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, False, False, True, "normal", "export_h"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, True, True, False, "normal", "export_l2_ga"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, True, False, True, "normal", "export_l2_h"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, False, True, True, "normal", "export_ga_h"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, True, True, True, "normal", "export_all"),
-        ("BNSD", 1, 4, 4, 128, "none", "", False, False, False, False, False, "strong", "g_strong"),
-        ("BNSD", 1, 4, 4, 128, "none", "", False, False, False, False, False, "spike", "g_spike"),
-        ("BNSD", 1, 4, 4, 64, "none", "", False, False, False, False, False, "mix", "g_mix"),
-        ("BNSD", 1, 4, 4, 8192, "none", "", False, False, False, False, False, "normal", "cap_t8192"),
-        ("NTD", 1, 2, 8, 8000, "fp32", "3000,5000", True, True, False, False, False, "normal", "cap_varlen"),
+        ('BNSD', 1, 4, 4, 128, 'none', '', False, False, False, False, 'normal', 'bnsd_mha_aligned'),
+        ('BNSD', 1, 2, 8, 128, 'none', '', False, False, False, False, 'normal', 'bnsd_gva'),
+        ('BNSD', 1, 4, 4, 100, 'none', '', False, False, False, False, 'normal', 'bnsd_tail'),
+        ('BNSD', 2, 4, 4, 64, 'none', '', False, False, False, False, 'normal', 'bnsd_batch2'),
+        ('BSND', 1, 4, 4, 128, 'none', '', False, False, False, False, 'normal', 'bsnd_aligned'),
+        ('BSND', 1, 4, 4, 100, 'none', '', False, False, False, False, 'normal', 'bsnd_tail'),
+        ('BSND', 2, 4, 4, 64, 'none', '', False, False, False, False, 'normal', 'bsnd_batch2'),
+        ('NTD', 1, 4, 4, 128, 'none', '', False, False, False, False, 'normal', 'ntd_fixed'),
+        ('NTD', 1, 4, 4, 128, 'none', '64,64', False, False, False, False, 'normal', 'ntd_var_aligned'),
+        ('NTD', 1, 4, 4, 100, 'none', '40,60', False, False, False, False, 'normal', 'ntd_var_uneven'),
+        ('TND', 1, 4, 4, 128, 'none', '', False, False, False, False, 'normal', 'tnd_fixed'),
+        ('TND', 1, 4, 4, 128, 'none', '64,64', False, False, False, False, 'normal', 'tnd_var_aligned'),
+        ('TND', 1, 4, 4, 100, 'none', '40,60', False, False, False, False, 'normal', 'tnd_var_uneven'),
+        ('BNSD', 1, 4, 4, 32, 'none', '', False, False, False, False, 'normal', 'single_chunk'),
+        ('BNSD', 1, 4, 4, 20, 'none', '', False, False, False, False, 'normal', 'single_chunk_tail'),
+        ('NTD', 1, 4, 4, 32, 'none', '16,16', False, False, False, False, 'normal', 'varlen_single'),
+        ('NTD', 1, 4, 4, 20, 'none', '12,8', False, False, False, False, 'normal', 'varlen_single_partial'),
+        ('TND', 1, 4, 4, 32, 'none', '16,16', False, False, False, False, 'normal', 'tnd_varlen_single'),
+        ('BNSD', 1, 4, 4, 64, 'bf16', '', False, False, False, False, 'normal', 'state_bf16'),
+        ('BNSD', 1, 4, 4, 64, 'fp32', '', False, False, False, False, 'normal', 'state_fp32'),
+        ('BNSD', 1, 4, 4, 64, 'zero', '', False, False, False, False, 'normal', 'state_zero'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', True, False, False, False, 'normal', 'allow_neg'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', False, True, False, False, 'normal', 'state_v_first'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', False, False, False, False, 'normal', 'export_off'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', False, False, True, False, 'normal', 'export_ga'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', False, False, False, True, 'normal', 'export_h'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', False, False, True, True, 'normal', 'export_ga_h'),
+        ('BNSD', 1, 4, 4, 128, 'none', '', False, False, False, False, 'strong', 'g_strong'),
+        ('BNSD', 1, 4, 4, 128, 'none', '', False, False, False, False, 'spike', 'g_spike'),
+        ('BNSD', 1, 4, 4, 64, 'none', '', False, False, False, False, 'mix', 'g_mix'),
+        ('BNSD', 1, 4, 4, 8192, 'none', '', False, False, False, False, 'normal', 'cap_t8192'),
+        ('NTD', 1, 2, 8, 8000, 'fp32', '3000,5000', True, True, False, False, 'normal', 'cap_varlen'),
     ]
     specs = []
     for index, row in enumerate(rows):
-        layout, batch, hk, hv, tokens, state, seqlens, neg, sv, l2, ga, out_h, g_mode, key = row
+        layout, batch, hk, hv, tokens, state, seqlens, neg, sv, ga, out_h, g_mode, key = row
         specs.append(
             _spec(
                 case_key=f"slim_{key}", tags="slim", layout=layout, batch=batch,
                 k_heads=hk, v_heads=hv, tokens=tokens, state=state, seqlens=seqlens,
-                allow_neg=neg, state_v_first=sv, out_l2=l2, disable_recompute=ga,
+                allow_neg=neg, state_v_first=sv, disable_recompute=ga,
                 out_h=out_h, g_mode=g_mode, seed=SEED_BASE + 5000 + index,
             )
         )
@@ -386,77 +376,77 @@ def perf_specs() -> list[dict]:
 def mss_specs() -> list[dict]:
     """The 60 sanitizer rows. ``seqlens`` is empty when the length is fixed."""
 
-    # key, layout, B, HK, HV, T, state, seqlens, neg, sv, l2, ga, h, final
+    # key, layout, B, HK, HV, T, state, seqlens, neg, sv, ga, h, final
     rows = [
-        ("mss_src00_bsnd_dense_T8192", "BSND", 1, 16, 32, 8192, "none", "", False, False, False, True, False, False),
-        ("mss_src01_bsnd_varlen_T8088", "BSND", 1, 32, 32, 8088, "none", "83,219,1069,249,1126,5342", False, False, False, True, False, False),
-        ("mss_src02_bnsd_state_zero_final_T1", "BNSD", 1, 1, 1, 1, "zero", "1", True, True, False, False, False, True),
-        ("mss_src03_ntd_state_initial_final_T1", "NTD", 1, 1, 1, 1, "fp32", "", True, False, False, False, True, True),
-        ("mss_src04_bsnd_varlen_T1", "BSND", 1, 1, 2, 1, "none", "1", True, True, True, False, True, False),
-        ("mss_src05_ntd_state_initial_final_T1", "NTD", 1, 1, 2, 1, "fp32", "1", True, True, True, False, False, True),
-        ("mss_src06_bsnd_state_zero_final_T1", "BSND", 1, 1, 2, 1, "zero", "1", False, True, False, True, True, True),
-        ("mss_src07_ntd_varlen_T1", "NTD", 1, 1, 2, 1, "none", "1", False, False, True, False, True, True),
-        ("mss_src08_bsnd_state_zero_final_T1", "BSND", 1, 1, 2, 1, "zero", "1", True, False, False, True, True, True),
-        ("mss_src09_ntd_varlen_T1", "NTD", 1, 1, 2, 1, "none", "1", False, True, False, True, True, True),
-        ("mss_src10_tnd_state_initial_final_T1", "TND", 1, 1, 2, 1, "fp32", "1", False, True, False, False, True, True),
-        ("mss_src11_tnd_state_initial_only_T1", "TND", 1, 1, 2, 1, "fp32", "1", False, True, False, True, True, True),
-        ("mss_src12_tnd_state_initial_final_T1", "TND", 1, 1, 2, 1, "fp32", "1", False, True, False, False, False, False),
-        ("mss_src13_bnsd_state_initial_only_T1", "BNSD", 1, 1, 3, 1, "fp32", "1", False, False, True, False, False, True),
-        ("mss_src14_ntd_dense_T1", "NTD", 1, 1, 3, 1, "none", "", True, False, False, True, False, True),
-        ("mss_src15_tnd_state_zero_final_T1", "TND", 1, 1, 3, 1, "zero", "1", False, False, False, False, False, True),
-        ("mss_src16_ntd_varlen_T1", "NTD", 1, 2, 2, 1, "none", "1", True, True, True, True, True, False),
-        ("mss_src17_tnd_state_zero_final_T1", "TND", 2, 1, 1, 1, "zero", "", True, False, True, False, False, False),
-        ("mss_src18_tnd_varlen_T1", "TND", 1, 2, 2, 1, "none", "1", False, False, True, False, True, True),
-        ("mss_src19_bsnd_varlen_T2", "BSND", 1, 1, 1, 2, "none", "2", False, True, True, False, True, False),
-        ("mss_src20_ntd_varlen_T2", "NTD", 1, 1, 1, 2, "none", "2", True, False, False, True, True, False),
-        ("mss_src21_tnd_state_initial_final_T1", "TND", 1, 2, 2, 1, "fp32", "1", False, False, True, True, False, True),
-        ("mss_src22_bsnd_state_zero_final_T1", "BSND", 1, 2, 2, 1, "zero", "1", False, True, True, False, True, False),
-        ("mss_src23_bsnd_state_initial_only_T1", "BSND", 2, 1, 1, 1, "fp32", "", False, False, False, True, True, True),
-        ("mss_src24_tnd_dense_T2", "TND", 1, 1, 1, 2, "none", "", True, False, True, True, True, False),
-        ("mss_src25_ntd_varlen_T1", "NTD", 1, 2, 2, 1, "none", "1", False, True, True, True, False, False),
-        ("mss_src26_tnd_state_initial_final_T1", "TND", 1, 2, 2, 1, "fp32", "1", True, False, False, True, True, True),
-        ("mss_src27_bsnd_varlen_T2", "BSND", 1, 1, 1, 2, "none", "2", True, True, False, True, True, True),
-        ("mss_src28_bsnd_varlen_T2", "BSND", 1, 1, 1, 2, "none", "2", False, True, False, False, True, False),
-        ("mss_src29_bnsd_state_zero_final_T1", "BNSD", 1, 2, 2, 1, "zero", "1", False, False, True, True, True, True),
-        ("mss_src30_ntd_varlen_T1", "NTD", 1, 2, 2, 1, "none", "1", False, False, False, False, True, False),
-        ("mss_src31_bnsd_state_initial_only_T2", "BNSD", 1, 1, 1, 2, "fp32", "2", False, False, False, False, True, True),
-        ("mss_src32_bnsd_state_initial_only_T2", "BNSD", 1, 1, 1, 2, "fp32", "1,1", False, False, False, True, True, False),
-        ("mss_src33_bnsd_varlen_T1", "BNSD", 1, 1, 4, 1, "none", "1", True, True, True, True, False, False),
-        ("mss_src34_ntd_varlen_T1", "NTD", 1, 1, 4, 1, "none", "1", True, False, False, False, True, False),
-        ("mss_src35_ntd_state_initial_only_T1", "NTD", 1, 1, 4, 1, "fp32", "1", False, True, False, False, False, False),
-        ("mss_src36_bsnd_varlen_T1", "BSND", 1, 1, 4, 1, "none", "1", False, False, True, False, False, True),
-        ("mss_src37_bnsd_varlen_T1", "BNSD", 1, 2, 4, 1, "none", "1", True, False, True, True, False, True),
-        ("mss_src38_bnsd_state_initial_final_T1", "BNSD", 1, 2, 4, 1, "fp32", "1", False, True, False, False, False, True),
-        ("mss_src39_bsnd_varlen_T2", "BSND", 1, 1, 2, 2, "none", "2", False, True, False, True, False, False),
-        ("mss_src40_ntd_state_initial_only_T2", "NTD", 1, 1, 2, 2, "fp32", "2", False, False, False, True, True, True),
-        ("mss_src41_bnsd_state_zero_final_T2", "BNSD", 1, 1, 2, 2, "zero", "1,1", False, False, False, False, False, True),
-        ("mss_src42_ntd_state_initial_only_T2", "NTD", 1, 1, 2, 2, "fp32", "1,1", False, False, True, False, True, True),
-        ("mss_src43_ntd_varlen_T2", "NTD", 1, 1, 2, 2, "none", "2", False, True, True, False, True, True),
-        ("mss_src44_bsnd_state_zero_final_T1", "BSND", 1, 2, 4, 1, "zero", "1", False, False, False, False, True, True),
-        ("mss_src45_tnd_varlen_T1", "TND", 1, 3, 3, 1, "none", "1", True, False, False, True, True, True),
-        ("mss_src46_bsnd_state_initial_final_T1", "BSND", 1, 3, 3, 1, "fp32", "1", True, True, True, False, False, False),
-        ("mss_src47_bsnd_state_initial_only_T1", "BSND", 1, 3, 3, 1, "fp32", "1", True, True, False, False, False, False),
-        ("mss_src48_tnd_state_initial_final_T1", "TND", 1, 3, 3, 1, "fp32", "1", False, False, False, True, False, False),
-        ("mss_src49_tnd_state_initial_final_T1", "TND", 1, 3, 3, 1, "fp32", "1", True, True, False, True, True, True),
-        ("mss_src50_tnd_state_zero_final_T1", "TND", 1, 3, 3, 1, "zero", "1", False, True, False, True, True, True),
-        ("mss_src51_tnd_state_initial_only_T1", "TND", 1, 3, 3, 1, "fp32", "1", False, False, True, True, True, True),
-        ("mss_src52_bsnd_varlen_T1", "BSND", 1, 3, 3, 1, "none", "1", False, False, False, True, False, False),
-        ("mss_src53_tnd_state_zero_final_T1", "TND", 1, 3, 3, 1, "zero", "1", True, False, False, True, False, False),
-        ("mss_src54_tnd_state_initial_final_T1", "TND", 1, 2, 6, 1, "fp32", "1", False, False, False, True, True, False),
-        ("mss_src55_tnd_varlen_T1", "TND", 1, 2, 6, 1, "none", "1", False, True, False, False, False, True),
-        ("mss_src56_bsnd_varlen_T2", "BSND", 1, 1, 3, 2, "none", "1,1", True, True, False, False, True, True),
-        ("mss_src57_bsnd_state_initial_final_T2", "BSND", 1, 1, 3, 2, "fp32", "1,1", False, True, False, False, True, False),
-        ("mss_src58_tnd_varlen_T2", "TND", 1, 1, 3, 2, "none", "1,1", False, True, True, True, False, False),
-        ("mss_src59_ntd_varlen_T1", "NTD", 1, 2, 6, 1, "none", "1", False, True, True, False, False, True),
+        ('mss_src00_bsnd_dense_T8192', 'BSND', 1, 16, 32, 8192, 'none', '', False, False, True, False, False),
+        ('mss_src01_bsnd_varlen_T8088', 'BSND', 1, 32, 32, 8088, 'none', '83,219,1069,249,1126,5342', False, False, True, False, False),
+        ('mss_src02_bnsd_state_zero_final_T1', 'BNSD', 1, 1, 1, 1, 'zero', '1', True, True, False, False, True),
+        ('mss_src03_ntd_state_initial_final_T1', 'NTD', 1, 1, 1, 1, 'fp32', '', True, False, False, True, True),
+        ('mss_src04_bsnd_varlen_T1', 'BSND', 1, 1, 2, 1, 'none', '1', True, True, False, True, False),
+        ('mss_src05_ntd_state_initial_final_T1', 'NTD', 1, 1, 2, 1, 'fp32', '1', True, True, False, False, True),
+        ('mss_src06_bsnd_state_zero_final_T1', 'BSND', 1, 1, 2, 1, 'zero', '1', False, True, True, True, True),
+        ('mss_src07_ntd_varlen_T1', 'NTD', 1, 1, 2, 1, 'none', '1', False, False, False, True, True),
+        ('mss_src08_bsnd_state_zero_final_T1', 'BSND', 1, 1, 2, 1, 'zero', '1', True, False, True, True, True),
+        ('mss_src09_ntd_varlen_T1', 'NTD', 1, 1, 2, 1, 'none', '1', False, True, True, True, True),
+        ('mss_src10_tnd_state_initial_final_T1', 'TND', 1, 1, 2, 1, 'fp32', '1', False, True, False, True, True),
+        ('mss_src11_tnd_state_initial_only_T1', 'TND', 1, 1, 2, 1, 'fp32', '1', False, True, True, True, True),
+        ('mss_src12_tnd_state_initial_final_T1', 'TND', 1, 1, 2, 1, 'fp32', '1', False, True, False, False, False),
+        ('mss_src13_bnsd_state_initial_only_T1', 'BNSD', 1, 1, 3, 1, 'fp32', '1', False, False, False, False, True),
+        ('mss_src14_ntd_dense_T1', 'NTD', 1, 1, 3, 1, 'none', '', True, False, True, False, True),
+        ('mss_src15_tnd_state_zero_final_T1', 'TND', 1, 1, 3, 1, 'zero', '1', False, False, False, False, True),
+        ('mss_src16_ntd_varlen_T1', 'NTD', 1, 2, 2, 1, 'none', '1', True, True, True, True, False),
+        ('mss_src17_tnd_state_zero_final_T1', 'TND', 2, 1, 1, 1, 'zero', '', True, False, False, False, False),
+        ('mss_src18_tnd_varlen_T1', 'TND', 1, 2, 2, 1, 'none', '1', False, False, False, True, True),
+        ('mss_src19_bsnd_varlen_T2', 'BSND', 1, 1, 1, 2, 'none', '2', False, True, False, True, False),
+        ('mss_src20_ntd_varlen_T2', 'NTD', 1, 1, 1, 2, 'none', '2', True, False, True, True, False),
+        ('mss_src21_tnd_state_initial_final_T1', 'TND', 1, 2, 2, 1, 'fp32', '1', False, False, True, False, True),
+        ('mss_src22_bsnd_state_zero_final_T1', 'BSND', 1, 2, 2, 1, 'zero', '1', False, True, False, True, False),
+        ('mss_src23_bsnd_state_initial_only_T1', 'BSND', 2, 1, 1, 1, 'fp32', '', False, False, True, True, True),
+        ('mss_src24_tnd_dense_T2', 'TND', 1, 1, 1, 2, 'none', '', True, False, True, True, False),
+        ('mss_src25_ntd_varlen_T1', 'NTD', 1, 2, 2, 1, 'none', '1', False, True, True, False, False),
+        ('mss_src26_tnd_state_initial_final_T1', 'TND', 1, 2, 2, 1, 'fp32', '1', True, False, True, True, True),
+        ('mss_src27_bsnd_varlen_T2', 'BSND', 1, 1, 1, 2, 'none', '2', True, True, True, True, True),
+        ('mss_src28_bsnd_varlen_T2', 'BSND', 1, 1, 1, 2, 'none', '2', False, True, False, True, False),
+        ('mss_src29_bnsd_state_zero_final_T1', 'BNSD', 1, 2, 2, 1, 'zero', '1', False, False, True, True, True),
+        ('mss_src30_ntd_varlen_T1', 'NTD', 1, 2, 2, 1, 'none', '1', False, False, False, True, False),
+        ('mss_src31_bnsd_state_initial_only_T2', 'BNSD', 1, 1, 1, 2, 'fp32', '2', False, False, False, True, True),
+        ('mss_src32_bnsd_state_initial_only_T2', 'BNSD', 1, 1, 1, 2, 'fp32', '1,1', False, False, True, True, False),
+        ('mss_src33_bnsd_varlen_T1', 'BNSD', 1, 1, 4, 1, 'none', '1', True, True, True, False, False),
+        ('mss_src34_ntd_varlen_T1', 'NTD', 1, 1, 4, 1, 'none', '1', True, False, False, True, False),
+        ('mss_src35_ntd_state_initial_only_T1', 'NTD', 1, 1, 4, 1, 'fp32', '1', False, True, False, False, False),
+        ('mss_src36_bsnd_varlen_T1', 'BSND', 1, 1, 4, 1, 'none', '1', False, False, False, False, True),
+        ('mss_src37_bnsd_varlen_T1', 'BNSD', 1, 2, 4, 1, 'none', '1', True, False, True, False, True),
+        ('mss_src38_bnsd_state_initial_final_T1', 'BNSD', 1, 2, 4, 1, 'fp32', '1', False, True, False, False, True),
+        ('mss_src39_bsnd_varlen_T2', 'BSND', 1, 1, 2, 2, 'none', '2', False, True, True, False, False),
+        ('mss_src40_ntd_state_initial_only_T2', 'NTD', 1, 1, 2, 2, 'fp32', '2', False, False, True, True, True),
+        ('mss_src41_bnsd_state_zero_final_T2', 'BNSD', 1, 1, 2, 2, 'zero', '1,1', False, False, False, False, True),
+        ('mss_src42_ntd_state_initial_only_T2', 'NTD', 1, 1, 2, 2, 'fp32', '1,1', False, False, False, True, True),
+        ('mss_src43_ntd_varlen_T2', 'NTD', 1, 1, 2, 2, 'none', '2', False, True, False, True, True),
+        ('mss_src44_bsnd_state_zero_final_T1', 'BSND', 1, 2, 4, 1, 'zero', '1', False, False, False, True, True),
+        ('mss_src45_tnd_varlen_T1', 'TND', 1, 3, 3, 1, 'none', '1', True, False, True, True, True),
+        ('mss_src46_bsnd_state_initial_final_T1', 'BSND', 1, 3, 3, 1, 'fp32', '1', True, True, False, False, False),
+        ('mss_src47_bsnd_state_initial_only_T1', 'BSND', 1, 3, 3, 1, 'fp32', '1', True, True, False, False, False),
+        ('mss_src48_tnd_state_initial_final_T1', 'TND', 1, 3, 3, 1, 'fp32', '1', False, False, True, False, False),
+        ('mss_src49_tnd_state_initial_final_T1', 'TND', 1, 3, 3, 1, 'fp32', '1', True, True, True, True, True),
+        ('mss_src50_tnd_state_zero_final_T1', 'TND', 1, 3, 3, 1, 'zero', '1', False, True, True, True, True),
+        ('mss_src51_tnd_state_initial_only_T1', 'TND', 1, 3, 3, 1, 'fp32', '1', False, False, True, True, True),
+        ('mss_src52_bsnd_varlen_T1', 'BSND', 1, 3, 3, 1, 'none', '1', False, False, True, False, False),
+        ('mss_src53_tnd_state_zero_final_T1', 'TND', 1, 3, 3, 1, 'zero', '1', True, False, True, False, False),
+        ('mss_src54_tnd_state_initial_final_T1', 'TND', 1, 2, 6, 1, 'fp32', '1', False, False, True, True, False),
+        ('mss_src55_tnd_varlen_T1', 'TND', 1, 2, 6, 1, 'none', '1', False, True, False, False, True),
+        ('mss_src56_bsnd_varlen_T2', 'BSND', 1, 1, 3, 2, 'none', '1,1', True, True, False, True, True),
+        ('mss_src57_bsnd_state_initial_final_T2', 'BSND', 1, 1, 3, 2, 'fp32', '1,1', False, True, False, True, False),
+        ('mss_src58_tnd_varlen_T2', 'TND', 1, 1, 3, 2, 'none', '1,1', False, True, True, False, False),
+        ('mss_src59_ntd_varlen_T1', 'NTD', 1, 2, 6, 1, 'none', '1', False, True, False, False, True),
     ]
     specs = []
     for index, row in enumerate(rows):
-        key, layout, batch, hk, hv, tokens, state, seqlens, neg, sv, l2, ga, out_h, final = row
+        key, layout, batch, hk, hv, tokens, state, seqlens, neg, sv, ga, out_h, final = row
         specs.append(
             _spec(
                 case_key=key, tags="mss", layout=layout, batch=batch, k_heads=hk, v_heads=hv,
                 tokens=tokens, state=state, seqlens=seqlens, allow_neg=neg, state_v_first=sv,
-                out_l2=l2, disable_recompute=ga, out_h=out_h, output_final_state=final,
+                disable_recompute=ga, out_h=out_h, output_final_state=final,
                 seed=SEED_BASE + 2000 + index,
             )
         )
@@ -466,9 +456,9 @@ def mss_specs() -> list[dict]:
 def dc_specs() -> list[dict]:
     return [
         _spec(
-            case_key="dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_l21_ga1_h1",
+            case_key="dc_bnsd_mha_fix_B1_H28x28_T8192_none_neg1_sv1_ga1_h1",
             tags="determinism", layout="BNSD", batch=1, k_heads=28, v_heads=28, tokens=8192,
-            state="none", allow_neg=True, state_v_first=True, out_l2=True, disable_recompute=True,
+            state="none", allow_neg=True, state_v_first=True, disable_recompute=True,
             out_h=True, output_final_state=True, seed=20261105,
         )
     ]
@@ -494,7 +484,7 @@ def suite_specs(name: str) -> list[dict]:
 
 Q, K, V, G, BETA = 0, 1, 2, 3, 4
 SCALE_I, CHUNK, LAYOUT, STATE, SEQLENS = 5, 6, 7, 8, 9
-NEG, SV, OUT_L2, GA, OUT_H, G_MODE, FINAL = 10, 11, 12, 13, 14, 15, 16
+NEG, SV, GA, OUT_H, G_MODE, FINAL = 10, 11, 12, 13, 14, 15
 
 
 def _tensor_shapes(spec: dict) -> dict[str, list[int]]:
@@ -549,7 +539,6 @@ class ChunkGatedDeltaRuleFwdChunk32Generator(CaseGenerator):
         case_config.inputs[SEQLENS].range_values = str(spec["seqlens"])
         case_config.inputs[NEG].range_values = bool(spec["allow_neg_eigval"])
         case_config.inputs[SV].range_values = bool(spec["state_v_first"])
-        case_config.inputs[OUT_L2].range_values = bool(spec["out_l2"])
         case_config.inputs[GA].range_values = bool(spec["disable_recompute"])
         case_config.inputs[OUT_H].range_values = bool(spec["out_h"])
         case_config.inputs[G_MODE].range_values = str(spec["g_mode"])

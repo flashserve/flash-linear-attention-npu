@@ -400,17 +400,16 @@ def _state_count(spec: dict[str, Any], seqlens: Optional[list[int]]) -> int:
     return len(seqlens) if seqlens is not None else int(spec["B"])
 
 
-def _flags(spec: dict[str, Any]) -> tuple[str, bool, bool, bool, bool, bool, bool]:
+def _flags(spec: dict[str, Any]) -> tuple[str, bool, bool, bool, bool, bool]:
     layout = str(spec.get("layout", "BNSD")).upper()
     if layout not in {"BNSD", "BSND", "NTD", "TND"}:
         raise ValueError(f"layout must be BNSD, BSND, NTD or TND, got {layout}")
     sequence_major = layout in {"BSND", "TND"}
     allow_neg = bool(spec.get("allow_neg_eigval", False))
     state_v_first = bool(spec.get("state_v_first", False))
-    out_l2 = bool(spec.get("out_l2", False))
     disable_recompute = bool(spec.get("disable_recompute", False))
     out_h = bool(spec.get("out_h", False))
-    return layout, sequence_major, allow_neg, state_v_first, out_l2, disable_recompute, out_h
+    return layout, sequence_major, allow_neg, state_v_first, disable_recompute, out_h
 
 
 def _scalar(value: Any) -> Any:
@@ -450,7 +449,6 @@ def _spec_from_inputs(input_data: InputDataset) -> dict[str, Any]:
         "seqlens": seqlens,
         "allow_neg_eigval": _bool(values["allow_neg_eigval"]),
         "state_v_first": _bool(values["state_v_first"]),
-        "out_l2": _bool(values["out_l2"]),
         "disable_recompute": _bool(values["disable_recompute"]),
         "out_h": _bool(values["out_h"]),
         "g_mode": _text(values["g_mode"]).lower(),
@@ -517,7 +515,7 @@ def build_inputs(spec: dict[str, Any], tensors: tuple, device: torch.device) -> 
     v = v.detach().to(device="cpu", dtype=torch.bfloat16).contiguous()
     g = g.detach().to(device="cpu", dtype=torch.float32).contiguous()
     beta = beta.detach().to(device="cpu", dtype=torch.bfloat16).contiguous()
-    layout, sequence_major, allow_neg, state_v_first, out_l2, disable_recompute, out_h = _flags(spec)
+    layout, sequence_major, allow_neg, state_v_first, disable_recompute, out_h = _flags(spec)
     if sequence_major:
         batch, tokens, k_heads, key = (int(dim) for dim in q.shape)
         batch_v, tokens_v, v_heads, value = (int(dim) for dim in v.shape)
@@ -572,7 +570,6 @@ def build_inputs(spec: dict[str, Any], tensors: tuple, device: torch.device) -> 
         "sequence_major": sequence_major,
         "allow_neg_eigval": allow_neg,
         "state_v_first": state_v_first,
-        "out_l2": out_l2,
         "disable_recompute": disable_recompute,
         "out_h": out_h,
     }
@@ -623,6 +620,32 @@ def _beta_public(beta: torch.Tensor, layout: str, allow_neg: bool) -> torch.Tens
     return (scale * torch.sigmoid(beta_bth.float())).contiguous()
 
 
+def _expect_public(spec: dict[str, Any], outputs) -> None:
+    """The loaded operator has to match the current ten-tuple contract."""
+
+    export_ga = bool(spec.get("disable_recompute", False))
+    present = {"o", "beta_eff"}
+    if bool(spec.get("output_final_state", True)):
+        present.add("final")
+    if export_ga:
+        present.update({"g_cumsum", "A", "q_hat", "k_hat", "q_rstd", "k_rstd"})
+    if bool(spec.get("out_h", False)):
+        present.add("h")
+    names = (
+        "o", "final", "g_cumsum", "A", "beta_eff", "h",
+        "q_hat", "k_hat", "q_rstd", "k_rstd",
+    )
+    bad = [
+        name for name, value in zip(names, outputs)
+        if (value is None) != (name not in present)
+    ]
+    if bad:
+        raise RuntimeError(
+            "npu_chunk_gated_delta_rule_fwd outputs do not match "
+            f"disable_recompute={export_ga}: {bad}"
+        )
+
+
 def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
           h=None, q_hat=None, k_hat=None, q_rstd=None, k_rstd=None):
     """Same slot order as the ten-tuple, with disabled exports left as None."""
@@ -630,7 +653,7 @@ def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
     export_ga = bool(spec.get("disable_recompute", False))
     # Chunk32 always normalises, so public hats follow disable_recompute.
     # beta_eff is required on, and h follows its own switch.
-    export_l2 = export_ga
+    export_hats = export_ga
     export_beta = True
     out_h = bool(spec.get("out_h", False))
     state_dtype = _state_dtype(spec)
@@ -641,10 +664,10 @@ def _pack(spec: dict[str, Any], o, state, g_cumsum=None, a=None, beta_eff=None,
         _cpu(a, torch.bfloat16) if export_ga else None,
         _cpu(beta_eff, torch.float32) if export_beta else None,
         _cpu(h, torch.bfloat16) if out_h else None,
-        _cpu(q_hat, torch.bfloat16) if export_l2 else None,
-        _cpu(k_hat, torch.bfloat16) if export_l2 else None,
-        _cpu(q_rstd, torch.float32) if export_l2 else None,
-        _cpu(k_rstd, torch.float32) if export_l2 else None,
+        _cpu(q_hat, torch.bfloat16) if export_hats else None,
+        _cpu(k_hat, torch.bfloat16) if export_hats else None,
+        _cpu(q_rstd, torch.float32) if export_hats else None,
+        _cpu(k_rstd, torch.float32) if export_hats else None,
     )
 
 
@@ -769,6 +792,7 @@ def run_npu(spec: dict[str, Any], tensors: tuple):
             layout=inputs["layout"],
         )
         torch.npu.synchronize()
+        _expect_public(spec, outputs)
         return _pack(spec, *outputs)
     finally:
         for name, previous in saved_env.items():
@@ -797,7 +821,6 @@ class FunctionApi(BaseApi):
         tensors = _tensors(input_data)
         case_id = spec["case_id"]
         export = (
-            f"l2={int(bool(spec.get('out_l2')))} "
             f"ga={int(bool(spec.get('disable_recompute')))} "
             f"h={int(bool(spec.get('out_h')))}"
         )
