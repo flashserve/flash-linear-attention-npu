@@ -188,8 +188,12 @@ def build_inputs(
     d_o = _randn((batch, value_heads, tokens, DIM), seed + 7, 0.12, torch.bfloat16, device, compute_dtype)
 
     use_qk_l2norm = _as_bool(spec.get("use_qk_l2norm", False))
-    q_rstd = torch.rsqrt((q.float() * q.float()).sum(-1) + 1.0e-6).to(torch.float32) if use_qk_l2norm else None
-    k_rstd = torch.rsqrt((k.float() * k.float()).sum(-1) + 1.0e-6).to(torch.float32) if use_qk_l2norm else None
+    if use_qk_l2norm:
+        norm_dtype = compute_dtype or torch.float32
+        q_rstd = torch.rsqrt((q.to(norm_dtype) * q.to(norm_dtype)).sum(-1) + 1.0e-6)
+        k_rstd = torch.rsqrt((k.to(norm_dtype) * k.to(norm_dtype)).sum(-1) + 1.0e-6)
+    else:
+        q_rstd = k_rstd = None
 
     sequences = batch if seqlens is None else len(seqlens)
     with_state = _as_bool(spec.get("with_state", False))
