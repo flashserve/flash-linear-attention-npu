@@ -290,9 +290,15 @@ def recurrent_reference(
 
 
 def cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:
-    actual = actual.float().reshape(-1)
-    expected = expected.float().reshape(-1)
-    denom = (actual.norm() * expected.norm()).clamp_min(1e-12)
+    # FP32 reductions on long ARM CPU vectors can make even self-cosine fall
+    # below the accuracy threshold. Accumulate both dot products and norms in FP64.
+    actual = actual.reshape(-1).double()
+    expected = expected.reshape(-1).double()
+    actual_norm = torch.linalg.vector_norm(actual)
+    expected_norm = torch.linalg.vector_norm(expected)
+    denom = actual_norm * expected_norm
+    if denom.item() == 0:
+        return 1.0 if actual_norm.item() == 0 and expected_norm.item() == 0 else 0.0
     return float(torch.clamp(torch.dot(actual, expected) / denom, -1.0, 1.0).item())
 
 
