@@ -185,7 +185,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
                         DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
                         DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
                                                  static_cast<uint32_t>(V * sizeof(kType)),
-                                                 static_cast<uint32_t>((Hv - 1) * V * sizeof(kType) / 32), 0};
+                                                 static_cast<uint32_t>((Hv - 1) * V * sizeof(kType) / 32), 0, 0};
                         DataCopyPad(tensorVin, vTensor[vOffset], params, pad);
                     } else {
                         DataCopy(tensorVin, vTensor[vOffset], V * curRowNum);
@@ -305,7 +305,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                         DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
                         DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
                                                  static_cast<uint32_t>(K * sizeof(kType)),
-                                                 static_cast<uint32_t>((Hk - 1) * K * sizeof(kType) / 32), 0};
+                                                 static_cast<uint32_t>((Hk - 1) * K * sizeof(kType) / 32), 0, 0};
                         DataCopyPad(tensorKin, kTensor[kSrcOffset], params, pad);
                     } else {
                         DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
