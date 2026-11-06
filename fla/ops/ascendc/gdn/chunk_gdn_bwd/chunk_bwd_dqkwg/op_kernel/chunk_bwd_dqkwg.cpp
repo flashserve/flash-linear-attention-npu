@@ -19,7 +19,6 @@
 
 using namespace AscendC;
 
-
 __global__ __aicore__ void chunk_bwd_dqkwg(GM_ADDR q,             // [B, HK, T, K]
                                            GM_ADDR k,             // [B, HK, T, K]
                                            GM_ADDR v,             // [B, HV, T, V]
