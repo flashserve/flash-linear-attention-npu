@@ -314,31 +314,8 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
 
 ge::graphStatus RecurrentKdaTiling::AnalyzeShapes()
 {
-    const auto ctx = BuildProcessorContext();
-    RecurrentKdaTilingProcessor processor(ctx);
-    const auto status = processor.ProcessShapes(tilingData_);
-    if (status != ge::GRAPH_SUCCESS || ctx.isA5 != 0 || ctx.inplaceFinalState != 0 ||
-        ctx.outputFinalState == 0) {
-        return status;
-    }
-    const auto *output = context_->GetOutputShape(FINAL_STATE_OUTPUT_INDEX);
-    const auto *desc = context_->GetOutputDesc(FINAL_STATE_OUTPUT_INDEX);
-    const int64_t outputStates = ctx.hasSsmStateIndices != 0 ? tilingData_.t : tilingData_.b;
-    if (output == nullptr || desc == nullptr || desc->GetDataType() != ge::DT_FLOAT) {
-        OP_LOGE(ctx.nodeName, "Non-inplace state output requires an FP32 descriptor.");
-        return ge::GRAPH_FAILED;
-    }
-    // ACLNN validates the logical output shape. Tiling may receive a flat
-    // storage descriptor, so validate the writable element count here.
-    const int64_t expectedElements = outputStates * ctx.stateShape.GetDim(1) *
-        ctx.stateShape.GetDim(2) * ctx.stateShape.GetDim(3);
-    const int64_t storageElements = output->GetStorageShape().GetShapeSize();
-    if (storageElements < expectedElements) {
-        OP_LOGE(ctx.nodeName, "Non-inplace state storage has %ld elements, expected at least %ld.",
-            storageElements, expectedElements);
-        return ge::GRAPH_FAILED;
-    }
-    return ge::GRAPH_SUCCESS;
+    RecurrentKdaTilingProcessor processor(BuildProcessorContext());
+    return processor.ProcessShapes(tilingData_);
 }
 
 bool RecurrentKdaTiling::CheckFormat(ge::Format format, const std::string &desc)

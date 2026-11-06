@@ -651,16 +651,8 @@ def npu_recurrent_kda(
             raise RuntimeError(
                 "npu_recurrent_kda: inplace_final_state=False requires "
                 "initial_state (no shape to build the scratch from)")
-        a5_state_output = False
         if output_final_state:
-            import torch
-
-            device_index = q.device.index
-            if device_index is None:
-                device_index = torch.npu.current_device()
-            a5_state_output = "Ascend950" in str(torch.npu.get_device_name(device_index))
-        if a5_state_output:
-            # A5 retains its existing full-pool output contract.
+            # Preserve the full state pool, including slots the kernel does not write.
             scratch = initial_state.detach().clone()
             out, _ = npu_recurrent_kda(
                 q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
