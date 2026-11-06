@@ -3,6 +3,7 @@
  * BSD 3-Clause License.
  */
  #include "aclnn_solve_tri.h"
+ #include <cstring>
  #include <new>
  
  #include "aclnn_kernels/contiguous.h"
@@ -37,10 +38,44 @@
      return ACLNN_SUCCESS;
  }
  
+ // layout 取值与 solve_tri_tiling.cpp 的 layoutMode 映射保持一致：bnsd/bhtd->0，bsnd->1，tnd->2，ntd->3；
+ // 未知取值在 tiling 会静默落入 BSND，必须在 host 前置拒绝。
+ static bool IsDenseLayout(const char *layout)
+ {
+     return std::strcmp(layout, "bsnd") == 0 || std::strcmp(layout, "bnsd") == 0 ||
+            std::strcmp(layout, "bhtd") == 0;
+ }
+ 
+ static bool IsVarlenLayout(const char *layout)
+ {
+     return std::strcmp(layout, "tnd") == 0 || std::strcmp(layout, "ntd") == 0;
+ }
+ 
+ static aclnnStatus CheckLayoutAndMetadata(const SolveTriParams &params)
+ {
+     const char *layout = params.layout != nullptr ? params.layout : "bsnd";
+     CHECK_COND(IsDenseLayout(layout) || IsVarlenLayout(layout), ACLNN_ERR_PARAM_INVALID,
+                "layout must be one of [bsnd, bnsd, bhtd, tnd, ntd], but got %s.", layout);
+     CHECK_COND((params.cuSeqlens == nullptr) == (params.chunkIndices == nullptr),
+                ACLNN_ERR_PARAM_INVALID, "cu_seqlens and chunk_indices must be provided together.");
+     if (IsDenseLayout(layout)) {
+         // dense 布局的 tiling/kernel 不读 varlen 元数据：传入会被静默忽略并按全局 chunk
+         // 对齐切分，跨序列边界读出错误结果（issue #819），直接拒绝。
+         CHECK_COND(params.cuSeqlens == nullptr, ACLNN_ERR_PARAM_INVALID,
+                    "layout %s does not support cu_seqlens/chunk_indices; "
+                    "use layout tnd/ntd for varlen input.", layout);
+     } else {
+         // varlen 布局的 tiling 无条件读取 chunk_indices/cu_seqlens，缺失将解引用空指针。
+         CHECK_COND(params.cuSeqlens != nullptr, ACLNN_ERR_PARAM_INVALID,
+                    "layout %s requires cu_seqlens and chunk_indices for varlen input.", layout);
+     }
+     return ACLNN_SUCCESS;
+ }
+ 
  static aclnnStatus CheckParams(SolveTriParams params)
  {
      CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-     return ACLNN_SUCCESS;
+     return CheckLayoutAndMetadata(params);
  }
  
  static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
