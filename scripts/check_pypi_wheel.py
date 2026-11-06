@@ -223,7 +223,7 @@ def check_wheel(
     tier = expect_tier
     if tier is None:
         match = re.fullmatch(
-            r"flash[_-]linear[_-]attention[_-]npu[_-](a[235])",
+            r"flash[_-]linear[_-]attention[_-]npu[_-](a[2356])",
             parts["distribution"],
             re.IGNORECASE,
         )

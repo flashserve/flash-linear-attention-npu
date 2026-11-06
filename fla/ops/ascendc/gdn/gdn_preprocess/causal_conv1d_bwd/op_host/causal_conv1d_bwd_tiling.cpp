@@ -272,13 +272,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t sysWorkspaceSize = 0;
     uint32_t coreNum = 0;
     bool isAscend910B = false;
-    bool isAscend950 = false;
+    bool isRegbase = false;
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
-        isAscend950 = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
+        const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        isRegbase = (npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201);
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
@@ -305,7 +306,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t numBlksD = D / BD;
 
-    bool useArch35DirectFast = isAscend950 && isB16Input &&
+    bool useRegbaseDirectFast = isRegbase && isB16Input &&
                                activation == ACTIVATION_SILU &&
                                !useInitialState && !useFinalState &&
                                W == 4 && BD == 64;
@@ -313,7 +314,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
                              W == 4 && (BD == 64 || BD == 128);
-    auto CalcArch35DirectNeed = [BD, W](uint32_t bt) -> uint32_t {
+    auto CalcRegbaseDirectNeed = [BD, W](uint32_t bt) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
@@ -335,9 +336,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     };
 
     uint32_t BT = 64;
-    if (useArch35DirectFast) {
+    if (useRegbaseDirectFast) {
         BT = std::min(T, DIRECT_FAST_BT_MAX);
-        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT) > ubSize) {
+        while (BT > DIRECT_FAST_BT_MIN && CalcRegbaseDirectNeed(BT) > ubSize) {
             BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
         }
     } else if (use910BDirectFast) {
@@ -370,8 +371,8 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
-    if (useArch35DirectFast) {
-        need = CalcArch35DirectNeed(BT);
+    if (useRegbaseDirectFast) {
+        need = CalcRegbaseDirectNeed(BT);
     } else if (use910BDirectFast) {
         need = Calc910BDirectNeed(BT);
     } else {

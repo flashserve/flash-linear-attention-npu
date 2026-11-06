@@ -11,7 +11,9 @@
  * \file recurrent_kda.cpp
  * \brief
  */
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/recurrent_kda.h"
+#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/recurrent_kda.h"
 #else
 #include "recurrent_kda.h"
