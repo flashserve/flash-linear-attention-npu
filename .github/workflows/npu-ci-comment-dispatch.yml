@@ -142,29 +142,91 @@ jobs:
               core.setFailed(`分支 \`${targetRef}\` 的 .github/workflows/ci.yml 不是可读取的文件。`);
               return;
             }
-            const workflowText = Buffer
+            let workflowText = Buffer
               .from(workflowFile.content, workflowFile.encoding || 'base64')
               .toString('utf8');
+
+            const dispatchValues = {
+              pr_number: String(prNumber),
+              ci_mode: ciMode,
+              ops,
+              requested_by: actor,
+              expected_head_sha: pr.head.sha,
+              expected_base_ref: pr.base.ref,
+              expected_base_sha: baseBranch.commit.sha,
+              expected_workflow_sha: baseBranch.commit.sha,
+            };
+            let dispatchRef = targetRef;
+            let dispatchInputs = auth.selectDispatchInputs(workflowText, dispatchValues);
+
+            // Older maintenance branches predate the allowlist and snapshot
+            // inputs. Their workflow would perform a second, repository-Admin
+            // check and reject an allowlisted write user. Run the trusted
+            // default-branch workflow for those branches; it still builds the
+            // PR's target branch and head, while the main workflow enforces
+            // the current authorization and CI-file policy.
+            if (!auth.hasDispatchContract(dispatchInputs)) {
+              const { data: repository } = await github.rest.repos.get({ ...context.repo });
+              const defaultRef = repository.default_branch;
+              if (!defaultRef) {
+                core.setFailed('无法确定默认分支，不能兼容旧版 NPU CI。');
+                return;
+              }
+              const { data: defaultBranch } = await github.rest.repos.getBranch({
+                ...context.repo, branch: defaultRef,
+              });
+              if (defaultBranch.protected !== true) {
+                core.setFailed(`默认分支 \`${defaultRef}\` 未启用分支保护，不能作为旧版 CI 的受信任流程来源。`);
+                return;
+              }
+              if (!/^[0-9a-f]{40}$/.test(defaultBranch.commit?.sha || '')) {
+                core.setFailed(`无法确定默认分支 \`${defaultRef}\` 的固定 commit，不能兼容旧版 NPU CI。`);
+                return;
+              }
+              let defaultWorkflowFile;
+              try {
+                ({ data: defaultWorkflowFile } = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: '.github/workflows/ci.yml',
+                  ref: defaultRef,
+                }));
+              } catch (error) {
+                core.setFailed(`默认分支 \`${defaultRef}\` 不包含可用的 .github/workflows/ci.yml：${error.message}`);
+                return;
+              }
+              if (Array.isArray(defaultWorkflowFile) ||
+                  defaultWorkflowFile.type !== 'file' ||
+                  !defaultWorkflowFile.content) {
+                core.setFailed(`默认分支 \`${defaultRef}\` 的 .github/workflows/ci.yml 不是可读取的文件。`);
+                return;
+              }
+              workflowText = Buffer
+                .from(defaultWorkflowFile.content, defaultWorkflowFile.encoding || 'base64')
+                .toString('utf8');
+              dispatchInputs = auth.selectDispatchInputs(workflowText, {
+                ...dispatchValues,
+                expected_workflow_sha: defaultBranch.commit.sha,
+                workflow_source_ref: defaultRef,
+              });
+              if (!auth.hasDispatchContract(dispatchInputs)) {
+                core.setFailed(`目标分支 \`${targetRef}\` 使用旧版 CI，但默认分支 \`${defaultRef}\` 也不支持当前 CI 分发契约。`);
+                return;
+              }
+              dispatchRef = defaultRef;
+              core.notice(`目标分支 \`${targetRef}\` 使用旧版 CI，改用默认分支 \`${defaultRef}\` 的受信任流程执行。`);
+            }
 
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'ci.yml',
-              ref: targetRef,
-              inputs: auth.selectDispatchInputs(workflowText, {
-                pr_number: String(prNumber),
-                ci_mode: ciMode,
-                ops,
-                requested_by: actor,
-                expected_head_sha: pr.head.sha,
-                expected_base_ref: pr.base.ref,
-                expected_base_sha: baseBranch.commit.sha,
-                expected_workflow_sha: baseBranch.commit.sha,
-              }),
+              ref: dispatchRef,
+              inputs: dispatchInputs,
             });
 
             core.notice(
-              `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
+              `已将 PR #${prNumber} 的 NPU CI 分发到 \`${dispatchRef}\`，` +
               `head=${pr.head.sha}，模式=${ciMode}。`
             );
 

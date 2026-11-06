@@ -48,6 +48,7 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertEqual(set(triggers["workflow_dispatch"]["inputs"]), {
             "pr_number", "ci_mode", "ops", "requested_by", "expected_head_sha",
             "expected_base_ref", "expected_base_sha", "expected_workflow_sha",
+            "workflow_source_ref",
         })
         self.assertIn("${{ github.ref_name }}", self.ci_text)
         self.assertIn("${{ github.workflow_sha }}", self.ci_text)
@@ -59,13 +60,20 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertEqual(triggers["issue_comment"]["types"], ["created"])
         self.assertEqual(permissions["actions"], "write")
         self.assertIn("workflow_id: 'ci.yml'", self.dispatch_script)
-        self.assertIn("ref: targetRef", self.dispatch_script)
+        self.assertIn("ref: dispatchRef", self.dispatch_script)
         self.assertIn(".github/workflows/ci.yml", self.dispatch_script)
         self.assertIn("auth.selectDispatchInputs(workflowText, {", self.dispatch_script)
 
-    def _run_dispatch(self, comment):
+    def _run_dispatch(self, comment, *, target_ref="main", workflow_text=None,
+                      default_workflow_text=None):
         encoded_workflow = base64.b64encode(
-            CI_WORKFLOW_PATH.read_bytes()
+            (workflow_text.encode("utf-8") if workflow_text is not None
+             else CI_WORKFLOW_PATH.read_bytes())
+        ).decode("ascii")
+        encoded_default_workflow = base64.b64encode(
+            (default_workflow_text.encode("utf-8") if default_workflow_text is not None
+             else (workflow_text.encode("utf-8") if workflow_text is not None
+                   else CI_WORKFLOW_PATH.read_bytes()))
         ).decode("ascii")
         wrapper = f"""
 const fs = require('fs');
@@ -76,6 +84,7 @@ globalThis.context = {{
   payload: {{
     issue: {{ number: 527 }},
     comment: {{ body: process.env.PR_COMMENT }},
+    repository: {{ default_branch: 'main' }},
   }},
   repo: {{ owner: 'example', repo: 'repo' }},
 }};
@@ -90,7 +99,7 @@ globalThis.github = {{
         data: {{
           type: 'file',
           encoding: 'base64',
-          content: '{encoded_workflow}',
+          content: payload.ref === 'main' ? '{encoded_default_workflow}' : '{encoded_workflow}',
         }},
       }}),
     }},
@@ -98,7 +107,7 @@ globalThis.github = {{
       get: async () => ({{
         data: {{
           number: 527, changed_files: 0, draft: false, state: 'open',
-          base: {{ sha: 'c'.repeat(40), ref: 'main' }},
+          base: {{ sha: 'c'.repeat(40), ref: '{target_ref}' }},
           head: {{ sha: 'a'.repeat(40) }},
         }},
       }}),
@@ -164,6 +173,33 @@ globalThis.core = {{
         self.assertEqual(dispatches, [])
         failures = [item["payload"] for item in records if item["kind"] == "failed"]
         self.assertIn("不支持", failures[0])
+
+    def test_legacy_target_uses_default_branch_workflow(self):
+        legacy = """on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+      ci_mode:
+        required: false
+      ops:
+        required: false
+      requested_by:
+        required: false
+"""
+        completed, records = self._run_dispatch(
+            "/run-npu-ci quick",
+            target_ref="v26.10.0",
+            workflow_text=legacy,
+            default_workflow_text=self.ci_text,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatches = [item["payload"] for item in records if item["kind"] == "dispatch"]
+        self.assertEqual(len(dispatches), 1)
+        self.assertEqual(dispatches[0]["ref"], "main")
+        self.assertEqual(dispatches[0]["inputs"]["workflow_source_ref"], "main")
+        self.assertEqual(dispatches[0]["inputs"]["requested_by"], "ci-admin")
 
 
 if __name__ == "__main__":
