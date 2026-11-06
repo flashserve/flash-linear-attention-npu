@@ -136,34 +136,40 @@ def main() -> int:
     parser.add_argument("--no-debug-probe", action="store_true",
                         help="drop the _stream_probe op (smaller symbol surface)")
     args = parser.parse_args()
-
-    torch_lib = torch_lib_dir()
     stamp = source_hash()
+    compile_launcher(TRANSLATION_UNITS, args.out, stamp,
+                     compiler=args.compiler, no_debug_probe=args.no_debug_probe)
+    write_hash_module(stamp)
+    return 0
+
+
+def compile_launcher(units, output, stamp, *, compiler="g++", no_debug_probe=True, extra_flags=()):
+    """Compile an explicit registration unit and runtime; callers own identity/stamps."""
+    torch_lib = torch_lib_dir()
     cmd = [
-        args.compiler,
+        compiler,
         "-std=c++17",
         "-O2",
         "-fPIC",
         "-shared",
         "-fvisibility=hidden",
-        *(["-DFLA_STABLE_NO_DEBUG_PROBE"] if args.no_debug_probe else []),
+        *(["-DFLA_STABLE_NO_DEBUG_PROBE"] if no_debug_probe else []),
         f'-DFLA_STABLE_SOURCE_HASH="{stamp}"',
         "-I", str(CSRC_INCLUDE),
         *[f"-I{path}" for path in torch_include_dirs()],
-        *[str(path) for path in TRANSLATION_UNITS],
+        *extra_flags,
+        *[str(path) for path in units],
         # The runtime (dlopen + symbol cache) ships with the launcher.
         "-L", torch_lib,
         "-Wl,--no-as-needed", "-ltorch_cpu", "-lc10", "-ltorch",
         "-ldl",
-        "-o", args.out,
+        "-o", str(output),
     ]
     print(" ".join(cmd))
-    if shutil.which(args.compiler) is None:
-        raise SystemExit(f"compiler {args.compiler!r} not found")
+    if shutil.which(compiler) is None:
+        raise SystemExit(f"compiler {compiler!r} not found")
     subprocess.run(cmd, check=True)
-    write_hash_module(stamp)
-    print(f"built {args.out}")
-    return 0
+    print(f"built {output}")
 
 
 if __name__ == "__main__":

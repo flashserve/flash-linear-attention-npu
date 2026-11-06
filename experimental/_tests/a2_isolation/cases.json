@@ -1,0 +1,292 @@
+[
+  {
+    "id": "L01",
+    "title": "只有实验 wheel",
+    "scenario": "experimental",
+    "profile": "experimental_only",
+    "mode": "experimental",
+    "requires": [],
+    "absent": "fla_npu"
+  },
+  {
+    "id": "L02",
+    "title": "同环境两包：仅加载 experimental",
+    "scenario": "experimental",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": []
+  },
+  {
+    "id": "L03",
+    "title": "同环境两包：正式 wheel 自动 .pth",
+    "scenario": "stable",
+    "profile": "combined",
+    "mode": "stable",
+    "requires": [
+      "stable_package"
+    ],
+    "pth": "enabled"
+  },
+  {
+    "id": "L04",
+    "title": "只有正式 wheel",
+    "scenario": "stable",
+    "profile": "stable_only",
+    "mode": "stable",
+    "requires": [
+      "stable_package"
+    ],
+    "pth": "enabled",
+    "absent": "fla_npu_experimental"
+  },
+  {
+    "id": "L05",
+    "title": "正式 wheel 显式加载",
+    "scenario": "stable",
+    "profile": "combined",
+    "mode": "stable",
+    "requires": [
+      "stable_package"
+    ]
+  },
+  {
+    "id": "L06",
+    "title": "正式 wheel + 合法 overlay",
+    "scenario": "overlay",
+    "profile": "overlay",
+    "mode": "stable",
+    "requires": [
+      "stable_package",
+      "overlay_vendor"
+    ],
+    "pth": "enabled"
+  },
+  {
+    "id": "L07",
+    "title": "未关闭稳定 .pth",
+    "scenario": "missing_disable",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "pth": "enabled",
+    "error": "FLA_NPU_DISABLE_PTH"
+  },
+  {
+    "id": "L08",
+    "title": "Python 启动后才关闭 .pth",
+    "scenario": "late_disable_pth",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "pth": "enabled",
+    "error": "only the selected experimental"
+  },
+  {
+    "id": "L09",
+    "title": "搜索路径：正式在前",
+    "scenario": "mixed_path",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "stable_first": true,
+    "error": "only the selected experimental"
+  },
+  {
+    "id": "L10",
+    "title": "搜索路径：实验在前",
+    "scenario": "mixed_path",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "stable_first": false,
+    "error": "only the selected experimental"
+  },
+  {
+    "id": "L11",
+    "title": "遗留正式库环境变量不劫持实验库",
+    "scenario": "stable_env_ignored",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ]
+  },
+  {
+    "id": "L12",
+    "title": "先正式后实验",
+    "scenario": "stable_then_experimental",
+    "profile": "combined",
+    "mode": "stable",
+    "requires": [
+      "stable_package",
+      "experimental_package"
+    ],
+    "error": "separate Python processes"
+  },
+  {
+    "id": "L13",
+    "title": "先实验后正式",
+    "scenario": "experimental_then_stable",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "cannot be imported after"
+  },
+  {
+    "id": "L14",
+    "title": "先 torch_npu 后实验",
+    "scenario": "torch_npu_first",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "before torch_npu/acl"
+  },
+  {
+    "id": "L15",
+    "title": "先原生装载正式 launcher",
+    "scenario": "native_launcher_first",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "Stable launcher is already loaded"
+  },
+  {
+    "id": "L16",
+    "title": "先原生装载正式 opapi",
+    "scenario": "native_opapi_first",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "different custom OPP|CANN is already loaded"
+  },
+  {
+    "id": "L17",
+    "title": "实验之后原生装载正式 launcher，再次检查",
+    "scenario": "native_launcher_after",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "Stable launcher is already loaded"
+  },
+  {
+    "id": "L18",
+    "title": "加载后切换 OPP 路径",
+    "scenario": "environment_changed",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "only the selected experimental"
+  },
+  {
+    "id": "L19",
+    "title": "加载后修改来源清单（副本）",
+    "scenario": "manifest_changed",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "contents changed"
+  },
+  {
+    "id": "L20",
+    "title": "替换 host 库（副本）",
+    "scenario": "corrupt_host",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "ABI manifest"
+  },
+  {
+    "id": "L21",
+    "title": "缺失 ABI 清单（副本）",
+    "scenario": "missing_abi",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "Missing .*abi_manifest"
+  },
+  {
+    "id": "L22",
+    "title": "替换为正式 launcher（副本）",
+    "scenario": "wrong_launcher",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "launcher hash mismatch"
+  },
+  {
+    "id": "L23",
+    "title": "源码指纹不匹配（副本）",
+    "scenario": "wrong_stamp",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "source fingerprint mismatch"
+  },
+  {
+    "id": "L24",
+    "title": "wheel 拼外部实验 OPP",
+    "scenario": "external_opp",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "external_experimental_opp"
+    ],
+    "error": "own matching OPP"
+  },
+  {
+    "id": "L25",
+    "title": "RWKV8 wheel 调用未注册的测试名称",
+    "scenario": "unselected_operator",
+    "profile": "single",
+    "mode": "experimental",
+    "requires": [],
+    "error": "not selected"
+  },
+  {
+    "id": "L26",
+    "title": "launcher 与 OPP 算子集合不一致（副本）",
+    "scenario": "wrong_selection",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "operator snapshots differ"
+  },
+  {
+    "id": "L27",
+    "title": "host 库链接越出 vendor（副本）",
+    "scenario": "escaping_link",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [
+      "stable_package"
+    ],
+    "error": "escapes the experimental OPP root"
+  },
+  {
+    "id": "L28",
+    "title": "修改 Python 包（副本）",
+    "scenario": "changed_python",
+    "profile": "combined",
+    "mode": "experimental",
+    "requires": [],
+    "error": "Python source differs"
+  }
+]

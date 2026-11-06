@@ -70,6 +70,19 @@ def _stable_tree(tmp: str, *, wrapper_args: int = 2):
 class BuildStampTest(unittest.TestCase):
     """The library stamp and the Python side must be produced together."""
 
+    def test_compile_and_python_stamp_use_same_snapshot(self) -> None:
+        builder = _load_module("stable_stamp_snapshot", SETUP_DIR / "csrc/build_stable.py")
+        # A source edit during compilation must not change the Python stamp
+        # away from the value embedded in the library just built.
+        with mock.patch.object(sys, "argv", ["build_stable.py"]), \
+                mock.patch.object(builder, "source_hash", side_effect=["before", "after"]) as source_hash, \
+                mock.patch.object(builder, "compile_launcher") as compile_launcher, \
+                mock.patch.object(builder, "write_hash_module") as write_hash:
+            self.assertEqual(builder.main(), 0)
+        source_hash.assert_called_once_with()
+        self.assertEqual(compile_launcher.call_args.args[2], "before")
+        write_hash.assert_called_once_with("before")
+
     def test_build_stamp_covers_every_adapter_source(self) -> None:
         import importlib.util as util
 
@@ -564,10 +577,17 @@ class TranslationUnitTest(unittest.TestCase):
         self.assertEqual(builder.TRANSLATION_UNITS, vendor.translation_units())
 
     def test_the_builder_uses_that_list(self) -> None:
-        source = (SETUP_DIR / "csrc" / "build_stable.py").read_text(
-            encoding="utf-8")
-        self.assertIn("[str(path) for path in TRANSLATION_UNITS]", source,
-                      "build_stable.py stopped building the declared units")
+        builder = _load_module("stable_compiler_inputs", SETUP_DIR / "csrc/build_stable.py")
+        with mock.patch.object(sys, "argv", ["build_stable.py"]), \
+                mock.patch.object(builder, "torch_lib_dir", return_value="/torch/lib"), \
+                mock.patch.object(builder, "torch_include_dirs", return_value=[]), \
+                mock.patch.object(builder.shutil, "which", return_value="g++"), \
+                mock.patch.object(builder.subprocess, "run") as run, \
+                mock.patch.object(builder, "write_hash_module"):
+            builder.main()
+        actual = [arg for arg in run.call_args.args[0] if arg.endswith(".cpp")]
+        self.assertEqual(actual, list(map(str, builder.TRANSLATION_UNITS)))
+
 
 
 class VendoredHeaderTest(unittest.TestCase):

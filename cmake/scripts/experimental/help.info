@@ -1,0 +1,5 @@
+  --install-path=<absolute-path>    Install into an isolated empty directory (required)
+                                   The parent directory must already exist.
+  --quiet                          Suppress the success message
+  --help                           Show experimental installer usage
+  Wheel overlay, upgrade, default CANN paths and existing OPP roots are unsupported.

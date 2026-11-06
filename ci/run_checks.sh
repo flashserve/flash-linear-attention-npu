@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+if [[ "${CI_EXPERIMENTAL:-false}" == "true" ]]; then
+    echo "[CI][ERROR] Use ci/run_experimental_validation.sh for isolated experimental validation." >&2
+    exit 2
+fi
+
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
