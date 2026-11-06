@@ -7,7 +7,7 @@
 从热路径挪走（`MUTATION_FLAGS` 声明式 flag），正确性由三件事保证：
 
 1. 该 bump 的还是 bump（inplace=True / 无 flag 的算子）；
-2. 不该 bump 的不 bump（inplace=False 走 scratch state）；
+2. 不该 bump 的不 bump（RecurrentKDA 非原位调用）；
 3. requires_grad 的拒绝行为在 position/keyword 两条调用路径上一致。
 """
 from __future__ import annotations
@@ -117,27 +117,31 @@ def scenario_recurrent_kda():
     kda_public(q, k, v, g, beta, state, **kw)
     torch.npu.synchronize()
     check_bump("recurrent_kda(flag omitted)", state, before, 1)
-    # 3) inplace=False：算子写 scratch，调用方 tensor 不能被动 → 不 bump。
+    # 非原位调用返回独立状态池，保留输入值和版本计数。
+    snapshot = state.clone()
     before = version_of(state)
-    out = kda_public(q, k, v, g, beta, state, inplace_final_state=False, **kw)
+    _, final_state = kda_public(q, k, v, g, beta, state, inplace_final_state=False, **kw)
     torch.npu.synchronize()
-    check_bump("recurrent_kda(inplace=False)", state, before, 0)
-    _, final_state = out
-    assert final_state.data_ptr() != state.data_ptr(), (
-        "inplace=False must return a scratch final_state")
-    print("PASS recurrent_kda(inplace=False returns scratch state)")
-    # 4) requires_grad：inplace=True 拒绝；inplace=False 允许（不写回）。
-    grad_state = state.clone().detach().requires_grad_(True)
+    check_bump("recurrent_kda(inplace=False, output=True)", state, before, 0)
+    assert final_state.data_ptr() != state.data_ptr()
+    assert final_state.shape == state.shape and final_state.dtype == state.dtype
+    torch.testing.assert_close(state, snapshot, rtol=0, atol=0)
+
+    grad_state = state.detach().requires_grad_(True)
     try:
         kda_public(q, k, v, g, beta, grad_state, inplace_final_state=True, **kw)
     except RuntimeError as exc:
         assert "must not require gradients" in str(exc), str(exc)
-        print("PASS recurrent_kda(requires_grad rejected, inplace=True)")
     else:
         raise AssertionError("inplace=True accepted a requires_grad state")
-    kda_public(q, k, v, g, beta, grad_state, inplace_final_state=False, **kw)
-    torch.npu.synchronize()
-    print("PASS recurrent_kda(requires_grad allowed, inplace=False)")
+
+    for output in (True, False):
+        before = version_of(grad_state)
+        _, final_state = kda_public(q, k, v, g, beta, grad_state, inplace_final_state=False,
+                                   **dict(kw, output_final_state=output))
+        torch.npu.synchronize()
+        check_bump(f"recurrent_kda(inplace=False, output={output})", grad_state, before, 0)
+        assert (final_state is not None) == output
 
 
 def main():
