@@ -420,6 +420,9 @@ private:
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
                 meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
             : (vectorOffset + rowBegin) * tiling_->valueDim;
+        // The composite launcher keeps dO in head-major storage for all
+        // layouts; only v follows the public sequence-major layout.
+        const uint64_t dOOffset = (vectorOffset + rowBegin) * tiling_->valueDim;
 
         // MTE2 等待 Vector 释放输入 slot；搬完后把 A/g/beta/v/d_o 一并交给 Vector。
         AscendC::Mutex::Lock<PIPE_MTE2>(inputMutex_[slot]);
@@ -443,7 +446,8 @@ private:
             AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows), rowBytes, rowGap, 0, 0};
             AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
             AscendC::DataCopyPad(vLocal, vGm_[vdoOffset], copy, pad);
-            AscendC::DataCopyPad(dOLocal, dOGm_[vdoOffset], copy, pad);
+            AscendC::DataCopyExtParams dOCopy{static_cast<uint16_t>(rows), rowBytes, 0, 0, 0};
+            AscendC::DataCopyPad(dOLocal, dOGm_[dOOffset], dOCopy, pad);
         }
         AscendC::Mutex::Unlock<PIPE_MTE2>(inputMutex_[slot]);
     }
