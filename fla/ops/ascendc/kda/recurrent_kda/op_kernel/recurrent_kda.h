@@ -100,7 +100,6 @@ public:
         allowNegEigval_ = (tilingData->allowNegEigval == 1);
         safeGate_ = (tilingData->safeGate == 1);
         stateVFirst_ = (tilingData->stateVFirst == 1);
-        compactFinalState_ = tilingData->inplaceFinalState == 0 && tilingData->outputFinalState == 1;
         shouldStoreState_ = (tilingData->inplaceFinalState == 1 || tilingData->outputFinalState == 1);
         gateDtype_ = tilingData->gateDtype;
         betaDtype_ = tilingData->betaDtype;
@@ -154,11 +153,6 @@ public:
         dtBiasGm_.SetGlobalBuffer((__gm__ float *)initParams.dtBias, 0);
         numAcceptedTokensInt32Gm_.SetGlobalBuffer((__gm__ int32_t *)initParams.numAcceptedTokens, 0);
         numAcceptedTokensInt64Gm_.SetGlobalBuffer((__gm__ int64_t *)initParams.numAcceptedTokens, 0);
-        if constexpr (!std::is_same<stateType, float32_t>()) {
-            if (compactFinalState_) {
-                finalStateFp32Gm_.SetGlobalBuffer((__gm__ float *)initParams.finalState, 0);
-            }
-        }
         finalStateGm_.SetGlobalBuffer((__gm__ stateType *)initParams.finalState, 0);
         attnOutGm_.SetGlobalBuffer((__gm__ outType *)initParams.attnOut, 0);
     }
@@ -179,8 +173,7 @@ public:
         pipe_->InitBuffer(packedInQueue_, PACKED_INPUT_BUFFER_NUM, packedBytes);
         pipe_->InitBuffer(betaInQueue_, BUFFER_NUM, betaUbSize);
         pipe_->InitBuffer(stateInQueue_, INPUT_BUFFER_NUM, alignK_ * vStep_ * sizeof(stateType));
-        const uint32_t stateOutElementBytes = compactFinalState_ ? sizeof(float) : sizeof(stateType);
-        pipe_->InitBuffer(stateOutQueue_, stateOutBufferNum_, alignK_ * vStep_ * stateOutElementBytes);
+        pipe_->InitBuffer(stateOutQueue_, stateOutBufferNum_, alignK_ * vStep_ * sizeof(stateType));
         if (!stateVFirst_) {
             pipe_->InitBuffer(stateTransposeBuf_, alignK_ * vStep_ * sizeof(stateType));
         }
@@ -877,28 +870,7 @@ private:
         ReduceSumBaseline(dstTensor, srcTensor, rows);
     }
 
-    template <typename stateOutType>
-    __aicore__ inline void EnqueueState(uint32_t curSingleV)
-    {
-        auto stateOutLocal = stateOutQueue_.AllocTensor<stateOutType>();
-        if constexpr (std::is_same<stateOutType, float32_t>()) {
-            if (stateVFirst_) {
-                DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
-            } else {
-                TransposeStateMatrixTyped<float>(stateOutLocal, stateInUb, curSingleV, alignK_, alignK_, vStep_);
-            }
-        } else if (stateVFirst_) {
-            Cast(stateOutLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
-        } else {
-            auto stateTransposeLocal = stateTransposeBuf_.Get<stateOutType>();
-            Cast(stateTransposeLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
-            AscendC::PipeBarrier<PIPE_V>();
-            TransposeVFirstToKFirst(stateOutLocal, stateTransposeLocal, curSingleV);
-        }
-        stateOutQueue_.EnQue<stateOutType>(stateOutLocal);
-    }
-
-    __aicore__ inline void Compute(uint32_t curSingleV, uint64_t curQKOffset, uint64_t curVOffset, bool storeState)
+    __aicore__ inline void Compute(uint32_t curSingleV, uint64_t curQKOffset, uint64_t curVOffset)
     {
         MatVecMul(stateInUb, gateInUb[curQKOffset], stateInUb, curSingleV, false);
         AscendC::PipeBarrier<PIPE_V>();
@@ -926,14 +898,25 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
         ReduceSumDispatch(attnInUb, broadTmpInUb, curSingleV);
         LocalTensor<outType> attnOutLocal = attnOutQueue_.AllocTensor<outType>();
-        if (storeState) {
-            if constexpr (std::is_same<stateType, float32_t>()) {
-                EnqueueState<float>(curSingleV);
-            } else if (compactFinalState_) {
-                EnqueueState<float>(curSingleV);
+        if (shouldStoreState_) {
+            LocalTensor<stateType> stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
+            if (stateVFirst_) {
+                if constexpr (std::is_same<stateType, float32_t>()) {
+                    DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
+                } else {
+                    Cast(stateOutLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
+                }
             } else {
-                EnqueueState<stateType>(curSingleV);
+                if constexpr (std::is_same<stateType, float32_t>()) {
+                    TransposeVFirstToKFirst(stateOutLocal, stateInUb, curSingleV);
+                } else {
+                    LocalTensor<stateType> stateTransposeLocal = stateTransposeBuf_.Get<stateType>();
+                    Cast(stateTransposeLocal, stateInUb, AscendC::RoundMode::CAST_RINT, alignK_ * curSingleV);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    TransposeVFirstToKFirst(stateOutLocal, stateTransposeLocal, curSingleV);
+                }
             }
+            stateOutQueue_.EnQue<stateType>(stateOutLocal);
         }
         Cast(attnOutLocal, attnInUb, AscendC::RoundMode::CAST_RINT, curSingleV);
         attnOutQueue_.EnQue<outType>(attnOutLocal);
@@ -947,41 +930,29 @@ private:
         attnOutQueue_.FreeTensor(attnLocal);
     }
 
-    template <typename stateOutType>
-    __aicore__ inline void CopyOutStateTyped(GlobalTensor<stateOutType> &stateGm, uint64_t stateSlot,
-                                              uint64_t head, uint64_t vOffset, uint32_t curSingleV)
+    __aicore__ inline void CopyOutState(uint64_t stateSlot, uint64_t head, uint64_t vOffset,
+                                         uint32_t curSingleV)
     {
-        LocalTensor<stateOutType> stateOutLocal = stateOutQueue_.DeQue<stateOutType>();
+        LocalTensor<stateType> stateOutLocal = stateOutQueue_.DeQue<stateType>();
         if (stateVFirst_) {
             uint64_t stateOffset =
                 stateOutStride0_ * stateSlot + stateOutStride1_ * head + stateOutStride2_ * vOffset;
             DataCopyParams stateOutParams{static_cast<uint16_t>(curSingleV),
-                                          static_cast<uint16_t>(realK_ * sizeof(stateOutType)), 0, 0};
-            DataCopyPad(stateGm[stateOffset], stateOutLocal, stateOutParams);
+                                          static_cast<uint16_t>(realK_ * sizeof(stateType)), 0, 0};
+            DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         } else {
             uint64_t stateOffset = stateOutStride0_ * stateSlot + stateOutStride1_ * head +
                                    stateOutStride3_ * vOffset;
             uint32_t srcStride = static_cast<uint32_t>(
-                (vStep_ - curSingleV) * sizeof(stateOutType) / DATA_BLOCK_BYTES);
+                (vStep_ - curSingleV) * sizeof(stateType) / DATA_BLOCK_BYTES);
             uint32_t dstStride = static_cast<uint32_t>(
-                (stateOutStride2_ - curSingleV) * sizeof(stateOutType));
+                (stateOutStride2_ - curSingleV) * sizeof(stateType));
             DataCopyExtParams stateOutParams{static_cast<uint16_t>(realK_),
-                                             static_cast<uint32_t>(curSingleV * sizeof(stateOutType)),
+                                             static_cast<uint32_t>(curSingleV * sizeof(stateType)),
                                              srcStride, dstStride, 0};
-            DataCopyPad(stateGm[stateOffset], stateOutLocal, stateOutParams);
+            DataCopyPad(finalStateGm_[stateOffset], stateOutLocal, stateOutParams);
         }
         stateOutQueue_.FreeTensor(stateOutLocal);
-    }
-
-    __aicore__ inline void CopyOutState(uint64_t stateSlot, uint64_t head, uint64_t vOffset, uint32_t curSingleV)
-    {
-        if constexpr (!std::is_same<stateType, float32_t>()) {
-            if (compactFinalState_) {
-                CopyOutStateTyped(finalStateFp32Gm_, stateSlot, head, vOffset, curSingleV);
-                return;
-            }
-        }
-        CopyOutStateTyped(finalStateGm_, stateSlot, head, vOffset, curSingleV);
     }
 
     template <typename betaType>
@@ -1140,10 +1111,10 @@ private:
                     uint64_t curQKOffset = static_cast<uint64_t>(seq_i - windowStart) * alignK_;
                     uint64_t curVOffset = static_cast<uint64_t>(seq_i - windowStart) * alignV_ + v_i;
                     uint64_t attnOffset = (static_cast<uint64_t>(seq_i) * NV_ + head_i) * realV_ + v_i;
-                    const bool storeState = shouldStoreState_ &&
-                        (!compactFinalState_ || hasSsmStateIndices_ || seq_i + 1 == seq1);
+                    uint64_t curStateSlot = StateSlotForToken(batchIdx, seq0, seq_i);
+                    uint64_t curStateOutSlot = curStateSlot;
                     beta_ = betaValues.GetValue(seq_i - windowStart);
-                    Compute(curSingleV, curQKOffset, curVOffset, storeState);
+                    Compute(curSingleV, curQKOffset, curVOffset);
                     if (attnOutBufferNum_ == BUFFER_NUM) {
                         CopyOutAttn(attnOffset, curSingleV);
                     } else {
@@ -1153,9 +1124,7 @@ private:
                         pendingAttnOffset = attnOffset;
                         hasPendingAttn = true;
                     }
-                    if (storeState) {
-                        const uint64_t curStateOutSlot = compactFinalState_ && hasSsmStateIndices_ ?
-                            static_cast<uint64_t>(seq_i) : StateSlotForToken(batchIdx, seq0, seq_i);
+                    if (shouldStoreState_) {
                         if (stateOutBufferNum_ == BUFFER_NUM) {
                             CopyOutState(curStateOutSlot, head_i, v_i, curSingleV);
                         } else {
@@ -1178,7 +1147,7 @@ private:
             if (hasPendingState) {
                 // The final two snapshots can target the same GM slot without another
                 // queue allocation to wait for the preceding MTE3 write.
-                if (!compactFinalState_ && seq1 - seq0 > 1 &&
+                if (seq1 - seq0 > 1 &&
                     pendingStateSlot == StateSlotForToken(batchIdx, seq0, seq1 - 2)) {
                     int32_t eventId = GetTPipePtr()->AllocEventID<HardEvent::MTE3_S>();
                     SetFlag<HardEvent::MTE3_S>(eventId);
@@ -1241,7 +1210,6 @@ private:
     GlobalTensor<int32_t> numAcceptedTokensInt32Gm_;
     GlobalTensor<int64_t> numAcceptedTokensInt64Gm_;
     GlobalTensor<stateType> finalStateGm_;
-    GlobalTensor<float> finalStateFp32Gm_;
     GlobalTensor<outType> attnOutGm_;
     TPipe *pipe_;
     TQue<QuePosition::VECIN, PACKED_INPUT_BUFFER_NUM> packedInQueue_;
@@ -1321,7 +1289,6 @@ private:
     bool safeGate_;
     bool stateVFirst_;
     bool shouldStoreState_;
-    bool compactFinalState_;
     bool useAddFoldReduce_;
     float beta_;
     float scale_;

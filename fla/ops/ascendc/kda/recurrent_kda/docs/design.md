@@ -85,20 +85,13 @@ o_t = S @ q_t
 - `torch_custom/fla_npu/csrc/src/stable_recurrent_kda.cpp` + `fla_npu/ops/ascendc/_stable.py`：提供解耦的 Python 入口（Stable-ABI 适配层），不注册 legacy `torch.ops.npu`；纯 ctypes 执行后端及回退已删除。
 - legacy `torch.ops.npu.npu_recurrent_kda` 不属于当前支持范围，不作为公共接口维护。
 
-### 5.1 非原位状态路径
+### 5.1 非原位状态池
 
-不返回状态时，Stable ABI 直接把原始初值交给 ACLNN，传 `inplace_final_state=False` 和
-`output_final_state=False`。ACLNN 仍需一个状态输出描述符，使用同一块存储描述；
-这两个标志同时为 False 时 kernel 不写状态。此路径无临时状态池，也不搬运初值。
+不返回状态时，Stable ABI 直接把原始初值传给 ACLNN，两个状态标志均为 False，kernel 只读
+初始状态并返回注意力输出。ACLNN 所需的状态输出描述符复用输入状态的存储描述。
 
-A2/A3 非原位且返回状态时，Stable ABI 独立分配连续 FP32 输出，ACLNN 校验其 shape、
-dtype 和独立存储。输入状态的槽位和读取方式沿用原规则。带索引时，用绝对 token 下标写出
-每个 token 的递推快照；不带索引时，仅在序列末 token 写序列末状态。不同序列及 head/V 分片
-写入不重叠的区域；padding 和无计算位置没有定义。
-
-状态输出队列按 FP32 分配，tiling 对输出队列按每元素 4 字节计入 UB，输入队列和输入转置区
-仍按输入 dtype 分配。BF16 初始状态在 UB 中转换后递推，输出直接从 FP32 递推状态写出。
-A5 沿用原有状态池语义和 UB 计算。
+返回状态时，包装层复制初始状态池后复用原位写回。返回池的 shape、dtype 和槽位规则与
+输入一致，未写槽位保留初值。该行为适用于 A2/A3/A5；CPU 标杆沿用完整状态池规则。
 
 ## 6. Tiling 设计
 
