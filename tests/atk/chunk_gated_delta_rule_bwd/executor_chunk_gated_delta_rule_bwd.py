@@ -384,10 +384,19 @@ class FunctionApi(BaseApi):
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         del with_output
-        spec = _case_spec(input_data, OP_NAME)
+        spec = dict(_case_spec(input_data, OP_NAME))
+        # ATK assigns hashed IDs above this threshold to accuracy_lt copies.
+        # The tensors are generated inside this executor, so varying ATK's
+        # marker tensors alone would otherwise repeat the original inputs.
+        # All three roles receive the same copy ID and therefore the same seed.
+        atk_case_id = int(self.task_result.case_config.id)
+        threshold = int(self.task_result.task_info.accuracy_lt_threshold)
+        if atk_case_id > threshold:
+            spec["seed"] = int(spec.get("seed", 20260911)) + atk_case_id
         print(
             f"[gdn-double-atk] case={spec.get('case_id', '?')} role={self.role} "
-            f"target={'cpu_fp64' if self.role == 'golden' else ('cpu_fp32' if self.role == 'benchmark' else OP_NAME)}",
+            f"target={'cpu_fp64' if self.role == 'golden' else ('cpu_fp32' if self.role == 'benchmark' else OP_NAME)} "
+            f"atk_case={atk_case_id} seed={spec.get('seed', 20260911)}",
             flush=True,
         )
         if self.device == "cpu":

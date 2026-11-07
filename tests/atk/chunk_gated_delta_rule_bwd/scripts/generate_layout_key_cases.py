@@ -42,6 +42,8 @@ def main():
                 profiles.append(spec)
     result = []
     for index, profile in enumerate(profiles):
+        # case_id=50 (FP32 scalar, norm, G=1 BNSD) needs accuracy_lt recheck
+        # when its dg relative-error ratio fails in an individual random run.
         case = deepcopy(cases[0])
         seed = int(profile.get("seed", 20261107 + index)) + args.seed_offset
         profile = dict(profile, seed=seed, case_id=index,
