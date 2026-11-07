@@ -2,6 +2,7 @@
 
 ## 🔥Latest News
 
+- [2026/11] 新增 [Overlay 增量安装](docs/Overlay增量安装指南.md)：保留完整基础包，只更新指定算子，移除增量后恢复基础实现。
 - [2026/09] torch_npu 解耦；新增算子：KDA 正反向（`recurrent_kda` / `chunk_kda_fwd`）、GDN 大融合（fused forward / backward finalize）。
 - [2026/06] 发布 v26.6.0 预编译 wheel，覆盖 A2 / A3 / A5 目标，可在 [Release v26.6.0](https://github.com/flashserve/flash-linear-attention-npu/releases/tag/v26.6.0) 下载。
 - [2026/03] flash-linear-attention-npu 项目首次上线。
@@ -88,6 +89,76 @@ python -m pip install --force-reinstall --no-cache-dir --no-deps dist/<wheel文�
 
 需要单独编译一个或多个算子 run 包的开发者场景见[开发者指南](docs/开发者指南.md) 场景 1。
 
+### 可选：只更新部分算子（Overlay）
+
+**已经装好完整包，只想更新其中一个算子？** Overlay（增量叠加层）会把更新单独安装：例如完整包有 A、B 两个算子，增量包只更新 A，运行时 A 使用新实现，B 继续使用完整包，原有 Python 调用方式不变。
+
+下面以 **A2 上更新 `chunk_fwd_o`** 为例，演示从准备基础包到撤销增量的完整流程。先完成 Step 0 / 1 和 2.1 的环境准备，在包含 overlay 功能的当前源码根目录、同一个 Bash 终端和 Python 环境中依次执行。每一步成功后再继续；安装或移除前退出相关 Python 程序、Notebook 内核和测试 worker。
+
+**① 安装完整基础包（base）**
+
+已经安装支持 overlay 的完整 wheel，可跳过编译安装，直接执行最后两条检查命令。首次体验可从当前源码构建；不要将上面示例中的旧 `26.9.1` 正式包直接当作支持 overlay 的 base。
+
+```sh
+SOC=ascend910b  # A3 改为 ascend910_93，A5 改为 ascend950；后续使用相同值
+unset FLA_NPU_OPS  # 基础包需要全部算子
+BASE_WHEEL_DIR="$(mktemp -d /tmp/fla-npu-base.XXXXXX)"
+FLA_NPU_SOC="$SOC" FLA_NPU_BUILD_ARGS=-j32 \
+  python scripts/build_wheel.py --wheel-dir "$BASE_WHEEL_DIR"
+python -m pip install --force-reinstall --no-cache-dir --no-deps "$BASE_WHEEL_DIR"/*.whl
+python -m fla_npu_opp_manage --help
+python -m fla_npu_opp_manage --status
+```
+
+应能看到 `base` 条目。基础包只需安装一次，后续修改算子时从第 ② 步开始。
+
+**② 修改算子，编译增量包**
+
+修改 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/` 下的实现，保持参数和返回值等公开接口不变，再只编译该算子：
+
+```sh
+SOC=ascend910b  # 与基础包一致；A3 / A5 按第 ① 步替换
+bash build.sh --pkg --soc="$SOC" --ops=chunk_fwd_o -j32
+OVERLAY_RUN="$PWD/build_out/fla_npu_linux-$(uname -m).run"
+test -f "$OVERLAY_RUN"
+```
+
+如果已从开发者处拿到与 base 匹配的增量 `.run` 包，可跳过源码修改和编译，改为设置 `OVERLAY_RUN=/实际路径/增量包.run`。未修改源码也可演练安装流程，但算子结果不会因此改变。
+
+**③ 安装为 overlay，保留 base**
+
+```sh
+STAGING_DIR="$(mktemp -d /tmp/fla-npu-overlay.XXXXXX)"
+bash "$OVERLAY_RUN" --install-path="$STAGING_DIR" --quiet
+unset FLA_NPU_OVERLAY_VENDOR FLA_NPU_DISABLE_PTH  # 使用默认发现和启动配置
+python -m fla_npu_opp_manage --overlay --source "$STAGING_DIR/vendors"
+python -m fla_npu_opp_manage --status
+```
+
+应看到 base、overlay 两类条目，overlay 的 `ops=` 包含 `chunk_fwd_o`，并显示 `ABI: OK`。不要用单算子 `.run --install` 代替上述命令，那会进入 base 覆盖流程。已有同名 overlay 时，确认替换后在 `--overlay --source ...` 命令末尾追加 `--force`。
+
+**④ 启动新进程，验证更新**
+
+```sh
+python -c "import os; print(os.environ.get('ASCEND_CUSTOM_OPP_PATH', ''))"
+python -c "import fla_npu; print('fla_npu import ok')"
+```
+
+路径中应先出现 `fla_npu_overlay_transformer`，再出现 `fla_npu_transformer`。随后重新启动原有程序，或按下面的 Step 3 运行算子测试：`chunk_fwd_o` 使用增量实现，未覆盖的算子继续使用 base。状态和导入检查不替代数值测试，已运行的进程也不会自动切换到新实现。
+
+**⑤ 不再需要增量时，移除并恢复 base**
+
+先退出相关进程，再执行：
+
+```sh
+python -m fla_npu_opp_manage --remove-overlay
+python -m fla_npu_opp_manage --status
+```
+
+默认 overlay 条目消失，base 保留；再次启动程序即可使用基础实现，无需重装完整包。
+
+上述流程适用于已有算子且公开接口不变的更新。替换、临时禁用、兼容边界与故障处理见 **[Overlay 增量安装指南](docs/Overlay增量安装指南.md)**。
+
 ### Step 3. 验证与测试
 
 ```sh
@@ -109,6 +180,7 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 开发者相关操作（单独编译单算子、一键编包、增加新算子、确认 wheel 来自最新源码）按场景拆分为独立文档；测试单算子和端到端验证见上文 Step 3：
 
 - [开发者指南](docs/开发者指南.md)
+- [Overlay 增量安装指南](docs/Overlay增量安装指南.md)（准备基础包、安装 / 替换 / 移除增量、确认生效）
 - [在线 / 离线使用与编译指南](docs/离线编译与使用指南.md)（直接使用 wheel、在线编译后离线二次编译、全离线编译）
 
 旧版本（v26.6.0 及更早）用户升级与兼容迁移见[兼容与迁移指南](docs/兼容与迁移指南.md)。
