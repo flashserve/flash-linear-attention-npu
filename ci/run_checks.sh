@@ -211,7 +211,7 @@ if command -v npu-smi >/dev/null 2>&1; then
     fi
 fi
 
-ci_jobs="${CI_JOBS:-16}"
+ci_jobs="${CI_JOBS:-64}"
 ci_cpack_jobs="${CI_CPACK_JOBS:-$ci_jobs}"
 ci_test_device="${CI_CONTAINER_DEVICE:-0}"
 
