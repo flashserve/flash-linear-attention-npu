@@ -51,6 +51,11 @@ bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 连续性和有限值。补充场景覆盖 T=1/63/64/65、G=3、多 batch、空序列、混合标量 dtype、
 两种指数模式、T=H、非连续输入和可追踪数值；这项对照不替代 CPU 双标杆精度测试。
 
+空序列的旧实现会将 dh0 留为零，与已有 dh0=dht 契约不符。本次同时修复该问题。
+与旧包冻结数据比较时，额外传入 `--baseline-empty-dh0-fix`，仅对空序列 dh0 使用冻结
+输入中的 dht 作为预期（无 dht 时为零）；其它区域仍逐字节比较旧包输出。CPU 双标杆
+保持完整状态梯度比较，不屏蔽空序列。
+
 ```bash
 python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
   --device 0 --save-dir <new_result_dir>

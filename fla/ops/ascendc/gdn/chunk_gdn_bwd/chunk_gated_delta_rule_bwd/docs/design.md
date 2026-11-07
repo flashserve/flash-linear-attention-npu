@@ -35,6 +35,10 @@ dO、g、beta、betaRaw、dBeta/dG、rstd、state 和中间 workspace 各自沿�
 | arch22 Finalize | dq 子流程读取 q/k，WY 读取 k/v 并写最终 dv | 内部 dq/dk/dkWy/dw 保持 head-major |
 | arch22 A2FinalizeQkTail | 读取原 q/k，合并梯度及可选 L2Norm 后写最终 dq/dk | rstd 与内部梯度分别寻址 |
 
+DHU 对空序列不执行递推，有初态时直接将对应 dht 写到 dh0；无 dht 时沿用清零结果。
+两种状态布局均按相同物理布局搬运，复用原 q 输入、FP32 暂存和输出缓冲及事件协议，
+不增加 workspace、事件或跨核同步。旧实现会将该区域留为零，此处按已有接口契约修正。
+
 保留原 GVA 归约顺序、BF16 阶段落盘、指数换算和状态编号。仅 W/U 的空序列 metadata
 继续压缩，其它阶段仍使用原序列编号。公开八个返回槽位不变。
 

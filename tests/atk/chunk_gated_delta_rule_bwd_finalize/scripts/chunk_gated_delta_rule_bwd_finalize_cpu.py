@@ -356,4 +356,3 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
         dk = ((dk_fp32 - k_fp32 * k_dot) * k_rstd[..., None]).to(k.dtype)
 
     return dq, dk, dv, dbeta.to(beta.dtype), dg.to(g.dtype)
-

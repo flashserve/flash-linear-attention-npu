@@ -471,6 +471,9 @@ public:
             SeqInfo seqInfo;
             GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
             if (!seqInfo.valid) {
+                if (isVariable_ != 0 && seqInfo.tokenStart == seqInfo.tokenEnd) {
+                    CopyEmptySequenceDh0(seqIdx, hvBase, headCnt);
+                }
                 continue;
             }
 
@@ -1029,6 +1032,31 @@ private:
         AscendC::DataCopy(outTensor[outOffset], outputBuf_[outputIdx], elements);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx]);
         curOutputPingPong_ ^= 1U;
+    }
+
+    __aicore__ inline void CopyEmptySequenceDh0(int64_t seqIdx, int64_t hvBase, int64_t headCnt)
+    {
+        if (!hasDh0_ || !hasDht_) {
+            return;
+        }
+        // No recurrence runs for an empty sequence: hT == h0. Both public
+        // states have the same physical layout, including stateVFirst.
+        // Reuse the q input and output slot protocols; qFp32 is V-only scratch.
+        AscendC::LocalTensor<float> scratch = qFp32Buf_.template Get<float>();
+        for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
+            if (headOffset % subBlockNum_ != subBlockIdx_) {
+                continue;
+            }
+            const int64_t stateBase = (seqIdx * HV_ + hvBase + headOffset) * K_ * V_;
+            for (int64_t offset = 0; offset < K_ * V_; offset += vecRow_ * V_) {
+                const uint32_t elems = static_cast<uint32_t>(Min(vecRow_ * V_, K_ * V_ - offset));
+                const uint32_t inputIdx = curQInputPingPong_;
+                CopyInRows(dhtGm_, qInputBuf_[inputIdx], stateBase + offset, elems);
+                CastInputRows(scratch, qInputBuf_[inputIdx], elems, inputIdx);
+                AscendC::PipeBarrier<PIPE_V>();
+                CopyOutFp32Rows(dh0Gm_, scratch, stateBase + offset, elems);
+            }
+        }
     }
 
     // Load the terminal gradient into the internal fp32 [K, V] state.

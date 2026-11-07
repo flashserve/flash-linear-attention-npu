@@ -82,7 +82,11 @@ def main():
                           help="Freeze inputs and head-major outputs using the baseline package")
     controls.add_argument("--read-control-dir", type=Path,
                           help="Compare against frozen inputs and baseline head-major outputs")
+    parser.add_argument("--baseline-empty-dh0-fix", action="store_true",
+                        help="Check the documented empty dh0=dht contract where the old package returned zero")
     args = parser.parse_args()
+    if args.baseline_empty_dh0_fix and not args.read_control_dir:
+        parser.error("--baseline-empty-dh0-fix requires --read-control-dir")
     case_path = Path(__file__).resolve().parents[1] / "atk_chunk_gated_delta_rule_bwd.json"
     cases = json.loads(case_path.read_text(encoding="utf-8"))
     if args.emit_supplemental_cases:
@@ -150,6 +154,19 @@ def main():
                         mismatched.append(index)
                     continue
                 expected = expected.cpu()
+                if index == 5 and args.baseline_empty_dh0_fix and inputs["seqlens"] is not None:
+                    empty = [i for i, length in enumerate(inputs["seqlens"]) if length == 0]
+                    if empty:
+                        expected = expected.clone()
+                        terminal = inputs["dht"]
+                        if terminal is None:
+                            expected[empty] = 0
+                        else:
+                            terminal = terminal.cpu()
+                            if spec.get("state_v_first"):
+                                terminal = terminal.transpose(-1, -2)
+                            expected[empty] = terminal[empty]
+                        print(case_id, "empty dh0 checked against dht contract", empty, flush=True)
                 observed_contiguous = observed.is_contiguous()
                 observed = observed.cpu()
                 if index < 3:
