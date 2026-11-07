@@ -47,6 +47,8 @@ static constexpr size_t CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX = 4;
 static constexpr int64_t CHUNK_FWD_O_A5_BT = GDN::CHUNK_FWD_O_A5_BT;
 static constexpr int64_t CHUNK_FWD_O_A5_K = GDN::CHUNK_FWD_O_A5_K;
 static constexpr int64_t CHUNK_FWD_O_A5_V = GDN::CHUNK_FWD_O_A5_V;
+static constexpr int64_t CHUNK_FWD_O_A5_MIN_GVA_RATIO = GDN::CHUNK_FWD_O_A5_MIN_GVA_RATIO;
+static constexpr int64_t CHUNK_FWD_O_A5_MAX_GVA_RATIO = GDN::CHUNK_FWD_O_A5_MAX_GVA_RATIO;
 
 static constexpr size_t CHUNK_FWD_O_QKV_DIM_NUM = 4;
 static constexpr size_t CHUNK_FWD_O_H_DIM_NUM = 5;
@@ -291,8 +293,9 @@ public:
                     OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires g in fp32 or bf16."),
                     return ge::GRAPH_FAILED);
         const int64_t headRatio = tiling_.vNumHead / tiling_.kNumHead;
-        OP_CHECK_IF(headRatio < 1 || headRatio > 4,
-                    OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires HV/HK in [1,4], but got %ld.", headRatio),
+        OP_CHECK_IF(headRatio < CHUNK_FWD_O_A5_MIN_GVA_RATIO || headRatio > CHUNK_FWD_O_A5_MAX_GVA_RATIO,
+                    OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires HV/HK in [%ld,%ld], but got %ld.",
+                            CHUNK_FWD_O_A5_MIN_GVA_RATIO, CHUNK_FWD_O_A5_MAX_GVA_RATIO, headRatio),
                     return ge::GRAPH_FAILED);
         return ge::GRAPH_SUCCESS;
     }

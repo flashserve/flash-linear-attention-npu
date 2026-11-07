@@ -92,7 +92,7 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
-- A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in [1,16]`。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
 

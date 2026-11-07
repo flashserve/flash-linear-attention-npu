@@ -161,8 +161,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         return ge::GRAPH_FAILED;
     }
     const int64_t hRatio = HV / HK;
-    if (hRatio < 1 || hRatio > 4) {
-        OP_LOGE(context->GetNodeName(), "Hv/Hk=%ld not in {1,2,3,4}", hRatio);
+    if (hRatio < 1 || hRatio > 16) {
+        OP_LOGE(context->GetNodeName(), "Hv/Hk=%ld not in [1,16]", hRatio);
         return ge::GRAPH_FAILED;
     }
     if (qDtype != ge::DT_BF16) {
