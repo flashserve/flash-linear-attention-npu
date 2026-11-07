@@ -118,6 +118,12 @@ def get_include_dirs():
 
 def get_compile_args():
     compile_args = ["-std=c++17"]
+    # torch_npu's op-plugin compatibility headers use this macro to select
+    # the PyTorch-version branch.  Without it, CURRENT_VERSION defaults to
+    # an undefined/zero value and the 2.13 wheel incorrectly includes the
+    # removed ATen/NamedTensorUtils.h header.
+    if len(version_parts) >= 2:
+        compile_args.append(f"-DCURRENT_VERSION=V{version_parts[0]}R{version_parts[1]}")
     # for Windows
     if sys.platform == "win32":
         compile_args.append("/MD")
