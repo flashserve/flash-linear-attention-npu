@@ -437,13 +437,13 @@ public:
                     if constexpr (sizeof(DT) == sizeof(uint16_t)) {
                         AscendC::GlobalTensor<uint16_t> dh0ClearGm;
                         dh0ClearGm.SetGlobalBuffer(
-                            reinterpret_cast<__gm__ uint16_t *>(dh0Addr_) + clearOffset);
+                            reinterpret_cast<__gm__ uint16_t *>(dh0Addr_) + clearOffset, clearElems);
                         AscendC::Fill(dh0ClearGm, static_cast<uint64_t>(clearElems),
                                       static_cast<uint16_t>(0));
                     } else {
                         AscendC::GlobalTensor<uint32_t> dh0ClearGm;
                         dh0ClearGm.SetGlobalBuffer(
-                            reinterpret_cast<__gm__ uint32_t *>(dh0Addr_) + clearOffset);
+                            reinterpret_cast<__gm__ uint32_t *>(dh0Addr_) + clearOffset, clearElems);
                         AscendC::Fill(dh0ClearGm, static_cast<uint64_t>(clearElems),
                                       static_cast<uint32_t>(0));
                     }
