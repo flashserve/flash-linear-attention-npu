@@ -18,6 +18,8 @@ a_log, dt_bias, cu_seqlens, chunk_indices, backward_mode
 
 用例中不使用 marker tensor、序列化 `case_spec` 或其他隐藏控制字段。
 `a_log`、`dt_bias`、`cu_seqlens` 和 `chunk_indices` 按场景传空或真实数据。
+`a_log` 是用例字段和 executor 内部字段名；调用 Stable 公共接口时使用关键字
+`A_log=inputs.a_log`，与 `chunk_kda_fwd_prepare(..., A_log=None, ...)` 的签名一致。
 
 接口固定保留 13 个输出槽位：
 
@@ -94,6 +96,24 @@ python3 ./gen_chunk_kda_fwd_prepare.py --summary
 
 ## 精度
 
+按 [公共环境准备说明](../README.md#运行前准备) 激活包含 ATK 和完整 FLA wheel 的
+Python 环境并加载 CANN/vendor 脚本后，可从仓库根目录使用统一入口：
+
+```bash
+# 最小调用回归，只执行第一条 case；不代表全量精度验收。
+CASE_START=0 CASE_END=1 \
+bash tests/atk/run_test_cpu.sh \
+  -op=chunk_kda_fwd_prepare -soc=ascend950 -npu_device_id=0 -scope=accuracy
+
+# 全量精度：移除外层 shell 中已有的 case 范围限制。
+unset CASE_START CASE_END ACCURACY_START ACCURACY_END
+bash tests/atk/run_test_cpu.sh \
+  -op=chunk_kda_fwd_prepare -soc=ascend950 -npu_device_id=0 -scope=accuracy
+```
+
+入口使用 `--backend npu` 和本目录 executor，通过 FLA Stable wrapper 加载算子；
+无需为此切换编译后端或设置 `ATK_CUSTOM_OPP_PATH`。脚本会检查 ATK 报告中的精度结果。
+
 加载当前构建的 A5 wheel 和 custom OPP 后，先跑单条，再跑全量：
 
 ```bash
@@ -114,6 +134,18 @@ atk node --backend npu --devices 0 -o ./atk_output/accuracy_full \
 
 单条用例执行超过 60 秒即判定超时。只有最终报告同时满足总任务 200、执行失败 0、
 精度结论通过，才能声明全量精度通过；不能只依据 shell 返回码。
+
+### Stable 调用关键字回归（2026-11-04）
+
+在源码 `a13871e8` 上修正 executor 的 `A_log` 调用关键字后，使用上述统一脚本的
+`CASE_START=0 CASE_END=1` 命令，在 A5 / CANN 9.2 / Python 3.12 / torch 2.13.0 /
+torch_npu 2.13.0 / ATK 26.9.8 上完成修改前后对照。两次均保留默认 GM 初始化，
+且未设置 `ATK_CUSTOM_OPP_PATH`。
+
+被测完整 wheel 为 `0.dev20261103+main.fb3d47d`，与上述源码的本算子实现及测试资产一致。
+原 executor 的报告为 0/1，统一脚本退出码为 1；修正后为 1/1 Pass，6 个可见输出全部
+通过比较，脚本退出码为 0。这是调用契约的最小回归，不代替 200 条精度用例、性能、
+确定性、MSS 或 A2/A3 验收；本轮未重新编译算子。
 
 ## 性能
 
