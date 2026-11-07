@@ -19898,7 +19898,7 @@
   {
     "id": 136,
     "default_seed": 20261050,
-    "name": "chunk_kda_fwd_finalize_0136_varlen_h2_15_16_17_bnsd_kv",
+    "name": "chunk_kda_fwd_finalize_0136_varlen_h2_15_0_16_17_bnsd_kv",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -20018,6 +20018,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -20064,7 +20075,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20086,7 +20097,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20126,13 +20137,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0136_varlen_h2_15_16_17_bnsd_kv",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0136_varlen_h2_15_0_16_17_bnsd_kv",
+    "is_boundary": true
   },
   {
     "id": 137,
     "default_seed": 20261051,
-    "name": "chunk_kda_fwd_finalize_0137_varlen_h2_15_16_17_bnsd_vk",
+    "name": "chunk_kda_fwd_finalize_0137_varlen_h2_15_0_16_17_bnsd_vk",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -20252,6 +20263,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -20298,7 +20320,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20320,7 +20342,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20360,13 +20382,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0137_varlen_h2_15_16_17_bnsd_vk",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0137_varlen_h2_15_0_16_17_bnsd_vk",
+    "is_boundary": true
   },
   {
     "id": 138,
     "default_seed": 20261052,
-    "name": "chunk_kda_fwd_finalize_0138_varlen_h2_15_16_17_bsnd_kv",
+    "name": "chunk_kda_fwd_finalize_0138_varlen_h2_15_0_16_17_bsnd_kv",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -20486,6 +20508,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -20532,7 +20565,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20554,7 +20587,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20594,13 +20627,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0138_varlen_h2_15_16_17_bsnd_kv",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0138_varlen_h2_15_0_16_17_bsnd_kv",
+    "is_boundary": true
   },
   {
     "id": 139,
     "default_seed": 20261053,
-    "name": "chunk_kda_fwd_finalize_0139_varlen_h2_15_16_17_bsnd_vk",
+    "name": "chunk_kda_fwd_finalize_0139_varlen_h2_15_0_16_17_bsnd_vk",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -20720,6 +20753,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -20766,7 +20810,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20788,7 +20832,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -20828,13 +20872,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0139_varlen_h2_15_16_17_bsnd_vk",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0139_varlen_h2_15_0_16_17_bsnd_vk",
+    "is_boundary": true
   },
   {
     "id": 140,
     "default_seed": 20261054,
-    "name": "chunk_kda_fwd_finalize_0140_varlen_h2_15_16_17_ntd_kv",
+    "name": "chunk_kda_fwd_finalize_0140_varlen_h2_15_0_16_17_ntd_kv",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -20952,6 +20996,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -20998,7 +21053,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21020,7 +21075,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21060,13 +21115,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0140_varlen_h2_15_16_17_ntd_kv",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0140_varlen_h2_15_0_16_17_ntd_kv",
+    "is_boundary": true
   },
   {
     "id": 141,
     "default_seed": 20261055,
-    "name": "chunk_kda_fwd_finalize_0141_varlen_h2_15_16_17_ntd_vk",
+    "name": "chunk_kda_fwd_finalize_0141_varlen_h2_15_0_16_17_ntd_vk",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -21184,6 +21239,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -21230,7 +21296,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21252,7 +21318,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21292,13 +21358,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0141_varlen_h2_15_16_17_ntd_vk",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0141_varlen_h2_15_0_16_17_ntd_vk",
+    "is_boundary": true
   },
   {
     "id": 142,
     "default_seed": 20261056,
-    "name": "chunk_kda_fwd_finalize_0142_varlen_h2_15_16_17_tnd_kv",
+    "name": "chunk_kda_fwd_finalize_0142_varlen_h2_15_0_16_17_tnd_kv",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -21416,6 +21482,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -21462,7 +21539,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21484,7 +21561,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21524,13 +21601,13 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0142_varlen_h2_15_16_17_tnd_kv",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0142_varlen_h2_15_0_16_17_tnd_kv",
+    "is_boundary": true
   },
   {
     "id": 143,
     "default_seed": 20261057,
-    "name": "chunk_kda_fwd_finalize_0143_varlen_h2_15_16_17_tnd_vk",
+    "name": "chunk_kda_fwd_finalize_0143_varlen_h2_15_0_16_17_tnd_vk",
     "aclnn_name": "ChunkKdaFwdFinalize",
     "version": "v2.1",
     "api": "pytorch",
@@ -21648,6 +21725,17 @@
           "required": false,
           "dtype": "int",
           "shape": null,
+          "range_values": 15,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
           "range_values": 31,
           "backward": false,
           "align_32B": null,
@@ -21694,7 +21782,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 1,
+          "range_values": 2,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21716,7 +21804,7 @@
           "required": false,
           "dtype": "int",
           "shape": null,
-          "range_values": 2,
+          "range_values": 3,
           "backward": false,
           "align_32B": null,
           "outlier_values": null
@@ -21756,8 +21844,8 @@
         "outlier_values": null
       }
     ],
-    "save_name": "chunk_kda_fwd_finalize_0143_varlen_h2_15_16_17_tnd_vk",
-    "is_boundary": false
+    "save_name": "chunk_kda_fwd_finalize_0143_varlen_h2_15_0_16_17_tnd_vk",
+    "is_boundary": true
   },
   {
     "id": 144,

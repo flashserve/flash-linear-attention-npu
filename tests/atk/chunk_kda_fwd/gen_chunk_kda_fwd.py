@@ -90,6 +90,9 @@ def _positive_case(local_id: int, soc: str) -> dict:
         lengths = _balanced(total_t, sequence_count)
         scenario = f"packed_balanced{sequence_count}"
         layout = "TND" if pair_id % 2 == 0 else "NTD"
+        if pair_id == 2:
+            lengths.insert(1, 0)
+            scenario += "_empty"
     elif profile_id in {4, 5}:
         lengths = _skewed(total_t, sequence_count)
         scenario = f"packed_skewed{sequence_count}"
