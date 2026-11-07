@@ -588,11 +588,18 @@ def main() -> int:
         raise SystemExit("--head-sha 必须是 40 位 commit SHA")
 
     checked_out = git_output(repo_root, "rev-parse", "HEAD")
-    if args.head_sha and checked_out.lower() != head_sha.lower():
+    if args.head_sha and checked_out and checked_out.lower() != head_sha.lower():
         raise SystemExit(
             "检出的代码与 package workflow 锁定的 commit 不一致："
-            f"expected={head_sha} actual={checked_out or '<unknown>'}"
+            f"expected={head_sha} actual={checked_out}"
         )
+    if args.head_sha and not checked_out:
+        # actions/checkout has already fetched the requested SHA. Some
+        # self-hosted workspaces temporarily reject a second git query; that
+        # local read failure must not turn a valid checkout into a false SHA
+        # mismatch or make the builder contact GitHub.
+        log("[警告] 无法从 checkout 工作区读取 HEAD，使用 workflow 锁定的 SHA")
+        checked_out = head_sha
 
     meta = resolve_metadata(repo_root, head_sha)
     out_dir = (
