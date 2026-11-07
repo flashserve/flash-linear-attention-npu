@@ -3,10 +3,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <string>
 #include "platform/soc_spec.h"
 #include <register/op_impl_registry.h>
-#include "op_common/log/log.h"
 #include "arch35/chunk_kda_fwd_tiling_impl.h"
 #include "tiling/platform/platform_ascendc.h"
 
@@ -15,7 +13,6 @@ namespace {
 constexpr size_t INPUT_Q_IDX = 0;
 constexpr size_t INPUT_V_IDX = 2;
 constexpr size_t INPUT_G_IDX = 3;
-constexpr size_t INPUT_BETA_IDX = 4;
 constexpr size_t INPUT_A_LOG_IDX = 5;
 constexpr size_t INPUT_DT_BIAS_IDX = 6;
 constexpr size_t INPUT_INITIAL_STATE_IDX = 7;
@@ -175,12 +172,6 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const char *layout = attrs->GetStr(ATTR_LAYOUT_IDX);
     const float scale = static_cast<float>(*attrs->GetAttrPointer<double>(ATTR_SCALE_IDX));
     const int64_t chunkSize = *attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX);
-    if (chunkSize == 32) {
-        // chunk32 大融合已迁至独立算子 ChunkKdaFwdFused，由 aclnnChunkKdaFwdV2 路由。
-        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "chunk_size", "32",
-                                  "use aclnnChunkKdaFwdV2 (routed to ChunkKdaFwdFused)");
-        return ge::GRAPH_FAILED;
-    }
     const bool safeGate = *attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE_IDX);
     const float lowerBound = *attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND_IDX);
     const bool useGateInKernel = *attrs->GetAttrPointer<bool>(ATTR_USE_GATE_IDX);

@@ -13,11 +13,6 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
 
-// l0op::Exp 在 CANN libopapi.so 有导出符号，仓库 vendor 头未含 exp.h。
-namespace l0op {
-const aclTensor *Exp(const aclTensor *x, aclOpExecutor *executor);
-}
-
 using namespace op;
 
 namespace l0op {

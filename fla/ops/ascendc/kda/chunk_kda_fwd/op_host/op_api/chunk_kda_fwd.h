@@ -27,7 +27,6 @@ KdaCoreOutputs KdaChunkForward(
     const aclTensor *kgOut, const aclTensor *vNewOut, const aclTensor *hOut,
     const aclTensor *qgScaledOut, const aclTensor *uSeedOut, int64_t stage,
     aclOpExecutor *executor);
-
 } // namespace l0op
 
 #endif
