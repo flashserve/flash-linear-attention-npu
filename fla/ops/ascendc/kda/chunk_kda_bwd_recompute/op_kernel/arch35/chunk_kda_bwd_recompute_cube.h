@@ -62,7 +62,7 @@ public:
         chunkNum_ = static_cast<uint64_t>(tiling->chunkNum);
         chunkSize_ = static_cast<uint64_t>(tiling->chunkSize);
         isVariable_ = tiling->isVariable;
-        usedCoreNum_ = tiling->vecRow > 0 ? static_cast<uint32_t>(tiling->vecRow)
+        usedCoreNum_ = tiling->usedAic > 0 ? static_cast<uint32_t>(tiling->usedAic)
                                           : static_cast<uint32_t>(1);
     }
 
