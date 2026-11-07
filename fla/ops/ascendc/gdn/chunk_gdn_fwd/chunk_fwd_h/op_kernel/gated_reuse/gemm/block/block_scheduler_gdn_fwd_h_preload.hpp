@@ -50,6 +50,7 @@ struct GDNFwdHStreamPreload {
     uint32_t kHeadIdx{0};
     uint32_t shapeBatchIdx{0};
     uint32_t tokenBatchIdx{0};
+    uint32_t stateBatchIdx{0};
      
     uint32_t chunkOffset{0};
     uint32_t tokenOffset{0};
@@ -76,6 +77,7 @@ struct BlockSchedulerGdnFwdHPreload {
     uint32_t isVariedLen{0};
     uint32_t shapeBatch{0};
     uint32_t tokenBatch{0};
+    uint32_t originalTokenBatch{0};
     bool useInitialState{false};
     bool storeFinalState{false};
     uint64_t numSeqWorkspaceOffset{0};
@@ -126,6 +128,7 @@ struct BlockSchedulerGdnFwdHPreload {
         isVariedLen = gdnFwdHTilingData->isVariedLen;
         shapeBatch = gdnFwdHTilingData->shapeBatch;
         tokenBatch = gdnFwdHTilingData->tokenBatch;
+        originalTokenBatch = tokenBatch;
         useInitialState = gdnFwdHTilingData->useInitialState;
         storeFinalState = gdnFwdHTilingData->storeFinalState;
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
@@ -187,6 +190,28 @@ struct BlockSchedulerGdnFwdHPreload {
     }
 
 
+    // Token/chunk metadata omits empty sequences, while state tensors retain
+    // their original sequence axis. Recover that axis only when compaction
+    // actually removed a sequence; dense and nonempty packed calls are direct.
+    CATLASS_DEVICE
+    uint32_t StateSequence(uint32_t compactSequence) const {
+        if (!isVariedLen || tokenBatch == originalTokenBatch) {
+            return compactSequence;
+        }
+        const int64_t tokenBegin = gmNumSeq.GetValue(compactSequence);
+        uint32_t begin = 0;
+        uint32_t end = originalTokenBatch;
+        while (begin < end) {
+            const uint32_t middle = begin + (end - begin) / 2;
+            if (gmSeqlen.GetValue(middle + 1) <= tokenBegin) {
+                begin = middle + 1;
+            } else {
+                end = middle;
+            }
+        }
+        return begin;
+    }
+
     CATLASS_DEVICE
     void InitNewStream(GDNFwdHStreamPreload& newStream) {
         newStream.vIdx = taskIdx / (batch * vNumHead);
@@ -195,6 +220,7 @@ struct BlockSchedulerGdnFwdHPreload {
         newStream.kHeadIdx = newStream.vHeadIdx / headGroups;
         newStream.shapeBatchIdx = isVariedLen ? 0 : newStream.batchIdx;
         newStream.tokenBatchIdx = isVariedLen ? newStream.batchIdx : 0;
+        newStream.stateBatchIdx = StateSequence(newStream.batchIdx);
         newStream.chunkOffset = isVariedLen ? gmNumChunks.GetValue(newStream.tokenBatchIdx) : 0;
         newStream.batchChunks = isVariedLen ? (gmNumChunks.GetValue(newStream.tokenBatchIdx + 1) - newStream.chunkOffset) : totalChunks;
         newStream.tokenOffset = isVariedLen ? gmNumSeq.GetValue(newStream.tokenBatchIdx) : 0;
@@ -209,8 +235,9 @@ struct BlockSchedulerGdnFwdHPreload {
      
         offset.isInitialState = stream.chunkIdx == 0; 
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1); 
-        offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim; 
-        offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim; 
+        offset.initialStateOffset = (static_cast<uint64_t>(stream.stateBatchIdx) * vNumHead +
+                                     stream.vHeadIdx) * kHeadDim * vHeadDim;
+        offset.finalStateOffset = offset.initialStateOffset;
         offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
         offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
         offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;

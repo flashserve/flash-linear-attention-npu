@@ -310,7 +310,9 @@ public:
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
                 uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
-                uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
+                const uint32_t stateBatchIdx = vecBlockScheduler.StateSequence(batchIdx);
+                uint64_t initialStateOffset =
+                    (static_cast<uint64_t>(stateBatchIdx) * vNumHead + vHeadIdx) * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                 uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
                 if (useInitialState) {

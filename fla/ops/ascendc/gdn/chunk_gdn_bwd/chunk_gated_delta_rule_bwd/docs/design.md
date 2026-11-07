@@ -45,6 +45,11 @@ arch35 通过输出 buffer 0 直接搬运同 dtype 的状态，不经过 FP32 �
 保留原 GVA 归约顺序、BF16 阶段落盘、指数换算和状态编号。仅 W/U 的空序列 metadata
 继续压缩，其它阶段仍使用原序列编号。公开八个返回槽位不变。
 
+arch22 FwdH 的 gated preload 内部使用压缩后的非空序列调度。初态和最终状态的
+序列轴仍保留空序列：发生压缩时，用非空序列起始 token 在原 cu_seqlens 中二分查找
+原序列编号；状态搬入和最终状态写回使用该编号，h 的 chunk 轴继续使用压缩编号。
+编号在 stream 初始化时保存，不在逐 chunk 更新中重复搜索，不增加 GM workspace 或同步。
+
 内部追加默认 false 的 `qkv_sequence_major` 属性，并通过 L0 重载、tiling 和模板选择传递。
 旧 L0 重载、ACLNN ABI 和独立子算子的默认行为保留。TilingKey 使用
 `ASCENDC_TPL_ARGS_DECL`、`ASCENDC_TPL_SEL` 和 `GET_TPL_TILING_KEY`。
