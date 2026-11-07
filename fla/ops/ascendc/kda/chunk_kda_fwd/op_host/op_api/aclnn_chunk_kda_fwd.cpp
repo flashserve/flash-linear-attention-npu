@@ -5,12 +5,24 @@
  */
 
 #include "aclnn_chunk_kda_fwd.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#undef OP_LOGE
+#undef OP_LOGE_WITHOUT_REPORT
+#endif
+#endif
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <initializer_list>
+#include <sstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "acl/acl.h"
@@ -41,6 +53,7 @@ constexpr int64_t KDA_STAGE_GATE_PREPARE = 0;
 constexpr int64_t KDA_STAGE_COUNT = 4;
 
 constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
+constexpr const char *KDA_FWD_ENTITY = "aclnnChunkKdaFwd";
 
 enum class KdaFwdLayout {
     BSND,
@@ -104,6 +117,153 @@ struct KdaShapeInfo {
     int64_t seqNum = 0;
     int64_t totalChunks = 0;
 };
+
+std::string DfxMakeShapeString(std::initializer_list<int64_t> dims)
+{
+    std::ostringstream stream;
+    stream << "[";
+    bool first = true;
+    for (int64_t dim : dims) {
+        if (!first) {
+            stream << ",";
+        }
+        stream << dim;
+        first = false;
+    }
+    stream << "]";
+    return stream.str();
+}
+
+std::string DfxTensorShapeString(const aclTensor *tensor)
+{
+    const auto &shape = tensor->GetViewShape();
+    std::ostringstream stream;
+    stream << "[";
+    for (size_t idx = 0; idx < shape.GetDimNum(); ++idx) {
+        if (idx != 0) {
+            stream << ",";
+        }
+        stream << shape.GetDim(idx);
+    }
+    stream << "]";
+    return stream.str();
+}
+
+std::string DfxDtypeString(DataType dtype)
+{
+    switch (dtype) {
+        case DataType::DT_FLOAT16:
+            return "FLOAT16";
+        case DataType::DT_BF16:
+            return "BF16";
+        case DataType::DT_FLOAT:
+            return "FLOAT";
+        default:
+            return std::to_string(static_cast<int32_t>(dtype));
+    }
+}
+
+void DfxReportInvalidInput(const char *paramName)
+{
+#if defined(OP_LOGE_LIBOPAPI_REPORT) && defined(OP_LOGE_WITH_INVALID_INPUT)
+    OP_LOGE_WITH_INVALID_INPUT(KDA_FWD_ENTITY, paramName);
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_NULLPTR, "Parameter %s of %s is required, but it is empty.", paramName,
+            KDA_FWD_ENTITY);
+#endif
+}
+
+void DfxReportInvalidShape(const char *paramName, const std::string &actual, const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_SHAPE)
+    OP_LOGE_FOR_INVALID_SHAPE(KDA_FWD_ENTITY, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameter %s of %s has incorrect shape %s. It should be %s.",
+            paramName, KDA_FWD_ENTITY, actual.c_str(), expected.c_str());
+#endif
+}
+
+void DfxReportInvalidShapeWithReason(const char *paramName, const std::string &actual,
+                                     const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON)
+    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(KDA_FWD_ENTITY, paramName, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameter %s of %s has incorrect shape %s. Reason: %s.",
+            paramName, KDA_FWD_ENTITY, actual.c_str(), reason.c_str());
+#endif
+}
+
+void DfxReportInvalidShapes(const char *paramNames, const std::string &actual, const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON)
+    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(KDA_FWD_ENTITY, paramNames, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameters %s of %s have incorrect shapes %s. Reason: %s.",
+            paramNames, KDA_FWD_ENTITY, actual.c_str(), reason.c_str());
+#endif
+}
+
+void DfxReportInvalidDtype(const char *paramName, const std::string &actual, const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_DTYPE)
+    OP_LOGE_FOR_INVALID_DTYPE(KDA_FWD_ENTITY, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameter %s of %s has incorrect dtype %s. It should be %s.",
+            paramName, KDA_FWD_ENTITY, actual.c_str(), expected.c_str());
+#endif
+}
+
+void DfxReportInvalidDtypes(const char *paramNames, const std::string &actual, const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON)
+    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(KDA_FWD_ENTITY, paramNames, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameters %s of %s have incorrect dtypes %s. Reason: %s.",
+            paramNames, KDA_FWD_ENTITY, actual.c_str(), reason.c_str());
+#endif
+}
+
+void DfxReportInvalidValue(const char *paramName, const std::string &actual, const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_VALUE)
+    OP_LOGE_FOR_INVALID_VALUE(KDA_FWD_ENTITY, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameter %s of %s has incorrect value %s. It should be %s.",
+            paramName, KDA_FWD_ENTITY, actual.c_str(), expected.c_str());
+#endif
+}
+
+void DfxReportInvalidValueWithReason(const char *paramName, const std::string &actual,
+                                     const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_VALUE_WITH_REASON)
+    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(KDA_FWD_ENTITY, paramName, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameter %s of %s has incorrect value %s. Reason: %s.",
+            paramName, KDA_FWD_ENTITY, actual.c_str(), reason.c_str());
+#endif
+}
+
+void DfxReportInvalidValues(const char *paramNames, const std::string &actual, const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_VALUES_WITH_REASON)
+    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(KDA_FWD_ENTITY, paramNames, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameters %s of %s have incorrect values %s. Reason: %s.",
+            paramNames, KDA_FWD_ENTITY, actual.c_str(), reason.c_str());
+#endif
+}
+
+void DfxReportInvalidListSize(const char *paramName, const std::string &actual, const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_LISTSIZE)
+    OP_LOGE_FOR_INVALID_LISTSIZE(KDA_FWD_ENTITY, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Parameter %s of %s has incorrect element nums %s. It should be %s.",
+            paramName, KDA_FWD_ENTITY, actual.c_str(), expected.c_str());
+#endif
+}
 
 op::Shape MakeShape(std::initializer_list<int64_t> dims)
 {
@@ -198,8 +358,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 
 static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
 {
-    CHECK_COND(layout != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "layout must be uppercase and one of BSND, BNSD, TND or NTD.");
+    if (layout == nullptr) {
+        DfxReportInvalidInput("layout");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (std::strcmp(layout, "BSND") == 0) {
         parsed = KdaFwdLayout::BSND;
     } else if (std::strcmp(layout, "BNSD") == 0) {
@@ -209,8 +371,8 @@ static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
     } else if (std::strcmp(layout, "NTD") == 0) {
         parsed = KdaFwdLayout::NTD;
     } else {
-        CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
-                   "layout must be uppercase and one of BSND, BNSD, TND or NTD.");
+        DfxReportInvalidValue("layout", layout, "BSND,BNSD,TND,NTD");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
 }
@@ -220,15 +382,28 @@ aclnnStatus CheckCuSeqlens(const aclIntArray *cuSeqlens, int64_t seqlen)
     if (cuSeqlens == nullptr) {
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(cuSeqlens->Size() >= 2, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional must contain at least [0, total_tokens].");
-    CHECK_COND((*cuSeqlens)[0] == 0, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional[0] must be 0.");
-    CHECK_COND((*cuSeqlens)[cuSeqlens->Size() - 1] == seqlen, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional last element must equal the sequence length.");
+    if (cuSeqlens->Size() < 2) {
+        DfxReportInvalidListSize("cuSeqlensOptional", std::to_string(cuSeqlens->Size()), ">=2");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*cuSeqlens)[0] != 0) {
+        DfxReportInvalidValue("cuSeqlensOptional[0]", std::to_string((*cuSeqlens)[0]), "0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*cuSeqlens)[cuSeqlens->Size() - 1] != seqlen) {
+        DfxReportInvalidValue("cuSeqlensOptional[last]",
+                              std::to_string((*cuSeqlens)[cuSeqlens->Size() - 1]),
+                              std::to_string(seqlen));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
-        CHECK_COND((*cuSeqlens)[idx] <= (*cuSeqlens)[idx + 1], ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional must be nondecreasing.");
+        if ((*cuSeqlens)[idx] > (*cuSeqlens)[idx + 1]) {
+            DfxReportInvalidValues("cuSeqlensOptional[idx],cuSeqlensOptional[idx+1]",
+                                   std::to_string((*cuSeqlens)[idx]) + "," +
+                                       std::to_string((*cuSeqlens)[idx + 1]),
+                                   "cu_seqlens must be nondecreasing");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -251,20 +426,31 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
     if (chunkIndices == nullptr) {
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(cuSeqlens != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "chunkIndicesOptional requires cuSeqlensOptional.");
-    CHECK_COND(chunkIndices->Size() == static_cast<size_t>(totalChunks) * 2,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunkIndicesOptional must contain exactly one (seq_id, chunk_id) pair per chunk.");
+    if (cuSeqlens == nullptr) {
+        DfxReportInvalidValues("chunkIndicesOptional,cuSeqlensOptional", "present,missing",
+                               "chunk_indices requires cu_seqlens");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (chunkIndices->Size() != static_cast<size_t>(totalChunks) * 2) {
+        DfxReportInvalidListSize("chunkIndicesOptional", std::to_string(chunkIndices->Size()),
+                                 std::to_string(static_cast<size_t>(totalChunks) * 2));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     size_t offset = 0;
     for (size_t seq = 0; seq + 1 < cuSeqlens->Size(); ++seq) {
         const int64_t length = (*cuSeqlens)[seq + 1] - (*cuSeqlens)[seq];
         const int64_t chunks = (length + chunkSize - 1) / chunkSize;
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-            CHECK_COND((*chunkIndices)[offset] == static_cast<int64_t>(seq) &&
-                           (*chunkIndices)[offset + 1] == chunk,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "chunkIndicesOptional must use canonical sequence-major chunk order.");
+            if ((*chunkIndices)[offset] != static_cast<int64_t>(seq) ||
+                (*chunkIndices)[offset + 1] != chunk) {
+                DfxReportInvalidValues(
+                    "chunkIndicesOptional[offset],chunkIndicesOptional[offset+1]",
+                    std::to_string((*chunkIndices)[offset]) + "," +
+                        std::to_string((*chunkIndices)[offset + 1]),
+                    "expected canonical sequence-major (" + std::to_string(seq) + "," +
+                        std::to_string(chunk) + ")");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             offset += 2;
         }
     }
@@ -276,13 +462,29 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
     info.isRank3 = layout == KdaFwdLayout::TND || layout == KdaFwdLayout::NTD;
     const size_t tensorRank = info.isRank3 ? 3 : 4;
     const size_t betaRank = info.isRank3 ? 2 : 3;
-    CHECK_COND(Rank(params.q) == tensorRank && Rank(params.k) == tensorRank &&
-                   Rank(params.v) == tensorRank && Rank(params.g) == tensorRank &&
-                   Rank(params.beta) == betaRank,
-               ACLNN_ERR_PARAM_INVALID,
-               "q/k/v/g and beta ranks must match layout: rank3/rank2 for TND/NTD, rank4/rank3 for BSND/BNSD.");
-    CHECK_COND(SameShape(params.q, params.k), ACLNN_ERR_PARAM_INVALID,
-               "q and k must have identical shape.");
+    const aclTensor *rankedInputs[] = {params.q, params.k, params.v, params.g};
+    const char *rankedNames[] = {"q", "k", "v", "g"};
+    for (size_t idx = 0; idx < sizeof(rankedInputs) / sizeof(rankedInputs[0]); ++idx) {
+        if (Rank(rankedInputs[idx]) != tensorRank) {
+            DfxReportInvalidShapeWithReason(
+                rankedNames[idx], std::to_string(Rank(rankedInputs[idx])) + "D",
+                "rank must be " + std::to_string(tensorRank) + " for the selected layout");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
+    if (Rank(params.beta) != betaRank) {
+        DfxReportInvalidShapeWithReason(
+            "beta", std::to_string(Rank(params.beta)) + "D",
+            "rank must be " + std::to_string(betaRank) + " for the selected layout");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!SameShape(params.q, params.k)) {
+        DfxReportInvalidShapes("q,k",
+                               "q=" + DfxTensorShapeString(params.q) + ",k=" +
+                                   DfxTensorShapeString(params.k),
+                               "q and k must have identical shape");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (layout == KdaFwdLayout::TND) {
         info.batch = 1;
@@ -291,10 +493,21 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(HasShape(params.v, {info.seqlen, info.hvNum, info.vDim}) &&
-                       HasShape(params.g, {info.seqlen, info.hvNum, info.kDim}) &&
-                       HasShape(params.beta, {info.seqlen, info.hvNum}),
-                   ACLNN_ERR_PARAM_INVALID, "TND expects v/g/beta as [T,HV,V], [T,HV,K], [T,HV].");
+        const std::string expectedV = DfxMakeShapeString({info.seqlen, info.hvNum, info.vDim});
+        const std::string expectedG = DfxMakeShapeString({info.seqlen, info.hvNum, info.kDim});
+        const std::string expectedBeta = DfxMakeShapeString({info.seqlen, info.hvNum});
+        if (!HasShape(params.v, {info.seqlen, info.hvNum, info.vDim})) {
+            DfxReportInvalidShape("v", DfxTensorShapeString(params.v), expectedV);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.seqlen, info.hvNum, info.kDim})) {
+            DfxReportInvalidShape("g", DfxTensorShapeString(params.g), expectedG);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.seqlen, info.hvNum})) {
+            DfxReportInvalidShape("beta", DfxTensorShapeString(params.beta), expectedBeta);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else if (layout == KdaFwdLayout::NTD) {
         info.batch = 1;
         info.hNum = Dim(params.q, 0);
@@ -302,10 +515,21 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 0);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(HasShape(params.v, {info.hvNum, info.seqlen, info.vDim}) &&
-                       HasShape(params.g, {info.hvNum, info.seqlen, info.kDim}) &&
-                       HasShape(params.beta, {info.hvNum, info.seqlen}),
-                   ACLNN_ERR_PARAM_INVALID, "NTD expects v/g/beta as [HV,T,V], [HV,T,K], [HV,T].");
+        const std::string expectedV = DfxMakeShapeString({info.hvNum, info.seqlen, info.vDim});
+        const std::string expectedG = DfxMakeShapeString({info.hvNum, info.seqlen, info.kDim});
+        const std::string expectedBeta = DfxMakeShapeString({info.hvNum, info.seqlen});
+        if (!HasShape(params.v, {info.hvNum, info.seqlen, info.vDim})) {
+            DfxReportInvalidShape("v", DfxTensorShapeString(params.v), expectedV);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.hvNum, info.seqlen, info.kDim})) {
+            DfxReportInvalidShape("g", DfxTensorShapeString(params.g), expectedG);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.hvNum, info.seqlen})) {
+            DfxReportInvalidShape("beta", DfxTensorShapeString(params.beta), expectedBeta);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else if (layout == KdaFwdLayout::BSND) {
         info.batch = Dim(params.q, 0);
         info.seqlen = Dim(params.q, 1);
@@ -313,11 +537,24 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 3);
         info.hvNum = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim}) &&
-                       HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim}) &&
-                       HasShape(params.beta, {info.batch, info.seqlen, info.hvNum}),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "BSND expects v/g/beta as [B,T,HV,V], [B,T,HV,K], [B,T,HV].");
+        const std::string expectedV =
+            DfxMakeShapeString({info.batch, info.seqlen, info.hvNum, info.vDim});
+        const std::string expectedG =
+            DfxMakeShapeString({info.batch, info.seqlen, info.hvNum, info.kDim});
+        const std::string expectedBeta =
+            DfxMakeShapeString({info.batch, info.seqlen, info.hvNum});
+        if (!HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim})) {
+            DfxReportInvalidShape("v", DfxTensorShapeString(params.v), expectedV);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim})) {
+            DfxReportInvalidShape("g", DfxTensorShapeString(params.g), expectedG);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.batch, info.seqlen, info.hvNum})) {
+            DfxReportInvalidShape("beta", DfxTensorShapeString(params.beta), expectedBeta);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
         info.batch = Dim(params.q, 0);
         info.hNum = Dim(params.q, 1);
@@ -325,11 +562,24 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 3);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim}) &&
-                       HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim}) &&
-                       HasShape(params.beta, {info.batch, info.hvNum, info.seqlen}),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "BNSD expects v/g/beta as [B,HV,T,V], [B,HV,T,K], [B,HV,T].");
+        const std::string expectedV =
+            DfxMakeShapeString({info.batch, info.hvNum, info.seqlen, info.vDim});
+        const std::string expectedG =
+            DfxMakeShapeString({info.batch, info.hvNum, info.seqlen, info.kDim});
+        const std::string expectedBeta =
+            DfxMakeShapeString({info.batch, info.hvNum, info.seqlen});
+        if (!HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim})) {
+            DfxReportInvalidShape("v", DfxTensorShapeString(params.v), expectedV);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim})) {
+            DfxReportInvalidShape("g", DfxTensorShapeString(params.g), expectedG);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!HasShape(params.beta, {info.batch, info.hvNum, info.seqlen})) {
+            DfxReportInvalidShape("beta", DfxTensorShapeString(params.beta), expectedBeta);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     info.seqNum = params.cuSeqlensOptional == nullptr
                       ? info.batch
@@ -341,26 +591,48 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
 aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
 {
     const DataType dataType = params.q->GetDataType();
-    CHECK_COND((dataType == DataType::DT_FLOAT16 || dataType == DataType::DT_BF16) &&
-                   params.k->GetDataType() == dataType && params.v->GetDataType() == dataType,
-               ACLNN_ERR_PARAM_INVALID, "q, k and v must use the same float16 or bfloat16 dtype.");
+    if (dataType != DataType::DT_FLOAT16 && dataType != DataType::DT_BF16) {
+        DfxReportInvalidDtype("q", DfxDtypeString(dataType), "FLOAT16,BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.k->GetDataType() != dataType || params.v->GetDataType() != dataType) {
+        DfxReportInvalidDtypes("k,v",
+                               "q=" + DfxDtypeString(dataType) + ",k=" +
+                                   DfxDtypeString(params.k->GetDataType()) + ",v=" +
+                                   DfxDtypeString(params.v->GetDataType()),
+                               "q, k and v must use the same dtype");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const DataType gateType = params.g->GetDataType();
-    CHECK_COND(gateType == DataType::DT_FLOAT || gateType == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "g must be float32 or bfloat16.");
+    if (gateType != DataType::DT_FLOAT && gateType != DataType::DT_BF16) {
+        DfxReportInvalidDtype("g", DfxDtypeString(gateType), "FLOAT,BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const DataType betaType = params.beta->GetDataType();
-    CHECK_COND(betaType == DataType::DT_FLOAT || betaType == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "beta must be float32 or bfloat16.");
+    if (betaType != DataType::DT_FLOAT && betaType != DataType::DT_BF16) {
+        DfxReportInvalidDtype("beta", DfxDtypeString(betaType), "FLOAT,BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.aLogOptional != nullptr) {
-        CHECK_COND(params.aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must be float32.");
+        if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
+            DfxReportInvalidDtype("aLogOptional",
+                                  DfxDtypeString(params.aLogOptional->GetDataType()), "FLOAT");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND(params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "dtBiasOptional must be float32.");
+        if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
+            DfxReportInvalidDtype("dtBiasOptional",
+                                  DfxDtypeString(params.dtBiasOptional->GetDataType()), "FLOAT");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.initialStateOptional != nullptr) {
-        CHECK_COND(params.initialStateOptional->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "initialStateOptional must be float32.");
+        if (params.initialStateOptional->GetDataType() != DataType::DT_FLOAT) {
+            DfxReportInvalidDtype("initialStateOptional",
+                                  DfxDtypeString(params.initialStateOptional->GetDataType()), "FLOAT");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -373,178 +645,254 @@ aclnnStatus CheckStateShape(const aclTensor *state, const char *name, const KdaS
     const bool valid = stateVFirst
                            ? HasShape(state, {info.seqNum, info.hvNum, info.vDim, info.kDim})
                            : HasShape(state, {info.seqNum, info.hvNum, info.kDim, info.vDim});
-    CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
-               "%s must be [N,HV,K,V] when stateVFirst=false and [N,HV,V,K] otherwise.", name);
+    if (!valid) {
+        const std::string expected =
+            stateVFirst ? DfxMakeShapeString({info.seqNum, info.hvNum, info.vDim, info.kDim})
+                        : DfxMakeShapeString({info.seqNum, info.hvNum, info.kDim, info.vDim});
+        DfxReportInvalidShape(name, DfxTensorShapeString(state), expected);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus CheckOptionalOutput(const aclTensor *output, const char *name, DataType expectedDtype,
+                                std::initializer_list<int64_t> expectedDims)
+{
+    if (output == nullptr) {
+        return ACLNN_SUCCESS;
+    }
+    if (!HasShape(output, expectedDims)) {
+        DfxReportInvalidShape(name, DfxTensorShapeString(output), DfxMakeShapeString(expectedDims));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (output->GetDataType() != expectedDtype) {
+        DfxReportInvalidDtype(name, DfxDtypeString(output->GetDataType()), DfxDtypeString(expectedDtype));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
 {
     const DataType dataType = params.q->GetDataType();
-    const bool attnShapeValid = info.isRank3
-                                    ? HasShape(params.attnOut, {info.seqlen, info.hvNum, info.vDim})
-                                    : HasShape(params.attnOut,
-                                               {info.batch, info.seqlen, info.hvNum, info.vDim});
-    CHECK_COND(attnShapeValid && params.attnOut->GetDataType() == dataType,
-               ACLNN_ERR_PARAM_INVALID,
-               "attnOut must match q dtype and use fixed sequence-major TND/BSND layout.");
-    if (params.gkOut != nullptr) {
-        const bool valid = info.isRank3
-                               ? HasShape(params.gkOut, {info.hvNum, info.seqlen, info.kDim})
-                               : HasShape(params.gkOut,
-                                          {info.batch, info.hvNum, info.seqlen, info.kDim});
-        CHECK_COND(valid && params.gkOut->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "gkOut must be float32 in fixed head-major NTD/BNSD layout.");
+    auto status = CheckOptionalOutput(
+        params.attnOut, "attnOut", dataType,
+        info.isRank3 ? std::initializer_list<int64_t>{info.seqlen, info.hvNum, info.vDim}
+                     : std::initializer_list<int64_t>{info.batch, info.seqlen, info.hvNum, info.vDim});
+    if (status != ACLNN_SUCCESS) {
+        return status;
     }
-    const aclTensor *matrixOutputs[] = {params.aqkOut, params.akkOut};
-    for (const aclTensor *output : matrixOutputs) {
-        if (output == nullptr) {
-            // Akk 为 OPTIONAL：省略时不导出，V2 组合入口退到 Prepare 的 none 档。
-            continue;
+    status = CheckOptionalOutput(
+        params.gkOut, "gkOut", DataType::DT_FLOAT,
+        info.isRank3 ? std::initializer_list<int64_t>{info.hvNum, info.seqlen, info.kDim}
+                     : std::initializer_list<int64_t>{info.batch, info.hvNum, info.seqlen, info.kDim});
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    for (const auto &matrixOutput : {std::make_pair(params.aqkOut, "aqkOut"),
+                                     std::make_pair(params.akkOut, "akkOut")}) {
+        status = CheckOptionalOutput(
+            matrixOutput.first, matrixOutput.second, dataType,
+            info.isRank3
+                ? std::initializer_list<int64_t>{info.hvNum, info.seqlen, params.chunkSize}
+                : std::initializer_list<int64_t>{info.batch, info.hvNum, info.seqlen, params.chunkSize});
+        if (status != ACLNN_SUCCESS) {
+            return status;
         }
-        const bool valid = info.isRank3
-                               ? HasShape(output, {info.hvNum, info.seqlen, params.chunkSize})
-                               : HasShape(output,
-                                          {info.batch, info.hvNum, info.seqlen, params.chunkSize});
-        CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout when provided.");
     }
-    const aclTensor *kOutputs[] = {params.wOut, params.qgOut, params.kgOut};
-    for (const aclTensor *output : kOutputs) {
-        if (output == nullptr) {
-            continue;
+    for (const auto &kOutput : {std::make_pair(params.wOut, "wOut"),
+                                std::make_pair(params.qgOut, "qgOut"),
+                                std::make_pair(params.kgOut, "kgOut")}) {
+        status = CheckOptionalOutput(
+            kOutput.first, kOutput.second, dataType,
+            info.isRank3
+                ? std::initializer_list<int64_t>{info.hvNum, info.seqlen, info.kDim}
+                : std::initializer_list<int64_t>{info.batch, info.hvNum, info.seqlen, info.kDim});
+        if (status != ACLNN_SUCCESS) {
+            return status;
         }
-        const bool valid = info.isRank3
-                               ? HasShape(output, {info.hvNum, info.seqlen, info.kDim})
-                               : HasShape(output,
-                                          {info.batch, info.hvNum, info.seqlen, info.kDim});
-        CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "w/qg/kg must match q dtype and use fixed head-major NTD/BNSD layout.");
     }
-    const aclTensor *vOutputs[] = {params.uOut, params.vNewOut};
-    for (const aclTensor *output : vOutputs) {
-        if (output == nullptr) {
-            continue;
+    for (const auto &vOutput : {std::make_pair(params.uOut, "uOut"),
+                                std::make_pair(params.vNewOut, "vNewOut")}) {
+        status = CheckOptionalOutput(
+            vOutput.first, vOutput.second, dataType,
+            info.isRank3
+                ? std::initializer_list<int64_t>{info.hvNum, info.seqlen, info.vDim}
+                : std::initializer_list<int64_t>{info.batch, info.hvNum, info.seqlen, info.vDim});
+        if (status != ACLNN_SUCCESS) {
+            return status;
         }
-        const bool valid = info.isRank3
-                               ? HasShape(output, {info.hvNum, info.seqlen, info.vDim})
-                               : HasShape(output,
-                                          {info.batch, info.hvNum, info.seqlen, info.vDim});
-        CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "u/vNew must match q dtype and use fixed head-major NTD/BNSD layout.");
     }
-    if (params.hOut != nullptr) {
-        const bool valid = params.stateVFirst
-                               ? (info.isRank3
-                                      ? HasShape(params.hOut,
-                                                 {info.totalChunks, info.hvNum, info.vDim, info.kDim})
-                                      : HasShape(params.hOut,
-                                                 {info.batch, info.totalChunks, info.hvNum,
-                                                  info.vDim, info.kDim}))
-                               : (info.isRank3
-                                      ? HasShape(params.hOut,
-                                                 {info.totalChunks, info.hvNum, info.kDim, info.vDim})
-                                      : HasShape(params.hOut,
-                                                 {info.batch, info.totalChunks, info.hvNum,
-                                                  info.kDim, info.vDim}));
-        CHECK_COND(valid && params.hOut->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "hOut must match q dtype, use fixed sequence-major layout, and follow stateVFirst.");
+    status = CheckOptionalOutput(
+        params.hOut, "hOut", dataType,
+        params.stateVFirst
+            ? (info.isRank3
+                   ? std::initializer_list<int64_t>{info.totalChunks, info.hvNum, info.vDim, info.kDim}
+                   : std::initializer_list<int64_t>{info.batch, info.totalChunks, info.hvNum, info.vDim,
+                                                    info.kDim})
+            : (info.isRank3
+                   ? std::initializer_list<int64_t>{info.totalChunks, info.hvNum, info.kDim, info.vDim}
+                   : std::initializer_list<int64_t>{info.batch, info.totalChunks, info.hvNum, info.kDim,
+                                                    info.vDim}));
+    if (status != ACLNN_SUCCESS) {
+        return status;
     }
     CHECK_RET(CheckStateShape(params.finalStateOut, "finalStateOut", info, params.stateVFirst) ==
                   ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     if (params.finalStateOut != nullptr) {
-        CHECK_COND(params.finalStateOut->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "finalStateOut must be float32.");
+        if (params.finalStateOut->GetDataType() != DataType::DT_FLOAT) {
+            DfxReportInvalidDtype("finalStateOut",
+                                  DfxDtypeString(params.finalStateOut->GetDataType()), "FLOAT");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, KdaShapeInfo &info)
 {
-    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
-                   params.g != nullptr && params.beta != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "q, k, v, g and beta must not be nullptr.");
-    CHECK_COND(params.attnOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "attnOut must not be nullptr.");
+    const aclTensor *requiredInputs[] = {params.q, params.k, params.v, params.g, params.beta};
+    const char *requiredInputNames[] = {"q", "k", "v", "g", "beta"};
+    for (size_t idx = 0; idx < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++idx) {
+        if (requiredInputs[idx] == nullptr) {
+            DfxReportInvalidInput(requiredInputNames[idx]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
+    if (params.attnOut == nullptr) {
+        DfxReportInvalidInput("attnOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     // aqkOut 对应 op def 的 REQUIRED 输出；akkOut 对应 OPTIONAL，省略时算子内部
     // 自建不导出的占位张量，V2 组合入口随之使用 Prepare 的 none 档。
-    CHECK_COND(params.aqkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "aqkOut must not be nullptr.");
-    CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize only supports 64.");
-    CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (params.aqkOut == nullptr) {
+        DfxReportInvalidInput("aqkOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.chunkSize != 64) {
+        DfxReportInvalidValue("chunkSize", std::to_string(params.chunkSize), "64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    auto status = ParseLayout(params.layout, layout);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = ResolveShapeInfo(params, layout, info);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
-    CHECK_COND(info.batch > 0, ACLNN_ERR_PARAM_INVALID,
-               "batch dimension must be greater than 0, but got B=%ld.", info.batch);
-    CHECK_COND(info.seqlen > 0, ACLNN_ERR_PARAM_INVALID,
-               "sequence length must be greater than 0, but got T=%ld.", info.seqlen);
-    CHECK_COND(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0,
-               ACLNN_ERR_PARAM_INVALID,
-               "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
-    CHECK_COND(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM,
-               ACLNN_ERR_PARAM_INVALID, "H and HV must be less than or equal to 128.");
+    if (info.batch <= 0) {
+        DfxReportInvalidValue("q.shape[B]", std::to_string(info.batch), ">0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (info.seqlen <= 0) {
+        DfxReportInvalidValue("q.shape[T]", std::to_string(info.seqlen), ">0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (info.hNum <= 0 || info.hvNum < info.hNum || info.hvNum % info.hNum != 0) {
+        DfxReportInvalidValues("H,HV",
+                               std::to_string(info.hNum) + "," + std::to_string(info.hvNum),
+                               "H and HV must be positive, HV >= H, and HV must be divisible by H");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (info.hNum > MAX_KDA_HEAD_NUM || info.hvNum > MAX_KDA_HEAD_NUM) {
+        DfxReportInvalidValues("H,HV",
+                               std::to_string(info.hNum) + "," + std::to_string(info.hvNum),
+                               "H and HV must be <= 128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
     // 其它取值；报错打印实际 K/V，便于调用方直接定位 shape。
     const bool kvDimSupported =
         (info.kDim == KDA_FWD_KV_DIM_SMALL && info.vDim == KDA_FWD_KV_DIM_SMALL) ||
         (info.kDim == KDA_FWD_KV_DIM_LARGE && info.vDim == KDA_FWD_KV_DIM_LARGE);
-    CHECK_COND(kvDimSupported, ACLNN_ERR_PARAM_INVALID,
-               "K/V must both be 64 or both be 128; mixed K/V and other dims are not "
-               "supported, but got Kdim=%ld, Vdim=%ld.",
-               info.kDim, info.vDim);
-    CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
-               ACLNN_ERR_PARAM_INVALID,
-               "rank4 varlen input with cuSeqlensOptional requires B=1.");
-    CHECK_COND(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES,
-               ACLNN_ERR_PARAM_INVALID, "varlen input supports at most 1024 sequences.");
-    CHECK_RET(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
-                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
-                              params.stateVFirst) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!kvDimSupported) {
+        DfxReportInvalidValues("q.shape[K],v.shape[V]",
+                               "K=" + std::to_string(info.kDim) + ",V=" + std::to_string(info.vDim),
+                               "K and V must both be 64 or both be 128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    status = CheckDtypes(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    if (params.cuSeqlensOptional != nullptr && !info.isRank3 && info.batch != 1) {
+        DfxReportInvalidValueWithReason("q.shape[0]", std::to_string(info.batch),
+                                        "rank4 input with cu_seqlens requires B=1");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.cuSeqlensOptional != nullptr && info.seqNum > MAX_KDA_VARLEN_SEQUENCES) {
+        DfxReportInvalidValue("cuSeqlensOptional.size", std::to_string(info.seqNum), "<=1024");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    status = CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
+                               info.totalChunks, params.chunkSize);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
+                             params.stateVFirst);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     // 归一化 / gate 开关约束：epsilon 只在 in-kernel L2 norm 时参与计算，
     // allowNegEigval 依赖 in-kernel beta sigmoid。
     const float epsilonFp32 = static_cast<float>(params.epsilon);
-    CHECK_COND(std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F, ACLNN_ERR_PARAM_INVALID,
-               "epsilon must be a positive finite number, but got %f.", params.epsilon);
-    CHECK_COND(!params.allowNegEigval || params.useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
-               "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
+    if (!std::isfinite(epsilonFp32) || epsilonFp32 <= 0.0F) {
+        DfxReportInvalidValue("epsilon", std::to_string(params.epsilon), "positive finite number");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.allowNegEigval && !params.useBetaSigmoidInKernel) {
+        DfxReportInvalidValueWithReason("allowNegEigval", "true",
+                                        "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.useGateInKernel) {
-        CHECK_COND(params.aLogOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "aLogOptional is required when useGateInKernel is true.");
-        CHECK_COND(HasShape(params.aLogOptional, {info.hvNum}), ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must have shape [HV].");
+        if (params.aLogOptional == nullptr) {
+            DfxReportInvalidInput("aLogOptional");
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+        if (!HasShape(params.aLogOptional, {info.hvNum})) {
+            DfxReportInvalidShape("aLogOptional", DfxTensorShapeString(params.aLogOptional),
+                                  DfxMakeShapeString({info.hvNum}));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         if (params.dtBiasOptional != nullptr) {
-            CHECK_COND(HasShape(params.dtBiasOptional, {info.hvNum * info.kDim}),
-                       ACLNN_ERR_PARAM_INVALID, "dtBiasOptional must have shape [HV*K].");
+            if (!HasShape(params.dtBiasOptional, {info.hvNum * info.kDim})) {
+                DfxReportInvalidShape("dtBiasOptional", DfxTensorShapeString(params.dtBiasOptional),
+                                      DfxMakeShapeString({info.hvNum * info.kDim}));
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         }
         if (params.safeGate) {
-            CHECK_COND(params.lowerBound >= -5.0 && params.lowerBound < 0.0,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "lowerBound must be in [-5, 0) when safeGate is true.");
+            if (params.lowerBound < -5.0 || params.lowerBound >= 0.0) {
+                DfxReportInvalidValue("lowerBound", std::to_string(params.lowerBound),
+                                      "[-5,0) when safeGate is true");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         }
     }
-    CHECK_RET(CheckOutputShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    return ACLNN_SUCCESS;
+    return CheckOutputShapes(params, info);
 }
 
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    const aclTensor *inputs[] = {params.q, params.k, params.v, params.g, params.beta,
+                                 params.aLogOptional, params.dtBiasOptional,
+                                 params.initialStateOptional};
+    for (const aclTensor *&input : inputs) {
+        auto status = MakeContiguous(input, executor);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -698,6 +1046,14 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
         safeGate, lowerBound, useGateInKernel, stateVFirst, 1.0e-6, false, false, false, true,
         attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
+    if (workspaceSize == nullptr) {
+        DfxReportInvalidInput("workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        DfxReportInvalidInput("executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     L2_DFX_PHASE_1(
         aclnnChunkKdaFwd,
         DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
@@ -711,8 +1067,14 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckParams(params, parsedLayout, info);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = ContiguousInputs(params, executorPtr);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
@@ -974,6 +1336,14 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         useBetaSigmoidInKernel, allowNegEigval, useExp2, attnOut, finalStateOut, gkOut,
         aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
         qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut};
+    if (workspaceSize == nullptr) {
+        DfxReportInvalidInput("workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        DfxReportInvalidInput("executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     L2_DFX_PHASE_1(
         aclnnChunkKdaFwdV2,
         DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
@@ -989,14 +1359,24 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckParams(params, parsedLayout, info);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = ContiguousInputs(params, executorPtr);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
-    CHECK_COND(CanUseKdaFwdV2Path(params, info), ACLNN_ERR_PARAM_INVALID,
-               "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
-               "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
+    if (!CanUseKdaFwdV2Path(params, info)) {
+        DfxReportInvalidValueWithReason(
+            "entry", "aclnnChunkKdaFwdV2",
+            "requires BF16 q/k/v, K=V=128, chunk_size=64, contiguous outputs, and strictly "
+            "increasing cu_seqlens; use aclnnChunkKdaFwd instead");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
     CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);

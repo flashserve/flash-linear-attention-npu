@@ -103,9 +103,10 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     };
 
     PreProcessBwdKernelMergedTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed"),
-                return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        // Process() 已上报带参数名、实际值和期望值的结构化错误；这里不再用通用错误覆盖最近错误。
+        return ge::GRAPH_FAILED;
+    }
 
     // TPL tilingKey = 模板参数组合（dtype + gate 模式）：kernel 侧由该 key 选中模板实例，不走 TILING_KEY_IS 分支
     const int dTQ = (qInputDesc->GetDataType() == ge::DT_BF16) ? PRE_PROCESS_BWD_KERNEL_MERGED_TPL_BF16
