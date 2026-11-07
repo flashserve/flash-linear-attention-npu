@@ -260,7 +260,7 @@ run_case \
     false \
     0 \
     success \
-    success,success,skipped,success,success \
+    success,success,success,success,success \
     true
 
 run_case \

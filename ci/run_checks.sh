@@ -147,7 +147,8 @@ write_docs_only_reports() {
             --output "$stage_report_file" \
             update \
             --stage "$stage" \
-            --status skipped \
+            --status success \
+            --exit-code 0 \
             --reason "documentation-only change; compilation and tests are not required"
     done
     python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize
@@ -816,6 +817,16 @@ skip_ci_stage() {
     echo "[CI][STAGE] SKIP ${stage}: ${reason}"
 }
 
+pass_disabled_ci_stage() {
+    local stage="$1"
+    local reason="$2"
+    # A stage disabled by the selected CI scope is a successful no-op. Keep
+    # skipped for stages that were not selected or were blocked by a previous
+    # failure, because those states still carry pipeline-control semantics.
+    update_ci_stage "$stage" success --exit-code 0 --reason "$reason"
+    echo "[CI][STAGE] PASS ${stage}: ${reason}"
+}
+
 stage_is_selected() {
     local stage="$1"
     (( stage_position[$stage] <= target_stage_position ))
@@ -836,7 +847,7 @@ run_pipeline_stage() {
         return
     fi
     if [[ "$enabled" != "true" ]]; then
-        skip_ci_stage "$stage" "stage is disabled by the current CI configuration"
+        pass_disabled_ci_stage "$stage" "stage is disabled by the current CI configuration"
         return
     fi
 
