@@ -386,7 +386,7 @@ private:
     }
 
     __aicore__ inline void PrefetchStage1Input(
-        const ChunkGdnBwdIntraWorkMeta &meta, int64_t r)
+        const ChunkGdnBwdIntraWorkMeta &meta, int64_t r, bool pairInputs = false)
     {
         constexpr int64_t PART_ROWS = 32;
         constexpr int64_t ROW_ELEMENTS = 64;
@@ -397,7 +397,8 @@ private:
             return;
         }
 
-        const uint32_t slot = static_cast<uint32_t>(r) & 1U;
+        const uint32_t slot = pairInputs ? static_cast<uint32_t>(r) :
+            static_cast<uint32_t>(r) & 1U;
         auto aLocal = resource_.ubBuf.template GetBufferByByte<MainT>(
             INTRA_A_UB_BASE + slot * INTRA_MATRIX_HALF_BYTES);
         auto gLocal = resource_.ubBuf.template GetBufferByByte<GateT>(
@@ -458,7 +459,7 @@ private:
     {
         if (tiling_->qkvSequenceMajor != 0) {
             for (uint32_t offset = 0; offset < count; ++offset) {
-                PrefetchStage1Input(meta, static_cast<int64_t>(firstSlot + offset));
+                PrefetchStage1Input(meta, static_cast<int64_t>(firstSlot + offset), true);
             }
             return;
         }

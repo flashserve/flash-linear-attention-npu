@@ -7,7 +7,7 @@ import torch
 import torch_npu  # noqa: F401
 
 from check_layout_equivalence import launch, load_executor
-from fla_npu.ops.ascendc import _runtime as rt
+import _layout_abi_probe as rt
 
 
 TENSORS = ("q", "k", "v", "g", "beta", "A", "d_o", "initial_state", "dht",

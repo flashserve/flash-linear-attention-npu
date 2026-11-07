@@ -199,10 +199,10 @@ private:
         auto l1Q = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_Q_BASE + r * L1_SLOT_BYTES);
         auto gmK = tla::MakeTensor(
-            kGm_[gmOffset], tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, qkvStride),
+            kGm_[gmOffset], tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128, qkvStride)),
             Catlass::Arch::PositionGM{});
         auto gmQ = tla::MakeTensor(
-            qGm_[gmOffset], tla::MakeLayout<MainT, LayoutCM>(qkvStride, meta.validTokens),
+            qGm_[gmOffset], tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens, qkvStride)),
             Catlass::Arch::PositionGM{});
         auto tensorL1K = tla::MakeTensor(
             l1K, tla::MakeLayout<MainT, typename ScoreTile::LayoutTagL1A>(64, 128),
