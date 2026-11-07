@@ -82,6 +82,8 @@ struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     int64_t headGroupNum;
 
     float scale;
+    // Shared host raw-data layout; arch35 kernels select layout via template.
+    int64_t qkvSequenceMajor;
 };
 
 } // namespace GDN

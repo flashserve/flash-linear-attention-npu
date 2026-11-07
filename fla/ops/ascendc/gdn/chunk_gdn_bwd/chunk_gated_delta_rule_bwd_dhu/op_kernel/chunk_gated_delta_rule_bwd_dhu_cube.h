@@ -164,8 +164,8 @@ public:
                         QKV_SEQUENCE_MAJOR ? HK_ * K_ : K_);
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
-                    LayoutTagQGT tagQGT = LayoutTagQGT::MakeLayout<DT>(
-                        QKV_SEQUENCE_MAJOR ? HK_ * K_ : K_, chunkSize_);
+                    // qg is produced into the contiguous internal workspace by VEC.
+                    LayoutTagQGT tagQGT = LayoutTagQGT::MakeLayout<DT>(K_, chunkSize_);
                     LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, V_DIM);
                     LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<DT>(K_, V_DIM);
 

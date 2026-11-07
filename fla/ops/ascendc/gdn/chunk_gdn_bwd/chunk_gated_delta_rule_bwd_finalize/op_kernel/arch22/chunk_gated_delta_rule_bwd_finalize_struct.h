@@ -2,6 +2,7 @@
 #define GDN_BWD_FINALIZE_A2_STRUCT_H
 
 #include <cstdint>
+#include "chunk_gated_delta_rule_bwd_finalize_tiling_key.h"
 
 #ifndef TORCH_MODE
 #include "ascendc/host_api/tiling/template_argument.h"
@@ -12,50 +13,6 @@ namespace GDN {
 #define TPL_BF16 10
 #define TPL_FP32 30
 
-#ifndef TORCH_MODE
-// arch22 私有模板：保留原五字段顺序，末位追加 MHA owner 编译开关。
-// false 的 16 项先注册，true 的 16 项随后；非 220 和 Host 继续使用原五字段声明。
-ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdFinalize,
-    ASCENDC_TPL_DTYPE_DECL(D_T_Q, TPL_BF16),
-    ASCENDC_TPL_DTYPE_DECL(D_T_G, TPL_BF16, TPL_FP32),
-    ASCENDC_TPL_BOOL_DECL(USE_QK_L2NORM, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(USE_BETA_SIGMOID, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(ENABLE_MHA_OWNER, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(QKV_SEQUENCE_MAJOR, 0, 1),
-);
-
-#define GDN_A2_TPL_SEL_ONE(Q, G, NORM, SIGMOID, EXP2, MHA_OWNER, QKV_SEQUENCE_MAJOR_VALUE) \
-    ASCENDC_TPL_ARGS_SEL( \
-        ASCENDC_TPL_DTYPE_SEL(D_T_Q, Q), \
-        ASCENDC_TPL_DTYPE_SEL(D_T_G, G), \
-        ASCENDC_TPL_BOOL_SEL(USE_QK_L2NORM, NORM), \
-        ASCENDC_TPL_BOOL_SEL(USE_BETA_SIGMOID, SIGMOID), \
-        ASCENDC_TPL_BOOL_SEL(USE_EXP2, EXP2), \
-        ASCENDC_TPL_BOOL_SEL(ENABLE_MHA_OWNER, MHA_OWNER), \
-        ASCENDC_TPL_BOOL_SEL(QKV_SEQUENCE_MAJOR, QKV_SEQUENCE_MAJOR_VALUE), \
-    )
-
-#define GDN_A2_TPL_SEL_FOR_DTYPE(Q, G, MHA_OWNER) \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 0, 0, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 0, 0, 0, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 0, 1, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 0, 0, 1, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 1, 0, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 0, 1, 0, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 1, 1, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 0, 1, 1, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 0, 0, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 1, 0, 0, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 0, 1, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 1, 0, 1, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 1, 0, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 1, 1, 0, MHA_OWNER, 1), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 1, 1, MHA_OWNER, 0), GDN_A2_TPL_SEL_ONE(Q, G, 1, 1, 1, MHA_OWNER, 1)
-
-ASCENDC_TPL_SEL(
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_BF16, 0),
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_FP32, 0),
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_BF16, 1),
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_FP32, 1),
-);
-
-#undef GDN_A2_TPL_SEL_FOR_DTYPE
-#undef GDN_A2_TPL_SEL_ONE
-#endif
 
 struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     // 输入逻辑 shape。K、V、chunkSize 分别从 q、v、A 的 shape 推导；

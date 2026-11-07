@@ -1,6 +1,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 
+#include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_tiling_key.h"
 #include "../op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.h"
 #include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
 #include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h"
@@ -22,6 +23,10 @@ namespace {
 namespace gdn_finalize_arch22 {
 
 using namespace GDN;
+using GDN::FinalizeArch22::g_tilingDeclareParams;
+#ifdef ASCENDC_DEBUG
+using GDN::FinalizeArch22::g_tilingSelectParams;
+#endif
 using GDN::FinalizeHostArch22::ShapeString;
 
 constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdFinalize";
@@ -462,17 +467,13 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
     context->GetWorkspaceSizes(1)[0] = systemWorkspace + layout.totalBytes;
-    const uint64_t baseTilingKey = GET_TPL_TILING_KEY(
-        static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
-        static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
-        static_cast<uint64_t>(useExp2Value));
-    OP_CHECK_IF(baseTilingKey >= GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK,
-                OP_LOGE(context->GetNodeName(), "A2 Finalize base TilingKey overlaps the private MHA-owner bit."),
-                return ge::GRAPH_FAILED);
     const bool enableMhaOwner = qKey == TPL_BF16 && tiling->K == K_SIZE_128 &&
         tiling->chunkSize == CHUNK_SIZE_64 && tiling->V == V_SIZE_128 && tiling->HK == tiling->HV;
-    const uint64_t actualTilingKey = baseTilingKey |
-        (enableMhaOwner ? GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK : uint64_t{0});
+    const uint64_t actualTilingKey = GET_TPL_TILING_KEY(
+        static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
+        static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
+        static_cast<uint64_t>(useExp2Value), static_cast<uint64_t>(enableMhaOwner),
+        static_cast<uint64_t>(qkvSequenceMajorValue));
     context->SetTilingKey(actualTilingKey);
     OP_LOGD(context->GetNodeName(),
             "GDN_FINALIZE_ARCH22_TILING actualKey=%" PRIu64 " owner=%u gKey=%d norm=%u sigmoid=%u exp2=%u",

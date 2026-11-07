@@ -16,10 +16,6 @@
 
 namespace GDN {
 
-// 固定 SDK 模板字段宽度为 8+8+1+1+1；私有第六个 bool 占 bit19。
-// Host 保持原五字段 GET，确认旧 key 不占该位后才合入此标志。
-constexpr uint64_t A2_FINALIZE_MHA_OWNER_KEY_MASK = uint64_t{1} << 19;
-
 // Host 和 device 共用同一份字节布局。DQ/WY 的临时区只在全核 barrier 后复用。
 struct A2FinalizeWorkspaceLayout {
     int64_t gOffset;
