@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+// Keep opdev's logging convention for CHECK_COND and CHECK_RET.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_gated_delta_rule_bwd.h"
 
 #ifndef GDN_BWD_ENABLE_ARCH22
@@ -23,7 +25,6 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
-#include "op_common/log/log.h"
 
 #include <array>
 #include <cmath>
@@ -678,7 +679,6 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     }
     const int64_t chunks = ChunkCount(params, info.tokens);
     const DataType dtype = qHead->GetDataType();
-    const op::Shape qShape = MakeShape({info.batch, info.hk, info.tokens, info.keyDim});
     const op::Shape vShape = MakeShape({info.batch, info.hv, info.tokens, info.valueDim});
     const op::Shape gateShape = MakeShape({info.batch, info.hv, info.tokens});
     const op::Shape wShape = MakeShape({info.batch, info.hv, info.tokens, info.keyDim});

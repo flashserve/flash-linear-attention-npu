@@ -59,3 +59,11 @@ python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py 
 GDN_ATK_CASE_JSON=<supplemental_json> \
   bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 ```
+
+公开 C ABI 的参数拦截和非连续输出兼容检查：
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_aclnn_layout_contract.py --device 0
+# A2/A3 额外回归 dq/dk/dv/dh0 非连续输出及非零 storage offset
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_aclnn_layout_contract.py --device 0 --output-views
+```
