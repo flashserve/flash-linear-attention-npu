@@ -452,6 +452,10 @@ public:
             AscendC::SyncAll<true>();
         }
 
+        if (hasDh0_ && hasDht_ && isVariable_ != 0) {
+            CopyEmptySequenceStates();
+        }
+
         const int64_t coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx() / subBlockNum_);
         const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
 
@@ -469,9 +473,6 @@ public:
             SeqInfo seqInfo;
             GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
             if (!seqInfo.valid) {
-                if (isVariable_ != 0 && seqInfo.tokenStart == seqInfo.tokenEnd) {
-                    CopyEmptySequenceDh0(seqIdx, hvBase, headCnt);
-                }
                 continue;
             }
 
@@ -1032,9 +1033,25 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
-    // Keep the exceptional empty-sequence copy out of the recurrence's
-    // register allocation and instruction working set.
-    __aicore__ __attribute__((noinline)) void CopyEmptySequenceDh0(
+    // Complete empty states before the recurrence creates its live task/state
+    // values. Keep the exceptional path out of the recurrence's register set.
+    __aicore__ __attribute__((noinline)) void CopyEmptySequenceStates()
+    {
+        const int64_t coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx() / subBlockNum_);
+        const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
+        for (int64_t taskIdx = coreIdx; taskIdx < taskNum_; taskIdx += blockNum) {
+            const int64_t seqIdx = taskIdx / headWindowNum_;
+            SeqInfo seqInfo;
+            GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
+            if (!seqInfo.valid && seqInfo.tokenStart == seqInfo.tokenEnd) {
+                const int64_t headWindowIdx = taskIdx - seqIdx * headWindowNum_;
+                const int64_t hvBase = headWindowIdx * headsPerTask_;
+                CopyEmptySequenceDh0(seqIdx, hvBase, Min(headsPerTask_, HV_ - hvBase));
+            }
+        }
+    }
+
+    __aicore__ inline void CopyEmptySequenceDh0(
         int64_t seqIdx, int64_t hvBase, int64_t headCnt)
     {
         if (!hasDh0_ || !hasDht_) {
