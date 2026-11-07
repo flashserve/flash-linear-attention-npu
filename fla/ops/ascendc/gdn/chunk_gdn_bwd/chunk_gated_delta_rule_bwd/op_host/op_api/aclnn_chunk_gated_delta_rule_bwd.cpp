@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 
 #if GDN_BWD_ENABLE_ARCH22
 #include "../../../chunk_bwd_dv_local/op_host/op_api/chunk_bwd_dv_local.h"
@@ -383,6 +384,30 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
                ACLNN_ERR_PARAM_INVALID, "K and V must both be 128.");
     CHECK_COND(info.hv % info.hk == 0 && info.hv / info.hk <= 4,
                ACLNN_ERR_PARAM_INVALID, "HV/HK must be an integer in [1, 4].");
+    if (info.sequenceMajor) {
+        // DataCopyExtParams expresses the GM row gap in bytes. The same
+        // bound protects public input gathers and gradient output scatters.
+        constexpr uint64_t ROW_BYTES = DIM_128 * sizeof(uint16_t);
+        constexpr uint64_t MAX_HEADS =
+            std::numeric_limits<uint32_t>::max() / ROW_BYTES + 1;
+        CHECK_COND(static_cast<uint64_t>(info.hk) <= MAX_HEADS,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "q/k/dq/dk: layout=%s requires HK <= %lu for the GM row gap, got %ld.",
+                   params.layout, MAX_HEADS, info.hk);
+        CHECK_COND(static_cast<uint64_t>(info.hv) <= MAX_HEADS,
+                   ACLNN_ERR_PARAM_INVALID,
+                   "v/dv: layout=%s requires HV <= %lu for the GM row gap, got %ld.",
+                   params.layout, MAX_HEADS, info.hv);
+        uint64_t remaining = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+        for (uint64_t factor : {static_cast<uint64_t>(info.batch),
+                                static_cast<uint64_t>(info.tokens),
+                                static_cast<uint64_t>(info.hv), ROW_BYTES}) {
+            CHECK_COND(factor <= remaining, ACLNN_ERR_PARAM_INVALID,
+                       "v/dv: layout=%s byte address B*T*HV*128*2 exceeds int64_t.",
+                       params.layout);
+            remaining /= factor;
+        }
+    }
     CHECK_RET(CheckLayoutShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
