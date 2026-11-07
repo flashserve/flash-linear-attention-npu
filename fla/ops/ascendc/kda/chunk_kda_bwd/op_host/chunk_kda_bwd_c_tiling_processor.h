@@ -104,12 +104,17 @@ public:
                                 "Kernel C matrix inputs must share q dtype"),
                         return ge::GRAPH_FAILED);
         }
-        for (size_t i : {KDA_C_GK, KDA_C_DQ_RAW, KDA_C_DAQK}) {
+        for (size_t i : {KDA_C_GK, KDA_C_DAQK}) {
             OP_CHECK_IF(ctx_.types[i] != ge::DT_FLOAT,
                         OP_LOGE(ctx_.nodeName,
-                                "gk/dq_raw/dAqk must be FP32"),
+                                "gk/dAqk must be FP32"),
                         return ge::GRAPH_FAILED);
         }
+        OP_CHECK_IF(ctx_.types[KDA_C_DQ_RAW] != ge::DT_FLOAT &&
+                        ctx_.types[KDA_C_DQ_RAW] != ge::DT_BF16,
+                    OP_LOGE(ctx_.nodeName,
+                            "dq_raw must be FP32 (BF16 on A5)"),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(ctx_.types[KDA_C_BETA] != ge::DT_BF16 &&
                         ctx_.types[KDA_C_BETA] != ge::DT_FLOAT,
                     OP_LOGE(ctx_.nodeName, "beta must be BF16 or FP32"),

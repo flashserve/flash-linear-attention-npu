@@ -47,6 +47,25 @@ __aicore__ inline bool CanUseA5SharedGateAnchor(
            tiling.lowerBound <= 0.0f;
 }
 
+// Pair-packed B lane: widen the B-pack granularity from one 16-row block
+// (anchor at rowStart+8) to one 32-row pair (anchor at pairBase+16), so each
+// chunk packs B twice instead of four times.  A 32-row span keeps every
+// materialized exp2 factor within +/-16 log2 steps of the anchor
+// (|lowerBound| <= 120*ln2/16 = 5.196 covers the API floor -5.0), so the
+// unclamped FinishScale primitives stay exact.  The lb domain is disjoint
+// from the shared lane above, and the T>=1024 mirror keeps every short
+// sequence on the legacy path.
+__aicore__ inline bool CanUseA5PairPackedB(
+    const ChunkKdaBwdCTilingData &tiling)
+{
+    return tiling.useGateInKernel != 0 && tiling.isVarLen == 0 &&
+           tiling.keyDim == 128 && tiling.chunkSize == kChunkSize &&
+           tiling.seqlen % kChunkSize == 0 &&
+           tiling.seqlen >= static_cast<int32_t>(kA5SharedGateMinSeqlen) &&
+           tiling.lowerBound >= -5.0f &&
+           tiling.lowerBound < kA5SharedGateMinLowerBound;
+}
+
 template <uint32_t K_DIM, bool VARLEN_TND>
 struct ProcessRowBlock {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -298,7 +317,8 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(0);
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         using ArchTag = Catlass::Arch::Ascend950;
@@ -341,8 +361,10 @@ public:
         LowerTailMmad lowerTail(resource);
         UpperTailMmad upperTail(resource);
         uint64_t window = 0;
-        for (uint64_t group = core; group < groups;
-             group += tiling_.usedCoreNum) {
+        uint64_t batchRound = 0;
+        for (uint64_t group = core + roundBegin * tiling_.usedCoreNum;
+             group < groups && batchRound < roundCount;
+             group += tiling_.usedCoreNum, ++batchRound) {
             const uint32_t taskIdx =
                 static_cast<uint32_t>(group / headWindows);
             const uint32_t headBase =
@@ -386,12 +408,27 @@ public:
                     uint64_t bSlotBase = slotBase;
                     bool useSharedB = false;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-                    useSharedB = CanUseA5SharedGateAnchor(tiling_) &&
+                    const bool usePairPackedB =
+                        !CanUseA5SharedGateAnchor(tiling_) &&
+                        CanUseA5PairPackedB(tiling_);
+                    useSharedB = (CanUseA5SharedGateAnchor(tiling_) ||
+                                  usePairPackedB) &&
                                  validC == kChunkSize &&
                                  processRowBlock == kRowBlock;
                     if (useSharedB) {
+                        // Shared lane: one chunk-wide B frame lives in the
+                        // group-first window's slot.  Pair lane: pair P's B
+                        // frame is packed by the pair's first Prepare window;
+                        // pair 1 uses the odd-parity slot so the dense16
+                        // pipeline's chunk-boundary drain closes its lifetime
+                        // exactly like the shared chunk-wide frame (Pre(w2)
+                        // precedes Post(w1), so a same-parity refill would
+                        // race block1's in-flight read of pair01's frame).
                         const uint64_t groupFirstWindow =
-                            window - rowStart / processRowBlock;
+                            usePairPackedB ?
+                                window - (rowStart % 32U) / processRowBlock +
+                                    rowStart / 32U :
+                                window - rowStart / processRowBlock;
                         const uint32_t bSlot =
                             CIntraWorkspaceSlot(groupFirstWindow, lane);
                         bSlotBase =
@@ -651,11 +688,12 @@ class ChunkKdaBwdCIntraVectorProcess {
 public:
     __aicore__ ChunkKdaBwdCIntraVectorProcess(
         GM_ADDR q, GM_ADDR k, GM_ADDR gk, GM_ADDR beta, GM_ADDR dAqk, GM_ADDR dAkk,
-        GM_ADDR dqBaseRaw, GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg,
+        GM_ADDR dh, GM_ADDR dqBaseRaw, GM_ADDR dq, GM_ADDR dk, GM_ADDR db, GM_ADDR dg,
         GM_ADDR dqOut, GM_ADDR dkOut, GM_ADDR dbOut, GM_ADDR dgOut, GM_ADDR cuSeqlens,
         GM_ADDR chunkMetadata, GM_ADDR rawG, GM_ADDR aLog, GM_ADDR dtBias,
         GM_ADDR dA, GM_ADDR dBias, GM_ADDR workspace)
         : q_(q), k_(k), gk_(gk), beta_(beta), dAqk_(dAqk), dAkk_(dAkk),
+          dh_(dh),
           dqBaseRaw_(dqBaseRaw), dq_(dq), dk_(dk), db_(db), dg_(dg),
           dqOut_(dqOut), dkOut_(dkOut), dbOut_(dbOut), dgOut_(dgOut),
           cuSeqlens_(cuSeqlens),
@@ -679,7 +717,8 @@ public:
         dAqkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAqk_));
         dAkkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dAkk_));
         dqBaseRawGm_.SetGlobalBuffer(
-            reinterpret_cast<__gm__ float *>(dqBaseRaw_));
+            reinterpret_cast<__gm__ KdaBwdDqRawStoreT *>(dqBaseRaw_));
+        dhFp32Gm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dh_));
         dqGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dq_));
         dkGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dk_));
         dbGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(db_));
@@ -734,7 +773,8 @@ public:
         }
     }
 
-    __aicore__ inline void Process()
+    __aicore__ inline void Process(
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
         const uint32_t coreIdx = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
         const uint32_t coreNum = static_cast<uint32_t>(tiling_.usedCoreNum);
@@ -746,12 +786,10 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                       kProcessRowBlock == kRowBlock) {
-            if (tiling_.isVarLen == 0 &&
-                tiling_.useGateInKernel != 0 &&
-                tiling_.seqlen % CHUNK_SIZE == 0) {
+            if (CanUseA5DenseRow16Intra(tiling_)) {
                 ProcessA5DenseRow16Pipeline(
                     coreIdx, coreNum, headNum, headWindowCount,
-                    taskGroupCount);
+                    taskGroupCount, roundBegin, roundCount);
                 // Drain the final Cube-ready wait and all dependent output
                 // stores before this fast path returns into phase SyncAll.
                 if (!CanUseA5SharedGateAnchor(tiling_)) {
@@ -776,9 +814,11 @@ public:
         }
 #endif
         uint64_t windowIdx = 0;
+        uint64_t batchRound = 0;
 
-        for (uint64_t taskGroupIdx = coreIdx; taskGroupIdx < taskGroupCount;
-             taskGroupIdx += coreNum) {
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && batchRound < roundCount;
+             taskGroupIdx += coreNum, ++batchRound) {
             // Decode directly from the logical group exactly as the paired
             // AIC path does.  This is required when varlen tiling selects a
             // usedCoreNum that is not a multiple of headWindowCount.
@@ -835,16 +875,14 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                     if constexpr (!PUBLIC_VARLEN && K_DIM == 128 &&
                                   kProcessRowBlock == kRowBlock) {
-                        if (tiling_.isVarLen == 0 &&
-                            tiling_.useGateInKernel != 0 &&
-                            tiling_.seqlen % CHUNK_SIZE == 0) {
+                        if (CanUseA5DenseRow16Intra(tiling_)) {
                             // Both AIVs consume every ready generation, but
                             // each completes one head so their Vector-Post
                             // work can overlap across the two-head window.
                             if (headInWindow == AscendC::GetSubBlockIdx()) {
                                 FinishHeadA5Dense16(
                                     task, headBase + headInWindow,
-                                    rowStart, validRows, slot, 0);
+                                    rowStart, validRows, slot, 0, windowIdx);
                             }
                             continue;
                         }
@@ -914,7 +952,7 @@ private:
                     CIntraWorkspaceSlot(windowIdx, headInWindow);
                 FinishHeadA5Dense16(
                     task, headBase + headInWindow, rowStart,
-                    kProcessRowBlock, slot, 0);
+                    kProcessRowBlock, slot, 0, windowIdx);
             }
         }
         // A parity slot contains both heads.  Do not let either AIV refill
@@ -924,14 +962,16 @@ private:
 
     __aicore__ inline void ProcessA5DenseRow16Pipeline(
         uint32_t coreIdx, uint32_t coreNum, uint32_t headNum,
-        uint32_t headWindowCount, uint64_t taskGroupCount)
+        uint32_t headWindowCount, uint64_t taskGroupCount,
+        uint64_t roundBegin = 0, uint64_t roundCount = UINT64_MAX)
     {
         static_assert(kProcessRowBlock == kRowBlock,
                       "The A5 row16 pipeline requires row16 tiles.");
         uint64_t windowIdx = 0;
-        for (uint64_t taskGroupIdx = coreIdx;
-             taskGroupIdx < taskGroupCount;
-             taskGroupIdx += coreNum, windowIdx += 4U) {
+        uint64_t batchRound = 0;
+        for (uint64_t taskGroupIdx = coreIdx + roundBegin * coreNum;
+             taskGroupIdx < taskGroupCount && batchRound < roundCount;
+             taskGroupIdx += coreNum, windowIdx += 4U, ++batchRound) {
             const uint32_t taskIdx =
                 static_cast<uint32_t>(taskGroupIdx / headWindowCount);
             const uint32_t headWindowIdx =
@@ -1709,6 +1749,25 @@ private:
                 }
                 return;
             }
+            if (CanUseA5PairPackedB(tiling_) &&
+                validRows == kProcessRowBlock &&
+                task.end - task.begin == CHUNK_SIZE) {
+                PackUpperA5Shared(
+                    task, head, rowStart, validRows, future,
+                    subBlock, slotBase);
+                if (rowStart % (2 * kProcessRowBlock) == 0) {
+                    // Pair 0's B frame shares this window's own slot; pair 1's
+                    // frame goes to the odd-parity slot so its write cannot
+                    // overlap block1's in-flight read of pair 0's frame
+                    // (Pre(w2) precedes Post(w1) in the dense16 pipeline).
+                    const uint64_t bSlotBase =
+                        rowStart == 0 ?
+                            slotBase : SlotBase(slot + kHeadsPerWindow);
+                    PackDenseA5BPair(
+                        task, head, rowStart, subBlock, bSlotBase);
+                }
+                return;
+            }
         }
 #endif
         PackUpperA(task, head, rowStart, validRows, future, subBlock, slotBase);
@@ -2384,6 +2443,147 @@ private:
             }
         }
     }
+
+    // Pair-packed B for the 32-row pair lane (CanUseA5PairPackedB).  One call
+    // packs the B operand consumed by both 16-row blocks of pair
+    // [pairBase, pairBase+32): BLower holds source rows [0, pairBase+32) at
+    // source-row indexing (k * exp2(anchor - gk_s), no beta), BUpper holds
+    // source rows [pairBase, 64) in the shared lane's interleaved layout
+    // (q at 2s, k*beta at 2s+1), all against the single pair-midpoint anchor
+    // gk[pairBase+16].  The VF primitives are the unclamped non-shared forms
+    // used by PackDenseA5B<false>; only the anchor row and the loop bounds
+    // differ.
+    __aicore__ inline void PackDenseA5BPair(
+        const CIntraTask &task, uint32_t head, uint32_t pairBase,
+        uint32_t subBlock, uint64_t slotBase)
+    {
+        static_assert(kProcessRowBlock == kRowBlock,
+                      "A5 fused B-pack requires stable row16 tiles.");
+        auto qData = Plane(0);
+        auto kData = Plane(2);
+        auto gate = Plane(4);
+        auto lowerData = Plane(6);
+        auto pairAnchor = Plane(8);
+        auto beta = Plane(9);
+        constexpr uint32_t rows = kProcessRowBlock;
+        constexpr uint32_t cols = K_DIM / 2;
+        const uint32_t col = subBlock * cols;
+        const uint32_t pairEnd = pairBase + 2 * kProcessRowBlock;
+        Load(
+            pairAnchor,
+            gkGm_[CIntraTensorOffset(
+                tiling_, task.batchIdx, head,
+                task.begin + pairBase + kProcessRowBlock, col)],
+            cols);
+
+        for (uint32_t sourceRow = 0; sourceRow < CHUNK_SIZE;
+             sourceRow += kProcessRowBlock) {
+            const bool needLower = sourceRow < pairEnd;
+            const bool needUpper = sourceRow >= pairBase;
+            const uint32_t token = task.begin + sourceRow;
+
+            if (needLower && needUpper) {
+                // The pair's second block supplies both contractions.  Keep
+                // one raw k copy for the lower scale before the upper pair
+                // updates kData in place.
+                LoadMatrixRowsPair(
+                    qData,
+                    qGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    kData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadRows(
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadScalarRows(
+                    beta,
+                    betaGm_[CIntraScalarOffset(
+                        tiling_, task.batchIdx, head, token)],
+                    rows);
+                KdaRegbaseGateScaleLowerPair(
+                    (__ubuf__ float *)qData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+            } else if (needLower) {
+                LoadMatrixRowsPair(
+                    lowerData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                KdaRegbaseGateScale<true, false>(
+                    (__ubuf__ float *)lowerData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)0, rows, cols);
+            } else {
+                LoadMatrixRowsPair(
+                    qData,
+                    qGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements(),
+                    kData,
+                    kGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadRows(
+                    gate,
+                    gkGm_[CIntraTensorOffset(
+                        tiling_, task.batchIdx, head, token, col)],
+                    rows, cols, TensorRowElements());
+                LoadScalarRows(
+                    beta,
+                    betaGm_[CIntraScalarOffset(
+                        tiling_, task.batchIdx, head, token)],
+                    rows);
+                KdaRegbaseGateScalePair(
+                    (__ubuf__ float *)qData.GetPhyAddr(),
+                    (__ubuf__ float *)kData.GetPhyAddr(),
+                    (__ubuf__ float *)gate.GetPhyAddr(),
+                    (__ubuf__ float *)pairAnchor.GetPhyAddr(),
+                    (__ubuf__ float *)beta.GetPhyAddr(), rows, cols);
+            }
+
+            if (needLower) {
+                const uint64_t lowerOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBLowerOffset / sizeof(float) +
+                    static_cast<uint64_t>(sourceRow) * K_DIM + col;
+                StoreRows(
+                    workspaceGm_[lowerOffset], lowerData,
+                    rows, cols, K_DIM);
+            }
+            if (needUpper) {
+                const uint32_t upperRow = 2 * sourceRow;
+                const uint64_t qOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(upperRow) * K_DIM + col;
+                const uint64_t kOffset =
+                    slotBase / sizeof(float) +
+                    tiling_.intraBUpperOffset / sizeof(float) +
+                    static_cast<uint64_t>(upperRow + 1) * K_DIM + col;
+                StoreRows(
+                    workspaceGm_[qOffset], qData,
+                    rows, cols, 2 * K_DIM);
+                StoreRows(
+                    workspaceGm_[kOffset], kData,
+                    rows, cols, 2 * K_DIM);
+            }
+        }
+    }
 #endif
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -2582,7 +2782,7 @@ private:
                 tiling_, task.batchIdx, head, anchorRow, 0)],
             1, cols, TensorRowElements());
         CopyInMatrixRowsDirect(
-            dqBaseRaw,
+            reduceTmp_.Get<KdaBwdDqRawStoreT>(),
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
@@ -2652,7 +2852,7 @@ private:
             (__ubuf__ float *)anchor.GetPhyAddr(),
             (__ubuf__ float *)beta.GetPhyAddr(),
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
-            (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+            (__ubuf__ KdaBwdDqRawStoreT *)dqBaseRaw.GetPhyAddr(),
             (__ubuf__ float *)anchorExp.GetPhyAddr(),
             (__ubuf__ float *)gate.GetPhyAddr(), tiling_.scale,
             ownedRows, cols);
@@ -2741,7 +2941,7 @@ private:
 
     __aicore__ inline void FinishHeadA5Dense16(
         const CIntraTask &task, uint32_t head, uint32_t rowStart, uint32_t validRows,
-        uint32_t slot, uint32_t ownedBegin)
+        uint32_t slot, uint32_t ownedBegin, uint32_t windowIdx)
     {
         static_assert(K_DIM == 128,
                       "The A5 16-row Vector-Post path is specialized for K=128.");
@@ -2757,6 +2957,14 @@ private:
             ownedBegin + 16 <= validRows ? 16 : validRows - ownedBegin;
         const uint32_t tokenBegin = task.begin + rowStart + ownedBegin;
         const uint64_t slotBase = SlotBase(slot);
+        const bool useFcCarrier = CanUseFcCarrierHandover(tiling_);
+        // WY generation slot for this batch-local chunk: the batch=2 ring is
+        // ((gen&1)*2)+lane with gen = windowIdx>>2, and the lane of a dense
+        // 2-head window is head & 1.  Only valid when useFcCarrier is set
+        // (the batch lockstep keeps the slot content alive into Intra).
+        const uint64_t wySlotBase = WyWorkspaceSlotBase(
+            tiling_, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
+            windowIdx >> 2, head & 1U);
 
         // One 16 x 128 FP32 matrix occupies two consecutive 4 KiB planes.
         // Keep only the values that remain live across the scale and output
@@ -2782,9 +2990,21 @@ private:
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
 
         const bool useSharedB = CanUseA5SharedGateAnchor(tiling_);
-        const uint32_t localAnchor =
+        const bool usePairPackedB =
+            !useSharedB && CanUseA5PairPackedB(tiling_);
+        uint32_t localAnchor =
             rowStart + 8 < task.end - task.begin ?
                 rowStart + 8 : task.end - task.begin - 1;
+        if (usePairPackedB) {
+            // Pair lane packs B against the pair-midpoint anchor gk[32P+16];
+            // finish must rescale against the same anchor.  The unclamped
+            // FinishScale form stays in use (the pair span keeps every split
+            // exponent within +/-16 log2 steps).
+            const uint32_t pairAnchor = (rowStart / 32U) * 32U + 16U;
+            localAnchor =
+                pairAnchor < task.end - task.begin ?
+                    pairAnchor : task.end - task.begin - 1;
+        }
         const uint32_t lowerAnchorRow =
             task.begin + (useSharedB ? CHUNK_SIZE - 8 : localAnchor);
         const uint32_t upperAnchorRow =
@@ -2821,7 +3041,7 @@ private:
                 tiling_, task.batchIdx, head, upperAnchorRow, 0)],
             1, cols, TensorRowElements());
         CopyInMatrixRowsDirect(
-            dqBaseRaw,
+            dqBaseRaw.template ReinterpretCast<KdaBwdDqRawStoreT>(),
             dqBaseRawGm_[CIntraTensorOffset(
                 tiling_, task.batchIdx, head, tokenBegin, 0)],
             ownedRows, cols, TensorRowElements());
@@ -2873,7 +3093,7 @@ private:
                 (__ubuf__ float *)upperAnchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
-                (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+                (__ubuf__ KdaBwdDqRawStoreT *)dqBaseRaw.GetPhyAddr(),
                 (__ubuf__ float *)anchorExp.GetPhyAddr(),
                 (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
                 ownedRows, cols);
@@ -2888,7 +3108,7 @@ private:
                 (__ubuf__ float *)lowerAnchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
-                (__ubuf__ float *)dqBaseRaw.GetPhyAddr(),
+                (__ubuf__ KdaBwdDqRawStoreT *)dqBaseRaw.GetPhyAddr(),
                 (__ubuf__ float *)anchorExp.GetPhyAddr(),
                 (__ubuf__ float *)dqFinal.GetPhyAddr(), tiling_.scale,
                 ownedRows, cols);
@@ -2900,14 +3120,26 @@ private:
         // directly with the Intra correction, so only the mature dk/dg matrix
         // input ping/pong remains here.  Issue both MTE2 reads before storing
         // dq_final to overlap input traffic with the independent MTE3 write.
-        const uint32_t dkSlot = CopyInMatrixRows(
-            dkGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements());
-        const uint32_t dgSlot = CopyInMatrixRows(
-            dgGm_[CIntraTensorOffset(
-                tiling_, task.batchIdx, head, tokenBegin, 0)],
-            ownedRows, cols, TensorRowElements());
+        const uint32_t dkSlot = useFcCarrier
+            ? CopyInMatrixRows(
+                  workspaceGm_[(wySlotBase + tiling_.dKgbOffset) /
+                                   sizeof(float) +
+                               static_cast<uint64_t>(rowStart + ownedBegin) * cols],
+                  ownedRows, cols, TensorRowElements())
+            : CopyInMatrixRows(
+                  dkGm_[CIntraTensorOffset(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  ownedRows, cols, TensorRowElements());
+        const uint32_t dgSlot = useFcCarrier
+            ? CopyInMatrixRows(
+                  dhFp32Gm_[WyDhOffset(tiling_, task.batchIdx, head,
+                                       task.chunkIdx) / 2U +
+                              static_cast<uint64_t>(rowStart + ownedBegin) * cols],
+                  ownedRows, cols, TensorRowElements())
+            : CopyInMatrixRows(
+                  dgGm_[CIntraTensorOffset(
+                      tiling_, task.batchIdx, head, tokenBegin, 0)],
+                  ownedRows, cols, TensorRowElements());
         StoreRows(dqOutGm_[CIntraTensorOffset(
                       tiling_, task.batchIdx, head, tokenBegin, 0)],
                   dqFinal, ownedRows, cols, TensorRowElements());
@@ -2990,7 +3222,7 @@ private:
                       kProcessRowBlock == 32) {
             FinishHeadA5Dense16(
                 task, head, rowStart, validRows, slot,
-                AscendC::GetSubBlockIdx() * 16U);
+                AscendC::GetSubBlockIdx() * 16U, 0);
             return;
         }
 #endif
@@ -3098,7 +3330,9 @@ private:
                 (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)beta.GetPhyAddr(),
                 (__ubuf__ float *)dbAcc.GetPhyAddr(),
-                (__ubuf__ float *)rawDq.GetPhyAddr(),
+                // FUSE_DQ_BASE=false: the dq-base operand is dead here; the
+                // cast only matches the BF16 storage signature (H5-C1).
+                (__ubuf__ KdaBwdDqRawStoreT *)rawDq.GetPhyAddr(),
                 (__ubuf__ float *)anchor.GetPhyAddr(),
                 (__ubuf__ float *)rawDq.GetPhyAddr(), 0.0f,
                 ownedRows, cols);
@@ -3223,6 +3457,7 @@ private:
     GM_ADDR beta_;
     GM_ADDR dAqk_;
     GM_ADDR dAkk_;
+    GM_ADDR dh_;
     GM_ADDR dqBaseRaw_;
     GM_ADDR dq_;
     GM_ADDR dk_;
@@ -3273,7 +3508,8 @@ private:
     AscendC::GlobalTensor<BetaT> betaGm_;
     AscendC::GlobalTensor<float> dAqkGm_;
     AscendC::GlobalTensor<float> dAkkGm_;
-    AscendC::GlobalTensor<float> dqBaseRawGm_;
+    AscendC::GlobalTensor<float> dhFp32Gm_;
+    AscendC::GlobalTensor<KdaBwdDqRawStoreT> dqBaseRawGm_;
     AscendC::GlobalTensor<float> dqGm_;
     AscendC::GlobalTensor<float> dkGm_;
     AscendC::GlobalTensor<float> dbGm_;
