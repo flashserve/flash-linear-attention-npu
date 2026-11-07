@@ -57,20 +57,28 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
 def _chunk_scaled_dot_kkt_ref(inputs):
     k, g, beta = inputs["k"], inputs["g"], inputs["beta"]
     B, HK, T, _ = k.shape
+    HV = g.shape[1]
+    if beta.shape[1] != HV or HV % HK != 0:
+        raise RuntimeError(
+            f"invalid GVA heads: k has HK={HK}, g/beta must share HV and HV % HK == 0, "
+            f"got g={tuple(g.shape)}, beta={tuple(beta.shape)}"
+        )
     chunk_size = int(inputs["chunk_size"])
     calc = torch.float64 if k.dtype == torch.float64 else torch.float32
-    out = torch.zeros((B, HK, T, chunk_size), dtype=calc, device=k.device)
+    out = torch.zeros((B, HV, T, chunk_size), dtype=calc, device=k.device)
+    head_ratio = HV // HK
     for b in range(B):
-        for hk in range(HK):
+        for hv in range(HV):
+            hk = hv // head_ratio
             for start, end in _chunks(T, chunk_size):
                 length = end - start
                 k_chunk = k[b, hk, start:end].to(calc)
-                g_chunk = g[b, hk, start:end].to(calc)
-                beta_chunk = beta[b, hk, start:end].to(calc)
+                g_chunk = g[b, hv, start:end].to(calc)
+                beta_chunk = beta[b, hv, start:end].to(calc)
                 score = torch.matmul(k_chunk, k_chunk.t())
                 gate = torch.exp(g_chunk[:, None] - g_chunk[None, :])
                 mask = torch.tril(torch.ones((length, length), dtype=calc, device=k.device), diagonal=-1)
-                out[b, hk, start:end, :length] = score * gate * beta_chunk[None, :] * mask
+                out[b, hv, start:end, :length] = score * gate * beta_chunk[:, None] * mask
     return out.to(torch.float32)
 
 
