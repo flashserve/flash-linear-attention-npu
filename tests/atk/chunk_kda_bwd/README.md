@@ -65,3 +65,19 @@ atk node -b cpu task -c atk_chunk_kda_bwd.json -p executor_chunk_kda_bwd.py -s 0
 
 ATK CPU 单条实际执行：`success 1, failed 0`（仅 CPU 执行，不含 NPU 对比）。
 正式生成后运行 `python scripts/archive_cases.py` 可重现种子固定、静态去重和编号归档。
+
+## safe_gate 参数回归（Issue #1057）
+
+安装当前 A2/A3 OPP 后，在仓库根目录运行：
+
+```bash
+python tests/stable_abi/test_chunk_kda_bwd_safe_gate.py --device 0
+```
+
+覆盖 BNSD/BSND/NTD/TND：4 个 `safe_gate=True` 保存缓存执行 smoke，以及保存缓存、
+重计算路径的 8 个 `safe_gate=False` 负例。负例须在 ACLNN GetWorkspaceSize 返回
+161002，并包含结构化错误码、safe_gate 实际值 false 和平台期望值 true on A2/A3。
+
+2026-11-05，Ascend 910B3 / CANN 9.2.0 定向构建安装后，12 项全部通过；未修复的
+`0.dev20261105+main.131fd3e` 包在首个负例返回 561103，测试按预期失败。
+此记录仅为接口回归与正常执行检查，不代替 ATK 数值精度验收；A3/A5 实机未执行。
