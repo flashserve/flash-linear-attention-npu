@@ -412,7 +412,6 @@ public:
         InitVectorEvents();
     }
 
-    template <bool COPY_EMPTY_STATES>
     __aicore__ inline void Process()
     {
         constexpr uint32_t qgL1PaddedRows = 128;
@@ -453,10 +452,6 @@ public:
             AscendC::SyncAll<true>();
         }
 
-        if constexpr (COPY_EMPTY_STATES) {
-            CopyEmptySequenceStates();
-        }
-
         const int64_t coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx() / subBlockNum_);
         const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
 
@@ -474,6 +469,9 @@ public:
             SeqInfo seqInfo;
             GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
             if (!seqInfo.valid) {
+                if (isVariable_ != 0 && seqInfo.tokenStart == seqInfo.tokenEnd) {
+                    CopyEmptySequenceDh0(seqIdx, hvBase, headCnt);
+                }
                 continue;
             }
 
@@ -1034,43 +1032,19 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
-    // Only the exceptional dispatch uses an outlined recurrence. The normal
-    // dispatch inlines Process<false> without an empty-state call or branch.
-public:
-    __aicore__ __attribute__((noinline)) void ProcessWithEmptySequenceStates()
-    {
-        Process<true>();
-    }
-
-private:
-    // Complete empty states before the recurrence creates its live task/state
-    // values. Keep the exceptional path out of the recurrence's register set.
-    __aicore__ __attribute__((noinline)) void CopyEmptySequenceStates()
-    {
-        const int64_t coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx() / subBlockNum_);
-        const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
-        for (int64_t taskIdx = coreIdx; taskIdx < taskNum_; taskIdx += blockNum) {
-            const int64_t seqIdx = taskIdx / headWindowNum_;
-            SeqInfo seqInfo;
-            GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
-            if (!seqInfo.valid && seqInfo.tokenStart == seqInfo.tokenEnd) {
-                const int64_t headWindowIdx = taskIdx - seqIdx * headWindowNum_;
-                const int64_t hvBase = headWindowIdx * headsPerTask_;
-                CopyEmptySequenceDh0(seqIdx, hvBase, Min(headsPerTask_, HV_ - hvBase));
-            }
-        }
-    }
-
     __aicore__ inline void CopyEmptySequenceDh0(
         int64_t seqIdx, int64_t hvBase, int64_t headCnt)
     {
         if (!hasDh0_ || !hasDht_) {
             return;
         }
-        // No recurrence runs for an empty sequence: hT == h0. Both public
-        // states have the same physical layout, including stateVFirst.
-        // Reuse the q input and output slot protocols; qFp32 is V-only scratch.
-        AscendC::LocalTensor<float> scratch = qFp32Buf_.template Get<float>();
+        // hT == h0, including the physical state layout and dtype. Copy the
+        // bits through output slot 0; no FP32 conversion or Vector scratch.
+        // Temporarily borrow q slot 0's empty event credits to bridge
+        // MTE3 -> V -> MTE2 and MTE2 -> V -> MTE3 for this output buffer.
+        // No q buffer is accessed, and its initial credit is restored below.
+        constexpr uint32_t SLOT = 0;
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
         for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
             if (headOffset % subBlockNum_ != subBlockIdx_) {
                 continue;
@@ -1078,13 +1052,19 @@ private:
             const int64_t stateBase = (seqIdx * HV_ + hvBase + headOffset) * K_ * V_;
             for (int64_t offset = 0; offset < K_ * V_; offset += vecRow_ * V_) {
                 const uint32_t elems = static_cast<uint32_t>(Min(vecRow_ * V_, K_ * V_ - offset));
-                const uint32_t inputIdx = curQInputPingPong_;
-                CopyInRows(dhtGm_, qInputBuf_[inputIdx], stateBase + offset, elems);
-                CastInputRows(scratch, qInputBuf_[inputIdx], elems, inputIdx);
-                AscendC::PipeBarrier<PIPE_V>();
-                CopyOutFp32Rows(dh0Gm_, scratch, stateBase + offset, elems);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SLOT]);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
+                AscendC::DataCopy(outputBuf_[SLOT], dhtGm_[stateBase + offset], elems);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SLOT]);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SLOT]);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[SLOT]);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[SLOT]);
+                AscendC::DataCopy(dh0Gm_[stateBase + offset], outputBuf_[SLOT], elems);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SLOT]);
             }
         }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
     }
 
     // Load the terminal gradient into the internal fp32 [K, V] state.

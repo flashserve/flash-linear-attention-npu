@@ -46,15 +46,7 @@ __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
         AscendC::TPipe pipe;
         ChunkGatedDeltaRuleBwdDhuVector<DT, GT, USE_GK, QKV_SEQUENCE_MAJOR> vec;
         vec.Init(q, gate, dv, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData, &pipe);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (tilingData->hasDh0 != 0 && dht != nullptr && tilingData->isVariable != 0) {
-            vec.ProcessWithEmptySequenceStates();
-        } else {
-            vec.template Process<false>();
-        }
-#else
         vec.Process();
-#endif
     }
 }
 
