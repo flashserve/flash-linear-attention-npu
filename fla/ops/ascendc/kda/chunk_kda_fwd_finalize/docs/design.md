@@ -7,6 +7,7 @@ Prepare 已生成按 HV 展开的 `qg_scaled` 和 `Aqk`，FwdH 已生成
 `attn_out`，不读取原始 `q/k/v/g/beta`，不输出反向检查点或
 `h/final_state`。公开约束见[算子 README](../README.md#输入输出)。
 
+
 ## 数学与精度
 
 对每个 batch、value head、序列及其第 `c` 个 chunk，设有效长度为
