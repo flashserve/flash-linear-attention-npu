@@ -456,7 +456,6 @@ private:
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
-        tiling_.qkvSequenceMajor = ctx_.qkvSequenceMajor ? 1 : 0;
 
         if (tiling_.K != K_SIZE_128) {
             return ge::GRAPH_FAILED;

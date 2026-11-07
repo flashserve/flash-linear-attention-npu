@@ -95,7 +95,6 @@ struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t hasGk;
     int64_t useExp2;
     int64_t stateVFirst;
-    int64_t qkvSequenceMajor;
     int64_t workspaceElemsPerSubBlock;
     int64_t qgWorkspaceOffset;
     int64_t stateWorkspaceOffset;

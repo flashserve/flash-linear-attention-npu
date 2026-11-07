@@ -82,7 +82,6 @@ struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     int64_t headGroupNum;
 
     float scale;
-    int64_t qkvSequenceMajor;
 };
 
 } // namespace GDN

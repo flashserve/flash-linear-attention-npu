@@ -1478,7 +1478,6 @@ public:
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
-        qkvSequenceMajor_ = QKV_SEQUENCE_MAJOR;
         pipe_ = pipe;
         stateChunkNum_ = tiling_->isVariable != 0 ? tiling_->totalChunkNum : tiling_->chunkNumForT;
         coreIdx_ = static_cast<int64_t>(AscendC::GetBlockIdx()) / AIV_COUNT_2;
@@ -2408,7 +2407,6 @@ private:
     AscendC::GlobalTensor<float> kRstdGm_;
     AscendC::GlobalTensor<DT> dqOutGm_;
     AscendC::GlobalTensor<DT> dkOutGm_;
-    bool qkvSequenceMajor_ = false;
     AscendC::GlobalTensor<GT> dgOutGm_;
     AscendC::GlobalTensor<DT> kbgOutGm_;
     AscendC::GlobalTensor<DT> vbOutGm_;

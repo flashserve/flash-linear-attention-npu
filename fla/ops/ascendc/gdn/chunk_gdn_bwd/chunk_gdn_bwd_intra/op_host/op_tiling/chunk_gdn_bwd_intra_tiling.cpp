@@ -190,7 +190,6 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->blockDim = schedule.blockDim;
     tiling->isVarlen = isVarlen ? 1 : 0;
     tiling->useExp2 = *useExp2 ? 1 : 0;
-    tiling->qkvSequenceMajor = *qkvSequenceMajor ? 1 : 0;
     tiling->scale = static_cast<float>(*scale);
     tiling->reserved = arch22 ? 2201 : 0;
     const uint64_t strategyKey = isVarlen ?

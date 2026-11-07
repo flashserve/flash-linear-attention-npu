@@ -180,7 +180,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
 #endif
     OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, qkvSequenceMajorValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
-    tiling->qkvSequenceMajor = qkvSequenceMajorValue ? 1 : 0;
 
     const double *scale = attrs->GetAttrPointer<double>(0);
     const int32_t *chunkSize = attrs->GetAttrPointer<int32_t>(1);
