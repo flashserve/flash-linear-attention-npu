@@ -98,8 +98,9 @@ sigmoid、两种指数模式、G=1/G=3 调度和两种物理布局。`--include-
 同时加入原 12 组和补充 14 组的两种布局，共 116 组；不修改输入值域或双标杆阈值。
 可使用 `--seed-offset 0/1000/2000` 生成三组独立数值样本。
 追加 `--complete-public-keys` 时，再补充 BF16 fixed G=2/4、packed G=1/2/3/4
-的两种布局，共 128 组；原 116 个 case id 保持不变。融合接口会将 g/beta 提升为共同
-计算 dtype，该矩阵据此覆盖 Intra 的固定/变长、G、标量 dtype 和布局模板。
+的两种布局，以及 FwdH 无初态、指数模式和标量 dtype 的剩余组合，共 140 组；
+原 116 个 case id 保持不变。融合接口会将 g/beta 提升为共同计算 dtype，该矩阵据此
+覆盖 Intra 的固定/变长、G、标量 dtype 和布局模板，以及 FwdH 的可达模板组合。
 
 ```bash
 python tests/atk/chunk_gated_delta_rule_bwd/scripts/generate_layout_key_cases.py \

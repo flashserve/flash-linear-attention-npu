@@ -37,13 +37,32 @@ def remaining_public_intra_profiles():
             yield spec
 
 
+def remaining_public_fwd_h_profiles():
+    # Absent initial_state resolves FwdH's state dtype to FP32. Exercise it
+    # independently of gate dtype, exponent mode and dense/packed selection.
+    missing = (("bf16", False, False, False), ("bf16", False, False, True),
+               ("bf16", False, True, True), ("bf16", True, False, True),
+               ("fp32", False, False, False), ("fp32", False, False, True))
+    for scalar, exp2, state, packed in missing:
+        for sequence_major in (False, True):
+            spec = dict(B=1 if packed else 2, HK=2, HV=6, T=65,
+                        scalar_dtype=scalar, use_exp2=exp2,
+                        with_state=state, with_dht=True)
+            if packed:
+                spec.update(seqlens=[0, 1, 64, 0],
+                            layout="TND" if sequence_major else "NTD")
+            else:
+                spec["layout"] = "BSND" if sequence_major else "BNSD"
+            yield spec
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--include-layout-regression", action="store_true")
     parser.add_argument("--complete-public-keys", action="store_true",
-                        help="Append the 12 remaining public BF16 Intra key cases")
+                        help="Append the 24 remaining public Intra/FwdH key cases")
     args = parser.parse_args()
     if args.complete_public_keys and not args.include_layout_regression:
         parser.error("--complete-public-keys requires --include-layout-regression")
@@ -63,6 +82,7 @@ def main():
                 profiles.append(spec)
     if args.complete_public_keys:
         profiles.extend(remaining_public_intra_profiles())
+        profiles.extend(remaining_public_fwd_h_profiles())
     result = []
     for index, profile in enumerate(profiles):
         # 单轮双标杆失败时需要复检（固定结构，accuracy_lt 50 轮）：
