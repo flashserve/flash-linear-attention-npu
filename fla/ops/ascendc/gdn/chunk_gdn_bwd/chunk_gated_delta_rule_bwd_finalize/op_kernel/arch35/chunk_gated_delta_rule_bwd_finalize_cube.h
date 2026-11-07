@@ -386,6 +386,15 @@ private:
 
     static constexpr auto GM_DU_LAYOUT = tla::MakeLayout<DT, LayoutRowMajor>(
         tla::Int<CHUNK_SIZE_64>{}, tla::Int<V_SIZE_128>{});
+    __aicore__ inline auto MakePublicQkLayout() const
+    {
+        if constexpr (QKV_SEQUENCE_MAJOR) {
+            return tla::MakeLayoutFromTag(LayoutRowMajor(
+                CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128));
+        } else {
+            return GM_DU_LAYOUT;
+        }
+    }
     // h/dh are physically [K,V] row-major. Reinterpret the same bytes as a
     // [V,K] column-major view so Cube consumes h.T/dh.T without a copy.
     static constexpr auto GM_STATE_TRANSPOSE_LAYOUT = tla::MakeLayout<DT, LayoutColumnMajor>(
@@ -860,9 +869,7 @@ private:
         auto tensorGmDA0 = tla::MakeTensor(gmDA0, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmK = tla::MakeTensor(
             gmK,
-            tla::MakeLayoutFromTag(LayoutRowMajor(
-                CHUNK_SIZE_64, K_SIZE_128,
-                QKV_SEQUENCE_MAJOR ? tiling_->HK * K_SIZE_128 : K_SIZE_128)),
+            MakePublicQkLayout(),
             Catlass::Arch::PositionGM{});
         auto blockGmDA0 = tla::GetTile(
             tensorGmDA0, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
@@ -1428,9 +1435,7 @@ private:
         gmVDecay.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vDecayIn_) + workspaceBase);
         auto tensorGmQ = tla::MakeTensor(
             gmQ,
-            tla::MakeLayoutFromTag(LayoutRowMajor(
-                CHUNK_SIZE_64, K_SIZE_128,
-                QKV_SEQUENCE_MAJOR ? tiling_->HK * K_SIZE_128 : K_SIZE_128)),
+            MakePublicQkLayout(),
             Catlass::Arch::PositionGM{});
         auto tensorGmDs = tla::MakeTensor(gmDs, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDoG = tla::MakeTensor(gmDoG, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});

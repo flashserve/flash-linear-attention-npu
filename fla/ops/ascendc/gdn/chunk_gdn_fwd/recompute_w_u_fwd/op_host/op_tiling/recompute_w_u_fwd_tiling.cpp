@@ -90,11 +90,12 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     RecomputeWUFwdTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
-    if (tiling->V == RECOMPUTE_W_U_FWD_V_DIM_256) {
-        context->SetTilingKey(2);
-    } else {
-        context->SetTilingKey(1);
-    }
+    using GDN::g_tilingDeclareParams;
+#ifdef ASCENDC_DEBUG
+    using GDN::g_tilingSelectParams;
+#endif
+    context->SetTilingKey(GET_TPL_TILING_KEY(static_cast<int>(tiling->V),
+                                           tiling->qkvSequenceMajor != 0));
     OP_LOGD(context->GetNodeName(), "tilingKey: %d (V=%ld)", context->GetTilingKey(), tiling->V);
     RecomputeWUFwdTilingDataPrint(context, *tiling);
 

@@ -51,7 +51,7 @@ using _128 = tla::Int<128>;
 using namespace tla;
 namespace GDN {
 
-template <typename QKVT, typename GT, typename Strategy, int V>
+template <typename QKVT, typename GT, typename Strategy, int V, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkBwdDvLocalCube {
 private:
     Strategy strategy;
@@ -83,12 +83,11 @@ public:
     int64_t coreLoops;
     int64_t blockNum;
     int64_t coreIdx;
-    bool qkvSequenceMajor;
 };
 
-template <typename QKVT, typename GT, typename Strategy, int V>
+template <typename QKVT, typename GT, typename Strategy, int V, bool QKV_SEQUENCE_MAJOR>
 __aicore__ inline void
-ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR cu_seqlens,
+ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR cu_seqlens,
                                               GM_ADDR chunk_indices, GM_ADDR d_v, GM_ADDR workspace,
                                               const ChunkBwdDvLocalTilingData *__restrict tilingData)
 {
@@ -104,14 +103,13 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d
     headBufNum = tilingData->headBufNum;
     T = tilingData->t;
     K = tilingData->k;
-    qkvSequenceMajor = tilingData->qkvSequenceMajor != 0;
     coreLoops = tilingData->b * strategy.chunkNumForT;
     blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
     coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx());
 }
 
-template <typename QKVT, typename GT, typename Strategy, int V>
-__aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
+template <typename QKVT, typename GT, typename Strategy, int V, bool QKV_SEQUENCE_MAJOR>
+__aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR>::Process()
 {
     #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         using ArchTag = Catlass::Arch::Ascend950;
@@ -144,9 +142,9 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                                                            ElementB, ElementC, void, TileCopyV>;
 
     auto layoutA_QK = tla::MakeLayoutFromTag(Catlass::layout::RowMajor(
-        strategy.chunkSize, K, qkvSequenceMajor ? H_qk * K : K));
+        strategy.chunkSize, K, QKV_SEQUENCE_MAJOR ? H_qk * K : K));
     auto layoutB_QK = tla::MakeLayoutFromTag(Catlass::layout::ColumnMajor(
-        K, strategy.chunkSize, qkvSequenceMajor ? H_qk * K : K));
+        K, strategy.chunkSize, QKV_SEQUENCE_MAJOR ? H_qk * K : K));
     auto layoutC_QK = tla::MakeLayout<ElementC, Catlass::layout::RowMajor>(strategy.chunkSize, strategy.chunkSize);
     auto layoutA_V = tla::MakeLayout<ElementA, LayoutTagA_V>(strategy.chunkSize, strategy.chunkSize);
     auto layoutB_V = tla::MakeLayout<ElementB, LayoutTagB_V>(strategy.chunkSize, V);
@@ -204,10 +202,10 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                 int64_t qkHead = scheduleIdx;
                 int64_t p1Slot = qkHead % p1SlotNum;
                 BlockMmadQK blockMmadQK(resource);
-                const int64_t kOffset = qkvSequenceMajor
+                const int64_t kOffset = QKV_SEQUENCE_MAJOR
                                              ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
                                              : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
-                const int64_t qOffset = qkvSequenceMajor
+                const int64_t qOffset = QKV_SEQUENCE_MAJOR
                                              ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
                                              : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
                 auto tensorA = tla::MakeTensor(kGm[kOffset], layoutA_QK, Catlass::Arch::PositionGM{});

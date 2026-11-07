@@ -22,7 +22,7 @@ using namespace AscendC;
 
 using GDN::RecomputeWUFwdTilingData;
 
-template <typename kType, typename betaType>
+template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR = false>
 class RecomputeWUFwdVectorProcess {
 public:
     /** @brief constructor */
@@ -47,7 +47,6 @@ private:
     uint64_t chunkNum = 0;
     uint64_t vbVecRow = 0;
     uint64_t kbgExpVecRow = 0;
-    bool qkvSequenceMajor = false;
 
     GM_ADDR k;
     GM_ADDR v;
@@ -85,16 +84,16 @@ private:
 
 };
 
-template <typename kType, typename betaType>
-__aicore__ inline RecomputeWUFwdVectorProcess<kType, betaType>::RecomputeWUFwdVectorProcess(
+template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
+__aicore__ inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::RecomputeWUFwdVectorProcess(
     GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR g_,
     GM_ADDR cu_seqlens_, GM_ADDR chunk_indices_, GM_ADDR w_, GM_ADDR u_,
     GM_ADDR workspace_)
     : k(k_), v(v_), beta(beta_), A(A_), g(g_), cu_seqlens(cu_seqlens_),
       chunk_indices(chunk_indices_), w(w_), u(u_), workspace(workspace_){};
 
-template <typename kType, typename betaType>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Init(
+template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::Init(
     const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_)
 {
     pipe = pipe_;
@@ -115,12 +114,11 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Init(
     chunkNum = tiling.chunkNum;
     vbVecRow = tiling.vbVecRow;
     kbgExpVecRow = tiling.kbgExpVecRow;
-    qkvSequenceMajor = tiling.qkvSequenceMajor != 0;
     return;
 }
 
-template <typename kType, typename betaType>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Process()
+template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::Process()
 {
     //计算K * Beta[:None]
     ProcessVb();
@@ -131,8 +129,8 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Process()
 }
 
 
-template <typename kType, typename betaType>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
+template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::ProcessVb()
 {
     uint32_t coreLoops = chunkNum;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -171,7 +169,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / ((T + chunkSize - 1) / chunkSize));
                 uint64_t tokenBase = cu_seqlens ? bos : (bos - bIdx * Hv * T);
-                auto vOffset = qkvSequenceMajor
+                auto vOffset = QKV_SEQUENCE_MAJOR
                                    ? ((bIdx * T + tokenBase + rowOffset) * Hv + h) * V
                                    : (h * T + bos + rowOffset) * V;
                 auto vDstOffset = (h * T + bos + rowOffset) * V;
@@ -181,7 +179,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
                     auto tensorVin = vInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
 
-                    if (qkvSequenceMajor) {
+                    if constexpr (QKV_SEQUENCE_MAJOR) {
                         DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
                         DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
                                                  static_cast<uint32_t>(V * sizeof(kType)),
@@ -242,8 +240,8 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
     return;
 }
 
-template <typename kType, typename betaType>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgExp()
+template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::ProcessKbgExp()
 {
     uint32_t coreLoops = chunkNum;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -291,7 +289,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                 uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / coreLoopsInB);
                 uint64_t tokenBase = cu_seqlens ? bos : (bos - bIdx * Hv * T);
                 uint64_t bosK = cu_seqlens ? bos : (bos - bIdx * (Hv - Hk) * T);
-                auto kSrcOffset = qkvSequenceMajor
+                auto kSrcOffset = QKV_SEQUENCE_MAJOR
                                       ? ((bIdx * T + tokenBase + rowOffset) * Hk + hk) * K
                                       : (hk * T + bosK + rowOffset) * K;
                 auto kDstOffset = (h * T + bos + rowOffset) * K;
@@ -301,7 +299,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                     auto tensorKin = kInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
                     auto tensorGin = gInQue.AllocTensor<betaType>();
-                    if (qkvSequenceMajor) {
+                    if constexpr (QKV_SEQUENCE_MAJOR) {
                         DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
                         DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
                                                  static_cast<uint32_t>(K * sizeof(kType)),

@@ -263,11 +263,12 @@ __aicore__ inline uint64_t FwdHInputOffset(const FwdHRuntimeTiling &tiling,
             tokenBegin) * dim;
 }
 
+template <bool QKV_SEQUENCE_MAJOR = false>
 __aicore__ inline uint64_t FwdHKOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t physicalBatch, uint32_t kh,
                                        uint32_t tokenBegin)
 {
-    if (tiling.qkvSequenceMajor) {
+    if constexpr (QKV_SEQUENCE_MAJOR) {
         return ((static_cast<uint64_t>(physicalBatch) * tiling.seqlen + tokenBegin) *
                 tiling.kNumHead + kh) * FWD_H_K;
     }

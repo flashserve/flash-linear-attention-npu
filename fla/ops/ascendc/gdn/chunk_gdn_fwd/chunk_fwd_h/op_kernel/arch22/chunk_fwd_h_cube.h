@@ -420,8 +420,9 @@ private:
         }
         AscendC::GlobalTensor<bfloat16_t> gmKg;
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) +
-            FwdHKOffset(args_.tiling, unit.sequence.physicalBatch, binding.kh, chunk.tokenBegin));
-        const uint32_t kRowStride = args_.tiling.qkvSequenceMajor
+            FwdHKOffset<CompilePolicy::QKV_SEQUENCE_MAJOR>(args_.tiling, unit.sequence.physicalBatch,
+                                                         binding.kh, chunk.tokenBegin));
+        const uint32_t kRowStride = CompilePolicy::QKV_SEQUENCE_MAJOR
             ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         if constexpr (!STATE_V_FIRST) {
             auto tensorGm = tla::MakeTensor(gmKg,

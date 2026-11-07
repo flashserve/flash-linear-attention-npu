@@ -44,7 +44,7 @@ struct RecomputeWUFwdTileShapes256 {
     using L0TileShape = GemmCubeTileShape<_128, _256, _64>;
 };
 
-template <typename kType, typename betaType, int VDim, typename TileShapes>
+template <typename kType, typename betaType, int VDim, typename TileShapes, bool QKV_SEQUENCE_MAJOR>
 __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
     GM_ADDR w, GM_ADDR u, GM_ADDR workspace, const RecomputeWUFwdTilingData *tilingData)
@@ -62,9 +62,9 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     if ASCEND_IS_AIV {
         AscendC::TPipe tPipe;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim> recomputeWUFwdVectorProcess(
+        RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim, QKV_SEQUENCE_MAJOR> recomputeWUFwdVectorProcess(
 #else
-        RecomputeWUFwdVectorProcess<kType, betaType> recomputeWUFwdVectorProcess(
+        RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR> recomputeWUFwdVectorProcess(
 #endif
             k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, workspace);
         recomputeWUFwdVectorProcess.Init(*tilingData, &tPipe);
@@ -72,16 +72,16 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     }
 }
 
-template <typename kType, typename betaType, int VDim>
+template <typename kType, typename betaType, int VDim, bool QKV_SEQUENCE_MAJOR = false>
 __aicore__ inline void RecomputeWUFwdKernelImpl(
     GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
     GM_ADDR w, GM_ADDR u, GM_ADDR workspace, const RecomputeWUFwdTilingData *tilingData)
 {
     if constexpr (VDim == 256) {
-        RecomputeWUFwdKernelImplTyped<kType, betaType, VDim, RecomputeWUFwdTileShapes256<kType, betaType>>(
+        RecomputeWUFwdKernelImplTyped<kType, betaType, VDim, RecomputeWUFwdTileShapes256<kType, betaType>, QKV_SEQUENCE_MAJOR>(
             k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, workspace, tilingData);
     } else {
-        RecomputeWUFwdKernelImplTyped<kType, betaType, VDim, RecomputeWUFwdTileShapes128<kType, betaType>>(
+        RecomputeWUFwdKernelImplTyped<kType, betaType, VDim, RecomputeWUFwdTileShapes128<kType, betaType>, QKV_SEQUENCE_MAJOR>(
             k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, workspace, tilingData);
     }
 }
@@ -91,6 +91,7 @@ __aicore__ inline void RecomputeWUFwdKernelImpl(
 #ifndef TORCH_MODE
 using namespace AscendC;
 
+template <int V, bool QKV_SEQUENCE_MAJOR>
 __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR gk,
                                             GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR w, GM_ADDR u,
                                             GM_ADDR workspace, GM_ADDR tiling)
@@ -104,14 +105,8 @@ __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta,
     REGISTER_TILING_DEFAULT(GDN::RecomputeWUFwdTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::RecomputeWUFwdTilingData, tilingData, tiling);
 
-    if (TILING_KEY_IS(1)) {
-        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, 128>(
-            k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
-    } else if (TILING_KEY_IS(2)) {
-        KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
-        GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, 256>(
-            k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
-    }
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+    GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, V, QKV_SEQUENCE_MAJOR>(
+        k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
 }
 #endif

@@ -19,7 +19,7 @@ enum class FwdHGateMode : uint8_t {
 };
 
 template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_,
-          bool DENSE_T16_ = false>
+          bool DENSE_T16_ = false, bool QKV_SEQUENCE_MAJOR_ = false>
 struct FwdHCompilePolicy {
     static constexpr FwdHGateMode GATE_MODE = GATE_MODE_;
     static constexpr bool USE_EXP2 = USE_EXP2_;
@@ -32,6 +32,7 @@ struct FwdHCompilePolicy {
     // 每 unit ≤2 head 才选 1；AIV 单 slot 大缓冲，per-tile 开销减半）。仅 arch22；
     // 变长/多 head-per-unit 路径恒 0，行为与既有二进制一致。
     static constexpr bool DENSE_T16 = DENSE_T16_;
+    static constexpr bool QKV_SEQUENCE_MAJOR = QKV_SEQUENCE_MAJOR_;
 };
 
 constexpr uint32_t FWD_H_CHUNK = 64;

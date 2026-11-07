@@ -44,7 +44,7 @@ struct FwdHKernelTraits {
     using GateT = typename FwdHGateDTypeTraits<D_T_G>::type;
     using CompilePolicy = FwdHCompilePolicy<
         USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32,
-        STORE_FINAL, DENSE_T16>;
+        STORE_FINAL, DENSE_T16, QKV_SEQUENCE_MAJOR>;
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
 };
 

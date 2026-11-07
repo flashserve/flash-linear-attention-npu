@@ -16,6 +16,9 @@
 #define RECOMPUTE_W_U_FWD_STRUCT_H
 
 #include <cstdint>
+#ifndef TORCH_MODE
+#include "recompute_w_u_fwd_tiling_key.h"
+#endif
 
 namespace GDN {
 

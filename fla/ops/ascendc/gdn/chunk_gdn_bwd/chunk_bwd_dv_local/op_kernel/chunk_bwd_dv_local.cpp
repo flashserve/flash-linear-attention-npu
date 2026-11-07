@@ -27,7 +27,7 @@
 
 namespace GDN {
 
-template <typename QKVT, typename GT, int V, typename Strategy>
+template <typename QKVT, typename GT, int V, bool QKV_SEQUENCE_MAJOR = false, typename Strategy>
 __aicore__ inline void ChunkBwdDvLocalKernelImpl(
     GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g, GM_ADDR g_gamma,
     GM_ADDR A, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -35,7 +35,7 @@ __aicore__ inline void ChunkBwdDvLocalKernelImpl(
     Strategy strategy)
 {
     if ASCEND_IS_AIC {
-        ChunkBwdDvLocalCube<QKVT, GT, Strategy, V> cube(strategy);
+        ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR> cube(strategy);
         cube.Init(q, k, d_o, cu_seqlens, chunk_indices, d_v, workspace, tilingData);
         cube.Process();
     }
@@ -65,24 +65,24 @@ struct DTypeTraits<CHUNK_BWD_DV_LOCAL_TPL_FP32> {
     using type = float;
 };
 
-template <uint64_t strategy, int D_T_Q, int D_T_G, int V>
+template <uint64_t strategy, int D_T_Q, int D_T_G, int V, bool QKV_SEQUENCE_MAJOR>
 struct ChunkBwdDvLocalDispatch;
 
-template <int D_T_Q, int D_T_G, int V>
-struct ChunkBwdDvLocalDispatch<CHUNK_BWD_DV_LOCAL_STRATEGY_FIX_LEN, D_T_Q, D_T_G, V> {
+template <int D_T_Q, int D_T_G, int V, bool QKV_SEQUENCE_MAJOR>
+struct ChunkBwdDvLocalDispatch<CHUNK_BWD_DV_LOCAL_STRATEGY_FIX_LEN, D_T_Q, D_T_G, V, QKV_SEQUENCE_MAJOR> {
     __aicore__ inline static void Invoke(
         GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g, GM_ADDR g_gamma,
         GM_ADDR A, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
         GM_ADDR d_v, GM_ADDR userWS, const ChunkBwdDvLocalTilingData *tilingData)
     {
         FixedLengthStrategy fixedStrategy{tilingData->chunkSize, tilingData->t, tilingData->chunkNumForT};
-        ChunkBwdDvLocalKernelImpl<typename DTypeTraits<D_T_Q>::type, typename DTypeTraits<D_T_G>::type, V>(
+        ChunkBwdDvLocalKernelImpl<typename DTypeTraits<D_T_Q>::type, typename DTypeTraits<D_T_G>::type, V, QKV_SEQUENCE_MAJOR>(
             q, k, d_o, g, g_gamma, A, cu_seqlens, chunk_indices, d_v, userWS, tilingData, fixedStrategy);
     }
 };
 
-template <int D_T_Q, int D_T_G, int V>
-struct ChunkBwdDvLocalDispatch<CHUNK_BWD_DV_LOCAL_STRATEGY_VAR_LEN, D_T_Q, D_T_G, V> {
+template <int D_T_Q, int D_T_G, int V, bool QKV_SEQUENCE_MAJOR>
+struct ChunkBwdDvLocalDispatch<CHUNK_BWD_DV_LOCAL_STRATEGY_VAR_LEN, D_T_Q, D_T_G, V, QKV_SEQUENCE_MAJOR> {
     __aicore__ inline static void Invoke(
         GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g, GM_ADDR g_gamma,
         GM_ADDR A, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -90,7 +90,7 @@ struct ChunkBwdDvLocalDispatch<CHUNK_BWD_DV_LOCAL_STRATEGY_VAR_LEN, D_T_Q, D_T_G
     {
         VariableLengthStrategy variableStrategy{tilingData->chunkSize, tilingData->t, tilingData->chunkNumForT,
                                                  cu_seqlens, chunk_indices};
-        ChunkBwdDvLocalKernelImpl<typename DTypeTraits<D_T_Q>::type, typename DTypeTraits<D_T_G>::type, V>(
+        ChunkBwdDvLocalKernelImpl<typename DTypeTraits<D_T_Q>::type, typename DTypeTraits<D_T_G>::type, V, QKV_SEQUENCE_MAJOR>(
             q, k, d_o, g, g_gamma, A, cu_seqlens, chunk_indices, d_v, userWS, tilingData, variableStrategy);
     }
 };
@@ -98,7 +98,7 @@ struct ChunkBwdDvLocalDispatch<CHUNK_BWD_DV_LOCAL_STRATEGY_VAR_LEN, D_T_Q, D_T_G
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <uint64_t strategy, int D_T_Q, int D_T_G, int V>
+template <uint64_t strategy, int D_T_Q, int D_T_G, int V, bool QKV_SEQUENCE_MAJOR>
 __global__ __aicore__ void chunk_bwd_dv_local(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR g, GM_ADDR g_gamma,
                                                GM_ADDR A, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
                                                GM_ADDR d_v, GM_ADDR workspace, GM_ADDR tiling)
@@ -111,7 +111,7 @@ __global__ __aicore__ void chunk_bwd_dv_local(GM_ADDR q, GM_ADDR k, GM_ADDR d_o,
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkBwdDvLocalTilingData, tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
-    GDN::ChunkBwdDvLocalDispatch<strategy, D_T_Q, D_T_G, V>::Invoke(
+    GDN::ChunkBwdDvLocalDispatch<strategy, D_T_Q, D_T_G, V, QKV_SEQUENCE_MAJOR>::Invoke(
         q, k, d_o, g, g_gamma, A, cu_seqlens, chunk_indices, d_v, userWS, &tilingData);
 }
 #endif

@@ -465,10 +465,10 @@ private:
             ClearL1(L1Kg(slot), FWD_H_L1_KG_SLOT_BYTES);
         }
         AscendC::GlobalTensor<bfloat16_t> gmKg;
-        const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
+        const uint64_t offset = FwdHKOffset<CompilePolicy::QKV_SEQUENCE_MAJOR>(args_.tiling, unit.sequence.physicalBatch,
                                             binding.kh, chunk.tokenBegin);
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) + offset);
-        const uint32_t kRowStride = args_.tiling.qkvSequenceMajor
+        const uint32_t kRowStride = CompilePolicy::QKV_SEQUENCE_MAJOR
             ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         bool readOnce = true;
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {

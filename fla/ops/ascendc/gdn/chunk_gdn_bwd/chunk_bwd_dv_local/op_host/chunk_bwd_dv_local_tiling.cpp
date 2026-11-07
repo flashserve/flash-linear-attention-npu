@@ -79,7 +79,7 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
     int v = static_cast<int>(tiling->v);
     OP_LOGD(context->GetNodeName(), "V value: %d", v);
 
-    uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, v);
+    uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, v, tiling->qkvSequenceMajor != 0);
     context->SetTilingKey(tilingKey);
 
     OP_LOGD(context->GetNodeName(), "tilingKey: %d", context->GetTilingKey());
