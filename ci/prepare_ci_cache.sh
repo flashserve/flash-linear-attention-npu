@@ -92,3 +92,19 @@ fi
 
 seed_third_party
 remove_known_partial_cache
+
+# The embedded offline bundle is only as complete as the cache it is built
+# from, and each runner keeps its own image store: a runner whose image
+# predates the newest third-party archive used to fail twenty minutes later,
+# at packaging time, with the compiled kernels already paid for. Check the
+# same manifest here, before the build starts, so a stale image costs seconds.
+if [[ "${FLA_NPU_BUILD_OFFLINE_BUNDLE:-}" == "true" ]]; then
+    if ! python3 scripts/tools/prepare_offline_bundle.py \
+        --cache "$third_party_dir" --check; then
+        echo "[CI][ERROR] the third_party cache is missing offline-bundle inputs." >&2
+        echo "[CI][ERROR] The CI image seed is likely stale: rebuild it from" >&2
+        echo "[CI][ERROR] ci/Dockerfile (or ci/Dockerfile.ascend950), or re-run" >&2
+        echo "[CI][ERROR] with CI_FORCE_CLEAN_CACHE=true to re-seed from the image." >&2
+        exit 1
+    fi
+fi

@@ -75,6 +75,15 @@ jobs:
           # libraries compiled on that runner (the OPP host libraries and the
           # Stable-ABI launcher), and FLA_NPU_ARCH only labels the artifact.  A
           # new arch therefore means a new row here once its runner is registered.
+          #
+          # build_jobs caps the compiler parallelism of the row (build.sh
+          # defaults to 2 x nproc).  The runners are shared hosts, and at the
+          # default the AscendC kernel generator starts hundreds of asc_opc
+          # jobs at once: when one of them fails, build.sh's wrapper touches
+          # compile_stop.flag and kill -9's every sibling compile, so the build
+          # dies within seconds with "Stop flag detected" on every kernel and
+          # no compiler error in the log.  64 keeps a complete a5 wheel building
+          # in ~15 min while staying inside the host's spare capacity.
           ROWS: |
             [
               {
@@ -82,21 +91,24 @@ jobs:
                 "tier": "a2",
                 "arch": "aarch64",
                 "runner_labels": "[\"self-hosted\",\"linux\",\"arm64\",\"npu\",\"flash-linear-attention-npu\"]",
-                "image": "fla-npu-ci:9.1.0-910b"
+                "image": "fla-npu-ci:9.1.0-910b",
+                "build_jobs": "64"
               },
               {
                 "soc": "ascend910_93",
                 "tier": "a3",
                 "arch": "aarch64",
                 "runner_labels": "[\"self-hosted\",\"linux\",\"arm64\",\"npu\",\"flash-linear-attention-npu\"]",
-                "image": "fla-npu-ci:9.1.0-910b"
+                "image": "fla-npu-ci:9.1.0-910b",
+                "build_jobs": "64"
               },
               {
                 "soc": "ascend950",
                 "tier": "a5",
                 "arch": "x86_64",
                 "runner_labels": "[\"self-hosted\",\"linux\",\"x64\",\"npu\",\"ascend950\",\"flash-linear-attention-npu-a5\"]",
-                "image": "fla-npu-ci:9.1.0-950"
+                "image": "fla-npu-ci:9.1.0-950",
+                "build_jobs": "64"
               }
             ]
           REQUESTED_SOC: ${{ inputs.soc }}
@@ -139,8 +151,12 @@ jobs:
       FLA_NPU_COMMIT_ID: ${{ github.sha }}
       CI_IMAGE: ${{ matrix.image }}
       # Same warm cache the NPU CI uses, so the embedded offline bundle is built
-      # from a seeded third_party tree instead of a network fetch.
-      CI_CACHE_ROOT: ${{ vars.FLA_NPU_CI_CACHE_ROOT || '/workspace/flash-linear-attention-npu-ci/cache' }}
+      # from a seeded third_party tree instead of a network fetch.  The default
+      # path is resolved in the step below rather than here: hardcoding /workspace
+      # made the workflow depend on one build host's filesystem layout, and on a
+      # host without it the cache -- and its backend build tree -- would land on a
+      # small, shared root filesystem.
+      CI_CACHE_ROOT: ${{ vars.FLA_NPU_CI_CACHE_ROOT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -154,7 +170,21 @@ jobs:
           VERSION_MODE_GUARD: ${{ inputs.release_build == false && '--allow-local-version' || '' }}
         run: |
           set -euo pipefail
-          third_party_cache="${CI_CACHE_ROOT}/third_party"
+          # Mirror the guard in ci/run_ci_container.sh: a host that provides
+          # /workspace keeps the cache there (warm across runs), anyone else gets
+          # one beside the checkout rather than inside it -- actions/checkout
+          # cleans the checkout itself, so a cache kept there would be wiped on
+          # every run.  The image ships the seed at /opt/fla-ci/third_party, so a
+          # cold cache costs a local copy instead of a network fetch.
+          cache_root="${CI_CACHE_ROOT:-}"
+          if [ -z "$cache_root" ]; then
+            if [ -d /workspace ]; then
+              cache_root=/workspace/flash-linear-attention-npu-ci/cache
+            else
+              cache_root="$(dirname "$PWD")/.fla-ci-cache"
+            fi
+          fi
+          third_party_cache="$cache_root/third_party"
           mkdir -p "$third_party_cache"
           docker run --rm --network host \
             -v "$PWD:/workspace/repo" \
@@ -163,6 +193,7 @@ jobs:
             -e FLA_NPU_DISABLE_LOCAL_VERSION -e FLA_NPU_BUILD_OFFLINE_BUNDLE \
             -e FLA_NPU_SOC -e FLA_NPU_ARCH -e FLA_NPU_EXPECT_TIER -e VERSION_MODE_GUARD \
             -e FLA_NPU_BRANCH_NAME -e FLA_NPU_COMMIT_ID \
+            -e OPS_CPU_NUMBER=${{ matrix.build_jobs }} \
             "$CI_IMAGE" bash -lc '
               set -euo pipefail
               source /usr/local/Ascend/ascend-toolkit/set_env.sh
