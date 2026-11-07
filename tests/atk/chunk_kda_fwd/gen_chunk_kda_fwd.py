@@ -222,6 +222,21 @@ NEGATIVE_CASES = (
     # 指明逻辑维的拦截文案，而不是下沉到 tiling 后只回传无上下文的 561103。
     ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "sequence length must be greater than 0"),
     ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "batch dimension must be greater than 0"),
+    # chunk32 fused guard：独立追加，保持既有 chunk64 负向用例 ID 不变。
+    ("chunk32_safe_gate", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter safeGate of aclnnChunkKdaFwd has incorrect value false"),
+    ("chunk32_missing_alog", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter aLogOptional of aclnnChunkKdaFwd has incorrect value null"),
+    ("chunk32_missing_dtbias", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter dtBiasOptional of aclnnChunkKdaFwd has incorrect value null"),
+    ("chunk32_bad_k", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter K/V of aclnnChunkKdaFwd has incorrect value 64/128"),
+    ("chunk32_q_fp32", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter q of aclnnChunkKdaFwd has incorrect dtype"),
+    ("chunk32_bnsd_varlen", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter layout of aclnnChunkKdaFwd has incorrect value BNSD with cuSeqlensOptional"),
+    ("chunk32_intermediate", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter gkOut of aclnnChunkKdaFwd has incorrect value provided"),
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
@@ -230,7 +245,7 @@ NEGATIVE_COUNT = len(NEGATIVE_CASES)
 def _negative_case(local_id: int, soc: str) -> dict:
     mutation, code_name, code, message = NEGATIVE_CASES[local_id]
     layout = "BSND"
-    return {
+    spec = {
         "case_key": f"{soc}_negative_{local_id:02d}_{mutation}",
         "tags": "negative,boundary",
         "route": "aclnn",
@@ -265,6 +280,15 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "expected_return_code": code,
         "expected_message": message,
     }
+    if mutation.startswith("chunk32_"):
+        spec.update(
+            chunk_size=32,
+            q_dtype="bf16",
+            disable_recompute=False,
+            return_intermediate_states=False,
+            state_v_first=False,
+        )
+    return spec
 
 
 def build_specs() -> list[dict]:
