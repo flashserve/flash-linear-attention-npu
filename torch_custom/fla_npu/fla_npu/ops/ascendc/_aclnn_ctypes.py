@@ -823,7 +823,8 @@ def npu_chunk_gated_delta_rule_bwd(
     if cu_seqlens is not None and batch != 1:
         raise ValueError("varlen rank-4 input requires B=1.")
 
-    use_exp2 = _optional_bool(use_exp2, True)
+    # None follows the public False default, as in Stable-ABI and Legacy.
+    use_exp2 = _optional_bool(use_exp2, False)
     use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
     use_qk_l2norm_in_kernel = _optional_bool(use_qk_l2norm_in_kernel, False)
     use_beta_sigmoid_in_kernel = _optional_bool(use_beta_sigmoid_in_kernel, False)
