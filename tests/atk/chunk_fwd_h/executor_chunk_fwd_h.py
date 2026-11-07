@@ -243,6 +243,7 @@ def _reference(
     state_v_first: bool,
     compute_dtype: torch.dtype | None = None,
     vector_store=None,
+    p_store_dtype: torch.dtype | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     k, w, u, g, gk = inputs.k, inputs.w, inputs.u, inputs.g, inputs.gk
     batch, _, total_tokens, _ = k.shape
@@ -313,7 +314,7 @@ def _reference(
 
                 w_chunk = w[physical_batch, value_head, token_begin:token_end]
                 p_acc = w_chunk.to(accumulation_dtype) @ h_current.to(accumulation_dtype)
-                p = p_acc.to(state_dtype)
+                p = p_acc.to(state_dtype if p_store_dtype is None else p_store_dtype)
                 v_new_fp32 = (
                     u[physical_batch, value_head, token_begin:token_end].to(accumulation_dtype)
                     - p.to(accumulation_dtype)

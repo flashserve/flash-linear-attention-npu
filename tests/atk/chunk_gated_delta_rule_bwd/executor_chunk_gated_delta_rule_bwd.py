@@ -302,6 +302,19 @@ def _intra_reference(inputs: dict[str, Any], use_exp2: bool, high_precision: boo
     return tuple(tensor.to(torch.float64 if high_precision else torch.bfloat16) for tensor in outputs)
 
 
+def _fwd_h_p_store_dtype(inputs: dict[str, Any], use_exp2: bool, high_precision: bool):
+    if (high_precision or not use_exp2 or
+            os.environ.get("GDN_ATK_BENCHMARK_ARCH", "arch35") != "arch22"):
+        return None
+    key_heads = inputs["k"].shape[1]
+    group = inputs["v"].shape[1] // key_heads
+    # Match FwdHGatedReusable and its packed odd-group fallback. The gated
+    # Cube writes P to FP32 workspace even when recurrent states are BF16.
+    if inputs["cu_seqlens"] is not None and group % 2 != 0 and key_heads > 1:
+        return None
+    return torch.float32
+
+
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
     inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
     g_dtype = inputs["g"].dtype
@@ -336,6 +349,7 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
         fwd_inputs, output_final_state=False, use_exp2=use_exp2, state_v_first=False,
         compute_dtype=torch.float64 if high_precision else None,
         vector_store=vector_store,
+        p_store_dtype=_fwd_h_p_store_dtype(inputs, use_exp2, high_precision),
     )
     dh, dh0, dv2 = _DHU.chunk_gated_delta_rule_bwd_dhu_cpu(
         inputs["q"], inputs["k"], w, inputs["d_o"], dv_local,

@@ -48,6 +48,8 @@ bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 
 脚本根据 DUT 型号选择 FP32 benchmark 的中间存储顺序：arch22 使用
 RecomputeWUFwd + ChunkBwdDvLocal，arch35 使用 Intra；两者的 BF16 舍入边界不同。
+arch22 FwdH 的 gated preload 分支将 `P=W@H` 保存在 FP32 workspace；FP32 benchmark
+保留该精度。其它 FwdH 分支沿用自身的存储边界，FP64 golden 始终不增加中间量量化。
 arch22 的 W/U 先舍入 `k*beta*exp(g)`、`v*beta` 再乘 A，local-dV 先舍入 KQ；
 不能用 arch35 的 `A*beta` 舍入顺序替代。FP64 golden 保持完整精度计算，三路输入
 在统一的输入 dtype 下生成后再提升计算精度。输入值域和原生双标杆 L1 阈值保持不变。
