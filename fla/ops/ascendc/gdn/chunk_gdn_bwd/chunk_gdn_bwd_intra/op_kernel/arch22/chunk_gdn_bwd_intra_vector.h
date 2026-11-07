@@ -8,7 +8,7 @@
 #include <type_traits>
 
 namespace GDN::Arch22 {
-template <typename MainT, typename GateT, typename BetaT, uint32_t G>
+template <typename MainT, typename GateT, typename BetaT, uint32_t G, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkGdnBwdIntraVector {
 public:
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
@@ -75,18 +75,18 @@ private:
         const uint32_t rows = m.validTokens > begin ? m.validTokens - begin : 0;
         const uint32_t count = (rows < VECTOR_PART_TOKENS ? rows : VECTOR_PART_TOKENS) * HEAD_DIM;
         if (count == 0) return;
-        const uint64_t vv = t_->qkvSequenceMajor != 0
+        const uint64_t vv = QKV_SEQUENCE_MAJOR
             ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
                t_->valueHeads + hv) * HEAD_DIM
             : ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv) *
                t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
         if (loadK) {
-            const uint64_t kk = t_->qkvSequenceMajor != 0
+            const uint64_t kk = QKV_SEQUENCE_MAJOR
                 ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
                    t_->qkHeads + hv / G) * HEAD_DIM
                 : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / G) *
                    t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
-            if (t_->qkvSequenceMajor == 0) {
+            if constexpr (!QKV_SEQUENCE_MAJOR) {
                 AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
             } else {
                 AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),
@@ -96,7 +96,7 @@ private:
                 AscendC::DataCopyPad(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], cp, pad);
             }
         }
-        if (t_->qkvSequenceMajor == 0) {
+        if constexpr (!QKV_SEQUENCE_MAJOR) {
             AscendC::DataCopy(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], count);
         } else {
             AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),

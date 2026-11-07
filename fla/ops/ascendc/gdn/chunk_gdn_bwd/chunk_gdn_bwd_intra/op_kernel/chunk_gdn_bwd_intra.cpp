@@ -54,25 +54,25 @@ __aicore__ inline void DispatchKernel(
     // 一个 MixBlock 包含 1 个 AIC 和 2 个 AIV：AIC 顺序执行 Stage 0/2，
     // 两个 AIV 并行执行 Stage 1 的前、后半行，二者通过 CrossCore flag 交接数据。
     if ASCEND_IS_AIC {
-        ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
+        ChunkGdnBwdIntraCube<MainT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
         kernel.Init(q, k, v, dO, w, u, dvLocal, workspace,
                     cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
     if ASCEND_IS_AIV {
-        ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
+        ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
         kernel.Init(v, dO, a, g, beta, dvLocal, workspace,
                     cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
 #else
     if ASCEND_IS_AIC {
-        Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
+        Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
         kernel.Init(q, k, a, dO, w, u, dvLocal, workspace, cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
     if ASCEND_IS_AIV {
-        Arch22::ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
+        Arch22::ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
         kernel.Init(k, v, g, beta, workspace, cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }

@@ -21,7 +21,7 @@
 
 namespace GDN {
 
-template <typename MainT, uint32_t G>
+template <typename MainT, uint32_t G, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkGdnBwdIntraCube {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -187,12 +187,12 @@ private:
             WaitScoreFree(r);
         }
         const int64_t hk = (meta.hvBegin + r) / G;
-        const uint64_t gmOffset = tiling_->qkvSequenceMajor != 0
+        const uint64_t gmOffset = QKV_SEQUENCE_MAJOR
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen + meta.tokenStart) *
                    tiling_->qkHeads + hk) * tiling_->keyDim
             : ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
                    tiling_->seqlen + meta.tokenStart) * tiling_->keyDim;
-        const uint32_t qkvStride = tiling_->qkvSequenceMajor != 0
+        const uint32_t qkvStride = QKV_SEQUENCE_MAJOR
             ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128U;
         auto l1K = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_K_BASE + r * L1_SLOT_BYTES);

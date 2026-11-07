@@ -162,7 +162,7 @@ __simd_vf__ inline void ChunkGdnBwdIntraPackMatrixVF(
     }
 }
 
-template <typename MainT, typename GateT, typename BetaT, uint32_t G>
+template <typename MainT, typename GateT, typename BetaT, uint32_t G, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkGdnBwdIntraVector {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -385,8 +385,9 @@ private:
         }
     }
 
+    template <bool PAIR_INPUTS = false>
     __aicore__ inline void PrefetchStage1Input(
-        const ChunkGdnBwdIntraWorkMeta &meta, int64_t r, bool pairInputs = false)
+        const ChunkGdnBwdIntraWorkMeta &meta, int64_t r)
     {
         constexpr int64_t PART_ROWS = 32;
         constexpr int64_t ROW_ELEMENTS = 64;
@@ -397,7 +398,7 @@ private:
             return;
         }
 
-        const uint32_t slot = pairInputs ? static_cast<uint32_t>(r) :
+        const uint32_t slot = PAIR_INPUTS ? static_cast<uint32_t>(r) :
             static_cast<uint32_t>(r) & 1U;
         auto aLocal = resource_.ubBuf.template GetBufferByByte<MainT>(
             INTRA_A_UB_BASE + slot * INTRA_MATRIX_HALF_BYTES);
@@ -417,7 +418,7 @@ private:
         const uint64_t vectorOffset =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
                 tiling_->seqlen + meta.tokenStart;
-        const uint64_t vdoOffset = tiling_->qkvSequenceMajor != 0
+        const uint64_t vdoOffset = QKV_SEQUENCE_MAJOR
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
                 meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
             : (vectorOffset + rowBegin) * tiling_->valueDim;
@@ -437,7 +438,7 @@ private:
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaLocal, betaGm_[vectorOffset], vectorCopy, betaPad);
         const uint32_t vdoElements = static_cast<uint32_t>(rows * tiling_->valueDim);
-        if (tiling_->qkvSequenceMajor == 0) {
+        if constexpr (!QKV_SEQUENCE_MAJOR) {
             AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
             AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
         } else {
@@ -457,9 +458,9 @@ private:
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t firstSlot,
         uint32_t count)
     {
-        if (tiling_->qkvSequenceMajor != 0) {
+        if constexpr (QKV_SEQUENCE_MAJOR) {
             for (uint32_t offset = 0; offset < count; ++offset) {
-                PrefetchStage1Input(meta, static_cast<int64_t>(firstSlot + offset), true);
+                PrefetchStage1Input<true>(meta, static_cast<int64_t>(firstSlot + offset));
             }
             return;
         }

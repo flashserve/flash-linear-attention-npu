@@ -12,7 +12,7 @@
 #include "tla/tensor.hpp"
 
 namespace GDN::Arch22 {
-template <typename MainT, uint32_t G>
+template <typename MainT, uint32_t G, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkGdnBwdIntraCube {
     using Arch = Catlass::Arch::AtlasA2;
     template <class BLayout>
@@ -53,12 +53,12 @@ public:
             for (int64_t r = 0; r < m.validHeads; ++r) {
                 if (!ChunkGdnBwdIntraScoreLeader<G>(m.hvBegin, r)) continue;
                 const int64_t hk = (m.hvBegin + r) / G;
-                const uint64_t qk = t_->qkvSequenceMajor != 0
+                const uint64_t qk = QKV_SEQUENCE_MAJOR
                     ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart) *
                        t_->qkHeads + hk) * HEAD_DIM
                     : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hk) *
                        t_->seqlen + m.tokenStart) * HEAD_DIM;
-                const uint32_t qkStride = t_->qkvSequenceMajor != 0
+                const uint32_t qkStride = QKV_SEQUENCE_MAJOR
                     ? static_cast<uint32_t>(t_->qkHeads * HEAD_DIM) : HEAD_DIM;
                 auto kGm = tla::MakeTensor(k_[qk], tla::MakeLayout<MainT,
                     Catlass::layout::RowMajor>(CHUNK_TOKENS, qkStride), Catlass::Arch::PositionGM{});
