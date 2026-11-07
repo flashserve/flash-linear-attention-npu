@@ -38,7 +38,7 @@
 
 namespace GDN {
 
-template <typename DT, int V_DIM>
+template <typename DT, int V_DIM, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkGatedDeltaRuleBwdDhuCube {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuCube() = default;
@@ -46,8 +46,7 @@ public:
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR dO, GM_ADDR dh, GM_ADDR dv2,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
-                                bool doTokenMajor = false,
-                                bool qkvSequenceMajor = false)
+                                bool doTokenMajor = false)
     {
         q_ = q;
         k_ = k;
@@ -59,7 +58,6 @@ public:
         chunkIndices_ = chunkIndices;
         workspace_ = workspace;
         doTokenMajor_ = doTokenMajor;
-        qkvSequenceMajor_ = qkvSequenceMajor;
 
         tiling_ = tilingData;
         B_ = tiling_->B;
@@ -161,7 +159,7 @@ public:
                         headOffset + 1 < headCnt && (hv / HRatio_) == ((hv + 1) / HRatio_);
                     const bool releaseKAfterUse = !nextHeadUsesSameK;
                     const int64_t hq = hv / HRatio_;
-                    const int64_t kBase = qkvSequenceMajor_
+                    const int64_t kBase = QKV_SEQUENCE_MAJOR
                         ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
                         : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dOBase = doTokenMajor_ ?
@@ -172,7 +170,7 @@ public:
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
 
                     LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_,
-                        qkvSequenceMajor_ ? HK_ * K_ : K_);
+                        QKV_SEQUENCE_MAJOR ? HK_ * K_ : K_);
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
                     LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(
@@ -1011,9 +1009,9 @@ private:
         auto tensorL1QGT = tla::MakeTensor(
             l1AScratch[headOffset], L1A_LAYOUT_QGT, Catlass::Arch::PositionL1{});
         LayoutTagQGT tagQGT = LayoutTagQGT::MakeLayout<DT>(
-            qkvSequenceMajor_ ? HK_ * K_ : K_, chunkSize_);
+            QKV_SEQUENCE_MAJOR ? HK_ * K_ : K_, chunkSize_);
         auto layoutQGT = tla::MakeLayoutFromTag(tagQGT);
-        const int64_t qBase = qkvSequenceMajor_
+        const int64_t qBase = QKV_SEQUENCE_MAJOR
             ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
             : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
         AscendC::GlobalTensor<DT> gmQ;
@@ -1070,7 +1068,6 @@ private:
     int64_t cachedKResidentBase_ = 0;
     uint32_t cachedKResidentSlot_ = 0;
     bool doTokenMajor_ = false;
-    bool qkvSequenceMajor_ = false;
 };
 
 } // namespace GDN

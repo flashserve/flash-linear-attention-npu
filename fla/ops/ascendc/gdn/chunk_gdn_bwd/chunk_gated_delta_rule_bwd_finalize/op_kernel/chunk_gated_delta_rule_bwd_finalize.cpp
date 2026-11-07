@@ -90,7 +90,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     GM_ADDR dk0Workspace = userWorkspace + 5 * workspaceRegionBytes;
     GM_ADDR dsWorkspace = userWorkspace + 6 * workspaceRegionBytes;
     if ASCEND_IS_AIC {
-        GDN::ChunkGatedDeltaRuleBwdFinalizeCube<QType> cube;
+        GDN::ChunkGatedDeltaRuleBwdFinalizeCube<QType, QKV_SEQUENCE_MAJOR> cube;
         // dkb/dkb_t 分别复用 vb/dvb 区；Stage 9 写入时旧语义已完成消费。
         cube.Init(q, k, v_new, dO, du, h, dh, A,
                   kbgDoGWorkspace, vbDkbWorkspace, dA0Workspace,

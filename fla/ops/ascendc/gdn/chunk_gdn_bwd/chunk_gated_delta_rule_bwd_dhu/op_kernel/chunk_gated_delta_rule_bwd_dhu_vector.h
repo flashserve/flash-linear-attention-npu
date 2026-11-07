@@ -25,7 +25,7 @@
 
 namespace GDN {
 
-template <typename DT, typename GT, int USE_GK>
+template <typename DT, typename GT, int USE_GK, bool QKV_SEQUENCE_MAJOR = false>
 class ChunkGatedDeltaRuleBwdDhuVector {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuVector() = default;
@@ -34,8 +34,7 @@ public:
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
                                 GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
-                                AscendC::TPipe *pipe,
-                                bool qkvSequenceMajor = false)
+                                AscendC::TPipe *pipe)
     {
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(gate));
@@ -67,7 +66,6 @@ public:
         workspaceStateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace));
 
         tiling_ = tilingData;
-        qkvSequenceMajor_ = qkvSequenceMajor;
         pipe_ = pipe;
         B_ = tiling_->B;
         HK_ = tiling_->HK;
@@ -334,12 +332,12 @@ public:
                     for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                         const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
                         const int64_t token = chunkInfo.tokenStart + rowOffset;
-                        const uint32_t qIdx = CopyInRows(
+                        const uint32_t qIdx = CopyInRows<DT, QKV_SEQUENCE_MAJOR>(
                             qGm_, qInputBuf_[curQInputPingPong_],
-                            qkvSequenceMajor_
+                            QKV_SEQUENCE_MAJOR
                                 ? ((chunkInfo.bIdx * T_ + token) * HK_ + hq) * K_
                                 : ((chunkInfo.bIdx * HK_ + hq) * T_ + token) * K_,
-                            static_cast<uint32_t>(curRows * K_), qkvSequenceMajor_);
+                            static_cast<uint32_t>(curRows * K_));
                         AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                         CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);
                         AscendC::PipeBarrier<PIPE_V>();
@@ -574,14 +572,14 @@ private:
         }
     }
 
-    template <typename CopyType>
+    template <typename CopyType, bool SEQUENCE_MAJOR_Q = false>
     __aicore__ inline uint32_t CopyInRows(AscendC::GlobalTensor<CopyType> &inputTensor,
                                           AscendC::LocalTensor<CopyType> dstTensor, int64_t inputOffset,
-                                          uint32_t elements, bool sequenceMajorQ = false)
+                                          uint32_t elements)
     {
         const uint32_t inputIdx = curQInputPingPong_;
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
-        if (sequenceMajorQ) {
+        if constexpr (SEQUENCE_MAJOR_Q) {
             const uint32_t rows = elements / static_cast<uint32_t>(K_);
             AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
                 static_cast<uint32_t>(K_ * sizeof(CopyType)),
@@ -837,7 +835,6 @@ private:
     AscendC::GlobalTensor<DT> dv2Gm_;
     AscendC::GlobalTensor<DT> workspaceGm_;
     AscendC::GlobalTensor<float> workspaceStateGm_;
-    bool qkvSequenceMajor_ = false;
 
     AscendC::TPipe *pipe_ = nullptr;
     AscendC::TBuf<AscendC::TPosition::VECCALC> qInputPing_;

@@ -179,6 +179,26 @@ private:
         }
     }
 
+    __aicore__ inline auto MakeQkvKLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
+    {
+        if constexpr (QKV_SEQUENCE_MAJOR) {
+            return tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128,
+                static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim)));
+        } else {
+            return tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, 128);
+        }
+    }
+
+    __aicore__ inline auto MakeQkvQLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
+    {
+        if constexpr (QKV_SEQUENCE_MAJOR) {
+            return tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens,
+                static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim)));
+        } else {
+            return tla::MakeLayout<MainT, LayoutCM>(128, meta.validTokens);
+        }
+    }
+
     __aicore__ inline void PrefetchLeader(
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t r, bool scoreSlotUsed)
     {
@@ -192,18 +212,12 @@ private:
                    tiling_->qkHeads + hk) * tiling_->keyDim
             : ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
                    tiling_->seqlen + meta.tokenStart) * tiling_->keyDim;
-        const uint32_t qkvStride = QKV_SEQUENCE_MAJOR
-            ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128U;
         auto l1K = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_K_BASE + r * L1_SLOT_BYTES);
         auto l1Q = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_Q_BASE + r * L1_SLOT_BYTES);
-        auto gmK = tla::MakeTensor(
-            kGm_[gmOffset], tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128, qkvStride)),
-            Catlass::Arch::PositionGM{});
-        auto gmQ = tla::MakeTensor(
-            qGm_[gmOffset], tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens, qkvStride)),
-            Catlass::Arch::PositionGM{});
+        auto gmK = tla::MakeTensor(kGm_[gmOffset], MakeQkvKLayout(meta), Catlass::Arch::PositionGM{});
+        auto gmQ = tla::MakeTensor(qGm_[gmOffset], MakeQkvQLayout(meta), Catlass::Arch::PositionGM{});
         auto tensorL1K = tla::MakeTensor(
             l1K, tla::MakeLayout<MainT, typename ScoreTile::LayoutTagL1A>(64, 128),
             Catlass::Arch::PositionL1{});
