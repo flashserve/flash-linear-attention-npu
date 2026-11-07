@@ -30,43 +30,56 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Discovery root: every custom operator of this repository lives under
-# fla/ops/ascendc/<group>/<sub_group>/<op_name>/, so the directory names below
-# this root are exactly the names accepted by --ops / FLA_NPU_OPS.
-OP_SEARCH_ROOTS = ("fla/ops/ascendc",)
+# Stable operators retain their existing nested layout. Experimental operators
+# use a flat tree: experimental/<operator>/CMakeLists.txt.
+STABLE_OP_SEARCH_ROOT = "fla/ops/ascendc"
+EXPERIMENTAL_OP_SEARCH_ROOT = "experimental"
 # CMake reads these as "compile every operator" instead of an operator name.
 BUILD_ALL_SENTINELS = frozenset({"all", "ALL"})
 LIST_COMMAND = "bash build.sh --list-ops"
 SCRIPT_LIST_COMMAND = "python3 scripts/check_build_ops.py --list"
 
 
-def discover_supported_ops(repo_root=REPO_ROOT) -> List[str]:
+def discover_supported_ops(repo_root=REPO_ROOT, experimental: bool = False) -> List[str]:
     """Return every operator name the CMake build can be filtered by."""
     repo_root = Path(repo_root)
 
-    ops = set()
-    for search_root in OP_SEARCH_ROOTS:
-        base = repo_root / search_root
+    if experimental:
+        base = repo_root / EXPERIMENTAL_OP_SEARCH_ROOT
         if not base.is_dir():
+            return []
+        return sorted(
+            entry.name
+            for entry in base.iterdir()
+            if entry.is_dir()
+            and not entry.name.startswith("_")
+            and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", entry.name)
+            and (entry / "CMakeLists.txt").is_file()
+        )
+
+    ops = set()
+    base = repo_root / STABLE_OP_SEARCH_ROOT
+    if not base.is_dir():
+        return []
+    for cmake_file in base.rglob("CMakeLists.txt"):
+        parts = cmake_file.parts
+        # cmake skips everything below a tests/ directory.
+        if "tests" in parts:
             continue
-        for cmake_file in base.rglob("CMakeLists.txt"):
-            parts = cmake_file.parts
-            # cmake skips everything below a tests/ directory.
-            if "tests" in parts:
-                continue
-            if "op_host" in parts:
-                op_index = len(parts) - 1 - parts[::-1].index("op_host")
-                op_dir = Path(*parts[:op_index])
-            else:
-                op_dir = cmake_file.parent
-            if op_dir.name:
-                ops.add(op_dir.name)
+        if "op_host" in parts:
+            op_index = len(parts) - 1 - parts[::-1].index("op_host")
+            op_dir = Path(*parts[:op_index])
+        else:
+            op_dir = cmake_file.parent
+        if op_dir.name:
+            ops.add(op_dir.name)
     return sorted(ops)
 
 
@@ -86,12 +99,17 @@ def is_build_all(raw: Optional[str]) -> bool:
 
 
 def unsupported_ops(
-    raw: Optional[str], repo_root=REPO_ROOT, supported: Optional[Sequence[str]] = None
+    raw: Optional[str],
+    repo_root=REPO_ROOT,
+    supported: Optional[Sequence[str]] = None,
+    experimental: bool = False,
 ) -> List[str]:
     """Return the requested operator names that this repository cannot build."""
     if is_build_all(raw):
         return []
-    known = set(supported) if supported is not None else set(discover_supported_ops(repo_root))
+    known = set(supported) if supported is not None else set(
+        discover_supported_ops(repo_root, experimental=experimental)
+    )
     unknown: List[str] = []
     for name in parse_ops_filter(raw):
         if name in known or name in unknown:
@@ -107,10 +125,11 @@ def format_validation_error(
     supported: Optional[Sequence[str]] = None,
     repo_root=REPO_ROOT,
     origin: Optional[str] = None,
+    experimental: bool = False,
 ) -> str:
     """Build the message printed when the operator filter cannot be honoured."""
     if supported is None:
-        supported = discover_supported_ops(repo_root)
+        supported = discover_supported_ops(repo_root, experimental=experimental)
     lines = [
         "[ERROR] Unsupported operator(s) in {}: {}".format(source, ", ".join(unknown)),
     ]
@@ -140,15 +159,23 @@ def validate_ops_filter(
     repo_root=REPO_ROOT,
     supported: Optional[Sequence[str]] = None,
     stream=None,
+    experimental: bool = False,
 ) -> bool:
     """Print a diagnostic and return False when ``raw`` contains unknown names."""
-    known = list(supported) if supported is not None else discover_supported_ops(repo_root)
-    unknown = unsupported_ops(raw, supported=known)
+    known = list(supported) if supported is not None else discover_supported_ops(
+        repo_root, experimental=experimental
+    )
+    unknown = unsupported_ops(raw, supported=known, experimental=experimental)
     if not unknown:
         return True
     print(
         format_validation_error(
-            raw, source=source, unknown=unknown, supported=known, origin=origin
+            raw,
+            source=source,
+            unknown=unknown,
+            supported=known,
+            origin=origin,
+            experimental=experimental,
         ),
         file=stream or sys.stderr,
     )
@@ -186,13 +213,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with --list, print a JSON object instead of plain names",
     )
+    parser.add_argument(
+        "--experimental",
+        action="store_true",
+        help="discover operators from experimental/<operator>/CMakeLists.txt",
+    )
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    supported = discover_supported_ops(args.repo_root)
+    supported = discover_supported_ops(args.repo_root, experimental=args.experimental)
 
     if args.list:
         if args.json:
@@ -209,6 +241,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         source=args.source,
         origin=args.origin,
         supported=supported,
+        experimental=args.experimental,
     ):
         return 1
     return 0

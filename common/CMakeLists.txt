@@ -81,7 +81,9 @@ if (BUILD_OPEN_PROJECT)
       dlog
     )
 
-    add_subdirectory(src/framework)
+    if (NOT ENABLE_EXPERIMENTAL)
+        add_subdirectory(src/framework)
+    endif()
 else()
     add_library(${COMMON_NAME}_obj OBJECT)
 

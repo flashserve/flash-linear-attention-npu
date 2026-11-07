@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_functions(path, names, namespace):
-    tree = ast.parse((ROOT / path).read_text())
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
     selected = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(selected) == len(names)
     module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *selected], type_ignores=[])

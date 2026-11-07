@@ -14,13 +14,9 @@ import sys
 import re
 import logging
 from pathlib import Path
-NEW_OPS_PATH = [
-    "mc2",
-    "attention",
-    "ffn",
-    "gmm",
-    "moe",
-]
+# Keep the pre-existing parser contract for non-experimental callers.
+NEW_OPS_PATH = ("mc2", "attention", "ffn", "gmm", "moe")
+_EXPERIMENTAL_PREFIX = ("experimental",)
 
 
 class OperatorChangeInfo:
@@ -39,59 +35,25 @@ BlackList = {
 
 def extract_operator_name(file_path, is_experimental):
     path_parts = file_path.lstrip('/').split('/')
-    domain, operator_name = _get_domain_and_op(path_parts, is_experimental)
-    if domain is None:
+    if is_experimental != "TRUE":
+        return _extract_stable_operator_name(path_parts)
+    if len(path_parts) < 2 or path_parts[0] != "experimental":
         return ""
-
-    # 判断是否直接返回默认名称（黑名单、common、实验路径不存在、op_host缺失）
-    if _should_return_default(domain, operator_name, path_parts, is_experimental):
-        return _get_default_name(domain)
-
-    # 非实验分支且 domain 不在 NEW_OPS_PATH 时，返回默认名称（空或 attention 特殊值）
-    if is_experimental != "TRUE" and domain not in NEW_OPS_PATH:
-        return _get_default_name(domain)
-
-    # 其他情况返回 operator_name
-    return operator_name
+    operator_name = path_parts[1]
+    if operator_name.startswith("_"):
+        return ""
+    return operator_name if (Path(*_EXPERIMENTAL_PREFIX, operator_name) / "CMakeLists.txt").is_file() else ""
 
 
-def _get_domain_and_op(path_parts, is_experimental):
-    """从路径部分提取域和算子名"""
-    if is_experimental == "TRUE":
-        if len(path_parts) >= 3:
-            return path_parts[1], path_parts[2]
-    else:
-        if len(path_parts) >= 2:
-            return path_parts[0], path_parts[1]
-    return None, None
-
-
-def _should_return_default(domain, operator_name, path_parts, is_experimental):
-    """检查是否应使用默认名称（而不是 operator_name）"""
-    if operator_name in BlackList:
-        return True
-
-    # 检查是否是 common 或 experimental 路径不存在
-    exp_path = f'experimental/{domain}/{operator_name}'
-    if operator_name == "common" or not os.path.exists(exp_path):
-        return True
-
-    # 实验分支额外检查 op_host 目录
-    if is_experimental == "TRUE":
-        # 构造 parent 路径（原代码用 Path(*path_parts[:3])）
-        if len(path_parts) >= 3:
-            parent = Path(*path_parts[:3])
-            target = parent / "op_host"
-            if not (target.exists() and target.is_dir()):
-                return True
-    return False
-
-
-def _get_default_name(domain):
-    """根据域返回默认名称（目前只有 attention 特殊处理）"""
-    if domain == 'attention':
-        return "fused_infer_attention_score"
-    return ""
+def _extract_stable_operator_name(path_parts):
+    if len(path_parts) < 2:
+        return ""
+    domain, operator_name = path_parts[:2]
+    default = "fused_infer_attention_score" if domain == "attention" else ""
+    if (operator_name in BlackList or operator_name == "common" or
+            not os.path.exists(f"experimental/{domain}/{operator_name}")):
+        return default
+    return operator_name if domain in NEW_OPS_PATH else default
 
 
 def get_operator_info_from_ci(changed_file_info_from_ci, is_experimental):
