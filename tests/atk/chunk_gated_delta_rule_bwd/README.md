@@ -77,3 +77,40 @@ python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_aclnn_layout_contract.
 # A2/A3 额外回归 dq/dk/dv/dh0 非连续输出及非零 storage offset
 python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_aclnn_layout_contract.py --device 0 --output-views
 ```
+
+
+## 布局模板、内存与性能回归
+
+`generate_layout_key_cases.py` 生成 64 组模板分支，覆盖两种标量 dtype、L2Norm、
+sigmoid、两种指数模式、G=1/G=3 调度和两种物理布局。`--include-layout-regression`
+同时加入原 12 组和补充 14 组的两种布局，共 116 组；不修改输入值域或双标杆阈值。
+可使用 `--seed-offset 0/1000/2000` 生成三组独立数值样本。
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/generate_layout_key_cases.py \
+  --out <key_cases_json> --include-layout-regression
+GDN_ATK_CASE_JSON=<key_cases_json> \
+  bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
+# 内存检查须先编译并安装匹配当前源码的 sanitizer 内核；不使用该构建测性能。
+mssanitizer --tool=memcheck -- atk node --name npu_dut --backend npu --devices 0 task \
+  -c <key_cases_json> -p tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py \
+  --task run --mssanitizer -msl <memcheck_log>
+```
+
+性能脚本默认执行原 12 组及 4 组固定输入的布局对照，预热三次、采集一次。
+每次 executor 调用后追加 Add 标记，仅汇总融合接口前缀下的计算和转换任务，
+排除输入构造和 Add 标记。性能依据为 msprof 的 `Task Duration(us)`，不使用 Python wall time。
+新旧版本使用相同脚本、输入和可见设备，分别保留完整 profiler CSV。
+
+```bash
+msprof --output=<profile_dir> python \
+  tests/atk/chunk_gated_delta_rule_bwd/scripts/profile_layout_regression.py --out-dir <manifest_dir>
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/summarize_layout_profile.py \
+  <op_summary_csv> <manifest_dir>/manifest.json --out <summary_csv>
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/compare_layout_profiles.py \
+  <before_summary_csv> <after_summary_csv> --out <comparison_csv>
+```
+
+比较脚本同时验证 BSND/TND 每次调用各减少 6 个 Transpose，BNSD/NTD 的转置数保持一致。
+增量编译前应确认构建目录的 kernel 源码副本与仓库源码一致，并刷新受影响内核的编译缓存；
+仅重装已有 run 包或刷新 opapi 不能证明内核头文件改动已经生效。
