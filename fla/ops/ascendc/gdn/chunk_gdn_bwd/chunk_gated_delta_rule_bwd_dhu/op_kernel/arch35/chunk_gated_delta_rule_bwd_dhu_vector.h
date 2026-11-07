@@ -413,7 +413,7 @@ public:
     }
 
     template <bool COPY_EMPTY_STATES>
-    __aicore__ __attribute__((noinline)) void Process()
+    __aicore__ inline void Process()
     {
         constexpr uint32_t qgL1PaddedRows = 128;
         constexpr uint32_t matrixTileBytes = qgL1PaddedRows * 128 * sizeof(DT);
@@ -1034,6 +1034,15 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
+    // Only the exceptional dispatch uses an outlined recurrence. The normal
+    // dispatch inlines Process<false> without an empty-state call or branch.
+public:
+    __aicore__ __attribute__((noinline)) void ProcessWithEmptySequenceStates()
+    {
+        Process<true>();
+    }
+
+private:
     // Complete empty states before the recurrence creates its live task/state
     // values. Keep the exceptional path out of the recurrence's register set.
     __aicore__ __attribute__((noinline)) void CopyEmptySequenceStates()
