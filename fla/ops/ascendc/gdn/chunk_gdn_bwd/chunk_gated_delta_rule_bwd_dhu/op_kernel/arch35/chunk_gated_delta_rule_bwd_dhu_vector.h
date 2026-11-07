@@ -1032,7 +1032,10 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
-    __aicore__ inline void CopyEmptySequenceDh0(int64_t seqIdx, int64_t hvBase, int64_t headCnt)
+    // Keep the exceptional empty-sequence copy out of the recurrence's
+    // register allocation and instruction working set.
+    __aicore__ __attribute__((noinline)) void CopyEmptySequenceDh0(
+        int64_t seqIdx, int64_t hvBase, int64_t headCnt)
     {
         if (!hasDh0_ || !hasDht_) {
             return;
