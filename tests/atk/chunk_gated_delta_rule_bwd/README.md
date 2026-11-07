@@ -21,7 +21,7 @@ CPU 标杆依次计算 `ChunkGdnBwdIntra`、`ChunkFwdH`、
 
 ## 覆盖范围
 
-- Ascend 950，输入主类型为 BF16，`K=V=128`，`chunk_size=64`。
+- A2/A3 与 A5，输入主类型为 BF16，`K=V=128`，`chunk_size=64`。
 - 覆盖 `BNSD/BSND/NTD/TND`，定长与变长，以及完整块、尾块和多块。
 - 覆盖 `G=HV/HK` 的 `1/2/3/4`。
 - 覆盖 BF16/FP32 标量输入、初始状态、末状态梯度和 `state_v_first`。
@@ -43,4 +43,19 @@ bash tests/atk/run_test_cpu.sh \
 
 # CPU 双标杆：NPU DUT + CPU FP32 benchmark + CPU FP64 golden
 bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
+```
+
+双标杆脚本会检查三路角色数量和 XLSX 中的逐用例精度结果；任一执行或精度失败均返回非零。
+
+布局改造另用同一组输入对比 BNSD/BSND、NTD/TND 的逐字节结果，同时检查输出 shape、dtype、
+连续性和有限值。补充场景覆盖 T=1/63/64/65、G=3、多 batch、空序列、混合标量 dtype、
+两种指数模式、T=H、非连续输入和可追踪数值；这项对照不替代 CPU 双标杆精度测试。
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
+  --device 0 --save-dir <new_result_dir>
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
+  --emit-supplemental-cases <supplemental_json>
+GDN_ATK_CASE_JSON=<supplemental_json> \
+  bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 ```
