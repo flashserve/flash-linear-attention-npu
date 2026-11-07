@@ -23,6 +23,25 @@ end=${ACCURACY_END:-}
 [[ -f "$case_json" ]] || { echo "找不到用例：$case_json" >&2; exit 2; }
 command -v "$atk_bin" >/dev/null 2>&1 || { echo "找不到 ATK 命令：$atk_bin" >&2; exit 2; }
 
+if [[ -z "${GDN_ATK_BENCHMARK_ARCH:-}" ]]; then
+    GDN_ATK_BENCHMARK_ARCH=$(python3 - "$device" <<'PY'
+import sys
+import torch
+import torch_npu
+name = torch.npu.get_device_name(int(sys.argv[1]))
+if name.startswith("Ascend910"):
+    print("arch22")
+elif name.startswith("Ascend950"):
+    print("arch35")
+else:
+    raise SystemExit(f"Unsupported benchmark target: {name}")
+PY
+)
+fi
+[[ "$GDN_ATK_BENCHMARK_ARCH" == arch22 || "$GDN_ATK_BENCHMARK_ARCH" == arch35 ]] || exit 2
+export GDN_ATK_BENCHMARK_ARCH
+echo "CPU FP32 benchmark: $GDN_ATK_BENCHMARK_ARCH"
+
 required_atk_version=${REQUIRED_ATK_VERSION:-26.7.8}
 installed_atk_version=$($atk_bin --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)
 [[ -n "$installed_atk_version" ]] || { echo "无法获取 ATK 版本" >&2; exit 2; }

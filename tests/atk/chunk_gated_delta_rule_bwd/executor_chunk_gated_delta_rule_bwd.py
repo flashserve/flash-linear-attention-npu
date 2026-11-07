@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -176,7 +177,8 @@ def build_inputs(
         else None
     )
     if beta_raw is not None:
-        beta = torch.sigmoid(beta_raw.to(compute_dtype or torch.float32)).to(beta_dtype)
+        # Input construction is identical for all roles, before FP64 promotion.
+        beta = torch.sigmoid(beta_raw.float()).to(beta_dtype)
         if compute_dtype is not None:
             beta = beta.to(compute_dtype)
     else:
@@ -189,7 +191,7 @@ def build_inputs(
 
     use_qk_l2norm = _as_bool(spec.get("use_qk_l2norm", False))
     if use_qk_l2norm:
-        norm_dtype = compute_dtype or torch.float32
+        norm_dtype = torch.float32
         q_rstd = torch.rsqrt((q.to(norm_dtype) * q.to(norm_dtype)).sum(-1) + 1.0e-6).to(torch.float32)
         k_rstd = torch.rsqrt((k.to(norm_dtype) * k.to(norm_dtype)).sum(-1) + 1.0e-6).to(torch.float32)
     else:
@@ -231,7 +233,44 @@ def build_inputs(
     }
 
 
+def _arch22_preparation_reference(inputs: dict[str, Any], use_exp2: bool):
+    """FP32 benchmark for RecomputeWUFwd + ChunkBwdDvLocal storage boundaries."""
+    q, k, v, d_o = (inputs[name].float() for name in ("q", "k", "v", "d_o"))
+    a, beta, g = (inputs[name].float() for name in ("A", "beta", "g"))
+    if use_exp2:
+        # The composite converts the gate to natural-log FP32 before both ops.
+        g = g * 0.6931471805599453
+    outputs = [torch.zeros_like(v) for _ in range(3)]
+    group = v.shape[1] // q.shape[1]
+    main_dtype = inputs["q"].dtype
+
+    def stored(value):
+        return value.to(main_dtype).float()
+
+    for b, start, end in _INTRA._work_chunks(dict(inputs, chunk_size=CHUNK_SIZE)):
+        length = end - start
+        valid = torch.ones((length, length), dtype=torch.bool).triu()
+        for hv in range(v.shape[1]):
+            hk = hv // group
+            beta_chunk, g_chunk = beta[b, hv, start:end], g[b, hv, start:end]
+            a_chunk = a[b, hv, start:end, :length]
+            vb = stored(v[b, hv, start:end] * beta_chunk.unsqueeze(-1))
+            kbg = stored(k[b, hk, start:end] *
+                         (beta_chunk * torch.exp(g_chunk)).unsqueeze(-1))
+            outputs[0][b, hv, start:end] = a_chunk @ kbg
+            outputs[1][b, hv, start:end] = a_chunk @ vb
+            # Local-dV stores the ungated KQ product before vector processing.
+            score = stored(k[b, hk, start:end] @ q[b, hk, start:end].t())
+            delta = g_chunk.unsqueeze(0) - g_chunk.unsqueeze(1)
+            factor = torch.where(valid, torch.exp(delta), 0.0) * float(inputs["scale"])
+            attention = stored(factor * score)
+            outputs[2][b, hv, start:end] = attention @ d_o[b, hv, start:end]
+    return tuple(tensor.to(main_dtype) for tensor in outputs)
+
+
 def _intra_reference(inputs: dict[str, Any], use_exp2: bool, high_precision: bool):
+    if not high_precision and os.environ.get("GDN_ATK_BENCHMARK_ARCH", "arch35") == "arch22":
+        return _arch22_preparation_reference(inputs, use_exp2)
     intra_inputs = {
         "q": inputs["q"],
         "k": inputs["k"],
@@ -376,6 +415,8 @@ class FunctionApi(BaseApi):
             self.role = "golden"
         elif self.device == "cpu" and self.task_name == "cpu_lowp":
             self.role = "benchmark"
+            if os.environ.get("GDN_ATK_BENCHMARK_ARCH") not in {"arch22", "arch35"}:
+                raise RuntimeError("Set GDN_ATK_BENCHMARK_ARCH=arch22/arch35 or use run_double_benchmark.sh")
         else:
             raise RuntimeError(
                 f"{OP_NAME} 无法识别 ATK 角色：device={self.device!r}, "
@@ -396,7 +437,8 @@ class FunctionApi(BaseApi):
         print(
             f"[gdn-double-atk] case={spec.get('case_id', '?')} role={self.role} "
             f"target={'cpu_fp64' if self.role == 'golden' else ('cpu_fp32' if self.role == 'benchmark' else OP_NAME)} "
-            f"atk_case={atk_case_id} seed={spec.get('seed', 20260911)}",
+            f"atk_case={atk_case_id} seed={spec.get('seed', 20260911)} "
+            f"benchmark_arch={os.environ.get('GDN_ATK_BENCHMARK_ARCH', 'unset')}",
             flush=True,
         )
         if self.device == "cpu":

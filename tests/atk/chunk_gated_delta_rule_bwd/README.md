@@ -47,6 +47,14 @@ bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 
 双标杆脚本会检查三路角色数量和 XLSX 中的逐用例精度结果；任一执行或精度失败均返回非零。
 
+脚本根据 DUT 型号选择 FP32 benchmark 的中间存储顺序：arch22 使用
+RecomputeWUFwd + ChunkBwdDvLocal，arch35 使用 Intra；两者的 BF16 舍入边界不同。
+arch22 的 W/U 先舍入 `k*beta*exp(g)`、`v*beta` 再乘 A，local-dV 先舍入 KQ；
+不能用 arch35 的 `A*beta` 舍入顺序替代。FP64 golden 保持完整精度计算，三路输入
+在统一的输入 dtype 下生成后再提升计算精度。输入值域和原生双标杆 L1 阈值保持不变。
+直接调用 ATK（包括 `accuracy_lt`）时，显式设置 `GDN_ATK_BENCHMARK_ARCH=arch22`
+或 `arch35`；CPU benchmark 节点拒绝缺少该配置的调用。
+
 布局改造另用同一组输入对比 BNSD/BSND、NTD/TND 的逐字节结果，同时检查输出 shape、dtype、
 连续性和有限值。补充场景覆盖 T=1/63/64/65、G=3、多 batch、空序列、混合标量 dtype、
 两种指数模式、T=H、非连续输入和可追踪数值；这项对照不替代 CPU 双标杆精度测试。
