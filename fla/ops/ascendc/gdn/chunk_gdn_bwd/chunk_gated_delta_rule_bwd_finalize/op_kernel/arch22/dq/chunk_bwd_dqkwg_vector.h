@@ -765,7 +765,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
         uint64_t qkOffset = QkOffset(h, bos, loopIdx);    // public q (HK)
         // dQ workspace remains head-major; only the public q/dq tensors use
         // sequence-major addressing.
-        uint64_t dqOutOffset = (static_cast<uint64_t>(h) * T + bos) * K;
+        uint64_t dqOutOffset = qkOffset;
         uint64_t gOffset = (h * T + bos);
         uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -857,7 +857,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
             }
             {
                 auto tensorDqOut = outQue1.DeQue<DataType>();
-                DataCopy(gmDq[dqOutOffset], tensorDqOut, actual_dqSize);
+                CopyQkRowsOut(gmDq, dqOutOffset, tensorDqOut, real_BT, HK);
                 outQue1.FreeTensor(tensorDqOut);
             }
         }
@@ -894,7 +894,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
         uint64_t qkOffset = QkOffset(hk_idx, bos, loopIdx);    // public q (HK)
         // dQ workspace remains head-major; only the public q/dq tensors use
         // sequence-major addressing.
-        uint64_t dqOutOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K;
+        uint64_t dqOutOffset = qkOffset;
         uint64_t gOffset = (static_cast<uint64_t>(h) * T + bos);
         uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -1098,7 +1098,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
             inQue1.FreeTensor(tensorDqSum);
 
             tensorDqOut = outQue1.DeQue<DataType>();
-            DataCopy(gmDq[dqOutOffset], tensorDqOut, actual_dqSize);
+            CopyQkRowsOut(gmDq, dqOutOffset, tensorDqOut, real_BT, HK);
             outQue1.FreeTensor(tensorDqOut);
             if (BT == 64) {
                 // 最后一个HV的只读Q消费已完成，再允许复用resident所在buffer。
@@ -1131,7 +1131,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
         uint64_t kOffset = QkOffset(h, bos, loopIdx);     // public k (HK)
         // dK workspace remains head-major; only the public k/dk tensors use
         // sequence-major addressing.
-        uint64_t dkOutOffset = (static_cast<uint64_t>(h) * T + bos) * K;
+        uint64_t dkOutOffset = kOffset;
         uint64_t gOffset = (h * T + bos);
         uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -1284,7 +1284,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
             }
             {
                 auto tensorDkOut = outQue1.DeQue<DataType>();
-                DataCopy(gmDk[dkOutOffset], tensorDkOut, actual_dkSize);
+                CopyQkRowsOut(gmDk, dkOutOffset, tensorDkOut, real_BT, HK);
                 outQue1.FreeTensor(tensorDkOut);
             }
         }
@@ -1332,7 +1332,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
         uint64_t kOffset = QkOffset(hk_idx, bos, loopIdx);     // public k (HK)
         // dK workspace remains head-major; only the public k/dk tensors use
         // sequence-major addressing.
-        uint64_t dkOutOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K;
+        uint64_t dkOutOffset = kOffset;
         uint64_t gOffset = (static_cast<uint64_t>(h) * T + bos);
         uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
 
@@ -1573,7 +1573,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
             inQue1.FreeTensor(tensorDkSum);
 
             tensorDkOut = outQue1.DeQue<DataType>();
-            DataCopy(gmDk[dkOutOffset], tensorDkOut, actual_dkSize);
+            CopyQkRowsOut(gmDk, dkOutOffset, tensorDkOut, real_BT, HK);
             outQue1.FreeTensor(tensorDkOut);
             if (BT == 64) {
                 inQue2.FreeTensor(tensorKResident);

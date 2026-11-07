@@ -859,12 +859,12 @@ private:
             reinterpret_cast<__gm__ DT *>(dA0_) + WorkspaceHeadOffset(headOffset));
         gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
         auto tensorGmDA0 = tla::MakeTensor(gmDA0, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
-        auto tensorGmK = qkvSequenceMajor_
-                             ? tla::MakeTensor(gmK,
-                                   tla::MakeLayoutFromTag(LayoutRowMajor(
-                                       CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128)),
-                                   Catlass::Arch::PositionGM{})
-                             : tla::MakeTensor(gmK, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmK = tla::MakeTensor(
+            gmK,
+            tla::MakeLayoutFromTag(LayoutRowMajor(
+                CHUNK_SIZE_64, K_SIZE_128,
+                qkvSequenceMajor_ ? tiling_->HK * K_SIZE_128 : K_SIZE_128)),
+            Catlass::Arch::PositionGM{});
         auto blockGmDA0 = tla::GetTile(
             tensorGmDA0, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
         auto blockGmK = tla::GetTile(
@@ -1427,12 +1427,12 @@ private:
         gmDs.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dsIn_) + workspaceBase);
         gmDoG.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(doGIn_) + workspaceBase);
         gmVDecay.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vDecayIn_) + workspaceBase);
-        auto tensorGmQ = qkvSequenceMajor_
-                             ? tla::MakeTensor(gmQ,
-                                   tla::MakeLayoutFromTag(LayoutRowMajor(
-                                       CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128)),
-                                   Catlass::Arch::PositionGM{})
-                             : tla::MakeTensor(gmQ, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmQ = tla::MakeTensor(
+            gmQ,
+            tla::MakeLayoutFromTag(LayoutRowMajor(
+                CHUNK_SIZE_64, K_SIZE_128,
+                qkvSequenceMajor_ ? tiling_->HK * K_SIZE_128 : K_SIZE_128)),
+            Catlass::Arch::PositionGM{});
         auto tensorGmDs = tla::MakeTensor(gmDs, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDoG = tla::MakeTensor(gmDoG, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmVDecay = tla::MakeTensor(gmVDecay, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});

@@ -1869,7 +1869,9 @@ public:
                     }
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    vOffset = gOffset * tiling_->V;
+                    vOffset = QKV_SEQUENCE_MAJOR
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HV + hv) * tiling_->V
+                                  : ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
                     Stage6VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dvb_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(v_[streamSlot_].GetPhyAddr()),
