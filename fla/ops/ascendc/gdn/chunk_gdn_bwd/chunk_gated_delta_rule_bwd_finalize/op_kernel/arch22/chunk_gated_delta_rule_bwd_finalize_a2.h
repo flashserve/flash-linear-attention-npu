@@ -11,7 +11,6 @@ struct ChunkBwdDqkwgTilingData {
     uint32_t mul0RowNum, aicCoreNum, hkPartitions;
     uint64_t wsMm3Offset, wsMm4Offset, wsMm6Offset, wsMm5Offset;
     uint64_t wsMm7Offset, wsDsTempOffset, wsDgLastOffset, isVarLen;
-    bool qkvSequenceMajor = false;
 };
 
 #include "dq/chunk_bwd_dqkwg_cube.h"
@@ -96,7 +95,6 @@ __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
         d.B, d.numChunks, d.HV, d.HK, d.aicCoreNum, 1,
         t.isVariable != 0 || d.T % d.BT == 0));
     d.isVarLen = t.isVariable;
-    d.qkvSequenceMajor = t.qkvSequenceMajor != 0;
     const uint64_t btk = d.aicCoreNum * d.HV * d.BT * d.K * sizeof(bfloat16_t);
     const uint64_t btb = d.aicCoreNum * d.HV * d.BT * d.BT * sizeof(bfloat16_t);
     uint64_t offset = 0;
@@ -519,7 +517,7 @@ __aicore__ inline void A2FinalizeNormTile(
 }
 
 // S4：独占 (chunk, HK)，合并两条 DK 支路后执行可选 Q/K norm。
-template <typename QT, bool USE_QK_L2NORM>
+template <typename QT, bool USE_QK_L2NORM, bool QKV_SEQUENCE_MAJOR>
 __aicore__ inline void A2FinalizeQkTail(
     GM_ADDR q, GM_ADDR k, GM_ADDR qRstd, GM_ADDR kRstd,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dq, GM_ADDR dk,
@@ -572,14 +570,14 @@ __aicore__ inline void A2FinalizeQkTail(
             AscendC::DataCopy(dkInput, dk1Gm[offset], count);
             AscendC::DataCopy(dkWyInput, dk2Gm[offset], count);
             uint64_t qkPublicOffset = static_cast<uint64_t>(offset);
-            if (t.qkvSequenceMajor != 0) {
+            if constexpr (QKV_SEQUENCE_MAJOR) {
                 const uint64_t headTokens = static_cast<uint64_t>(t.HK) * t.T;
                 const uint64_t batch = (cuSeqlens == nullptr) ? task.keyBos / headTokens : 0;
                 const uint64_t token = (cuSeqlens == nullptr) ? task.keyBos % headTokens : task.keyBos;
                 qkPublicOffset = ((batch * t.T + token + row) * t.HK + hk) * K;
             }
             if constexpr (USE_QK_L2NORM) {
-                if (t.qkvSequenceMajor != 0) {
+                if constexpr (QKV_SEQUENCE_MAJOR) {
                     const DataCopyExtParams qkCopy{
                         static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)),
                         static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0, 0};
@@ -614,7 +612,7 @@ __aicore__ inline void A2FinalizeQkTail(
             }
             // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
             AscendC::PipeBarrier<PIPE_ALL>();
-            if (t.qkvSequenceMajor != 0) {
+            if constexpr (QKV_SEQUENCE_MAJOR) {
                 const DataCopyExtParams outputCopy{
                     static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
                     static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0};
@@ -656,7 +654,7 @@ __aicore__ inline void A2FinalizeRun(
         dqTiling.aicCoreNum, dqTiling.hkPartitions);
     GM_ADDR stageWorkspace = workspace + layout.stageOffset;
     if ASCEND_IS_AIC {
-        ChunkBwdDqkwgCubeProcess<QT, float> cube(
+        ChunkBwdDqkwgCubeProcess<QT, float, QKV_SEQUENCE_MAJOR> cube(
             q, k, vNew, standardH, dO, standardDh, du, cuSeqlens, chunkIndices,
             workspace + layout.dqOffset, workspace + layout.dkOffset,
             workspace + layout.dwOffset, stageWorkspace);
@@ -670,7 +668,7 @@ __aicore__ inline void A2FinalizeRun(
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkBwdDqkwgVectorProcess<QT, float> vec(
+        ChunkBwdDqkwgVectorProcess<QT, float, QKV_SEQUENCE_MAJOR> vec(
             q, k, vNew, workspace + layout.gOffset, standardH, dO, standardDh, du,
             cuSeqlens, chunkIndices, workspace + layout.dqOffset,
             workspace + layout.dkOffset, workspace + layout.dwOffset,
@@ -688,19 +686,18 @@ __aicore__ inline void A2FinalizeRun(
     AscendC::SyncAll<false>();
     const auto wyTiling = A2FinalizeWyTiling(t);
     if ASCEND_IS_AIC {
-        PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE> cube(
-            k, a, workspace + layout.dwOffset, du, cuSeqlens, chunkIndices, stageWorkspace,
-            t.qkvSequenceMajor != 0);
+        PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE, QKV_SEQUENCE_MAJOR> cube(
+            k, a, workspace + layout.dwOffset, du, cuSeqlens, chunkIndices, stageWorkspace);
         cube.Init(wyTiling);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER> vec(
+        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, QKV_SEQUENCE_MAJOR> vec(
             k, v, workspace + layout.betaOffset, workspace + layout.gOffset,
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
             workspace + layout.dbetaOffset, workspace + layout.dgWyOffset, stageWorkspace);
-        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum), t.qkvSequenceMajor != 0);
+        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum));
         vec.Process();
         AscendC::PipeBarrier<PIPE_ALL>();
         pipe.Reset();
@@ -711,7 +708,7 @@ __aicore__ inline void A2FinalizeRun(
         AscendC::TPipe pipe;
         A2FinalizeGateTail<GT, USE_BETA_SIGMOID, CHUNK_SIZE>(
             betaRaw, cuSeqlens, chunkIndices, dbeta, dg, workspace, t, layout, pipe);
-        A2FinalizeQkTail<QT, USE_QK_L2NORM>(
+        A2FinalizeQkTail<QT, USE_QK_L2NORM, QKV_SEQUENCE_MAJOR>(
             q, k, qRstd, kRstd, cuSeqlens, chunkIndices, dq, dk, workspace, t, layout, pipe);
     }
 }
