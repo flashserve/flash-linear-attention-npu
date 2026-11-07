@@ -89,7 +89,8 @@ dO 固定为 BSND，可选的 betaRaw 固定为 BSN，与 q/k/v 的 `layout` 无
 
 在 A2/A3 上，`dq/dk/dv` 和非空 `dh0` 支持非连续输出 view。L2 为需要连续写入的 L0 分配临时输出，
 计算结束后通过 ViewCopy 写入原 view；BNSD/NTD 的连续输出保持直接写入。
-BSND/TND 仍按原布局转换后写回，`dh0` 保持 `stateVFirst` 指定的状态布局。
+连续 BSND/TND 的 dq/dk/dv 由 kernel 直接写入公开布局；非连续输出只保留同布局暂存到 view
+的回填。`dh0` 保持 `stateVFirst` 指定的状态布局。布局搬运详见 [设计](docs/design.md)。
 A5 沿用原有输出处理，本次不扩展其非连续输出支持范围。
 未提供 initial state 时，即使提供 dht，公开 `dh0` 仍为空。
 
@@ -130,7 +131,8 @@ A5 沿用原有输出处理，本次不扩展其非连续输出支持范围。
 
 A2/A3 组件复用尚需验证两个数值边界：RecomputeWUFwd 与 A5 Intra 的 BF16 中间舍入位置不同；
 ChunkBwdDvLocal 对 gate 差取 `min(delta,0)`，与非单调 gate 的直接指数公式可能不同。
-新增路径保留原 CPU 标杆和混合精度阈值，不能据前向有效 gate 的通过结果宣称已覆盖任意 gate 值域。
+ATK 使用独立 CPU FP64 golden、CPU FP32 benchmark 和原输入值域，不能据前向有效 gate
+的通过结果宣称已覆盖任意 gate 值域。
 
 ## 测试
 
@@ -140,7 +142,7 @@ ChunkBwdDvLocal 对 gate 差取 `min(delta,0)`，与非单调 gate 的直接指�
    L2 组合顺序、可选参数传导、公开布局转换和 `stateVFirst` 状态转换。
 2. ATK 独立精度测试：组合 `ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、
    `ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize` 已有的 CPU reference，
-   使用 `mixed_tolerance_bm` 对比全部有效梯度。
+   使用 ATK 原生 `cv_fused_double_benchmark` 的 L1 双标杆对比全部有效梯度，不使用混合容差。
 
 用例需要覆盖 `BNSD/BSND/NTD/TND`、`Hv/Hk in {1,2,3,4}`、完整 chunk、尾块、变长序列、
 有无 initial state、`stateVFirst=true/false`、Q/K L2Norm 开关和 beta sigmoid 开关。

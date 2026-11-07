@@ -24,6 +24,31 @@ void SetNdFormat(const aclTensor *tensor)
 } // namespace
 
 const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
+    const aclTensor *q,
+    const aclTensor *k,
+    const aclTensor *v,
+    const aclTensor *g,
+    const aclTensor *beta,
+    const aclTensor *a,
+    const aclTensor *dO,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    double scale,
+    int64_t chunkSize,
+    bool useExp2,
+    const aclTensor *wOut,
+    const aclTensor *uOut,
+    const aclTensor *dvLocalOut,
+    aclOpExecutor *executor)
+{
+    return ChunkGdnBwdIntra(
+        q, k, v, g,
+        beta, a, dO, cuSeqlensOptional,
+        chunkIndicesOptional, scale, chunkSize, useExp2,
+        wOut, uOut, dvLocalOut, executor, false);
+}
+
+const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
     const aclTensor *g, const aclTensor *beta, const aclTensor *a,
     const aclTensor *dO, const aclIntArray *cuSeqlensOptional,

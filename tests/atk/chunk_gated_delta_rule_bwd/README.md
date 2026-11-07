@@ -54,6 +54,11 @@ bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 ```bash
 python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
   --device 0 --save-dir <new_result_dir>
+# 安装旧主线包时冻结输入和 head-major 输出，安装新包后读取并逐字节对照
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
+  --device 0 --write-control-dir <baseline_control_dir>
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
+  --device 0 --read-control-dir <baseline_control_dir> --save-dir <new_result_dir>
 python tests/atk/chunk_gated_delta_rule_bwd/scripts/check_layout_equivalence.py \
   --emit-supplemental-cases <supplemental_json>
 GDN_ATK_CASE_JSON=<supplemental_json> \

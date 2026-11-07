@@ -77,6 +77,11 @@ def main():
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--save-dir", type=Path)
     parser.add_argument("--emit-supplemental-cases", type=Path)
+    controls = parser.add_mutually_exclusive_group()
+    controls.add_argument("--write-control-dir", type=Path,
+                          help="Freeze inputs and head-major outputs using the baseline package")
+    controls.add_argument("--read-control-dir", type=Path,
+                          help="Compare against frozen inputs and baseline head-major outputs")
     args = parser.parse_args()
     case_path = Path(__file__).resolve().parents[1] / "atk_chunk_gated_delta_rule_bwd.json"
     cases = json.loads(case_path.read_text(encoding="utf-8"))
@@ -100,25 +105,42 @@ def main():
         args.emit_supplemental_cases.write_text(json.dumps(supplements), encoding="utf-8")
         print(f"wrote {len(supplements)} supplemental ATK cases")
         return
-    if args.save_dir is None:
-        parser.error("--save-dir is required for device comparisons")
+    result_dir = args.write_control_dir or args.save_dir
+    if result_dir is None:
+        parser.error("--save-dir or --write-control-dir is required for device comparisons")
     torch.npu.set_device(args.device)
     executor = load_executor()
     specs = [json.loads(next(item["range_values"] for item in case["inputs"]
                              if item["name"] == "case_spec")) for case in cases]
     specs += supplemental_specs()
-    args.save_dir.mkdir(parents=True, exist_ok=False)
+    result_dir.mkdir(parents=True, exist_ok=False)
     failures = []
     for case_id, spec in enumerate(specs):
         try:
-            inputs = executor.build_inputs(spec, torch.device(f"npu:{args.device}"))
-            if spec.get("trace_values"):
-                for offset, name in enumerate(("q", "k", "v")):
-                    value = inputs[name]
-                    traced = ((torch.arange(value.numel(), dtype=torch.int64) // 128 +
-                               offset * 7) % 31 - 15).float() / 128
-                    inputs[name] = traced.reshape(value.shape).to(value.device, value.dtype)
-            control = launch(executor, inputs, spec, False)
+            if args.read_control_dir:
+                frozen = torch.load(args.read_control_dir / f"case{case_id}.pt", weights_only=False)
+                assert frozen["spec"] == spec
+                inputs = {name: value.to(f"npu:{args.device}") if isinstance(value, torch.Tensor)
+                          else value for name, value in frozen["inputs"].items()}
+                control = frozen["outputs"]
+            else:
+                inputs = executor.build_inputs(spec, torch.device(f"npu:{args.device}"))
+                if spec.get("trace_values"):
+                    for offset, name in enumerate(("q", "k", "v")):
+                        value = inputs[name]
+                        traced = ((torch.arange(value.numel(), dtype=torch.int64) // 128 +
+                                   offset * 7) % 31 - 15).float() / 128
+                        inputs[name] = traced.reshape(value.shape).to(value.device, value.dtype)
+                control = launch(executor, inputs, spec, False)
+            if args.write_control_dir:
+                frozen_inputs = {name: value.cpu() if isinstance(value, torch.Tensor) else value
+                                 for name, value in inputs.items()}
+                frozen_outputs = tuple(value.cpu() if value is not None else None for value in control)
+                assert all(torch.isfinite(value).all().item() for value in frozen_outputs if value is not None)
+                torch.save(dict(spec=spec, inputs=frozen_inputs, outputs=frozen_outputs),
+                           result_dir / f"case{case_id}.pt")
+                print(case_id, spec["name"], "FROZEN", flush=True)
+                continue
             actual = launch(executor, inputs, spec, True)
             torch.npu.synchronize()
             mismatched = []
@@ -138,15 +160,15 @@ def main():
                            torch.equal(expected.view(torch.uint8), observed.view(torch.uint8)))
                 if not matches:
                     mismatched.append(index)
-                    torch.save(expected, args.save_dir / f"case{case_id}_out{index}_head.pt")
-                    torch.save(observed, args.save_dir / f"case{case_id}_out{index}_seq.pt")
+                    torch.save(expected, result_dir / f"case{case_id}_out{index}_head.pt")
+                    torch.save(observed, result_dir / f"case{case_id}_out{index}_seq.pt")
             if mismatched:
                 failures.append(dict(case_id=case_id, outputs=mismatched, spec=spec))
             print(case_id, spec["name"], "FAIL" if mismatched else "PASS", mismatched, flush=True)
         except Exception as exc:
             failures.append(dict(case_id=case_id, error=str(exc), spec=spec))
             print(case_id, spec["name"], "ERROR", str(exc), flush=True)
-    (args.save_dir / "failures.json").write_text(
+    (result_dir / "failures.json").write_text(
         json.dumps(failures, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"layout equivalence: total={len(specs)} pass={len(specs)-len(failures)} fail={len(failures)}")
     raise SystemExit(bool(failures))

@@ -30,8 +30,27 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
+    aclOpExecutor *executor);
+
+const std::array<const aclTensor *, 3> ChunkFwdH(
+    const aclTensor *k,
+    const aclTensor *w,
+    const aclTensor *u,
+    const aclTensor *g,
+    const aclTensor *gkOptional,
+    const aclTensor *initialStateOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    bool outputFinalState,
+    int64_t chunkSize,
+    bool saveNewValue,
+    bool useExp2,
+    bool stateVFirst,
+    const aclTensor *hOut,
+    const aclTensor *vNewOut,
+    const aclTensor *finalStateOut,
     aclOpExecutor *executor,
-    bool qkvSequenceMajor = false);
+    bool qkvSequenceMajor);
 }
 
 #endif

@@ -29,6 +29,26 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     int64_t chunkSize,
     const aclTensor *wOut,
     const aclTensor *uOut,
+    aclOpExecutor *executor)
+{
+    return RecomputeWUFwd(
+        k, v, beta, a,
+        g, gk, cuSeqlensOptional, chunkIndicesOptional,
+        chunkSize, wOut, uOut, executor, false);
+}
+
+const std::array<const aclTensor *, 2> RecomputeWUFwd(
+    const aclTensor *k,
+    const aclTensor *v,
+    const aclTensor *beta,
+    const aclTensor *a,
+    const aclTensor *g,
+    const aclTensor *gk,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    int64_t chunkSize,
+    const aclTensor *wOut,
+    const aclTensor *uOut,
     aclOpExecutor *executor,
     bool qkvSequenceMajor)
 {
