@@ -139,18 +139,40 @@ struct BlockSchedulerGdnFwdHPreload {
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         if (isVariedLen) {
-            gmNumChunks.SetValue(0, 0);
-            gmNumSeq.SetValue(0, 0);
+            // The prefix tables are shared by every AIC/AIV block.  Building
+            // them independently lets one block read an entry while another
+            // block is still writing it, which can produce an invalid
+            // chunkOffset and subsequently out-of-range epilogue transfers.
+            if ASCEND_IS_AIC {
+                if (AscendC::GetBlockIdx() == 0) {
+                    gmNumChunks.SetValue(0, 0);
+                    gmNumSeq.SetValue(0, 0);
+                    uint32_t actualBatch = 0;
+                    int64_t prevSeq = 0, currSeq;
+                    for (uint32_t b = 1; b <= tokenBatch; b++) {
+                        currSeq = gmSeqlen.GetValue(b);
+                        int64_t batchSeqLen = currSeq - prevSeq;
+                        if (batchSeqLen > 0) {
+                            actualBatch++;
+                            gmNumSeq.SetValue(actualBatch, currSeq);
+                            int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
+                            gmNumChunks.SetValue(actualBatch,
+                                                 gmNumChunks.GetValue(actualBatch - 1) + batchChunk);
+                        }
+                        prevSeq = currSeq;
+                    }
+                }
+            }
+            // The writer must publish the complete table before any scheduler
+            // computes offsets from it.
+            AscendC::SyncAll<false>();
+
             uint32_t actualBatch = 0;
             int64_t prevSeq = 0, currSeq;
             for (uint32_t b = 1; b <= tokenBatch; b++) {
                 currSeq = gmSeqlen.GetValue(b);
-                int64_t batchSeqLen = currSeq - prevSeq;
-                if (batchSeqLen > 0) {
+                if (currSeq > prevSeq) {
                     actualBatch++;
-                    gmNumSeq.SetValue(actualBatch, currSeq);
-                    int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
-                    gmNumChunks.SetValue(actualBatch, gmNumChunks.GetValue(actualBatch - 1) + batchChunk);
                 }
                 prevSeq = currSeq;
             }

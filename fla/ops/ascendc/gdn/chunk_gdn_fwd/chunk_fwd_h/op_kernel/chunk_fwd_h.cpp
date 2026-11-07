@@ -60,8 +60,8 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
            (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
 }
 
-// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
-// 各 AIC 幂等同值写）后调用 gated preload kernel；g 须为 log2 域输入。
+// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段）
+// 后调用 gated preload kernel；g 须为 log2 域输入。
 template <typename GateT, typename StateT, bool QKV_SEQUENCE_MAJOR>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
@@ -71,7 +71,7 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
-    {
+    if (AscendC::GetBlockIdx() == 0) {
         gtiling->batch = args.tiling.batch;
         gtiling->seqlen = args.tiling.seqlen;
         gtiling->kNumHead = args.tiling.kNumHead;
@@ -96,6 +96,10 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
         gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
         gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
     }
+    // The preload kernel reads this GM mirror during Init.  A barrier is
+    // required here because Init runs on every AIC/AIV block and the mirror
+    // must be fully visible before any block consumes its offsets.
+    AscendC::SyncAll<false>();
     GatedKernel gatedKernel;
     gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
                      args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
