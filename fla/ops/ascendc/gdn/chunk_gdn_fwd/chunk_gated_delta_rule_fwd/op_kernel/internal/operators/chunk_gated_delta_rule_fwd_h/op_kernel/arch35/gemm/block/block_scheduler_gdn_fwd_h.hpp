@@ -213,12 +213,19 @@ struct BlockSchedulerGdnFwdH {
         vBlockSize = vHeadDim;
         taskNum = batch * vNumHead;
         headGroups = vNumHead / kNumHead;
-        uint32_t maxTaskCntPerLoop = taskNum > cubeCoreNum ? PING_PONG_STAGES : 1;
+        // The bounded/tail path drives MMAD preSetFlags/finalWaitFlags per
+        // task. Concurrent streams on one core reuse the same L1/L0 pipeline,
+        // so keep a single task stream for varlen or non-aligned dense inputs.
+        const bool useBoundedMmad =
+            isVariedLen || (seqlen % chunkSize != 0);
+        uint32_t maxTaskCntPerLoop =
+            (!useBoundedMmad && taskNum > cubeCoreNum) ? PING_PONG_STAGES : 1;
         taskStride = cubeCoreNum * maxTaskCntPerLoop;
-        // Fused H/O keeps the two per-core streams but distributes each stream
-        // as a core-wide wave. This preserves ping-pong while avoiding the
-        // 4/2 task imbalance of adjacent task pairs for 64 tasks on 28 cores.
-        const bool useBalancedWaves = useWaveTaskMapping && !isVariedLen;
+        // Fused H/O uses core-wide waves only while both ping-pong streams are
+        // active. The bounded/tail path above deliberately collapses to one.
+        const bool useBalancedWaves =
+            useWaveTaskMapping && !isVariedLen &&
+            maxTaskCntPerLoop == PING_PONG_STAGES;
         for (uint32_t streamId = 0; streamId < PING_PONG_STAGES; ++streamId) {
             auto& stream = runningQ.streams[streamId];
             stream.nextTaskIdx = (streamId < maxTaskCntPerLoop)
