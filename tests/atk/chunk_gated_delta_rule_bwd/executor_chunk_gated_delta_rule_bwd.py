@@ -268,6 +268,16 @@ def _arch22_preparation_reference(inputs: dict[str, Any], use_exp2: bool):
     return tuple(tensor.to(main_dtype) for tensor in outputs)
 
 
+def _arch35_vector_store(value: torch.Tensor, dtype: torch.dtype):
+    """Model CAST_ROUND at Vector BF16 stores; Cube stores retain PyTorch RNE."""
+    if dtype != torch.bfloat16:
+        return value.to(dtype)
+    fp32 = value.float().contiguous()
+    bits = fp32.view(torch.int32)
+    rounded = ((bits + 0x8000) & -0x10000).view(torch.float32).to(dtype)
+    return torch.where(torch.isfinite(fp32), rounded, fp32.to(dtype))
+
+
 def _intra_reference(inputs: dict[str, Any], use_exp2: bool, high_precision: bool):
     if not high_precision and os.environ.get("GDN_ATK_BENCHMARK_ARCH", "arch35") == "arch22":
         return _arch22_preparation_reference(inputs, use_exp2)
@@ -286,6 +296,8 @@ def _intra_reference(inputs: dict[str, Any], use_exp2: bool, high_precision: boo
         "cu_seqlens": inputs["cu_seqlens"],
         "chunk_indices": inputs["chunk_indices"],
     }
+    if not high_precision:
+        intra_inputs["vector_store"] = _arch35_vector_store
     outputs = _INTRA._cpu_ref(intra_inputs)
     return tuple(tensor.to(torch.float64 if high_precision else torch.bfloat16) for tensor in outputs)
 
@@ -304,6 +316,10 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
     if inputs["beta_raw"] is not None:
         inputs["beta_raw"] = inputs["beta_raw"].to(gate_dtype)
     use_exp2 = _as_bool(spec.get("use_exp2", False))
+    vector_store = (
+        _arch35_vector_store if not high_precision and
+        os.environ.get("GDN_ATK_BENCHMARK_ARCH", "arch35") == "arch35" else None
+    )
     w, u, dv_local = _intra_reference(inputs, use_exp2, high_precision)
     fwd_inputs = _FWD_H.PreparedInputs(
         k=inputs["k"],
@@ -319,6 +335,7 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
     h, v_new, _ = _FWD_H._reference(
         fwd_inputs, output_final_state=False, use_exp2=use_exp2, state_v_first=False,
         compute_dtype=torch.float64 if high_precision else None,
+        vector_store=vector_store,
     )
     dh, dh0, dv2 = _DHU.chunk_gated_delta_rule_bwd_dhu_cpu(
         inputs["q"], inputs["k"], w, inputs["d_o"], dv_local,
@@ -342,6 +359,7 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
         use_beta_sigmoid_in_kernel=_as_bool(spec.get("use_beta_sigmoid", False)),
         use_gate_in_kernel=False, state_v_first=False, use_exp2=use_exp2, nt_first=True,
         compute_dtype=torch.float64 if high_precision else None,
+        vector_store=vector_store,
     )
     state_v_first = _as_bool(spec.get("state_v_first", False))
     if dh0 is not None and state_v_first:

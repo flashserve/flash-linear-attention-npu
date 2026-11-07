@@ -183,6 +183,7 @@ def _cpu_ref(inputs: dict[str, Any]):
     chunk_size = int(inputs["chunk_size"])
     calc = torch.float64 if q.dtype == torch.float64 else torch.float32
     main_dtype = inputs["main_dtype"]
+    vector_store = inputs.get("vector_store", lambda value, dtype: value.to(dtype))
     a_bg_all, a_beta_all, d_all = _compute_intermediates(inputs)
     outputs = [torch.zeros_like(v, dtype=calc) for _ in range(3)]
     group = HV // HK
@@ -191,9 +192,9 @@ def _cpu_ref(inputs: dict[str, Any]):
             hk = hv // group
             length = end - start
             # Stage 1 writes main dtype workspace before the three Cube MMADs.
-            a_bg = a_bg_all[b, hv, start:end, :length].to(main_dtype).to(calc)
-            a_beta = a_beta_all[b, hv, start:end, :length].to(main_dtype).to(calc)
-            d_local = d_all[b, hv, start:end, :length].to(main_dtype).to(calc)
+            a_bg = vector_store(a_bg_all[b, hv, start:end, :length], main_dtype).to(calc)
+            a_beta = vector_store(a_beta_all[b, hv, start:end, :length], main_dtype).to(calc)
+            d_local = vector_store(d_all[b, hv, start:end, :length], main_dtype).to(calc)
             outputs[0][b, hv, start:end] = (
                 a_bg @ k[b, hk, start:end].to(calc)
             )

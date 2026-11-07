@@ -42,8 +42,9 @@ def main():
                 profiles.append(spec)
     result = []
     for index, profile in enumerate(profiles):
-        # case_id=50 (FP32 scalar, norm, G=1 BNSD) needs accuracy_lt recheck
-        # when its dg relative-error ratio fails in an individual random run.
+        # 单轮双标杆失败时需要复检（固定结构，accuracy_lt 50 轮）：
+        # arch22 case_id=1,6,20,23,29,33,35,47,50,51,61,112,113。
+        # arch35 case_id=10,11,46,47,50,51,55,58,59。
         case = deepcopy(cases[0])
         seed = int(profile.get("seed", 20261107 + index)) + args.seed_offset
         profile = dict(profile, seed=seed, case_id=index,

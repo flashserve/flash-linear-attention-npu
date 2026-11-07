@@ -242,6 +242,7 @@ def _reference(
     use_exp2: bool,
     state_v_first: bool,
     compute_dtype: torch.dtype | None = None,
+    vector_store=None,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     k, w, u, g, gk = inputs.k, inputs.w, inputs.u, inputs.g, inputs.gk
     batch, _, total_tokens, _ = k.shape
@@ -257,6 +258,10 @@ def _reference(
     if compute_dtype is None:
         compute_dtype = torch.bfloat16
     accumulation_dtype = torch.float64 if compute_dtype == torch.float64 else torch.float32
+
+    def store_vector(value, dtype):
+        return value.to(dtype) if vector_store is None else vector_store(value, dtype)
+
     h_logical = torch.empty(
         (batch, h_chunk_count, v_heads, K_DIM, V_DIM),
         dtype=compute_dtype,
@@ -313,7 +318,7 @@ def _reference(
                     u[physical_batch, value_head, token_begin:token_end].to(accumulation_dtype)
                     - p.to(accumulation_dtype)
                 )
-                v_new_chunk = v_new_fp32.to(compute_dtype)
+                v_new_chunk = store_vector(v_new_fp32, compute_dtype)
                 v_new[physical_batch, value_head, token_begin:token_end] = v_new_chunk
 
                 is_last = token_end == sequence_end
@@ -322,10 +327,11 @@ def _reference(
                         gate = g[
                             physical_batch, value_head, token_begin:token_end
                         ].to(accumulation_dtype)
-                        right = (
+                        right = store_vector(
                             v_new_fp32
-                            * _gate_exp(gate[-1] - gate, use_exp2).unsqueeze(-1)
-                        ).to(compute_dtype)
+                            * _gate_exp(gate[-1] - gate, use_exp2).unsqueeze(-1),
+                            compute_dtype,
+                        )
                         group_size = v_heads // k.shape[1]
                         key_head = value_head // group_size
                         left = k[
@@ -347,7 +353,7 @@ def _reference(
                             _gate_exp(gate, use_exp2).unsqueeze(-1).to(accumulation_dtype) * state.to(accumulation_dtype)
                             + left.to(accumulation_dtype).transpose(0, 1) @ v_new_chunk.to(accumulation_dtype)
                         )
-                    state = next_state.to(state_dtype)
+                    state = store_vector(next_state, state_dtype)
                 sequence_chunk += 1
 
             if final_logical is not None:

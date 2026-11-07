@@ -31,6 +31,7 @@ def supplemental_specs():
              state_v_first=vfirst, g_dtype="bf16", beta_dtype="fp32")
         for exp2 in (False, True) for vfirst in (False, True)
     ]
+    # supplemental case_id=12：arch22 单轮失败时需要复检，accuracy_lt 50 轮。
     specs += [dict(B=1, HK=4, HV=4, T=4, use_exp2=True),
               dict(B=2, HK=2, HV=6, T=65, use_exp2=True,
                    noncontiguous=True, trace_values=True)]

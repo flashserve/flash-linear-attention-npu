@@ -52,6 +52,10 @@ RecomputeWUFwd + ChunkBwdDvLocal，arch35 使用 Intra；两者的 BF16 舍入�
 arch22 的 W/U 先舍入 `k*beta*exp(g)`、`v*beta` 再乘 A，local-dV 先舍入 KQ；
 不能用 arch35 的 `A*beta` 舍入顺序替代。FP64 golden 保持完整精度计算，三路输入
 在统一的输入 dtype 下生成后再提升计算精度。输入值域和原生双标杆 L1 阈值保持不变。
+
+arch35 的 Intra、FwdH、Finalize 向量 BF16 写回使用 `CAST_ROUND`，恰好位于
+中点时向远离零的方向舍入；对应 CPU FP32 benchmark 按该模式量化。Cube 写回及
+DHU 的 `CAST_RINT` 保持偶数舍入，FP64 golden 不引入这些中间量化。
 直接调用 ATK（包括 `accuracy_lt`）时，显式设置 `GDN_ATK_BENCHMARK_ARCH=arch22`
 或 `arch35`；CPU benchmark 节点拒绝缺少该配置的调用。
 
