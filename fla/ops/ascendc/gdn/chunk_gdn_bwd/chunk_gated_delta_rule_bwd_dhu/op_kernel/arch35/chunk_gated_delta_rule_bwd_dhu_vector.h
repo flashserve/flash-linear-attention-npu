@@ -412,7 +412,8 @@ public:
         InitVectorEvents();
     }
 
-    __aicore__ inline void Process()
+    template <bool COPY_EMPTY_STATES>
+    __aicore__ __attribute__((noinline)) void Process()
     {
         constexpr uint32_t qgL1PaddedRows = 128;
         constexpr uint32_t matrixTileBytes = qgL1PaddedRows * 128 * sizeof(DT);
@@ -452,7 +453,7 @@ public:
             AscendC::SyncAll<true>();
         }
 
-        if (hasDh0_ && hasDht_ && isVariable_ != 0) {
+        if constexpr (COPY_EMPTY_STATES) {
             CopyEmptySequenceStates();
         }
 
