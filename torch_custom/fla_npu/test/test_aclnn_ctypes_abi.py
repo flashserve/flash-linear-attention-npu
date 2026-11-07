@@ -83,6 +83,51 @@ class FakeCallContext:
 
 
 class AclnnCtypesAbiTest(unittest.TestCase):
+    def test_gdn_bwd_use_exp2_matches_stable_for_default_and_none(self):
+        spec = importlib.util.spec_from_file_location(
+            "fla_npu_test_aclnn_ctypes._stable", ASCENDC_DIR / "_stable.py"
+        )
+        stable = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(stable)
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float32 = object()
+        fake_torch.bfloat16 = object()
+        q = FakeTensor((1, 2, 64, 128), fake_torch.bfloat16)
+        v = FakeTensor((1, 4, 64, 128), fake_torch.bfloat16)
+        g = FakeTensor((1, 64, 4), fake_torch.float32)
+        a = FakeTensor((1, 4, 64, 64), fake_torch.bfloat16)
+        d_o = FakeTensor((1, 64, 4, 128), fake_torch.bfloat16)
+        captured = {}
+
+        def fake_empty(shape, like, **kwargs):
+            return FakeTensor(shape, kwargs.get("dtype", like.dtype))
+
+        def fake_call_aclnn(name, build_args, outputs):
+            self.assertEqual(name, "aclnnChunkGatedDeltaRuleBwd")
+            captured["ctypes"] = build_args(FakeCallContext())[19].value
+            return outputs
+
+        def fake_dispatch(*args):
+            captured["stable"] = args[19]
+
+        cases = (("omitted", {}, False), ("none", {"use_exp2": None}, False),
+                 ("false", {"use_exp2": False}, False),
+                 ("true", {"use_exp2": True}, True))
+        with mock.patch.dict(sys.modules, {"torch": fake_torch}), \
+                mock.patch.object(ACLNN_CTYPES, "_empty", side_effect=fake_empty), \
+                mock.patch.object(ACLNN_CTYPES, "_empty_like", side_effect=lambda x: fake_empty(x.shape, x)), \
+                mock.patch.object(ACLNN_CTYPES, "_call_aclnn", side_effect=fake_call_aclnn), \
+                mock.patch.object(stable, "_op", return_value=fake_dispatch), \
+                mock.patch.object(stable, "_host_ints", return_value=None), \
+                mock.patch.object(stable, "_current_stream_ptr", return_value=0):
+            for mode, options, expected in cases:
+                with self.subTest(mode=mode):
+                    ACLNN_CTYPES.npu_chunk_gated_delta_rule_bwd(q, q, v, g, g, a, d_o, 0.125, **options)
+                    stable.npu_chunk_gated_delta_rule_bwd(q, q, v, g, g, a, d_o, 0.125, **options)
+                    self.assertIs(captured["stable"], expected)
+                    self.assertIs(captured["ctypes"], captured["stable"])
+
     def test_gdn_training_and_inference_output_contract(self):
         import inspect
 
