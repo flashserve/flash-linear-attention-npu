@@ -61,6 +61,8 @@ public:
         this->Attr("raw_g_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("qkv_layout").AttrType(OPTIONAL).Int(0);
         this->Attr("o_layout").AttrType(OPTIONAL).Int(0);
+        this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

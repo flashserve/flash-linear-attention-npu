@@ -64,13 +64,13 @@ constexpr const char* kSchema_chunk_gated_delta_rule_fwd =
     "bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, "
     "bool disable_recompute, bool output_final_state, "
     "bool return_intermediate_states, bool state_v_first, int stream) "
-    "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor, Tensor, "
+    "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, "
     "Tensor?, Tensor?)";
 
 std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>,
            std::optional<Tensor>, std::optional<Tensor>,
-           std::optional<Tensor>, Tensor, Tensor, std::optional<Tensor>,
-           std::optional<Tensor>>
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>>
 run_npu_chunk_gated_delta_rule_fwd(
     Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta,
     std::optional<Tensor> initial_state,
@@ -115,20 +115,28 @@ run_npu_chunk_gated_delta_rule_fwd(
         {layout_math::sequences(cu, batch), heads, state_tail_k, state_tail_v},
         state_dtype, q_meta);
   }
+  // Chunk32 runs L2 and beta sigmoid inside the kernel and rejects every
+  // intermediate output (ACLNN 161002). Passing the tensors the flags would
+  // normally allocate makes a legal chunk32 launch fail.
+  const bool is_chunk32 = chunk_size == 32;
+  const bool export_beta = use_beta_sigmoid_in_kernel && !is_chunk32;
+  const bool export_ga = disable_recompute && !is_chunk32;
+  const bool export_h = return_intermediate_states && !is_chunk32;
+  const bool export_l2 = use_qk_l2norm_in_kernel && !is_chunk32;
   std::optional<Tensor> out_beta_eff;
-  if (use_beta_sigmoid_in_kernel) {
+  if (export_beta) {
     out_beta_eff =
         allocate_sizes({batch, tokens, heads}, kFloat, meta_of(beta));
   }
   std::optional<Tensor> out_g_cumsum;
   std::optional<Tensor> out_a;
-  if (disable_recompute) {
+  if (export_ga) {
     out_g_cumsum = allocate_sizes({batch, tokens, heads}, kFloat, meta_of(g));
     out_a = allocate_sizes({batch, heads, tokens, chunk_size},
                            q_meta.scalar_type, q_meta);
   }
   std::optional<Tensor> out_h;
-  if (return_intermediate_states) {
+  if (export_h) {
     const std::vector<int64_t> h_shape = {
         batch, layout_math::chunks(cu, ci, chunk_size, tokens), heads,
         state_tail_k, state_tail_v};
@@ -137,17 +145,19 @@ run_npu_chunk_gated_delta_rule_fwd(
   // The Q/K normalisation results are part of the public tuple now.  The
   // reference allocates them only when the kernel does the normalisation;
   // otherwise the hats *are* the caller's q/k and both rstd slots stay null.
-  const Tensor out_q_hat =
-      use_qk_l2norm_in_kernel
-          ? allocate_sizes(q_meta.sizes, q_meta.scalar_type, q_meta)
-          : q;
-  const Tensor out_k_hat =
-      use_qk_l2norm_in_kernel
-          ? allocate_sizes(k_meta.sizes, k_meta.scalar_type, k_meta)
-          : k;
+  // Chunk32 normalises internally and returns no hats.
+  std::optional<Tensor> out_q_hat;
+  std::optional<Tensor> out_k_hat;
+  if (export_l2) {
+    out_q_hat = allocate_sizes(q_meta.sizes, q_meta.scalar_type, q_meta);
+    out_k_hat = allocate_sizes(k_meta.sizes, k_meta.scalar_type, k_meta);
+  } else if (!is_chunk32) {
+    out_q_hat = q;
+    out_k_hat = k;
+  }
   std::optional<Tensor> out_q_rstd;
   std::optional<Tensor> out_k_rstd;
-  if (use_qk_l2norm_in_kernel) {
+  if (export_l2) {
     // BNS regardless of the input layout -- the kernel enforces this shape.
     out_q_rstd = allocate_sizes({batch, key_heads, tokens}, kFloat, q_meta);
     out_k_rstd = allocate_sizes({batch, key_heads, tokens}, kFloat, q_meta);
@@ -166,8 +176,8 @@ run_npu_chunk_gated_delta_rule_fwd(
       out_tensor(meta_of(out_o)),
       out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
                                              : TensorMeta()),
-      out_tensor(use_qk_l2norm_in_kernel ? meta_of(out_q_hat) : TensorMeta()),
-      out_tensor(use_qk_l2norm_in_kernel ? meta_of(out_k_hat) : TensorMeta()),
+      out_tensor(export_l2 ? meta_of(*out_q_hat) : TensorMeta()),
+      out_tensor(export_l2 ? meta_of(*out_k_hat) : TensorMeta()),
       out_tensor(out_q_rstd.has_value() ? meta_of(*out_q_rstd) : TensorMeta()),
       out_tensor(out_k_rstd.has_value() ? meta_of(*out_k_rstd) : TensorMeta()),
       out_tensor(out_beta_eff.has_value() ? meta_of(*out_beta_eff)
