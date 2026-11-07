@@ -48,7 +48,7 @@ def parse_list(value: str, allowed: tuple[str, ...], label: str) -> list[str]:
 
     result: list[str] = []
     seen: set[str] = set()
-    for token in re.split(r"[,s]+", value.strip()):
+    for token in re.split(r"[,\s]+", value.strip()):
         if not token:
             continue
         token = token.lower()
