@@ -1,0 +1,32 @@
+{
+  "device": 0,
+  "timeout": 120,
+  "protected_roots": [
+    "/ABS/original-stable-install/fla_npu"
+  ],
+  "profiles": {
+    "combined": {
+      "python": "/ABS/test-envs/combined/bin/python",
+      "stable_package": "/ABS/test-envs/combined/lib/python3.12/site-packages/fla_npu",
+      "experimental_package": "/ABS/test-envs/combined/lib/python3.12/site-packages/fla_npu_experimental",
+      "external_experimental_opp": "/ABS/test-artifacts/separate-experimental-opp"
+    },
+    "experimental_only": {
+      "python": "/ABS/test-envs/experimental_only/bin/python",
+      "experimental_package": "/ABS/test-envs/experimental_only/lib/python3.12/site-packages/fla_npu_experimental"
+    },
+    "stable_only": {
+      "python": "/ABS/test-envs/stable_only/bin/python",
+      "stable_package": "/ABS/test-envs/stable_only/lib/python3.12/site-packages/fla_npu"
+    },
+    "single": {
+      "python": "/ABS/test-envs/single/bin/python",
+      "experimental_package": "/ABS/test-envs/single/lib/python3.12/site-packages/fla_npu_experimental"
+    },
+    "overlay": {
+      "python": "/ABS/test-envs/overlay/bin/python",
+      "stable_package": "/ABS/test-envs/overlay/lib/python3.12/site-packages/fla_npu",
+      "overlay_vendor": "/ABS/test-envs/overlay/lib/python3.12/site-packages/fla_npu/opp/vendors/fla_npu_overlay_control"
+    }
+  }
+}

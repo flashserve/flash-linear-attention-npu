@@ -100,12 +100,20 @@ void Runtime::init(const std::string& custom_lib_path) {
     // FLA_NPU_OP_API_LIBS (plural) is an os.pathsep-separated list, highest
     // priority first: overlay vendors first, the complete base library last.
     // FLA_NPU_OP_API_LIB (singular) stays supported for single-library setups.
+#ifdef FLA_STABLE_EXPERIMENTAL
+    const char* plural = nullptr;
+#else
     const char* plural = std::getenv("FLA_NPU_OP_API_LIBS");
+#endif
     if (plural != nullptr && *plural != '\0') {
       custom_paths = split_path_list(plural);
     }
     if (custom_paths.empty()) {
+#ifdef FLA_STABLE_EXPERIMENTAL
+      const char* env = std::getenv("FLA_NPU_EXPERIMENTAL_OP_API_LIB");
+#else
       const char* env = std::getenv("FLA_NPU_OP_API_LIB");
+#endif
       if (env != nullptr && *env != '\0') {
         custom_paths.push_back(env);
       }
@@ -147,6 +155,13 @@ void* Runtime::symbol(const std::string& name) {
     }
   }
   if (addr == nullptr && cann_handle_ != nullptr) {
+#ifdef FLA_STABLE_EXPERIMENTAL
+    // Custom experiment entry points must never resolve from CANN or a base.
+    const std::string owned = FLA_EXPERIMENTAL_SYMBOLS;
+    if (owned.find(":" + name + ":") != std::string::npos) {
+      throw std::runtime_error("experimental launcher: missing owned symbol: " + name);
+    }
+#endif
     addr = dlsym(cann_handle_, name.c_str());
   }
   if (addr == nullptr) {

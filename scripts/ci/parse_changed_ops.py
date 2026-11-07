@@ -13,6 +13,7 @@ import os
 import sys
 import re
 import logging
+import json
 from pathlib import Path
 NEW_OPS_PATH = [
     "mc2",
@@ -24,9 +25,12 @@ NEW_OPS_PATH = [
 
 
 class OperatorChangeInfo:
-    def __init__(self, changed_operators=None, operator_file_map=None):
+    def __init__(self, changed_operators=None, operator_file_map=None,
+                 full_rebuild=False, deleted_operators=None):
         self.changed_operators = [] if changed_operators is None else changed_operators
         self.operator_file_map = {} if operator_file_map is None else operator_file_map
+        self.full_rebuild = full_rebuild
+        self.deleted_operators = [] if deleted_operators is None else deleted_operators
 
 
 BlackList = {
@@ -39,6 +43,14 @@ BlackList = {
 
 def extract_operator_name(file_path, is_experimental):
     path_parts = file_path.lstrip('/').split('/')
+    if is_experimental == "TRUE":
+        if len(path_parts) < 2 or path_parts[0] != "experimental":
+            return ""
+        operator_name = path_parts[1]
+        if operator_name.startswith("_"):
+            return ""
+        marker = Path("experimental", operator_name, "CMakeLists.txt")
+        return operator_name if marker.is_file() else ""
     domain, operator_name = _get_domain_and_op(path_parts, is_experimental)
     if domain is None:
         return ""
@@ -100,6 +112,9 @@ def get_operator_info_from_ci(changed_file_info_from_ci, is_experimental):
     :param changed_file_info_from_ci: git diff result file from ci
     :return: None or OperatorChangeInfo
     """
+    if is_experimental == "TRUE":
+        return _experimental_change_info(changed_file_info_from_ci)
+
     def is_skippable_file(line):
         ext = os.path.splitext(line)[-1].lower()
         return ext in (".md",)
@@ -132,14 +147,71 @@ def get_operator_info_from_ci(changed_file_info_from_ci, is_experimental):
     return OperatorChangeInfo(changed_operators=list(changed_operators), operator_file_map=operator_file_map)
 
 
+def _experimental_change_info(changed_file_info_from_ci):
+    """Read name-only or tab-separated git --name-status changes.
+
+    Rebuild the small experimental tree on every relevant code change. This
+    includes reverse dependents without attempting to parse executable CMake
+    dependency declarations in Python. Keep changed/deleted identities for
+    artifact and registration cleanup checks.
+    """
+    change_file = Path(changed_file_info_from_ci)
+    if not change_file.is_file():
+        raise ValueError(f"Experimental changed-file list is missing: {change_file}")
+    shared_prefixes = ("cmake/", "common/", "scripts/", "ci/",
+                       ".github/workflows/", "torch_custom/")
+    shared_files = {"build.sh", "CMakeLists.txt", "setup.py", "setup.cfg",
+                    "pyproject.toml", "MANIFEST.in"}
+    changed, deleted, files = set(), set(), {}
+    full = False
+    for line in change_file.read_text(encoding="utf-8").splitlines():
+        fields = line.strip().split("\t")
+        if not fields[0]:
+            continue
+        status = fields[0] if len(fields) > 1 else ""
+        paths = fields[1:] if status else fields
+        for index, value in enumerate(paths):
+            path = value.removeprefix("./")
+            if path.endswith(".md"):
+                continue
+            if path in shared_files or path.startswith(shared_prefixes):
+                full = True
+                continue
+            parts = path.split("/")
+            if not parts or parts[0] != "experimental":
+                continue
+            full = True
+            if len(parts) < 3 or parts[1].startswith("_"):
+                continue
+            name = parts[1]
+            if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name):
+                raise ValueError(f"Invalid experimental changed path: {path}")
+            changed.add(name)
+            files.setdefault(name, []).append(path)
+            removed = status.startswith("D") or (status.startswith("R") and index == 0)
+            if removed or not (Path("experimental") / name / "CMakeLists.txt").is_file():
+                deleted.add(name)
+    return OperatorChangeInfo(sorted(changed), files, full, sorted(deleted))
+
+
 def get_change_ops_list(changed_file_info_from_ci, is_experimental):
     ops_change_info = get_operator_info_from_ci(changed_file_info_from_ci, is_experimental)
     if not ops_change_info:
         logging.info("[INFO] not found ops change info, run all c++.")
         return None
 
+    if ops_change_info.full_rebuild:
+        return "all"
+
     return ";".join(ops_change_info.changed_operators)
 
 
 if __name__ == '__main__':
-    print(get_change_ops_list(sys.argv[1], sys.argv[2]))
+    try:
+        if "--json" in sys.argv[3:]:
+            info = get_operator_info_from_ci(sys.argv[1], sys.argv[2])
+            print(json.dumps(vars(info) if info is not None else None, sort_keys=True))
+        else:
+            print(get_change_ops_list(sys.argv[1], sys.argv[2]))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc

@@ -6,6 +6,7 @@ import ast
 import os
 from pathlib import Path
 import re
+import shlex
 
 import npu_compat
 from fla_npu_artifacts import get_tier
@@ -17,6 +18,9 @@ LAUNCHER_FILES = ("libfla_npu_stable.so", "ops/ascendc/_stable_hash.py")
 
 def validate_build_options() -> None:
     """Reject removed modes before running a compiler or changing outputs."""
+    if any(arg == "--experimental" or arg.startswith("--experimental=")
+           for arg in shlex.split(os.getenv("FLA_NPU_BUILD_ARGS", ""))):
+        raise RuntimeError("Stable wheels cannot contain experimental operators; use experimental/_framework/build.py")
     stable = os.getenv("FLA_NPU_BUILD_STABLE_ABI", "TRUE").strip().upper()
     if stable not in {"1", "TRUE", "YES", "ON"}:
         raise RuntimeError("FLA_NPU_BUILD_STABLE_ABI cannot disable the mandatory Stable-ABI launcher")

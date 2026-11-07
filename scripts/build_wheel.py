@@ -489,7 +489,10 @@ def _collect_build_args(args: argparse.Namespace) -> str:
     env_args = os.getenv("FLA_NPU_BUILD_ARGS", "").strip()
     if env_args:
         parts.insert(0, env_args)
-    return " ".join(part.strip() for part in parts if part.strip())
+    result = " ".join(part.strip() for part in parts if part.strip())
+    if any(arg == "--experimental" or arg.startswith("--experimental=") for arg in shlex.split(result)):
+        raise RuntimeError("Cannot build experimental operators into a stable fla_npu wheel")
+    return result
 
 
 def _extract_values(build_args: str, option: str) -> list:
@@ -627,6 +630,7 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+    build_args = _assemble_build_args(args)
 
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
@@ -659,7 +663,6 @@ def main() -> int:
         ]
 
         env = os.environ.copy()
-        build_args = _assemble_build_args(args)
         if build_args:
             env["FLA_NPU_BUILD_ARGS"] = build_args
         returncode = _run_with_progress(command, env, progress, follow_path=build_log)
