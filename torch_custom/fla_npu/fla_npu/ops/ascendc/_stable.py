@@ -70,6 +70,7 @@ _ENUM = {
     "npu_chunk_fwd_o": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
+    "npu_chunk_kda_bwd_prepare": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_prepare": {"layout": _LAYOUT_CODES},
@@ -1350,6 +1351,19 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         _current_stream_ptr(),
     )
     return (*result, initial_state)
+
+
+def npu_chunk_kda_bwd_prepare(
+    aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+):
+    """Partial KDA gradients with contiguous head-major outputs."""
+    return _op("npu_chunk_kda_bwd_prepare")(
+        aqk, v_new, d_o, h, _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        _char_code("npu_chunk_kda_bwd_prepare", "layout", layout),
+        float(scale), int(chunk_size), bool(state_v_first),
+        _current_stream_ptr(),
+    )
 
 
 def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,

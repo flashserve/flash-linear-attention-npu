@@ -214,7 +214,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const auto *dvScan=AllocTensor(ex,token,DataType::DT_BF16);
     CHECK_RET(dAqk && dv0 && dqRaw && dh && dvScan,ACLNN_ERR_INNER_NULLPTR);
     const auto prepareResult = l0op::ChunkKdaBwdPrepare(
-        aqk, vNew, dO, h, cu, indices, scale, 64, false, dAqk, dv0, dqRaw, ex);
+        aqk, vNew, dO, h, cu, indices, packed ? "NTD" : "BNSD", scale, 64, false, dAqk, dv0, dqRaw, ex);
     for (const auto *value : prepareResult) {
         CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
     }
