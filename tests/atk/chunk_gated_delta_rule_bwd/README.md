@@ -38,14 +38,13 @@ CPU 标杆依次计算 `ChunkGdnBwdIntra`、`ChunkFwdH`、
 ```bash
 GEN_CASES_DTYPE_NUMBERS=12 bash tests/atk/run_test_cpu.sh \
   -op=chunk_gated_delta_rule_bwd -scope=gen_cases
-bash tests/atk/run_test_cpu.sh \
-  -op=chunk_gated_delta_rule_bwd -soc=ascend950 -npu_device_id=0 -scope=accuracy
 
 # CPU 双标杆：NPU DUT + CPU FP32 benchmark + CPU FP64 golden
 bash tests/atk/chunk_gated_delta_rule_bwd/scripts/run_double_benchmark.sh 0
 ```
 
 双标杆脚本会检查三路角色数量和 XLSX 中的逐用例精度结果；任一执行或精度失败均返回非零。
+本算子的精度入口使用上述脚本，以同时启动三个角色。
 
 脚本根据 DUT 型号选择 FP32 benchmark 的中间存储顺序：arch22 使用
 RecomputeWUFwd + ChunkBwdDvLocal，arch35 使用 Intra；两者的 BF16 舍入边界不同。
@@ -130,3 +129,25 @@ python tests/atk/chunk_gated_delta_rule_bwd/scripts/compare_layout_profiles.py \
 比较脚本同时验证 BSND/TND 每次调用各减少 6 个 Transpose，BNSD/NTD 的转置数保持一致。
 增量编译前应确认构建目录的 kernel 源码副本与仓库源码一致，并刷新受影响内核的编译缓存；
 仅重装已有 run 包或刷新 opapi 不能证明内核头文件改动已经生效。
+
+### 实际模板选择记录
+
+使用 140 组矩阵各执行一次，按 `task_time` 中的真实 kernel 名称建立 key 到 case id 的映射：
+[arch22](layout_key_coverage.arch22.json)、[arch35](layout_key_coverage.arch35.json)。
+映射同时保存原始 task CSV 和 case manifest 的 SHA256。
+
+| 执行链 | 可达模板轴 | 实测 key 数 |
+| --- | --- | ---: |
+| arch22 WU | 两种 qkv 布局 | 2 |
+| arch22 LocalDV | 指数模式、qkv 布局 | 4 |
+| arch22 FwdH | gate dtype、指数模式、状态 dtype、dense T16、qkv 布局 | 32 |
+| arch35 Intra | fixed/packed、G=1/2/3/4、共同标量 dtype、qkv 布局 | 32 |
+| arch35 FwdH | gate dtype、指数模式、状态 dtype、qkv 布局 | 16 |
+| DHU | gate dtype、qkv 布局 | 每平台 4 |
+| arch22 Finalize | gate dtype、L2Norm、sigmoid、指数模式、owner、qkv 布局 | 64 |
+| arch35 Finalize | gate dtype、L2Norm、sigmoid、指数模式、qkv 布局 | 32 |
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd/scripts/summarize_layout_key_coverage.py \
+  <task_time_csv> <manifest_json> --arch arch22 --out <coverage_json>
+```

@@ -201,6 +201,9 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 三路双标杆，精度入口为该算子 `README.md` 中的 `scripts/run_matrix.sh`；统一脚本仍用于其
 性能、确定性和 mssanitizer。
 
+`chunk_gated_delta_rule_bwd` 使用 NPU DUT、CPU FP32 benchmark 和 CPU FP64 golden
+三路双标杆及原生 L1 标准，精度入口为该算子的 `scripts/run_double_benchmark.sh`。
+
 ### 性能执行
 
 性能测试使用 ATK `performance_device`：
