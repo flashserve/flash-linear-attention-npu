@@ -281,8 +281,10 @@ __aicore__ inline void ChunkBwdDvLocalVector<QKVT, GT, Strategy>::ProcessChunk(c
         endSplitMaskId = CeilDiv(taskEndLine + 1, MASK_LINE_SIZE);
         for (int64_t index = startSplitMaskId; index < endSplitMaskId; index++) {
             repeatOffset = (curTaskLine - taskStartLine) * strategy.chunkSize;
+            // Non-final mask tiles end at an exclusive row boundary. An
+            // extra repeat would read row MASK_LINE_SIZE outside the mask.
             curSize = index == endSplitMaskId - 1 ? taskEndLine - curTaskLine + 1 :
-                                                    (index + 1) * MASK_LINE_SIZE - curTaskLine + 1;
+                                                    (index + 1) * MASK_LINE_SIZE - curTaskLine;
             //  前面补0
             for (int64_t colChunkIndex = 0; colChunkIndex < index; colChunkIndex++) {
                 AscendC::Copy(gFactorLocalTensor[repeatOffset + colChunkIndex * MASK_LINE_SIZE], zeroFp32LocalTensor,
