@@ -36,8 +36,11 @@ dO、g、beta、betaRaw、dBeta/dG、rstd、state 和中间 workspace 各自沿�
 | arch22 A2FinalizeQkTail | 读取原 q/k，合并梯度及可选 L2Norm 后写最终 dq/dk | rstd 与内部梯度分别寻址 |
 
 DHU 对空序列不执行递推，有初态时直接将对应 dht 写到 dh0；无 dht 时沿用清零结果。
-两种状态布局均按相同物理布局搬运，复用原 q 输入、FP32 暂存和输出缓冲及事件协议，
-不增加 workspace、事件或跨核同步。旧实现会将该区域留为零，此处按已有接口契约修正。
+两种状态布局均按相同物理布局搬运。arch22 复用原 q 输入、FP32 暂存和输出缓冲；
+arch35 通过输出 buffer 0 直接搬运同 dtype 的状态，不经过 FP32 转换。arch35 在搬入前
+等待该输出槽位的 MTE3→V 释放信用，再通过原 q 槽位的 V→MTE2、MTE2→V 事件及
+输出槽位的 V→MTE3 事件交接；搬出后归还 MTE3→V 信用，退出前恢复借用的 q 信用。
+不增加 workspace、EventID 或跨核同步。旧实现会将该区域留为零，此处按已有接口契约修正。
 
 保留原 GVA 归约顺序、BF16 阶段落盘、指数换算和状态编号。仅 W/U 的空序列 metadata
 继续压缩，其它阶段仍使用原序列编号。公开八个返回槽位不变。
@@ -45,6 +48,8 @@ DHU 对空序列不执行递推，有初态时直接将对应 dht 写到 dh0；�
 内部追加默认 false 的 `qkv_sequence_major` 属性，并通过 L0 重载、tiling 和模板选择传递。
 旧 L0 重载、ACLNN ABI 和独立子算子的默认行为保留。TilingKey 使用
 `ASCENDC_TPL_ARGS_DECL`、`ASCENDC_TPL_SEL` 和 `GET_TPL_TILING_KEY`。
+arch22 Finalize 的 DQ/WY Cube、Vector 和最终 Q/K 写回均继续传递布局模板参数，
+不在内层循环读取布局属性或按运行时布局选择搬运路径。
 
 ## 资源与同步
 

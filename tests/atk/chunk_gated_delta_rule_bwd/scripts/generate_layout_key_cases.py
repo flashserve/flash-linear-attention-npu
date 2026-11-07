@@ -20,12 +20,33 @@ def key_profiles():
                    layout="BSND" if sequence_major else "BNSD")
 
 
+def remaining_public_intra_profiles():
+    # The composite API promotes g/beta to a common dtype. Complete the BF16
+    # fixed/packed G branches not covered by the 64 Finalize combinations.
+    for packed, group in ((False, 2), (False, 4),
+                          (True, 1), (True, 2), (True, 3), (True, 4)):
+        for sequence_major in (False, True):
+            spec = dict(B=1 if packed else 2, HK=2, HV=2 * group, T=65,
+                        scalar_dtype="bf16", use_exp2=True,
+                        with_state=True, with_dht=True)
+            if packed:
+                spec.update(seqlens=[0, 1, 64, 0],
+                            layout="TND" if sequence_major else "NTD")
+            else:
+                spec["layout"] = "BSND" if sequence_major else "BNSD"
+            yield spec
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--include-layout-regression", action="store_true")
+    parser.add_argument("--complete-public-keys", action="store_true",
+                        help="Append the 12 remaining public BF16 Intra key cases")
     args = parser.parse_args()
+    if args.complete_public_keys and not args.include_layout_regression:
+        parser.error("--complete-public-keys requires --include-layout-regression")
     op_dir = Path(__file__).resolve().parents[1]
     cases = json.loads((op_dir / "atk_chunk_gated_delta_rule_bwd.json").read_text(encoding="utf-8"))
     profiles = list(key_profiles())
@@ -40,6 +61,8 @@ def main():
                 spec["layout"] = ("TND" if seq else "NTD") if packed else (
                     "BSND" if seq else "BNSD")
                 profiles.append(spec)
+    if args.complete_public_keys:
+        profiles.extend(remaining_public_intra_profiles())
     result = []
     for index, profile in enumerate(profiles):
         # 单轮双标杆失败时需要复检（固定结构，accuracy_lt 50 轮）：
