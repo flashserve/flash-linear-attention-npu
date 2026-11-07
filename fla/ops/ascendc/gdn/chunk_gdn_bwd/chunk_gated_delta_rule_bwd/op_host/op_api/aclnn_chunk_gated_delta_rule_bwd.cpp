@@ -23,12 +23,14 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
+#include "op_common/log/log.h"
 
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <string>
 
 #if GDN_BWD_ENABLE_ARCH22
 #include "../../../chunk_bwd_dv_local/op_host/op_api/chunk_bwd_dv_local.h"
@@ -390,21 +392,30 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
         constexpr uint64_t ROW_BYTES = DIM_128 * sizeof(uint16_t);
         constexpr uint64_t MAX_HEADS =
             std::numeric_limits<uint32_t>::max() / ROW_BYTES + 1;
-        CHECK_COND(static_cast<uint64_t>(info.hk) <= MAX_HEADS,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "q/k/dq/dk: layout=%s requires HK <= %lu for the GM row gap, got %ld.",
-                   params.layout, MAX_HEADS, info.hk);
-        CHECK_COND(static_cast<uint64_t>(info.hv) <= MAX_HEADS,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "v/dv: layout=%s requires HV <= %lu for the GM row gap, got %ld.",
-                   params.layout, MAX_HEADS, info.hv);
+        const std::string expectedHeads = "<= " + std::to_string(MAX_HEADS) +
+            " for the uint32_t GM row gap in layout=" + params.layout;
+        if (static_cast<uint64_t>(info.hk) > MAX_HEADS) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkGatedDeltaRuleBwd", "q/k/dq/dk.HK",
+                                      std::to_string(info.hk), expectedHeads);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (static_cast<uint64_t>(info.hv) > MAX_HEADS) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkGatedDeltaRuleBwd", "v/dv.HV",
+                                      std::to_string(info.hv), expectedHeads);
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         uint64_t remaining = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
         for (uint64_t factor : {static_cast<uint64_t>(info.batch),
                                 static_cast<uint64_t>(info.tokens),
                                 static_cast<uint64_t>(info.hv), ROW_BYTES}) {
-            CHECK_COND(factor <= remaining, ACLNN_ERR_PARAM_INVALID,
-                       "v/dv: layout=%s byte address B*T*HV*128*2 exceeds int64_t.",
-                       params.layout);
+            if (factor > remaining) {
+                const std::string actual = "B=" + std::to_string(info.batch) +
+                    ", T=" + std::to_string(info.tokens) + ", HV=" + std::to_string(info.hv);
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON("aclnnChunkGatedDeltaRuleBwd",
+                    "v/dv byte address", actual,
+                    "layout=" + std::string(params.layout) + " requires B*T*HV*128*2 <= INT64_MAX");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             remaining /= factor;
         }
     }
