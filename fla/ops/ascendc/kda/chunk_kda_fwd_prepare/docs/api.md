@@ -155,6 +155,10 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 
 ## 返回码
 
+参数错误通过 `op_common/log/log.h` 结构化上报，可用 `aclGetRecentErrMsg()`
+读取参数名、实际值和约束。按宏及配套 opbase 消息目录选择可用错误码；
+下层调用失败保留首错，ACLNN 返回状态保持兼容。
+
 | 返回码 | 触发条件 |
 | --- | --- |
 | `ACLNN_SUCCESS` | workspace 查询或执行成功 |
