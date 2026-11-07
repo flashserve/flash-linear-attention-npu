@@ -1738,12 +1738,12 @@ public:
                         AscendC::DataCopyPad(k_[streamSlot_], kGm_[kOffset],
                             {static_cast<uint16_t>(chunk.chunkLen),
                              static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
-                             static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                             static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT)), 0, 0},
                             {false, 0, 0, 0});
                         AscendC::DataCopyPad(v_[streamSlot_], vGm_[vOffset],
                             {static_cast<uint16_t>(chunk.chunkLen),
                              static_cast<uint32_t>(V_SIZE_128 * sizeof(DT)),
-                             static_cast<uint32_t>((tiling_->HV - 1) * V_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                             static_cast<uint32_t>((tiling_->HV - 1) * V_SIZE_128 * sizeof(DT)), 0, 0},
                             {false, 0, 0, 0});
                     } else {
                         AscendC::DataCopy(k_[streamSlot_], kGm_[kOffset], chunk.chunkLen * K_SIZE_128);
@@ -1888,7 +1888,7 @@ public:
                             static_cast<uint16_t>(chunk.chunkLen),
                             static_cast<uint32_t>(V_SIZE_128 * sizeof(DT)),
                             0,
-                            static_cast<uint32_t>((tiling_->HV - 1) * V_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0};
+                            static_cast<uint32_t>((tiling_->HV - 1) * V_SIZE_128 * sizeof(DT)), 0};
                         AscendC::DataCopyPad(dkStage12OutGm_[vOffset], dvb_[streamSlot_], dvOutputCopyParams);
                     } else {
                         AscendC::DataCopyPad(
@@ -2088,7 +2088,7 @@ public:
                             AscendC::DataCopyPad(qStage14_[qSlot], qGm_[qOffset],
                                 {static_cast<uint16_t>(chunk.chunkLen),
                                  static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
-                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT)), 0, 0},
                                 {false, 0, 0, 0});
                         } else {
                             AscendC::DataCopy(qStage14_[qSlot], qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
@@ -2207,12 +2207,12 @@ public:
                             AscendC::DataCopyPad(qStage15_, qGm_[qOffset],
                                 {static_cast<uint16_t>(chunk.chunkLen),
                                  static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
-                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT)), 0, 0},
                                 {false, 0, 0, 0});
                             AscendC::DataCopyPad(kStage15_, kGm_[qOffset],
                                 {static_cast<uint16_t>(chunk.chunkLen),
                                  static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
-                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0, 0},
+                                 static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT)), 0, 0},
                                 {false, 0, 0, 0});
                         } else {
                             AscendC::DataCopy(qStage15_, qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
@@ -2245,7 +2245,7 @@ public:
                             static_cast<uint16_t>(chunk.chunkLen),
                             static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
                             0,
-                            static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT) / UB_ALIGN_BYTES), 0};
+                            static_cast<uint32_t>((tiling_->HK - 1) * K_SIZE_128 * sizeof(DT)), 0};
                         AscendC::DataCopyPad(dqOutGm_[qOffset], dqAcc_[stage15Output], outputCopyParams);
                         AscendC::DataCopyPad(dkOutGm_[qOffset], dkAcc_[stage15Output], outputCopyParams);
                     } else {

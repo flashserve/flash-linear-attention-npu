@@ -650,7 +650,7 @@ public:
                             const uint32_t qIdx = CopyInRows(
                                 qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset *
                                     (qkvSequenceMajor_ ? HK_ * K_ : K_),
-                                static_cast<uint32_t>(curRows * K_));
+                                static_cast<uint32_t>(curRows * K_), qkvSequenceMajor_);
                             AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                             CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);
                             AscendC::PipeBarrier<PIPE_V>();
@@ -956,11 +956,11 @@ private:
     template <typename CopyType>
     __aicore__ inline uint32_t CopyInRows(AscendC::GlobalTensor<CopyType> &inputTensor,
                                           AscendC::LocalTensor<CopyType> dstTensor, int64_t inputOffset,
-                                          uint32_t elements)
+                                          uint32_t elements, bool sequenceMajorQ = false)
     {
         const uint32_t inputIdx = curQInputPingPong_;
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
-        if (qkvSequenceMajor_) {
+        if (sequenceMajorQ) {
             const uint32_t rows = elements / static_cast<uint32_t>(K_);
             AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
                 static_cast<uint32_t>(K_ * sizeof(CopyType)),

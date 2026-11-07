@@ -41,7 +41,8 @@ template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename STATE_TYPE,
-    typename WORKSPACE_TYPE
+    typename WORKSPACE_TYPE,
+    bool K_SEQUENCE_MAJOR = false
 >
 class GDNFwdHKernelPreload {
 public:
@@ -202,7 +203,9 @@ public:
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
+            auto kLayout = tla::MakeLayoutFromTag(LayoutK(
+                kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens,
+                K_SEQUENCE_MAJOR ? kNumHead * kHeadDim : kHeadDim));
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
             AscendC::SyncAll<false>();    
@@ -244,6 +247,12 @@ public:
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            if constexpr (K_SEQUENCE_MAJOR) {
+                                const uint64_t token = static_cast<uint64_t>(stream.shapeBatchIdx) *
+                                    cubeBlockScheduler.totalTokens + stream.tokenOffset +
+                                    static_cast<uint64_t>(stream.chunkIdx) * chunkSize;
+                                cube2OffsetK = (token * kNumHead + stream.kHeadIdx) * kHeadDim;
+                            }
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
                             auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});

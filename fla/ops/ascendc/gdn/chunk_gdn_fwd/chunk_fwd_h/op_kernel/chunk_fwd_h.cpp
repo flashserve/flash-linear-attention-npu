@@ -62,11 +62,12 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
 
 // gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
 // 各 AIC 幂等同值写）后调用 gated preload kernel；g 须为 log2 域输入。
-template <typename GateT, typename StateT>
+template <typename GateT, typename StateT, bool QKV_SEQUENCE_MAJOR>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float>;
+    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<
+        DataT, GateT, StateT, float, QKV_SEQUENCE_MAJOR>;
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
@@ -119,7 +120,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
             (group % 2) != 0 && args.tiling.kNumHead > 1;
         if (!gatedDeadlockShape) {
-            RunFwdHGatedReuse<GateT, GatedStateT>(args);
+            RunFwdHGatedReuse<GateT, GatedStateT, QKV_SEQUENCE_MAJOR>(args);
             return;
         }
     }

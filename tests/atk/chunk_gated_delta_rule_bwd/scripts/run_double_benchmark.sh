@@ -99,4 +99,27 @@ PY
 
 report_file=$(find "$run_dir" -type f -name '*.xlsx' -print -quit 2>/dev/null || true)
 [[ -n "$report_file" ]] || { echo "ATK 未生成 XLSX 报告：$run_dir" >&2; exit 97; }
+python3 - "$report_file" "$expected_cases" <<'PY'
+import sys
+import openpyxl
+
+workbook = openpyxl.load_workbook(sys.argv[1], read_only=True)
+rows = iter(workbook["statistic"].values)
+header = list(next(rows))
+accuracy_columns = [i for i, name in enumerate(header) if name and name.endswith("_精度通过")]
+result_column = header.index("运行结果")
+results = list(rows)
+expected = int(sys.argv[2])
+if len(results) != expected or not accuracy_columns:
+    raise SystemExit(f"报告用例数或精度列异常：expected={expected}, actual={len(results)}")
+failed = []
+for row in results:
+    accuracy = [row[i] for i in accuracy_columns if row[i] not in (None, "", "-")]
+    if row[result_column] != "SUCCESS" or not accuracy or any(value is not True for value in accuracy):
+        failed.append(row[0])
+workbook.close()
+if failed:
+    raise SystemExit(f"双标杆精度未通过，case={failed}")
+print(f"双标杆精度报告校验通过：{expected} case")
+PY
 echo "双标杆精度测试完成：$run_dir"
