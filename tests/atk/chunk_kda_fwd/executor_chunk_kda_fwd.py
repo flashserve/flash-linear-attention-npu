@@ -897,7 +897,6 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         "indices": inputs.chunk_indices,
         "layout": layout,
         "chunk_size": int(spec["chunk_size"]),
-        "safe_gate": _as_bool(spec["safe_gate"]),
         "lower_bound": float(spec["lower_bound"]),
     }
     null_inputs = {"null_q": "q", "null_k": "k", "null_v": "v", "null_g": "g", "null_beta": "beta"}
@@ -1074,7 +1073,7 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
                 ctypes.cast(layout_buffer, ctypes.c_char_p),
                 ctypes.c_double(float(spec["scale"])),
                 ctypes.c_int64(values["chunk_size"]),
-                ctypes.c_bool(values["safe_gate"]),
+                ctypes.c_bool(_as_bool(spec["safe_gate"])),
                 ctypes.c_double(values["lower_bound"]),
                 ctypes.c_bool(_as_bool(spec["use_gate_in_kernel"])),
                 ctypes.c_bool(_as_bool(spec["state_v_first"])),

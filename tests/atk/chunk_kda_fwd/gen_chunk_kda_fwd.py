@@ -236,7 +236,7 @@ NEGATIVE_COUNT = len(NEGATIVE_CASES)
 def _negative_case(local_id: int, soc: str) -> dict:
     mutation, code_name, code, message = NEGATIVE_CASES[local_id]
     layout = "BSND"
-    spec = {
+    return {
         "case_key": f"{soc}_negative_{local_id:02d}_{mutation}",
         "tags": "negative,boundary",
         "route": "aclnn",
@@ -271,7 +271,6 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "expected_return_code": code,
         "expected_message": message,
     }
-    return spec
 
 
 def build_specs() -> list[dict]:
