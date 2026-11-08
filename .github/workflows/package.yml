@@ -158,6 +158,10 @@ jobs:
           script: |
             const SOCS = ['ascend910b', 'ascend910_93', 'ascend950'];
             const ARCHES = ['arm', 'x86'];
+            const RUNNER_LABELS = {
+              arm: ['self-hosted', 'Linux', 'ARM64', 'npu', 'flash-linear-attention-npu'],
+              x86: ['self-hosted', 'Linux', 'npu', 'X64', 'ascend950', 'flash-linear-attention-npu-a5'],
+            };
             const inputs = context.payload.inputs || {};
 
             let socs = (inputs.socs || '').split(',')
@@ -191,6 +195,7 @@ jobs:
                   soc,
                   arch,
                   name: `Release-${ref}-${datetime}-PR${pr}-${soc}-${arch}-${commit}`,
+                  runner_labels: JSON.stringify(RUNNER_LABELS[arch]),
                 });
               }
             }
@@ -205,11 +210,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    # 同一架构的多个 SOC 按顺序执行 (SOC 之间串行)，arm 与 x86 之间并行
+    # 每个 SOC 使用独立并发组，避免 GitHub 只保留一个 pending；runner 容量负责实际排队，arm/x86 使用各自标签
     concurrency:
-      group: pkg-${{ github.repository }}-PR${{ inputs.pr_number }}-${{ matrix.arch }}-${{ inputs.build_sha }}
+      group: pkg-${{ github.repository }}-PR${{ inputs.pr_number }}-${{ matrix.arch }}-${{ matrix.soc }}-${{ inputs.build_sha }}
       cancel-in-progress: false
-    runs-on: ["self-hosted", "linux", "arm64", "npu", "flash-linear-attention-npu"]
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
     permissions:
       contents: read
     env:
