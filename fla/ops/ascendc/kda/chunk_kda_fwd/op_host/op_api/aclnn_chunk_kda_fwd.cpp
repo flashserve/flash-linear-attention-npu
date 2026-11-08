@@ -543,16 +543,15 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
 
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    // 执行阶段的连续化失败属于内部错误(l0op 失败时 MakeContiguous 返回
-    // ACLNN_ERR_INNER_NULLPTR),原样传播,不映射为参数错误。chunk64 调用点仍按
-    // 其既有契约自行映射为 PARAM_INVALID,对外行为不变。
-    const aclTensor **slots[] = {&params.q, &params.k, &params.v, &params.g, &params.beta,
-                                 &params.aLogOptional, &params.dtBiasOptional,
-                                 &params.initialStateOptional};
-    for (auto *slot : slots) {
-        aclnnStatus ret = MakeContiguous(*slot, executor);
-        CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    }
+    CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 
