@@ -173,10 +173,7 @@ NEGATIVE_CASES = (
     ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, "attnOut must not be nullptr"),
     ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
     ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aLogOptional is required when useGateInKernel is true"),
-    # chunk32 已迁至独立算子 ChunkKdaFwdFused 并仅由 aclnnChunkKdaFwdV2 路由，
-    # V1 收到 chunk_size=32 明确拒绝（mutation 将该值改为 32）。
-    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter chunkSize of aclnnChunkKdaFwd has incorrect value 32"),
+    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize must be 64 or 128"),
     ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
     ("layout_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
     ("rank_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "q/k/v/g and beta ranks must match layout"),
@@ -225,9 +222,6 @@ NEGATIVE_CASES = (
     # 指明逻辑维的拦截文案，而不是下沉到 tiling 后只回传无上下文的 561103。
     ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "sequence length must be greater than 0"),
     ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "batch dimension must be greater than 0"),
-    # chunk32 守卫的负向覆盖在 chunk32 套件（tests/atk/chunk_kda_fwd/chunk32/
-    # negative_chunk32_v2_guards.py，走 aclnnChunkKdaFwdV2）；chunk32 已不从
-    # aclnnChunkKdaFwd 路由，本套件不再承载 chunk32 用例。
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
