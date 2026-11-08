@@ -61,8 +61,13 @@ bash tests/atk/chunk_kda_fwd/chunk32/run_chunk32_atk.sh accuracy 0
 bash tests/atk/chunk_kda_fwd/chunk32/run_chunk32_atk.sh performance 0
 bash tests/atk/chunk_kda_fwd/chunk32/run_chunk32_atk.sh mssanitizer 0
 
-# 公开 V2 的 H=HV=0 dense/NTD varlen 负向回归。
+# 负向回归（raw ABI 探针，只跑 GetWorkspaceSize 阶段）：
+# 公开 V2 的 H=HV=0 dense/NTD varlen、H/HV 上限与 lowerBound 范围、
+# 七个 chunk32 守卫文案，以及 V1 对 chunk_size=32 的整体拒绝。
 python3 tests/atk/chunk_kda_fwd/chunk32/negative_chunk32_zero_heads.py
+python3 tests/atk/chunk_kda_fwd/chunk32/negative_chunk32_head_lowerbound.py
+python3 tests/atk/chunk_kda_fwd/chunk32/negative_chunk32_v2_guards.py
+python3 tests/atk/chunk_kda_fwd/chunk32/negative_chunk32_v1_rejects_chunk32.py
 ```
 
 设备号由执行环境选择。输出默认写入本目录的 `atk_output/`，可用 `ATK_OUTPUT_ROOT` 改到其他位置；

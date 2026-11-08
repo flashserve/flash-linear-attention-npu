@@ -1360,7 +1360,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
         // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkSize", "32",
-                                  "chunkSize=32 is only supported via aclnnChunkKdaFwdV2");
+                                  "64 or 128 (chunkSize=32 is only supported via aclnnChunkKdaFwdV2)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;

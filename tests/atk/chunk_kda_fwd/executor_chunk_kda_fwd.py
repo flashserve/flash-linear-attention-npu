@@ -884,12 +884,6 @@ def _resize_axis(tensor: torch.Tensor, axis: int, size: int) -> torch.Tensor:
 def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
     mutation = str(spec["mutation"])
     layout = str(spec["layout"])
-    if int(spec["chunk_size"]) == 32:
-        # 正向 fused 输出只有 attn/final state；负向用例只保留目标中间输出。
-        for index in (2, 5, 6, 7, 8, 9, 10):
-            if mutation == "chunk32_intermediate" and index == 2:
-                continue
-            outputs[index] = None
     values = {
         "q": inputs.q,
         "k": inputs.k,
@@ -915,26 +909,6 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         outputs[3] = None
     elif mutation == "null_akk":
         outputs[4] = None
-    elif mutation == "chunk32_safe_gate":
-        values["safe_gate"] = False
-    elif mutation == "chunk32_missing_alog":
-        values["A_log"] = None
-    elif mutation == "chunk32_missing_dtbias":
-        values["dt_bias"] = None
-    elif mutation == "chunk32_bad_k":
-        for name in ("q", "k", "g"):
-            values[name] = values[name][..., :-64].contiguous()
-        values["dt_bias"] = values["dt_bias"][:int(spec["HV"]) * 64].contiguous()
-    elif mutation == "chunk32_q_fp32":
-        values["q"] = inputs.q.float()
-    elif mutation == "chunk32_bnsd_varlen":
-        values["layout"] = "BNSD"
-        values["cu"] = [0, int(spec["T"])]
-        for name in ("q", "k", "v", "g"):
-            values[name] = values[name].permute(0, 2, 1, 3).contiguous()
-        values["beta"] = values["beta"].permute(0, 2, 1).contiguous()
-    elif mutation == "chunk32_intermediate":
-        pass  # gkOut 已在上面保留，其余 fused 不支持的输出仍为 None。
     elif mutation == "missing_alog":
         values["A_log"] = None
     elif mutation == "chunk_invalid":

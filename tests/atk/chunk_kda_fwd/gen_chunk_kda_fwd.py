@@ -173,7 +173,10 @@ NEGATIVE_CASES = (
     ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, "attnOut must not be nullptr"),
     ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
     ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aLogOptional is required when useGateInKernel is true"),
-    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize must be 64 or 128"),
+    # chunk32 已迁至独立算子 ChunkKdaFwdFused 并仅由 aclnnChunkKdaFwdV2 路由，
+    # V1 收到 chunk_size=32 明确拒绝（mutation 将该值改为 32）。
+    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002,
+     "Parameter chunkSize of aclnnChunkKdaFwd has incorrect value 32"),
     ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
     ("layout_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
     ("rank_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "q/k/v/g and beta ranks must match layout"),
@@ -222,21 +225,9 @@ NEGATIVE_CASES = (
     # 指明逻辑维的拦截文案，而不是下沉到 tiling 后只回传无上下文的 561103。
     ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "sequence length must be greater than 0"),
     ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "batch dimension must be greater than 0"),
-    # chunk32 fused guard：独立追加，保持既有 chunk64 负向用例 ID 不变。
-    ("chunk32_safe_gate", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter safeGate of aclnnChunkKdaFwd has incorrect value false"),
-    ("chunk32_missing_alog", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter aLogOptional of aclnnChunkKdaFwd has incorrect value null"),
-    ("chunk32_missing_dtbias", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter dtBiasOptional of aclnnChunkKdaFwd has incorrect value null"),
-    ("chunk32_bad_k", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter K/V of aclnnChunkKdaFwd has incorrect value 64/128"),
-    ("chunk32_q_fp32", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter q of aclnnChunkKdaFwd has incorrect dtype"),
-    ("chunk32_bnsd_varlen", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter layout of aclnnChunkKdaFwd has incorrect value BNSD with cuSeqlensOptional"),
-    ("chunk32_intermediate", "ACLNN_ERR_PARAM_INVALID", 161002,
-     "Parameter gkOut of aclnnChunkKdaFwd has incorrect value provided"),
+    # chunk32 守卫的负向覆盖在 chunk32 套件（tests/atk/chunk_kda_fwd/chunk32/
+    # negative_chunk32_v2_guards.py，走 aclnnChunkKdaFwdV2）；chunk32 已不从
+    # aclnnChunkKdaFwd 路由，本套件不再承载 chunk32 用例。
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
@@ -280,14 +271,6 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "expected_return_code": code,
         "expected_message": message,
     }
-    if mutation.startswith("chunk32_"):
-        spec.update(
-            chunk_size=32,
-            q_dtype="bf16",
-            disable_recompute=False,
-            return_intermediate_states=False,
-            state_v_first=False,
-        )
     return spec
 
 
