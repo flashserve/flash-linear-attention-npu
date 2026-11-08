@@ -130,7 +130,7 @@ Python 入口 `fla_npu.ops.ascendc.chunk_kda_fwd` 通过关键字参数
 
 ## 支持范围
 
-- A2 (`ascend910b`)、A3 (`ascend910_93`) 支持 chunk64；A5 (`ascend950`) 支持 chunk64 和 chunk32。
+- A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
 - `K/V` 只支持两档且必须同档：`K=V=64` 或 `K=V=128`。混合档（如 `K=64,V=128`）
   与其它取值（含 `V=256`）都不支持，会在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`。
 - `chunk_size` 支持 `64` 和 `32`。chunk32 仅走 Ascend950 的 arch35 融合路径，要求
