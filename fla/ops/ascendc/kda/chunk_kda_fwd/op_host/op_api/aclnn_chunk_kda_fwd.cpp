@@ -73,7 +73,7 @@ struct ChunkKdaFwdParams {
     double lowerBound = -5.0;
     bool useGateInKernel = false;
     bool stateVFirst = false;
-    // 归一化 / 指数开关:v1 入口固定使用默认值,
+    // 归一化 / 指数开关：v1 入口固定使用与历史实现一致的默认值，
     // 只有 aclnnChunkKdaFwdV2 才会按调用方传参设置。
     double epsilon = 1.0e-6;
     bool useQkL2normInKernel = false;
