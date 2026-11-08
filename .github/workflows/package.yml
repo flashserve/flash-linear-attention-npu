@@ -162,6 +162,10 @@ jobs:
               arm: ['self-hosted', 'Linux', 'ARM64', 'npu', 'flash-linear-attention-npu'],
               x86: ['self-hosted', 'Linux', 'npu', 'X64', 'ascend950', 'flash-linear-attention-npu-a5'],
             };
+            const DOCKER_IMAGES = {
+              arm: 'fla-npu-ci:9.1.0-910b',
+              x86: 'fla-npu-ci:9.1.0-950',
+            };
             const inputs = context.payload.inputs || {};
 
             let socs = (inputs.socs || '').split(',')
@@ -196,6 +200,7 @@ jobs:
                   arch,
                   name: `Release-${ref}-${datetime}-PR${pr}-${soc}-${arch}-${commit}`,
                   runner_labels: JSON.stringify(RUNNER_LABELS[arch]),
+                  docker_image: DOCKER_IMAGES[arch],
                 });
               }
             }
@@ -223,7 +228,7 @@ jobs:
       FLA_PKG_COMMIT_ID: ${{ inputs.build_sha }}
       FLA_PKG_DATETIME: ${{ inputs.datetime }}
       FLA_PKG_THIRD_PARTY_CACHE: /workspace/flash-linear-attention-npu-ci/cache/third_party
-      FLA_PKG_DOCKER_IMAGE: fla-npu-ci:9.1.0-910b
+      FLA_PKG_DOCKER_IMAGE: ${{ matrix.docker_image }}
     steps:
       - name: Checkout build source (${{ inputs.build_repo }} @ ${{ inputs.build_sha }})
         uses: actions/checkout@v4
