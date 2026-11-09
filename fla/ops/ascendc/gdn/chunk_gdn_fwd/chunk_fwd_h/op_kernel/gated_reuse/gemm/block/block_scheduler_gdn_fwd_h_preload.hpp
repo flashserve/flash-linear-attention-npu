@@ -115,24 +115,23 @@ struct BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreload() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
 
-        batch = gdnFwdHTilingData->batch;
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        shapeBatch = gdnFwdHTilingData->shapeBatch;
-        tokenBatch = gdnFwdHTilingData->tokenBatch;
+        batch = tiling.batch;
+        seqlen = tiling.seqlen;
+        kNumHead = tiling.kNumHead;
+        vNumHead = tiling.vNumHead;
+        kHeadDim = tiling.kHeadDim;
+        vHeadDim = tiling.vHeadDim;
+        chunkSize = tiling.chunkSize;
+        isVariedLen = tiling.isVariedLen;
+        shapeBatch = tiling.shapeBatch;
+        tokenBatch = tiling.tokenBatch;
         originalTokenBatch = tokenBatch;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        useInitialState = tiling.useInitialState;
+        storeFinalState = tiling.storeFinalState;
+        numSeqWorkspaceOffset = tiling.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
@@ -355,7 +354,7 @@ struct BlockSchedulerGdnFwdHPreloadCube : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
     }
 
@@ -366,7 +365,7 @@ struct BlockSchedulerGdnFwdHPreloadVec : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
     }
 

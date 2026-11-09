@@ -96,6 +96,7 @@ public:
         this->Attr("logical_v_heads").AttrType(REQUIRED).Int(1);
         this->Attr("logical_k_dim").AttrType(REQUIRED).Int(1);
         this->Attr("logical_v_dim").AttrType(REQUIRED).Int(1);
+        this->Attr("seq_chunk_counts").AttrType(OPTIONAL).ListInt({});
         this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig aicore_config;

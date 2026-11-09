@@ -144,28 +144,27 @@ public:
     __aicore__ inline GDNFwdHKernelPreload() {}
 
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, 
-        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
+        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
-        layout_ = gdnFwdHTilingData->layout;
-        batch = gdnFwdHTilingData->batch;
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        shapeBatch = gdnFwdHTilingData->shapeBatch;
-        tokenBatch = gdnFwdHTilingData->tokenBatch;
-        vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
-        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
-        hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        layout_ = tiling.layout;
+        batch = tiling.batch;
+        seqlen = tiling.seqlen;
+        kNumHead = tiling.kNumHead;
+        vNumHead = tiling.vNumHead;
+        kHeadDim = tiling.kHeadDim;
+        vHeadDim = tiling.vHeadDim;
+        chunkSize = tiling.chunkSize;
+        useInitialState = tiling.useInitialState;
+        storeFinalState = tiling.storeFinalState;
+        isVariedLen = tiling.isVariedLen;
+        shapeBatch = tiling.shapeBatch;
+        tokenBatch = tiling.tokenBatch;
+        vWorkspaceOffset = tiling.vWorkspaceOffset;
+        vUpdateWorkspaceOffset = tiling.vUpdateWorkspaceOffset;
+        hWorkspaceOffset = tiling.hWorkspaceOffset;
+        numSeqWorkspaceOffset = tiling.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
         
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);

@@ -68,43 +68,38 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
     using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<
         DataT, GateT, StateT, float>;
     __gm__ uint8_t *user = args.workspace;
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
-    if (AscendC::GetBlockIdx() == 0) {
-        gtiling->layout = args.tiling.layout;
-        gtiling->batch = args.tiling.batch;
-        gtiling->seqlen = args.tiling.seqlen;
-        gtiling->kNumHead = args.tiling.kNumHead;
-        gtiling->vNumHead = args.tiling.vNumHead;
-        gtiling->kHeadDim = args.tiling.kHeadDim;
-        gtiling->vHeadDim = args.tiling.vHeadDim;
-        gtiling->chunkSize = args.tiling.chunkSize;
-        gtiling->useInitialState = args.tiling.useInitialState;
-        gtiling->storeFinalState = args.tiling.storeFinalState;
-        gtiling->dataType = 1; // bf16 输入
-        gtiling->gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
-        gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
-        gtiling->isVariedLen = args.tiling.isVariedLen;
-        gtiling->shapeBatch = args.tiling.shapeBatch;
-        gtiling->tokenBatch = args.tiling.tokenBatch;
-        gtiling->useG = true;
-        gtiling->useGk = false;
-        gtiling->vWorkspaceOffset = args.tiling.vWorkspaceOffset;
-        gtiling->vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
-        gtiling->kDecayWorkspaceOffset = 0;
-        gtiling->hWorkspaceOffset = args.tiling.hWorkspaceOffset;
-        gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
-        gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
-    }
-    // The preload kernel reads this GM mirror during Init.  A barrier is
-    // required here because Init runs on every AIC/AIV block and the mirror
-    // must be fully visible before any block consumes its offsets.
-    AscendC::SyncAll<false>();
+    // Each block already owns the host tiling values. Keep the private preload
+    // view local so initialization needs no shared GM mirror or publication barrier.
+    ChunkGatedDeltaRuleFwdHTilingData gatedTiling{};
+    gatedTiling.layout = args.tiling.layout;
+    gatedTiling.batch = args.tiling.batch;
+    gatedTiling.seqlen = args.tiling.seqlen;
+    gatedTiling.kNumHead = args.tiling.kNumHead;
+    gatedTiling.vNumHead = args.tiling.vNumHead;
+    gatedTiling.kHeadDim = args.tiling.kHeadDim;
+    gatedTiling.vHeadDim = args.tiling.vHeadDim;
+    gatedTiling.chunkSize = args.tiling.chunkSize;
+    gatedTiling.useInitialState = args.tiling.useInitialState;
+    gatedTiling.storeFinalState = args.tiling.storeFinalState;
+    gatedTiling.dataType = 1;
+    gatedTiling.gDataType = std::is_same_v<GateT, float> ? 2 : 1;
+    gatedTiling.stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
+    gatedTiling.isVariedLen = args.tiling.isVariedLen;
+    gatedTiling.shapeBatch = args.tiling.shapeBatch;
+    gatedTiling.tokenBatch = args.tiling.tokenBatch;
+    gatedTiling.useG = true;
+    gatedTiling.useGk = false;
+    gatedTiling.vWorkspaceOffset = args.tiling.vWorkspaceOffset;
+    gatedTiling.vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
+    gatedTiling.kDecayWorkspaceOffset = 0;
+    gatedTiling.hWorkspaceOffset = args.tiling.hWorkspaceOffset;
+    gatedTiling.numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
+    gatedTiling.numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
     GatedKernel gatedKernel;
     gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
                      args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
                      args.finalState,
-                     reinterpret_cast<GM_ADDR>(gtiling),
+                     gatedTiling,
                      user);
     gatedKernel.Process();
 }
