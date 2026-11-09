@@ -6,7 +6,6 @@
 #define OP_API_INC_LEVEL0_OP_SOLVE_TRI_H
 
 #include "aclnn/aclnn_base.h"
-#include "opdev/op_executor.h"
 
 #ifdef __cplusplus
 extern "C" {
