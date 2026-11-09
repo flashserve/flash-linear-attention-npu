@@ -21,22 +21,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
-    aclOpExecutor *executor);
-
-const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
-    const aclTensor *q, const aclTensor *k, const aclTensor *v,
-    const aclTensor *vNew, const aclTensor *dO, const aclTensor *du,
-    const aclTensor *g, const aclTensor *beta, const aclTensor *h,
-    const aclTensor *dh, const aclTensor *a,
-    const aclTensor *qRstdOptional, const aclTensor *kRstdOptional,
-    const aclTensor *betaRawOptional,
-    const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
-    double scale, int64_t chunkSize, bool useQkL2NormInKernel,
-    bool useBetaSigmoidInKernel, bool useGateInKernel, bool stateVFirst,
-    bool useExp2,
-    const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
-    const aclTensor *dbetaOut, const aclTensor *dgOut,
-    aclOpExecutor *executor, bool qkvSequenceMajor);
+    aclOpExecutor *executor, const char *layout = "BNSD");
 
 } // namespace l0op
 

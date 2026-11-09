@@ -521,8 +521,7 @@ aclnnStatus ComposeIntraArch22(
     const Params &params, const aclTensor *qHead, const aclTensor *kHead,
     const aclTensor *vHead, const aclTensor *dOHead, const aclTensor *gHead,
     const aclTensor *betaHead, DataType gateType, const aclTensor *w,
-    const aclTensor *u, const aclTensor *dvLocal, aclOpExecutor *executor,
-    bool qkvSequenceMajor)
+    const aclTensor *u, const aclTensor *dvLocal, aclOpExecutor *executor)
 {
     // A2/A3 复用两个已注册的 L0 算子。它们的 gate 是 FP32 自然指数；
     // 公共 use_exp2 仅在此内部桥接，后续算子仍接收原 g 和原 flag。
@@ -564,13 +563,13 @@ aclnnStatus ComposeIntraArch22(
     }
     const auto wuResult = l0op::RecomputeWUFwd(
         kHead, vHead, naturalBeta, params.a, naturalGate, nullptr,
-        wuCuSeqlens, wuChunkIndices, params.chunkSize, w, u, executor, qkvSequenceMajor);
+        wuCuSeqlens, wuChunkIndices, params.chunkSize, w, u, executor, params.layout);
     CHECK_COND(wuResult[0] != nullptr && wuResult[1] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "A2/A3 W/U composition failed.");
     const aclTensor *localResult = l0op::ChunkBwdDvLocal(
         qHead, kHead, dOHead, naturalGate, nullptr, nullptr,
         params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
-        dvLocal, executor, qkvSequenceMajor);
+        dvLocal, executor, params.layout);
     CHECK_COND(localResult != nullptr, ACLNN_ERR_INNER_NULLPTR,
                "A2/A3 local dV composition failed.");
     return ACLNN_SUCCESS;
@@ -715,15 +714,14 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         CHECK_RET(MakeOutputContiguousArch22(params.dh0Out, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
         CHECK_RET(ComposeIntraArch22(params, qHead, kHead, vHead, dOHead, gHead,
-                                    betaHead, gateType, w, u, dvLocal, executorPtr,
-                                    info.sequenceMajor) == ACLNN_SUCCESS,
+                                    betaHead, gateType, w, u, dvLocal, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
     } else {
 #endif
         const auto intraResult = l0op::ChunkGdnBwdIntra(
             qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
             params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
-            params.useExp2, w, u, dvLocal, executorPtr, info.sequenceMajor);
+            params.useExp2, w, u, dvLocal, executorPtr, params.layout);
         CHECK_COND(intraResult[0] != nullptr && intraResult[1] != nullptr &&
                        intraResult[2] != nullptr,
                    ACLNN_ERR_INNER_NULLPTR, "ChunkGdnBwdIntra composition failed.");
@@ -734,7 +732,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const auto fwdHResult = l0op::ChunkFwdH(
         kHead, w, u, gHead, nullptr, initialStateKv,
         params.cuSeqlens, params.chunkIndices, false, params.chunkSize, true,
-        params.useExp2, false, h, vNew, nullptr, executorPtr, info.sequenceMajor);
+        params.useExp2, false, h, vNew, nullptr, executorPtr, params.layout);
     CHECK_COND(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "ChunkFwdH composition failed.");
 
@@ -742,7 +740,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         qHead, kHead, w, dOHead, dvLocal, gHead, nullptr,
         params.initialState, params.dht, params.cuSeqlens, params.chunkIndices,
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst, dh, params.dh0Out,
-        dv2, executorPtr, info.sequenceMajor);
+        dv2, executorPtr, params.layout);
     CHECK_COND(dhuResult[0] != nullptr && dhuResult[1] != nullptr &&
                    dhuResult[2] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "ChunkGatedDeltaRuleBwdDhu composition failed.");
@@ -753,7 +751,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         params.chunkIndices, params.scale, params.chunkSize,
         params.useQkL2normInKernel, params.useBetaSigmoidInKernel,
         params.useGateInKernel, false, params.useExp2,
-        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr, info.sequenceMajor);
+        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr, params.layout);
     for (const aclTensor *tensor : finalizeResult) {
         CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR,
                    "ChunkGatedDeltaRuleBwdFinalize composition failed.");

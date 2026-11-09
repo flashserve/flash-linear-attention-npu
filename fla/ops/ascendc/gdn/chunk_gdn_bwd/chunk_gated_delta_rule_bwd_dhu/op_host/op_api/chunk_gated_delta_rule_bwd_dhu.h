@@ -35,29 +35,8 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclTensor *dhOut,
     const aclTensor *dh0Out,
     const aclTensor *dv2Out,
-    aclOpExecutor *executor);
-
-const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
-    const aclTensor *q,
-    const aclTensor *k,
-    const aclTensor *w,
-    const aclTensor *dO,
-    const aclTensor *dv,
-    const aclTensor *gOptional,
-    const aclTensor *gkOptional,
-    const aclTensor *h0Optional,
-    const aclTensor *dhtOptional,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
-    double scale,
-    int64_t chunkSize,
-    bool useExp2,
-    bool stateVFirst,
-    const aclTensor *dhOut,
-    const aclTensor *dh0Out,
-    const aclTensor *dv2Out,
     aclOpExecutor *executor,
-    bool qkvSequenceMajor);
+    const char *layout = "BNSD");
 
 } // namespace l0op
 

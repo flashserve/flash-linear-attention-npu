@@ -51,7 +51,7 @@ public:
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
-        this->Attr("qkv_sequence_major").AttrType(OPTIONAL).Bool(false);
+        this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

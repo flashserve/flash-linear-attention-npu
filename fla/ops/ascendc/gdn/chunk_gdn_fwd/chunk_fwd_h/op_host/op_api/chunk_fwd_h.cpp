@@ -8,6 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <cstring>
+
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -53,39 +55,18 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
-    aclOpExecutor *executor)
-{
-    return ChunkFwdH(
-        k, w, u, g,
-        gkOptional, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional,
-        outputFinalState, chunkSize, saveNewValue, useExp2,
-        stateVFirst, hOut, vNewOut, finalStateOut,
-        executor, false);
-}
-
-const std::array<const aclTensor *, 3> ChunkFwdH(
-    const aclTensor *k,
-    const aclTensor *w,
-    const aclTensor *u,
-    const aclTensor *g,
-    const aclTensor *gkOptional,
-    const aclTensor *initialStateOptional,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
-    bool outputFinalState,
-    int64_t chunkSize,
-    bool saveNewValue,
-    bool useExp2,
-    bool stateVFirst,
-    const aclTensor *hOut,
-    const aclTensor *vNewOut,
-    const aclTensor *finalStateOut,
     aclOpExecutor *executor,
-    bool qkvSequenceMajor)
+    const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        return {nullptr, nullptr, nullptr};
+    }
     L0_DFX(ChunkFwdH, k, w, u, g, gkOptional, initialStateOptional, cuSeqlensOptional,
            chunkIndicesOptional, outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
-           hOut, vNewOut, finalStateOut, qkvSequenceMajor);
+           hOut, vNewOut, finalStateOut, layout);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -115,6 +96,8 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         actualChunkIndices = nullptr;
     }
 
+    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 ||
+                                  std::strcmp(layout, "TND") == 0;
     const auto &kShape = k->GetViewShape();
     const auto &uShape = u->GetViewShape();
     const size_t headDim = qkvSequenceMajor ? 2 : 1;
@@ -124,7 +107,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const int64_t logicalSeqlen = kShape.GetDim(sequenceDim);
     const int64_t logicalKDim = kShape.GetDim(3);
     // u is an internal head-major [B,HV,T,V] tensor even when the public
-    // q/k/v tensors are sequence-major; only k follows qkvSequenceMajor here.
+    // q/k/v tensors are sequence-major; only k follows layout here.
     const int64_t logicalVHeads = uShape.GetDim(1);
     const int64_t logicalVDim = uShape.GetDim(3);
     const aclTensor *finalStateOutKernel = finalStateOut;
@@ -162,7 +145,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         OP_ATTR(outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
                 logicalBatch, logicalSeqlen,
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr,
-                qkvSequenceMajor));
+                layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};

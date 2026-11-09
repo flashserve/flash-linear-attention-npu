@@ -24,7 +24,7 @@ constexpr size_t INTRA_CHUNK_INDICES_IDX = 8;
 constexpr size_t INTRA_SCALE_ATTR_IDX = 0;
 constexpr size_t INTRA_CHUNK_SIZE_ATTR_IDX = 1;
 constexpr size_t INTRA_USE_EXP2_ATTR_IDX = 2;
-constexpr size_t INTRA_QKV_SEQUENCE_MAJOR_ATTR_IDX = 3;
+constexpr size_t INTRA_LAYOUT_ATTR_IDX = 3;
 
 } // namespace optiling
 

@@ -24,22 +24,8 @@ const aclTensor * ChunkBwdDvLocal(
     double scale,
     int64_t chunkSize,
     const aclTensor *out,
-    aclOpExecutor *executor);
-
-const aclTensor * ChunkBwdDvLocal(
-    const aclTensor *q,
-    const aclTensor *k,
-    const aclTensor *dO,
-    const aclTensor *g,
-    const aclTensor *gGammaOptional,
-    const aclTensor *aOptional,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
-    double scale,
-    int64_t chunkSize,
-    const aclTensor *out,
     aclOpExecutor *executor,
-    bool qkvSequenceMajor);
+    const char *layout = "BNSD");
 }
 
 #endif

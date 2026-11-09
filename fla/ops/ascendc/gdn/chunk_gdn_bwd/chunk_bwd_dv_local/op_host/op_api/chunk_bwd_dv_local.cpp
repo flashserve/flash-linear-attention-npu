@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include <cstring>
+
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -29,31 +31,17 @@ const aclTensor * ChunkBwdDvLocal(
     double scale,
     int64_t chunkSize,
     const aclTensor *out,
-    aclOpExecutor *executor)
-{
-    return ChunkBwdDvLocal(
-        q, k, dO, g,
-        gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional,
-        scale, chunkSize, out, executor, false);
-}
-
-const aclTensor * ChunkBwdDvLocal(
-    const aclTensor *q,
-    const aclTensor *k,
-    const aclTensor *dO,
-    const aclTensor *g,
-    const aclTensor *gGammaOptional,
-    const aclTensor *aOptional,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
-    double scale,
-    int64_t chunkSize,
-    const aclTensor *out,
     aclOpExecutor *executor,
-    bool qkvSequenceMajor)
+    const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        return nullptr;
+    }
     L0_DFX(ChunkBwdDvLocal, q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional,
-           chunkIndicesOptional, scale, chunkSize, qkvSequenceMajor, out);
+           chunkIndicesOptional, scale, chunkSize, layout, out);
     
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -78,7 +66,7 @@ const aclTensor * ChunkBwdDvLocal(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkBwdDvLocal,
         OP_INPUT(q, k, dO, g, gGammaOptional, aOptional, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(out),
-        OP_ATTR(scale, chunkSize, qkvSequenceMajor));
+        OP_ATTR(scale, chunkSize, layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;

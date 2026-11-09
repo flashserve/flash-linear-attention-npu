@@ -2,6 +2,8 @@
 #define GDN_FINALIZE_ENABLE_ARCH22 0
 #endif
 
+#include <cstring>
+
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
 
 #include <algorithm>
@@ -168,9 +170,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
-    const bool *qkvSequenceMajor = attrs->GetAttrPointer<bool>(7);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    const bool qkvSequenceMajorValue = qkvSequenceMajor == nullptr ? false : *qkvSequenceMajor;
+    const char *layout = attrs->GetStr(7);
+    if (layout == nullptr) {
+        layout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+                return ge::GRAPH_FAILED);
+    const bool qkvSequenceMajorValue = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
 #if GDN_FINALIZE_ENABLE_ARCH22
     // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
     const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());

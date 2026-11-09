@@ -1,6 +1,8 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 
+#include <cstring>
+
 #include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_tiling_key.h"
 #include "../op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.h"
 #include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
@@ -242,8 +244,15 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    const bool *qkvSequenceMajor = attrs->GetAttrPointer<bool>(7);
-    const bool qkvSequenceMajorValue = qkvSequenceMajor == nullptr ? false : *qkvSequenceMajor;
+    const char *layout = attrs->GetStr(7);
+    if (layout == nullptr) {
+        layout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+                return ge::GRAPH_FAILED);
+    const bool qkvSequenceMajorValue = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
     tiling->qkvSequenceMajor = qkvSequenceMajorValue ? 1 : 0;
     OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, qkvSequenceMajorValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);

@@ -12,6 +12,8 @@
  * \brief
  */
 
+#include <cstring>
+
 #include "recompute_w_u_fwd_tiling.h"
 #include "recompute_w_u_fwd_tiling_processor.h"
 #include <register/op_impl_registry.h>
@@ -66,6 +68,16 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     const int64_t *chunkIndicesData =
         chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
 
+    const char *layout = attrPtr->GetStr(1);
+    if (layout == nullptr) {
+        layout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+                return ge::GRAPH_FAILED);
+    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+
     RecomputeWUFwdTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_INPUT_K_IDX),
@@ -78,7 +90,7 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
         cuSeqlensData,
         chunkIndicesData,
         *(attrPtr->GetAttrPointer<int32_t>(0)),
-        attrPtr->GetAttrPointer<bool>(1) != nullptr && *attrPtr->GetAttrPointer<bool>(1),
+        qkvSequenceMajor,
         kDesc->GetDataType(),
         betaDesc->GetDataType(),
         ubSize,

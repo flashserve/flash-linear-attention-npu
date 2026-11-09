@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include <cstring>
+
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -29,31 +31,17 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     int64_t chunkSize,
     const aclTensor *wOut,
     const aclTensor *uOut,
-    aclOpExecutor *executor)
-{
-    return RecomputeWUFwd(
-        k, v, beta, a,
-        g, gk, cuSeqlensOptional, chunkIndicesOptional,
-        chunkSize, wOut, uOut, executor, false);
-}
-
-const std::array<const aclTensor *, 2> RecomputeWUFwd(
-    const aclTensor *k,
-    const aclTensor *v,
-    const aclTensor *beta,
-    const aclTensor *a,
-    const aclTensor *g,
-    const aclTensor *gk,
-    const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
-    int64_t chunkSize,
-    const aclTensor *wOut,
-    const aclTensor *uOut,
     aclOpExecutor *executor,
-    bool qkvSequenceMajor)
+    const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        return {nullptr, nullptr};
+    }
     L0_DFX(RecomputeWUFwd, k, v, beta, a, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize,
-           qkvSequenceMajor, wOut, uOut);
+           layout, wOut, uOut);
     
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -78,7 +66,7 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RecomputeWUFwd,
         OP_INPUT(k, v, beta, a, g, gk, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(wOut, uOut),
-        OP_ATTR(chunkSize, qkvSequenceMajor));
+        OP_ATTR(chunkSize, layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr};

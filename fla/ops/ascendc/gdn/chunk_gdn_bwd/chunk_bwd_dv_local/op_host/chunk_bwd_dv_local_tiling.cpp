@@ -12,6 +12,8 @@
  * \brief
  */
 
+#include <cstring>
+
 #include "chunk_bwd_dv_local_tiling_processor.h"
 #include "../op_kernel/chunk_bwd_dv_local_struct.h"
 
@@ -47,6 +49,16 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
 
     auto attrPtr = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
+    const char *layout = attrPtr->GetStr(2);
+    if (layout == nullptr) {
+        layout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+                return ge::GRAPH_FAILED);
+    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+
     ChunkBwdDvLocalTilingContext ctx{
         context->GetNodeName(),
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_Q_IDX),
@@ -57,7 +69,7 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_CHUNK_INDICES_IDX),
         *(attrPtr->GetAttrPointer<double>(CHUNK_BWD_DV_LOCAL_ATTR_SCALE_IDX)),
         *(attrPtr->GetAttrPointer<int32_t>(CHUNK_BWD_DV_LOCAL_ATTR_CHUNK_SIZE_IDX)),
-        attrPtr->GetAttrPointer<bool>(2) != nullptr && *attrPtr->GetAttrPointer<bool>(2),
+        qkvSequenceMajor,
     };
 
     ChunkBwdDvLocalTilingProcessor processor(ctx, *tiling);
