@@ -18,6 +18,8 @@ CLI 与 `ci/example_st_cases.json` 的字段映射保持一致（`--batch/--toke
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import os
 import sys
@@ -41,6 +43,8 @@ from fla_npu.ops.ascendc import chunk_kda_bwd, chunk_kda_fwd  # noqa: E402
 
 DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}
 ACCURACY_TENSORS = ("o", "dq", "dk", "dv", "dbeta", "dg")
+# 输入生成、CPU recurrent 或参考梯度算法变化时递增，避免复用旧标杆。
+ACCURACY_REFERENCE_VERSION = 1
 DEFAULT_TOLERANCES = {
     "output_tol": 5e-3,
     "grad_tol": 8e-3,
@@ -106,6 +110,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--demo-model", action="store_true", default=False)
     parser.add_argument("--legacy-unfused-core", action="store_true", default=False)
     parser.add_argument("--accuracy-check", action="store_true", default=False)
+    parser.add_argument(
+        "--accuracy-cache-dir",
+        default=os.environ.get("GDR_ACCURACY_CACHE_DIR", "third_party/gdr_accuracy_golden"),
+    )
+    parser.add_argument("--accuracy-force-regenerate", action="store_true")
     parser.add_argument("--recompute", action="store_true", default=False)
     parser.add_argument("--check-finite", action="store_true", default=False,
                         help="任一前向输出出现非有限值即失败（尾块 workspace 看护）")
@@ -287,6 +296,65 @@ def recurrent_reference(
             out[batch_id, token_id] = torch.einsum(
                 "hvk,hk->hv", state, q_norm[batch_id, token_id] * scale)
     return out, gate, leaves
+
+
+def load_or_create_accuracy_golden(
+    args: argparse.Namespace,
+    tensors: Dict[str, torch.Tensor],
+    grad_out: torch.Tensor,
+    *,
+    scale: float,
+    cu_seqlens: Optional[Tuple[int, ...]],
+) -> Dict[str, torch.Tensor]:
+    """复用 GDR 的持久化目录和日志协议，只缓存独立 CPU 标杆。"""
+
+    config = {
+        "reference_version": ACCURACY_REFERENCE_VERSION,
+        "batch": args.batch,
+        "tokens": args.tokens,
+        "query_heads": args.query_heads,
+        "value_heads": args.value_heads,
+        "key_dim": args.key_dim,
+        "value_dim": args.value_dim,
+        "chunk_size": args.chunk_size,
+        "dtype": args.dtype,
+        "seed": args.seed,
+        "layout": args.layout,
+        "qk_l2norm": bool(args.qk_l2norm),
+        "lower_bound": float(args.lower_bound),
+        "scale": float(scale),
+        "cu_seqlens": list(cu_seqlens) if cu_seqlens is not None else None,
+    }
+    encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()[:16]
+    case_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_"
+                        for ch in args.case_name.strip()) or "chunk_kda"
+    path = Path(args.accuracy_cache_dir) / "chunk_kda" / f"{case_name}_{digest}.pt"
+    if path.exists() and not args.accuracy_force_regenerate:
+        loaded = torch.load(path, map_location="cpu", weights_only=True)
+        if loaded.get("config") == config:
+            print(f"accuracy golden: reused {path}", flush=True)
+            return loaded["tensors"]
+        print(f"accuracy golden: config mismatch, regenerating {path}", flush=True)
+
+    ref_o, _ref_gate, leaves = recurrent_reference(
+        *(tensors[name].cpu() for name in ("q", "k", "v", "g", "beta", "A_log", "dt_bias")),
+        scale=scale, lower_bound=args.lower_bound,
+        cu_seqlens=cu_seqlens, qk_l2norm=bool(args.qk_l2norm))
+    loss = (ref_o * grad_out.cpu()).sum()
+    grads = torch.autograd.grad(
+        loss, [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
+    golden = {name: tensor.detach() for name, tensor in zip(ACCURACY_TENSORS, (ref_o, *grads))}
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        torch.save({"config": config, "tensors": golden}, temporary)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print(f"accuracy golden: generated {path}", flush=True)
+    return golden
 
 
 def cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:
@@ -523,13 +591,8 @@ def run_once(args: argparse.Namespace) -> int:
         torch.set_num_threads(1)
     except Exception:  # pragma: no cover - 已有并行工作时的保护
         pass
-    ref_o, _ref_gate, leaves = recurrent_reference(
-        q.cpu(), k.cpu(), v.cpu(), g.cpu(), beta.cpu(), tensors["A_log"].cpu(),
-        tensors["dt_bias"].cpu(), scale=scale, lower_bound=args.lower_bound,
-        cu_seqlens=cu, qk_l2norm=bool(args.qk_l2norm))
-    loss = (ref_o * grad_out.cpu()).sum()
-    grads = torch.autograd.grad(loss, [leaves[name] for name in ("q", "k", "v", "beta", "raw_gate")])
-    ref_dq, ref_dk, ref_dv, ref_dbeta, ref_dg_raw = grads
+    golden = load_or_create_accuracy_golden(
+        args, tensors, grad_out, scale=scale, cu_seqlens=cu)
 
     # layout=BSND/TND，五个 Token 梯度已是模型顺序。
     def to_bsnd(x: torch.Tensor) -> torch.Tensor:
@@ -538,24 +601,18 @@ def run_once(args: argparse.Namespace) -> int:
     o_bsnd = to_bsnd(o)
     dq_bsnd, dk_bsnd, dv_bsnd, dbeta_bsnd, dg_bsnd = map(to_bsnd, (dq, dk, dv, dbeta, dg))
 
-    if args.qk_l2norm:
-        # 反向返回的是对归一化 q/k 的梯度，参考也按同样口径（leaves 即归一化后的 q/k）。
-        ref_dg = ref_dg_raw
-    else:
-        ref_dg = ref_dg_raw
-
     selected = {item.strip() for item in args.accuracy_tensors.split(",") if item.strip()}
     unknown = selected.difference(ACCURACY_TENSORS)
     if unknown:
         raise ValueError(f"Unsupported accuracy tensor(s): {', '.join(sorted(unknown))}")
 
     pairs = {
-        "o": (o_bsnd, ref_o),
-        "dq": (dq_bsnd, ref_dq),
-        "dk": (dk_bsnd, ref_dk),
-        "dv": (dv_bsnd, ref_dv),
-        "dbeta": (dbeta_bsnd, ref_dbeta),
-        "dg": (dg_bsnd, ref_dg),
+        "o": (o_bsnd, golden["o"]),
+        "dq": (dq_bsnd, golden["dq"]),
+        "dk": (dk_bsnd, golden["dk"]),
+        "dv": (dv_bsnd, golden["dv"]),
+        "dbeta": (dbeta_bsnd, golden["dbeta"]),
+        "dg": (dg_bsnd, golden["dg"]),
     }
     failed = []
     for name in ACCURACY_TENSORS:
