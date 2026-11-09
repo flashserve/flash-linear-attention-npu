@@ -176,11 +176,24 @@ jobs:
       contains(github.event.comment.body, '/package')
     runs-on: ubuntu-latest
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 分发到 package workflow
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/package(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -194,6 +207,7 @@ jobs:
             let socs = [];
             let arches = [];
             let branch = '';
+            let jobs = '';
             for (const part of parts) {
               if (part.startsWith('soc=')) {
                 if (socs.length > 0) {
@@ -217,6 +231,16 @@ jobs:
                   core.setFailed(`arch 参数不合法，可选值: ${ARCHES.join(', ')}`);
                   return;
                 }
+              } else if (part.startsWith('jobs=')) {
+                if (jobs) {
+                  core.setFailed('jobs 参数只能指定一次。');
+                  return;
+                }
+                jobs = part.slice('jobs='.length);
+                if (!/^[1-9][0-9]*$/.test(jobs) || !Number.isSafeInteger(Number(jobs))) {
+                  core.setFailed('jobs 参数必须是正整数，例如 /package jobs=16。');
+                  return;
+                }
               } else if (part.startsWith('branch=')) {
                 if (branch) {
                   core.setFailed('branch 参数只能指定一次。');
@@ -231,29 +255,16 @@ jobs:
                 core.setFailed(
                   `不支持的参数: ${part}。用法: /package ` +
                   `[soc=ascend910b,ascend910_93,ascend950] ` +
-                  `[arch=arm,x86] [branch=<分支名|head>]`);
+                  `[arch=arm,x86] [branch=<分支名|head>] [jobs=16]`);
                 return;
               }
             }
             if (!socs.length) socs = SOCS;
             if (!arches.length) arches = ARCHES;
+            if (!jobs) jobs = '16';
 
             const actor = context.actor;
-            let actorPermission = 'none';
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: actor,
-              });
-              actorPermission = data.permission || 'none';
-            } catch (error) {
-              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
-            }
-            if (actorPermission !== 'admin') {
-              core.setFailed(`${actor} 无权触发 Package 编译：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
-              return;
-            }
+            await auth.authorizeCiRequest({ github, context, requestedBy: actor });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -264,6 +275,9 @@ jobs:
             if (pr.draft) {
               core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再触发 Package 编译。`);
               return;
+            }
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              await auth.requireCiAuthorAdmin({ github, context, pr });
             }
 
             // 出包代码来源: 不指定 branch 时默认编译 PR 合并结果，即
@@ -324,6 +338,7 @@ jobs:
                 pr_number: String(prNumber),
                 socs: socs.join(','),
                 arches: arches.join(','),
+                jobs,
                 requested_by: actor,
                 build_sha: buildSha,
                 build_ref: buildRef,
@@ -334,5 +349,5 @@ jobs:
 
             core.notice(
               `已将 PR #${prNumber} 的 Package 编译分发到 package.yml，` +
-              `分支=${buildRef}@${buildSha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]。`
+              `分支=${buildRef}@${buildSha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]，编译并发=${jobs}。`
             );
