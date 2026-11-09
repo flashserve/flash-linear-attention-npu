@@ -285,8 +285,23 @@ jobs:
             printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
           done
 
-      - name: Checkout build source through proxy
+      - name: Checkout build source through proxy (attempt 1)
+        id: checkout_source_proxy_1
         if: steps.checkout_source.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.build_repo }}
+          ref: ${{ inputs.build_sha }}
+          fetch-depth: 1
+
+      - name: 等待后再次通过代理拉取源码
+        if: steps.checkout_source.outcome == 'failure' && steps.checkout_source_proxy_1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Checkout build source through proxy (attempt 2)
+        if: steps.checkout_source.outcome == 'failure' && steps.checkout_source_proxy_1.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v4
         with:
