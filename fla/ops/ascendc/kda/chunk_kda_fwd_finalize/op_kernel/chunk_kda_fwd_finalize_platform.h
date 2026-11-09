@@ -7,24 +7,12 @@
 #ifndef CHUNK_KDA_FWD_FINALIZE_PLATFORM_H
 #define CHUNK_KDA_FWD_FINALIZE_PLATFORM_H
 
-#include <cstdint>
-
-#include "ascendc/host_api/tiling/template_argument.h"
-
 namespace KdaFinalize {
 
-// MIX 实例核型必须保持“可展开为数值字面量的宏”：ASCENDC_TPL_PRE 阶段会把
-// ASCENDC_TPL_KERNEL_TYPE_SEL 的实参原样交给代码生成器解析，只有宏会被展开成
-// 数字，C++ 限定名（如 FinalizePlatform::kMixAicKernelType）无法被解析。
-#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
-#define CHUNK_KDA_FWD_FINALIZE_MIX_AIC_KERNEL_TYPE ASCENDC_TPL_MIX_AIC_1_1
-#else
-#define CHUNK_KDA_FWD_FINALIZE_MIX_AIC_KERNEL_TYPE ASCENDC_TPL_MIX_AIC_1_2
-#endif
-
 // 三段门控的唯一判定点：把全工程散点的 __NPU_ARCH__==9201 / __CCE_AICORE__==310
-// 收敛到这一处。struct/cube/tiling_key/kernel 的 per-arch 判定一律从这里的 bool 取，
-// 不再各自 #if。
+// 收敛到这一处。struct/cube/kernel 的 per-arch 判定一律从这里的 bool 取，不再各自 #if。
+// MIX 实例核型仍在 tiling_key.h 内以数值宏表达（ASCENDC_TPL_PRE 阶段只接受可展开成
+// 数字的宏），属于同一平台契约的另一半。
 struct FinalizePlatform {
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
     // A6（Ascend960DT）：AIC:AIV = 1:1，单 AIV 串行搬 4 head。

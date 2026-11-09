@@ -340,7 +340,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     const FinalizePlatformTraits traits = GetFinalizePlatformTraits(tier);
     if (traits.tier == FinalizeKernelTier::Unknown) {
         OP_LOGE(context->GetNodeName(),
-                "chunk_kda_fwd_finalize 不支持的 NPU 架构 id=%u，无法匹配平台模板。",
+                "chunk_kda_fwd_finalize 不支持的 NPU 架构 id=%u，"
+                "期望 DAV_2201(A2/A3)、DAV_3510(A5)、DAV_9201(A6) 之一。",
                 static_cast<uint32_t>(platform.GetCurNpuArch()));
         return ge::GRAPH_FAILED;
     }
