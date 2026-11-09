@@ -50,6 +50,8 @@ engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、param
 
 任务入口等待 V→MTE2 握手，选择 (current+1)%3 的 bank 搬入初态；然后向当前参数槽提交 bias 和首 tile 输入，Vector 持有该槽参数锁直到任务结束。相邻有效任务选择不同参数槽，下一任务输入搬入无需等待当前任务释放参数槽；再次复用同一槽时仍须等待其上一个消费者释放。每个 token 锁住目标 bank，执行 VF，再按需提交 State 搬出。tile 完成后释放输入/out 锁并提交整个 tile out。
 
+indexed State 写回时，每个 bank 记录其尚未回收的快照目标槽位。Vector 获取目标 bank 的 Mutex 后，上一笔以该 bank 为源的搬出已完成，可清除对应记录。提交新快照前，若其 GM 槽位与其他未完成快照相同，在 MTE3 上插入 `PipeBarrier<PIPE_MTE3>()`，并清除此前记录，保证同址覆盖按 token 顺序完成；其他槽位继续重叠搬出。只靠不同 bank 的 Mutex 或同流水 Lock/Unlock 不能保证重叠 GM 写的完成顺序。记录在每个任务的 V 分块内维护；不同活跃请求不得共享写槽，同一任务的不同 V 分块写入不同 GM 区间。该等待不阻塞 Scalar。
+
 倒数第二个 token VF 后发布 V→MTE2，保证下一工作项（下一 V 分块或下一任务）所需 bank 已完成最后一次 Vector 读取。T=1 时下一任务所用 bank 不参与当前 VF，可提前发布。下一工作项初态搬入允许与当前末 token VF 重叠；同一任务的下一 V 分块继续复用参数槽，下一任务参数搬入使用另一参数槽，覆盖旧槽时仍由该槽独立的 parameter Mutex 保护。结尾关闭未消费的握手，再由 V 按槽0、槽1依次获取并立即释放 output Mutex，等待两槽最后的 MTE3 搬出完成，替代入口的 PipeBarrier<PIPE_ALL>。最后一笔 tile out 位于此前全部 State 搬出之后，因此该等待覆盖本 AIV 的 State/out 写回；全部 MTE2 输入已在 VF 前由 input/parameter Mutex 消费。未使用的 out 槽处于释放状态，不增加等待；cu_seqlens 校验早退时尚未提交算子数据 DMA。核尾不新增 Mutex 编号，不使用 MTE3_S 或 PIPE_S。
 
 沿用参考 PR 的逐 tile 提交方式，不额外引入 x8-pr 的 lookahead 输入预取。不同物理输入/out 槽可在复用保护下覆盖搬运与计算；是否形成有效流水重叠须由设备采集确认。

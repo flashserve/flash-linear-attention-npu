@@ -207,7 +207,9 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 - Python/aclnn 入口支持符合 stride 约束的非连续 Q/K/V 与 `initial_state`。
 - Q/K/V 直接访问要求 feature stride=1、head/token 区间不重叠、stride 为正；BSND `B>1` 时
   `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride、batch-gap view 由 ACLNN
-  回退连续化；token/head 置换或正 stride 重叠 descriptor 返回参数错误。
+  回退连续化。不重叠的 head-major view 在 TND 和 BSND `B=1` 下可直接读取，在 BSND `B>1`
+  下回退连续化；例如 TND shape `[2,2,128]`、stride `[128,256,1]` 是合法 view。
+  正 stride 的 token/head 地址区间重叠时返回参数错误。
 - 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
 - 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。

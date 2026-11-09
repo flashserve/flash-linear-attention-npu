@@ -55,8 +55,8 @@ out, final_state = recurrent_kda(
   - `safe_gate=False`：`gate = -exp(A_log) * softplus(g + dt_bias)`。
   - `safe_gate=True`：`gate = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - `use_beta_sigmoid_in_kernel=True` 时，kernel 使用 `sigmoid(beta)`；若 `allow_neg_eigval=True`，再乘 2。
-- Python/aclnn/legacy 入口支持非连续 `initial_state`。Python 主入口返回 `final_state` 时与输入保持相同
-  storage 和 stride；legacy Torch 入口只返回 `out`，最终状态通过 `initial_state` 原位更新。
+- Python/aclnn 入口支持非连续 `initial_state`。Python 主入口在原位模式返回输入 State，非原位模式
+  先复制初态再递推，返回独立存储的 State，且不修改输入。
 - `cu_seqlens` 是可选的同设备 INT32/INT64 tensor，shape 为 `[seq_num+1]`，使用与 fla-org 一致的
   累积 offset 语义。首项必须为 0，末项等于有效 packed token 数且可小于图捕获的 token capacity，
   相邻差值是各序列长度。host 不读取其值，兼容 ACLGraph capture/replay。
@@ -77,7 +77,8 @@ o_t = S @ (q_t * scale)
 - `q/k/v/out` 仅支持 `BF16`。
 - Q/K/V 直接非连续访问要求 feature stride 为 1、head 间不重叠、token 间不重叠且 stride 为正；
   BSND 在 `B>1` 时还要求 `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride
-  与 batch-gap view 自动回退连续化；token/head 置换或正 stride 重叠 descriptor 明确拒绝。
+  与 batch-gap view 自动回退连续化；TND 和 BSND `B=1` 也支持不重叠的 head-major view，
+  BSND `B>1` 的 head-major view 回退连续化。正 stride 的 token/head 地址区间重叠时明确拒绝。
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分、TND 为一条序列；传入时为与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入

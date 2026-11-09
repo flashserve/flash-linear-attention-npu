@@ -23,6 +23,7 @@ constexpr uint32_t STATE_BYTES = DIM * DIM * sizeof(float);
 constexpr uint32_t TILE_VECTOR_BYTES = TOKEN_TILE * DIM * sizeof(float);
 constexpr uint32_t TILE_SCALAR_BYTES = TOKEN_TILE * 32;
 constexpr uint32_t PREDICTION_BYTES = DIM * sizeof(float);
+constexpr uint64_t INVALID_STATE_SLOT = uint64_t(-1);
 constexpr uint32_t UB_BYTES = 3 * STATE_BYTES +
     2 * (4 * TOKEN_TILE * DIM * sizeof(bfloat16_t) + TILE_VECTOR_BYTES + TILE_SCALAR_BYTES) +
     PARAMETER_BUFFERS * DIM * sizeof(float);
@@ -464,6 +465,12 @@ public:
                     stateReadyEvent = true;
                 }
                 if (usesBias && valueOffset == 0) Mutex::Lock<PIPE_V>(PARAMETER_MUTEX[parameterBuffer]);
+                uint64_t pendingStateSlots[STATE_BANKS];
+                if (tiling_->hasSsmStateIndices) {
+                    for (uint32_t bank = 0; bank < STATE_BANKS; ++bank) {
+                        pendingStateSlots[bank] = INVALID_STATE_SLOT;
+                    }
+                }
                 for (int64_t start = sequenceBegin_; start < sequenceEnd_; start += TOKEN_TILE) {
                     const uint16_t rows = static_cast<uint16_t>((sequenceEnd_ - start < TOKEN_TILE ? sequenceEnd_ - start : TOKEN_TILE));
                     const uint32_t buffer = tileIndex++ % INPUT_BUFFERS;
@@ -484,6 +491,9 @@ public:
                         if ((tiling_->inplaceFinalState || tiling_->outputFinalState) &&
                             (tiling_->hasSsmStateIndices || position + 1 == sequenceEnd_)) {
                             const uint64_t slot = StateSlot(request, position);
+                            if (tiling_->hasSsmStateIndices) {
+                                OrderStateSnapshotWrites(nextBank, slot, pendingStateSlots);
+                            }
                             Mutex::Lock<PIPE_MTE3>(STATE_MUTEX[nextBank]);
                             CopyStateOut(nextBank, slot, head, valueOffset);
                             Mutex::Unlock<PIPE_MTE3>(STATE_MUTEX[nextBank]);
@@ -618,6 +628,25 @@ private:
         int64_t token = sequenceBegin_;
         if (tiling_->hasAcceptedTokens) token += Metadata(acceptedAddress_, tiling_->acceptedTokensDtype, request) - 1;
         return StateSlot(request, token);
+    }
+
+    __aicore__ inline void OrderStateSnapshotWrites(
+        uint32_t sourceBank, uint64_t slot, uint64_t (&pendingStateSlots)[STATE_BANKS])
+    {
+        // The token's V lock already recycled this bank after its old snapshot.
+        pendingStateSlots[sourceBank] = INVALID_STATE_SLOT;
+        for (uint32_t bank = 0; bank < STATE_BANKS; ++bank) {
+            if (pendingStateSlots[bank] == slot) {
+                // Bank Mutexes protect UB reuse, not overlapping GM destinations.
+                // A same-pipe Mutex pair cannot order two MTE3 writes either.
+                PipeBarrier<PIPE_MTE3>();
+                for (uint32_t completedBank = 0; completedBank < STATE_BANKS; ++completedBank) {
+                    pendingStateSlots[completedBank] = INVALID_STATE_SLOT;
+                }
+                break;
+            }
+        }
+        pendingStateSlots[sourceBank] = slot;
     }
 
     __aicore__ inline void CopyStateIn(uint32_t bank, uint64_t slot, uint64_t head, uint32_t valueOffset)
