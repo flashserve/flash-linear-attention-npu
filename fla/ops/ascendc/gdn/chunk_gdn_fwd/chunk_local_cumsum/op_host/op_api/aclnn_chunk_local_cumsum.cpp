@@ -15,11 +15,8 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
-#include "../../../../../common/host_utils/log.h"
 
 using namespace op;
-
-static constexpr const char *CHUNK_LOCAL_CUMSUM_ENTITY = "aclnnChunkLocalCumsum";
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,31 +36,17 @@ struct ChunkLocalCumsumParams {
 
 static aclnnStatus CheckNotNull(ChunkLocalCumsumParams params)
 {
-    if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.out == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "out");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.outputDtypeOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "outputDtype");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
+    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
+    CHECK_COND(params.out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "out must not be nullptr.");
+    CHECK_COND(params.outputDtypeOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
+               "outputDtypeOptional must not be nullptr.");
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckParams(ChunkLocalCumsumParams params)
 {
-    auto status = CheckNotNull(params);
-    if (status != ACLNN_SUCCESS) {
-        return status;
-    }
-    if (params.chunkSize <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "chunkSize", std::to_string(params.chunkSize), "positive");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID, "chunkSize must be positive.");
     return ACLNN_SUCCESS;
 }
 
@@ -76,10 +59,8 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkLocalCumsumParams &params, aclOpExecutor *executorPtr)
 {
-    auto dfxRetStatus1 = DataContiguous(params.g, executorPtr);
-    if (dfxRetStatus1 != ACLNN_SUCCESS) {
-        return dfxRetStatus1;
-    }
+    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+               "Contiguous g failed.");
     return ACLNN_SUCCESS;
 }
 
@@ -114,14 +95,10 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
             "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_fwd instead.");
 
     auto ret = CheckParams(params);
-    if (ret != ACLNN_SUCCESS) {
-        return ret;
-    }
+    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
-    auto dfxRetStatus2 = ParamsDataContiguous(params, executorPtr);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
+    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
+               "ParamsDataContiguous failed.");
 
     auto result = l0op::ChunkLocalCumsum(params.g, params.cuSeqlensOptional, params.chunkIndicesOutOptional,
                                         params.chunkSize, params.reverse, params.scale, params.headFirst,
