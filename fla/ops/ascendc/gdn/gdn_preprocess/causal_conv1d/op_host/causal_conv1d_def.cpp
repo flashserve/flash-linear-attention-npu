@@ -118,6 +118,9 @@ public:
         if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
             this->AICore().AddConfig("ascend950", aicoreConfig);
         }
+        if (std::string(ASCEND_SOC_VERSION) == "ascend960dt") {
+            this->AICore().AddConfig("ascend960dt", aicoreConfig);
+        }
 #endif
     }
 };
