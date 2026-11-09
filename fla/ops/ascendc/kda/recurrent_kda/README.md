@@ -79,7 +79,7 @@ o_t = S @ (q_t * scale)
   BSND 在 `B>1` 时还要求 `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride
   与 batch-gap view 自动回退连续化；TND 和 BSND `B=1` 也支持不重叠的 head-major view，
   BSND `B>1` 的 head-major view 回退连续化。正 stride 的 token/head 地址区间重叠时明确拒绝。
-- `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
+- `g/beta` Python 入口支持 `FP32/BF16/FP16`，ACLNN 按需连续化；A5 保留输入 dtype，在 VF 中转换为 `FP32` 计算。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分、TND 为一条序列；传入时为与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
   token capacity。A2/A3 支持超过 8 token 的 dense 单序列与 varlen 分段，内部按 8-token 窗口递推；
