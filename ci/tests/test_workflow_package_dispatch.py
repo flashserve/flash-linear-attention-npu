@@ -158,7 +158,57 @@ globalThis.core = {{
         self.assertEqual(dispatch["inputs"]["socs"],
                          "ascend910b,ascend910_93,ascend950")
         self.assertEqual(dispatch["inputs"]["arches"], "arm,x86")
+        self.assertEqual(dispatch["inputs"]["jobs"], "16")
         self.assertEqual(dispatch["inputs"]["requested_by"], "ci-admin")
+
+    def test_comment_can_set_build_parallelism(self):
+        completed, records = self._run_dispatch(
+            "/package jobs=8 soc=ascend950 arch=x86")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatch = self._assert_single_dispatch(records)
+        self.assertEqual(dispatch["inputs"]["jobs"], "8")
+        self.assertEqual(dispatch["inputs"]["socs"], "ascend950")
+        self.assertEqual(dispatch["inputs"]["arches"], "x86")
+
+    def test_invalid_or_duplicate_jobs_never_dispatch(self):
+        for value in ("", "0", "-1", "1.5", "abc", "1;id", "9007199254740992"):
+            with self.subTest(value=value):
+                completed, records = self._run_dispatch(f"/package jobs={value}")
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertFalse([r for r in records if r["kind"] == "dispatch"])
+                self.assertTrue(any("jobs 参数必须是正整数" in r["payload"]
+                                    for r in records if r["kind"] == "failed"))
+        completed, records = self._run_dispatch("/package jobs=8 jobs=16")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertFalse([r for r in records if r["kind"] == "dispatch"])
+        self.assertTrue(any("jobs 参数只能指定一次" in r["payload"]
+                            for r in records if r["kind"] == "failed"))
+
+    def test_matrix_validates_parallelism_before_device_jobs(self):
+        script = self.package_workflow["jobs"]["prepare"]["steps"][0]["with"]["script"]
+        wrapper = """
+const inputs = JSON.parse(process.argv[1]);
+const outputs = {}, failures = [];
+const context = { payload: { inputs } };
+const core = { setOutput: (key, value) => outputs[key] = value,
+  setFailed: message => failures.push(message), info: () => {} };
+""" + "try {\n" + script + "\n} finally { console.log(JSON.stringify({outputs, failures})); }"
+        for value, expected in ((None, "16"), ("8", "8"), ("32", "32"),
+                                ("0", None), ("-1", None), ("1;id", None)):
+            with self.subTest(value=value):
+                inputs = {} if value is None else {"jobs": value}
+                completed = subprocess.run(
+                    ["node", "-e", "(function() {" + wrapper + "})()",
+                     json.dumps(inputs)], capture_output=True, text=True,
+                    encoding="utf-8", check=True)
+                result = json.loads(completed.stdout)
+                if expected is None:
+                    self.assertTrue(result["failures"])
+                    self.assertNotIn("matrix", result["outputs"])
+                else:
+                    self.assertFalse(result["failures"])
+                    self.assertEqual(result["outputs"]["jobs"], expected)
+                    self.assertEqual(len(json.loads(result["outputs"]["matrix"])["include"]), 6)
 
     def test_build_and_report_require_guard(self):
         # guard 是 write 权限绕过评论分发器直接 dispatch 时的唯一门禁，

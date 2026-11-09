@@ -304,9 +304,12 @@ def build_local(
     soc: str,
     wheel_dir: Path,
     log_file: Path,
+    jobs: int = 16,
 ) -> list[Path]:
     """Build one SOC wheel in the local runner container."""
 
+    if jobs < 1:
+        raise ValueError("编译并发数必须是正整数")
     image = env_or("FLA_PKG_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
     inspect = subprocess.run(
         ["docker", "image", "inspect", image],
@@ -324,7 +327,7 @@ def build_local(
     wheel_dir.mkdir(parents=True, exist_ok=True)
 
     container = f"fla-pkg-{soc}-{os.getpid()}-{time.time_ns()}"
-    command = r"""
+    command = f"""
 set -euo pipefail
 if [[ -f /usr/local/Ascend/ascend-toolkit/latest/set_env.sh ]]; then
   source /usr/local/Ascend/ascend-toolkit/latest/set_env.sh
@@ -335,7 +338,11 @@ else
   exit 1
 fi
 cd /workspace/repo
-exec python3 scripts/build_wheel.py --wheel-dir /workspace/pkg-out
+# Package builds always include all operators, regardless of runner/image filters.
+unset FLA_NPU_OPS FLA_NPU_BUILD_ARGS
+export CMAKE_BUILD_PARALLEL_LEVEL={jobs} MAKEFLAGS=-j{jobs} MAX_JOBS={jobs}
+echo '[pkg] Full wheel build: all operators; parallel jobs: {jobs}'
+exec python3 scripts/build_wheel.py --wheel-dir /workspace/pkg-out --build-args='--ops=all -j{jobs}'
 """
     argv = [
         "docker",
@@ -357,8 +364,6 @@ exec python3 scripts/build_wheel.py --wheel-dir /workspace/pkg-out
         "HOME=/root",
     ]
     for name in (
-        "FLA_NPU_OPS",
-        "FLA_NPU_BUILD_ARGS",
         "FLA_NPU_BRANCH_NAME",
         "FLA_NPU_COMMIT_ID",
     ):
@@ -536,6 +541,12 @@ def main() -> int:
         help="架构列表；必须与当前 runner 架构一致，默认 arm",
     )
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=16,
+        help="每个出包任务的编译并发数，默认 16",
+    )
+    parser.add_argument(
         "--head-sha",
         default="",
         help="package workflow 锁定的 PR 合并 commit SHA",
@@ -551,6 +562,8 @@ def main() -> int:
         help="列出支持的 SOC/架构组合后退出",
     )
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs 必须是正整数")
 
     if args.list:
         for soc in SUPPORTED_SOCS:
@@ -618,7 +631,7 @@ def main() -> int:
         f"代码: {checked_out or head_sha}；runner 架构: {host_arch}；"
         f"SOC: {','.join(socs)}；输出: {out_dir}"
     )
-    log("仅使用当前 runner 本地编译；结果由 package workflow 上传为 artifact")
+    log(f"本地全量编译所有算子，并发数: {args.jobs}；结果上传为 artifact")
 
     results: list[dict] = []
     retries = int(env_or("FLA_PKG_BUILD_RETRIES", "1"))
@@ -634,6 +647,7 @@ def main() -> int:
         record = {
             "soc": soc,
             "arch": arch,
+            "jobs": args.jobs,
             "artifact": name,
             "status": "failed",
             "wheels": [],
@@ -644,7 +658,7 @@ def main() -> int:
             wheels: list[Path] = []
             for attempt in range(retries + 1):
                 try:
-                    wheels = build_local(repo_root, soc, wheel_dir, log_file)
+                    wheels = build_local(repo_root, soc, wheel_dir, log_file, jobs=args.jobs)
                     break
                 except KeyboardInterrupt:
                     raise

@@ -194,6 +194,7 @@ jobs:
             let socs = [];
             let arches = [];
             let branch = '';
+            let jobs = '';
             for (const part of parts) {
               if (part.startsWith('soc=')) {
                 if (socs.length > 0) {
@@ -217,6 +218,16 @@ jobs:
                   core.setFailed(`arch 参数不合法，可选值: ${ARCHES.join(', ')}`);
                   return;
                 }
+              } else if (part.startsWith('jobs=')) {
+                if (jobs) {
+                  core.setFailed('jobs 参数只能指定一次。');
+                  return;
+                }
+                jobs = part.slice('jobs='.length);
+                if (!/^[1-9][0-9]*$/.test(jobs) || !Number.isSafeInteger(Number(jobs))) {
+                  core.setFailed('jobs 参数必须是正整数，例如 /package jobs=16。');
+                  return;
+                }
               } else if (part.startsWith('branch=')) {
                 if (branch) {
                   core.setFailed('branch 参数只能指定一次。');
@@ -231,12 +242,13 @@ jobs:
                 core.setFailed(
                   `不支持的参数: ${part}。用法: /package ` +
                   `[soc=ascend910b,ascend910_93,ascend950] ` +
-                  `[arch=arm,x86] [branch=<分支名|head>]`);
+                  `[arch=arm,x86] [branch=<分支名|head>] [jobs=16]`);
                 return;
               }
             }
             if (!socs.length) socs = SOCS;
             if (!arches.length) arches = ARCHES;
+            if (!jobs) jobs = '16';
 
             const actor = context.actor;
             let actorPermission = 'none';
@@ -324,6 +336,7 @@ jobs:
                 pr_number: String(prNumber),
                 socs: socs.join(','),
                 arches: arches.join(','),
+                jobs,
                 requested_by: actor,
                 build_sha: buildSha,
                 build_ref: buildRef,
@@ -334,5 +347,5 @@ jobs:
 
             core.notice(
               `已将 PR #${prNumber} 的 Package 编译分发到 package.yml，` +
-              `分支=${buildRef}@${buildSha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]。`
+              `分支=${buildRef}@${buildSha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]，编译并发=${jobs}。`
             );
