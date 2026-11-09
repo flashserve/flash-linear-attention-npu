@@ -17,7 +17,7 @@
 #ifndef CHUNK_BWD_DQKWG_CUBE_H
 #define CHUNK_BWD_DQKWG_CUBE_H
 
-#include "qkv_layout.h"
+#include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
 
 #include "chunk_bwd_dqkwg_schedule.h"
 
@@ -245,7 +245,7 @@ public:
         }
 
         // Layout 创建
-        const uint64_t qkStride = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND) ? params.HK * params.K : params.K;
+        const uint64_t qkStride = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND) ? params.HK * params.K : params.K;
         // gmV is vNew from FwdH and always remains head-major.
         auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, qkStride);
         auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(qkStride, params.BT);
@@ -333,7 +333,7 @@ public:
                     }
                     // GVA: q/k 为 HK 头; hv_idx=h -> hk_idx=h/n_ratio, 并把 HV-based bos 修正为 HK-based
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t qkOffset = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND)
+                    uint64_t qkOffset = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND)
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
@@ -406,7 +406,7 @@ public:
                     // GVA: k 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t kOffset = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND)
+                    uint64_t kOffset = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND)
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
@@ -455,7 +455,7 @@ public:
                     // GVA: q 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t qOffset = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND)
+                    uint64_t qOffset = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND)
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);

@@ -2,7 +2,6 @@
 #define GDN_BWD_FINALIZE_A2_STRUCT_H
 
 #include <cstdint>
-#include "chunk_gated_delta_rule_bwd_finalize_tiling_key.h"
 
 #ifndef TORCH_MODE
 #include "ascendc/host_api/tiling/template_argument.h"
@@ -13,6 +12,16 @@ namespace GDN {
 #define TPL_BF16 10
 #define TPL_FP32 30
 
+
+// Runtime layout codes shared by this operator's host and kernels.
+namespace FinalizeLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace FinalizeLayout
 
 struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     // 输入逻辑 shape。K、V、chunkSize 分别从 q、v、A 的 shape 推导；

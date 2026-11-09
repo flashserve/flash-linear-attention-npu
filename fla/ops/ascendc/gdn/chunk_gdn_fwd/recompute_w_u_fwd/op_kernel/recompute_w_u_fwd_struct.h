@@ -17,10 +17,21 @@
 
 #include <cstdint>
 #ifndef TORCH_MODE
-#include "recompute_w_u_fwd_tiling_key.h"
+#include "ascendc/host_api/tiling/template_argument.h"
 #endif
 
 namespace GDN {
+
+#ifndef TORCH_MODE
+ASCENDC_TPL_ARGS_DECL(RecomputeWUFwd,
+    ASCENDC_TPL_UINT_DECL(V, 1, ASCENDC_TPL_UI_LIST, 128, 256),
+);
+ASCENDC_TPL_SEL(
+    ASCENDC_TPL_ARGS_SEL(
+        ASCENDC_TPL_UINT_SEL(V, ASCENDC_TPL_UI_LIST, 128, 256),
+    ),
+);
+#endif
 
 // The compact Ascend 950 path uses this depth for both workspace slots and
 // the reverse-credit cadence of its cross-core synchronization channels.
@@ -29,6 +40,16 @@ namespace GDN {
 constexpr uint32_t RECOMPUTE_W_U_FWD_GM_RING_DEPTH = 8;
 static_assert(RECOMPUTE_W_U_FWD_GM_RING_DEPTH > 0 && RECOMPUTE_W_U_FWD_GM_RING_DEPTH <= 15,
               "GM ring depth must fit the cross-core flag counter limit.");
+
+// Runtime layout codes shared by this operator's host and kernels.
+namespace RecomputeWULayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace RecomputeWULayout
 
 struct RecomputeWUFwdTilingData {
     int64_t B;

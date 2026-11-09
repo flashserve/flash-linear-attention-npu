@@ -1,7 +1,7 @@
 #ifndef GDN_BWD_FINALIZE_A2_H
 #define GDN_BWD_FINALIZE_A2_H
 
-#include "qkv_layout.h"
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
 
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_finalize_workspace.h"
@@ -575,14 +575,14 @@ __aicore__ inline void A2FinalizeQkTail(
             AscendC::DataCopy(dkInput, dk1Gm[offset], count);
             AscendC::DataCopy(dkWyInput, dk2Gm[offset], count);
             uint64_t qkPublicOffset = static_cast<uint64_t>(offset);
-            if ((t.layout == GDN::QKV_LAYOUT_BSND || t.layout == GDN::QKV_LAYOUT_TND)) {
+            if ((t.layout == GDN::FinalizeLayout::BSND || t.layout == GDN::FinalizeLayout::TND)) {
                 const uint64_t headTokens = static_cast<uint64_t>(t.HK) * t.T;
                 const uint64_t batch = (cuSeqlens == nullptr) ? task.keyBos / headTokens : 0;
                 const uint64_t token = (cuSeqlens == nullptr) ? task.keyBos % headTokens : task.keyBos;
                 qkPublicOffset = ((batch * t.T + token + row) * t.HK + hk) * K;
             }
             if constexpr (USE_QK_L2NORM) {
-                if ((t.layout == GDN::QKV_LAYOUT_BSND || t.layout == GDN::QKV_LAYOUT_TND)) {
+                if ((t.layout == GDN::FinalizeLayout::BSND || t.layout == GDN::FinalizeLayout::TND)) {
                     const DataCopyExtParams qkCopy{
                         static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)),
                         static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0, 0};
@@ -617,7 +617,7 @@ __aicore__ inline void A2FinalizeQkTail(
             }
             // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
             AscendC::PipeBarrier<PIPE_ALL>();
-            if ((t.layout == GDN::QKV_LAYOUT_BSND || t.layout == GDN::QKV_LAYOUT_TND)) {
+            if ((t.layout == GDN::FinalizeLayout::BSND || t.layout == GDN::FinalizeLayout::TND)) {
                 const DataCopyExtParams outputCopy{
                     static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
                     static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0};

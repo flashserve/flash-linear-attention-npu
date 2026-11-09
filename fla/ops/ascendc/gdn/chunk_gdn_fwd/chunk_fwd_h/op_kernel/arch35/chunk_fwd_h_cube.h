@@ -7,7 +7,7 @@
 #ifndef ARCH35_CHUNK_FWD_H_CUBE_H
 #define ARCH35_CHUNK_FWD_H_CUBE_H
 
-#include "qkv_layout.h"
+#include "../chunk_fwd_h_struct.h"
 
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
@@ -470,7 +470,7 @@ private:
         const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
                                             binding.kh, chunk.tokenBegin);
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) + offset);
-        const uint32_t kRowStride = (args_.tiling.layout == GDN::QKV_LAYOUT_BSND || args_.tiling.layout == GDN::QKV_LAYOUT_TND)
+        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND || args_.tiling.layout == GDN::FwdHLayout::TND)
             ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         bool readOnce = true;
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {

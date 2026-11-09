@@ -9,6 +9,16 @@
 
 namespace GDN {
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace IntraLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace IntraLayout
+
 struct ChunkGdnBwdIntraTilingData {
     // 输入逻辑 shape。
     int64_t batch;

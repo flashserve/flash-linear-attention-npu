@@ -52,6 +52,16 @@ ASCENDC_TPL_SEL(
 #undef TPL_SEL_ONE
 #endif
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace FinalizeLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace FinalizeLayout
+
 struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     // 输入逻辑 shape。K、V、chunkSize 分别从 q、v、A 的 shape 推导；
     // 即使当前实现只支持 K=128、V=128、chunkSize=64，也必须作为运行时 tiling 数据传入。

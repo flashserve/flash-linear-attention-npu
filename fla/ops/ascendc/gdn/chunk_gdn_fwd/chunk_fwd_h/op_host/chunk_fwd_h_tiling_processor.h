@@ -17,7 +17,6 @@
  * dim and the total workspace size, mirroring exactly the original Tiling4ChunkFwdH.
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
 #ifndef CHUNK_FWD_H_TILING_PROCESSOR_H
 #define CHUNK_FWD_H_TILING_PROCESSOR_H
 
@@ -54,7 +53,7 @@ struct ChunkFwdHTilingContext {
     bool useInitialState;
     // attrs
     bool storeFinalState;
-    int64_t layout = GDN::QKV_LAYOUT_BNSD;
+    int64_t layout = GDN::FwdHLayout::BNSD;
     int64_t chunkSize;
     // P1: per-sequence chunk counts read from cu_seqlens on host (aclnn/l0op layer);
     // nullptr / zero count means dense path — kernel keeps uniform head partition.

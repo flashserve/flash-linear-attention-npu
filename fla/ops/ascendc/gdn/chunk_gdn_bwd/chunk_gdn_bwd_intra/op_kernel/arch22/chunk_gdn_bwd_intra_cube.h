@@ -5,7 +5,7 @@
 #ifndef CHUNK_GDN_BWD_INTRA_ARCH22_CUBE_H
 #define CHUNK_GDN_BWD_INTRA_ARCH22_CUBE_H
 
-#include "qkv_layout.h"
+#include "../chunk_gdn_bwd_intra_struct.h"
 #include "chunk_gdn_bwd_intra_common.h"
 #include "catlass/arch/resource.hpp"
 #include "catlass/gemm/tile/tile_copy.hpp"
@@ -55,12 +55,12 @@ public:
             for (int64_t r = 0; r < m.validHeads; ++r) {
                 if (!ChunkGdnBwdIntraScoreLeader<G>(m.hvBegin, r)) continue;
                 const int64_t hk = (m.hvBegin + r) / G;
-                const uint64_t qk = (t_->layout == GDN::QKV_LAYOUT_BSND || t_->layout == GDN::QKV_LAYOUT_TND)
+                const uint64_t qk = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
                     ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart) *
                        t_->qkHeads + hk) * HEAD_DIM
                     : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hk) *
                        t_->seqlen + m.tokenStart) * HEAD_DIM;
-                const uint32_t qkStride = (t_->layout == GDN::QKV_LAYOUT_BSND || t_->layout == GDN::QKV_LAYOUT_TND)
+                const uint32_t qkStride = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
                     ? static_cast<uint32_t>(t_->qkHeads * HEAD_DIM) : HEAD_DIM;
                 auto kGm = tla::MakeTensor(k_[qk], tla::MakeLayout<MainT,
                     Catlass::layout::RowMajor>(CHUNK_TOKENS, qkStride), Catlass::Arch::PositionGM{});

@@ -12,7 +12,6 @@
  * \brief
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
 #include <cstring>
 
 #include "chunk_bwd_dv_local_tiling_processor.h"
@@ -59,9 +58,9 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::DvLocalLayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::DvLocalLayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::DvLocalLayout::NTD : GDN::DvLocalLayout::TND;
 
     ChunkBwdDvLocalTilingContext ctx{
         context->GetNodeName(),

@@ -1,7 +1,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_VECTOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_VECTOR_H
 
-#include "qkv_layout.h"
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
 
 #include <type_traits>
 
@@ -1715,10 +1715,10 @@ public:
                     hv = hvBase + headOffset;
                     hk = hv / tiling_->headRatio;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    kOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                    kOffset = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                    ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
                                    : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
-                    vOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                    vOffset = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                    ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HV + hv) * tiling_->V
                                    : ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
 
@@ -1735,7 +1735,7 @@ public:
                     AscendC::DataCopyPad(beta_[streamSlot_], betaGm_[gOffset],
                         {1, static_cast<uint32_t>(chunk.chunkLen * sizeof(BT)), 0, 0, 0},
                         {false, 0, 0, 0});
-                    if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+                    if ((tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)) {
                         AscendC::DataCopyPad(k_[streamSlot_], kGm_[kOffset],
                             {static_cast<uint16_t>(chunk.chunkLen),
                              static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
@@ -1870,7 +1870,7 @@ public:
                     }
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    vOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                    vOffset = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HV + hv) * tiling_->V
                                   : ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
                     Stage6VF<DT>(
@@ -1884,7 +1884,7 @@ public:
                     // Stage 6 已得到最终 dv。后续 Stage 只消费 db_v_partial，
                     // 不再需要 dv 的中间副本，因此直接写算子输出，避免借用
                     // workspace 后又被 Stage 12 的调试数据覆盖。
-                    if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+                    if ((tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)) {
                         const AscendC::DataCopyExtParams dvOutputCopyParams = {
                             static_cast<uint16_t>(chunk.chunkLen),
                             static_cast<uint32_t>(V_SIZE_128 * sizeof(DT)),
@@ -2078,14 +2078,14 @@ public:
                     hk = hv / tiling_->headRatio;
                     localHv = hv - hk * tiling_->headRatio;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    qOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                    qOffset = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
                                   : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
                     // G=3/4 时同一 AIV 会处理同一 HK 的两个 HV，第二个 HV
                     // 直接复用本 AIV 在 slot0 中已经驻留的 q，不重复读 GM。
                     qSlot = tiling_->headRatio >= 3 ? 0U : streamSlot_;
                     if (tiling_->headRatio < 3 || localHv < AIV_COUNT_2) {
-                        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+                        if ((tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)) {
                             AscendC::DataCopyPad(qStage14_[qSlot], qGm_[qOffset],
                                 {static_cast<uint16_t>(chunk.chunkLen),
                                  static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
@@ -2198,13 +2198,13 @@ public:
                 for (stage15Output = 0; stage15Output < stage15OutputCount; ++stage15Output) {
                     stage15FirstHead = stage15Begin + stage15Output * tiling_->headRatio;
                     stage15Hk = (hvBase + stage15FirstHead) / tiling_->headRatio;
-                    qOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                    qOffset = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + stage15Hk) * tiling_->K
                                   : ((chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
                     const int64_t rstdOffset = (chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T + chunk.tokenStart;
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
                     if constexpr (USE_QK_L2NORM) {
-                        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+                        if ((tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)) {
                             AscendC::DataCopyPad(qStage15_, qGm_[qOffset],
                                 {static_cast<uint16_t>(chunk.chunkLen),
                                  static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),
@@ -2241,7 +2241,7 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
-                    if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+                    if ((tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)) {
                         const AscendC::DataCopyExtParams outputCopyParams = {
                             static_cast<uint16_t>(chunk.chunkLen),
                             static_cast<uint32_t>(K_SIZE_128 * sizeof(DT)),

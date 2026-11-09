@@ -15,7 +15,6 @@
 #ifndef CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 #define CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 
-#include "qkv_layout.h"
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
@@ -146,9 +145,9 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                                                            ElementB, ElementC, void, TileCopyV>;
 
     auto layoutA_QK = tla::MakeLayoutFromTag(Catlass::layout::RowMajor(
-        strategy.chunkSize, K, (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND) ? H_qk * K : K));
+        strategy.chunkSize, K, (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND) ? H_qk * K : K));
     auto layoutB_QK = tla::MakeLayoutFromTag(Catlass::layout::ColumnMajor(
-        K, strategy.chunkSize, (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND) ? H_qk * K : K));
+        K, strategy.chunkSize, (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND) ? H_qk * K : K));
     auto layoutC_QK = tla::MakeLayout<ElementC, Catlass::layout::RowMajor>(strategy.chunkSize, strategy.chunkSize);
     auto layoutA_V = tla::MakeLayout<ElementA, LayoutTagA_V>(strategy.chunkSize, strategy.chunkSize);
     auto layoutB_V = tla::MakeLayout<ElementB, LayoutTagB_V>(strategy.chunkSize, V);
@@ -206,10 +205,10 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                 int64_t qkHead = scheduleIdx;
                 int64_t p1Slot = qkHead % p1SlotNum;
                 BlockMmadQK blockMmadQK(resource);
-                const int64_t kOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
+                const int64_t kOffset = (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND)
                                              ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
                                              : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
-                const int64_t qOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
+                const int64_t qOffset = (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND)
                                              ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
                                              : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
                 auto tensorA = tla::MakeTensor(kGm[kOffset], layoutA_QK, Catlass::Arch::PositionGM{});

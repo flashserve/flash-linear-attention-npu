@@ -12,7 +12,6 @@
  * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
@@ -360,7 +359,7 @@ private:
     {
         gert::Shape qShape = ctx_.qShape->GetStorageShape();
         gert::Shape kShape = ctx_.kShape->GetStorageShape();
-        if ((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND)) {
+        if ((ctx_.layout == GDN::DhuLayout::BSND || ctx_.layout == GDN::DhuLayout::TND)) {
             const int64_t tokens = qShape.GetDim(DIM_1);
             qShape.SetDim(DIM_1, qShape.GetDim(DIM_2));
             qShape.SetDim(DIM_2, tokens);

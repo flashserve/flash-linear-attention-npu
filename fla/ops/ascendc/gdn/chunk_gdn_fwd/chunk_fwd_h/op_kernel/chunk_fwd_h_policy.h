@@ -7,7 +7,7 @@
 #ifndef CHUNK_FWD_H_POLICY_H
 #define CHUNK_FWD_H_POLICY_H
 
-#include "qkv_layout.h"
+#include "chunk_fwd_h_struct.h"
 
 #include <cstdint>
 
@@ -168,7 +168,7 @@ struct FwdHRuntimeTiling {
     bool useInitialState = false;
     bool storeFinalState = false;
     bool isVariedLen = false;
-    int64_t layout = GDN::QKV_LAYOUT_BNSD;
+    int64_t layout = GDN::FwdHLayout::BNSD;
     // P1：host 注入的均衡分区表（varlen）。coreBoundCount=0 表示无表，走均分。
     // 表本体留在 GM tiling data 内（不拷入 kernel 栈——260B 结构体膨胀曾致
     // AIV 指令缓冲等待 +48us 的代码足迹税），此处仅持 GM 指针，每核读 2 个字。

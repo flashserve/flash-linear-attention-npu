@@ -12,7 +12,6 @@
  * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
 #ifndef RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
 #define RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
 
@@ -268,9 +267,9 @@ public:
         const gert::Shape AStorageShape = ctx_.aShape->GetStorageShape();
         const gert::Shape gStorageShape = ctx_.gShape->GetStorageShape();
         B = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0));
-        Hk = static_cast<int64_t>((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)
+        Hk = static_cast<int64_t>((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)
                                                          : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
-        Hv = static_cast<int64_t>((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)
+        Hv = static_cast<int64_t>((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)
                                                          : vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
         OP_CHECK_IF(Hk <= 0 || Hv <= 0,
                     OP_LOGE(ctx_.nodeName,
@@ -285,9 +284,9 @@ public:
                     OP_LOGE(ctx_.nodeName, "Compare B: v B=%ld vs k B=%ld mismatch.",
                             vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0), kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+        OP_CHECK_IF(((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
                                            : vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) !=
-                        ((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+                        ((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
                                                : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
                     OP_LOGE(ctx_.nodeName, "Compare T: v T=%ld vs k T=%ld mismatch.",
                             vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2), kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
@@ -299,7 +298,7 @@ public:
                     OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs g B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
                             gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+        OP_CHECK_IF(((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
                                            : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) !=
                         gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                     OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs g T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
@@ -309,7 +308,7 @@ public:
                     OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs A B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
                             AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+        OP_CHECK_IF(((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
                                            : kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) !=
                         AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
                     OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs A T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
@@ -325,7 +324,7 @@ public:
         OP_CHECK_IF(gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
                     OP_LOGE(ctx_.nodeName, "Compare head: g H=%ld must equal Hv=%ld.", gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1), Hv),
                     return ge::GRAPH_FAILED);
-        T = static_cast<int64_t>((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
+        T = static_cast<int64_t>((ctx_.layout == GDN::RecomputeWULayout::BSND || ctx_.layout == GDN::RecomputeWULayout::TND) ? vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1)
                                                        : vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_3));
         OP_CHECK_IF(K != RECOMPUTE_W_U_FWD_K_DIM_128,

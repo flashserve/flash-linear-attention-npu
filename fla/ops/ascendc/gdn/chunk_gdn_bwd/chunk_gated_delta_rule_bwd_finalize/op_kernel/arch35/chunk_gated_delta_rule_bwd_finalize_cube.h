@@ -1,7 +1,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 
-#include "qkv_layout.h"
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
 
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
@@ -391,7 +391,7 @@ private:
     __aicore__ inline auto MakePublicQkLayout() const
     {
         const int64_t rowStride =
-            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+            (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                 ? tiling_->HK * K_SIZE_128 : K_SIZE_128;
         return tla::MakeLayoutFromTag(LayoutRowMajor(CHUNK_SIZE_64, K_SIZE_128, rowStride));
     }
@@ -857,7 +857,7 @@ private:
         const uint32_t localHv = static_cast<uint32_t>(headOffset / AIV_COUNT_2);
         const uint32_t l1Event = static_cast<uint32_t>(headOffset);
         const int64_t hk = hv / tiling_->headRatio;
-        const int64_t kBase = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+        const int64_t kBase = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
                                   : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
 
@@ -1417,7 +1417,7 @@ private:
         const uint32_t doGEvent = L1_RESIDENT_HEAD_COUNT_4 +
             (static_cast<uint32_t>(headOffset) & 1U);
         const uint32_t dhEvent = L1_RESIDENT_HEAD_COUNT_4 + BANK_COUNT_2 + dhSlot;
-        const int64_t qBase = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+        const int64_t qBase = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * K_SIZE_128
                                   : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
         const int64_t workspaceBase = WorkspaceHeadOffset(headOffset);

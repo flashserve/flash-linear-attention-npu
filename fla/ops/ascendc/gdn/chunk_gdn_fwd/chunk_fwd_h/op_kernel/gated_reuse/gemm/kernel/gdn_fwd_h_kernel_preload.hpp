@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#include "qkv_layout.h"
+#include "../../../chunk_fwd_h_struct.h"
 #define CATLASS_ARCH 2201
 
 #include "catlass/arch/arch.hpp"
@@ -206,7 +206,7 @@ public:
             
             auto kLayout = tla::MakeLayoutFromTag(LayoutK(
                 kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens,
-                (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND) ? kNumHead * kHeadDim : kHeadDim));
+                (layout_ == GDN::FwdHLayout::BSND || layout_ == GDN::FwdHLayout::TND) ? kNumHead * kHeadDim : kHeadDim));
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
             AscendC::SyncAll<false>();    
@@ -248,7 +248,7 @@ public:
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
-                            if ((layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
+                            if ((layout_ == GDN::FwdHLayout::BSND || layout_ == GDN::FwdHLayout::TND)) {
                                 const uint64_t token = static_cast<uint64_t>(stream.shapeBatchIdx) *
                                     cubeBlockScheduler.totalTokens + stream.tokenOffset +
                                     static_cast<uint64_t>(stream.chunkIdx) * chunkSize;

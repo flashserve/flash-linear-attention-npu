@@ -24,6 +24,19 @@
 // 超容量回退均分（coreBoundCount=0），无正确性影响。
 constexpr int64_t CHUNK_FWD_H_MAX_CORE_BOUNDS = 32;
 
+namespace GDN {
+// Runtime layout codes shared by this operator's host and kernels.
+namespace FwdHLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace FwdHLayout
+
+} // namespace GDN
+
 struct ChunkFwdHPlainTilingData {
     int64_t batch;
     int64_t seqlen;

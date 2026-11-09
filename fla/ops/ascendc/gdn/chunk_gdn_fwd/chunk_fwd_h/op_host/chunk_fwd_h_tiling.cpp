@@ -12,7 +12,7 @@
  * \brief
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
+#include "../op_kernel/chunk_fwd_h_struct.h"
 #include <cstring>
 
 #include "chunk_fwd_h_tiling.h"
@@ -124,9 +124,9 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FwdHLayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::FwdHLayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::FwdHLayout::NTD : GDN::FwdHLayout::TND;
     int64_t logicalBatch = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_BATCH_IDX));
     int64_t logicalSeqlen = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_SEQLEN_IDX));
     int64_t logicalKHeads = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_HEADS_IDX));

@@ -15,7 +15,6 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 
-#include "qkv_layout.h"
 
 #include <cstdint>
 #include <type_traits>
@@ -532,7 +531,7 @@ public:
                     const int64_t hq = hv / HRatio_;
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
                     const int64_t stateBase = StateWorkspaceFloatOffset(workspaceBase, 0);
-                    const int64_t qBase = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                    const int64_t qBase = (tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND)
                         ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
                         : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dhBase = DhOffset(chunkInfo.bIdx, hv, chunkInfo.outputChunkIdx);
@@ -652,9 +651,9 @@ public:
                             const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
                             const uint32_t qIdx = CopyInRows<DT>(
                                 qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset *
-                                    ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND) ? HK_ * K_ : K_),
+                                    ((tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND) ? HK_ * K_ : K_),
                                 static_cast<uint32_t>(curRows * K_),
-                            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                            (tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND)
                                 ? HK_ * K_ : K_);
                             AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                             CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);

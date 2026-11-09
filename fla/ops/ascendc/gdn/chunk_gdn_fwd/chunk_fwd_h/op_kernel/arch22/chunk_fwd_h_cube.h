@@ -7,7 +7,7 @@
 #ifndef ARCH22_CHUNK_FWD_H_CUBE_H
 #define ARCH22_CHUNK_FWD_H_CUBE_H
 
-#include "qkv_layout.h"
+#include "../chunk_fwd_h_struct.h"
 
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 2201
@@ -424,7 +424,7 @@ private:
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) +
             FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
                                                          binding.kh, chunk.tokenBegin));
-        const uint32_t kRowStride = (args_.tiling.layout == GDN::QKV_LAYOUT_BSND || args_.tiling.layout == GDN::QKV_LAYOUT_TND)
+        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND || args_.tiling.layout == GDN::FwdHLayout::TND)
             ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         if constexpr (!STATE_V_FIRST) {
             auto tensorGm = tla::MakeTensor(gmKg,

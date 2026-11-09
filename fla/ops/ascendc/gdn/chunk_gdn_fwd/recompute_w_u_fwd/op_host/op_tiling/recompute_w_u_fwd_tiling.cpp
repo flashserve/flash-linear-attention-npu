@@ -12,7 +12,7 @@
  * \brief
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
+#include "../../op_kernel/recompute_w_u_fwd_struct.h"
 #include <cstring>
 
 #include "recompute_w_u_fwd_tiling.h"
@@ -78,9 +78,9 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::RecomputeWULayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::RecomputeWULayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::RecomputeWULayout::NTD : GDN::RecomputeWULayout::TND;
 
     RecomputeWUFwdTilingContext ctx{
         context->GetNodeName(),

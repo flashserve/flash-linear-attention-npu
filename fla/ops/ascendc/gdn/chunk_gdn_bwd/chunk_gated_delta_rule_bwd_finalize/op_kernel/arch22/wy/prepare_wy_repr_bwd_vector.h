@@ -17,7 +17,7 @@
 #ifndef PREPARE_WY_REPR_BWD_VECTOR_H
 #define PREPARE_WY_REPR_BWD_VECTOR_H
 
-#include "qkv_layout.h"
+#include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
 
 #include <type_traits>
 
@@ -535,7 +535,7 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 {
     inputIdx_ = curInputPingPong_;
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vToMte2Event_[inputIdx_]);
-    if (!(tiling_.layout == GDN::QKV_LAYOUT_BSND || tiling_.layout == GDN::QKV_LAYOUT_TND)) {
+    if (!(tiling_.layout == GDN::FinalizeLayout::BSND || tiling_.layout == GDN::FinalizeLayout::TND)) {
         DataCopy(dstTensor, inputTensor[(head * tiling_.T + base) * dim], rows * dim);
     } else {
         const uint64_t headTokens = heads * tiling_.T;
@@ -655,7 +655,7 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 {
     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
-    if (!(tiling_.layout == GDN::QKV_LAYOUT_BSND || tiling_.layout == GDN::QKV_LAYOUT_TND)) {
+    if (!(tiling_.layout == GDN::FinalizeLayout::BSND || tiling_.layout == GDN::FinalizeLayout::TND)) {
         DataCopy(outTensor[(head * tiling_.T + base) * dim], srcTensor, rows * dim);
     } else {
         const uint64_t headTokens = heads * tiling_.T;

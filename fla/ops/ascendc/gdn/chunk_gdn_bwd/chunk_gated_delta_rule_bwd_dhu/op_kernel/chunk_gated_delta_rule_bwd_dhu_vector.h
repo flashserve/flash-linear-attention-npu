@@ -15,7 +15,6 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 
-#include "qkv_layout.h"
 
 #include <cstdint>
 #include <type_traits>
@@ -336,11 +335,11 @@ public:
                         const int64_t token = chunkInfo.tokenStart + rowOffset;
                         const uint32_t qIdx = CopyInRows<DT>(
                             qGm_, qInputBuf_[curQInputPingPong_],
-                            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                            (tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND)
                                 ? ((chunkInfo.bIdx * T_ + token) * HK_ + hq) * K_
                                 : ((chunkInfo.bIdx * HK_ + hq) * T_ + token) * K_,
                             static_cast<uint32_t>(curRows * K_),
-                            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                            (tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND)
                                 ? HK_ * K_ : K_);
                         AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                         CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);

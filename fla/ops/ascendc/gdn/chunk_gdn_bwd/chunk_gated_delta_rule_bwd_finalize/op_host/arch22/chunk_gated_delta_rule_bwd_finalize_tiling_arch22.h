@@ -1,10 +1,9 @@
-#include "fla/ops/ascendc/common/qkv_layout.h"
+#include "../../op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 
 #include <cstring>
 
-#include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_tiling_key.h"
 #include "../op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.h"
 #include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
 #include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h"
@@ -151,10 +150,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape &a = shapes[INPUT_A_IDX]->GetStorageShape();
     const gert::Shape &h = shapes[INPUT_H_IDX]->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? q.GetDim(2) : q.GetDim(1);
-    tiling.T = (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? q.GetDim(1) : q.GetDim(2);
+    tiling.HK = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? v.GetDim(2) : v.GetDim(1);
+    tiling.HV = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -191,13 +190,13 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "k.shape", shapes[INPUT_K_IDX]->GetStorageShape(),
-                      (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HK, tiling.K}
+                      (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HK, tiling.K}
                                         : std::initializer_list<int64_t>{tiling.B, tiling.HK, tiling.T, tiling.K},
                       INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "v.shape", shapes[INPUT_V_IDX]->GetStorageShape(),
-                      (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HV, tiling.V}
+                      (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HV, tiling.V}
                                         : std::initializer_list<int64_t>{tiling.B, tiling.HV, tiling.T, tiling.V},
                       INPUT_V_IDX) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -254,9 +253,9 @@ ge::graphStatus Tiling(gert::TilingContext *context,
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FinalizeLayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::FinalizeLayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::FinalizeLayout::NTD : GDN::FinalizeLayout::TND;
     tiling->layout = layoutValue;
     OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, layoutValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);

@@ -5,7 +5,7 @@
 #ifndef CHUNK_GDN_BWD_INTRA_VECTOR_H
 #define CHUNK_GDN_BWD_INTRA_VECTOR_H
 
-#include "qkv_layout.h"
+#include "chunk_gdn_bwd_intra_struct.h"
 
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
@@ -420,7 +420,7 @@ private:
         const uint64_t vectorOffset =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
                 tiling_->seqlen + meta.tokenStart;
-        const uint64_t vdoOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+        const uint64_t vdoOffset = (tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
                 meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
             : (vectorOffset + rowBegin) * tiling_->valueDim;
@@ -440,7 +440,7 @@ private:
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaLocal, betaGm_[vectorOffset], vectorCopy, betaPad);
         const uint32_t vdoElements = static_cast<uint32_t>(rows * tiling_->valueDim);
-        if (!(tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+        if (!(tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)) {
             AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
             AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
         } else {
@@ -460,7 +460,7 @@ private:
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t firstSlot,
         uint32_t count)
     {
-        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
+        if ((tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)) {
             for (uint32_t offset = 0; offset < count; ++offset) {
                 PrefetchStage1Input<true>(meta, static_cast<int64_t>(firstSlot + offset));
             }

@@ -22,7 +22,7 @@
 #ifndef CHUNK_BWD_DQKWG_VECTOR_H
 #define CHUNK_BWD_DQKWG_VECTOR_H
 
-#include "qkv_layout.h"
+#include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
 
 #include "chunk_bwd_dqkwg_common.h"
 #include "chunk_bwd_dqkwg_schedule.h"
@@ -266,7 +266,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsIn
     const LocalTensor<DataType> &dst, const GlobalTensor<DataType> &src, uint64_t offset,
     uint32_t rows, uint32_t heads)
 {
-    if (!(layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
+    if (!(layout_ == GDN::FinalizeLayout::BSND || layout_ == GDN::FinalizeLayout::TND)) {
         DataCopy(dst, src[offset], rows * K);
         return;
     }
@@ -281,7 +281,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsOu
     const GlobalTensor<DataType> &dst, uint64_t offset, const LocalTensor<DataType> &src,
     uint32_t rows, uint32_t heads)
 {
-    if (!(layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
+    if (!(layout_ == GDN::FinalizeLayout::BSND || layout_ == GDN::FinalizeLayout::TND)) {
         DataCopy(dst[offset], src, rows * K);
         return;
     }
@@ -295,7 +295,7 @@ __aicore__ inline uint64_t ChunkBwdDqkwgVectorProcess<DataType, GType>::QkOffset
     uint32_t hk, uint32_t bos, uint32_t loopIdx) const
 {
     const uint64_t bIdx = loopIdx / numChunks;
-    if ((layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
+    if ((layout_ == GDN::FinalizeLayout::BSND || layout_ == GDN::FinalizeLayout::TND)) {
         const uint64_t token = isVarLen ? bos : bos - bIdx * HV * T;
         const uint64_t batchToken = isVarLen ? token : bIdx * T + token;
         return (batchToken * HK + hk) * K;
@@ -1019,7 +1019,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
                 auto tensorQIn = tensorDqIn[half_dqSize * 2];
                 DataCopy(tensorDqIn[half_dqSize], gmMm4[mm4Offset + half_dqSize], second_dqSize);
                 if (BT != 64) {
-                    const uint64_t qSecondOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
+                    const uint64_t qSecondOffset = (layout_ == GDN::FinalizeLayout::BSND || layout_ == GDN::FinalizeLayout::TND)
                         ? qkOffset + static_cast<uint64_t>(half_BT) * HK * K
                         : qkOffset + half_dqSize;
                     CopyQkRowsIn(tensorQIn[half_dqSize], gmQ, qSecondOffset, second_BT, HK);
@@ -1461,7 +1461,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
                 auto tensorKIn = tensorDkIn[half_dkSize * 2];
                 DataCopy(tensorDkIn[half_dkSize], gmMm5[mm5Offset + half_dkSize], second_dkSize);
                 if (BT != 64) {
-                    const uint64_t kSecondOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
+                    const uint64_t kSecondOffset = (layout_ == GDN::FinalizeLayout::BSND || layout_ == GDN::FinalizeLayout::TND)
                         ? kOffset + static_cast<uint64_t>(half_BT) * HK * K
                         : kOffset + half_dkSize;
                     CopyQkRowsIn(tensorKIn[half_dkSize], gmK, kSecondOffset, second_BT, HK);

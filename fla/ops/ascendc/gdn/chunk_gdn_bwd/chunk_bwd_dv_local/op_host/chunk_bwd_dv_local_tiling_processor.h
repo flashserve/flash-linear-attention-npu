@@ -12,7 +12,6 @@
  * \brief Tiling processor decoupled from gert::TilingContext, reusable in both aclnn and kernel launch modes.
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
 #ifndef CHUNK_BWD_DV_LOCAL_TILING_PROCESSOR_H
 #define CHUNK_BWD_DV_LOCAL_TILING_PROCESSOR_H
 
@@ -188,14 +187,14 @@ public:
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareDimPair(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME,
-                                   (ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? DIM_1 : DIM_2, DIM_2) !=
+                                   (ctx_.layout == GDN::DvLocalLayout::BSND || ctx_.layout == GDN::DvLocalLayout::TND) ? DIM_1 : DIM_2, DIM_2) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(dOStorageShape, gStorageShape, INPUT_DO_NAME, INPUT_G_NAME, G_DIM_NUM) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         tiling_.b = static_cast<int64_t>(qStorageShape.GetDim(DIM_0));
-        tiling_.hQk = static_cast<int64_t>((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? qStorageShape.GetDim(DIM_2)
+        tiling_.hQk = static_cast<int64_t>((ctx_.layout == GDN::DvLocalLayout::BSND || ctx_.layout == GDN::DvLocalLayout::TND) ? qStorageShape.GetDim(DIM_2)
                                                                   : qStorageShape.GetDim(DIM_1));
         tiling_.hDo = static_cast<int64_t>(dOStorageShape.GetDim(DIM_1));
         OP_CHECK_IF(tiling_.hDo % tiling_.hQk != 0,
@@ -205,7 +204,7 @@ public:
                     return ge::GRAPH_FAILED);
         tiling_.hRatio = tiling_.hDo / tiling_.hQk;
         tiling_.headBufNum = P1_SLOT_NUM * (1 + tiling_.hRatio);
-        tiling_.t = static_cast<int64_t>((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND) ? qStorageShape.GetDim(DIM_1)
+        tiling_.t = static_cast<int64_t>((ctx_.layout == GDN::DvLocalLayout::BSND || ctx_.layout == GDN::DvLocalLayout::TND) ? qStorageShape.GetDim(DIM_1)
                                                                : qStorageShape.GetDim(DIM_2));
         tiling_.k = static_cast<int64_t>(qStorageShape.GetDim(DIM_3));
         tiling_.v = static_cast<int64_t>(dOStorageShape.GetDim(DIM_3));

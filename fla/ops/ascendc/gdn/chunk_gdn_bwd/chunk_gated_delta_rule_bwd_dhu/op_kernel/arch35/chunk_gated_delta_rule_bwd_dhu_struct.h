@@ -67,6 +67,16 @@ ASCENDC_TPL_SEL(
 #undef TPL_SEL_ONE
 #endif
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace DhuLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace DhuLayout
+
 struct ChunkGatedDeltaRuleBwdDhuTilingData {
     int64_t layout;
     int64_t B;

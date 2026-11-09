@@ -12,7 +12,7 @@
  * \brief Tiling implementation for chunk_gated_delta_rule_bwd_dhu.
  */
 
-#include "fla/ops/ascendc/common/qkv_layout.h"
+#include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include <cstring>
 
 #include "chunk_gated_delta_rule_bwd_dhu_tiling.h"
@@ -108,9 +108,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::DhuLayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::DhuLayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::DhuLayout::NTD : GDN::DhuLayout::TND;
 
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
