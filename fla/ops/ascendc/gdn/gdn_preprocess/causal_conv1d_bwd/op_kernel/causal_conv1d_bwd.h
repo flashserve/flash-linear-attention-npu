@@ -90,6 +90,13 @@ private:
     __aicore__ inline void CopyInInputTile(GlobalTensor<inputT> &srcGm, LocalTensor<float> dst,
                                            uint64_t bos, uint32_t startRow, uint32_t i_d,
                                            uint32_t totalRows, uint32_t seqLen, bool useGradLayout);
+    __aicore__ inline uint32_t IssueCopyInInputTile(GlobalTensor<inputT> &srcGm, LocalTensor<float> dst,
+                                                    LocalTensor<inputT> staging, uint64_t bos,
+                                                    uint32_t startRow, uint32_t i_d, uint32_t totalRows,
+                                                    uint32_t seqLen, bool useGradLayout,
+                                                    event_t mte2ToVEvent);
+    __aicore__ inline void FinishCopyInInputTile(LocalTensor<float> dst, LocalTensor<inputT> staging,
+                                                 uint32_t validRows);
     __aicore__ inline void CopyInInputTileRaw(GlobalTensor<inputT> &srcGm, LocalTensor<inputT> dst,
                                               uint64_t bos, uint32_t startRow, uint32_t i_d,
                                               uint32_t totalRows, uint32_t seqLen, bool useGradLayout);
@@ -99,6 +106,8 @@ private:
     __aicore__ inline void CopyInX(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
     __aicore__ inline void CopyInXRaw(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
     __aicore__ inline void CopyInWeight(uint32_t i_d);
+    __aicore__ inline void IssueCopyInWeight(uint32_t i_d, event_t mte2ToVEvent);
+    __aicore__ inline void FinishCopyInWeight(event_t mte2ToVEvent);
     __aicore__ inline void CopyInWeightRaw(uint32_t i_d);
     __aicore__ inline void CopyInDy(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_w, uint32_t seqLen);
     __aicore__ inline void CopyInDyWindow(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
@@ -111,6 +120,7 @@ private:
     __aicore__ inline void AccumulateInitialStateDw(uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
     __aicore__ inline void AccumulateDhtDx(uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
     __aicore__ inline void ComputeWdyAndAcc(uint32_t i_w, uint32_t dyRowOffset);
+    __aicore__ inline void ComputeWdyAndDwRowsAll();
     __aicore__ inline void ComputeDwPartial(uint32_t i_w, uint32_t dyRowOffset);
     __aicore__ inline void ComputeDwRowsAccum(uint32_t i_w, uint32_t dyRowOffset);
     __aicore__ inline void FinalizeDwRowsAccum();
@@ -161,6 +171,8 @@ private:
     TBuf<TPosition::VECOUT> dwBuf_;
     TBuf<TPosition::VECOUT> dbBuf_;
     TBuf<TPosition::VECOUT> castBuf_;
+    TBuf<TPosition::VECOUT> dxOutBuf_;
+    TBuf<TPosition::VECOUT> dbOutBuf_;
     TBuf<TPosition::VECCALC> wdyBuf_;
     TBuf<TPosition::VECCALC> tempBuf_;
     TBuf<TPosition::VECCALC> dwRowsBuf_;
@@ -295,6 +307,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         pipe_->InitBuffer(dxBuf_, btBdCount_ * FP32_DTYPE_SIZE);
         if constexpr (!IsSameType<inputT, float>::value) {
             pipe_->InitBuffer(castBuf_, btBdCount_ * sizeof(inputT));
+            pipe_->InitBuffer(dxOutBuf_, btBdCount_ * sizeof(inputT));
         }
         pipe_->InitBuffer(tempBuf_, (dyBdCount_ + regPad) * FP32_DTYPE_SIZE);
         pipe_->InitBuffer(yBuf_, 2 * dyBdCount_ * sizeof(inputT));
@@ -304,6 +317,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         }
         if (hasBias_) {
             pipe_->InitBuffer(dbBuf_, ((BD_ > regPad) ? BD_ : regPad) * FP32_DTYPE_SIZE);
+            if constexpr (!IsSameType<inputT, float>::value) {
+                pipe_->InitBuffer(dbOutBuf_, BD_ * sizeof(inputT));
+            }
         }
         return;
     }
@@ -318,6 +334,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
     }
     if constexpr (!IsSameType<inputT, float>::value) {
         pipe_->InitBuffer(castBuf_, calcCount * sizeof(inputT));
+        // 输出专用 staging：dx / db 各自独占，避免与 castBuf_（dw 输出、x staging）复用，
+        // 从而省掉 store 之后为“保护 buffer 不被复用”而做的 MTE3_V 排空。
+        pipe_->InitBuffer(dxOutBuf_, btBdCount_ * sizeof(inputT));
     }
     pipe_->InitBuffer(wdyBuf_, calcCount * FP32_DTYPE_SIZE);
     pipe_->InitBuffer(tempBuf_, calcCount * FP32_DTYPE_SIZE);
@@ -332,6 +351,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         pipe_->InitBuffer(dbBuf_, BD_ * FP32_DTYPE_SIZE);
         if (activation_ == ACTIVATION_NONE) {
             pipe_->InitBuffer(dbRowsBuf_, btBdCount_ * FP32_DTYPE_SIZE);
+        }
+        if constexpr (!IsSameType<inputT, float>::value) {
+            pipe_->InitBuffer(dbOutBuf_, BD_ * sizeof(inputT));
         }
     }
     if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
@@ -385,132 +407,113 @@ __aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::GetInputSegmentL
     return remain;
 }
 
+// 发起一路 x/y/dy 的 GM→UB 拷贝，但不等待 MTE2 完成：由调用方在合适位置
+// WaitFlag(mte2ToVEvent)，从而把多路互相独立的输入拷贝延迟重叠起来。
+// 返回本 tile 的有效行数（0 表示该 tile 完全越界，此时 dst 已整块清零）。
 template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTile(
-    GlobalTensor<inputT> &srcGm, LocalTensor<float> dst, uint64_t bos, uint32_t startRow,
-    uint32_t i_d, uint32_t totalRows, uint32_t seqLen, bool useGradLayout)
+__aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::IssueCopyInInputTile(
+    GlobalTensor<inputT> &srcGm, LocalTensor<float> dst, LocalTensor<inputT> staging,
+    uint64_t bos, uint32_t startRow, uint32_t i_d, uint32_t totalRows, uint32_t seqLen,
+    bool useGradLayout, event_t mte2ToVEvent)
 {
     uint32_t validRows = (startRow + totalRows <= seqLen) ? totalRows :
                          ((startRow < seqLen) ? (seqLen - startRow) : 0);
     bool fullTile = (validRows == totalRows);
     uint32_t totalCount = totalRows * BD_;
+    uint32_t validCount = validRows * BD_;
     if (!fullTile) {
-        Duplicate(dst, float(0), totalCount);
-        if constexpr (!IsSameType<inputT, float>::value) {
-            LocalTensor<inputT> srcTemp = tempBuf_.Get<inputT>();
-            Duplicate(srcTemp, static_cast<inputT>(0), totalCount);
-        }
+        // 只清理 dst 中不会被 GM 覆盖的尾部；staging 的尾部不再清零、也不再参与 Cast。
+        Duplicate(dst[validCount], float(0), totalCount - validCount);
         PipeBarrier<PIPE_V>();
     }
     if (validRows == 0) {
-        return;
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+        return 0U;
     }
 
     event_t vMte2Ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
     SetFlag<HardEvent::V_MTE2>(vMte2Ev);
     WaitFlag<HardEvent::V_MTE2>(vMte2Ev);
 
+    LocalTensor<inputT> rawDst;
+    if constexpr (IsSameType<inputT, float>::value) {
+        rawDst = dst;
+    } else {
+        rawDst = staging;
+    }
+
     DataCopyPadExtParams<inputT> padParams{false, 0, 0, static_cast<inputT>(0)};
     if (useGradLayout &&
         (inputLayout_ == INPUT_LAYOUT_BNSD || inputLayout_ == INPUT_LAYOUT_NTD)) {
-        if constexpr (IsSameType<inputT, float>::value) {
-            uint32_t channel = i_d * BD_;
-            uint32_t remain = BD_;
-            uint32_t localOffset = 0;
-            while (remain > 0) {
-                uint32_t segLen = GetInputSegmentLen(channel, remain);
-                uint32_t dstGapBytes = (BD_ - segLen) * sizeof(float);
-                DataCopyExtParams copyParams{
-                    static_cast<uint16_t>(validRows),
-                    static_cast<uint32_t>(segLen * sizeof(inputT)),
-                    static_cast<uint32_t>((inputHeadDim_ - segLen) * sizeof(inputT)),
-                    static_cast<uint32_t>(dstGapBytes / 32U),
-                    0};
-                uint64_t base = GetInputOffset(bos, startRow, channel);
-                DataCopyPad(dst[localOffset], srcGm[base], copyParams, padParams);
-                channel += segLen;
-                localOffset += segLen;
-                remain -= segLen;
-            }
-            event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-            SetFlag<HardEvent::MTE2_V>(ev);
-            WaitFlag<HardEvent::MTE2_V>(ev);
-        } else {
-            LocalTensor<inputT> srcTemp = tempBuf_.Get<inputT>();
-            uint32_t channel = i_d * BD_;
-            uint32_t remain = BD_;
-            uint32_t localOffset = 0;
-            while (remain > 0) {
-                uint32_t segLen = GetInputSegmentLen(channel, remain);
-                uint32_t dstGapBytes = (BD_ - segLen) * sizeof(inputT);
-                DataCopyExtParams copyParams{
-                    static_cast<uint16_t>(validRows),
-                    static_cast<uint32_t>(segLen * sizeof(inputT)),
-                    static_cast<uint32_t>((inputHeadDim_ - segLen) * sizeof(inputT)),
-                    static_cast<uint32_t>(dstGapBytes / 32U),
-                    0};
-                uint64_t base = GetInputOffset(bos, startRow, channel);
-                DataCopyPad(srcTemp[localOffset], srcGm[base], copyParams, padParams);
-                channel += segLen;
-                localOffset += segLen;
-                remain -= segLen;
-            }
-            event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-            SetFlag<HardEvent::MTE2_V>(ev);
-            WaitFlag<HardEvent::MTE2_V>(ev);
-            Cast(dst, srcTemp, RoundMode::CAST_NONE, totalCount);
-            PipeBarrier<PIPE_V>();
+        uint32_t channel = i_d * BD_;
+        uint32_t remain = BD_;
+        uint32_t localOffset = 0;
+        while (remain > 0) {
+            uint32_t segLen = GetInputSegmentLen(channel, remain);
+            uint32_t dstGapBytes = (BD_ - segLen) * sizeof(inputT);
+            DataCopyExtParams copyParams{
+                static_cast<uint16_t>(validRows),
+                static_cast<uint32_t>(segLen * sizeof(inputT)),
+                static_cast<uint32_t>((inputHeadDim_ - segLen) * sizeof(inputT)),
+                static_cast<uint32_t>(dstGapBytes / 32U),
+                0};
+            uint64_t base = GetInputOffset(bos, startRow, channel);
+            DataCopyPad(rawDst[localOffset], srcGm[base], copyParams, padParams);
+            channel += segLen;
+            localOffset += segLen;
+            remain -= segLen;
         }
-        return;
+        SetFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+        return validRows;
     }
 
     uint32_t channel = i_d * BD_;
     uint32_t remain = BD_;
     uint32_t localOffset = 0;
-    if constexpr (IsSameType<inputT, float>::value) {
-        while (remain > 0) {
-            uint32_t segLen = useGradLayout ? GetInputSegmentLen(channel, remain) : remain;
-            uint32_t rowStride = useGradLayout ? GetInputRowStride(channel) : D_;
-            DataCopyExtParams copyParams{
-                static_cast<uint16_t>(validRows),
-                static_cast<uint32_t>(segLen * sizeof(inputT)),
-                static_cast<uint32_t>((rowStride - segLen) * sizeof(inputT)),
-                static_cast<uint32_t>((BD_ - segLen) * sizeof(float)),
-                0};
-            uint64_t base = useGradLayout ? GetInputOffset(bos, startRow, channel)
-                                          : (bos + startRow) * D_ + channel;
-            DataCopyPad(dst[localOffset], srcGm[base], copyParams, padParams);
-            channel += segLen;
-            localOffset += segLen;
-            remain -= segLen;
-        }
-        event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-        SetFlag<HardEvent::MTE2_V>(ev);
-        WaitFlag<HardEvent::MTE2_V>(ev);
-    } else {
-        LocalTensor<inputT> srcTemp = tempBuf_.Get<inputT>();
-        while (remain > 0) {
-            uint32_t segLen = useGradLayout ? GetInputSegmentLen(channel, remain) : remain;
-            uint32_t rowStride = useGradLayout ? GetInputRowStride(channel) : D_;
-            DataCopyExtParams copyParams{
-                static_cast<uint16_t>(validRows),
-                static_cast<uint32_t>(segLen * sizeof(inputT)),
-                static_cast<uint32_t>((rowStride - segLen) * sizeof(inputT)),
-                static_cast<uint32_t>((BD_ - segLen) * sizeof(inputT)),
-                0};
-            uint64_t base = useGradLayout ? GetInputOffset(bos, startRow, channel)
-                                          : (bos + startRow) * D_ + channel;
-            DataCopyPad(srcTemp[localOffset], srcGm[base], copyParams, padParams);
-            channel += segLen;
-            localOffset += segLen;
-            remain -= segLen;
-        }
-        event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-        SetFlag<HardEvent::MTE2_V>(ev);
-        WaitFlag<HardEvent::MTE2_V>(ev);
-        Cast(dst, srcTemp, RoundMode::CAST_NONE, totalCount);
+    while (remain > 0) {
+        uint32_t segLen = useGradLayout ? GetInputSegmentLen(channel, remain) : remain;
+        uint32_t rowStride = useGradLayout ? GetInputRowStride(channel) : D_;
+        DataCopyExtParams copyParams{
+            static_cast<uint16_t>(validRows),
+            static_cast<uint32_t>(segLen * sizeof(inputT)),
+            static_cast<uint32_t>((rowStride - segLen) * sizeof(inputT)),
+            static_cast<uint32_t>((BD_ - segLen) * sizeof(inputT)),
+            0};
+        uint64_t base = useGradLayout ? GetInputOffset(bos, startRow, channel)
+                                      : (bos + startRow) * D_ + channel;
+        DataCopyPad(rawDst[localOffset], srcGm[base], copyParams, padParams);
+        channel += segLen;
+        localOffset += segLen;
+        remain -= segLen;
+    }
+    SetFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+    return validRows;
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinishCopyInInputTile(
+    LocalTensor<float> dst, LocalTensor<inputT> staging, uint32_t validRows)
+{
+    if (validRows == 0U) {
+        return;
+    }
+    if constexpr (!IsSameType<inputT, float>::value) {
+        Cast(dst, staging, RoundMode::CAST_NONE, validRows * BD_);
         PipeBarrier<PIPE_V>();
     }
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTile(
+    GlobalTensor<inputT> &srcGm, LocalTensor<float> dst, uint64_t bos, uint32_t startRow,
+    uint32_t i_d, uint32_t totalRows, uint32_t seqLen, bool useGradLayout)
+{
+    LocalTensor<inputT> staging = tempBuf_.Get<inputT>();
+    event_t mte2ToVEvent = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+    uint32_t validRows = IssueCopyInInputTile(srcGm, dst, staging, bos, startRow, i_d, totalRows,
+                                             seqLen, useGradLayout, mte2ToVEvent);
+    WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+    FinishCopyInInputTile(dst, staging, validRows);
 }
 
 template <typename inputT, typename calT>
@@ -700,6 +703,43 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeight(uint32_
         Cast(wLocal, wTemp, RoundMode::CAST_NONE, wBdCount_);
         PipeBarrier<PIPE_V>();
     }
+}
+
+// CopyInWeight 的异步拆分：先只发起 GM→UB 拷贝（不等待、不 Cast），使 weight 的
+// GM 往返延迟与随后 x/dy 的拷贝重叠；Cast 推迟到 FinishCopyInWeight。
+// bf16 的 staging 借用 wdyBuf_ 的 inputT 视图：它在 Finish 的 Cast 之后才会被
+// ComputeWdyAndDwRowsAccum 的 masked Mul 覆写，两者读窗口不重叠；容量 2*calcCount 亦
+// 足以容纳 wBdCount_。fp32 无 Cast，直接拷进 weightBuf_。
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::IssueCopyInWeight(
+    uint32_t i_d, event_t mte2ToVEvent)
+{
+    if (!hasWeight_) return;
+    DataCopyExtParams copyParams{static_cast<uint16_t>(W_), blockBytesSrc_,
+        static_cast<uint32_t>((D_ - BD_) * sizeof(inputT)), 0, 0};
+    DataCopyPadExtParams<inputT> padParams{false, 0, 0, static_cast<inputT>(0)};
+    uint64_t off = static_cast<uint64_t>(i_d) * BD_;
+    event_t vMte2Ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+    SetFlag<HardEvent::V_MTE2>(vMte2Ev);
+    WaitFlag<HardEvent::V_MTE2>(vMte2Ev);
+    if constexpr (IsSameType<inputT, float>::value) {
+        DataCopyPad(weightBuf_.Get<float>(), weightGm_[off], copyParams, padParams);
+    } else {
+        DataCopyPad(wdyBuf_.Get<inputT>(), weightGm_[off], copyParams, padParams);
+    }
+    SetFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinishCopyInWeight(
+    event_t mte2ToVEvent)
+{
+    if (!hasWeight_) return;
+    WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+    if constexpr (!IsSameType<inputT, float>::value) {
+        Cast(weightBuf_.Get<float>(), wdyBuf_.Get<inputT>(), RoundMode::CAST_NONE, wBdCount_);
+    }
+    PipeBarrier<PIPE_V>();
 }
 
 template <typename inputT, typename calT>
@@ -980,6 +1020,46 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndAcc(
     PipeBarrier<PIPE_V>();
 }
 
+// ComputeWdyAndAcc + ComputeDwRowsAccum 的融合版（仅 activation==NONE 路径使用）。
+// 把 W_ 轮循环收进函数内部，重复使用的 tensor 取址与 BinaryRepeatParams 只构造一次，
+// 降低标量指令数（数值与逐 i_w 调用完全一致）。
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndDwRowsAll()
+{
+    LocalTensor<float> dxLocal = dxBuf_.Get<float>();
+    LocalTensor<float> rows = dwRowsBuf_.Get<float>();
+    if (hasWeight_) {
+        LocalTensor<float> xLocal = xBuf_.Get<float>();
+        LocalTensor<float> wLocal = weightBuf_.Get<float>();
+        LocalTensor<float> wdyLocal = wdyBuf_.Get<float>();
+        LocalTensor<float> tmpLocal = tempBuf_.Get<float>();
+        BinaryRepeatParams repeatParams;
+        repeatParams.dstBlkStride = 1;
+        repeatParams.src0BlkStride = 1;
+        repeatParams.src1BlkStride = 1;
+        repeatParams.dstRepStride = static_cast<uint16_t>(BD_ / BLOCK_ALIGN_NUM);
+        repeatParams.src0RepStride = static_cast<uint16_t>(BD_ / BLOCK_ALIGN_NUM);
+        repeatParams.src1RepStride = 0;
+        for (uint32_t i_w = 0; i_w < W_; i_w++) {
+            uint32_t wIdx = W_ - i_w - 1U;
+            LocalTensor<float> dyLocal = dyBuf_.Get<float>()[i_w * BD_];
+            Mul(wdyLocal, dyLocal, wLocal[wIdx * BD_], static_cast<uint64_t>(BD_),
+                static_cast<uint8_t>(BT_), repeatParams);
+            Mul(tmpLocal, dyLocal, xLocal, btBdCount_);
+            PipeBarrier<PIPE_V>();
+            Add(dxLocal, dxLocal, wdyLocal, btBdCount_);
+            Add(rows[wIdx * btBdCount_], rows[wIdx * btBdCount_], tmpLocal, btBdCount_);
+            PipeBarrier<PIPE_V>();
+        }
+    } else {
+        for (uint32_t i_w = 0; i_w < W_; i_w++) {
+            LocalTensor<float> dyLocal = dyBuf_.Get<float>()[i_w * BD_];
+            Add(dxLocal, dxLocal, dyLocal, btBdCount_);
+            PipeBarrier<PIPE_V>();
+        }
+    }
+}
+
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsToInplace(
     LocalTensor<float> tensor, uint32_t rows, uint32_t cols, uint32_t targetRows)
@@ -1110,14 +1190,59 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDwRowsAccum(
     if (!hasWeight_) return;
     LocalTensor<float> rows = dwRowsBuf_.Get<float>();
     LocalTensor<float> dwLocal = dwBuf_.Get<float>();
+
+    // 快速路径：一个归约阶段只处理 pairRows 行，行宽 pairRows*BD_ 不超过一个 repeat
+    // (fp32 为 64 元素) 时，可以用 mask+repeatTimes 的形式把 W_ 个 w 的行归约合并到
+    // 同一条 strided Add 上（repeat 维映射到 w，repeatStride = btBdCount_）。
+    // 这样 3 个归约阶段各只需 1 条指令，并且结果直接落到 rows 每个 w 段的第 0 行上，
+    // 最后一条 strided Adds 一次性搬进 dwLocal。数值与逐 w 串行归约完全一致。
+    if (BT_ >= 2U && ((BT_ >> 1U) * BD_) <= 64U) {
+        uint32_t remainRows = BT_;
+        while (remainRows > 1U) {
+            uint32_t upperRows = (remainRows + 1U) >> 1U;
+            uint32_t pairRows = remainRows >> 1U;
+            BinaryRepeatParams repeatParams;
+            repeatParams.dstBlkStride = 1;
+            repeatParams.src0BlkStride = 1;
+            repeatParams.src1BlkStride = 1;
+            repeatParams.dstRepStride = static_cast<uint16_t>(btBdCount_ / BLOCK_ALIGN_NUM);
+            repeatParams.src0RepStride = static_cast<uint16_t>(btBdCount_ / BLOCK_ALIGN_NUM);
+            repeatParams.src1RepStride = static_cast<uint16_t>(btBdCount_ / BLOCK_ALIGN_NUM);
+            Add(rows, rows, rows[upperRows * BD_], static_cast<uint64_t>(pairRows * BD_),
+                static_cast<uint8_t>(W_), repeatParams);
+            PipeBarrier<PIPE_V>();
+            remainRows = upperRows;
+        }
+        UnaryRepeatParams unaryParams;
+        unaryParams.dstBlkStride = 1;
+        unaryParams.srcBlkStride = 1;
+        unaryParams.dstRepStride = static_cast<uint16_t>(BD_ / BLOCK_ALIGN_NUM);
+        unaryParams.srcRepStride = static_cast<uint16_t>(btBdCount_ / BLOCK_ALIGN_NUM);
+        Adds(dwLocal, rows, float(0), static_cast<uint64_t>(BD_), static_cast<uint8_t>(W_),
+             unaryParams);
+        PipeBarrier<PIPE_V>();
+        return;
+    }
+
     Duplicate(dwLocal, float(0), wBdCount_);
     PipeBarrier<PIPE_V>();
 
+    // W_ 个 w 的行归约彼此独立：按“同一轮内并行归约所有 w，轮间只同步一次”重排，
+    // 把原来 3*W_ 次 PipeBarrier 降到 3 次（数值与逐 w 串行归约完全一致）。
+    uint32_t remainRows = BT_;
+    while (remainRows > 1U) {
+        uint32_t upperRows = (remainRows + 1U) >> 1U;
+        uint32_t pairRows = remainRows >> 1U;
+        for (uint32_t w = 0; w < W_; w++) {
+            LocalTensor<float> rowBase = rows[w * btBdCount_];
+            Add(rowBase, rowBase, rowBase[upperRows * BD_], pairRows * BD_);
+        }
+        PipeBarrier<PIPE_V>();
+        remainRows = upperRows;
+    }
     for (uint32_t w = 0; w < W_; w++) {
         LocalTensor<float> rowBase = rows[w * btBdCount_];
-        ReduceRowsInplace(rowBase, BT_, BD_);
         Add(dwLocal[w * BD_], dwLocal[w * BD_], rowBase, BD_);
-        PipeBarrier<PIPE_V>();
     }
     PipeBarrier<PIPE_V>();
 }
@@ -1154,6 +1279,24 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDbRowsAccum(
     if (!hasBias_) return;
     LocalTensor<float> dbRows = dbRowsBuf_.Get<float>();
     LocalTensor<float> dbLocal = dbBuf_.Get<float>();
+
+    // 快速路径：把 BT_ 行归约的最后一级与“搬进 dbLocal”合并——树形归约到剩 2 行时
+    // 直接 Add(dbLocal, row0, row1)，省掉一次 Duplicate 与一次独立 Add。
+    // 对任意 BT_ >= 2 都与原 ReduceRowsInplace + Add 数值完全一致（同一 ceil 配对树）。
+    if (BT_ >= 2U) {
+        uint32_t remainRows = BT_;
+        while (remainRows > 2U) {
+            uint32_t upperRows = (remainRows + 1U) >> 1U;
+            uint32_t pairRows = remainRows >> 1U;
+            Add(dbRows, dbRows, dbRows[upperRows * BD_], pairRows * BD_);
+            PipeBarrier<PIPE_V>();
+            remainRows = upperRows;
+        }
+        Add(dbLocal, dbRows, dbRows[BD_], BD_);
+        PipeBarrier<PIPE_V>();
+        return;
+    }
+
     Duplicate(dbLocal, float(0), BD_);
     PipeBarrier<PIPE_V>();
 
@@ -1343,7 +1486,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectReg
     uint32_t i_t, uint32_t seqLen, uint32_t slot)
 {
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-    if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
+    if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value &&
+                  !IsSameType<inputT, float>::value) {
         (void)i_t;
         (void)seqLen;
         (void)slot;
@@ -1414,10 +1558,6 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
-    event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-    SetFlag<HardEvent::V_MTE3>(ev);
-    WaitFlag<HardEvent::V_MTE3>(ev);
-
     LocalTensor<float> dl = dxBuf_.Get<float>();
     uint64_t off = bos * D_ + i_t * BT_ * D_ + i_d * BD_;
     uint64_t startRow = static_cast<uint64_t>(i_t) * BT_;
@@ -1427,18 +1567,33 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
     }
     uint32_t rowStrideBytes = static_cast<uint32_t>((D_ - BD_) * sizeof(inputT));
     if constexpr (IsSameType<inputT, float>::value) {
+        // MTE3 直接读取向量写出的 dxBuf_，需要一次 V_MTE3 同步。
+        event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+        SetFlag<HardEvent::V_MTE3>(ev);
+        WaitFlag<HardEvent::V_MTE3>(ev);
         DataCopyExtParams outParams{static_cast<uint16_t>(validRows), blockBytesDst_, 0, rowStrideBytes, 0};
         DataCopyPad(dxGm_[off], dl, outParams);
         event_t evMte3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
         SetFlag<HardEvent::MTE3_V>(evMte3V);
         WaitFlag<HardEvent::MTE3_V>(evMte3V);
     } else {
+        // A5（310）用独占 staging，从而省掉 store 后为保护 buffer 复用而做的 MTE3_V 排空；
+        // 其它平台（含 220/910B）完全沿用原有实现，行为与改动前逐字一致。
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+        LocalTensor<inputT> dlIn = dxOutBuf_.Get<inputT>();
+        constexpr bool kKeepPostStoreDrain = false;
+#else
         LocalTensor<inputT> dlIn;
         if (Arch32UseDirectVector()) {
             dlIn = yBuf_.Get<inputT>();
         } else {
             dlIn = castBuf_.Get<inputT>();
         }
+        constexpr bool kKeepPostStoreDrain = true;
+        event_t evPre = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+        SetFlag<HardEvent::V_MTE3>(evPre);
+        WaitFlag<HardEvent::V_MTE3>(evPre);
+#endif
         DataCopyExtParams outParams{
             static_cast<uint16_t>(validRows),
             static_cast<uint32_t>(BD_ * sizeof(inputT)),
@@ -1446,14 +1601,20 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
             rowStrideBytes,
             0};
         Cast(dlIn, dl, RoundMode::CAST_RINT, validRows * BD_);
+#if !CAUSAL_CONV1D_BWD_ARCH35_REGBASE
         PipeBarrier<PIPE_V>();
+#endif
         event_t evMte3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
         SetFlag<HardEvent::V_MTE3>(evMte3);
         WaitFlag<HardEvent::V_MTE3>(evMte3);
         DataCopyPad(dxGm_[off], dlIn, outParams);
-        event_t evMte3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-        SetFlag<HardEvent::MTE3_V>(evMte3V);
-        WaitFlag<HardEvent::MTE3_V>(evMte3V);
+        if (kKeepPostStoreDrain || (!hasWeight_ && !hasBias_)) {
+            // kKeepPostStoreDrain: A5 之外的平台沿用原有排空；
+            // A5 上仅当本轮没有 dw/db store（CopyOutDwDb 提前返回）时在此兜底。
+            event_t evMte3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+            SetFlag<HardEvent::MTE3_V>(evMte3V);
+            WaitFlag<HardEvent::MTE3_V>(evMte3V);
+        }
     }
 }
 
@@ -1732,15 +1893,24 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
         SetFlag<HardEvent::MTE3_V>(mte3ToV);
         WaitFlag<HardEvent::MTE3_V>(mte3ToV);
     } else {
-        LocalTensor<inputT> outputLocal;
-        if (Arch32UseDirectVector()) {
-            outputLocal = yBuf_.Get<inputT>();
-        } else {
-            outputLocal = castBuf_.Get<inputT>();
-        }
+        // A5（310）dw/db 使用各自独占 staging，两次 store 之间无需排空；
+        // 其它平台（含 220/910B）完全沿用原有实现，行为与改动前逐字一致。
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+        constexpr bool kKeepInterStoreDrain = false;
+#else
+        constexpr bool kKeepInterStoreDrain = true;
+#endif
         if (hasWeight_) {
-            Cast(outputLocal, dwBuf_.Get<float>(), RoundMode::CAST_RINT, wBdCount_);
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+            LocalTensor<inputT> dwOut = castBuf_.Get<inputT>();
+#else
+            LocalTensor<inputT> dwOut = Arch32UseDirectVector() ? yBuf_.Get<inputT>()
+                                                               : castBuf_.Get<inputT>();
+#endif
+            Cast(dwOut, dwBuf_.Get<float>(), RoundMode::CAST_RINT, wBdCount_);
+#if !CAUSAL_CONV1D_BWD_ARCH35_REGBASE
             PipeBarrier<PIPE_V>();
+#endif
             event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
             SetFlag<HardEvent::V_MTE3>(ev);
             WaitFlag<HardEvent::V_MTE3>(ev);
@@ -1752,16 +1922,26 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
                 static_cast<uint32_t>((D_ - BD_) * sizeof(inputT)),
                 0};
             uint64_t dstOff = static_cast<uint64_t>(i_d) * BD_;
-            DataCopyPad(dwGm_[dstOff], outputLocal, dwOutParams);
+            DataCopyPad(dwGm_[dstOff], dwOut, dwOutParams);
 
-            event_t mte3ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-            SetFlag<HardEvent::MTE3_V>(mte3ToV);
-            WaitFlag<HardEvent::MTE3_V>(mte3ToV);
+            if (kKeepInterStoreDrain) {
+                event_t mte3ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+                SetFlag<HardEvent::MTE3_V>(mte3ToV);
+                WaitFlag<HardEvent::MTE3_V>(mte3ToV);
+            }
         }
 
         if (hasBias_) {
-            Cast(outputLocal, dbBuf_.Get<float>(), RoundMode::CAST_RINT, BD_);
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+            LocalTensor<inputT> dbOut = dbOutBuf_.Get<inputT>();
+#else
+            LocalTensor<inputT> dbOut = Arch32UseDirectVector() ? yBuf_.Get<inputT>()
+                                                               : castBuf_.Get<inputT>();
+#endif
+            Cast(dbOut, dbBuf_.Get<float>(), RoundMode::CAST_RINT, BD_);
+#if !CAUSAL_CONV1D_BWD_ARCH35_REGBASE
             PipeBarrier<PIPE_V>();
+#endif
             event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
             SetFlag<HardEvent::V_MTE3>(ev);
             WaitFlag<HardEvent::V_MTE3>(ev);
@@ -1769,8 +1949,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
             uint64_t dbOff = static_cast<uint64_t>(i_d) * BD_;
             DataCopyExtParams dbParams{
                 1, static_cast<uint32_t>(BD_ * sizeof(inputT)), 0, 0, 0};
-            DataCopyPad(dbGm_[dbOff], outputLocal, dbParams);
+            DataCopyPad(dbGm_[dbOff], dbOut, dbParams);
+        }
 
+        if (hasWeight_ || hasBias_) {
+            // 一次排空覆盖本轮全部输出 buffer（MTE3 为 FIFO）：保证下一轮 Cast 覆写前
+            // MTE3 已读完；dw/db 使用各自独占 buffer 时，两次 store 之间无需再排空。
             event_t mte3ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
             SetFlag<HardEvent::MTE3_V>(mte3ToV);
             WaitFlag<HardEvent::MTE3_V>(mte3ToV);
@@ -1957,16 +2141,27 @@ template <typename inputT, typename calT>
 __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegbase() const
 {
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-    if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
-        return false;
-    } else {
-        bool supportActivation = ((activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH ||
-                                   activation_ == ACTIVATION_NONE) &&
-                                  !useInitialState_ && !useFinalState_);
+    bool supportActivation = ((activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH ||
+                               activation_ == ACTIVATION_NONE) &&
+                              !useInitialState_ && !useFinalState_);
+    if constexpr (IsSameType<inputT, half>::value || IsSameType<inputT, bfloat16_t>::value) {
+        // BD=16 且 D 只有一个通道块（numBlksD_==1）时无需 i_d 切分：此时 chunk 并行度与普通路径
+        // 相同（T<=64 两条路径都只有 1 个 chunk），可安全启用快路径。与 host 侧 useArch35DirectFast
+        // 的 `BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))` 门控逐字对齐。
+        bool tinyBD16 = (BD_ == 16U && numBlksD_ == 1U && T_ <= 64U);
         return hasWeight_ &&
                supportActivation &&
-               (BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD || (BD_ == 16U && useIdSplit_ != 0U)) &&
+               (BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD || (BD_ == 16U && useIdSplit_ != 0U) ||
+                tinyBD16) &&
                W_ > 0 && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX;
+    } else if constexpr (IsSameType<inputT, float>::value) {
+        // fp32：仅启用 BD=16（D 非 64 整数倍）且 i_d 切分成立的场景，与 host 侧 useArch35DirectFast 门控一致。
+        return hasWeight_ &&
+               supportActivation &&
+               BD_ == 16U && useIdSplit_ != 0U &&
+               W_ > 0 && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX;
+    } else {
+        return false;
     }
 #else
     return false;
@@ -2021,18 +2216,29 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
         ProcessNormal2DSplit(bIdx, blockNum);
         return;
     }
+    bool weightCopyPending = false;
+    event_t pendingWeightMte2ToVEvent;
     for (uint32_t i_d = 0; i_d < numBlksD_; i_d++) {
+        // 上一轮若因空 chunk 未消费 weight 的 MTE2_V event，这里先排空，避免 event 泄漏。
+        if (weightCopyPending) {
+            WaitFlag<HardEvent::MTE2_V>(pendingWeightMte2ToVEvent);
+            weightCopyPending = false;
+        }
         if (hasWeight_) {
             if (useDirectRegbase) {
                 CopyInWeightRaw(i_d);
                 Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
+            } else if (activation_ == ACTIVATION_NONE) {
+                // NONE 路径：weight 只发起拷贝不等待，与随后的 x/dy 拷贝重叠成一个 GM 往返；
+                // Cast 推迟到 chunk 内（见 FinishCopyInWeight 调用点）。
+                pendingWeightMte2ToVEvent =
+                    static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+                IssueCopyInWeight(i_d, pendingWeightMte2ToVEvent);
+                weightCopyPending = true;
+                Duplicate(dwRowsBuf_.Get<float>(), float(0), W_ * btBdCount_);
             } else {
                 CopyInWeight(i_d);
-                if (activation_ == ACTIVATION_NONE) {
-                    Duplicate(dwRowsBuf_.Get<float>(), float(0), W_ * btBdCount_);
-                } else {
-                    Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
-                }
+                Duplicate(dwBuf_.Get<float>(), float(0), wBdCount_);
             }
             PipeBarrier<PIPE_V>();
         }
@@ -2127,12 +2333,10 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
 
                 ComputeTileDirectVector(reuseHalo);
             } else {
-                CopyInX(bos, i_t, i_d, seqLen);
-
-                Duplicate(dxBuf_.Get<float>(), float(0), btBdCount_);
-                PipeBarrier<PIPE_V>();
-
                 if (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH) {
+                    CopyInX(bos, i_t, i_d, seqLen);
+                    Duplicate(dxBuf_.Get<float>(), float(0), btBdCount_);
+                    PipeBarrier<PIPE_V>();
                     CopyInDyWindow(bos, i_t, i_d, seqLen);
                     CopyInYWindow(bos, i_t, i_d, seqLen);
                     ApplySiluBackward(dyBuf_.Get<float>(), yBuf_.Get<float>(), dyBdCount_);
@@ -2142,11 +2346,42 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
                         if (hasBias_ && i_w == 0) ComputeDbPartial(0);
                     }
                 } else {
-                    CopyInDyWindow(bos, i_t, i_d, seqLen);
-                    for (uint32_t i_w = 0; i_w < W_; i_w++) {
-                        ComputeWdyAndAcc(i_w, i_w);
-                        ComputeDwRowsAccum(i_w, i_w);
+                    // NONE 激活：x 与 dy 两路 GM 读取互相独立，分别用独立的 staging buffer
+                    // 发起后再统一等待，把两次 GM 往返延迟重叠成一次。
+                    LocalTensor<inputT> xStage;
+                    if constexpr (!IsSameType<inputT, float>::value) {
+                        xStage = castBuf_.Get<inputT>();
                     }
+                    LocalTensor<inputT> dyStage = tempBuf_.Get<inputT>();
+                    event_t xMte2ToVEvent =
+                        static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+                    event_t dyMte2ToVEvent =
+                        static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+                    uint32_t xRows =
+                        IssueCopyInInputTile(xGm_, xBuf_.Get<float>(), xStage, bos, i_t * BT_, i_d,
+                                             BT_, seqLen, false, xMte2ToVEvent);
+                    uint32_t dyRows =
+                        IssueCopyInInputTile(dyGm_, dyBuf_.Get<float>(), dyStage, bos, i_t * BT_,
+                                             i_d, dyRows_, seqLen, true, dyMte2ToVEvent);
+                    Duplicate(dxBuf_.Get<float>(), float(0), btBdCount_);
+                    // weight 先于 x/dy 发起，通常在 x/dy 的 MTE2 往返尚未返回时就已就绪；
+                    // 把 weight 的 Cast 放到等待 x/dy 之前，正好填补这段暴露的 GM 延迟。
+                    if (weightCopyPending) {
+                        FinishCopyInWeight(pendingWeightMte2ToVEvent);
+                        weightCopyPending = false;
+                    }
+                    WaitFlag<HardEvent::MTE2_V>(xMte2ToVEvent);
+                    WaitFlag<HardEvent::MTE2_V>(dyMte2ToVEvent);
+                    if constexpr (!IsSameType<inputT, float>::value) {
+                        if (xRows > 0U) {
+                            Cast(xBuf_.Get<float>(), xStage, RoundMode::CAST_NONE, xRows * BD_);
+                        }
+                        if (dyRows > 0U) {
+                            Cast(dyBuf_.Get<float>(), dyStage, RoundMode::CAST_NONE, dyRows * BD_);
+                        }
+                    }
+                    PipeBarrier<PIPE_V>();
+                    ComputeWdyAndDwRowsAll();
                     if (hasBias_) ComputeDbRowsAccum(0);
                 }
 
@@ -2172,7 +2407,15 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
         if (!useDirectRegbase && hasBias_ && activation_ == ACTIVATION_NONE) {
             FinalizeDbRowsAccum();
         }
-        CopyOutPartialDwDb(bIdx, i_d);
+        // 单核（blockNum == 1）时该 i_d 的 dw/db 只有一个贡献者：partial workspace 写回、
+        // SyncAll 与第二趟归约都是纯固定开销，直接写回输出即可（数值完全一致）。
+        // blockNum == 1 只在未启用 id-split/2D-split 且 totalChunks == 1 时出现，
+        // 此时每个 i_d 由这一个核完整计算。
+        if (blockNum > 1U) {
+            CopyOutPartialDwDb(bIdx, i_d);
+        } else {
+            CopyOutDwDb(i_d);
+        }
     }
 
     if (useDirectVector) {
@@ -2183,10 +2426,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
         }
     }
 
-    SyncAll();
+    if (blockNum > 1U) {
+        SyncAll();
 
-    for (uint32_t i_d = bIdx; i_d < numBlksD_; i_d += blockNum) {
-        ReducePartialDwDb(i_d);
+        for (uint32_t i_d = bIdx; i_d < numBlksD_; i_d += blockNum) {
+            ReducePartialDwDb(i_d);
+        }
     }
 
     if (useDirectRegbase) {

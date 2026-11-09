@@ -80,6 +80,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     auto xDtype = xDesc->GetDataType();
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
+    bool isFp32Input = (xDtype == ge::DT_FLOAT);
     uint32_t B = 0;
     uint32_t T = 0;
     uint32_t D = 0;
@@ -312,21 +313,28 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     bool useIdSplit = isAscend950 && numBlksD >= coreNum;
 
     // A5(arch35) regbase 快路径：b16、BD∈{64,16}、W∈[1,8]、无 initial_state/dht。
+    // fp32 仅支持 BD=16（D 非 64 整数倍）且 useIdSplit 成立：BD=64 的 fp32 未验证，仍走普通路径。
     // activation 支持 SILU/SWISH（同一套 SiLU 反向公式）与 NONE（dy 直读）。
     // BD=64 时行宽已满一个向量寄存器；BD=16 仅当 useIdSplit 成立（核数按 i_d 铺满）才启用：
     // 非 idSplit 下核间并行度只来自 chunk 数，而快路径 BT 最大 224 会把 chunk 数压得很低
     // （例如 T=512、BT=224 只剩 3 个 chunk ⇒ 仅 3 个核），反而比普通路径 BT=64 更慢。
-    bool useArch35DirectFast = isAscend950 && isB16Input &&
+    // BD=16 且 numBlksD==1（即 D==16）时，i_d 方向本来就只有 1 个块，chunk 并行度与普通路径
+    // 完全一致（T<=64 时两条路径都只产生 1 个 chunk、1 个核）；不存在上面担心的“快路径 BT 过大
+    // 反而压掉 chunk 并行度”的问题，因此可以无 i_d 切分直接启用快路径。
+    bool useArch35DirectFast = isAscend950 &&
+                               ((isB16Input && (BD == 64 ||
+                                                (BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))))) ||
+                                (isFp32Input && BD == 16 && useIdSplit)) &&
                                (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH ||
                                 activation == ACTIVATION_NONE) &&
                                !useInitialState && !useFinalState &&
-                               W >= 1 && W <= ARCH35_DIRECT_W_MAX &&
-                               (BD == 64 || (BD == 16 && useIdSplit));
+                               W >= 1 && W <= ARCH35_DIRECT_W_MAX;
     bool use910BDirectFast = isAscend910B && isB16Input &&
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
                              W == 4 && (BD == 64 || BD == 128);
-    auto CalcArch35DirectNeed = [BD, W](uint32_t bt) -> uint32_t {
+    uint32_t rawDtypeSize = isB16Input ? B16_DTYPE_SIZE : FP32_DTYPE_SIZE;
+    auto CalcArch35DirectNeed = [BD, W, rawDtypeSize, isB16Input](uint32_t bt) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
@@ -336,7 +344,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t regPad = (BD < 64U) ? 64U : 0U;
         uint32_t dbAl = (BD < 64U) ? 64U : bdAl;
         uint32_t need = 0;
-        need += (3 * btBdAl + 4 * dyBdAl + wBdAl + regPad) * B16_DTYPE_SIZE;
+        // 原始输入缓冲：x/dy/y 各 2 份 slot（b16 另有 1 份 cast 缓冲）；fp32 时其元素位宽为 4 字节。
+        need += (2 * btBdAl + 4 * dyBdAl + wBdAl + regPad) * rawDtypeSize;
+        if (isB16Input) {
+            need += btBdAl * rawDtypeSize;
+        }
+        // fp32 计算/输出缓冲：dx + dyAct(temp) + dw + db。
         need += (btBdAl + dyBdAl + wBdAl + 2 * regPad + dbAl) * FP32_DTYPE_SIZE;
         return need;
     };

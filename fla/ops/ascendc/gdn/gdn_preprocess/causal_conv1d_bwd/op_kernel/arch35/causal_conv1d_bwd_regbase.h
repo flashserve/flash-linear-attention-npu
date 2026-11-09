@@ -316,6 +316,168 @@ static __simd_vf__ inline void ComputeDbDirectB16Vf(
     StoreFloatOne(dbAddr, old, maskF32);
 }
 
+// fp32 行宽 BD 模板化 VF：BD=64 时行步长恰为一个 fp32 寄存器全宽；BD=16 时用 16 车道掩码，
+// 加载沿用无掩码 DIST_NORM（一次读满 64 元素，低 BD 车道即目标行），与 b16 BD=16 路径同构，仅省去 Cast。
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeActivatedDyF32Vf(
+    __ubuf__ float *dyAddr, __ubuf__ float *yAddr, __ubuf__ float *dyActAddr, uint32_t rows)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> dy;
+    RegTensor<float> y;
+
+    for (uint32_t row = 0; row < rows; row++) {
+        LoadFloatOne(dy, dyAddr + row * BD);
+        LoadFloatOne(y, yAddr + row * BD);
+        ApplySiluBackwardOne(dy, y, maskF32);
+        StoreFloatOne(dyActAddr + row * BD, dy, maskF32);
+    }
+}
+
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeDxActivatedF32Vf(
+    __ubuf__ float *dyActAddr, __ubuf__ float *weightAddr, __ubuf__ float *dxAddr,
+    uint32_t rows, uint32_t width)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> dy;
+    RegTensor<float> weight;
+    RegTensor<float> dx;
+    RegTensor<float> prod;
+
+    for (uint32_t row = 0; row < rows; row++) {
+        Duplicate(dx, 0.0f, maskF32);
+        for (uint32_t iW = 0; iW < width; iW++) {
+            uint32_t wIdx = width - iW - 1;
+            LoadFloatOne(dy, dyActAddr + (row + iW) * BD);
+            LoadFloatOne(weight, weightAddr + wIdx * BD);
+            Mul(prod, dy, weight, maskF32);
+            Add(dx, dx, prod, maskF32);
+        }
+        StoreFloatOne(dxAddr + row * BD, dx, maskF32);
+    }
+}
+
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeDwOneActivatedF32Vf(
+    __ubuf__ float *xAddr, __ubuf__ float *dyActAddr, __ubuf__ float *dwAddr,
+    uint32_t rows, uint32_t width, uint32_t wIdx)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> sum;
+    RegTensor<float> x;
+    RegTensor<float> dy;
+    RegTensor<float> prod;
+
+    Duplicate(sum, 0.0f, maskF32);
+
+    uint32_t iW = width - wIdx - 1U;
+    for (uint32_t row = 0; row < rows; row++) {
+        LoadFloatOne(x, xAddr + row * BD);
+        LoadFloatOne(dy, dyActAddr + (row + iW) * BD);
+        Mul(prod, dy, x, maskF32);
+        Add(sum, sum, prod, maskF32);
+    }
+
+    StoreDwSumOne<BD>(dwAddr, sum, wIdx, maskF32);
+}
+
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeDbActivatedF32Vf(
+    __ubuf__ float *dyActAddr, __ubuf__ float *dbAddr, uint32_t rows)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> sum;
+    RegTensor<float> dy;
+    RegTensor<float> old;
+
+    Duplicate(sum, 0.0f, maskF32);
+    for (uint32_t row = 0; row < rows; row++) {
+        LoadFloatOne(dy, dyActAddr + row * BD);
+        Add(sum, sum, dy, maskF32);
+    }
+
+    LoadFloatOne(old, dbAddr);
+    Add(old, old, sum, maskF32);
+    StoreFloatOne(dbAddr, old, maskF32);
+}
+
+// activation == NONE 时的 fp32 直接路径：与 Activated 版本同构，仅把 dyAct 换成 dy 直读。
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeDxDirectF32Vf(
+    __ubuf__ float *dyAddr, __ubuf__ float *weightAddr, __ubuf__ float *dxAddr,
+    uint32_t rows, uint32_t width)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> dy;
+    RegTensor<float> weight;
+    RegTensor<float> dx;
+    RegTensor<float> prod;
+
+    for (uint32_t row = 0; row < rows; row++) {
+        Duplicate(dx, 0.0f, maskF32);
+        for (uint32_t iW = 0; iW < width; iW++) {
+            uint32_t wIdx = width - iW - 1;
+            LoadFloatOne(dy, dyAddr + (row + iW) * BD);
+            LoadFloatOne(weight, weightAddr + wIdx * BD);
+            Mul(prod, dy, weight, maskF32);
+            Add(dx, dx, prod, maskF32);
+        }
+        StoreFloatOne(dxAddr + row * BD, dx, maskF32);
+    }
+}
+
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeDwOneDirectF32Vf(
+    __ubuf__ float *xAddr, __ubuf__ float *dyAddr, __ubuf__ float *dwAddr,
+    uint32_t rows, uint32_t width, uint32_t wIdx)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> sum;
+    RegTensor<float> x;
+    RegTensor<float> dy;
+    RegTensor<float> prod;
+
+    Duplicate(sum, 0.0f, maskF32);
+
+    uint32_t iW = width - wIdx - 1U;
+    for (uint32_t row = 0; row < rows; row++) {
+        LoadFloatOne(x, xAddr + row * BD);
+        LoadFloatOne(dy, dyAddr + (row + iW) * BD);
+        Mul(prod, dy, x, maskF32);
+        Add(sum, sum, prod, maskF32);
+    }
+
+    StoreDwSumOne<BD>(dwAddr, sum, wIdx, maskF32);
+}
+
+template <uint32_t BD>
+static __simd_vf__ inline void ComputeDbDirectF32Vf(
+    __ubuf__ float *dyAddr, __ubuf__ float *dbAddr, uint32_t rows)
+{
+    MaskReg maskF32 = MaskF32ForBd<BD>();
+
+    RegTensor<float> sum;
+    RegTensor<float> dy;
+    RegTensor<float> old;
+
+    Duplicate(sum, 0.0f, maskF32);
+    for (uint32_t row = 0; row < rows; row++) {
+        LoadFloatOne(dy, dyAddr + row * BD);
+        Add(sum, sum, dy, maskF32);
+    }
+
+    LoadFloatOne(old, dbAddr);
+    Add(old, old, sum, maskF32);
+    StoreFloatOne(dbAddr, old, maskF32);
+}
+
 template <typename T>
 static __simd_vf__ inline void ComputeDxDirectVf(
     __ubuf__ T *dyAddr, __ubuf__ T *weightAddr, __ubuf__ float *dxAddr,
@@ -614,6 +776,88 @@ __aicore__ inline void ComputeTileDirectRegbaseBd(
             AscendC::VF_CALL<ComputeDbDirectB16Vf<T, BD>>(dyAddr, dbAddr, rows);
         }
         return;
+    } else if constexpr (BD == 16U) {
+        // fp32 BD=16（D 非 64 整数倍）走与 b16 BD=16 同构的 VF 快路径，仅省去 Cast。
+        if (activation == 1U || activation == 2U) {
+            AscendC::VF_CALL<ComputeActivatedDyF32Vf<BD>>(dyAddr, yAddr, dyActAddr, dyRows);
+            AscendC::VF_CALL<ComputeDxActivatedF32Vf<BD>>(dyActAddr, weightAddr, dxAddr, rows, width);
+            if (width > 0U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 0U);
+            }
+            if (width > 1U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 1U);
+            }
+            if (width > 2U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 2U);
+            }
+            if (width > 3U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 3U);
+            }
+            if (width > 4U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 4U);
+            }
+            if (width > 5U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 5U);
+            }
+            if (width > 6U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 6U);
+            }
+            if (width > 7U) {
+                AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
+                    xAddr, dyActAddr, dwAddr, rows, width, 7U);
+            }
+            if (hasBias != 0U) {
+                AscendC::VF_CALL<ComputeDbActivatedF32Vf<BD>>(dyActAddr, dbAddr, rows);
+            }
+            return;
+        }
+        if (activation != 0U) {
+            return;
+        }
+        // activation == NONE：dy 直接参与计算，无需 y 与 dyAct 中间缓冲。
+        AscendC::VF_CALL<ComputeDxDirectF32Vf<BD>>(dyAddr, weightAddr, dxAddr, rows, width);
+        if (width > 0U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 0U);
+        }
+        if (width > 1U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 1U);
+        }
+        if (width > 2U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 2U);
+        }
+        if (width > 3U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 3U);
+        }
+        if (width > 4U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 4U);
+        }
+        if (width > 5U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 5U);
+        }
+        if (width > 6U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 6U);
+        }
+        if (width > 7U) {
+            AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
+                xAddr, dyAddr, dwAddr, rows, width, 7U);
+        }
+        if (hasBias != 0U) {
+            AscendC::VF_CALL<ComputeDbDirectF32Vf<BD>>(dyAddr, dbAddr, rows);
+        }
     } else {
         if (activation == 1U) {
             AscendC::VF_CALL<ComputeActivatedDyVf<T>>(dyAddr, yAddr, dyActAddr, dyRows);
