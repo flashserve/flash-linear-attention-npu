@@ -26,7 +26,7 @@ try:
 except ImportError:
     raise SystemExit("torch_npu 不可用")
 
-from fla_npu.ops.ascendc._aclnn_ctypes import npu_chunk_kda_fwd
+from fla_npu.ops.ascendc import npu_chunk_kda_fwd
 
 
 def main() -> int:
@@ -73,6 +73,10 @@ def main() -> int:
             dt_bias=dt_bias,
             safe_gate=True,
             lower_bound=-5.0,
+            use_qk_l2norm_in_kernel=True,
+            use_beta_sigmoid_in_kernel=True,
+            allow_neg_eigval=False,
+            use_exp2=True,
         )
 
     for _ in range(args.warm_up):
