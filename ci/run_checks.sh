@@ -537,17 +537,12 @@ install_custom_opp_package() {
     echo "[CI] Installing custom OPP package: ${run_file}"
     chmod +x "${run_file}"
     if [[ "$change_scope" == "partial" ]]; then
-        # A partial run package contains only selected operators. Install it
-        # into a temporary root, then register that vendor as a package-local
-        # overlay so the complete architecture wheel remains the fallback for
-        # every unmodified operator.
-        local staging_dir="$TMPDIR/fla-npu-partial-opp"
-        rm -rf -- "$staging_dir"
-        mkdir -p "$staging_dir"
-        "${run_file}" --install-path="$staging_dir" --quiet
+        # The OPP stage extracted and checked this vendor. Register it as a
+        # package-local overlay, retaining the complete architecture wheel as
+        # the fallback for every unmodified operator.
         python3 -m fla_npu_opp_manage \
             --overlay \
-            --source "$staging_dir/vendors/fla_npu_transformer" \
+            --source "$partial_opp_dir/vendors/fla_npu_transformer" \
             --force
     else
         "${run_file}" --quiet
@@ -693,6 +688,25 @@ build_opp_run_package() {
             if [[ "$change_scope" == "partial" ]]; then
                 bash build.sh --pkg --soc="$ci_soc" --vendor_name=fla_npu \
                     --ops="$ci_ops" -j"$ci_jobs"
+                # Inspect the actual built vendor before installing any overlay.
+                # A daily wheel can predate interfaces already present on main.
+                local run_file abi_status=0
+                run_file="$(find_single_run_package)"
+                chmod +x "$run_file"
+                rm -rf -- "$partial_opp_dir"
+                mkdir -p "$partial_opp_dir"
+                "$run_file" --install-path="$partial_opp_dir" --quiet
+                python3 ci/check_partial_opp_abi.py \
+                    --overlay "$partial_opp_dir/vendors/fla_npu_transformer" || abi_status=$?
+                case "$abi_status" in
+                    0) ;;
+                    10)
+                        echo "[CI] Base wheel ABI is incompatible; rebuilding the complete PR wheel and adapter."
+                        FLA_NPU_OPS="" FLA_NPU_SOC="$ci_soc" python3 scripts/build_wheel.py
+                        printf 'full\n' > "$effective_scope_file"
+                        ;;
+                    *) return "$abi_status" ;;
+                esac
             else
                 FLA_NPU_SOC="$ci_soc" python3 scripts/build_wheel.py
             fi
@@ -878,6 +892,11 @@ fi
 ci_bootstrap_complete=true
 trap - EXIT
 failed_stage=""
+partial_opp_dir="$TMPDIR/fla-npu-partial-opp"
+# Stages execute in subshells. Persist a successful full-build fallback so
+# subsequent stages install the matching PR adapter rather than the daily one.
+effective_scope_file="$TMPDIR/fla-npu-effective-scope"
+rm -f -- "$effective_scope_file"
 
 run_pipeline_stage \
     environment-contracts \
@@ -894,6 +913,12 @@ run_pipeline_stage \
     "build the target-SOC OPP run package" \
     "$opp_package_enabled" \
     build_opp_run_package
+
+if [[ -f "$effective_scope_file" ]]; then
+    change_scope="full"
+    ci_ops=""
+    export CI_CHANGE_SCOPE=full CI_CHANGE_OPS="" CI_OPS=""
+fi
 
 standalone_layout_enabled=false
 if [[ "$change_scope" != "tests-only" && ( "$requested_stage" != "all" || \
