@@ -12,6 +12,7 @@
  * \brief
  */
 #include "recurrent_kda_tiling.h"
+#include "../op_kernel/recurrent_kda_tiling_key.h"
 
 #include "err/ops_err.h"
 #include "log/log.h"
@@ -213,7 +214,7 @@ ge::graphStatus RecurrentKdaTiling::DoOpTiling()
 
 ge::graphStatus RecurrentKdaTiling::DoLibApiTiling()
 {
-    tilingKey_ = 0;
+    tilingKey_ = GET_TPL_TILING_KEY(tilingData_.inplaceFinalState != 0);
     return ge::GRAPH_SUCCESS;
 };
 

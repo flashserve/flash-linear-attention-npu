@@ -121,7 +121,7 @@ token capacity。
 
 ### 6.3 模板化方案与 tiling key
 
-当前 kernel 通过 `REGISTER_TILING_DEFAULT(RecurrentKdaTilingData)` 使用默认 tiling data，不引入额外 tiling key。
+Host 通过 `GET_TPL_TILING_KEY(inplaceFinalState != 0)` 选择 `INPLACE_STATE` 模板实例。Kernel 按模板实参选择原位 state 输出或独立 final state，两个实例共用 `RecurrentKdaTilingData`。
 dtype 固定为 BF16 QKV，state dtype 由编译宏 `DTYPE_INITIAL_STATE` 实例化；layout、gate/beta 分支和可选输入存在性由
 tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 

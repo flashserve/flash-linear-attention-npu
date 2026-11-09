@@ -12,7 +12,7 @@
  * \brief Causal Conv1D backward tiling implementation
  *
  * Tiling keys:
- *   key=0 : Main kernel. Activation is selected by tiling data at runtime.
+ *   IS_VARLEN selects packed sequence offsets or fixed-length chunk indexing.
  */
 
 #include "register/op_def_registry.h"
@@ -23,6 +23,7 @@
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"
+#include "causal_conv1d_bwd_arch92_tiling.h"
 #include <algorithm>
 #include <cstring>
 
@@ -278,8 +279,8 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-        isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
         const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        isAscend910B = npuArch == NpuArch::DAV_2201;
         isA5 = npuArch == NpuArch::DAV_3510;
         isA6 = npuArch == NpuArch::DAV_9201;
         coreNum = ascendcPlatform.GetCoreNumAiv();
@@ -308,15 +309,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t numBlksD = D / BD;
 
-    bool useRegbaseDirectFast = (isA5 || isA6) && isB16Input &&
-                               activation == ACTIVATION_SILU &&
-                               !useInitialState && !useFinalState &&
-                               (W == 4 || (isA6 && W > 0 && W < 4)) && BD == 64;
+    const bool directSilu = isB16Input && activation == ACTIVATION_SILU &&
+                            !useInitialState && !useFinalState && BD == 64;
+    const bool useA5Direct = isA5 && directSilu && W == 4;
     bool use910BDirectFast = isAscend910B && isB16Input &&
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
                              W == 4 && (BD == 64 || BD == 128);
-    auto CalcRegbaseDirectNeed = [BD, W](uint32_t bt) -> uint32_t {
+    auto CalcA5DirectNeed = [BD, W](uint32_t bt) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
@@ -338,16 +338,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     };
 
     uint32_t BT = 64;
-    if (isA6 && useRegbaseDirectFast) {
-        // Bound the time tile by the work per AIV as well as the reported UB.
-        const uint32_t tokensPerCore = totalTokens / coreNum + (totalTokens % coreNum != 0);
-        BT = std::min(T, std::min(DIRECT_FAST_BT_MAX, std::max(DIRECT_FAST_BT_STEP, tokensPerCore)));
-        while (BT > 1 && CalcRegbaseDirectNeed(BT) > ubSize) {
-            --BT;
-        }
-    } else if (useRegbaseDirectFast) {
+    causal_conv_arch92::TimeTile a6Tile{};
+    if (isA6) {
+        a6Tile = causal_conv_arch92::SelectTimeTile(T, totalTokens, coreNum, W, BD, isB16Input, activation,
+                                                    useInitialState || useFinalState, ubSize);
+        BT = a6Tile.rows;
+    } else if (useA5Direct) {
         BT = std::min(T, DIRECT_FAST_BT_MAX);
-        while (BT > DIRECT_FAST_BT_MIN && CalcRegbaseDirectNeed(BT) > ubSize) {
+        while (BT > DIRECT_FAST_BT_MIN && CalcA5DirectNeed(BT) > ubSize) {
             BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
         }
     } else if (use910BDirectFast) {
@@ -379,17 +377,16 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
     uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
-    uint32_t need = 0;
-    if (useRegbaseDirectFast) {
-        need = CalcRegbaseDirectNeed(BT);
+    uint64_t need = 0;
+    if (isA6) {
+        need = a6Tile.bytes;
+    } else if (useA5Direct) {
+        need = CalcA5DirectNeed(BT);
     } else if (use910BDirectFast) {
         need = Calc910BDirectNeed(BT);
     } else {
         need += (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
         need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
-        if (isA6 && isB16Input) {
-            need += calcBdAl * B16_DTYPE_SIZE; // Generic arch92 castBuf_.
-        }
         const bool hasWeight = true;
         const bool hasBias = true;
         if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
@@ -404,12 +401,11 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     OP_CHECK_IF(need > ubSize,
-                OP_LOGE(context, "UB overflow: need %u > available %lu", need, ubSize),
+                OP_LOGE(context, "UB overflow: need %llu > available %llu",
+                        static_cast<unsigned long long>(need), static_cast<unsigned long long>(ubSize)),
                 return ge::GRAPH_FAILED);
 
-    // The kernel entry is not template-specialized by activation. Keep one
-    // function entry and let tiling->activation select the runtime path.
-    uint64_t tilingKey = CAUSAL_CONV1D_BWD_TPL_ACTIVATION_NONE;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(inputMode == 0);
 
     // Compute block dimension
     uint32_t chunkPerCore = 0;

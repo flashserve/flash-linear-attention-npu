@@ -12,8 +12,8 @@
 
 #include "causal_conv1d_bwd.h"
 
-template <typename inputT, typename calT>
-class CausalConv1dBwdInputLayoutKernel : public CausalConv1dBwdKernel<inputT, calT> {
+template <typename inputT, typename calT, bool IsVarlen>
+class CausalConv1dBwdInputLayoutKernel : public CausalConv1dBwdKernel<inputT, calT, IsVarlen> {
 public:
     __aicore__ inline CausalConv1dBwdInputLayoutKernel() {}
 };

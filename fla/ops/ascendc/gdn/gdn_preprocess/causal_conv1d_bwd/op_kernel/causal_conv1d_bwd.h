@@ -41,7 +41,7 @@
 #include "causal_conv1d_bwd_tiling_data.h"
 #include "causal_conv1d_bwd_tiling_key.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 2201
 #include "arch32/causal_conv1d_bwd_vector.h"
 #define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 1
 #else
@@ -50,12 +50,12 @@
 
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
 #include "arch92/causal_conv1d_bwd_regbase.h"
-#define CAUSAL_CONV1D_BWD_REGBASE 1
+#define CAUSAL_CONV1D_BWD_ARCH35 0
 #elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 #include "arch35/causal_conv1d_bwd_regbase.h"
-#define CAUSAL_CONV1D_BWD_REGBASE 1
+#define CAUSAL_CONV1D_BWD_ARCH35 1
 #else
-#define CAUSAL_CONV1D_BWD_REGBASE 0
+#define CAUSAL_CONV1D_BWD_ARCH35 0
 #endif
 
 using namespace AscendC;
@@ -70,7 +70,7 @@ constexpr uint32_t INPUT_LAYOUT_TND = 1;
 constexpr uint32_t INPUT_LAYOUT_BNSD = 2;
 constexpr uint32_t INPUT_LAYOUT_NTD = 3;
 
-template <typename inputT, typename calT>
+template <typename inputT, typename calT, bool IsVarlen>
 class CausalConv1dBwdKernel {
 public:
     __aicore__ inline CausalConv1dBwdKernel() {}
@@ -140,6 +140,14 @@ private:
     __aicore__ inline bool ResolveChunk(uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t,
                                         uint64_t &bos, uint32_t &seqLen);
     __aicore__ inline bool Arch32UseDirectVector() const;
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    __aicore__ inline bool UseA6Direct() const;
+    __aicore__ inline void InitA6DirectBuffers();
+    __aicore__ inline void ProcessA6Direct();
+    __aicore__ inline void CopyInA6Tile(uint64_t bos, uint32_t t, uint32_t d, uint32_t seqLen,
+                                      uint32_t slot, event_t ready);
+    __aicore__ inline void ComputeA6Tile(uint32_t t, uint32_t seqLen, uint32_t slot);
+#endif
     __aicore__ inline bool UseDirectRegbase() const;
 
     TPipe *pipe_;
@@ -164,7 +172,7 @@ private:
     uint32_t useInitialState_ = 0;
     uint32_t useFinalState_ = 0;
     uint32_t hasDh0_ = 0;
-    uint32_t inputMode_ = 1, totalTokens_ = 0;
+    uint32_t totalTokens_ = 0;
     uint32_t inputLayout_ = INPUT_LAYOUT_BSND, inputN_ = 1, inputHeadDim_ = 0;
     uint32_t blockNum_ = 0;
     uint32_t BT_ = 0, BD_ = 0;
@@ -184,8 +192,8 @@ private:
     uint32_t blockBytesDst_ = 0;
 };
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::InitTilingData(
     const CausalConv1dBwdTilingData *tilingData,
     GM_ADDR x, GM_ADDR y, GM_ADDR weight, GM_ADDR dy,
     GM_ADDR initial_state, GM_ADDR dht, GM_ADDR queryStartLoc,
@@ -199,7 +207,6 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
     useInitialState_ = tilingData->useInitialState;
     useFinalState_ = tilingData->useFinalState;
     hasDh0_ = (dh0 != nullptr && useInitialState_) ? 1 : 0;
-    inputMode_ = tilingData->inputMode;
     inputLayout_ = tilingData->inputLayout;
     inputN_ = tilingData->inputN;
     inputHeadDim_ = tilingData->inputHeadDim;
@@ -243,8 +250,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
         queryStartLocGm_.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(queryStartLoc));
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *inputPipe)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::InitBuffer(TPipe *inputPipe)
 {
     pipe_ = inputPipe;
     if (Arch32UseDirectVector()) {
@@ -266,6 +273,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         }
         return;
     }
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    if (UseA6Direct()) {
+        InitA6DirectBuffers();
+        return;
+    }
+#endif
     if (UseDirectRegbase()) {
         pipe_->InitBuffer(xBuf_, 2 * btBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dyBuf_, 2 * dyBdCount_ * sizeof(inputT));
@@ -318,8 +331,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         pipe_->InitBuffer(dh0Buf_, BD_ * FP32_DTYPE_SIZE);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline uint64_t CausalConv1dBwdKernel<inputT, calT>::GetInputOffset(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline uint64_t CausalConv1dBwdKernel<inputT, calT, IsVarlen>::GetInputOffset(
     uint64_t bos, uint32_t row, uint32_t channel) const
 {
     if (inputLayout_ == INPUT_LAYOUT_BNSD) {
@@ -336,8 +349,8 @@ __aicore__ inline uint64_t CausalConv1dBwdKernel<inputT, calT>::GetInputOffset(
     return (bos + row) * D_ + channel;
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::GetInputRowStride(uint32_t channel) const
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT, IsVarlen>::GetInputRowStride(uint32_t channel) const
 {
     (void)channel;
     if (inputLayout_ == INPUT_LAYOUT_BNSD || inputLayout_ == INPUT_LAYOUT_NTD) {
@@ -346,8 +359,8 @@ __aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::GetInputRowStrid
     return D_;
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::GetInputSegmentLen(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT, IsVarlen>::GetInputSegmentLen(
     uint32_t channel, uint32_t remain) const
 {
     if (inputLayout_ == INPUT_LAYOUT_BNSD || inputLayout_ == INPUT_LAYOUT_NTD) {
@@ -357,8 +370,8 @@ __aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::GetInputSegmentL
     return remain;
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTile(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInInputTile(
     GlobalTensor<inputT> &srcGm, LocalTensor<float> dst, uint64_t bos, uint32_t startRow,
     uint32_t i_d, uint32_t totalRows, uint32_t seqLen, bool useGradLayout)
 {
@@ -485,8 +498,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTile(
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTileRaw(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInInputTileRaw(
     GlobalTensor<inputT> &srcGm, LocalTensor<inputT> dst, uint64_t bos, uint32_t startRow,
     uint32_t i_d, uint32_t totalRows, uint32_t seqLen, bool useGradLayout)
 {
@@ -557,8 +570,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTileRaw(
     WaitFlag<HardEvent::MTE2_V>(ev);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTileRawAsync(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInInputTileRawAsync(
     GlobalTensor<inputT> &srcGm, LocalTensor<inputT> dst, uint64_t bos, uint32_t startRow,
     uint32_t i_d, uint32_t totalRows, uint32_t seqLen, bool useGradLayout)
 {
@@ -627,22 +640,22 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTileRawAs
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInX(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInX(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     CopyInInputTile(xGm_, xBuf_.Get<float>(), bos, i_t * BT_, i_d, BT_, seqLen, false);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInXRaw(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInXRaw(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     CopyInInputTileRaw(xGm_, xBuf_.Get<inputT>(), bos, i_t * BT_, i_d, BT_, seqLen, false);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeight(uint32_t i_d)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInWeight(uint32_t i_d)
 {
     if (!hasWeight_) return;
     LocalTensor<float> wLocal = weightBuf_.Get<float>();
@@ -674,8 +687,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeight(uint32_
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeightRaw(uint32_t i_d)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInWeightRaw(uint32_t i_d)
 {
     if (!hasWeight_) return;
     LocalTensor<inputT> wLocal = weightBuf_.Get<inputT>();
@@ -692,43 +705,43 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeightRaw(uint
     WaitFlag<HardEvent::MTE2_V>(ev);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDy(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInDy(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_w, uint32_t seqLen)
 {
     CopyInInputTile(dyGm_, dyBuf_.Get<float>(), bos, i_t * BT_ + i_w, i_d, BT_, seqLen, true);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDyWindow(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInDyWindow(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     CopyInInputTile(dyGm_, dyBuf_.Get<float>(), bos, i_t * BT_, i_d, dyRows_, seqLen, true);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDyWindowRaw(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInDyWindowRaw(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     CopyInInputTileRaw(dyGm_, dyBuf_.Get<inputT>(), bos, i_t * BT_, i_d, dyRows_, seqLen, true);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInYWindow(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInYWindow(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     CopyInInputTile(yGm_, yBuf_.Get<float>(), bos, i_t * BT_, i_d, dyRows_, seqLen, true);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInYWindowRaw(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInYWindowRaw(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     CopyInInputTileRaw(yGm_, yBuf_.Get<inputT>(), bos, i_t * BT_, i_d, dyRows_, seqLen, true);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInitialStateBlock(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInInitialStateBlock(
     uint32_t i_b, uint32_t i_d)
 {
     LocalTensor<float> stateBlock = tempBuf_.Get<float>();
@@ -761,8 +774,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInitialStateBl
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDhtBlock(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInDhtBlock(
     uint32_t i_b, uint32_t i_d)
 {
     LocalTensor<float> stateBlock = tempBuf_.Get<float>();
@@ -795,8 +808,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDhtBlock(
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ApplySiluBackward(
     LocalTensor<float> dyLocal, LocalTensor<float> yLocal, uint32_t count)
 {
     LocalTensor<float> sigmoidLocal = sigmoidBuf_.Get<float>();
@@ -825,8 +838,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::AccumulateInitialStateDw(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::AccumulateInitialStateDw(
     uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen)
 {
     if (!useInitialState_ || !hasWeight_ || W_ <= 1) return;
@@ -864,8 +877,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::AccumulateInitialSta
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::AccumulateDhtDx(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::AccumulateDhtDx(
     uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen)
 {
     if (!useFinalState_ || W_ <= 1) return;
@@ -895,8 +908,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::AccumulateDhtDx(
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndAcc(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeWdyAndAcc(
     uint32_t i_w, uint32_t dyRowOffset)
 {
     LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
@@ -924,8 +937,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndAcc(
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsInplace(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ReduceRowsInplace(
     LocalTensor<float> tensor, uint32_t rows, uint32_t cols)
 {
     uint32_t remainRows = rows;
@@ -938,8 +951,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsInplace(
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDwPartial(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeDwPartial(
     uint32_t i_w, uint32_t dyRowOffset)
 {
     if (!hasWeight_) return;
@@ -957,8 +970,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDwPartial(
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDwRowsAccum(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeDwRowsAccum(
     uint32_t i_w, uint32_t dyRowOffset)
 {
     if (!hasWeight_) return;
@@ -975,8 +988,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDwRowsAccum(
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDwRowsAccum()
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::FinalizeDwRowsAccum()
 {
     if (!hasWeight_) return;
     LocalTensor<float> rows = dwRowsBuf_.Get<float>();
@@ -993,8 +1006,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDwRowsAccum(
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDbPartial(uint32_t dyRowOffset)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeDbPartial(uint32_t dyRowOffset)
 {
     if (!hasBias_) return;
     LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
@@ -1008,8 +1021,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDbPartial(uin
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDbRowsAccum(uint32_t dyRowOffset)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeDbRowsAccum(uint32_t dyRowOffset)
 {
     if (!hasBias_) return;
     LocalTensor<float> dyLocal = dyBuf_.Get<float>()[dyRowOffset * BD_];
@@ -1019,8 +1032,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDbRowsAccum(u
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDbRowsAccum()
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::FinalizeDbRowsAccum()
 {
     if (!hasBias_) return;
     LocalTensor<float> dbRows = dbRowsBuf_.Get<float>();
@@ -1033,8 +1046,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDbRowsAccum(
     PipeBarrier<PIPE_V>();
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDh0(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeDh0(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen)
 {
     if (!useInitialState_ || W_ <= 1) return;
@@ -1111,8 +1124,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDh0(
     WaitFlag<HardEvent::MTE3_V>(mte3ToV);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectVectorTileRawAsync(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInDirectVectorTileRawAsync(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen, bool reuseHalo,
     event_t mte2ToVEvent)
 {
@@ -1143,8 +1156,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectVectorTi
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CastDirectVectorTile(bool reuseHalo)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CastDirectVectorTile(bool reuseHalo)
 {
 #if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
     Cast(xBuf_.Get<float>(), castBuf_.Get<inputT>(), RoundMode::CAST_NONE, btBdCount_);
@@ -1166,8 +1179,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CastDirectVectorTile
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectVector(bool reuseHalo)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeTileDirectVector(bool reuseHalo)
 {
 #if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
     NsCausalConv1dBwdArch32::ComputeTile(
@@ -1180,11 +1193,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectVec
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectTileRawAsync(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyInDirectTileRawAsync(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen, uint32_t slot, event_t mte2ToVEvent)
 {
-#if CAUSAL_CONV1D_BWD_REGBASE
+#if CAUSAL_CONV1D_BWD_ARCH35
     LocalTensor<inputT> xSlot = xBuf_.Get<inputT>()[slot * btBdCount_];
     LocalTensor<inputT> dySlot = dyBuf_.Get<inputT>()[slot * dyBdCount_];
     LocalTensor<inputT> ySlot = yBuf_.Get<inputT>()[slot * dyBdCount_];
@@ -1209,11 +1222,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectTileRawA
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectRegbase(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ComputeTileDirectRegbase(
     uint32_t i_t, uint32_t seqLen, uint32_t slot)
 {
-#if CAUSAL_CONV1D_BWD_REGBASE
+#if CAUSAL_CONV1D_BWD_ARCH35
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
         (void)i_t;
         (void)seqLen;
@@ -1242,8 +1255,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectReg
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDxDirectVectorAsync(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyOutDxDirectVectorAsync(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen,
     uint32_t slot, event_t mte3ToVEvent)
 {
@@ -1281,8 +1294,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDxDirectVecto
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyOutDx(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
     event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
@@ -1328,8 +1341,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t i_d)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyOutDwDb(uint32_t i_d)
 {
     if (!hasWeight_ && !hasBias_) return;
 
@@ -1408,8 +1421,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
     }
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutPartialDwDb(uint32_t coreIdx, uint32_t i_d)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::CopyOutPartialDwDb(uint32_t coreIdx, uint32_t i_d)
 {
     event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
     SetFlag<HardEvent::V_MTE3>(ev);
@@ -1430,8 +1443,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutPartialDwDb(u
     WaitFlag<HardEvent::MTE3_V>(mte3ToV);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb(uint32_t i_d)
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ReducePartialDwDb(uint32_t i_d)
 {
     LocalTensor<float> tmp;
     if (Arch32UseDirectVector()) {
@@ -1478,11 +1491,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb(ui
     CopyOutDwDb(i_d);
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::ResolveChunk(
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT, IsVarlen>::ResolveChunk(
     uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t, uint64_t &bos, uint32_t &seqLen)
 {
-    if (inputMode_ != 0) {
+    if constexpr (!IsVarlen) {
         uint32_t ntPerSeq = CeilDiv(T_, BT_);
         i_b = chunkIdx / ntPerSeq;
         i_t = chunkIdx % ntPerSeq;
@@ -1517,8 +1530,8 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::ResolveChunk(
     return false;
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch32UseDirectVector() const
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT, IsVarlen>::Arch32UseDirectVector() const
 {
 #if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
@@ -1535,10 +1548,10 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch32UseDirectVecto
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::UseDirectRegbase() const
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT, IsVarlen>::UseDirectRegbase() const
 {
-#if CAUSAL_CONV1D_BWD_REGBASE
+#if CAUSAL_CONV1D_BWD_ARCH35
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
         return false;
     } else {
@@ -1554,9 +1567,15 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::UseDirectRegbase() c
 #endif
 }
 
-template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
+template <typename inputT, typename calT, bool IsVarlen>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT, IsVarlen>::Process()
 {
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    if (UseA6Direct()) {
+        ProcessA6Direct();
+        return;
+    }
+#endif
     uint32_t bIdx = GetBlockIdx();
     uint32_t blockNum = GetBlockNum();
     bool useDirectVector = Arch32UseDirectVector();
@@ -1760,5 +1779,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(directVectorMte3ToVEvent[1]);
     }
 }
+
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/causal_conv1d_bwd_schedule.h"
+#endif
 
 #endif  // ASCENDC_CAUSAL_CONV1D_BWD_H_

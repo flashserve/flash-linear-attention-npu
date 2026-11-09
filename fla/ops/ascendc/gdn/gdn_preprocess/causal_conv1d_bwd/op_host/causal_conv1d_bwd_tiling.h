@@ -15,6 +15,7 @@
 #ifndef ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_H
 #define ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_H
 
+#include "../op_kernel/causal_conv1d_bwd_tiling_data.h"
 #include "../op_kernel/causal_conv1d_bwd_tiling_key.h"
 
 namespace optiling {

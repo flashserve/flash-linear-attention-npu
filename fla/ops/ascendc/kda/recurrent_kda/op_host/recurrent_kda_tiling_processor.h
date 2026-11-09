@@ -15,6 +15,7 @@
 #ifndef RECURRENT_KDA_TILING_PROCESSOR_H
 #define RECURRENT_KDA_TILING_PROCESSOR_H
 
+#include "recurrent_kda_arch92_tiling.h"
 #include "../op_kernel/recurrent_kda_struct.h"
 #include "err/ops_err.h"
 #include "log/log.h"
@@ -624,6 +625,10 @@ private:
             taskUnits = 1;
         }
         uint64_t maxCoreNum = (ctx_.aivNum > 0) ? ctx_.aivNum : 1;
+        if (ctx_.isA6) {
+            tiling.vectorCoreNum = rkda_arch92::BlockDim(taskUnits, maxCoreNum);
+            return;
+        }
         uint64_t selectedCoreNum = (taskUnits < maxCoreNum) ? taskUnits : maxCoreNum;
         if (!ctx_.isA5) {
             // Keep the minimum wave count while avoiding partially filled cores.
@@ -675,20 +680,14 @@ private:
         return ge::GRAPH_SUCCESS;
     }
 
-    int64_t BetaRowElements(int64_t alignedHeads, uint32_t heads) const
-    {
-        // arch92 packs one head per DMA block; BF16 expands to 16 FP32 elements.
-        if (ctx_.isA6) {
-            return 16;
-        }
-        return ctx_.isA5 ? alignedHeads : heads;
-    }
-
     int64_t CalcFixedUbBytes(int64_t aNv, int64_t aDv, int64_t aDk, uint32_t nv) const
     {
+        if (ctx_.isA6) {
+            return rkda_arch92::FixedBytes(aDk, aDv, RKDA_UB_GUARD_BYTES);
+        }
         const int64_t rawBytes = RKDA_MAX_MTP * (8 * aDk + 2 * aDv);
-        const int64_t rawBufferNum = (ctx_.isA5 || ctx_.isA6) ? 1 : 2;
-        const int64_t betaHeads = BetaRowElements(aNv, nv);
+        const int64_t rawBufferNum = ctx_.isA5 ? 1 : 2;
+        const int64_t betaHeads = ctx_.isA5 ? aNv : nv;
         int64_t usedUbBytes = rawBufferNum * rawBytes;
         usedUbBytes += RKDA_MAX_MTP * 4 * betaHeads;
         usedUbBytes += 64 + RKDA_UB_GUARD_BYTES;
@@ -697,20 +696,22 @@ private:
 
     int64_t CalcWorkingUbBytes(int64_t aNv, int64_t aDv, int64_t aDk, uint32_t nv) const
     {
-        const int64_t betaHeads = BetaRowElements(aNv, nv);
+        if (ctx_.isA6) {
+            return rkda_arch92::WorkingBytes(aDk, aDv, RKDA_UB_GUARD_BYTES);
+        }
+        const int64_t betaHeads = ctx_.isA5 ? aNv : nv;
         int64_t usedUbBytes = CalcFixedUbBytes(aNv, aDv, aDk, nv);
         usedUbBytes += RKDA_MAX_MTP * (4 * aDv + 12 * aDk + 4 * betaHeads);
-        if (ctx_.isA6 && aDk == RKDA_FUSED_REDUCE_K) {
-            // Normalization and gating must not overwrite live recurrent state between windows.
-            usedUbBytes += RKDA_MAX_MTP * aDk * sizeof(float);
-        }
         return usedUbBytes;
     }
 
     int64_t CalcComputeUbCoeff(int64_t aDk) const
     {
+        if (ctx_.isA6) {
+            return rkda_arch92::ComputeBytesPerV(aDk);
+        }
         int64_t coeff = 4 * aDk + 8; // state and row outputs.
-        if ((!ctx_.isA5 && !ctx_.isA6) || aDk != RKDA_FUSED_REDUCE_K) {
+        if (!ctx_.isA5 || aDk != RKDA_FUSED_REDUCE_K) {
             coeff += 4 * aDk; // broadTmp for the generic matvec path.
         }
         return coeff;
