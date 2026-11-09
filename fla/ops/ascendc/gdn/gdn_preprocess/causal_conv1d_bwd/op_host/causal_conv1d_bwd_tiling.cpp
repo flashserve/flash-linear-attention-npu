@@ -344,10 +344,13 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t regPad = (BD < 64U) ? 64U : 0U;
         uint32_t dbAl = (BD < 64U) ? 64U : bdAl;
         uint32_t need = 0;
-        // 原始输入缓冲：x/dy/y 各 2 份 slot（b16 另有 1 份 cast 缓冲）；fp32 时其元素位宽为 4 字节。
+        // 原始输入缓冲：x/dy/y 各 2 份 slot；fp32 时其元素位宽为 4 字节。
         need += (2 * btBdAl + 4 * dyBdAl + wBdAl + regPad) * rawDtypeSize;
         if (isB16Input) {
-            need += btBdAl * rawDtypeSize;
+            // b16 额外 3 份原始位宽缓冲：castBuf_（x 的转换 staging）、dxOutBuf_（dx 输出 staging）、
+            // dbOutBuf_（db 输出 staging，hasBias 恒为 1）。与 kernel InitBuffer 逐项对齐，
+            // 漏算会让 BT 选到实际分配已超过 UB 的取值。
+            need += (2 * btBdAl + bdAl) * rawDtypeSize;
         }
         // fp32 计算/输出缓冲：dx + dyAct(temp) + dw + db。
         need += (btBdAl + dyBdAl + wBdAl + 2 * regPad + dbAl) * FP32_DTYPE_SIZE;
@@ -361,6 +364,40 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t xRawAl = std::max(btBdAl, wBdAl);
         uint32_t need = (btBdAl + 3 * dyBdAl + 2 * wBdAl + 2 * bdAl) * FP32_DTYPE_SIZE;
         need += (xRawAl + 2 * dyBdAl + 2 * btBdAl) * B16_DTYPE_SIZE;
+        return need;
+    };
+    // 普通路径（chunk 切分 / i_d 切分）的 UB 预算，不含两级归约 stage buffer（该部分在预算内按需追加）。
+    // 提取成函数是为了在 BT 选择阶段做「预算超额则减半 BT」的兜底：BT 越小 UB 需求越小。
+    auto CalcNormalNeed = [BD, W, rawDtypeSize, isB16Input, isAscend950, activation,
+                           useInitialState, useFinalState](uint32_t bt) -> uint32_t {
+        uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
+        uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
+        uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
+        uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
+        uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
+        uint32_t wBtBdAl = CeilAlign(W * bt * BD, BLOCK_ALIGN_NUM);
+        const bool hasWeight = true;
+        const bool hasBias = true;
+        uint32_t need = (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
+        need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
+        if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
+        if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
+        if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
+        if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
+        if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
+            need += 2 * dyBdAl * FP32_DTYPE_SIZE;
+        if (useInitialState || useFinalState) {
+            need += bdAl * FP32_DTYPE_SIZE;
+        }
+        // b16 的原始位宽缓冲：castBuf_（x/dw 的转换 staging）恒分配；dxOutBuf_/dbOutBuf_（dx/db
+        // 输出 staging）只在 arch35 regbase 构建中存在（CAUSAL_CONV1D_BWD_ARCH35_REGBASE，即 950），
+        // 910B 不分配。与 kernel InitBuffer 逐项对齐，避免预算少于实际分配。
+        if (isB16Input) {
+            need += calcBdAl * rawDtypeSize;
+            if (isAscend950) {
+                need += (btBdAl + bdAl) * rawDtypeSize;
+            }
+        }
         return need;
     };
 
@@ -434,6 +471,17 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
     }
 
+    // UB 预算兜底：普通路径的 BT 上限固定为 64，极端 shape（超大卷积核宽度 W、或 b16 的 cast/
+    // 输出 staging 叠加）即使 BT=64 也放不下。BT 越小每份 buffer 越小，故逐级减半直到预算满足，
+    // 保证算子仍能正常执行而不是在 tiling 阶段直接报错。BT 减半只会增加 chunk 数，需同步刷新
+    // numChunks（后续 2D 切分与 chunkPerCore 均依赖它）。快路径与 910B 快路径已有各自的 BT 回退。
+    if (!useArch35DirectFast && !use910BDirectFast) {
+        while (BT > 1U && CalcNormalNeed(BT) > ubSize) {
+            BT >>= 1U;
+        }
+        numChunks = CalcNumChunks(BT);
+    }
+
     // chunk × i_d 二维切分：把 numBlksD 个 i_d 与 numChunks 个 chunk 一起铺到 AIV 核上
     // （blockNum = numBlksD * numChunks），每个核只处理 1 个 i_d 的 1 个 chunk 组，
     // 消除「每核串行遍历全部 i_d」的固定开销（每 i_d 的 CopyInWeight/Duplicate/partial 回写/栅栏）。
@@ -446,11 +494,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                       numBlksD >= 2 && numChunks >= 1 &&
                       static_cast<uint64_t>(numBlksD) * numChunks < coreNum;
 
-    uint32_t btBdAl = CeilAlign(BT * BD, BLOCK_ALIGN_NUM);
-    uint32_t dyBdAl = CeilAlign((BT + W - 1) * BD, BLOCK_ALIGN_NUM);
     uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
-    uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
-    uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
     uint32_t dwStageRows = 0;
@@ -459,19 +503,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else if (use910BDirectFast) {
         need = Calc910BDirectNeed(BT);
     } else {
-        need += (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
-        need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
-        const bool hasWeight = true;
-        const bool hasBias = true;
-        if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
-        if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
-        if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
-        if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
-        if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
-            need += 2 * dyBdAl * FP32_DTYPE_SIZE;
-        if (useInitialState || useFinalState) {
-            need += bdAl * FP32_DTYPE_SIZE;
-        }
+        need = CalcNormalNeed(BT);
 
         // 两级归约：SILU/SWISH 分支下把 dw/db 的行归约从"每 chunk 全量归约到 1 行"改为
         // "chunk 内只归约到 R 行并累积进 stage buffer，i_d 末再做 R→1"。
