@@ -139,7 +139,7 @@ aclnnStatus CheckChunkKdaFwd32Metadata(const ChunkKdaFwdParams &params, KdaShape
     if (cu == nullptr) {
         info.seqNum = info.batch;
         if (params.chunkIndicesOptional != nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", "chunkIndicesOptional", "provided", "requires cuSeqlensOptional");
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkIndicesOptional", "provided", "requires cuSeqlensOptional");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
@@ -157,7 +157,7 @@ aclnnStatus CheckChunkKdaFwd32Metadata(const ChunkKdaFwdParams &params, KdaShape
         }
         for (size_t i = 0; i + 1 < cu->Size(); ++i) {
             if ((*cu)[i] > (*cu)[i + 1]) {
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", "cuSeqlensOptional", "decreasing at index " + std::to_string(i), "must be nondecreasing");
+                OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "cuSeqlensOptional", "decreasing at index " + std::to_string(i), "must be nondecreasing");
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }
@@ -179,7 +179,7 @@ aclnnStatus CheckChunkKdaFwd32Metadata(const ChunkKdaFwdParams &params, KdaShape
             const int64_t chunks = ((*cu)[seq + 1] - (*cu)[seq] + params.chunkSize - 1) / params.chunkSize;
             for (int64_t chunk = 0; chunk < chunks; ++chunk) {
                 if ((*indices)[offset] != static_cast<int64_t>(seq) || (*indices)[offset + 1] != chunk) {
-                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", "chunkIndicesOptional", "non-canonical pair at " + std::to_string(offset / 2), "canonical sequence-major order");
+                    OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkIndicesOptional", "non-canonical pair at " + std::to_string(offset / 2), "canonical sequence-major order");
                     return ACLNN_ERR_PARAM_INVALID;
                 }
                 offset += 2;
@@ -298,7 +298,7 @@ aclnnStatus CheckChunkKdaFwd32Params(const ChunkKdaFwdParams &params, KdaFwdLayo
         "kgOut", "vNewOut", "hOut"};
     for (size_t i = 0; i < 9; ++i) {
         if (unsupported[i] != nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", unsupportedNames[i], "provided", "chunkSize=32 only exports attnOut/finalStateOut");
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", unsupportedNames[i], "provided", "chunkSize=32 only exports attnOut/finalStateOut");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }

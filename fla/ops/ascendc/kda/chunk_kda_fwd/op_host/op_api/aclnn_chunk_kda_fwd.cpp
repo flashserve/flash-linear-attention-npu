@@ -1013,7 +1013,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         const char *savedNames[] = {"qHatOut", "kHatOut", "qRstdOut", "kRstdOut", "betaEffOut"};
         for (size_t i = 0; i < 5; ++i) {
             if (savedOutputs[i] != nullptr) {
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnChunkKdaFwd", savedNames[i], "provided", "chunkSize=32 does not export backward saved values");
+                OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", savedNames[i], "provided", "chunkSize=32 does not export backward saved values");
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }

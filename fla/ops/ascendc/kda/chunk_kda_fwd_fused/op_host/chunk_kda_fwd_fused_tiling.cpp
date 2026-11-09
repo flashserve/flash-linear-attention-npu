@@ -108,7 +108,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
         const int64_t *cu = cuTensor->GetData<int64_t>();
         if (cu == nullptr || nSeq == 0 || nSeq > KDA_FD32_MAX_VARLEN_SEQ || cu[0] != 0 ||
             static_cast<uint64_t>(cu[nSeq]) != seqLen) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_LOGE_FOR_INVALID_VALUE(
                 context->GetNodeName(), "cu_seqlens", "nSeq=" + std::to_string(nSeq),
                 "expected 1..1024 sequences with cu[0]=0 and cu[nSeq]=T=" +
                     std::to_string(seqLen));
@@ -116,7 +116,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
         }
         for (uint64_t i = 0; i <= nSeq; ++i) {
             if (i > 0 && cu[i] < cu[i - 1]) {
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_LOGE_FOR_INVALID_VALUE(
                     context->GetNodeName(), "cu_seqlens",
                     "decreasing at index " + std::to_string(i), "must be nondecreasing");
                 return ge::GRAPH_FAILED;
