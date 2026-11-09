@@ -81,43 +81,10 @@ static bool IsGateDtype(DataType dtype)
 
 static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "q");
+        if (!FLA_NPU_CHECK_NOT_NULL(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, {params.q, "q"}, {params.k, "k"}, {params.v, "v"}, {params.g, "g"}, {params.beta, "beta"}, {params.gOut, "gOut"}, {params.wOut, "wOut"}, {params.uOut, "uOut"}, {params.aOut, "aOut"})) {
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "k");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "v");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "beta");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.gOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "gOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.wOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "wOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.uOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "uOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.aOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "aOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    {
+{
         const bool hasQHat = params.qHatOptional != nullptr;
         const bool hasKHat = params.kHatOptional != nullptr;
         const bool hasQRstd = params.qRstdOptional != nullptr;

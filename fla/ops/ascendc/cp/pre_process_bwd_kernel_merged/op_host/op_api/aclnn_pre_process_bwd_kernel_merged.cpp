@@ -160,15 +160,10 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    aclnnStatus launchStatus = ACLNN_ERR_INNER_NULLPTR;
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
-                                                 params.chunkSize, params.dhmOut, executorPtr, launchStatus);
-    if (result == nullptr) {
-        // Tiling 参数拦截与内部 launcher 失败均由下层上报具体状态；这里透传真实码，
-        // 不再无条件映射为参数非法。下层未给出失败码时回退内部码。
-        return launchStatus == ACLNN_SUCCESS ? ACLNN_ERR_INNER_NULLPTR : launchStatus;
-    }
+                                                 params.chunkSize, params.dhmOut, executorPtr);
+    CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;

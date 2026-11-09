@@ -71,17 +71,17 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const ge::DataType betaDtype = betaDesc->GetDataType();
     if (mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "mainDtype",
-            fla_npu::host_utils::DfxDtypeString(mainDtype), "BF16,FP16");
+            FLA_NPU_DFX_DTYPE_STRING(mainDtype), "BF16,FP16");
         return ge::GRAPH_FAILED;
     }
     if (gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "g",
-            fla_npu::host_utils::DfxDtypeString(gDtype), "BF16,FP32");
+            FLA_NPU_DFX_DTYPE_STRING(gDtype), "BF16,FP32");
         return ge::GRAPH_FAILED;
     }
     if (betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "beta",
-            fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16,FP32");
+            FLA_NPU_DFX_DTYPE_STRING(betaDtype), "BF16,FP32");
         return ge::GRAPH_FAILED;
     }
 

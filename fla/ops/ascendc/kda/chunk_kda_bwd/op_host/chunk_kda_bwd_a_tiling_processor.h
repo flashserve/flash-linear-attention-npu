@@ -57,7 +57,7 @@ public:
         }
         if (ctx_.dataType != ge::DT_FLOAT16 && ctx_.dataType != ge::DT_BF16) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "Aqk/v_new/h/d_o",
-                fla_npu::host_utils::DfxDtypeString(ctx_.dataType), "FP16,BF16");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.dataType), "FP16,BF16");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.vNewType != ctx_.dataType || ctx_.hType != ctx_.dataType || ctx_.doType != ctx_.dataType) {

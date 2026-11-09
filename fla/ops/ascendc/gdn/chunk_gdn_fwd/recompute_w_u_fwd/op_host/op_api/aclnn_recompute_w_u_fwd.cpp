@@ -53,39 +53,10 @@ struct RecomputeWUFwdParams {
 
 static aclnnStatus CheckNotNull(RecomputeWUFwdParams params)
 {
-    if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k");
+        if (!FLA_NPU_CHECK_NOT_NULL(RECOMPUTE_W_U_FWD_ENTITY, {params.k, "k"}, {params.v, "v"}, {params.beta, "beta"}, {params.a, "a"}, {params.g, "g"}, {params.wOut, "wOut"}, {params.uOut, "uOut"})) {
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.a == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.gk != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "gk");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.wOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.uOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    return ACLNN_SUCCESS;
+return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckFormat(RecomputeWUFwdParams params)
@@ -223,17 +194,17 @@ static aclnnStatus CheckDtype(RecomputeWUFwdParams params)
     auto inputDtype = params.k->GetDataType();
     if (inputDtype != DataType::DT_FLOAT16 && inputDtype != DataType::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k",
-            fla_npu::host_utils::DfxDtypeString(inputDtype), "FLOAT16,BF16");
+            FLA_NPU_DFX_DTYPE_STRING(inputDtype), "FLOAT16,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.v->GetDataType() != inputDtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v",
-            fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()), "match k");
+            FLA_NPU_DFX_DTYPE_STRING(params.v->GetDataType()), "match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.a->GetDataType() != inputDtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a",
-            fla_npu::host_utils::DfxDtypeString(params.a->GetDataType()), "match k");
+            FLA_NPU_DFX_DTYPE_STRING(params.a->GetDataType()), "match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.wOut->GetDataType() != inputDtype || params.uOut->GetDataType() != inputDtype) {
@@ -242,12 +213,12 @@ static aclnnStatus CheckDtype(RecomputeWUFwdParams params)
     }
     if (params.beta->GetDataType() != DataType::DT_FLOAT && params.beta->GetDataType() != inputDtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta",
-            fla_npu::host_utils::DfxDtypeString(params.beta->GetDataType()), "FLOAT32 or match k");
+            FLA_NPU_DFX_DTYPE_STRING(params.beta->GetDataType()), "FLOAT32 or match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.g->GetDataType() != DataType::DT_FLOAT && params.g->GetDataType() != inputDtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g",
-            fla_npu::host_utils::DfxDtypeString(params.g->GetDataType()), "FLOAT32 or match k");
+            FLA_NPU_DFX_DTYPE_STRING(params.g->GetDataType()), "FLOAT32 or match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;

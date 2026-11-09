@@ -159,45 +159,32 @@ aclnnStatus CheckMetadata(const ChunkScaledDotKktParams &p)
 
 aclnnStatus CheckParams(const ChunkScaledDotKktParams &p)
 {
-    if (p.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "k");
+        if (!FLA_NPU_CHECK_NOT_NULL(CHUNK_SCALED_DOT_KKT_ENTITY, {p.k, "k"}, {p.g, "g"}, {p.beta, "beta"}, {p.a, "A"})) {
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    if (p.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "beta");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.a == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "A");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.chunkSize != 16 && p.chunkSize != 32 && p.chunkSize != 64 && p.chunkSize != 128) {
+if (p.chunkSize != 16 && p.chunkSize != 32 && p.chunkSize != 64 && p.chunkSize != 128) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "chunkSize",
             std::to_string(p.chunkSize), "16, 32, 64 or 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (p.k->GetDataType() != DataType::DT_FLOAT16 && p.k->GetDataType() != DataType::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "k",
-            fla_npu::host_utils::DfxDtypeString(p.k->GetDataType()), "FLOAT16,BF16");
+            FLA_NPU_DFX_DTYPE_STRING(p.k->GetDataType()), "FLOAT16,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (p.g->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "g",
-            fla_npu::host_utils::DfxDtypeString(p.g->GetDataType()), "FLOAT32");
+            FLA_NPU_DFX_DTYPE_STRING(p.g->GetDataType()), "FLOAT32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (p.beta->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "beta",
-            fla_npu::host_utils::DfxDtypeString(p.beta->GetDataType()), "FLOAT32");
+            FLA_NPU_DFX_DTYPE_STRING(p.beta->GetDataType()), "FLOAT32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (p.a->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "A",
-            fla_npu::host_utils::DfxDtypeString(p.a->GetDataType()), "FLOAT32");
+            FLA_NPU_DFX_DTYPE_STRING(p.a->GetDataType()), "FLOAT32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     auto status = CheckShape(p);

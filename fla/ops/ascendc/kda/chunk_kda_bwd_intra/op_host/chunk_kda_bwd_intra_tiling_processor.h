@@ -138,12 +138,12 @@ private:
     {
         if (ctx_.qDataType != ge::DT_BF16) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "q/k",
-                fla_npu::host_utils::DfxDtypeString(ctx_.qDataType), "BF16");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.qDataType), "BF16");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.betaDataType != ge::DT_BF16 && ctx_.betaDataType != ge::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "beta",
-                fla_npu::host_utils::DfxDtypeString(ctx_.betaDataType), "BF16,FP32");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.betaDataType), "BF16,FP32");
             return ge::GRAPH_FAILED;
         }
         if (!ctx_.safeGate) {

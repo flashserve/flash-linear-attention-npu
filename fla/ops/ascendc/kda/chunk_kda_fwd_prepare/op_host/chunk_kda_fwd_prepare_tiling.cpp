@@ -492,7 +492,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         !IsGateDtype(gDesc->GetDataType()) ||
         !IsGateDtype(betaDesc->GetDataType())) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "q,k,v,g,beta",
-                "q=" + fla_npu::host_utils::DfxDtypeString(qDesc->GetDataType()) + ",k=" + fla_npu::host_utils::DfxDtypeString(kDesc->GetDataType()) + ",v=" + fla_npu::host_utils::DfxDtypeString(vDesc->GetDataType()) + ",g=" + fla_npu::host_utils::DfxDtypeString(gDesc->GetDataType()) + ",beta=" + fla_npu::host_utils::DfxDtypeString(betaDesc->GetDataType()),
+                "q=" + FLA_NPU_DFX_DTYPE_STRING(qDesc->GetDataType()) + ",k=" + FLA_NPU_DFX_DTYPE_STRING(kDesc->GetDataType()) + ",v=" + FLA_NPU_DFX_DTYPE_STRING(vDesc->GetDataType()) + ",g=" + FLA_NPU_DFX_DTYPE_STRING(gDesc->GetDataType()) + ",beta=" + FLA_NPU_DFX_DTYPE_STRING(betaDesc->GetDataType()),
                 "q/k/v BF16, g/beta BF16 or FP32");
         return ge::GRAPH_FAILED;
     }

@@ -49,20 +49,6 @@ constexpr int64_t KDA_STAGE_COUNT = 4;
 
 constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
 constexpr const char *KDA_FWD_ENTITY = "aclnnChunkKdaFwd";
-std::string DfxTensorShapeString(const aclTensor *tensor)
-{
-    const auto &shape = tensor->GetViewShape();
-    std::ostringstream stream;
-    stream << "[";
-    for (size_t idx = 0; idx < shape.GetDimNum(); ++idx) {
-        if (idx != 0) {
-            stream << ",";
-        }
-        stream << shape.GetDim(idx);
-    }
-    stream << "]";
-    return stream.str();
-}
 
 
 enum class KdaFwdLayout {
@@ -344,8 +330,8 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
     }
     if (!SameShape(params.q, params.k)) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(KDA_FWD_ENTITY, "q,k",
-                               "q=" + DfxTensorShapeString(params.q) + ",k=" +
-                                   DfxTensorShapeString(params.k),
+                               "q=" + FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.q) + ",k=" +
+                                   FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.k),
                                "q and k must have identical shape");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -357,19 +343,19 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 2);
-        const std::string expectedV = fla_npu::host_utils::DfxMakeShapeString({info.seqlen, info.hvNum, info.vDim});
-        const std::string expectedG = fla_npu::host_utils::DfxMakeShapeString({info.seqlen, info.hvNum, info.kDim});
-        const std::string expectedBeta = fla_npu::host_utils::DfxMakeShapeString({info.seqlen, info.hvNum});
+        const std::string expectedV = FLA_NPU_DFX_MAKE_SHAPE_STRING(info.seqlen, info.hvNum, info.vDim);
+        const std::string expectedG = FLA_NPU_DFX_MAKE_SHAPE_STRING(info.seqlen, info.hvNum, info.kDim);
+        const std::string expectedBeta = FLA_NPU_DFX_MAKE_SHAPE_STRING(info.seqlen, info.hvNum);
         if (!HasShape(params.v, {info.seqlen, info.hvNum, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.seqlen, info.hvNum, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.seqlen, info.hvNum})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else if (layout == KdaFwdLayout::NTD) {
@@ -379,19 +365,19 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 0);
         info.vDim = Dim(params.v, 2);
-        const std::string expectedV = fla_npu::host_utils::DfxMakeShapeString({info.hvNum, info.seqlen, info.vDim});
-        const std::string expectedG = fla_npu::host_utils::DfxMakeShapeString({info.hvNum, info.seqlen, info.kDim});
-        const std::string expectedBeta = fla_npu::host_utils::DfxMakeShapeString({info.hvNum, info.seqlen});
+        const std::string expectedV = FLA_NPU_DFX_MAKE_SHAPE_STRING(info.hvNum, info.seqlen, info.vDim);
+        const std::string expectedG = FLA_NPU_DFX_MAKE_SHAPE_STRING(info.hvNum, info.seqlen, info.kDim);
+        const std::string expectedBeta = FLA_NPU_DFX_MAKE_SHAPE_STRING(info.hvNum, info.seqlen);
         if (!HasShape(params.v, {info.hvNum, info.seqlen, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.hvNum, info.seqlen, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.hvNum, info.seqlen})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else if (layout == KdaFwdLayout::BSND) {
@@ -402,21 +388,21 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.hvNum = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
         const std::string expectedV =
-            fla_npu::host_utils::DfxMakeShapeString({info.batch, info.seqlen, info.hvNum, info.vDim});
+            FLA_NPU_DFX_MAKE_SHAPE_STRING(info.batch, info.seqlen, info.hvNum, info.vDim);
         const std::string expectedG =
-            fla_npu::host_utils::DfxMakeShapeString({info.batch, info.seqlen, info.hvNum, info.kDim});
+            FLA_NPU_DFX_MAKE_SHAPE_STRING(info.batch, info.seqlen, info.hvNum, info.kDim);
         const std::string expectedBeta =
-            fla_npu::host_utils::DfxMakeShapeString({info.batch, info.seqlen, info.hvNum});
+            FLA_NPU_DFX_MAKE_SHAPE_STRING(info.batch, info.seqlen, info.hvNum);
         if (!HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.batch, info.seqlen, info.hvNum})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
@@ -427,21 +413,21 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
         const std::string expectedV =
-            fla_npu::host_utils::DfxMakeShapeString({info.batch, info.hvNum, info.seqlen, info.vDim});
+            FLA_NPU_DFX_MAKE_SHAPE_STRING(info.batch, info.hvNum, info.seqlen, info.vDim);
         const std::string expectedG =
-            fla_npu::host_utils::DfxMakeShapeString({info.batch, info.hvNum, info.seqlen, info.kDim});
+            FLA_NPU_DFX_MAKE_SHAPE_STRING(info.batch, info.hvNum, info.seqlen, info.kDim);
         const std::string expectedBeta =
-            fla_npu::host_utils::DfxMakeShapeString({info.batch, info.hvNum, info.seqlen});
+            FLA_NPU_DFX_MAKE_SHAPE_STRING(info.batch, info.hvNum, info.seqlen);
         if (!HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.batch, info.hvNum, info.seqlen})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -456,45 +442,45 @@ aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
 {
     const DataType dataType = params.q->GetDataType();
     if (dataType != DataType::DT_FLOAT16 && dataType != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "q", fla_npu::host_utils::DfxDtypeString(dataType), "FLOAT16,BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "q", FLA_NPU_DFX_DTYPE_STRING(dataType), "FLOAT16,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.k->GetDataType() != dataType || params.v->GetDataType() != dataType) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(KDA_FWD_ENTITY, "k,v",
-                               "q=" + fla_npu::host_utils::DfxDtypeString(dataType) + ",k=" +
-                                   fla_npu::host_utils::DfxDtypeString(params.k->GetDataType()) + ",v=" +
-                                   fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()),
+                               "q=" + FLA_NPU_DFX_DTYPE_STRING(dataType) + ",k=" +
+                                   FLA_NPU_DFX_DTYPE_STRING(params.k->GetDataType()) + ",v=" +
+                                   FLA_NPU_DFX_DTYPE_STRING(params.v->GetDataType()),
                                "q, k and v must use the same dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType gateType = params.g->GetDataType();
     if (gateType != DataType::DT_FLOAT && gateType != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateType), "FLOAT,BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "g", FLA_NPU_DFX_DTYPE_STRING(gateType), "FLOAT,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType betaType = params.beta->GetDataType();
     if (betaType != DataType::DT_FLOAT && betaType != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaType), "FLOAT,BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "beta", FLA_NPU_DFX_DTYPE_STRING(betaType), "FLOAT,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.aLogOptional != nullptr) {
         if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "aLogOptional",
-                                  fla_npu::host_utils::DfxDtypeString(params.aLogOptional->GetDataType()), "FLOAT");
+                                  FLA_NPU_DFX_DTYPE_STRING(params.aLogOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.dtBiasOptional != nullptr) {
         if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "dtBiasOptional",
-                                  fla_npu::host_utils::DfxDtypeString(params.dtBiasOptional->GetDataType()), "FLOAT");
+                                  FLA_NPU_DFX_DTYPE_STRING(params.dtBiasOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.initialStateOptional != nullptr) {
         if (params.initialStateOptional->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "initialStateOptional",
-                                  fla_npu::host_utils::DfxDtypeString(params.initialStateOptional->GetDataType()), "FLOAT");
+                                  FLA_NPU_DFX_DTYPE_STRING(params.initialStateOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -511,9 +497,9 @@ aclnnStatus CheckStateShape(const aclTensor *state, const char *name, const KdaS
                            : HasShape(state, {info.seqNum, info.hvNum, info.kDim, info.vDim});
     if (!valid) {
         const std::string expected =
-            stateVFirst ? fla_npu::host_utils::DfxMakeShapeString({info.seqNum, info.hvNum, info.vDim, info.kDim})
-                        : fla_npu::host_utils::DfxMakeShapeString({info.seqNum, info.hvNum, info.kDim, info.vDim});
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, name, DfxTensorShapeString(state), expected);
+            stateVFirst ? FLA_NPU_DFX_MAKE_SHAPE_STRING(info.seqNum, info.hvNum, info.vDim, info.kDim)
+                        : FLA_NPU_DFX_MAKE_SHAPE_STRING(info.seqNum, info.hvNum, info.kDim, info.vDim);
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, name, FLA_NPU_DFX_TENSOR_SHAPE_STRING(state), expected);
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -526,11 +512,11 @@ aclnnStatus CheckOptionalOutput(const aclTensor *output, const char *name, DataT
         return ACLNN_SUCCESS;
     }
     if (!HasShape(output, expectedDims)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, name, DfxTensorShapeString(output), fla_npu::host_utils::DfxMakeShapeString(expectedDims));
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, name, FLA_NPU_DFX_TENSOR_SHAPE_STRING(output), FLA_NPU_DFX_MAKE_SHAPE_STRING_IL(expectedDims));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (output->GetDataType() != expectedDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, name, fla_npu::host_utils::DfxDtypeString(output->GetDataType()), fla_npu::host_utils::DfxDtypeString(expectedDtype));
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, name, FLA_NPU_DFX_DTYPE_STRING(output->GetDataType()), FLA_NPU_DFX_DTYPE_STRING(expectedDtype));
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -607,7 +593,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
     if (params.finalStateOut != nullptr) {
         if (params.finalStateOut->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "finalStateOut",
-                                  fla_npu::host_utils::DfxDtypeString(params.finalStateOut->GetDataType()), "FLOAT");
+                                  FLA_NPU_DFX_DTYPE_STRING(params.finalStateOut->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -724,14 +710,14 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         if (!HasShape(params.aLogOptional, {info.hvNum})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "aLogOptional", DfxTensorShapeString(params.aLogOptional),
-                                  fla_npu::host_utils::DfxMakeShapeString({info.hvNum}));
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "aLogOptional", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.aLogOptional),
+                                  FLA_NPU_DFX_MAKE_SHAPE_STRING(info.hvNum));
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (params.dtBiasOptional != nullptr) {
             if (!HasShape(params.dtBiasOptional, {info.hvNum * info.kDim})) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "dtBiasOptional", DfxTensorShapeString(params.dtBiasOptional),
-                                      fla_npu::host_utils::DfxMakeShapeString({info.hvNum * info.kDim}));
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "dtBiasOptional", FLA_NPU_DFX_TENSOR_SHAPE_STRING(params.dtBiasOptional),
+                                      FLA_NPU_DFX_MAKE_SHAPE_STRING(info.hvNum * info.kDim));
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }

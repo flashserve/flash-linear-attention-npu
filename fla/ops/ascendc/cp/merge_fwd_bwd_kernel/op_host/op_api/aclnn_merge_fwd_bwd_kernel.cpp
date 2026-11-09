@@ -48,20 +48,6 @@ bool MatchesShape(const Shape &shape, std::initializer_list<int64_t> expect)
     return true;
 }
 
-std::string DfxTensorShapeString(const aclTensor *tensor)
-{
-    const auto &shape = tensor->GetViewShape();
-    std::ostringstream stream;
-    stream << "[";
-    for (size_t idx = 0; idx < shape.GetDimNum(); ++idx) {
-        if (idx != 0) {
-            stream << ",";
-        }
-        stream << shape.GetDim(idx);
-    }
-    stream << "]";
-    return stream.str();
-}
 
 aclnnStatus CheckPublicFormat(const aclTensor *tensor, const char *name)
 {
@@ -99,13 +85,13 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
     const DataType dtype = agHm->GetDataType();
     if (dtype != DataType::DT_FLOAT && dtype != DataType::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(MERGE_FWD_BWD_ENTITY, "agHm",
-                                                   fla_npu::host_utils::DfxDtypeString(dtype), "FLOAT,BF16");
+                                                   FLA_NPU_DFX_DTYPE_STRING(dtype), "FLOAT,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (h->GetDataType() != dtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(MERGE_FWD_BWD_ENTITY, "h,agHm",
-                                                    "h=" + fla_npu::host_utils::DfxDtypeString(h->GetDataType()) +
-                                                        ",agHm=" + fla_npu::host_utils::DfxDtypeString(dtype),
+                                                    "h=" + FLA_NPU_DFX_DTYPE_STRING(h->GetDataType()) +
+                                                        ",agHm=" + FLA_NPU_DFX_DTYPE_STRING(dtype),
                                                     "both same");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -136,7 +122,7 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
     // Tiling reads the storage shape. Both must be the dense [HV,128,128] buffer.
     if (!MatchesShape(h->GetViewShape(), {hv, kK, kV}) || !MatchesShape(h->GetStorageShape(), {hv, kK, kV})) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(
-            MERGE_FWD_BWD_ENTITY, "h", DfxTensorShapeString(h),
+            MERGE_FWD_BWD_ENTITY, "h", FLA_NPU_DFX_TENSOR_SHAPE_STRING(h),
             "[" + std::to_string(hv) + ",128,128]");
         return ACLNN_ERR_PARAM_INVALID;
     }

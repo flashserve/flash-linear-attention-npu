@@ -65,13 +65,13 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(
-            context->GetNodeName(), "w", fla_npu::host_utils::DfxShapeString(wShapePtr->GetStorageShape()),
+            context->GetNodeName(), "w", FLA_NPU_DFX_SHAPE_STRING(wShapePtr->GetStorageShape()),
             "[1," + std::to_string(Hv) + ",T,K]");
         return ge::GRAPH_FAILED;
     }
     if (uShape.GetDim(0) != 1 || uShape.GetDim(2) != T || uShape.GetDim(3) != V) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(
-            context->GetNodeName(), "u", fla_npu::host_utils::DfxShapeString(uShape),
+            context->GetNodeName(), "u", FLA_NPU_DFX_SHAPE_STRING(uShape),
             "u must be [1,Hv,T,V] and match k's T");
         return ge::GRAPH_FAILED;
     }

@@ -32,8 +32,8 @@ aclnnStatus CheckRequired(const aclTensor *tensor, DataType dtype, const char *n
     }
     if (tensor->GetDataType() != dtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name,
-                                                   fla_npu::host_utils::DfxDtypeString(tensor->GetDataType()),
-                                                   fla_npu::host_utils::DfxDtypeString(dtype));
+                                                   FLA_NPU_DFX_DTYPE_STRING(tensor->GetDataType()),
+                                                   FLA_NPU_DFX_DTYPE_STRING(dtype));
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -94,7 +94,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     }
     if (beta->GetDataType() != DataType::DT_BF16 && beta->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta",
-                                                   fla_npu::host_utils::DfxDtypeString(beta->GetDataType()), "BF16,FP32");
+                                                   FLA_NPU_DFX_DTYPE_STRING(beta->GetDataType()), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     ret = CheckRequired(beta, beta->GetDataType(), "beta");
@@ -118,7 +118,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     }
     if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT && aLog->GetDataType() != DataType::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log",
-                                                   fla_npu::host_utils::DfxDtypeString(aLog->GetDataType()), "FP32,BF16");
+                                                   FLA_NPU_DFX_DTYPE_STRING(aLog->GetDataType()), "FP32,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
@@ -156,13 +156,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 #ifdef KDA_BWD_STAGES_ARCH22
     if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log",
-                                                   fla_npu::host_utils::DfxDtypeString(aLog->GetDataType()), "FP32");
+                                                   FLA_NPU_DFX_DTYPE_STRING(aLog->GetDataType()), "FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #endif
     if (useBetaSigmoidInKernel && beta->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta",
-                                                   fla_npu::host_utils::DfxDtypeString(beta->GetDataType()), "FP32");
+                                                   FLA_NPU_DFX_DTYPE_STRING(beta->GetDataType()), "FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)) &&

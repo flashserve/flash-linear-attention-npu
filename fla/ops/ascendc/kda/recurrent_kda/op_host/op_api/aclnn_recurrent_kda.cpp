@@ -380,39 +380,10 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
 
 aclnnStatus CheckNotNull(const RecurrentKdaParams &params)
 {
-    if (params.query == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "query");
+        if (!FLA_NPU_CHECK_NOT_NULL(RECURRENT_KDA_ENTITY, {params.query, "query"}, {params.key, "key"}, {params.value, "value"}, {params.gate, "gate"}, {params.beta, "beta"}, {params.initialStateRef, "initialStateRef"}, {params.attnOut, "attnOut"}, {params.finalState, "finalState"})) {
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    if (params.key == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "key");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.value == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "value");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.gate == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "gate");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "beta");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.initialStateRef == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "initialStateRef");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.attnOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "attnOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.finalState == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "finalState");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    return ACLNN_SUCCESS;
+return ACLNN_SUCCESS;
 }
 
 bool CheckDtypeValid(const RecurrentKdaParams &params)
@@ -427,7 +398,7 @@ bool CheckDtypeValid(const RecurrentKdaParams &params)
     OP_CHECK_DTYPE_NOT_SUPPORT(params.finalState, STATE_TYPE_SUPPORT_LIST, return false);
     if (params.finalState->GetDataType() != params.initialStateRef->GetDataType()) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECURRENT_KDA_ENTITY, "finalState",
-            fla_npu::host_utils::DfxDtypeString(params.finalState->GetDataType()), "match initialStateRef");
+            FLA_NPU_DFX_DTYPE_STRING(params.finalState->GetDataType()), "match initialStateRef");
         return false;
     }
     if (params.cuSeqlensOptional != nullptr) {

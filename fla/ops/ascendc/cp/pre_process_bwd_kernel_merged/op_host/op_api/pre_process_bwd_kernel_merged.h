@@ -24,8 +24,7 @@ const aclTensor *PreProcessBwdKernelMerged(
     double scale,
     int64_t chunkSize,
     const aclTensor *dhmOut,
-    aclOpExecutor *executor,
-    aclnnStatus &status);
+    aclOpExecutor *executor);
 }
 
 #endif // OP_API_INC_LEVEL0_OP_PRE_PROCESS_BWD_KERNEL_MERGED_H

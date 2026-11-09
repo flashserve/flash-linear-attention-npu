@@ -11,6 +11,7 @@
 
 #include <initializer_list>
 #include <sstream>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -41,50 +42,6 @@
 
 namespace fla_npu {
 namespace host_utils {
-
-inline std::string DfxMakeShapeString(std::initializer_list<int64_t> dims)
-{
-    std::ostringstream stream;
-    stream << "[";
-    bool first = true;
-    for (int64_t dim : dims) {
-        if (!first) {
-            stream << ",";
-        }
-        stream << dim;
-        first = false;
-    }
-    stream << "]";
-    return stream.str();
-}
-
-inline std::string DfxShapeString(const gert::Shape &shape)
-{
-    std::ostringstream stream;
-    stream << "[";
-    for (size_t idx = 0; idx < static_cast<size_t>(shape.GetDimNum()); ++idx) {
-        if (idx != 0) {
-            stream << ",";
-        }
-        stream << shape.GetDim(idx);
-    }
-    stream << "]";
-    return stream.str();
-}
-
-inline std::string DfxDtypeString(ge::DataType dtype)
-{
-    switch (dtype) {
-        case ge::DT_FLOAT16:
-            return "FLOAT16";
-        case ge::DT_BF16:
-            return "BF16";
-        case ge::DT_FLOAT:
-            return "FLOAT";
-        default:
-            return std::to_string(static_cast<int32_t>(dtype));
-    }
-}
 
 // 降级上报日志：tiling 上下文的 OP_LOGE(opName, ...) 无 errno；aclnn 上下文的 OP_LOGE(errno, ...)。
 #if defined(FLA_NPU_HOST_TILING)
@@ -365,5 +322,45 @@ inline void DfxReportInvalidFormatWithReason(const char *entity, const char *par
 
 #define OP_LOGE_LIBOPAPI_REPORT_FORMAT_WITH_REASON_COMPAT(entity, paramName, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidFormatWithReason((entity), (paramName), (actual), (reason))
+
+// ---------------------------------------------------------------------------
+// 纯宏封装层（无 host_utils 命名空间函数依赖，自包含可复用工具）
+// ---------------------------------------------------------------------------
+
+#define FLA_NPU_DFX_TENSOR_SHAPE_STRING(t) \
+    FLA_NPU_DFX_SHAPE_STRING((t)->GetViewShape())
+
+#define FLA_NPU_DFX_DTYPE_STRING(dtype) \
+    ((dtype) == ge::DT_FLOAT16 ? "FLOAT16" : \
+     (dtype) == ge::DT_BF16 ? "BF16" : \
+     (dtype) == ge::DT_FLOAT ? "FLOAT" : \
+     std::to_string(static_cast<int32_t>(dtype)))
+
+#define FLA_NPU_DFX_SHAPE_STRING(shape) \
+    ([&]() { std::ostringstream __s; __s << "["; \
+            size_t __n = static_cast<size_t>((shape).GetDimNum()); \
+            for (size_t __i = 0; __i < __n; ++__i) { if (__i) __s << ","; __s << (shape).GetDim(__i); } \
+            __s << "]"; return __s.str(); }())
+
+#define FLA_NPU_DFX_MAKE_SHAPE_STRING(...) \
+    ([&]() { std::ostringstream __s; __s << "["; bool __first = true; \
+            for (int64_t __d : std::initializer_list<int64_t>{__VA_ARGS__}) { \
+                if (!__first) __s << ","; __s << __d; __first = false; } \
+            __s << "]"; return __s.str(); }())
+
+#define FLA_NPU_DFX_MAKE_SHAPE_STRING_IL(dims) \
+    ([&]() { std::ostringstream __s; __s << "["; bool __first = true; \
+            for (int64_t __d : (dims)) { if (!__first) __s << ","; __s << __d; __first = false; } \
+            __s << "]"; return __s.str(); }())
+
+#define FLA_NPU_CHECK_NOT_NULL(entity, ...) \
+    ([&]() -> bool { const std::pair<const void *, const char *> __c[] = {__VA_ARGS__}; \
+                     for (const auto &__i : __c) \
+                         if (__i.first == nullptr) { \
+                             OP_LOGE_LIBOPAPI_REPORT_COMPAT((entity), __i.second); \
+                             return false; \
+                         } \
+                     return true; }())
+
 
 #endif // FLA_NPU_ASCENDC_COMMON_HOST_UTILS_LOG_H

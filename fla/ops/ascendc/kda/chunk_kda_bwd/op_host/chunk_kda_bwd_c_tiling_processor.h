@@ -100,7 +100,7 @@ public:
         const ge::DataType dataType = ctx_.types[KDA_C_Q];
         if (dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "Kernel C data",
-                fla_npu::host_utils::DfxDtypeString(dataType), "FP16,BF16");
+                FLA_NPU_DFX_DTYPE_STRING(dataType), "FP16,BF16");
             return ge::GRAPH_FAILED;
         }
         for (size_t i : {KDA_C_K, KDA_C_V, KDA_C_V_NEW,
@@ -114,13 +114,13 @@ public:
         for (size_t i : {KDA_C_GK, KDA_C_DQ_RAW, KDA_C_DAQK}) {
             if (ctx_.types[i] != ge::DT_FLOAT) {
                 OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "gk/dq_raw/dAqk",
-                    fla_npu::host_utils::DfxDtypeString(ctx_.types[i]), "FP32");
+                    FLA_NPU_DFX_DTYPE_STRING(ctx_.types[i]), "FP32");
                 return ge::GRAPH_FAILED;
             }
         }
         if (ctx_.types[KDA_C_BETA] != ge::DT_BF16 && ctx_.types[KDA_C_BETA] != ge::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "beta",
-                fla_npu::host_utils::DfxDtypeString(ctx_.types[KDA_C_BETA]), "BF16,FP32");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.types[KDA_C_BETA]), "BF16,FP32");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.useGateInKernel) {

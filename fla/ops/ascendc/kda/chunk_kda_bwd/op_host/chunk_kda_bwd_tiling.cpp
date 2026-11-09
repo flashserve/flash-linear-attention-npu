@@ -97,12 +97,12 @@ ge::graphStatus BuildKernelBTiling(
     OP_CHECK_NULL_WITH_CONTEXT(context, vShapeStorage);
     if (qgDesc->GetDataType() != ge::DT_FLOAT16 && qgDesc->GetDataType() != ge::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "qg/kg/w",
-            fla_npu::host_utils::DfxDtypeString(qgDesc->GetDataType()), "FP16,BF16");
+            FLA_NPU_DFX_DTYPE_STRING(qgDesc->GetDataType()), "FP16,BF16");
         return ge::GRAPH_FAILED;
     }
     if (gkDesc->GetDataType() != ge::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "gk",
-            fla_npu::host_utils::DfxDtypeString(gkDesc->GetDataType()), "FP32");
+            FLA_NPU_DFX_DTYPE_STRING(gkDesc->GetDataType()), "FP32");
         return ge::GRAPH_FAILED;
     }
 

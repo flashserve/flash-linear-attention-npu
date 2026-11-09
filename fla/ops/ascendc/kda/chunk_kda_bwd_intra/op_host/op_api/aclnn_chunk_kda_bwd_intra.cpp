@@ -210,13 +210,13 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
     for (const aclTensor *tensor : bf16) {
         if (tensor->GetDataType() != DataType::DT_BF16) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q/k",
-                                                       fla_npu::host_utils::DfxDtypeString(tensor->GetDataType()), "BF16");
+                                                       FLA_NPU_DFX_DTYPE_STRING(tensor->GetDataType()), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!(p.beta->GetDataType() == DataType::DT_BF16 || p.beta->GetDataType() == DataType::DT_FLOAT)) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta",
-                                                   fla_npu::host_utils::DfxDtypeString(p.beta->GetDataType()), "BF16,FP32");
+                                                   FLA_NPU_DFX_DTYPE_STRING(p.beta->GetDataType()), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclTensor *fp32[] = {
@@ -226,7 +226,7 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
     for (const aclTensor *tensor : fp32) {
         if (tensor->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "gk/dA/gradient",
-                                                       fla_npu::host_utils::DfxDtypeString(tensor->GetDataType()), "FP32");
+                                                       FLA_NPU_DFX_DTYPE_STRING(tensor->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }

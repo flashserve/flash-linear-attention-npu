@@ -278,30 +278,30 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
     if (!(params.q->GetDataType() == DataType::DT_BF16 && params.k->GetDataType() == DataType::DT_BF16 &&
           params.v->GetDataType() == DataType::DT_BF16)) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "q,k,v",
-            "q=" + fla_npu::host_utils::DfxDtypeString(params.q->GetDataType()) + ",k=" + fla_npu::host_utils::DfxDtypeString(params.k->GetDataType()) + ",v=" + fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()), "BF16");
+            "q=" + FLA_NPU_DFX_DTYPE_STRING(params.q->GetDataType()) + ",k=" + FLA_NPU_DFX_DTYPE_STRING(params.k->GetDataType()) + ",v=" + FLA_NPU_DFX_DTYPE_STRING(params.v->GetDataType()), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto gateDtype = params.g->GetDataType();
     const auto betaDtype = params.beta->GetDataType();
     if (!(gateDtype == DataType::DT_BF16 || gateDtype == DataType::DT_FLOAT)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateDtype), "BF16,FP32");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "g", FLA_NPU_DFX_DTYPE_STRING(gateDtype), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(betaDtype == DataType::DT_BF16 || betaDtype == DataType::DT_FLOAT)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16,FP32");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "beta", FLA_NPU_DFX_DTYPE_STRING(betaDtype), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.aLogOptional != nullptr) {
         if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "aLogOptional",
-                fla_npu::host_utils::DfxDtypeString(params.aLogOptional->GetDataType()), "FP32");
+                FLA_NPU_DFX_DTYPE_STRING(params.aLogOptional->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.dtBiasOptional != nullptr) {
         if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "dtBiasOptional",
-                fla_npu::host_utils::DfxDtypeString(params.dtBiasOptional->GetDataType()), "FP32");
+                FLA_NPU_DFX_DTYPE_STRING(params.dtBiasOptional->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -316,7 +316,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         }
         if (output->GetDataType() != DataType::DT_BF16) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "output",
-                fla_npu::host_utils::DfxDtypeString(output->GetDataType()), "BF16");
+                FLA_NPU_DFX_DTYPE_STRING(output->GetDataType()), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -328,7 +328,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         }
         if (output->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "output",
-                fla_npu::host_utils::DfxDtypeString(output->GetDataType()), "FP32");
+                FLA_NPU_DFX_DTYPE_STRING(output->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }

@@ -76,15 +76,15 @@ static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
     const auto bf16 = DataType::DT_BF16;
     const auto kDtype = params.k->GetDataType();
     if (kDtype != bf16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "k", fla_npu::host_utils::DfxDtypeString(kDtype), "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "k", FLA_NPU_DFX_DTYPE_STRING(kDtype), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.w->GetDataType() != bf16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "w", fla_npu::host_utils::DfxDtypeString(params.w->GetDataType()), "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "w", FLA_NPU_DFX_DTYPE_STRING(params.w->GetDataType()), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.u->GetDataType() != bf16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "u", fla_npu::host_utils::DfxDtypeString(params.u->GetDataType()), "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "u", FLA_NPU_DFX_DTYPE_STRING(params.u->GetDataType()), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // DPLR 不支持：bg / v 是 DPLR 专用输入。两者留着 ABI 槽位，但必须为空——否则会被带到
@@ -111,7 +111,7 @@ static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
     }
     if (params.hmOut->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "hmOut",
-                                                   fla_npu::host_utils::DfxDtypeString(params.hmOut->GetDataType()), "FLOAT");
+                                                   FLA_NPU_DFX_DTYPE_STRING(params.hmOut->GetDataType()), "FLOAT");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;

@@ -721,7 +721,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     const ge::DataType xDtype = xDesc->GetDataType();
     if (xDtype != ge::DT_BF16 && xDtype != ge::DT_FLOAT16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "x", fla_npu::host_utils::DfxDtypeString(xDtype), "BF16,FP16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "x", FLA_NPU_DFX_DTYPE_STRING(xDtype), "BF16,FP16");
         return ge::GRAPH_FAILED;
     }
 

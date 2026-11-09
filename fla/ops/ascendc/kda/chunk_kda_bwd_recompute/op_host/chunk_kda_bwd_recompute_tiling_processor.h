@@ -123,12 +123,12 @@ private:
         }
         if (ctx_.gateDtype != ge::DT_BF16 && ctx_.gateDtype != ge::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g",
-                fla_npu::host_utils::DfxDtypeString(ctx_.gateDtype), "BF16,FP32");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.gateDtype), "BF16,FP32");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.betaDtype != ge::DT_BF16 && ctx_.betaDtype != ge::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "beta",
-                fla_npu::host_utils::DfxDtypeString(ctx_.betaDtype), "BF16,FP32");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.betaDtype), "BF16,FP32");
             return ge::GRAPH_FAILED;
         }
         tiling_.B = q.GetDim(0);
@@ -166,7 +166,7 @@ private:
         }
         if (g.GetDim(0) != v.GetDim(0) || g.GetDim(1) != v.GetDim(1) || g.GetDim(2) != v.GetDim(2)) {
             OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(
-                ctx_.nodeName, "g", fla_npu::host_utils::DfxShapeString(g), "g shape must match v on B/H/T");
+                ctx_.nodeName, "g", FLA_NPU_DFX_SHAPE_STRING(g), "g shape must match v on B/H/T");
             return ge::GRAPH_FAILED;
         }
         if (beta.GetDimNum() != 3) {

@@ -225,7 +225,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
     auto inputDtype = params.k->GetDataType();
     if (inputDtype != DataType::DT_FLOAT16 && inputDtype != DataType::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "k",
-            fla_npu::host_utils::DfxDtypeString(inputDtype), "FLOAT16,BF16");
+            FLA_NPU_DFX_DTYPE_STRING(inputDtype), "FLOAT16,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.w->GetDataType() != inputDtype || params.u->GetDataType() != inputDtype) {
@@ -239,7 +239,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
     auto gateDtype = params.gOptional != nullptr ? params.gOptional->GetDataType() : params.gkOptional->GetDataType();
     if (gateDtype != DataType::DT_FLOAT && gateDtype != inputDtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "g,gk",
-            fla_npu::host_utils::DfxDtypeString(gateDtype), "FLOAT32 or match k");
+            FLA_NPU_DFX_DTYPE_STRING(gateDtype), "FLOAT32 or match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.gOptional != nullptr && params.gkOptional != nullptr &&
@@ -256,7 +256,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
                                                                 : DataType::DT_FLOAT;
         if (params.finalStateOut->GetDataType() != stateDtype) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "finalStateOut",
-                fla_npu::host_utils::DfxDtypeString(params.finalStateOut->GetDataType()),
+                FLA_NPU_DFX_DTYPE_STRING(params.finalStateOut->GetDataType()),
                 "match initial state, or FLOAT32 when absent");
             return ACLNN_ERR_PARAM_INVALID;
         }

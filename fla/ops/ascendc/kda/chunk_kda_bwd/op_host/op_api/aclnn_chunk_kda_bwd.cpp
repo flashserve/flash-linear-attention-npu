@@ -206,27 +206,25 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_ENTITY, "scale/lowerBound", "non-finite", "finite");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    const bool packed = cuSeqlensOptional != nullptr;
-    const bool inputTokenMajor = inputLayout &&
-        std::strcmp(inputLayout, packed ? "TND" : "BSND") == 0;
-    const bool outputTokenMajor = outputLayout &&
-        std::strcmp(outputLayout, packed ? "TND" : "BSND") == 0;
-    if (!(inputLayout && (inputTokenMajor || std::strcmp(inputLayout, packed ? "NTD" : "BNSD") == 0) &&
-          outputLayout && (outputTokenMajor || std::strcmp(outputLayout, packed ? "NTD" : "BNSD") == 0))) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_ENTITY, "inputLayout/outputLayout", "mismatch", "dense/packed");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-    if (!disableRecompute && inputTokenMajor) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_ENTITY, "inputLayout", "invalid", "BNSD or NTD for recompute");
+    const bool variable = cuSeqlensOptional != nullptr;
+    const bool packed = layout && (std::strcmp(layout, "NTD") == 0 || std::strcmp(layout, "TND") == 0);
+    const bool inputTokenMajor = layout && (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0);
+    if (!(layout && (packed || std::strcmp(layout, "BNSD") == 0 || std::strcmp(layout, "BSND") == 0))) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_ENTITY, "layout",
+            layout ? layout : "null", "BNSD, BSND, NTD or TND");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto &vs = v->GetViewShape();
-    if (vs.GetDimNum() != (packed ? 3U : 4U)) {
+    if (!(vs.GetDimNum() == (packed ? 3U : 4U) && (!packed || variable))) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_BWD_ENTITY, "v",
-            "rank=" + std::to_string(vs.GetDimNum()), "rank=" + std::to_string(packed ? 3U : 4U));
+            "rank=" + std::to_string(vs.GetDimNum()), "3D calls require cu_seqlens");
         return ACLNN_ERR_PARAM_INVALID;
     }
-
+    if (variable && !packed && vs.GetDim(0) != 1) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_ENTITY, "v.shape[0]", std::to_string(vs.GetDim(0)),
+            "1 (4D varlen calls require B=1)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const size_t base = packed ? 0 : 1;
     const int64_t B = packed ? 1 : vs.GetDim(0);
     const int64_t H = vs.GetDim(base + (inputTokenMajor ? 1 : 0));
@@ -246,20 +244,28 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
     const auto outputToken = inputTokenMajor ?
         (packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128})) : token;
-
-    const auto outputScalar = outputTokenMajor ?
-        (packed ? MakeShape({T,H}) : MakeShape({B,T,H})) : scalar;
+    const auto gateToken = packed ? MakeShape({T,H,128}) : MakeShape({B,T,H,128});
+    const auto gateScalar = packed ? MakeShape({T,H}) : MakeShape({B,T,H});
+    const auto betaShape = gateScalar;
     if (!(MatchesTensor(q, qRstdOptional ? token : externalToken, DataType::DT_BF16) &&
           MatchesTensor(k, kRstdOptional ? token : externalToken, DataType::DT_BF16) &&
           MatchesTensor(v, externalToken, DataType::DT_BF16) &&
-          MatchesTensor(dO, externalToken, DataType::DT_BF16) &&
+          MatchesTensor(dO, gateToken, DataType::DT_BF16) &&
           MatchesTensor(aqk, matrix, DataType::DT_BF16) &&
           MatchesTensor(akk, matrix, DataType::DT_BF16))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "q,k,v,dO,aqk,akk", "mismatch", "BF16 fixed head-major");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "q,k,v,dO,aqk,akk", "mismatch",
+            "BF16 fixed head-major caches");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(MatchesTensor(beta, scalar, DataType::DT_BF16) || MatchesTensor(beta, scalar, DataType::DT_FLOAT))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "beta", "mismatch", "head-major BF16/FP32");
+    if (!(MatchesTensor(beta, betaShape, DataType::DT_BF16) || MatchesTensor(beta, betaShape, DataType::DT_FLOAT))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "beta", "mismatch", "token-major BF16/FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (useBetaSigmoidInKernel
+            ? !MatchesTensor(betaEffOptional, scalar, DataType::DT_FLOAT)
+            : betaEffOptional != nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "betaEffOptional", "mismatch",
+            "FP32 head-major when useBetaSigmoidInKernel, else null");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (qRstdOptional && !(MatchesTensor(qRstdOptional, scalar, DataType::DT_FLOAT) &&
@@ -267,22 +273,22 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "qRstd,kRstd", "mismatch", "head-major FP32 pair");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    for (const auto *out : {dqOut, dkOut}) {
-        if (!(MatchesTensor(out, outputToken, DataType::DT_FLOAT) || MatchesTensor(out, outputToken, DataType::DT_BF16))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dq/dk", "mismatch", "outputToken FP32/BF16");
-            return ACLNN_ERR_PARAM_INVALID;
-        }
+    if (!(MatchesTensor(dqOut, outputToken, q->GetDataType()) &&
+          MatchesTensor(dkOut, outputToken, k->GetDataType()))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dq/dk", "mismatch", "match layout and q/k dtype");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MatchesTensor(dvOut, outputToken, DataType::DT_BF16) &&
-          (MatchesTensor(dbOut, outputScalar, DataType::DT_FLOAT) || MatchesTensor(dbOut, outputScalar, DataType::DT_BF16)) &&
-          MatchesTensor(dgOut, outputToken, DataType::DT_FLOAT))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dvOut,dbOut,dgOut", "mismatch", "public gradient descriptors");
+          MatchesTensor(dbOut, gateScalar, beta->GetDataType()) &&
+          MatchesTensor(dgOut, gateToken, rawGOptional ? rawGOptional->GetDataType() : DataType::DT_FLOAT))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dvOut,dbOut,dgOut", "mismatch", "match layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel &&
-        !(((MatchesTensor(rawGOptional, externalToken, DataType::DT_FLOAT) || MatchesTensor(rawGOptional, externalToken, DataType::DT_BF16)) &&
-           (MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT) || MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_BF16))))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "rawGOptional,aLogOptional", "mismatch", "gate backward");
+        !(((MatchesTensor(rawGOptional, gateToken, DataType::DT_FLOAT) || MatchesTensor(rawGOptional, gateToken, DataType::DT_BF16)) &&
+           MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT)))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "rawGOptional,aLogOptional", "mismatch",
+            "raw_g BF16/FP32 token-major and a_log FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dtBiasOptional && !(dtBiasOptional->GetDataType() == DataType::DT_FLOAT && IsContiguous(dtBiasOptional) &&
@@ -290,8 +296,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dtBiasOptional", "mismatch", "contiguous FP32 H*K");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (dAOutOptional && !MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dAOutOptional", "mismatch", "[H] FP32");
+    if (dAOutOptional && !(aLogOptional && MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dAOutOptional", "mismatch", "[H] FP32 with aLog");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dBiasOutOptional && !(dtBiasOptional && IsContiguous(dBiasOutOptional) &&
@@ -300,9 +306,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_ENTITY, "dBiasOutOptional", "mismatch", "contiguous FP32 H*K");
         return ACLNN_ERR_PARAM_INVALID;
     }
-
     int64_t nc = (T + 63) / 64;
-    if (packed) {
+    if (variable) {
         const auto *cu = cuSeqlensOptional;
         const auto *indices = chunkIndicesOptional;
         if (!(cu->Size() >= 2 && cu->Size() <= 1025 && (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T)) {

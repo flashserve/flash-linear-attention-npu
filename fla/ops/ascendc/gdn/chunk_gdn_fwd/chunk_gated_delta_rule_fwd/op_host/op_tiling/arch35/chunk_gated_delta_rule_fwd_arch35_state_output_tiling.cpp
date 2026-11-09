@@ -242,7 +242,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
     if (qDesc->GetDataType() != ge::DT_FLOAT16 && qDesc->GetDataType() != ge::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "q,k,v",
-            fla_npu::host_utils::DfxDtypeString(qDesc->GetDataType()), "FLOAT16,BF16");
+            FLA_NPU_DFX_DTYPE_STRING(qDesc->GetDataType()), "FLOAT16,BF16");
         return ge::GRAPH_FAILED;
     }
     if (kDesc->GetDataType() != qDesc->GetDataType() ||

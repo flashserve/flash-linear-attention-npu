@@ -171,7 +171,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     }
     if (qDtype != ge::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "q,k,v",
-            fla_npu::host_utils::DfxDtypeString(qDtype), "BF16");
+            FLA_NPU_DFX_DTYPE_STRING(qDtype), "BF16");
         return ge::GRAPH_FAILED;
     }
     if (useGateInKernel && !hasALog) {

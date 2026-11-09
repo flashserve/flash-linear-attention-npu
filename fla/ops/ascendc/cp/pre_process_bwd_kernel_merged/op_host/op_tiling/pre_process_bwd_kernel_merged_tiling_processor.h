@@ -154,38 +154,38 @@ public:
         Hv_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_1));
         V_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_3));
 
-        if (fla_npu::host_utils::DfxShapeString(kShape) != fla_npu::host_utils::DfxShapeString(qShape)) {
+        if (FLA_NPU_DFX_SHAPE_STRING(kShape) != FLA_NPU_DFX_SHAPE_STRING(qShape)) {
             OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(ctx_.nodeName, "q,k",
-                                             "q=" + fla_npu::host_utils::DfxShapeString(qShape) + ",k=" + fla_npu::host_utils::DfxShapeString(kShape),
+                                             "q=" + FLA_NPU_DFX_SHAPE_STRING(qShape) + ",k=" + FLA_NPU_DFX_SHAPE_STRING(kShape),
                                              "k must equal q with shape [B,Hk,T,K]");
             return ge::GRAPH_FAILED;
         }
         const std::string expectedW =
-            fla_npu::host_utils::DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_),
+            FLA_NPU_DFX_MAKE_SHAPE_STRING({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_),
                             static_cast<int64_t>(K_)});
-        if (fla_npu::host_utils::DfxShapeString(wShape) != expectedW) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "w", fla_npu::host_utils::DfxShapeString(wShape), expectedW);
+        if (FLA_NPU_DFX_SHAPE_STRING(wShape) != expectedW) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "w", FLA_NPU_DFX_SHAPE_STRING(wShape), expectedW);
             return ge::GRAPH_FAILED;
         }
         if (doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
             doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
             OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(
-                ctx_.nodeName, "d_o", fla_npu::host_utils::DfxShapeString(doShape),
+                ctx_.nodeName, "d_o", FLA_NPU_DFX_SHAPE_STRING(doShape),
                 "batch and time must match q: expected [B,*,T,V] with B=" + std::to_string(B_) +
                     ",T=" + std::to_string(T_));
             return ge::GRAPH_FAILED;
         }
-        if (fla_npu::host_utils::DfxShapeString(dvShape) != fla_npu::host_utils::DfxShapeString(doShape)) {
+        if (FLA_NPU_DFX_SHAPE_STRING(dvShape) != FLA_NPU_DFX_SHAPE_STRING(doShape)) {
             OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(
                 ctx_.nodeName, "d_o,dv",
-                "d_o=" + fla_npu::host_utils::DfxShapeString(doShape) + ",dv=" + fla_npu::host_utils::DfxShapeString(dvShape),
+                "d_o=" + FLA_NPU_DFX_SHAPE_STRING(doShape) + ",dv=" + FLA_NPU_DFX_SHAPE_STRING(dvShape),
                 "dv must have the same [B,Hv,T,V] shape as d_o");
             return ge::GRAPH_FAILED;
         }
         if (B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0) {
             OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(
                 ctx_.nodeName, "q,d_o",
-                "q=" + fla_npu::host_utils::DfxShapeString(qShape) + ",d_o=" + fla_npu::host_utils::DfxShapeString(doShape),
+                "q=" + FLA_NPU_DFX_SHAPE_STRING(qShape) + ",d_o=" + FLA_NPU_DFX_SHAPE_STRING(doShape),
                 "B/T/Hk/Hv/K/V must all be greater than 0");
             return ge::GRAPH_FAILED;
         }
@@ -236,15 +236,15 @@ public:
                 return ge::GRAPH_FAILED;
             }
             const std::string expectedGk =
-                fla_npu::host_utils::DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_),
+                FLA_NPU_DFX_MAKE_SHAPE_STRING({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_),
                                 static_cast<int64_t>(T_), static_cast<int64_t>(K_)});
-            if (fla_npu::host_utils::DfxShapeString(gkShape) != expectedGk) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "gk", fla_npu::host_utils::DfxShapeString(gkShape), expectedGk);
+            if (FLA_NPU_DFX_SHAPE_STRING(gkShape) != expectedGk) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "gk", FLA_NPU_DFX_SHAPE_STRING(gkShape), expectedGk);
                 return ge::GRAPH_FAILED;
             }
             if (ctx_.gkDtype != ctx_.qDtype) {
-                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "gk", fla_npu::host_utils::DfxDtypeString(ctx_.gkDtype),
-                                      "the same dtype as q/k (" + fla_npu::host_utils::DfxDtypeString(ctx_.qDtype) + ")");
+                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "gk", FLA_NPU_DFX_DTYPE_STRING(ctx_.gkDtype),
+                                      "the same dtype as q/k (" + FLA_NPU_DFX_DTYPE_STRING(ctx_.qDtype) + ")");
                 return ge::GRAPH_FAILED;
             }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_PER_K;
@@ -260,14 +260,14 @@ public:
                 return ge::GRAPH_FAILED;
             }
             const std::string expectedG =
-                fla_npu::host_utils::DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_)});
-            if (fla_npu::host_utils::DfxShapeString(gShape) != expectedG) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "g", fla_npu::host_utils::DfxShapeString(gShape), expectedG);
+                FLA_NPU_DFX_MAKE_SHAPE_STRING({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_)});
+            if (FLA_NPU_DFX_SHAPE_STRING(gShape) != expectedG) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "g", FLA_NPU_DFX_SHAPE_STRING(gShape), expectedG);
                 return ge::GRAPH_FAILED;
             }
             if (ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT) {
-                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g", fla_npu::host_utils::DfxDtypeString(ctx_.gDtype),
-                                      "FLOAT or the same dtype as q/k (" + fla_npu::host_utils::DfxDtypeString(ctx_.qDtype) + ")");
+                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g", FLA_NPU_DFX_DTYPE_STRING(ctx_.gDtype),
+                                      "FLOAT or the same dtype as q/k (" + FLA_NPU_DFX_DTYPE_STRING(ctx_.qDtype) + ")");
                 return ge::GRAPH_FAILED;
             }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_SCALAR;

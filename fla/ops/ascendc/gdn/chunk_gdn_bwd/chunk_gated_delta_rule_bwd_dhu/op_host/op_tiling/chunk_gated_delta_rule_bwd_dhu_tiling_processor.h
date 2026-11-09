@@ -338,7 +338,7 @@ private:
         }
         if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g,gk",
-                fla_npu::host_utils::DfxDtypeString(ctx_.gDataType), "FLOAT or match q/k");
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.gDataType), "FLOAT or match q/k");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG) {

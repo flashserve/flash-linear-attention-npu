@@ -137,7 +137,7 @@ aclnnStatus KdaGateCheckParams(
     }
     if (gkOut->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut",
-                                                   fla_npu::host_utils::DfxDtypeString(gkOut->GetDataType()), "FLOAT");
+                                                   FLA_NPU_DFX_DTYPE_STRING(gkOut->GetDataType()), "FLOAT");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!KdaGateSameShape(gkOut, g)) {
@@ -163,7 +163,7 @@ aclnnStatus KdaGateCheckParams(
         }
         if (aLogOptional->GetDataType() != DataType::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional",
-                                                       fla_npu::host_utils::DfxDtypeString(aLogOptional->GetDataType()), "FLOAT");
+                                                       FLA_NPU_DFX_DTYPE_STRING(aLogOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (safeGate) {

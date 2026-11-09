@@ -48,14 +48,14 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
     const ge::DataType dtype = agDesc->GetDataType();
     if (dtype != ge::DT_FLOAT && dtype != ge::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "ag_hm",
-                                                   fla_npu::host_utils::DfxDtypeString(dtype), "FLOAT,BF16");
+                                                   FLA_NPU_DFX_DTYPE_STRING(dtype), "FLOAT,BF16");
         return ge::GRAPH_FAILED;
     }
     if (hDesc->GetDataType() != dtype || hInDesc->GetDataType() != dtype) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(
             context->GetNodeName(), "h,ag_hm",
-            "h=" + fla_npu::host_utils::DfxDtypeString(hDesc->GetDataType()) +
-                ",ag_hm=" + fla_npu::host_utils::DfxDtypeString(dtype),
+            "h=" + FLA_NPU_DFX_DTYPE_STRING(hDesc->GetDataType()) +
+                ",ag_hm=" + FLA_NPU_DFX_DTYPE_STRING(dtype),
             "both same");
         return ge::GRAPH_FAILED;
     }
@@ -93,7 +93,7 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
     };
     if (!hOk(hIn, Hv) || !hOk(h, Hv)) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(
-            context->GetNodeName(), "h", fla_npu::host_utils::DfxShapeString(h),
+            context->GetNodeName(), "h", FLA_NPU_DFX_SHAPE_STRING(h),
             "[" + std::to_string(Hv) + ",128,128]");
         return ge::GRAPH_FAILED;
     }

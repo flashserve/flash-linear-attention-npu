@@ -230,7 +230,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         OP_CHECK_NULL_WITH_CONTEXT(context, qslDesc);
         if (qslDesc->GetDataType() != ge::DT_INT64) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "queryStartLoc",
-                fla_npu::host_utils::DfxDtypeString(qslDesc->GetDataType()), "INT64");
+                FLA_NPU_DFX_DTYPE_STRING(qslDesc->GetDataType()), "INT64");
             return ge::GRAPH_FAILED;
         }
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);

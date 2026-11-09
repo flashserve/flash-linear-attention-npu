@@ -178,7 +178,7 @@ aclnnStatus Check(const Params &p)
     const DataType mainType = p.q->GetDataType();
     if (mainType != DataType::DT_BF16 && mainType != DataType::DT_FLOAT16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "q,k,v,A,dO",
-            fla_npu::host_utils::DfxDtypeString(mainType), "BF16,FP16");
+            FLA_NPU_DFX_DTYPE_STRING(mainType), "BF16,FP16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const std::array<const aclTensor *, 7> mainTensors = {
@@ -193,13 +193,13 @@ aclnnStatus Check(const Params &p)
     const DataType gateType = p.g->GetDataType();
     if (gateType != DataType::DT_BF16 && gateType != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "g",
-            fla_npu::host_utils::DfxDtypeString(gateType), "BF16,FP32");
+            FLA_NPU_DFX_DTYPE_STRING(gateType), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType betaType = p.beta->GetDataType();
     if (betaType != DataType::DT_BF16 && betaType != DataType::DT_FLOAT) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "beta",
-            fla_npu::host_utils::DfxDtypeString(betaType), "BF16,FP32");
+            FLA_NPU_DFX_DTYPE_STRING(betaType), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((p.cuSeqlens != nullptr) != (p.chunkIndices != nullptr)) {

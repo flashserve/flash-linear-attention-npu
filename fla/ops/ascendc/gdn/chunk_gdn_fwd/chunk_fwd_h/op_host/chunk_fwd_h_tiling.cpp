@@ -105,7 +105,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     uint64_t gateDtypeToken = 0;
     if (!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken)) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "g,gk",
-                                                   fla_npu::host_utils::DfxDtypeString(gateTensor->GetDataType()),
+                                                   FLA_NPU_DFX_DTYPE_STRING(gateTensor->GetDataType()),
                                                    "BF16,FP32");
         return ge::GRAPH_FAILED;
     }
@@ -137,7 +137,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     uint64_t stateDtypeToken = 0;
     if (!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken)) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "state",
-                                                   fla_npu::host_utils::DfxDtypeString(resolvedStateDataType),
+                                                   FLA_NPU_DFX_DTYPE_STRING(resolvedStateDataType),
                                                    "BF16,FP32");
         return ge::GRAPH_FAILED;
     }

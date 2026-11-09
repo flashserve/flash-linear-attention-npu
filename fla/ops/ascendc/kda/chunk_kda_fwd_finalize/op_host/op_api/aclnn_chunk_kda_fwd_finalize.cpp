@@ -86,7 +86,7 @@ aclnnStatus CheckDtypeAndFormat(const FinalizeParams &params)
     for (size_t index = 0; index < 5; ++index) {
         if (tensors[index]->GetDataType() != DataType::DT_BF16) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
-                fla_npu::host_utils::DfxDtypeString(tensors[index]->GetDataType()), "BF16");
+                FLA_NPU_DFX_DTYPE_STRING(tensors[index]->GetDataType()), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
         const auto storage = tensors[index]->GetStorageFormat();
@@ -141,10 +141,13 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
-    if (!(shape.batch > 0 && shape.heads > 0 && shape.seqLen > 0)) {
+    if (!(shape.batch > 0 && shape.heads > 0 && shape.seqLen > 0 &&
+          shape.batch <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
+          shape.heads <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
+          shape.seqLen <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B/HV/T]",
             "B=" + std::to_string(shape.batch) + ",HV=" + std::to_string(shape.heads) + ",T=" + std::to_string(shape.seqLen),
-            "positive");
+            "positive and fit in uint32");
         return ACLNN_ERR_PARAM_INVALID;
     }
 

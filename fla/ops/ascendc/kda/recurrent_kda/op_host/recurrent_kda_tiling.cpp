@@ -286,14 +286,14 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     }
     if (stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16) {
         OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context_->GetNodeName(), "initial_state",
-            fla_npu::host_utils::DfxDtypeString(stateDtype), "BF16 or FP32");
+            FLA_NPU_DFX_DTYPE_STRING(stateDtype), "BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
     if (context_->GetOptionalInputDesc(CU_SEQLENS_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(CU_SEQLENS_INDEX)->GetDataType();
         if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context_->GetNodeName(), "cu_seqlens",
-                fla_npu::host_utils::DfxDtypeString(dtype), "int32 or int64");
+                FLA_NPU_DFX_DTYPE_STRING(dtype), "int32 or int64");
             return ge::GRAPH_FAILED;
         }
     }
@@ -301,21 +301,21 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
         auto dtype = context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType();
         if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context_->GetNodeName(), "ssm_state_indices",
-                fla_npu::host_utils::DfxDtypeString(dtype), "int32 or int64");
+                FLA_NPU_DFX_DTYPE_STRING(dtype), "int32 or int64");
             return ge::GRAPH_FAILED;
         }
     }
     if (context_->GetOptionalInputDesc(A_LOG_INDEX) != nullptr) {
         if (context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType() != ge::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context_->GetNodeName(), "A_log",
-                fla_npu::host_utils::DfxDtypeString(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType()), "FP32");
+                FLA_NPU_DFX_DTYPE_STRING(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType()), "FP32");
             return ge::GRAPH_FAILED;
         }
     }
     if (context_->GetOptionalInputDesc(DT_BIAS_INDEX) != nullptr) {
         if (context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType() != ge::DT_FLOAT) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context_->GetNodeName(), "dt_bias",
-                fla_npu::host_utils::DfxDtypeString(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType()), "FP32");
+                FLA_NPU_DFX_DTYPE_STRING(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType()), "FP32");
             return ge::GRAPH_FAILED;
         }
     }
@@ -323,7 +323,7 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
         auto dtype = context_->GetOptionalInputDesc(ACC_TOKEN_INDEX)->GetDataType();
         if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
             OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context_->GetNodeName(), "num_accepted_tokens",
-                fla_npu::host_utils::DfxDtypeString(dtype), "int32 or int64");
+                FLA_NPU_DFX_DTYPE_STRING(dtype), "int32 or int64");
             return ge::GRAPH_FAILED;
         }
     }
