@@ -299,7 +299,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     }
 
     int64_t nc = (T + 63) / 64;
-    if (variable) {
+    if (packed) {
         const auto *cu = cuSeqlensOptional;
         const auto *indices = chunkIndicesOptional;
         if (!(cu->Size() >= 2 && cu->Size() <= 1025 && (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T)) {
@@ -454,14 +454,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                ACLNN_ERR_INNER_NULLPTR, "Unable to adapt KDA backward outputs.");
 #else
 
-    const bool packedLayout = cuSeqlensOptional != nullptr;
-    if (!(inputLayout && outputLayout &&
-          std::strcmp(inputLayout, packedLayout ? "NTD" : "BNSD") == 0 &&
-          std::strcmp(outputLayout, packedLayout ? "NTD" : "BNSD") == 0 &&
-          !qRstdOptional && !kRstdOptional && !useBetaSigmoidInKernel && !allowNegEigval)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_ENTITY, "interface capabilities", "unsupported", "A5 original backward capabilities");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+    // A5 (non-arch22) backward is not implemented. Keep failing fast regardless
+    // of the capability combination: issue #991 requires a pure DFX remediation
+    // not to enable previously-failing kernel paths.
+    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_ENTITY, "interface capabilities",
+        "A5 backward not supported", "implemented on A2/A3 (arch22) only");
+    return ACLNN_ERR_PARAM_INVALID;
 
     const aclTensor *required[] = {
         q, k, v, beta, gk, aqk, akk, dO,
