@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Python 主入口 | `fla_npu.ops.ascendc.recurrent_kda` | 支持 |
 | aclnn | `aclnnRecurrentKdaGetWorkspaceSize` / `aclnnRecurrentKda` | 支持 |
-| Ascend C `<<<>>>` | `recurrent_kda<<<blockDim, nullptr, stream>>>` | 支持 |
+| Ascend C `<<<>>>` | `recurrent_kda<KERNEL_MODE><<<blockDim, nullptr, stream>>>` | 支持 |
 | legacy | `torch.ops.npu.npu_recurrent_kda` | 不支持 |
 
 各入口表达同一个 fused recurrent KDA 前向语义。算子计算本身在一个 AICore kernel 内完成，不把
@@ -170,13 +170,27 @@ torch.npu.synchronize()
 
 ## 5. Ascend C `<<<>>>` 直调
 
-`blockDim`、workspace 和序列化 tiling data 必须来自同一组 host tiling 结果。参数顺序与 kernel 定义保持一致：
+`blockDim`、workspace 和序列化 tiling data 必须来自同一组 host tiling 结果。kernel 是函数模板，调用时必须显式给出 `KERNEL_MODE`；该模板参数无法从 GM 地址推导。以下为 A5 V-first 通用模式的实例：
 
 ```cpp
-recurrent_kda<<<blockDim, nullptr, stream>>>(
+#include "recurrent_kda_tiling_key.h"
+
+recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
     q, k, v, g, beta, initialState, cuSeqlens, ssmStateIndices,
     aLog, dtBias, numAcceptedTokens, out, initialStateOut, finalState, workspace, tiling);
 ```
+
+该实例的 State/gate/beta dtype 编译定义也必须与输入一致。host 通过 `GET_TPL_TILING_KEY(KERNEL_MODE)` 编码模板选择，不能将编码后的 key 直接当作模板参数。模式对应关系如下：
+
+| `KERNEL_MODE` | 适用平台/路径 | host 选择条件 |
+| --- | --- | --- |
+| `RKDA_TPL_COMPAT` (0) | A2/A3 | 非 A5 |
+| `RKDA_TPL_V_FIRST` (1) | A5 V-first 通用 | `state_v_first=true`，不满足常用融合条件 |
+| `RKDA_TPL_K_FIRST` (2) | A5 K-first 通用 | `state_v_first=false`，不满足常用融合条件 |
+| `RKDA_TPL_V_FIRST_FUSED` (3) | A5 V-first 常用融合 | `state_v_first=true`，满足常用融合条件 |
+| `RKDA_TPL_K_FIRST_FUSED` (4) | A5 K-first 常用融合 | `state_v_first=false`，满足常用融合条件 |
+
+常用融合条件为 norm、raw gate、dt_bias、beta sigmoid 同时开启，且 `allow_neg_eigval=false`、`safe_gate=false`；具体由 host 的 `a5VfFlags` 决定。A5 的 V=128/V=256 共用上述四种模式，FP32/BF16 State 使用各自的 dtype 编译实例。
 
 直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理地址或 tiling data 中的 Q/K/V/state stride 解释 GM 地址；非连续直调必须使用
 与实际 view shape、stride 和首地址匹配的 host tiling 结果。
@@ -211,7 +225,8 @@ recurrent_kda<<<blockDim, nullptr, stream>>>(
 
 | 条件 | 返回码/异常 |
 | --- | --- |
-| 必选 tensor、workspaceSize 或 executor 为空 | `ACLNN_ERR_PARAM_NULLPTR` |
+| workspaceSize 或 executor 为空 | `ACLNN_ERR_PARAM_NULLPTR` |
+| 必选 tensor 为空 | `ACLNN_ERR_PARAM_INVALID` |
 | rank/shape/dtype/layout 或属性组合非法 | `ACLNN_ERR_PARAM_INVALID` |
 | 内部 tensor 创建或 L0 调用失败 | `ACLNN_ERR_INNER_NULLPTR` |
 | Python 输入不是 NPU tensor 或 runtime/op_api 未加载 | `RuntimeError` |

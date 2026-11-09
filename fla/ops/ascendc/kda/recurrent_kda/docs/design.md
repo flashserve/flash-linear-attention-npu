@@ -62,4 +62,15 @@ KERNEL_MODE 为 compat、V 通用、K 通用、V 常用融合、K 常用融合�
 
 ## 验证矩阵
 
-沿用原 CPU 标杆、输入值域和精度标准。精度覆盖布局、dtype、gate 模式、tail、长序列、空请求、槽位和输出组合；补充同一 AIV 连续任务与跨 tile 复用。检查全部 TilingKey 的内存与确定性。性能覆盖 issue680 全部 288 对，完整样本、环境和构建身份保存在独立 output 记录中，结果归档至测试 README。
+沿用原 CPU 标杆、输入值域和精度标准。精度覆盖布局、dtype、gate 模式、tail、长序列、空请求、槽位和输出组合；补充同一 AIV 连续任务与跨 tile 复用。A5 可达四种模板模式，按下表核对，不能把 A2/A3 的 compat 计为第五种 A5 模式。
+
+| 模板模式 | 布局 | 功能组合 |
+| --- | --- | --- |
+| `RKDA_TPL_V_FIRST` | V-first | 预计算 gate，或不满足常用融合条件的组合 |
+| `RKDA_TPL_K_FIRST` | K-first | 同上 |
+| `RKDA_TPL_V_FIRST_FUSED` | V-first | norm、raw gate、bias、sigmoid 开启，negative/safe 关闭 |
+| `RKDA_TPL_K_FIRST_FUSED` | K-first | 同上 |
+
+每种模式均覆盖 V=128/V=256、FP32/BF16 State；通用模式补充 safe gate、negative、缺省 bias 和各功能开关的组合。长序列覆盖 T=9/17/65/1024、混合 cu_seqlens、空请求和逐 token State 写回，确认 V=256 跨 tile 处理且无提前退出。
+
+模板覆盖记录需保存输入 case、host 实际产生的 TilingKey、模板模式及精度结果，不能只根据属性推算 key；诊断插桩仅用于记录选择，验收后恢复正式 host 库。检查各模式的内存与输出完整性。性能覆盖 issue680 全部 288 对，样本、环境、构建身份和验证结果保存在独立 output 记录中，测试脚本及原始 profiling 不纳入 PR。

@@ -177,7 +177,16 @@ private:
             reason += "]";
         }
         reason += "; isA5=" + std::to_string(ctx_.isA5) + "; UB bytes=" + std::to_string(ctx_.ubSize) +
-                  "; lower_bound=" + std::to_string(ctx_.lowerBound);
+                  "; layout=" + std::to_string(ctx_.layout) + "; scale=" + std::to_string(ctx_.scale) +
+                  "; output_final_state=" + std::to_string(ctx_.outputFinalState) +
+                  "; inplace_final_state=" + std::to_string(ctx_.inplaceFinalState) +
+                  "; use_qk_l2norm_in_kernel=" + std::to_string(ctx_.useQkL2norm) +
+                  "; use_gate_in_kernel=" + std::to_string(ctx_.useGateInKernel) +
+                  "; use_beta_sigmoid_in_kernel=" + std::to_string(ctx_.useBetaSigmoid) +
+                  "; allow_neg_eigval=" + std::to_string(ctx_.allowNegEigval) +
+                  "; safe_gate=" + std::to_string(ctx_.safeGate) +
+                  "; lower_bound=" + std::to_string(ctx_.lowerBound) +
+                  "; state_v_first=" + std::to_string(ctx_.stateVFirst);
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, name, reason);
     }
 

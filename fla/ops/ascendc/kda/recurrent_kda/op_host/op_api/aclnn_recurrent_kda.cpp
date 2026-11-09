@@ -109,7 +109,17 @@ void ReportInvalid(const RecurrentKdaParams &params, const char *name, const cha
         "; ssm_state_indices " + TensorDescription(params.ssmStateIndicesOptional) +
         "; num_accepted_tokens " + TensorDescription(params.numAcceptedTokensOptional) +
         "; A_log " + TensorDescription(params.aLogOptional) + "; dt_bias " + TensorDescription(params.dtBiasOptional) +
-        "; lower_bound=" + std::to_string(params.lowerBound);
+        "; layout=" + (params.layout == nullptr ? std::string("BSND (default)") : std::string(params.layout)) +
+        "; scale=" + std::to_string(params.scale) +
+        "; output_final_state=" + std::to_string(params.outputFinalState) +
+        "; inplace_final_state=" + std::to_string(params.inplaceFinalState) +
+        "; use_qk_l2norm_in_kernel=" + std::to_string(params.useQkL2normInKernel) +
+        "; use_gate_in_kernel=" + std::to_string(params.useGateInKernel) +
+        "; use_beta_sigmoid_in_kernel=" + std::to_string(params.useBetaSigmoidInKernel) +
+        "; allow_neg_eigval=" + std::to_string(params.allowNegEigval) +
+        "; safe_gate=" + std::to_string(params.safeGate) +
+        "; lower_bound=" + std::to_string(params.lowerBound) +
+        "; state_v_first=" + std::to_string(params.stateVFirst);
     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name, reason);
 }
 
@@ -396,6 +406,17 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
             return false;
         }
     }
+    if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
+        ReportInvalid(params, "num_accepted_tokens",
+                "npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.");
+        return false;
+    }
+    if (!params.inplaceFinalState && params.outputFinalState &&
+        SameTensorStorage(params.initialStateRef, params.finalState)) {
+        ReportInvalid(params, "finalState",
+                "non-inplace output must use storage independent from initialStateRef");
+        return false;
+    }
     if (params.numAcceptedTokensOptional != nullptr &&
         (Rank(params.numAcceptedTokensOptional) != 1 || Dim(params.numAcceptedTokensOptional, DIM0) != seqNum)) {
         ReportInvalid(params, "num_accepted_tokens", "npu_recurrent_kda: num_accepted_tokens length must equal sequence number.");
@@ -599,11 +620,6 @@ aclnnStatus PreProcess(
     if (DataContiguous(params.numAcceptedTokensOptional, executor) != ACLNN_SUCCESS) {
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
-        ReportInvalid(params, "num_accepted_tokens",
-                "npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
     return ACLNN_SUCCESS;
 }
 } // namespace
@@ -684,8 +700,10 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const bool queryNeedsContiguous = !querySupportsDirect;
     const bool keyNeedsContiguous = !keySupportsDirect;
     const bool valueNeedsContiguous = !valueSupportsDirect;
-    if (PreProcess(params, queryNeedsContiguous, keyNeedsContiguous, valueNeedsContiguous, executorPtr) != ACLNN_SUCCESS) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus preprocessStatus =
+        PreProcess(params, queryNeedsContiguous, keyNeedsContiguous, valueNeedsContiguous, executorPtr);
+    if (preprocessStatus != ACLNN_SUCCESS) {
+        return preprocessStatus;
     }
     if (queryUsesDirectView) {
         if (CreateViewIfNonContiguous(params.query, executorPtr) != ACLNN_SUCCESS) {
@@ -731,13 +749,6 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     // Empty requests and untouched pool slots must preserve their initial value
     // on every public entry, including direct ACLNN and ctypes. Enqueue the copy
     // before recurrence; the executor orders both writes to the same output.
-    if (!params.inplaceFinalState && params.outputFinalState &&
-        SameTensorStorage(params.initialStateRef, params.finalState)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            "aclnnRecurrentKda", "finalState",
-            "non-inplace output must use storage independent from initialStateRef");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
     if (!params.inplaceFinalState && params.outputFinalState &&
         !SameTensorView(params.initialStateRef, params.finalState)) {
         if (CopyStateView(initialStateForKernel, finalStateForKernel, executorPtr) != ACLNN_SUCCESS) {
