@@ -3,6 +3,7 @@
  * CANN Open Software License Agreement Version 2.0.
  */
 #include "chunk_gated_delta_rule_fwd_arch35_struct.h"
+#include "chunk_gated_delta_rule_fwd_chunk32/chunk_gated_delta_rule_fwd_32.h"
 
 #include "../gated_delta_rule_state_update_output/chunk_gated_delta_rule_state_update_output.cpp"
 #include "../coefficient_generation/chunk_gated_delta_rule_coefficient_generation.cpp"
@@ -397,9 +398,16 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
     GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A,
     GM_ADDR workspace, GM_ADDR tiling)
 {
-    (void)a_storage;
     REGISTER_TILING_DEFAULT(GDN::Arch35ChunkGatedDeltaRuleFwdTrailer);
-    if (TILING_KEY_IS(1)) {
+    if (TILING_KEY_IS(32)) {
+        KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
+        GET_TILING_DATA_WITH_STRUCT(
+            ChunkGatedDeltaRuleFwd32TilingData, chunk32Tiling, tiling);
+        GdnFwd32::Kernel op;
+        op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
+                o, final_state, chunk32Tiling);
+        op.Process();
+    } else if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
