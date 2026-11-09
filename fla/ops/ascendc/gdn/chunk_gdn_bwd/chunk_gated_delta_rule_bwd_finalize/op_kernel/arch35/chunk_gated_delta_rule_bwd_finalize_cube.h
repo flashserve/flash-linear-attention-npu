@@ -390,12 +390,10 @@ private:
         tla::Int<CHUNK_SIZE_64>{}, tla::Int<V_SIZE_128>{});
     __aicore__ inline auto MakePublicQkLayout() const
     {
-        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
-            return tla::MakeLayoutFromTag(LayoutRowMajor(
-                CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128));
-        } else {
-            return GM_DU_LAYOUT;
-        }
+        const int64_t rowStride =
+            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                ? tiling_->HK * K_SIZE_128 : K_SIZE_128;
+        return tla::MakeLayoutFromTag(LayoutRowMajor(CHUNK_SIZE_64, K_SIZE_128, rowStride));
     }
     // h/dh are physically [K,V] row-major. Reinterpret the same bytes as a
     // [V,K] column-major view so Cube consumes h.T/dh.T without a copy.
