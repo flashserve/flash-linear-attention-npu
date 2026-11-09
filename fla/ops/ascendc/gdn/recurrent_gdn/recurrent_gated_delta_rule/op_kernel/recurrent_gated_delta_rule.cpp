@@ -40,7 +40,8 @@ struct RGDRDTypeTraits<RGDR_TPL_FP32> {
 } // namespace RecurrentGatedDeltaRule
 
 #ifndef TORCH_MODE
-template <int D_T_STATE, int D_T_BETA, int D_T_G>
+template <int D_T_STATE, int D_T_G, int D_T_BETA, bool USE_QK_L2NORM, bool USE_GATE_IN_KERNEL, bool USE_BETA_SIGMOID,
+          bool ALLOW_NEG_EIGVAL>
 __global__ __aicore__ void
 recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR beta, GM_ADDR state, GM_ADDR cuSeqlens,
                            GM_ADDR ssmStateIndices, GM_ADDR g, GM_ADDR gk, GM_ADDR numAcceptedTokens,
@@ -54,19 +55,18 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
     using StateType = typename RGDRDTypeTraits<D_T_STATE>::type;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
     using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
-    using GateType = typename RGDRDTypeTraits<D_T_G>::type;
-    RecurrentGatedDeltaRuleV2::RGDRV2<
-        bfloat16_t, bfloat16_t, StateType, GateType, BetaType> op(&tilingData);
-    RecurrentGatedDeltaRuleV2::RGDRV2InitParams params{
-        query, key, value, g, beta, state, cuSeqlens, ssmStateIndices,
-        aLog, dtBias, numAcceptedTokens, out, stateOut};
-    op.Init(params);
+    using GType = typename RGDRDTypeTraits<D_T_G>::type;
+    RGDR<bfloat16_t, bfloat16_t, StateType, GType, BetaType, USE_QK_L2NORM, USE_GATE_IN_KERNEL, USE_BETA_SIGMOID,
+           ALLOW_NEG_EIGVAL>
+        op(&tilingData);
+    op.Init(query, key, value, g, beta, state, cuSeqlens, ssmStateIndices,
+            aLog, dtBias, numAcceptedTokens, out, stateOut);
     op.Process();
 #else
     TPipe pipe;
     using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
-    using GateType = typename RGDRDTypeTraits<D_T_G>::type;
-    RGDR<StateType, BetaType, GateType> op(&tilingData);
+    using GType = typename RGDRDTypeTraits<D_T_G>::type;
+    RGDR<StateType, BetaType, GType> op(&tilingData);
     RGDRInitParams params{query, key, value, beta, state, cuSeqlens, ssmStateIndices,
                           g, numAcceptedTokens, aLog, dtBias, out};
     op.Init(params, &pipe);
