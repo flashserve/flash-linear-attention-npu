@@ -227,6 +227,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     const aclTensor *dAqkOut, const aclTensor *dvOut, const aclTensor *dqRawOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    const char *inputLayout = layout;
+
     // DFX also checks these pointers, but its generic error omits the operator
     // and parameter names. Report them before entering the DFX helper.
     if (workspaceSize == nullptr) return Missing("workspaceSize");
