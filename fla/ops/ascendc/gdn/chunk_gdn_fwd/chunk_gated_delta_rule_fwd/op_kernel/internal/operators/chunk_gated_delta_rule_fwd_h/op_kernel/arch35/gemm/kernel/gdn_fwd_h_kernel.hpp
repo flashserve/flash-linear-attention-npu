@@ -554,10 +554,6 @@ public:
             uint32_t coreIdx = AscendC::GetBlockIdx();
             uint32_t coreNum = vecBlockScheduler.cubeCoreNum;
 
-            BlockMmadWH blockMmadWH(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            BlockMmadKV blockMmadKV(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            BlockMmadWHTail blockMmadWHTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
-            BlockMmadKVTail blockMmadKVTail(resource, chunkSize * cubeBlockScheduler.vBlockSize * sizeof(ElementV) * PING_PONG_STAGES);
             bool useBoundedMmad = isVariedLen || (seqlen % chunkSize != 0);
 
             auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kHeadDim);
@@ -649,13 +645,25 @@ public:
                                 tensorV, tla::MakeCoord(0, 0),
                                 tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
 
+                            // A bounded MMAD instance owns L1/L0 ping-pong cursors.
+                            // Recreate it for each independently scheduled task so
+                            // a one-chunk task cannot leave the next task on a
+                            // stale FIX_M cursor and self-wait.
                             if (cube1Offsets.blockTokens < chunkSize) {
+                                BlockMmadWHTail blockMmadWHTail(
+                                    resource,
+                                    chunkSize * cubeBlockScheduler.vBlockSize *
+                                        sizeof(ElementV) * PING_PONG_STAGES);
                                 blockMmadWHTail.preSetFlags();
                                 blockMmadWHTail(
                                     tensorBlockW, tensorBlockH, tensorBlockV,
                                     cube1Shape);
                                 blockMmadWHTail.finalWaitFlags();
                             } else {
+                                BlockMmadWH blockMmadWH(
+                                    resource,
+                                    chunkSize * cubeBlockScheduler.vBlockSize *
+                                        sizeof(ElementV) * PING_PONG_STAGES);
                                 blockMmadWH.preSetFlags();
                                 blockMmadWH(
                                     tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape);
@@ -670,6 +678,10 @@ public:
                                 cubeBlockScheduler.cube1Done[streamId]);
                         }
                     } else {
+                        BlockMmadWH blockMmadWH(
+                            resource,
+                            chunkSize * cubeBlockScheduler.vBlockSize *
+                                sizeof(ElementV) * PING_PONG_STAGES);
                         blockMmadWH.preSetFlags();
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                             uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
@@ -792,12 +804,20 @@ public:
                                     tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
 
                                 if (cube2Offsets.blockTokens < chunkSize) {
+                                    BlockMmadKVTail blockMmadKVTail(
+                                        resource,
+                                        chunkSize * cubeBlockScheduler.vBlockSize *
+                                            sizeof(ElementV) * PING_PONG_STAGES);
                                     blockMmadKVTail.preSetFlags();
                                     blockMmadKVTail(
                                         tensorBlockK, tensorBlockVwork, tensorBlockHwork,
                                         cube2Shape);
                                     blockMmadKVTail.finalWaitFlags();
                                 } else {
+                                    BlockMmadKV blockMmadKV(
+                                        resource,
+                                        chunkSize * cubeBlockScheduler.vBlockSize *
+                                            sizeof(ElementV) * PING_PONG_STAGES);
                                     blockMmadKV.preSetFlags();
                                     blockMmadKV(
                                         tensorBlockK, tensorBlockVwork, tensorBlockHwork,
@@ -810,6 +830,10 @@ public:
                                 cubeBlockScheduler.cube2Done[streamId]);
                         }
                     } else {
+                        BlockMmadKV blockMmadKV(
+                            resource,
+                            chunkSize * cubeBlockScheduler.vBlockSize *
+                                sizeof(ElementV) * PING_PONG_STAGES);
                         blockMmadKV.preSetFlags();
                         for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
                             uint32_t streamId = cubeBlockScheduler.GetStreamId(i);
@@ -869,7 +893,8 @@ public:
             uint32_t coreNum = AscendC::GetBlockNum();
             uint32_t taskCount =
                 (isVariedLen ? vecBlockScheduler.tokenBatch : shapeBatch) * vNumHead;
-            uint32_t tasksPerCore = taskCount > coreNum ? PING_PONG_STAGES : 1;
+            uint32_t tasksPerCore =
+                (!useBoundedMmad && taskCount > coreNum) ? PING_PONG_STAGES : 1;
             uint32_t taskStride = coreNum * tasksPerCore;
             uint32_t rowsPerSubBlock = (kHeadDim + subBlockNum - 1) / subBlockNum;
             uint32_t rowBegin = subBlockIdx * rowsPerSubBlock;
