@@ -6,8 +6,8 @@
 
 接口契约见 [api.md](api.md)。将既有融合实现迁入 arch22，移除历史 A2/A3 kernel，
 保留两个 host ABI。该迁移不改变融合实现的计算、任务划分、地址规划和同步协议。
-`useV2` 仅区别 host 参数契约和 dtype 校验，不再选择不同 kernel。A2/A3 与 A5
-分别编译 arch22 和 arch35，但各架构内部的 V1/V2 host ABI 进入同一实现。
+host 统一按融合契约校验 dtype 与属性，不再设置版本选择字段或隐藏属性。A2/A3 与 A5
+分别编译 arch22 和 arch35，各架构内部的两个 host ABI 进入同一实现。
 CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；固定原输入值域及混合容差。
 性能采用 msprof `Task Duration(us)`，本次没有额外性能提升目标。
 
@@ -24,7 +24,8 @@ host 按可用 AIV 数限制 blockDim，任务按连续区间均匀分配。
 每次窗口最多 8 token。Q/K/V 按各自 stride 搬入双 raw bank，转为 FP32。
 Q/K 可选归一化并对 Q 乘 scale。beta 与 g 按窗口收集、转换，完成可选 sigmoid/
 softplus 门控；使用非正指数实现稳定 sigmoid，softplus 修正小尾部舍入损失。
-g=None 时不读取 gate。空序列不进入计算及窗口同步。
+g=None 时直接依据输入地址跳过 gate 读取，不在 tiling 中另存存在性标志。
+空序列不进入计算及窗口同步。
 
 ### Stage 1：Vector，逐 token 递推与写回
 
