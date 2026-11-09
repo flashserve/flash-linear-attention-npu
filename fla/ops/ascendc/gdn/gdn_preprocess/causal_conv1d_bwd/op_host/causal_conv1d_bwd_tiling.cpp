@@ -272,18 +272,20 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t sysWorkspaceSize = 0;
     uint32_t coreNum = 0;
     bool isAscend910B = false;
-    bool isRegbase = false;
+    bool isA5 = false;
+    bool isA6 = false;
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
         const auto npuArch = ascendcPlatform.GetCurNpuArch();
-        isRegbase = (npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201);
+        isA5 = npuArch == NpuArch::DAV_3510;
+        isA6 = npuArch == NpuArch::DAV_9201;
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-        OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(ubSize <= RESERVED_UB, OP_LOGE(context, "insufficient UB after reservation"), return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
 
@@ -306,10 +308,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t numBlksD = D / BD;
 
-    bool useRegbaseDirectFast = isRegbase && isB16Input &&
+    bool useRegbaseDirectFast = (isA5 || isA6) && isB16Input &&
                                activation == ACTIVATION_SILU &&
                                !useInitialState && !useFinalState &&
-                               W == 4 && BD == 64;
+                               (W == 4 || (isA6 && W > 0 && W < 4)) && BD == 64;
     bool use910BDirectFast = isAscend910B && isB16Input &&
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
@@ -336,7 +338,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     };
 
     uint32_t BT = 64;
-    if (useRegbaseDirectFast) {
+    if (isA6 && useRegbaseDirectFast) {
+        // Bound the time tile by the work per AIV as well as the reported UB.
+        const uint32_t tokensPerCore = totalTokens / coreNum + (totalTokens % coreNum != 0);
+        BT = std::min(T, std::min(DIRECT_FAST_BT_MAX, std::max(DIRECT_FAST_BT_STEP, tokensPerCore)));
+        while (BT > 1 && CalcRegbaseDirectNeed(BT) > ubSize) {
+            --BT;
+        }
+    } else if (useRegbaseDirectFast) {
         BT = std::min(T, DIRECT_FAST_BT_MAX);
         while (BT > DIRECT_FAST_BT_MIN && CalcRegbaseDirectNeed(BT) > ubSize) {
             BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
@@ -378,6 +387,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else {
         need += (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
         need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
+        if (isA6 && isB16Input) {
+            need += calcBdAl * B16_DTYPE_SIZE; // Generic arch92 castBuf_.
+        }
         const bool hasWeight = true;
         const bool hasBias = true;
         if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;

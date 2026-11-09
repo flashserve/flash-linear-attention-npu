@@ -26,7 +26,8 @@ using namespace RecurrentKda;
 struct RecurrentKdaCompileInfo {
     uint64_t aivNum{0UL};
     uint64_t ubSize{0UL};
-    bool isRegbase{false};
+    bool isA5{false};
+    bool isA6{false};
 };
 
 struct RecurrentKdaInfo {

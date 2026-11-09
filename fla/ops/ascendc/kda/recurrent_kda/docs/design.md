@@ -20,7 +20,7 @@ GDN recurrent 的函数接口。
 
 - 不提供内部 state 矩阵任意转置或步长采样的低性能 gather/scatter 路径。
 - 不支持把 `KdaGateCumsum` 的输出流水作为公开前置步骤。
-- A2/A3 通过第 17 节的时间窗口支持长序列；保持逐 token recurrent 公式和 AIV-only 路径。A5/A6 仍限制每段长度 <=8。
+- A2/A3/A6 通过第 17 节的时间窗口支持长序列；保持逐 token recurrent 公式和 AIV-only 路径。A5 仍限制每段长度 <=8。
 
 ## 3. 能力边界
 
@@ -76,8 +76,7 @@ o_t = S @ q_t
 ## 5. 整体架构
 
 A5（DAV_3510）使用 `op_kernel/arch35/recurrent_kda.h`，A6（DAV_9201）使用独立的
-`op_kernel/arch92/recurrent_kda.h`；两者沿用相同的短序列计算流程。Host 的
-`isRegbase` 同时选择对应的分核和 UB 策略；UB 容量从实际平台读取。A2/A3 保留原有多时间窗口路径。
+`op_kernel/arch92/recurrent_kda.h`。A6 按 batch 和 value head 分核，每个 V 分片在 UB 中保留 FP32 state，按最多 8 个 token 顺序加载 Q/K/V、gate 和 beta。窗口偏移用于访问局部输入，状态槽索引始终相对整段序列计算。归一化和 gate 的临时区与 state 分开计入 A6 平台的 UB 预算。
 
 - `op_host/op_api/aclnn_recurrent_kda.cpp`：校验 dtype、layout、shape、可选输入组合；不读取 device metadata 的值；
   对规则非连续 Q/K/V 保留 stride/storage offset，已验证布局回退连续化，token/head 置换或
@@ -96,7 +95,7 @@ A5（DAV_3510）使用 `op_kernel/arch35/recurrent_kda.h`，A6（DAV_9201）使�
 Tiling 按逻辑序列和 value head 拆分任务。提供 `cu_seqlens` 时，`seq_num=len(cu_seqlens)-1`，使用与
 fla-org 一致的累计边界语义，第 `i` 条序列范围为 `[cu_seqlens[i], cu_seqlens[i+1])`；未提供时，
 BSND 按 batch 行划分序列，TND 视为一条序列。接口面向 decode / MTP 短序列：每个相邻 offset
-的差值表示 varlen 每段长度；A2/A3 不再限制为 8，A5/A6 每段与 dense 单序列仍须 <=8。提供 cu_seqlens 时，末项表示有效 token 数，可小于图捕获的
+的差值表示 varlen 每段长度；A2/A3/A6 不再限制为 8，A5 每段与 dense 单序列仍须 <=8。提供 cu_seqlens 时，末项表示有效 token 数，可小于图捕获的
 token capacity。
 
 ### 6.2 Tiling Data
@@ -105,7 +104,7 @@ token capacity。
 | --- | --- | --- |
 | `vectorCoreNum` | `uint32_t` | 使用的 AIV core 数 |
 | `ubCalSize` | `uint32_t` | 平台 UB 预算上限 |
-| `ubRestBytes` | `uint32_t` | A2/A3 命名 scratch 实际字节数；A5/A6 保持原剩余预算语义 |
+| `ubRestBytes` | `uint32_t` | A2/A3/A6 命名 scratch 实际字节数；A5 保持原剩余预算语义 |
 | `t` / `seqLen` | `uint32_t` | token 总数与输入物理序列轴长度 |
 | `nk` / `dk` | `uint32_t` | query/key head 数与 K 维 |
 | `nv` / `dv` | `uint32_t` | value head 数与 V 维 |
@@ -168,7 +167,7 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 | A2 | `ascend910b` | 公共 AIV kernel | 无 |
 | A3 | `ascend910_93` | 公共 AIV kernel | 无 |
 | A5 | `ascend950` | arch35 特化 AIV kernel | RegBase/DataCopy 路径，并对 `K=128` 使用融合归约实现 |
-| A6 | `ascend960dt` | arch92 AIV kernel | RegBase/DataCopy 路径，每段长度 <=8 |
+| A6 | `ascend960dt` | arch92 AIV kernel | RegBase/DataCopy 路径，每窗口最多 8 个 token |
 
 ## 9. 精度设计
 
@@ -213,7 +212,7 @@ A2/A5 精度验证过程中修复以下问题：
   batch 维可按 `T * tokenStride` 扁平化。已验证的 feature-gap、zero-stride、batch-gap view
   自动回退连续化；token/head 置换或正 stride 重叠 descriptor 明确拒绝。
 - 当前 `K/V` 仅支持 `K=128,V=128` 或 `K=128,V=256`。
-- A2/A3 内部时间窗口容量为 8，支持多窗口序列；A5/A6 每段仍限制为 <=8。
+- A2/A3/A6 内部时间窗口容量为 8，支持多窗口序列；A5 每段仍限制为 <=8。
 - state 最后两维必须为行主序稠密矩阵；slot/head 维可有间隔但不得重叠。
 - 显式 slot 模式要求所有活跃序列的写槽互不冲突，且 slot 值位于 state pool 容量范围内。
 - 后续若扩展长序列或更多 dtype，需要同步更新 op_host 校验、tiling、kernel、本地测试 case 和 API 文档。

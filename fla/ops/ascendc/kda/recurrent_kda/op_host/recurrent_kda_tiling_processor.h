@@ -46,12 +46,12 @@ static constexpr size_t RKDA_DIM_3 = 3;
 
 static constexpr uint32_t RKDA_LAYOUT_BSND = 0;
 static constexpr uint32_t RKDA_LAYOUT_TND = 1;
-// A2/A3 input window capacity; A5/A6 retain their sequence-length limit.
+// Input window capacity; arch35 also limits the whole sequence to this length.
 static constexpr size_t RKDA_MAX_MTP = 8;
 static constexpr int64_t RKDA_INPUT_BUFFER_NUM = 2;
 static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
-// On regbase A5/A6, broadTmp aliases state in UB when K hits this fused-reduce size.
+// On A5, broadTmp aliases state in UB when K hits this fused-reduce size.
 static constexpr int64_t RKDA_FUSED_REDUCE_K = 128;
 
 struct RecurrentKdaTilingContext {
@@ -101,7 +101,8 @@ struct RecurrentKdaTilingContext {
     bool hasStateOutStrides = false;
     uint64_t aivNum = 0;
     uint64_t ubSize = 0;
-    uint32_t isRegbase = 0;
+    bool isA5 = false;
+    bool isA6 = false;
 };
 
 class RecurrentKdaTilingProcessor {
@@ -624,7 +625,7 @@ private:
         }
         uint64_t maxCoreNum = (ctx_.aivNum > 0) ? ctx_.aivNum : 1;
         uint64_t selectedCoreNum = (taskUnits < maxCoreNum) ? taskUnits : maxCoreNum;
-        if (ctx_.isRegbase == 0) {
+        if (!ctx_.isA5) {
             // Keep the minimum wave count while avoiding partially filled cores.
             const uint64_t tasksPerCore = (taskUnits + maxCoreNum - 1) / maxCoreNum;
             selectedCoreNum = (taskUnits + tasksPerCore - 1) / tasksPerCore;
@@ -643,7 +644,7 @@ private:
 
     ge::graphStatus RuleFillTilingShapeData(RecurrentKdaTilingData &tiling) const
     {
-        if (ctx_.isRegbase == 0) {
+        if (!ctx_.isA5) {
             // Long-sequence offsets are 64-bit, but serialized capacities remain uint32.
             const int64_t maxCapacity = static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
             const int64_t seqLen = ctx_.queryShape.GetDim(
@@ -674,11 +675,20 @@ private:
         return ge::GRAPH_SUCCESS;
     }
 
+    int64_t BetaRowElements(int64_t alignedHeads, uint32_t heads) const
+    {
+        // arch92 packs one head per DMA block; BF16 expands to 16 FP32 elements.
+        if (ctx_.isA6) {
+            return 16;
+        }
+        return ctx_.isA5 ? alignedHeads : heads;
+    }
+
     int64_t CalcFixedUbBytes(int64_t aNv, int64_t aDv, int64_t aDk, uint32_t nv) const
     {
         const int64_t rawBytes = RKDA_MAX_MTP * (8 * aDk + 2 * aDv);
-        const int64_t rawBufferNum = ctx_.isRegbase != 0 ? 1 : 2;
-        const int64_t betaHeads = ctx_.isRegbase != 0 ? aNv : static_cast<int64_t>(nv);
+        const int64_t rawBufferNum = (ctx_.isA5 || ctx_.isA6) ? 1 : 2;
+        const int64_t betaHeads = BetaRowElements(aNv, nv);
         int64_t usedUbBytes = rawBufferNum * rawBytes;
         usedUbBytes += RKDA_MAX_MTP * 4 * betaHeads;
         usedUbBytes += 64 + RKDA_UB_GUARD_BYTES;
@@ -687,16 +697,20 @@ private:
 
     int64_t CalcWorkingUbBytes(int64_t aNv, int64_t aDv, int64_t aDk, uint32_t nv) const
     {
-        const int64_t betaHeads = ctx_.isRegbase != 0 ? aNv : static_cast<int64_t>(nv);
+        const int64_t betaHeads = BetaRowElements(aNv, nv);
         int64_t usedUbBytes = CalcFixedUbBytes(aNv, aDv, aDk, nv);
         usedUbBytes += RKDA_MAX_MTP * (4 * aDv + 12 * aDk + 4 * betaHeads);
+        if (ctx_.isA6 && aDk == RKDA_FUSED_REDUCE_K) {
+            // Normalization and gating must not overwrite live recurrent state between windows.
+            usedUbBytes += RKDA_MAX_MTP * aDk * sizeof(float);
+        }
         return usedUbBytes;
     }
 
     int64_t CalcComputeUbCoeff(int64_t aDk) const
     {
         int64_t coeff = 4 * aDk + 8; // state and row outputs.
-        if (ctx_.isRegbase == 0 || aDk != RKDA_FUSED_REDUCE_K) {
+        if ((!ctx_.isA5 && !ctx_.isA6) || aDk != RKDA_FUSED_REDUCE_K) {
             coeff += 4 * aDk; // broadTmp for the generic matvec path.
         }
         return coeff;
@@ -790,14 +804,14 @@ private:
             OP_LOGE(ctx_.nodeName, "ubRestBytes should be non-negative, but got %ld", ubRestBytes);
             return ge::GRAPH_FAILED;
         }
-        if (ctx_.isRegbase == 0) {
+        if (!ctx_.isA5) {
             const int64_t tmpBytes = ubCalcCtx.workingUbBytes - ubCalcCtx.fixedUbBytes +
                                      CalcComputeUbCoeff(aDk) * static_cast<int64_t>(selected.vStep);
             if (tmpBytes > ubRestBytes) {
                 OP_LOGE(ctx_.nodeName, "packed input buffers exceed the UB budget");
                 return ge::GRAPH_FAILED;
             }
-            // Generic A2/A3 kernels allocate only named live scratch slices.
+            // Windowed kernels allocate only their live scratch slices.
             ubRestBytes = tmpBytes;
         }
         tiling.ubCalSize = static_cast<uint32_t>(ctx_.ubSize);
