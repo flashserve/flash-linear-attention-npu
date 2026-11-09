@@ -245,7 +245,11 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
 
 
 def compare_overlay_to_base(overlay_dir: Path, base_dir: Path) -> list[str]:
-    """Return public aclnn contracts that an existing wheel cannot safely call."""
+    """Validate an overlay and reject changes to contracts shared with the base.
+
+    Additional interfaces are allowed after manifest and two-phase validation.
+    They do not replace any base entry, nor add Python/Stable adapter support.
+    """
 
     try:
         overlay = validated_contracts(overlay_dir, require_manifest=True)
@@ -255,11 +259,7 @@ def compare_overlay_to_base(overlay_dir: Path, base_dir: Path) -> list[str]:
     problems: list[str] = []
     for symbol, signature in sorted(overlay.items()):
         base_signature = base.get(symbol)
-        if base_signature is None:
-            problems.append(
-                f"{symbol}: not declared by the base wheel (overlay={list(signature)})"
-            )
-        elif base_signature != signature:
+        if base_signature is not None and base_signature != signature:
             problems.append(
                 f"{symbol}: overlay={list(signature)} base={list(base_signature)}"
             )

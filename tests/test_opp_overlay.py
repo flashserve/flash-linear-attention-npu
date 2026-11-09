@@ -28,21 +28,21 @@ def _minimal_vendor(path: Path) -> None:
     _write_aclnn_header(path, "int64_t")
 
 
-def _write_aclnn_header(vendor: Path, scalar_type: str) -> None:
+def _write_aclnn_header(vendor: Path, scalar_type: str, *, symbol: str = "aclnnDemo") -> None:
     header = vendor / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        f"aclnnStatus {symbol}GetWorkspaceSize(\n"
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
         "    aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize,\n"
+        f"aclnnStatus {symbol}(void *workspace, uint64_t workspaceSize,\n"
         "    aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
     with mock.patch.dict(ABI["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
     }):
         ABI["write_manifest"](vendor)
 
@@ -133,6 +133,18 @@ class OverlayInstallerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "public aclnn ABI differs"):
                 self.module["install_overlay"](source)
             self.assertFalse((vendors / "fla_npu_overlay_transformer").exists())
+
+    def test_new_public_aclnn_interface_can_be_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            vendors, base, source = self._tree(Path(temp_dir))
+            base_manifest = (base / "abi_manifest.json").read_bytes()
+            _write_aclnn_header(source, "float", symbol="aclnnRecurrentGatedDeltaRuleV2")
+            installed = self.module["install_overlay"](source)
+            self.assertEqual(installed, vendors / "fla_npu_overlay_transformer")
+            self.assertEqual(ABI["compare_overlay_to_base"](installed, base), [])
+            self.assertEqual((base / "abi_manifest.json").read_bytes(), base_manifest)
 
     def test_failed_replacement_preserves_previous_overlay_base_and_config(self) -> None:
         for failure in ("copy", "staged_abi", "set_env", "move_old", "move_new", "config"):

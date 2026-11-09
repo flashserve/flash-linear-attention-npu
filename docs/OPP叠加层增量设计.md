@@ -132,7 +132,9 @@ bash tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy
 
 类型解析保留每级指针，区分 `double`/`double*`、`aclTensor*`/`aclTensor**`，不猜测未知类型。参数名及 cv 限定不参与 C 调用 ABI 比较。仅保留两个显式例外：SolveTri 已核对源码的冻结契约；CausalConv1d 及 Bwd 的 Tensor 变体共用对应执行入口。
 
-`abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。旧 base 无清单时允许以公共头为兼容基线；新 overlay 必须携带有效清单。缺头、未覆盖导出、阶段不配对、哈希不符、base 未声明接口或签名漂移均拒绝。
+`abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。旧 base 无清单时允许以公共头为兼容基线；新 overlay 必须携带有效清单。允许 overlay 新增 base 未声明的接口，前提是公共头、清单与两阶段导出完整有效；overlay 与 base 中同名接口的签名必须一致。缺头、未覆盖导出、阶段不配对、哈希不符或同名接口签名漂移仍拒绝。安装、状态检查与 import 使用同一兼容性规则。
+
+允许新增 ACLNN 导出不会自动为旧 wheel 添加 Python wrapper 或 Stable adapter。调用新增接口仍需匹配的调用方支持。此策略随 wheel 中的 `_op_abi.py` 交付；partial CI 使用已下载 base wheel 的安装器和运行时，因此需发布并安装包含此修复的 base wheel。仅更新仓库源码或重新构建 overlay，不能改变旧 wheel 的拒绝策略。
 
 overlay ABI 校验以当前 base 与 wheel 的 Python/Stable launcher 配套为前提。构建检查验证本次源码中的 adapter 与 OPP 头文件，overlay 安装及加载检查验证 overlay 与当前 base；这些检查不构成对另一版本 base 与旧 launcher 任意混装的兼容承诺。
 

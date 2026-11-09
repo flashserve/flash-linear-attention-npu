@@ -115,22 +115,23 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
     _write_aclnn_header(vendor_dir, "int64_t")
 
 
-def _write_aclnn_header(vendor_dir: Path, scalar_type: str) -> None:
+def _write_aclnn_header(vendor_dir: Path, scalar_type: str, *, symbol: str = "aclnnDemo") -> None:
     header = vendor_dir / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        f"aclnnStatus {symbol}GetWorkspaceSize(\n"
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
         "    aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);\n",
+        f"aclnnStatus {symbol}(void *workspace, uint64_t workspaceSize, "
+        "aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
 
     abi = runpy.run_path(str(OP_ABI_SOURCE))
     with mock.patch.dict(abi["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
     }):
         abi["write_manifest"](vendor_dir)
 
@@ -1316,14 +1317,18 @@ source {set_env!s}
                     _load_runtime(runtime_path)
 
     def test_overlay_import_prepares_order_without_loading_torch_or_launcher(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        for symbol in ("aclnnDemo", "aclnnRecurrentGatedDeltaRuleV2"):
+            self._check_overlay_import(symbol)
+
+    def _check_overlay_import(self, symbol: str) -> None:
+        with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as temp_dir:
             runtime_path, base, _ = _create_runtime_package(
                 Path(temp_dir) / "site-packages"
             )
             overlay = base.parent / "fla_npu_overlay_transformer"
             _create_minimal_vendor(overlay)
             _write_aclnn_header(base, "int64_t")
-            _write_aclnn_header(overlay, "int64_t")
+            _write_aclnn_header(overlay, "int64_t", symbol=symbol)
 
             with mock.patch.dict(
                 os.environ,

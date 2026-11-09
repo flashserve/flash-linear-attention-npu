@@ -17,17 +17,19 @@ abi = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(abi)
 
 
-def vendor(path, scalar="double", exports=None):
+def vendor(path, scalar="double", exports=None, *, name="Demo"):
     (path / abi.LIBRARY).parent.mkdir(parents=True, exist_ok=True)
     (path / abi.LIBRARY).write_bytes(b"fixture ELF, exports supplied by the test")
-    header = path / abi.INCLUDE / "aclnn_demo.h"
+    header = path / abi.INCLUDE / f"aclnn_{name.lower()}.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        f"aclnnStatus aclnnDemoGetWorkspaceSize(const aclTensor *x, {scalar} scale, "
+        f"aclnnStatus aclnn{name}GetWorkspaceSize(const aclTensor *x, {scalar} scale, "
         "uint64_t *workspaceSize, aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize, "
+        f"aclnnStatus aclnn{name}(void *workspace, uint64_t workspaceSize, "
         "aclOpExecutor *executor, aclrtStream stream);\n", encoding="utf-8")
-    with mock.patch.object(abi, "exported_symbols", return_value=exports or {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}):
+    with mock.patch.object(abi, "exported_symbols", return_value=(
+        exports if exports is not None else set(abi.public_prototypes(path / abi.INCLUDE))
+    )):
         abi.write_manifest(path)
     return path
 
@@ -54,10 +56,46 @@ class ContractTest(unittest.TestCase):
             problems = abi.compare_overlay_to_base(overlay, base)
             self.assertTrue(any("double*" in p for p in problems), problems)
 
+    def test_new_interfaces_are_allowed_with_manifest_or_legacy_base(self):
+        for legacy in (False, True):
+            for include_existing in (False, True):
+                with self.subTest(legacy=legacy, include_existing=include_existing), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    base = vendor(Path(tmp) / "base")
+                    if legacy:
+                        (base / abi.MANIFEST_NAME).unlink()
+                    overlay = Path(tmp) / "overlay"
+                    if include_existing:
+                        vendor(overlay)
+                    vendor(overlay, name="RecurrentGatedDeltaRuleV2")
+                    self.assertEqual(abi.compare_overlay_to_base(overlay, base), [])
+
+    def test_new_interface_does_not_allow_drift_in_existing_interface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = vendor(Path(tmp) / "base")
+            overlay = vendor(Path(tmp) / "overlay", "float")
+            vendor(overlay, name="RecurrentGatedDeltaRuleV2")
+            problems = abi.compare_overlay_to_base(overlay, base)
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("aclnnDemoGetWorkspaceSize", problems[0])
+            self.assertIn("float", problems[0])
+
+    def test_new_interface_requires_both_phases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = vendor(Path(tmp) / "base")
+            overlay = vendor(Path(tmp) / "overlay", name="RecurrentGatedDeltaRuleV2")
+            manifest = overlay / abi.MANIFEST_NAME
+            data = json.loads(manifest.read_text())
+            del data["contracts"]["aclnnRecurrentGatedDeltaRuleV2"]
+            manifest.write_text(json.dumps(data))
+            problems = abi.compare_overlay_to_base(overlay, base)
+            self.assertTrue(any("Missing phase-two" in p for p in problems), problems)
+
     def test_missing_manifest_headers_and_modified_library_fail_closed(self):
         for mutation in ["manifest", "headers", "library"]:
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
-                base, overlay = vendor(Path(tmp)/"base"), vendor(Path(tmp)/"overlay")
+                base = vendor(Path(tmp) / "base")
+                overlay = vendor(Path(tmp) / "overlay", name="RecurrentGatedDeltaRuleV2")
                 if mutation == "manifest": (overlay/abi.MANIFEST_NAME).unlink()
                 elif mutation == "headers": shutil.rmtree(overlay/abi.INCLUDE)
                 else: (overlay/abi.LIBRARY).write_bytes(b"different library")
