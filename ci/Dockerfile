@@ -65,7 +65,6 @@ RUN set -e; \
       python3 -m pip install "/tmp/${TORCH_NPU_WHL}"; \
       rm -f "/tmp/${TORCH_NPU_WHL}"; \
       python3 -c 'from importlib import metadata; assert metadata.version("torch-npu") == "'"${TORCH_NPU_VERSION}"'"; print("torch-npu", metadata.version("torch-npu"))'; \
-      python3 -c 'import importlib; [importlib.import_module(name) for name in ("torchnpugen.gen_op_plugin_functions", "torchnpugen.gen_backend_stubs", "torchnpugen.struct.gen_struct_opapi")]; print("torchnpugen OK")'; \
     fi; \
     python3 -m pip uninstall -y triton || true; \
     python3 -m pip install "triton-ascend==${TRITON_ASCEND_VERSION}" --extra-index-url=https://triton-ascend.osinfra.cn/pypi/simple; \
@@ -74,8 +73,7 @@ RUN set -e; \
     cp -a /tmp/pybind11-target/. "$SITE_PACKAGES/"; \
     rm -rf /tmp/pybind11-target; \
     python3 -c "import pybind11; print(pybind11.__file__)"; \
-    python3 -c "from triton import Config; print('triton Config OK')"; \
-    python3 -c "import site; p=site.getsitepackages()[0]+'/torchnpugen/api/cpp.py'; s=open(p).read(); old='    raise AssertionError(f\"unrecognized return type {t}\")'; new='    elif isinstance(t, OptionalType):\n        return OptionalCType(returntype_type(t.elem, mutable=False))\n    raise AssertionError(f\"unrecognized return type {t}\")'; assert old in s, 'patch target not found'; open(p,'w').write(s.replace(old,new,1)); print('torchnpugen OptionalType return patch applied')"
+    python3 -c "from triton import Config; print('triton Config OK')"
 
 RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
       mkdir -p /opt/fla-ci/third_party/pkg; \

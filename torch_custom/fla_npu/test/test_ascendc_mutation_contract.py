@@ -38,13 +38,17 @@ def fake_torch(incremented):
 
 def load_ascendc_module(raw_calls):
     fake_fla_npu = types.ModuleType("fla_npu")
-    fake_fla_npu.__path__ = []
+    fake_fla_npu.__path__ = [str(ASCENDC_INIT_PATH.parents[2])]
     fake_fla_npu.load_ascendc_opapi_libraries = lambda: None
 
     fake_ops = types.ModuleType("fla_npu.ops")
     fake_ops.__path__ = []
 
-    ctypes_module = types.ModuleType("fla_npu.ops.ascendc._aclnn_ctypes")
+    stable_spec = importlib.util.spec_from_file_location(
+        "fla_npu.ops.ascendc._stable", ASCENDC_INIT_PATH.parent / "_stable.py")
+    stable_module = importlib.util.module_from_spec(stable_spec)
+    assert stable_spec.loader is not None
+    stable_spec.loader.exec_module(stable_module)
 
     def npu_causal_conv1d(
         x,
@@ -93,21 +97,32 @@ def load_ascendc_module(raw_calls):
         num_accepted_tokens=None,
         g=None,
         gk=None,
+        use_qk_l2norm_in_kernel=False,
+        use_gate_in_kernel=False,
+        A_log=None,
+        dt_bias=None,
+        use_beta_sigmoid_in_kernel=False,
+        allow_neg_eigval=False,
     ):
         del key, value, beta, scale, actual_seq_lengths, ssm_state_indices
         del num_accepted_tokens, g, gk
+        del use_qk_l2norm_in_kernel, use_gate_in_kernel, A_log, dt_bias
+        del use_beta_sigmoid_in_kernel, allow_neg_eigval
         raw_calls.append(state)
         return "output"
 
-    ctypes_module.ASCENDC_CTYPES_OPS = {
+    stable_ops = {
         "npu_causal_conv1d": npu_causal_conv1d,
         "npu_recurrent_kda": npu_recurrent_kda,
         "npu_recurrent_gated_delta_rule": npu_recurrent_gated_delta_rule,
     }
+    for name, function in stable_ops.items():
+        setattr(stable_module, name, function)
+    stable_module._op = lambda name: stable_ops[name]
     modules = {
         "fla_npu": fake_fla_npu,
         "fla_npu.ops": fake_ops,
-        "fla_npu.ops.ascendc._aclnn_ctypes": ctypes_module,
+        "fla_npu.ops.ascendc._stable": stable_module,
     }
 
     spec = importlib.util.spec_from_file_location(
@@ -235,6 +250,16 @@ class AscendCMutationContractTest(unittest.TestCase):
             ("gdr state keyword", "npu_recurrent_gated_delta_rule",
              [FakeTensor(), FakeTensor(), FakeTensor()],
              dict(gdr_kwargs, state=state)),
+            ("gdr fused state positional", "npu_recurrent_gated_delta_rule",
+             [FakeTensor(), FakeTensor(), FakeTensor(), state],
+             dict(gdr_kwargs, g=one(), A_log=one(), dt_bias=one(),
+                  use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True,
+                  use_beta_sigmoid_in_kernel=True, allow_neg_eigval=True)),
+            ("gdr fused state keyword", "npu_recurrent_gated_delta_rule",
+             [FakeTensor(), FakeTensor(), FakeTensor()],
+             dict(gdr_kwargs, state=state, g=one(), A_log=one(), dt_bias=one(),
+                  use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True,
+                  use_beta_sigmoid_in_kernel=True, allow_neg_eigval=True)),
         ]
 
     def test_fast_path_matches_bind_reference_for_every_call_form(self):
@@ -248,7 +273,7 @@ class AscendCMutationContractTest(unittest.TestCase):
             spec.loader.exec_module(module)
             for label, name, args, kwargs in self._call_forms(module):
                 signature = inspect.signature(
-                    module.ASCENDC_CTYPES_OPS[name])
+                    getattr(module._stable, name))
                 plan = module._mutation_plan(name, signature)
                 fast_mutated, used_fast = module._resolve_mutation(
                     plan, signature,
@@ -327,6 +352,29 @@ class AscendCMutationContractTest(unittest.TestCase):
             module._get_direct_op.cache_clear()
             with self.assertRaisesRegex(RuntimeError, "unknown argument"):
                 module._get_direct_op("npu_recurrent_kda")
+
+
+    def test_hot_wrapper_contract_does_not_increment_version_twice(self):
+        raw_calls = []
+        incremented = []
+        module, spec, modules = load_ascendc_module(raw_calls)
+        modules["torch"] = fake_torch(incremented)
+        stable = modules["fla_npu.ops.ascendc._stable"]
+        original = stable.npu_causal_conv1d
+
+        def hot(*args, **kwargs):
+            result = original(*args, **kwargs)
+            incremented.append(kwargs["conv_states"])
+            return result
+
+        hot._fla_npu_inplace_contract = True
+        hot.__signature__ = inspect.signature(original)
+        stable.npu_causal_conv1d = hot
+        with mock.patch.dict(sys.modules, modules):
+            spec.loader.exec_module(module)
+            state = FakeTensor()
+            module.npu_causal_conv1d(FakeTensor(), FakeTensor(), conv_states=state)
+        self.assertEqual(incremented, [state])
 
 
 if __name__ == "__main__":

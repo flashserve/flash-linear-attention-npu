@@ -14,8 +14,9 @@ Everything is read from files in the tree:
 3. **Enum tables** -- a ``cstr(k<X>Names, arg)`` call site must have the same
    code order as ``_stable._ENUM[op][arg]``, because the two are the only thing
    that keeps a layout string from silently becoming a different layout.
-4. **Baseline** -- a gap is a FAIL unless ``tests/stable_coverage_baseline.json``
-   records it with a reason, so gaps are declared rather than tolerated.
+4. **Public contract** -- the historical API and dispatcher argument positions
+   in ``tests/stable_public_api.json`` cannot silently disappear or reorder.
+   All operators must be covered; no missing-backend waiver is supported.
 
 Usage::
 
@@ -39,6 +40,7 @@ REPO_ROOT = SETUP_DIR.parents[1]
 OPS_DIR = SETUP_DIR / "fla_npu" / "ops" / "ascendc"
 SRC_DIR = SETUP_DIR / "csrc" / "src"
 BASELINE = REPO_ROOT / "tests" / "stable_coverage_baseline.json"
+PUBLIC_CONTRACT = REPO_ROOT / "tests" / "stable_public_api.json"
 
 
 def public_ops() -> list[str]:
@@ -51,42 +53,41 @@ def public_ops() -> list[str]:
     return re.findall(r'"([a-z0-9_]+)"', match.group(1))
 
 
-def ctypes_ops() -> list[str]:
-    """Operators the ctypes fallback still defines.
-
-    This is the *fallback* surface, not a parity reference: an operator with no
-    entry here can only be reached through the adapter layer.
-    """
-
-    text = (OPS_DIR / "_aclnn_ctypes.py").read_text(encoding="utf-8")
-    return sorted(set(re.findall(r"^def (npu_[a-z0-9_]+)\(", text, re.M)))
+def required_public_ops() -> list[str]:
+    """Historical public contract, independent of the implementation inventory."""
+    names = json.loads(PUBLIC_CONTRACT.read_text(encoding="utf-8"))["operators"]
+    if not names or len(names) != len(set(names)):
+        raise ValueError("public API contract must contain unique nonempty operators")
+    return names
 
 
-def launcher_only_ops() -> list[str]:
-    """Operators only the adapter layer can serve: published minus ctypes.
-
-    A new operator is not expected to bring a ctypes adapter any more, so the
-    fallback backend is *derived* here exactly the way ``__init__.py`` derives
-    it -- ``_ASCENDC_OPS`` minus what ``_aclnn_ctypes`` defines.  Nothing is
-    declared, so nothing can drift or go stale.
-    """
-
-    return sorted(set(public_ops()) - set(ctypes_ops()))
-
-
-_HAND_WRITTEN_LAUNCHER_ONLY = re.compile(
-    r"_LAUNCHER_ONLY_OPS[^=\n]*=\s*\(")
-
-
-def hand_written_launcher_only() -> bool:
-    """True when ``__init__.py`` lists launcher-only operators by hand again.
-
-    The declaration is what new operators would have to remember, so the only
-    way to get the derivation wrong is to bypass it.
-    """
-
-    text = (OPS_DIR / "__init__.py").read_text(encoding="utf-8")
-    return _HAND_WRITTEN_LAUNCHER_ONLY.search(text) is not None
+def public_signatures(path: Path) -> dict[str, dict]:
+    """Read inspect.signature-visible arguments without importing torch/CANN."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    constants = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, TypeError):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = value
+    result = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("npu_"):
+            continue
+        for default in node.args.defaults + node.args.kw_defaults:
+            if isinstance(default, ast.Name) and default.id in constants:
+                replacement = ast.parse(repr(constants[default.id]), mode="eval").body
+                for values in (node.args.defaults, node.args.kw_defaults):
+                    for index, item in enumerate(values):
+                        if item is default:
+                            values[index] = replacement
+        result[node.name] = {"arguments": ast.unparse(node.args),
+                             "return": ast.unparse(node.returns) if node.returns else None}
+    return result
 
 
 def wrappers() -> dict[str, int]:
@@ -109,45 +110,54 @@ def wrapper_dispatches() -> dict[str, list[dict]]:
     """
 
     tree = ast.parse((OPS_DIR / "_stable.py").read_text(encoding="utf-8"))
-    found: dict[str, list[dict]] = {}
-    for node in tree.body:
-        if (not isinstance(node, ast.FunctionDef)
-                or not node.name.startswith("npu_")):
-            continue
-        # `stream = _current_stream_ptr()` hoisted out of the call is the same
-        # thing as passing the call inline; both count as "stream is last".
-        hoisted = {target.id
-                   for assign in ast.walk(node)
-                   if isinstance(assign, ast.Assign)
-                   and isinstance(assign.value, ast.Call)
-                   and isinstance(assign.value.func, ast.Name)
-                   and assign.value.func.id == "_current_stream_ptr"
-                   for target in assign.targets
-                   if isinstance(target, ast.Name)}
-        calls: list[dict] = []
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+    def dispatch_name(node):
+        if not isinstance(node, ast.Call) or not node.args or not isinstance(node.args[0], ast.Constant):
+            return None
+        if isinstance(node.func, ast.Name) and node.func.id == "_op":
+            return node.args[0].value
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "_OP_CACHE" and node.func.attr == "get":
+            return node.args[0].value
+        return None
+
+    def walk(function, visited):
+        if function in visited:
+            return []
+        visited = visited | {function}
+        node = functions[function]
+        assignments = [item for item in ast.walk(node) if isinstance(item, ast.Assign)]
+        aliases = {target.id: dispatch_name(item.value) for item in assignments
+                   for target in item.targets if isinstance(target, ast.Name) and dispatch_name(item.value)}
+        helpers = {target.id: item.value.id for item in assignments
+                   for target in item.targets if isinstance(target, ast.Name)
+                   and isinstance(item.value, ast.Name) and item.value.id in functions}
+        hoisted = {target.id for item in assignments if isinstance(item.value, ast.Call)
+                   and isinstance(item.value.func, ast.Name) and item.value.func.id == "_current_stream_ptr"
+                   for target in item.targets if isinstance(target, ast.Name)}
+        calls = []
         for call in ast.walk(node):
             if not isinstance(call, ast.Call):
                 continue
-            inner = call.func
-            if not (isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Name)
-                    and inner.func.id == "_op"
-                    and inner.args
-                    and isinstance(inner.args[0], ast.Constant)):
+            op = dispatch_name(call.func)
+            if isinstance(call.func, ast.Name):
+                op = aliases.get(call.func.id, op)
+                helper = helpers.get(call.func.id, call.func.id)
+                if helper in functions and helper not in visited:
+                    calls.extend(walk(helper, visited))
+            if op is None:
                 continue
             last = call.args[-1] if call.args else None
-            stream_last = (
-                isinstance(last, ast.Call)
-                and isinstance(last.func, ast.Name)
-                and last.func.id == "_current_stream_ptr"
-            ) or (isinstance(last, ast.Name) and last.id in hoisted)
-            calls.append({"op": inner.args[0].value,
-                          "args": len(call.args),
-                          "star": any(isinstance(argument, ast.Starred)
-                                      for argument in call.args),
+            stream_last = (isinstance(last, ast.Call) and isinstance(last.func, ast.Name)
+                           and last.func.id == "_current_stream_ptr") or (
+                               isinstance(last, ast.Name) and last.id in hoisted)
+            calls.append({"op": op, "args": len(call.args),
+                          "expressions": [ast.unparse(arg) for arg in call.args],
+                          "star": any(isinstance(arg, ast.Starred) for arg in call.args),
                           "stream_last": stream_last})
-        found[node.name] = calls
-    return found
+        return calls
+
+    return {name: walk(name, set()) for name in functions if name.startswith("npu_")}
 
 
 def _wrapper_problems(op: str, expected: list, dispatch: dict) -> list[str]:
@@ -261,9 +271,11 @@ def registrations() -> list[tuple[str, str]]:
 
     text = (SRC_DIR / "stable_ops.cpp").read_text(encoding="utf-8")
     defs = re.findall(r"m\.def\((kSchema\w*)\)", text)
-    impls = [match.group(2) or match.group(3)
-             for match in _IMPL_RE.finditer(text)]
-    return list(zip(defs, impls))
+    impls = {match.group(1): match.group(2) or match.group(3)
+             for match in _IMPL_RE.finditer(text)}
+    table = schemas()
+    return [(constant, impls.get(table.get(constant, {}).get("op"), ""))
+            for constant in defs]
 
 
 def adapter_functions() -> dict[str, str]:
@@ -308,7 +320,7 @@ def adapters() -> dict[str, dict]:
         entry = found.setdefault(name, {})
         entry["schema"] = schema["file"]
         entry["def"] = True
-        entry["impl"] = True
+        entry["impl"] = bool(function)
         entry["adapter"] = function
         entry["run"] = functions.get(function)
         # The declared domain of this operator, as far as the tree can tell:
@@ -398,29 +410,46 @@ def expected_source(op: str) -> str:
     return f"stable_{op[len('npu_'):]}.cpp" if op.startswith("npu_") else ""
 
 
+def enum_codes_match(table: dict[str, int], names: list[str]) -> bool:
+    """C++ indexes its name array with integer codes, independently of key order."""
+    values = list(table.values())
+    return (all(type(value) is int for value in values)
+            and values == list(range(len(names))))
+
+
 def evaluate() -> dict:
     published = public_ops()
-    launcher_only = set(launcher_only_ops())
     wrapper_lines = wrappers()
     dispatches = wrapper_dispatches()
     schema_by_op = {info["op"]: info["params"] for info in schemas().values()}
+    contract = json.loads(PUBLIC_CONTRACT.read_text(encoding="utf-8"))
     adapter_info = adapters()
     enums = package_enums()
 
     rows = []
     blockers = []
+    if not published:
+        blockers.append("public API: operator inventory is empty")
+    if len(published) != len(set(published)):
+        blockers.append("public API: duplicate published operator")
+    for name in sorted(set(required_public_ops()) - set(published)):
+        blockers.append(f"{name}: historical public API was removed")
+    signatures = public_signatures(OPS_DIR / "_stable.py")
     for name in sorted(published):
+        expected_signature = contract.get("public_signatures", {}).get(name)
+        if expected_signature is not None and signatures.get(name) != expected_signature:
+            blockers.append(f"{name}: public Python signature differs from the baseline")
         row = {
             "op": name,
             "wrapper": name in wrapper_lines,
             "schema": "schema" in adapter_info.get(name, {}),
-            "run": "run" in adapter_info.get(name, {}),
+            "run": bool(adapter_info.get(name, {}).get("run")),
             "def": bool(adapter_info.get(name, {}).get("def")),
             "impl": bool(adapter_info.get(name, {}).get("impl")),
             "enums": sorted(adapter_info.get(name, {}).get("enums", {})),
             "axes": adapter_info.get(name, {}).get("axes", {}),
             "flags": adapter_info.get(name, {}).get("flags", []),
-            "fallback": "none" if name in launcher_only else "ctypes",
+            "backend": "stable",
         }
         rows.append(row)
         if name not in wrapper_lines:
@@ -437,6 +466,14 @@ def evaluate() -> dict:
             blockers.append(
                 f"{name}: adapter is defined in {actual}, expected {wanted} "
                 "(one operator per file)")
+        if not dispatches.get(name):
+            blockers.append(f"{name}: wrapper never reaches a Stable dispatcher call")
+        expected_calls = contract.get("dispatch_arguments", {}).get(name)
+        if expected_calls is not None:
+            actual_calls = [{"op": call["op"], "expressions": call["expressions"]}
+                            for call in dispatches.get(name, [])]
+            if actual_calls != expected_calls:
+                blockers.append(f"{name}: dispatcher argument order/expression differs from public contract")
         for dispatch in dispatches.get(name, []):
             if dispatch["op"] == name:
                 blockers.extend(
@@ -453,19 +490,31 @@ def evaluate() -> dict:
                 blockers.append(
                     f"{name}: {info['table']} order {info['names']} != "
                     f"_stable._ENUM {list(package_table[argument])}")
+            elif not enum_codes_match(package_table[argument], info["names"]):
+                blockers.append(
+                    f"{name}: enum numeric codes for {argument!r} "
+                    f"{list(package_table[argument].values())} must be integer "
+                    f"indexes {list(range(len(info['names'])))}")
 
     for name in sorted(set(adapter_info) - set(published)):
         blockers.append(f"{name}: adapter exists but is not published")
 
-    # Having no ctypes fallback is the default shape for a new operator, so the
-    # fallback set is derived (published minus ctypes) instead of declared --
-    # nothing for an author to remember.  A hand-written tuple would bring the
-    # declaration back and drift from the ctypes inventory.
-    if hand_written_launcher_only():
-        blockers.append(
-            "_LAUNCHER_ONLY_OPS must stay derived from _ASCENDC_OPS and "
-            "ASCENDC_CTYPES_OPS; listing operators by hand reintroduces the "
-            "declaration new operators no longer need")
+    unit = (SRC_DIR / "stable_ops.cpp").read_text(encoding="utf-8")
+    definitions = re.findall(r"m\.def\((kSchema\w*)\)", unit)
+    implementations = [m.group(1) for m in _IMPL_RE.finditer(unit)]
+    schema_table = schemas()
+    for constant in definitions:
+        if constant not in schema_table:
+            blockers.append(f"{constant}: registered schema is not defined")
+    defined_ops = [schema_table[c]["op"] for c in definitions if c in schema_table]
+    defined_ops.extend(re.findall(r'm\.def\(\s*"([a-z0-9_]+)\(', unit))
+    for name in implementations:
+        if name not in defined_ops:
+            blockers.append(f"{name}: implementation has no registered schema")
+    for items, label in ((definitions, "schema"), (implementations, "implementation")):
+        for name in set(items):
+            if items.count(name) != 1:
+                blockers.append(f"{name}: duplicate {label} registration")
 
     # Adapter sources are #included into stable_ops.cpp rather than compiled on
     # their own, so a file nobody includes is never built: the operator would
@@ -475,6 +524,9 @@ def evaluate() -> dict:
         blockers.append(
             f"{orphaned}: adapter source is not #included by stable_ops.cpp, "
             "so it is never compiled")
+    for included in translation_unit()[0]:
+        if not (SRC_DIR / included).is_file():
+            blockers.append(f"{included}: included adapter source is missing")
 
     # ...and the other direction: a table in Python that no adapter consumes is
     # a stale code order waiting to be used (this is how the recurrent KDA
@@ -491,22 +543,24 @@ def evaluate() -> dict:
                     f"{name}: _stable._ENUM[{argument!r}] {list(table)} != "
                     f"{adapter_enums[argument]['table']} "
                     f"{adapter_enums[argument]['names']}")
+            elif not enum_codes_match(table, adapter_enums[argument]["names"]):
+                blockers.append(
+                    f"{name}: _stable._ENUM[{argument!r}] enum numeric codes "
+                    "do not match C++ table indexes")
 
     return {"rows": rows, "blockers": blockers,
             "adapter_count": len(adapter_info),
-            "launcher_only": sorted(launcher_only)}
+            "public_count": len(published)}
 
 
 def render(report: dict, strict: bool, baseline: dict) -> tuple[str, bool]:
-    known = {} if strict else baseline.get("known_gaps", {})
     lines = ["%-42s %-8s %-8s %-8s %-11s %s" % (
-        "operator", "wrapper", "schema", "run", "registered", "fallback")]
+        "operator", "wrapper", "schema", "run", "registered", "backend")]
     for row in report["rows"]:
         lines.append("%-42s %-8s %-8s %-8s %-11s %s" % (
             row["op"], row["wrapper"], row["schema"], row["run"],
-            row["def"] and row["impl"], row.get("fallback", "ctypes")))
-    unexplained = [b for b in report["blockers"]
-                   if b.split(":", 1)[0] not in known]
+            row["def"] and row["impl"], row["backend"]))
+    unexplained = report["blockers"]
     if unexplained:
         lines.append("")
         lines.append("UNEXPLAINED GAPS:")
@@ -531,7 +585,7 @@ def main() -> int:
     if args.json:
         report["baseline"] = baseline
         print(json.dumps(report, indent=2, sort_keys=True))
-        return 0 if not report["blockers"] or not args.strict else 1
+        return 0 if render(report, args.strict, baseline)[1] else 1
     text, ok = render(report, args.strict, baseline)
     print(text)
     return 0 if ok else 1

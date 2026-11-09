@@ -64,13 +64,13 @@ constexpr const char* kSchema_chunk_gated_delta_rule_fwd =
     "bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, "
     "bool disable_recompute, bool output_final_state, "
     "bool return_intermediate_states, bool state_v_first, int stream) "
-    "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor, Tensor, "
+    "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, "
     "Tensor?, Tensor?)";
 
 std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>,
            std::optional<Tensor>, std::optional<Tensor>,
-           std::optional<Tensor>, Tensor, Tensor, std::optional<Tensor>,
-           std::optional<Tensor>>
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>>
 run_npu_chunk_gated_delta_rule_fwd(
     Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta,
     std::optional<Tensor> initial_state,
@@ -134,20 +134,23 @@ run_npu_chunk_gated_delta_rule_fwd(
         state_tail_k, state_tail_v};
     out_h = allocate_sizes(h_shape, q_meta.scalar_type, q_meta);
   }
-  // The Q/K normalisation results are part of the public tuple now.  The
-  // reference allocates them only when the kernel does the normalisation;
-  // otherwise the hats *are* the caller's q/k and both rstd slots stay null.
-  const Tensor out_q_hat =
-      use_qk_l2norm_in_kernel
-          ? allocate_sizes(q_meta.sizes, q_meta.scalar_type, q_meta)
-          : q;
-  const Tensor out_k_hat =
-      use_qk_l2norm_in_kernel
-          ? allocate_sizes(k_meta.sizes, k_meta.scalar_type, k_meta)
-          : k;
+  // Real hats only when the caller keeps intermediates and the kernel
+  // normalises. disable_recompute=false leaves both slots null. Chunk 64/128
+  // with normalisation off still returns the caller's q/k.
+  std::optional<Tensor> out_q_hat;
+  std::optional<Tensor> out_k_hat;
+  if (disable_recompute &&
+      (chunk_size == 32 || use_qk_l2norm_in_kernel)) {
+    out_q_hat = allocate_sizes(q_meta.sizes, q_meta.scalar_type, q_meta);
+    out_k_hat = allocate_sizes(k_meta.sizes, k_meta.scalar_type, k_meta);
+  } else if (disable_recompute) {
+    out_q_hat = q;
+    out_k_hat = k;
+  }
   std::optional<Tensor> out_q_rstd;
   std::optional<Tensor> out_k_rstd;
-  if (use_qk_l2norm_in_kernel) {
+  if (disable_recompute &&
+      (chunk_size == 32 || use_qk_l2norm_in_kernel)) {
     // BNS regardless of the input layout -- the kernel enforces this shape.
     out_q_rstd = allocate_sizes({batch, key_heads, tokens}, kFloat, q_meta);
     out_k_rstd = allocate_sizes({batch, key_heads, tokens}, kFloat, q_meta);
@@ -166,8 +169,8 @@ run_npu_chunk_gated_delta_rule_fwd(
       out_tensor(meta_of(out_o)),
       out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
                                              : TensorMeta()),
-      out_tensor(use_qk_l2norm_in_kernel ? meta_of(out_q_hat) : TensorMeta()),
-      out_tensor(use_qk_l2norm_in_kernel ? meta_of(out_k_hat) : TensorMeta()),
+      out_tensor(out_q_rstd.has_value() ? meta_of(*out_q_hat) : TensorMeta()),
+      out_tensor(out_k_rstd.has_value() ? meta_of(*out_k_hat) : TensorMeta()),
       out_tensor(out_q_rstd.has_value() ? meta_of(*out_q_rstd) : TensorMeta()),
       out_tensor(out_k_rstd.has_value() ? meta_of(*out_k_rstd) : TensorMeta()),
       out_tensor(out_beta_eff.has_value() ? meta_of(*out_beta_eff)

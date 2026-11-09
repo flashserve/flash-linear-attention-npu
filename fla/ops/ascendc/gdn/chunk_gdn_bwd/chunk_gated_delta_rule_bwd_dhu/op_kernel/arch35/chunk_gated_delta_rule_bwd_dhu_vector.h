@@ -625,9 +625,8 @@ public:
                     }
 
                     // C3：dh 已全部写 GM（上面 state 行循环的 CopyOutFp32Rows 完成），
-                    // GEMM0 唯一跨核输入就绪——先于 qg 生成/dvGateFactor 发射 dhReady，
-                    // 让 cube 的 GEMM0 与本 AIV 的 qg 生成重叠。PIPE_MTE3 与 dh 的
-                    // MTE3 写同 pipe 保序。
+                    // GEMM0 唯一跨核输入就绪——先于 qg 生成/dvGateFactor 发射 dhReady。
+                    // AIC direct 的 qg 不再需要这里的 AIV staging；其它路径仍保持重叠。
                     Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(dhReadyFlag);
 
@@ -635,11 +634,11 @@ public:
                     AscendC::DataCopyEnhancedParams qgCopyEnhanced;
                     qgCopyEnhanced.blockMode = AscendC::BlockMode::BLOCK_MODE_VECTOR;
                     uint32_t qgScratchSlot = static_cast<uint32_t>(headOffset);
-                    bool produceQG = true;
+                    bool produceQG = USE_GK == 0 || HRatio_ != 1;
                     if constexpr (USE_GK != 0) {
                         const int64_t groupStartHv = hq * HRatio_;
                         qgScratchSlot = static_cast<uint32_t>(groupStartHv > hvBase ? groupStartHv - hvBase : 0);
-                        produceQG = headOffset == 0 || hq != (hv - 1) / HRatio_;
+                        produceQG = HRatio_ != 1 && (headOffset == 0 || hq != (hv - 1) / HRatio_);
                     }
                     if (produceQG) {
                         AscendC::LocalTensor<DT> qgL1 = qgL1Scratch[qgScratchSlot];

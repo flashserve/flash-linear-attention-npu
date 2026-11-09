@@ -27,7 +27,23 @@ on:
         required: false
         default: ''
       requested_by:
-        description: "Original Admin requester; set by the PR comment dispatcher"
+        description: "Original authorized requester; set by the PR comment dispatcher"
+        required: false
+        default: ''
+      expected_head_sha:
+        description: "PR head SHA captured automatically by the comment dispatcher"
+        required: false
+        default: ''
+      expected_base_ref:
+        description: "PR target branch captured by the comment dispatcher"
+        required: false
+        default: ''
+      expected_base_sha:
+        description: "PR target commit captured by the comment dispatcher"
+        required: false
+        default: ''
+      expected_workflow_sha:
+        description: "Workflow commit captured by the comment dispatcher"
         required: false
         default: ''
 
@@ -53,55 +69,46 @@ jobs:
       base_sha: ${{ steps.prepare.outputs.base_sha }}
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
-      trusted_ci_sha: ${{ steps.prepare.outputs.trusted_ci_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
       workflow_ref: ${{ steps.prepare.outputs.workflow_ref }}
       requested_by: ${{ steps.prepare.outputs.requested_by }}
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: |
+            .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 解析 PR 和 CI 参数
         id: prepare
         uses: actions/github-script@v8
         env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
           NPU_CI_WORKFLOW_REF: ${{ github.ref_name }}
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
+            const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
             const actor = context.actor;
             const workflowInputs = context.payload.inputs || {};
-            const requestedBy = workflowInputs.requested_by || actor;
+            const requestedBy = actor === 'github-actions[bot]' ? workflowInputs.requested_by : actor;
             const workflowRef = process.env.NPU_CI_WORKFLOW_REF || '';
-            let actorPermission = 'none';
-            try {
-              const permissionSubject = actor === 'github-actions[bot]' ? requestedBy : actor;
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: permissionSubject,
-              });
-              actorPermission = data.permission || 'none';
-            } catch (error) {
-              const permissionSubject = actor === 'github-actions[bot]' ? requestedBy : actor;
-              core.warning(`Unable to inspect repository permission for ${permissionSubject}: ${error.message}`);
-            }
-            if (actorPermission !== 'admin') {
-              const permissionSubject = actor === 'github-actions[bot]' ? requestedBy : actor;
-              core.setFailed(`${permissionSubject} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
-              return;
-            }
+            await auth.authorizeCiRequest({ github, context, requestedBy });
 
-            const requiredCheckContexts = [
-              ['NPU CI / A2+A5 / 01 环境、wheel 与运行时契约', '环境、wheel 与运行时契约'],
-              ['NPU CI / A2+A5 / 02 全量 OPP 构建', '全量 OPP 构建'],
-              ['NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局', 'torch_custom wheel 与 OPP 布局'],
-              ['NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配', 'OPP 安装与 PyTorch 适配'],
-              ['NPU CI / A2+A5 / 05 GDR Example/ST', 'GDR Example/ST'],
-              ['NPU CI / A2+A5 / 06 报告与 commit 校验', '报告与 commit 校验'],
-            ];
-            const scopedCheckContext = ['NPU CI / A2+A5 / 定向诊断', '定向诊断'];
+            const requiredCheckContexts = checks.prepareChecks;
+            const scopedCheckContext = [checks.diagnostic.context, checks.diagnostic.label];
             let prNumber;
             let ciMode = 'quick';
             let ops = '';
@@ -151,29 +158,29 @@ jobs:
               }
             };
 
-            const isActivePendingStatus = async (status) => {
-              if (!status || status.state !== 'pending') {
-                return false;
-              }
-              const targetUrl = status.target_url || '';
-              const match = targetUrl.match(/\/actions\/runs\/(\d+)/);
-              if (!match) {
-                return false;
-              }
-              const pendingRunId = Number(match[1]);
-              if (pendingRunId === Number(context.runId)) {
-                return false;
-              }
+            const getMatchingExecutionRun = async (status, { pr, baseSha, workflowSha }) => {
+              const runPrefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
+              const targetUrl = status?.target_url || '';
+              if (!targetUrl.startsWith(runPrefix)) return null;
+              const match = targetUrl.slice(runPrefix.length).match(/^(\d+)(?:\/attempts\/\d+)?\/?$/);
+              const runId = Number(match?.[1]);
+              if (!Number.isSafeInteger(runId) || runId <= 0 || runId === Number(context.runId)) return null;
               try {
                 const { data: run } = await github.rest.actions.getWorkflowRun({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  run_id: pendingRunId,
+                  run_id: runId,
                 });
-                return ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(run.status);
+                // Commit statuses belong to the PR head. The workflow run also
+                // records the base commit, so head-only statuses cannot reuse
+                // a result built before the target branch or workflow changed.
+                if (run.head_sha !== baseSha || run.head_sha !== workflowSha || run.head_branch !== pr.base.ref ||
+                    run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
+                    run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
+                return run;
               } catch (error) {
                 core.warning(`Unable to inspect NPU CI workflow run; allowing a replacement run: ${error.message}`);
-                return false;
+                return null;
               }
             };
 
@@ -194,10 +201,7 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
             });
-            if (pr.draft) {
-              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
-              return;
-            }
+            auth.requireOpenPullRequest(pr);
             const { data: baseBranch } = await github.rest.repos.getBranch({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -205,13 +209,23 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            const trustedCiSha = workflowSha;
-            if (!/^[0-9a-f]{40}$/.test(baseSha) || !/^[0-9a-f]{40}$/.test(trustedCiSha)) {
-              core.setFailed('无法确定本次 NPU CI 的 base 或可信 CI commit。');
-              return;
-            }
+            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef });
+            auth.requireDispatchIdentity({ pr, inputs: workflowInputs,
+              required: actor === 'github-actions[bot]', rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
             core.setOutput('base_sha', baseSha);
-            core.setOutput('trusted_ci_sha', trustedCiSha);
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              try {
+                await auth.requireCiAuthorAdmin({ github, context, pr });
+              } catch (error) {
+                await Promise.all((ops.trim() ? [scopedCheckContext] : requiredCheckContexts).map(([statusContext]) => github.rest.repos.createCommitStatus({
+                  ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
+                  description: 'CI 文件变更仅允许仓库 Admin 作者提交', target_url: pr.html_url,
+                })));
+                await upsertComment(pr, `NPU CI 拒绝执行。\n\n原因及修改建议：${error.message}`);
+                core.setFailed(error.message);
+                return;
+              }
+            }
 
             const opsItems = ops.split(',').map((item) => item.trim());
             if (ops.trim() && opsItems.some((item) =>
@@ -250,6 +264,8 @@ jobs:
               latestExecutionCi &&
               (latestExecutionCi.description || '').includes(requestedModeSuffix)
             );
+            const matchingExecutionRun = latestExecutionMatchesRequest
+              ? await getMatchingExecutionRun(latestExecutionCi, { pr, baseSha, workflowSha }) : null;
             const allContextsPassedInSameRun = Boolean(
               latestExecutionCi &&
               latestExecutionCi.target_url &&
@@ -261,7 +277,7 @@ jobs:
               })
             );
             if (isInitialWorkflowAttempt &&
-                latestExecutionMatchesRequest && latestExecutionCi.state === 'success' &&
+                matchingExecutionRun && latestExecutionCi.state === 'success' &&
                 allContextsPassedInSameRun) {
               core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
               commentId = await upsertComment(
@@ -290,7 +306,8 @@ jobs:
               core.setOutput('requested_by', requestedBy);
               return;
             }
-            if (latestExecutionMatchesRequest && await isActivePendingStatus(latestExecutionCi)) {
+            if (matchingExecutionRun && latestExecutionCi.state === 'pending' &&
+                ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(matchingExecutionRun.status)) {
               core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
               commentId = await upsertComment(
                 pr,
@@ -383,7 +400,8 @@ jobs:
             require_preloaded_image: 'false'
           - platform: a5
             name: A5 / ascend950
-            runner_labels: '["self-hosted","linux","x64","npu","ascend950","flash-linear-attention-npu-a5"]'
+            # Either native x64 or ARM64 runner may execute the single A5 job.
+            runner_labels: '["self-hosted","linux","npu","ascend950","flash-linear-attention-npu-a5"]'
             soc: ascend950
             image: fla-npu-ci:9.1.0-950
             dockerfile: ci/Dockerfile.ascend950
@@ -392,7 +410,6 @@ jobs:
     timeout-minutes: 240
     permissions:
       contents: read
-      pull-requests: read
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
@@ -426,331 +443,14 @@ jobs:
       TMPDIR: /home/huangjunzhe/ci/tmp
       CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: 通过 GitHub API 准备 A5 源码
-        if: matrix.platform == 'a5'
-        env:
-          # Runner services inherit proxyon; this source path stays direct.
-          # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
-          http_proxy: ''
-          https_proxy: ''
-          all_proxy: ''
-          GIT_HTTP_PROXY: ''
-          GIT_HTTPS_PROXY: ''
-          no_proxy: '*'
-          GITHUB_TOKEN: ${{ github.token }}
-          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
-          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
-          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
-          NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
-          NPU_CI_TRUSTED_SHA: ${{ needs.prepare.outputs.trusted_ci_sha }}
-        run: |
-          set -euo pipefail
-
-          archive_dir="${TMPDIR}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          rm -rf repo trusted-ci "$archive_dir"
-          mkdir -p repo trusted-ci "$archive_dir"
-          export NPU_CI_ARCHIVE_DIR="$archive_dir"
-
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          import shutil
-          import stat
-          import tarfile
-          import time
-          import urllib.request
-          from pathlib import Path, PurePosixPath
-
-          api_url = os.environ["GITHUB_API_URL"]
-          repository = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GITHUB_TOKEN"]
-          pr_number = os.environ["NPU_CI_PR_NUMBER"]
-          expected_base_ref = os.environ["NPU_CI_BASE_REF"]
-          expected_base_sha = os.environ["NPU_CI_BASE_SHA"]
-          expected_head_sha = os.environ["NPU_CI_TARGET_SHA"]
-          trusted_sha = os.environ["NPU_CI_TRUSTED_SHA"]
-          archive_dir = Path(os.environ["NPU_CI_ARCHIVE_DIR"])
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-
-          def get_json(path):
-              request = urllib.request.Request(
-                  f"{api_url}/repos/{repository}/{path}", headers=headers
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)
-
-          merge_sha = ""
-          stale_base_sha = ""
-          stale_merge_sha = ""
-          base_sha = expected_base_sha
-          last_error = "GitHub has not produced a current test merge commit"
-          for attempt in range(12):
-              pr = get_json(f"pulls/{pr_number}")
-              head_sha = pr["head"]["sha"]
-              base_ref = pr["base"]["ref"]
-              if head_sha != expected_head_sha:
-                  raise RuntimeError(
-                      f"PR head changed before archive download: expected={expected_head_sha}, actual={head_sha}"
-                  )
-              if base_ref != expected_base_ref:
-                  raise RuntimeError(
-                      f"PR base changed before archive download: expected={expected_base_ref}, actual={base_ref}"
-                  )
-              merge_sha = pr.get("merge_commit_sha") or ""
-              if merge_sha:
-                  merge_commit = get_json(f"commits/{merge_sha}")
-                  parents = [parent["sha"] for parent in merge_commit.get("parents", [])]
-                  if parents == [base_sha, head_sha]:
-                      break
-                  if len(parents) == 2 and parents[1] == head_sha:
-                      # GitHub keeps serving the test merge computed before the base
-                      # branch advanced.  Keep that merge (the PR head side is already
-                      # resolved in it) so the base delta can be replayed later.
-                      stale_merge_sha = merge_sha
-                      stale_base_sha = parents[0]
-                  last_error = (
-                      "test merge parents do not match the current base and head: "
-                      f"merge={merge_sha}, parents={parents}"
-                  )
-              if attempt < 11:
-                  time.sleep(5)
-          else:
-              if not stale_merge_sha:
-                  raise RuntimeError(last_error)
-              merge_sha = stale_merge_sha
-
-          def download_archive(sha, destination):
-              request = urllib.request.Request(
-                  f"{api_url}/repos/{repository}/tarball/{sha}", headers=headers
-              )
-              with urllib.request.urlopen(request, timeout=120) as response:
-                  with destination.open("wb") as output:
-                      shutil.copyfileobj(response, output)
-
-          def extract_archive(archive_path, destination):
-              if not stat.S_ISDIR(destination.lstat().st_mode):
-                  raise RuntimeError(f"archive destination is not a directory: {destination}")
-              if any(destination.iterdir()):
-                  raise RuntimeError(f"archive destination is not empty: {destination}")
-
-              checked_members = []
-              seen_paths = set()
-              root_name = None
-              root_entry_seen = False
-              with tarfile.open(archive_path, "r:gz") as archive:
-                  for member in archive.getmembers():
-                      member_path = PurePosixPath(member.name)
-                      parts = member_path.parts
-                      if (
-                          not parts
-                          or member_path.is_absolute()
-                          or any(part in {"", ".."} for part in parts)
-                      ):
-                          raise RuntimeError(f"unsafe archive member path: {member.name!r}")
-
-                      if root_name is None:
-                          root_name = parts[0]
-                      elif parts[0] != root_name:
-                          raise RuntimeError("archive contains multiple top-level directories")
-
-                      if len(parts) == 1:
-                          if not member.isdir():
-                              raise RuntimeError("archive top-level member is not a directory")
-                          if root_entry_seen:
-                              raise RuntimeError("duplicate archive top-level directory")
-                          root_entry_seen = True
-                          continue
-
-                      relative_parts = parts[1:]
-                      if relative_parts in seen_paths:
-                          raise RuntimeError(f"duplicate archive member: {member.name!r}")
-                      seen_paths.add(relative_parts)
-                      if not (member.isdir() or member.isfile()):
-                          raise RuntimeError(
-                              f"unsupported archive member type: {member.name!r}"
-                          )
-                      checked_members.append((member, relative_parts))
-
-                  if root_name is None:
-                      raise RuntimeError("archive is empty")
-
-                  directory_modes = []
-                  nofollow = getattr(os, "O_NOFOLLOW", 0)
-                  if not nofollow:
-                      raise RuntimeError("O_NOFOLLOW is required for safe archive extraction")
-                  for member, relative_parts in checked_members:
-                      target = destination.joinpath(*relative_parts)
-                      if member.isdir():
-                          target.mkdir(parents=True, exist_ok=True)
-                          directory_modes.append((target, member.mode & 0o777))
-                          continue
-
-                      target.parent.mkdir(parents=True, exist_ok=True)
-                      source = archive.extractfile(member)
-                      if source is None:
-                          raise RuntimeError(f"cannot read archive member: {member.name!r}")
-                      flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
-                      output_fd = os.open(target, flags, member.mode & 0o777)
-                      with source, os.fdopen(output_fd, "wb") as output:
-                          shutil.copyfileobj(source, output)
-                      os.chmod(target, member.mode & 0o777)
-
-                  for target, mode in reversed(directory_modes):
-                      os.chmod(target, mode)
-
-          def tree_digests(root):
-              digests = {}
-              for path in sorted(root.rglob("*")):
-                  if path.is_file():
-                      relative = path.relative_to(root).as_posix()
-                      digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-              return digests
-
-          def replay_base_delta(repo_dir, source_tree, target_tree):
-              """Apply the base branch delta between two commits onto a merged tree.
-
-              ``repo_dir`` holds the PR head merged with ``source_tree``'s commit.
-              Replaying ``source_tree -> target_tree`` turns it into the tree for
-              the base commit the run recorded.  Paths that the PR and the base
-              changed differently cannot be replayed without a rebase, so they are
-              returned instead of being guessed.
-              """
-
-              source_digests = tree_digests(source_tree)
-              target_digests = tree_digests(target_tree)
-              repo_digests = tree_digests(repo_dir)
-              conflicts = []
-              for relative in sorted(set(source_digests) | set(target_digests)):
-                  before = source_digests.get(relative)
-                  after = target_digests.get(relative)
-                  if before == after:
-                      continue
-                  current = repo_digests.get(relative)
-                  if current == after:
-                      continue
-                  if current != before:
-                      conflicts.append(relative)
-                      continue
-                  destination = repo_dir / relative
-                  if after is None:
-                      destination.unlink()
-                      continue
-                  destination.parent.mkdir(parents=True, exist_ok=True)
-                  shutil.copy2(target_tree / relative, destination)
-              return conflicts
-
-          def copy_case_file(repo_directory, destination):
-              nofollow = getattr(os, "O_NOFOLLOW", 0)
-              directory = getattr(os, "O_DIRECTORY", 0)
-              if not nofollow or not directory:
-                  raise RuntimeError("O_NOFOLLOW and O_DIRECTORY are required")
-
-              repo_fd = os.open(
-                  repo_directory, os.O_RDONLY | directory | nofollow
-              )
-              try:
-                  try:
-                      ci_fd = os.open(
-                          "ci", os.O_RDONLY | directory | nofollow, dir_fd=repo_fd
-                      )
-                  except FileNotFoundError:
-                      return False
-                  try:
-                      try:
-                          case_fd = os.open(
-                              "example_st_cases.json",
-                              os.O_RDONLY | os.O_NONBLOCK | nofollow,
-                              dir_fd=ci_fd,
-                          )
-                      except FileNotFoundError:
-                          return False
-                      with os.fdopen(case_fd, "rb") as case_file:
-                          if not stat.S_ISREG(os.fstat(case_file.fileno()).st_mode):
-                              raise RuntimeError("Example/ST case path is not a regular file")
-                          case_data = case_file.read()
-                  finally:
-                      os.close(ci_fd)
-              finally:
-                  os.close(repo_fd)
-
-              json.loads(case_data.decode("utf-8"))
-              parent_fd = os.open(
-                  destination.parent, os.O_RDONLY | directory | nofollow
-              )
-              try:
-                  output_fd = os.open(
-                      destination.name,
-                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
-                      0o600,
-                      dir_fd=parent_fd,
-                  )
-                  with os.fdopen(output_fd, "wb") as output:
-                      output.write(case_data)
-              finally:
-                  os.close(parent_fd)
-              return True
-
-          download_archive(merge_sha, archive_dir / "merge.tar.gz")
-          download_archive(trusted_sha, archive_dir / "trusted.tar.gz")
-          extract_archive(archive_dir / "merge.tar.gz", Path("repo"))
-          extract_archive(archive_dir / "trusted.tar.gz", Path("trusted-ci"))
-
-          if stale_merge_sha and merge_sha == stale_merge_sha:
-              relation = get_json(f"compare/{stale_base_sha}...{base_sha}")
-              if relation.get("status") not in {"ahead", "behind"}:
-                  raise RuntimeError(last_error)
-              source_tree = archive_dir / "stale-base-tree"
-              target_tree = archive_dir / "current-base-tree"
-              source_tree.mkdir()
-              target_tree.mkdir()
-              download_archive(stale_base_sha, archive_dir / "stale-base.tar.gz")
-              download_archive(base_sha, archive_dir / "current-base.tar.gz")
-              extract_archive(archive_dir / "stale-base.tar.gz", source_tree)
-              extract_archive(archive_dir / "current-base.tar.gz", target_tree)
-              conflicts = replay_base_delta(Path("repo"), source_tree, target_tree)
-              if conflicts:
-                  shown = ", ".join(conflicts[:5])
-                  if len(conflicts) > 5:
-                      shown = f"{shown} 等 {len(conflicts)} 个路径"
-                  raise RuntimeError(
-                      "PR 与最新 base 修改了同一批文件，无法在缓存的 test merge 上重放 base 改动："
-                      f"{shown}。请先将 PR 与 main 同步后重新触发 NPU CI。"
-                  )
-              print(
-                  "[A5][WARN] GitHub 缓存的 test merge 基于过期 base "
-                  f"{stale_base_sha[:8]}，已按当前 base {base_sha[:8]} 重放 base 侧改动。"
-              )
-
-          copy_case_file(
-              Path("repo"), archive_dir / "example_st_cases.json"
-          )
-          print(
-              "Validated A5 source archive: "
-              f"merge={merge_sha}, base={base_sha}, head={expected_head_sha}, trusted={trusted_sha}"
-          )
-          PY
-
-          rm -rf repo/ci
-          cp -a trusted-ci/ci repo/ci
-          if [ -f "$archive_dir/example_st_cases.json" ]; then
-            cp "$archive_dir/example_st_cases.json" repo/ci/example_st_cases.json
-          fi
-          rm -rf trusted-ci "$archive_dir"
-
       - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
-        if: matrix.platform == 'a2'
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/checkout@v5
         env:
-          # Try direct access before enabling the existing A2 proxy fallback.
-          # GitHub env keys are case-insensitive; no_proxy also bypasses inherited proxies.
+          # Both platforms try direct access before enabling the proxy fallback.
+          # Workflow env mappings reject case-only duplicate keys; use lowercase proxy names.
           http_proxy: ''
           https_proxy: ''
           all_proxy: ''
@@ -759,84 +459,133 @@ jobs:
           no_proxy: '*'
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 50
           path: repo
 
       - name: 启动代理并获取端口
-        if: steps.checkout_pr_1.outcome == 'failure' && matrix.platform == 'a2'
+        id: enable_proxy
+        if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           set -euo pipefail
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
           source "$CI_PROXY_SCRIPT"
           proxyon
-          for variable in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY \
-            no_proxy NO_PROXY GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+          for variable in http_proxy https_proxy all_proxy no_proxy \
+            GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+            uppercase="${variable^^}"
             value="${!variable-}"
+            value="${value:-${!uppercase-}}"
+            # Optional variables may be absent; clear only the direct-mode bypass.
+            if [[ -z "$value" && "$variable" != no_proxy ]]; then continue; fi
             if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
               echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
               exit 1
             fi
+            export "$variable=$value"
             printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
           done
+          unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+          echo "NPU_CI_PROXY_ENABLED=true" >> "$GITHUB_ENV"
 
       - name: 等待后重试拉取目标分支代码
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 15
 
       - name: 拉取当前目标分支代码（第 2 次）
         id: checkout_pr_2
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure'
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 50
           path: repo
 
       - name: 再次等待后重试拉取目标分支代码
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         run: |
           rm -rf repo
           sleep 30
 
       - name: 拉取当前目标分支代码（第 3 次）
-        if: matrix.platform == 'a2' && steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
+        if: steps.checkout_pr_1.outcome == 'failure' && steps.checkout_pr_2.outcome == 'failure'
         timeout-minutes: 10
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.base_sha }}
+          ref: ${{ needs.prepare.outputs.base_ref }}
           fetch-depth: 50
           path: repo
 
       - name: 现场合并 PR 代码
-        if: matrix.platform == 'a2'
         working-directory: repo
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           pr_head_ref="refs/remotes/pull/${NPU_CI_PR_NUMBER}/head"
+          source_refs=(
+            "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}"
+            "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+          )
 
-          retry_fetch_pr_head() {
-            local delay="$1"
-            if [ "$delay" != "0" ]; then
-              sleep "$delay"
+          # A runner service may inherit a proxy. Keep fetching direct until a
+          # checkout/fetch actually fails, then reuse the proxy for later steps.
+          if [[ "${NPU_CI_PROXY_ENABLED:-false}" != true ]]; then
+            unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
+            unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
+            export no_proxy='*' NO_PROXY='*'
+          fi
+
+          # A stalled connection must reach the proxy fallback too.
+          fetch_with_retry() {
+            if timeout --kill-after=10 120 git fetch "$@"; then
+              return 0
             fi
-            git fetch --no-tags --prune --no-recurse-submodules --depth=50 origin \
-              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+            echo "[CI][WARN] Git fetch failed; enabling the proxy before retrying." >&2
+            unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+            unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
+            source "$CI_PROXY_SCRIPT" || return
+            proxyon || return
+            for variable in http_proxy https_proxy all_proxy no_proxy \
+              GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+              uppercase="${variable^^}"
+              value="${!variable-}"
+              value="${value:-${!uppercase-}}"
+              # Optional variables may be absent; clear only the direct-mode bypass.
+              if [[ -z "$value" && "$variable" != no_proxy ]]; then continue; fi
+              if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+                echo "[CI][ERROR] Proxy variable $variable contains a newline." >&2
+                return 1
+              fi
+              export "$variable=$value"
+              printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
+            done
+            unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+            export NPU_CI_PROXY_ENABLED=true
+            echo "NPU_CI_PROXY_ENABLED=true" >> "$GITHUB_ENV"
+            for delay in 15 30; do
+              sleep "$delay"
+              if timeout --kill-after=10 120 git fetch "$@"; then
+                return 0
+              fi
+            done
+            echo "[CI][ERROR] Git fetch failed after proxy retries; check the runner proxy and GitHub connectivity." >&2
+            return 1
           }
 
           fetch_more_history() {
             local deepen_by="$1"
             echo "[CI] Merge base not found in shallow history; deepening by ${deepen_by} commits."
-            git fetch --no-tags --prune --no-recurse-submodules --deepen="${deepen_by}" origin \
-              "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
-              "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+            fetch_with_retry --atomic --no-tags --prune --no-recurse-submodules --deepen="${deepen_by}" \
+              origin "${source_refs[@]}"
           }
 
           ensure_merge_base() {
@@ -844,21 +593,21 @@ jobs:
               return 0
             fi
             for deepen_by in 50 100 200 400 800 1600 3200; do
-              fetch_more_history "${deepen_by}"
+              fetch_more_history "${deepen_by}" || return
               if git merge-base HEAD "${pr_head_ref}" >/dev/null; then
                 return 0
               fi
             done
             if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
               echo "[CI] Merge base still not found; unshallowing repository as final probe."
-              git fetch --no-tags --prune --no-recurse-submodules --unshallow origin \
-                "+refs/heads/${NPU_CI_BASE_REF}:refs/remotes/origin/${NPU_CI_BASE_REF}" \
-                "+refs/pull/${NPU_CI_PR_NUMBER}/head:${pr_head_ref}"
+              fetch_with_retry --atomic --no-tags --prune --no-recurse-submodules --unshallow \
+                origin "${source_refs[@]}" || return
             fi
             git merge-base HEAD "${pr_head_ref}" >/dev/null
           }
 
-          retry_fetch_pr_head 0 || retry_fetch_pr_head 15 || retry_fetch_pr_head 30
+          fetch_with_retry --atomic --no-tags --prune --no-recurse-submodules --depth=50 \
+            origin "${source_refs[@]}"
           fetched_head="$(git rev-parse "${pr_head_ref}")"
           if [ "$fetched_head" != "$NPU_CI_TARGET_SHA" ]; then
             echo "[CI][ERROR] PR head changed before merge; target=${NPU_CI_TARGET_SHA}, fetched=${fetched_head}."
@@ -869,144 +618,44 @@ jobs:
             exit 1
           fi
 
-          git merge --no-ff --no-edit "${pr_head_ref}"
+          git merge --no-ff --no-edit "$NPU_CI_TARGET_SHA"
+          # The target branch may have advanced since prepare. Publish the
+          # commit actually tested by this run for later diagnostics.
+          echo "NPU_CI_BASE_SHA=$(git rev-parse HEAD^)" >> "$GITHUB_ENV"
         env:
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
 
-      - name: 拉取可信 CI 脚本（第 1 次）
-        id: checkout_trusted_ci_1
-        if: matrix.platform == 'a2'
-        continue-on-error: true
-        timeout-minutes: 10
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
-          fetch-depth: 1
-          path: trusted-ci
-
-      - name: 等待后重试拉取可信 CI 脚本
-        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure'
+      - name: 离线校验设备任务的 PR head
+        id: validate_pr
+        working-directory: repo
+        env:
+          NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          NPU_CI_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_CI_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_CI_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
         run: |
-          rm -rf trusted-ci
-          sleep 15
-
-      - name: 拉取可信 CI 脚本（第 2 次）
-        id: checkout_trusted_ci_2
-        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure'
-        continue-on-error: true
-        timeout-minutes: 10
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
-          fetch-depth: 1
-          path: trusted-ci
-
-      - name: 再次等待后重试拉取可信 CI 脚本
-        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
-        run: |
-          rm -rf trusted-ci
-          sleep 30
-
-      - name: 拉取可信 CI 脚本（第 3 次）
-        if: matrix.platform == 'a2' && steps.checkout_trusted_ci_1.outcome == 'failure' && steps.checkout_trusted_ci_2.outcome == 'failure'
-        timeout-minutes: 10
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.prepare.outputs.trusted_ci_sha }}
-          fetch-depth: 1
-          path: trusted-ci
-
-      - name: 使用可信 CI 脚本
-        if: matrix.platform == 'a2'
-        run: |
-          # 评论触发由默认分支的分发 workflow 校验 Admin 权限后，以 workflow_dispatch
-          # 选择 PR 的目标分支；手动触发则使用 Actions 页面选择的分支。两种路径都通过
-          # 当前 workflow commit 的不可变 SHA 选择可信 CI，同时允许 CI 自身修改在合入前验证。
-          # 但 Example/ST 用例配置属于被验证内容：新 PR 中新增或修改的 enabled 用例
-          # 必须跟随当前目标分支和 PR head 的现场合并结果一起进入容器，并被 /run-npu-ci quick 实际执行验证。
-          case_archive="$(mktemp -d "${TMPDIR}/example-st-cases.XXXXXX")"
-          trap 'rm -rf -- "$case_archive"' EXIT
-          export NPU_CI_CASE_ARCHIVE="$case_archive"
-          python3 - <<'PY'
-          import json
-          import os
-          import stat
-          from pathlib import Path
-
-          def copy_case_file(repo_directory, destination):
-              nofollow = getattr(os, "O_NOFOLLOW", 0)
-              directory = getattr(os, "O_DIRECTORY", 0)
-              if not nofollow or not directory:
-                  raise RuntimeError("O_NOFOLLOW and O_DIRECTORY are required")
-
-              repo_fd = os.open(
-                  repo_directory, os.O_RDONLY | directory | nofollow
-              )
-              try:
-                  try:
-                      ci_fd = os.open(
-                          "ci", os.O_RDONLY | directory | nofollow, dir_fd=repo_fd
-                      )
-                  except FileNotFoundError:
-                      return False
-                  try:
-                      try:
-                          case_fd = os.open(
-                              "example_st_cases.json",
-                              os.O_RDONLY | os.O_NONBLOCK | nofollow,
-                              dir_fd=ci_fd,
-                          )
-                      except FileNotFoundError:
-                          return False
-                      with os.fdopen(case_fd, "rb") as case_file:
-                          if not stat.S_ISREG(os.fstat(case_file.fileno()).st_mode):
-                              raise RuntimeError("Example/ST case path is not a regular file")
-                          case_data = case_file.read()
-                  finally:
-                      os.close(ci_fd)
-              finally:
-                  os.close(repo_fd)
-
-              json.loads(case_data.decode("utf-8"))
-              parent_fd = os.open(
-                  destination.parent, os.O_RDONLY | directory | nofollow
-              )
-              try:
-                  output_fd = os.open(
-                      destination.name,
-                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
-                      0o600,
-                      dir_fd=parent_fd,
-                  )
-                  with os.fdopen(output_fd, "wb") as output:
-                      output.write(case_data)
-              finally:
-                  os.close(parent_fd)
-              return True
-
-          copy_case_file(
-              Path("repo"),
-              Path(os.environ["NPU_CI_CASE_ARCHIVE"])
-              / "example_st_cases.json",
-          )
-          PY
-
-          rm -rf repo/ci
-          cp -a trusted-ci/ci repo/ci
-
-          # 覆盖可信 CI 脚本后，再恢复 PR 自身的 case 文件。
-          # 因此后续 PR 只补充 ci/example_st_cases.json 时，NPU CI 会跑到新增用例。
-          if [ -f "$case_archive/example_st_cases.json" ]; then
-            cp "$case_archive/example_st_cases.json" repo/ci/example_st_cases.json
+          set -euo pipefail
+          # PR state/draft/target metadata is checked by GitHub-hosted prepare
+          # and finalize. Device validation only reads the fetched Git objects.
+          fetched_head="$(git rev-parse "refs/remotes/pull/${NPU_CI_PR_NUMBER}/head^{commit}")"
+          if [[ "$fetched_head" != "$NPU_CI_HEAD_SHA" ]]; then
+            echo "[CI][ERROR] PR head changed before validation; start a new NPU CI run." >&2
+            echo "[CI][ERROR] head: expected=$NPU_CI_HEAD_SHA fetched=$fetched_head" >&2
+            exit 1
           fi
+          if ! git merge-base --is-ancestor "$NPU_CI_HEAD_SHA" HEAD; then
+            echo "[CI][ERROR] Merged source does not contain the PR head; fetch and merge the PR again." >&2
+            exit 1
+          fi
+          echo "[CI] Offline source validation passed: head=$fetched_head merged=$(git rev-parse HEAD)"
 
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         id: npu_ci
         working-directory: repo
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_CI_HEAD_POLL_SECONDS: '60'
@@ -1022,27 +671,22 @@ jobs:
             "$CI_SUMMARY_FILE"
 
           get_pr_head_sha() {
-            python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          repo = os.environ["GITHUB_REPOSITORY"]
-          pr_number = os.environ["NPU_CI_PR_NUMBER"]
-          token = os.environ["GITHUB_TOKEN"]
-          url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
-          request = urllib.request.Request(
-              url,
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {token}",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              data = json.load(response)
-          print(data["head"]["sha"])
-          PY
+            local result sha ref fetched_ref
+            ref="refs/pull/${NPU_CI_PR_NUMBER}/head"
+            if ! result="$(timeout --kill-after=5 30 git ls-remote --exit-code origin "$ref")"; then
+              unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+              source "$CI_PROXY_SCRIPT" >&2 || return
+              proxyon >&2 || return
+              result="$(timeout --kill-after=5 30 git ls-remote --exit-code origin "$ref")" || return
+            fi
+            # ls-remote also matches suffixes such as refs/original/.../head.
+            while read -r sha fetched_ref; do
+              if [[ "$fetched_ref" == "$ref" && "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+                printf '%s\n' "$sha"
+                return 0
+              fi
+            done <<< "$result"
+            return 1
           }
 
           mark_stale() {
@@ -1056,15 +700,6 @@ jobs:
             } >>"$GITHUB_ENV"
             docker rm -f "$CI_CONTAINER_NAME" >/dev/null 2>&1 || true
           }
-
-          if current_sha="$(get_pr_head_sha)"; then
-            if [[ "$current_sha" != "$NPU_CI_TARGET_SHA" ]]; then
-              mark_stale "$current_sha"
-              exit 1
-            fi
-          else
-            echo "[CI][WARN] Unable to check PR head before starting NPU CI; continuing."
-          fi
 
           echo "::group::${{ matrix.name }} 完整构建与测试日志（默认折叠）"
           (
@@ -1152,14 +787,6 @@ jobs:
             exit 1
           fi
           cleanup_directories=("$CI_HOST_TMPDIR")
-          if [[ "$CI_ACCURACY_PLATFORM" == a5 ]]; then
-            archive_dir="${TMPDIR}/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            if [[ "$archive_dir" != "/home/huangjunzhe/ci/tmp/fla-npu-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]; then
-              echo "[CI][ERROR] Refusing to clean an unexpected source archive directory." >&2
-              exit 1
-            fi
-            cleanup_directories+=("$archive_dir")
-          fi
           for directory in "${cleanup_directories[@]}"; do
             [[ ! -L "$directory" ]] || { echo "[CI][ERROR] Refusing to clean a symlink." >&2; exit 1; }
           done
@@ -1228,8 +855,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.workflow_sha }}
-          path: trusted-ci
-          sparse-checkout: .github/scripts/publish_npu_ci_status.js
+          path: ci-control
+          sparse-checkout: |
+            .github/scripts/publish_npu_ci_status.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -1253,13 +883,15 @@ jobs:
           NPU_COMMENT_ID: ${{ needs.prepare.outputs.comment_id }}
           NPU_MATRIX_RESULT: ${{ needs.ascend-npu.result }}
           NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_EXPECTED_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           NPU_EXPECTED_RUN_ID: ${{ github.run_id }}
           NPU_EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
             const publishNpuCiStatus = require(
-              `${process.env.GITHUB_WORKSPACE}/trusted-ci/.github/scripts/publish_npu_ci_status.js`
+              `${process.env.GITHUB_WORKSPACE}/ci-control/.github/scripts/publish_npu_ci_status.js`
             );
             await publishNpuCiStatus({ github, context, core });
 
@@ -1269,23 +901,28 @@ jobs:
         env:
           NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_OPS: ${{ needs.prepare.outputs.ops }}
+          NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
         with:
           github-token: ${{ github.token }}
           script: |
             const sha = process.env.NPU_EXPECTED_HEAD_SHA;
-            const contexts = [
-              'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-              'NPU CI / A2+A5 / 02 全量 OPP 构建',
-              'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-              'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-              'NPU CI / A2+A5 / 05 GDR Example/ST',
-              'NPU CI / A2+A5 / 06 报告与 commit 校验',
-            ];
-            const scopedContext = 'NPU CI / A2+A5 / 定向诊断';
+            // This fallback must also work when checkout of ci-control failed.
+            const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
+            if (!/^[0-9a-f]{40}$/.test(workflowSha)) throw new Error('无法确定固定的检查项定义版本。');
+            const { data: file } = await github.rest.repos.getContent({ ...context.repo,
+              path: '.github/scripts/npu_ci_checks.json', ref: workflowSha });
+            if (!file || Array.isArray(file) || file.type !== 'file' || !file.content) {
+              throw new Error('无法读取 NPU CI 检查项定义。');
+            }
+            const checks = JSON.parse(Buffer.from(file.content, file.encoding || 'base64').toString('utf8'));
             const normalizedOps = [...new Set(
               (process.env.NPU_OPS || '').split(',').map((item) => item.trim()).filter(Boolean)
             )].sort().join(',');
-            const statusContexts = normalizedOps ? [scopedContext] : contexts;
+            const statusContexts = normalizedOps ? [checks.diagnostic.context] : checks.required.map((item) => item.context);
+            if (!statusContexts.length || new Set(statusContexts).size !== statusContexts.length ||
+                statusContexts.some((name) => typeof name !== 'string' || !name.startsWith('NPU CI / '))) {
+              throw new Error('NPU CI 检查项定义无效。');
+            }
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             if (!/^[0-9a-f]{40}$/.test(sha || '')) {
               core.setFailed('无法确定要收敛的 PR head commit。');
