@@ -189,16 +189,26 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkFwdOParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.h, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous h failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    auto dfxRetStatus1 = DataContiguous(params.q, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.v, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.h, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -229,9 +239,18 @@ static aclnnStatus CheckParams(ChunkFwdOParams params)
     // 不可经 CHECK_RET 统一改写为 161002，否则丢失 NULLPTR 语义
     aclnnStatus ret = CheckNotNull(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus6 = CheckFormat(params);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = CheckShape(params);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = CheckDtype(params);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -266,8 +285,10 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     // 固定写法，参数检查（透传 CheckParams 的错误码，保留 NULLPTR 161001 语义）
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus9 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
     auto result = l0op::ChunkFwdO(params.q, params.k, params.v, params.h, params.g, params.cuSeqlensOptional,
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
                                  params.stateVFirst, params.outputLayout, params.oOut, executorPtr);

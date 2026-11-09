@@ -127,22 +127,38 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(PrepareWyReprBwdFullParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous beta failed.");
-    CHECK_COND(DataContiguous(params.a, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous a failed.");
-    CHECK_COND(DataContiguous(params.dA, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dA failed.");
-    CHECK_COND(DataContiguous(params.dw, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dw failed.");
-    CHECK_COND(DataContiguous(params.du, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous du failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    auto dfxRetStatus1 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.v, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.beta, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.a, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = DataContiguous(params.dA, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
+    auto dfxRetStatus6 = DataContiguous(params.dw, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = DataContiguous(params.du, executorPtr);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -212,8 +228,10 @@ aclnnStatus aclnnPrepareWyReprBwdFullGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus9 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
     auto result = l0op::PrepareWyReprBwdFull(params.k, params.v, params.beta, params.a, params.dA, params.dw, params.du, params.g, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.dkOut, params.dvOut, params.dbetaOut, params.dgOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);

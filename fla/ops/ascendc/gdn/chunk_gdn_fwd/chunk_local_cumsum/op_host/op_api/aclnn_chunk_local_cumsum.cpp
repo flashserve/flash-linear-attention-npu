@@ -76,8 +76,10 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkLocalCumsumParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    auto dfxRetStatus1 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -116,8 +118,10 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
         return ret;
     }
 
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus2 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
 
     auto result = l0op::ChunkLocalCumsum(params.g, params.cuSeqlensOptional, params.chunkIndicesOutOptional,
                                         params.chunkSize, params.reverse, params.scale, params.headFirst,

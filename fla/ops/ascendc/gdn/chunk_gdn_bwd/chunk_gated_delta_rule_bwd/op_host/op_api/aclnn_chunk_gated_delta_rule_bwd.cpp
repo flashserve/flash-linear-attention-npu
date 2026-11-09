@@ -393,7 +393,10 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
                ACLNN_ERR_PARAM_INVALID, "K and V must both be 128.");
     CHECK_COND(info.hv % info.hk == 0 && info.hv / info.hk <= 4,
                ACLNN_ERR_PARAM_INVALID, "HV/HK must be an integer in [1, 4].");
-    CHECK_RET(CheckLayoutShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus1 = CheckLayoutShapes(params, info);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
     CHECK_RET(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     CHECK_COND(params.cuSeqlens == nullptr || info.batch == 1,
@@ -606,18 +609,54 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         return checkStatus;
     }
 
-    CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.a, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialState, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dht, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.qRstd, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.kRstd, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.betaRaw, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus2 = MakeContiguous(params.q, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = MakeContiguous(params.k, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = MakeContiguous(params.v, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = MakeContiguous(params.g, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
+    auto dfxRetStatus6 = MakeContiguous(params.beta, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = MakeContiguous(params.a, executorPtr);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = MakeContiguous(params.dO, executorPtr);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
+    auto dfxRetStatus9 = MakeContiguous(params.initialState, executorPtr);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
+    auto dfxRetStatus10 = MakeContiguous(params.dht, executorPtr);
+    if (dfxRetStatus10 != ACLNN_SUCCESS) {
+        return dfxRetStatus10;
+    }
+    auto dfxRetStatus11 = MakeContiguous(params.qRstd, executorPtr);
+    if (dfxRetStatus11 != ACLNN_SUCCESS) {
+        return dfxRetStatus11;
+    }
+    auto dfxRetStatus12 = MakeContiguous(params.kRstd, executorPtr);
+    if (dfxRetStatus12 != ACLNN_SUCCESS) {
+        return dfxRetStatus12;
+    }
+    auto dfxRetStatus13 = MakeContiguous(params.betaRaw, executorPtr);
+    if (dfxRetStatus13 != ACLNN_SUCCESS) {
+        return dfxRetStatus13;
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;

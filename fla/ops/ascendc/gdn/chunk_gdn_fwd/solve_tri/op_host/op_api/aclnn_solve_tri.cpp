@@ -64,8 +64,10 @@ static constexpr const char *SOLVE_TRI_ENTITY = "aclnnSolveTri";
  
  static aclnnStatus ParamsDataContiguous(SolveTriParams &params, aclOpExecutor *executorPtr)
  {
-     CHECK_COND(DataContiguous(params.x, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                "Contiguous x failed.");
+     auto dfxRetStatus1 = DataContiguous(params.x, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
      return ACLNN_SUCCESS;
  }
  
@@ -91,8 +93,10 @@ static constexpr const char *SOLVE_TRI_ENTITY = "aclnnSolveTri";
          return ret;
      }
  
-     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                "ParamsDataContiguous failed.");
+     auto dfxRetStatus2 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
  
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);

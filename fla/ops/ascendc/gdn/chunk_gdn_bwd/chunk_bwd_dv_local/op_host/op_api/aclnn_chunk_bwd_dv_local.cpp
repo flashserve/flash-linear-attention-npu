@@ -171,14 +171,22 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkBwdDvLocalParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dO failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    auto dfxRetStatus1 = DataContiguous(params.q, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.dO, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -242,8 +250,10 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus5 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
     auto result = l0op::ChunkBwdDvLocal(params.q, params.k,  params.dO, params.g, params.gGammaOptional, params.aOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize, params.out, executorPtr);
     CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 

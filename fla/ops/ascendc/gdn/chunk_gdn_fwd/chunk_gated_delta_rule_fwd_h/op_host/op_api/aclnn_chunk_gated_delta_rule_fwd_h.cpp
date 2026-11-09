@@ -273,19 +273,29 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous u failed.");
+    auto dfxRetStatus1 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.w, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.u, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
     if (params.gOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Contiguous gOptional failed.");
+        auto dfxRetStatus4 = DataContiguous(params.gOptional, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
     }
     if (params.gkOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Contiguous gkOptional failed.");
+        auto dfxRetStatus5 = DataContiguous(params.gkOptional, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
     }
     if (params.initialStateOptional != nullptr) {
         CHECK_COND(DataContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS,
@@ -483,8 +493,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus6 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
     const auto kShape = params.k->GetViewShape();
     const auto uShape = params.u->GetViewShape();
     const int64_t seqNum = params.cuSeqlensOptional == nullptr

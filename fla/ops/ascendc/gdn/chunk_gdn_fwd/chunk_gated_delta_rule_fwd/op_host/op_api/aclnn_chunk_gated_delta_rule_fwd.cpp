@@ -552,7 +552,10 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         return supportedContractStatus;
     }
     GdnShapeInfo info;
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus1 = ResolveShapeInfo(params, info);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
     const size_t qkvRank = 4;
     const size_t scalarRank = 3;
     CHECK_RET(CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional") == ACLNN_SUCCESS,
@@ -629,7 +632,10 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                ACLNN_ERR_PARAM_INVALID, "cuSeqlens and chunkIndices must be both present or both absent.");
     CHECK_COND(params.cuSeqlensOptional == nullptr || info.batch == 1, ACLNN_ERR_PARAM_INVALID,
                "varlen rank-4 input requires physical B=1.");
-    CHECK_RET(CheckMetadata(params, info.seqlen) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus2 = CheckMetadata(params, info.seqlen);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
 
     const int64_t seqNum = SeqNum(params, info.batch);
     const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
@@ -760,15 +766,36 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         return status;
     }
 
-    CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus3 = MakeContiguous(params.q, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = MakeContiguous(params.k, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = MakeContiguous(params.v, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
+    auto dfxRetStatus6 = MakeContiguous(params.g, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = MakeContiguous(params.beta, executorPtr);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = MakeContiguous(params.initialStateOptional, executorPtr);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
 
     GdnShapeInfo info;
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus9 = ResolveShapeInfo(params, info);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
     const int64_t batch = info.batch;
     const int64_t hq = info.hq;
     const int64_t hv = info.hv;
@@ -866,8 +893,14 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const aclTensor *dtBias = params.dtBiasOptional;
         const aclTensor *initialState = params.initialStateOptional;
         if (IsDav2201Device()) {
-            CHECK_RET(MakeContiguous(aLog, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-            CHECK_RET(MakeContiguous(dtBias, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+            auto dfxRetStatus10 = MakeContiguous(aLog, executorPtr);
+    if (dfxRetStatus10 != ACLNN_SUCCESS) {
+        return dfxRetStatus10;
+    }
+            auto dfxRetStatus11 = MakeContiguous(dtBias, executorPtr);
+    if (dfxRetStatus11 != ACLNN_SUCCESS) {
+        return dfxRetStatus11;
+    }
             if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT) {
                 aLog = l0op::Cast(aLog, DataType::DT_FLOAT, executorPtr);
             }

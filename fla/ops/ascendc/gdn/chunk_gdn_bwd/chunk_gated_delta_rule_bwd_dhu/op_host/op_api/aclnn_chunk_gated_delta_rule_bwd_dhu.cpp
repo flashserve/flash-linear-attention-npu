@@ -321,24 +321,42 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleBwdDhuParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dO failed.");
-    CHECK_COND(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dv failed.");
-    CHECK_COND(OptionalDataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
-    CHECK_COND(OptionalDataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous gk failed.");
-    CHECK_COND(OptionalDataContiguous(params.h0Optional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous h0 failed.");
-    CHECK_COND(OptionalDataContiguous(params.dhtOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dht failed.");
+    auto dfxRetStatus1 = DataContiguous(params.q, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.w, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.dO, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = DataContiguous(params.dv, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
+    auto dfxRetStatus6 = OptionalDataContiguous(params.gOptional, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = OptionalDataContiguous(params.gkOptional, executorPtr);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = OptionalDataContiguous(params.h0Optional, executorPtr);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
+    auto dfxRetStatus9 = OptionalDataContiguous(params.dhtOptional, executorPtr);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -348,9 +366,18 @@ static aclnnStatus CheckParams(ChunkGatedDeltaRuleBwdDhuParams params)
     // 不可经 CHECK_RET 统一改写为 161002，否则丢失 NULLPTR 语义
     aclnnStatus ret = CheckNotNull(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus10 = CheckFormat(params);
+    if (dfxRetStatus10 != ACLNN_SUCCESS) {
+        return dfxRetStatus10;
+    }
+    auto dfxRetStatus11 = CheckDtype(params);
+    if (dfxRetStatus11 != ACLNN_SUCCESS) {
+        return dfxRetStatus11;
+    }
+    auto dfxRetStatus12 = CheckShape(params);
+    if (dfxRetStatus12 != ACLNN_SUCCESS) {
+        return dfxRetStatus12;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -392,8 +419,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     // 固定写法，参数检查
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus13 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus13 != ACLNN_SUCCESS) {
+        return dfxRetStatus13;
+    }
 
     auto result = l0op::ChunkGatedDeltaRuleBwdDhu(
         params.q, params.k, params.w, params.dO, params.dv, params.gOptional, params.gkOptional,

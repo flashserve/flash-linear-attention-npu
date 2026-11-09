@@ -247,7 +247,10 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     if (IsA2PrepareSoc()) {
         CHECK_COND(B > 0 && HK > 0 && HV > 0 && T > 0, ACLNN_ERR_PARAM_INVALID,
                    "A2 Prepare requires positive B/Hk/Hv/T.");
-        CHECK_RET(CheckA2PrepareMetadata(params, T) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+        auto dfxRetStatus1 = CheckA2PrepareMetadata(params, T);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
     }
     CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
                "v batch/seq must match q.");
@@ -326,16 +329,34 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdPrepareParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous g failed.");
-    CHECK_COND(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous beta failed.");
-    CHECK_COND(OptionalDataContiguous(params.aLogOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous aLog failed.");
-    CHECK_COND(OptionalDataContiguous(params.dtBiasOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dtBias failed.");
+    auto dfxRetStatus2 = DataContiguous(params.q, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.v, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
+    auto dfxRetStatus6 = DataContiguous(params.beta, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = OptionalDataContiguous(params.aLogOptional, executorPtr);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = OptionalDataContiguous(params.dtBiasOptional, executorPtr);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -478,8 +499,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     if (status != ACLNN_SUCCESS) {
         return status;
     }
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus9 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
 
     const bool a2 = IsA2PrepareSoc();
     auto compute = params;
