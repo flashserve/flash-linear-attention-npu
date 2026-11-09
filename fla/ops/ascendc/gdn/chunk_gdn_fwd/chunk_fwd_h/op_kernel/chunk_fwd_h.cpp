@@ -59,8 +59,8 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
            (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
 }
 
-// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段）
-// 后调用 gated preload kernel；g 须为 log2 域输入。
+// gated 复用分支：逐核构造本地 tiling 视图并调用 gated preload kernel；
+// g 须为 log2 域输入。
 template <typename GateT, typename StateT>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {

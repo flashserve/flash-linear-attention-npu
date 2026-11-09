@@ -148,6 +148,7 @@ struct BlockSchedulerGdnFwdHPreload {
                     gmNumSeq.SetValue(0, 0);
                     uint32_t actualBatch = 0;
                     int64_t prevSeq = 0, currSeq;
+                    int64_t chunkPrefix = 0;
                     for (uint32_t b = 1; b <= tokenBatch; b++) {
                         currSeq = gmSeqlen.GetValue(b);
                         int64_t batchSeqLen = currSeq - prevSeq;
@@ -155,16 +156,19 @@ struct BlockSchedulerGdnFwdHPreload {
                             actualBatch++;
                             gmNumSeq.SetValue(actualBatch, currSeq);
                             int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
-                            gmNumChunks.SetValue(actualBatch,
-                                                 gmNumChunks.GetValue(actualBatch - 1) + batchChunk);
+                            chunkPrefix += batchChunk;
+                            gmNumChunks.SetValue(actualBatch, chunkPrefix);
                         }
                         prevSeq = currSeq;
                     }
+                    // SetValue writes through the scalar data cache. SyncAll
+                    // orders the cores but does not write back that cache.
+                    AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
                 }
             }
-            // The writer must publish the complete table before any scheduler
-            // computes offsets from it.
+            // Publish both prefix tables before any scheduler computes offsets.
             AscendC::SyncAll<false>();
+            AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
 
             uint32_t actualBatch = 0;
             int64_t prevSeq = 0, currSeq;

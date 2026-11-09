@@ -3,7 +3,7 @@
 ## 功能
 
 `ChunkGatedDeltaRuleBwd` 实现 Gated Delta Rule 的分块反向计算。A5 上依次调度
-`ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、`ChunkGatedDeltaRuleBwdDhu` 和
+`ChunkGdnBwdIntra`、`ChunkFwdH`、`ChunkGatedDeltaRuleBwdDhu` 和
 `ChunkGatedDeltaRuleBwdFinalize`。当前实现支持定长和变长序列、GVA、可选初始状态、
 Q/K L2Norm 反向以及 beta sigmoid 反向。
 
