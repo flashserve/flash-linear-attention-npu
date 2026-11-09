@@ -101,6 +101,14 @@ function requireReviewerWritePermissions(permissions) {
   }
 }
 
+function getTargetBranchRef(pr) {
+  const ref = pr?.base?.ref;
+  if (typeof ref !== 'string' || !ref.trim()) {
+    throw new Error('无法确定 PR 当前目标分支，不能读取 CODEOWNERS。');
+  }
+  return ref;
+}
+
 function truncateDescription(value) {
   return String(value).replace(/\s+/g, ' ').trim().slice(0, 140);
 }
@@ -137,7 +145,9 @@ async function run({ github, context, core }) {
     const { data: codeownersFile } = await github.rest.repos.getContent({
       ...context.repo,
       path: CODEOWNERS_PATH,
-      ref: pr.base.sha,
+      // PR base.sha can remain at the original merge base for long-lived PRs.
+      // Read the current target branch so workflow/CODEOWNERS upgrades apply.
+      ref: getTargetBranchRef(pr),
     });
     if (!codeownersFile || Array.isArray(codeownersFile) ||
         codeownersFile.type !== 'file' || !codeownersFile.content) {
@@ -215,5 +225,6 @@ module.exports = {
   parseCodeowners,
   computeActiveApprovals,
   requireReviewerWritePermissions,
+  getTargetBranchRef,
   run,
 };

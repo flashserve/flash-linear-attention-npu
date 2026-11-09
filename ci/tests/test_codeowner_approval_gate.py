@@ -102,6 +102,17 @@ try {
         )
         self.assertIn("至少需要 write", result["error"])
 
+    def test_codeowners_ref_uses_current_target_branch_not_stale_base_sha(self):
+        result = self.run_helper(
+            "getTargetBranchRef",
+            args=[{"base": {"ref": "main", "sha": "98e0ddf6cba844e46e412372f84685b1dae42b44"}}],
+        )
+        self.assertEqual(result["result"], "main")
+
+    def test_missing_target_branch_ref_fails_closed(self):
+        result = self.run_helper("getTargetBranchRef", args=[{"base": {"sha": "98e0ddf"}}])
+        self.assertIn("无法确定 PR 当前目标分支", result["error"])
+
     def test_workflow_runs_on_review_and_pr_state_changes(self):
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         events = workflow.get("on", workflow.get(True))
@@ -111,6 +122,8 @@ try {
         )
         self.assertIn("synchronize", events["pull_request_target"]["types"])
         self.assertEqual(workflow["permissions"]["statuses"], "write")
+        checkout = workflow["jobs"]["evaluate"]["steps"][0]["with"]
+        self.assertEqual(checkout["ref"], "${{ github.workflow_sha }}")
         script = workflow["jobs"]["evaluate"]["steps"][1]["with"]["script"]
         self.assertIn("gate.run", script)
 

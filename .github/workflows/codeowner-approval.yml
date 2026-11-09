@@ -33,7 +33,9 @@ jobs:
       - name: 检出受信任的目标分支检查脚本
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          # The workflow itself is trusted; a long-lived PR may retain a base
+          # SHA that predates this helper.
+          ref: ${{ github.workflow_sha }}
           sparse-checkout: |
             .github/scripts/codeowner_approval_gate.js
           sparse-checkout-cone-mode: false
