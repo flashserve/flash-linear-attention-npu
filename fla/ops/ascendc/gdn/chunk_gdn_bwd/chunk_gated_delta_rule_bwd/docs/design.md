@@ -53,13 +53,13 @@ arch22 FwdH 的 gated preload 内部使用压缩后的非空序列调度。初�
 六个小算子的原 L0 接口末尾追加 `const char *layout = "BNSD"`，OpDef 追加同名
 默认 `BNSD` 的可选字符串属性。主算子显式传入自身 layout；省略参数的原调用继续
 使用 head-major。每个 L0 只保留一个声明和定义，不增加 v2 或重载。NTD/TND 使用
-现有 B=1 的四维物理描述；host 将 BNSD/NTD、BSND/TND 分别映射为两种既有模板。
+现有 B=1 的四维物理描述；host 将四种布局解析为枚举值并写入 tiling data。
 layout 只控制原始 q/k/v 与最终 dq/dk/dv，其余张量沿用各自布局。公开 ACLNN C ABI
 保持不变；L0 默认参数保留源码调用兼容，使用方需要重新编译。
 TilingKey 使用
 `ASCENDC_TPL_ARGS_DECL`、`ASCENDC_TPL_SEL` 和 `GET_TPL_TILING_KEY`。
-arch22 Finalize 的 DQ/WY Cube、Vector 和最终 Q/K 写回均继续传递布局模板参数，
-不在内层循环读取布局属性或按运行时布局选择搬运路径。
+布局不增加 TilingKey 模板维度。arch22 Finalize 的 DQ/WY Cube、Vector 和最终
+Q/K 写回使用 tiling data 中的运行时 layout 计算 GM offset 和行跨度。
 
 ## 资源与同步
 
