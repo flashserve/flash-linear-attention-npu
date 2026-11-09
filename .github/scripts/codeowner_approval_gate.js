@@ -8,6 +8,7 @@ const EXPECTED_CODEOWNERS = Object.freeze([
   'weiwei-612',
   'chen-linxin',
   'Ensley0304',
+  'zhangshuolei-hfut',
 ]);
 
 const permissionRank = Object.freeze({
@@ -63,7 +64,7 @@ function parseCodeowners(text) {
     throw new Error(`全仓 Code Owner 必须且只能是：${EXPECTED_CODEOWNERS.join('、')}。`);
   }
   if (allOwners.size !== expected.size || [...allOwners.keys()].some((login) => !expected.has(login))) {
-    throw new Error('所有路径级 Code Owner 都必须属于指定四人，不能引入其他账号或团队。');
+    throw new Error('所有路径级 Code Owner 都必须属于指定用户，不能引入其他账号或团队。');
   }
   return [...EXPECTED_CODEOWNERS];
 }
