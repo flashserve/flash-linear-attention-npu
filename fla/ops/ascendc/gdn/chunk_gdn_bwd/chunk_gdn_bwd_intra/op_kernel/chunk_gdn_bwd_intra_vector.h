@@ -5,6 +5,8 @@
 #ifndef CHUNK_GDN_BWD_INTRA_VECTOR_H
 #define CHUNK_GDN_BWD_INTRA_VECTOR_H
 
+#include "qkv_layout.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -162,7 +164,7 @@ __simd_vf__ inline void ChunkGdnBwdIntraPackMatrixVF(
     }
 }
 
-template <typename MainT, typename GateT, typename BetaT, uint32_t G, bool QKV_SEQUENCE_MAJOR = false>
+template <typename MainT, typename GateT, typename BetaT, uint32_t G>
 class ChunkGdnBwdIntraVector {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -418,7 +420,7 @@ private:
         const uint64_t vectorOffset =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
                 tiling_->seqlen + meta.tokenStart;
-        const uint64_t vdoOffset = QKV_SEQUENCE_MAJOR
+        const uint64_t vdoOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
                 meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
             : (vectorOffset + rowBegin) * tiling_->valueDim;
@@ -438,7 +440,7 @@ private:
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaLocal, betaGm_[vectorOffset], vectorCopy, betaPad);
         const uint32_t vdoElements = static_cast<uint32_t>(rows * tiling_->valueDim);
-        if constexpr (!QKV_SEQUENCE_MAJOR) {
+        if (!(tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
             AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
             AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
         } else {
@@ -458,7 +460,7 @@ private:
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t firstSlot,
         uint32_t count)
     {
-        if constexpr (QKV_SEQUENCE_MAJOR) {
+        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
             for (uint32_t offset = 0; offset < count; ++offset) {
                 PrefetchStage1Input<true>(meta, static_cast<int64_t>(firstSlot + offset));
             }

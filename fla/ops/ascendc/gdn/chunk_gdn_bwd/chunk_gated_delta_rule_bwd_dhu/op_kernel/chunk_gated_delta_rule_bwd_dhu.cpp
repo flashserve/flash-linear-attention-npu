@@ -29,22 +29,21 @@
 
 namespace GDN {
 
-template <typename DT, typename GT, int V_DIM, int USE_GK, bool DO_TOKEN_MAJOR,
-          bool QKV_SEQUENCE_MAJOR>
+template <typename DT, typename GT, int V_DIM, int USE_GK, bool DO_TOKEN_MAJOR>
 __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR gate, GM_ADDR dht,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2,
     GM_ADDR workspace, const ChunkGatedDeltaRuleBwdDhuTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
-        ChunkGatedDeltaRuleBwdDhuCube<DT, V_DIM, QKV_SEQUENCE_MAJOR> cube;
+        ChunkGatedDeltaRuleBwdDhuCube<DT, V_DIM> cube;
         cube.Init(q, k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, workspace, tilingData,
                   DO_TOKEN_MAJOR);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkGatedDeltaRuleBwdDhuVector<DT, GT, USE_GK, QKV_SEQUENCE_MAJOR> vec;
+        ChunkGatedDeltaRuleBwdDhuVector<DT, GT, USE_GK> vec;
         vec.Init(q, gate, dv, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData, &pipe);
         vec.Process();
     }
@@ -71,8 +70,7 @@ struct ChunkGatedDeltaRuleBwdDhuDTypeTraits<TPL_FP32> {
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <int D_T_Q, int D_T_G, int V, int USE_GK, bool DO_TOKEN_MAJOR,
-          bool QKV_SEQUENCE_MAJOR>
+template <int D_T_Q, int D_T_G, int V, int USE_GK, bool DO_TOKEN_MAJOR>
 __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g,
     GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -94,7 +92,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     using QType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_Q>::type;
     using GType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_G>::type;
     GM_ADDR gate = (USE_GK == 0) ? g : gk;
-    GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK, DO_TOKEN_MAJOR, QKV_SEQUENCE_MAJOR>(
+    GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK, DO_TOKEN_MAJOR>(
         q, k, w, d_o, dv, gate, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
 }
 #endif

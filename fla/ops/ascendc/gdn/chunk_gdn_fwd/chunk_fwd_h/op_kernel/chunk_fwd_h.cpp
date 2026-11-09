@@ -37,14 +37,13 @@ struct FwdHGateDTypeTraits<CHUNK_FWD_H_TPL_FP32> {
 };
 
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16,
-          bool QKV_SEQUENCE_MAJOR>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
 struct FwdHKernelTraits {
     static_assert(V_DIM == static_cast<int>(FWD_H_V), "ChunkFwdH only supports V=128.");
     using GateT = typename FwdHGateDTypeTraits<D_T_G>::type;
     using CompilePolicy = FwdHCompilePolicy<
         USE_GK ? FwdHGateMode::KEY_GK : FwdHGateMode::SCALAR_G, USE_EXP2, STATE_FP32,
-        STORE_FINAL, DENSE_T16, QKV_SEQUENCE_MAJOR>;
+        STORE_FINAL, DENSE_T16>;
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
 };
 
@@ -62,16 +61,17 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
 
 // gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段）
 // 后调用 gated preload kernel；g 须为 log2 域输入。
-template <typename GateT, typename StateT, bool QKV_SEQUENCE_MAJOR>
+template <typename GateT, typename StateT>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
     using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<
-        DataT, GateT, StateT, float, QKV_SEQUENCE_MAJOR>;
+        DataT, GateT, StateT, float>;
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
     if (AscendC::GetBlockIdx() == 0) {
+        gtiling->layout = args.tiling.layout;
         gtiling->batch = args.tiling.batch;
         gtiling->seqlen = args.tiling.seqlen;
         gtiling->kNumHead = args.tiling.kNumHead;
@@ -110,7 +110,7 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 }
 #endif
 
-template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST, bool QKV_SEQUENCE_MAJOR>
+template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
@@ -124,7 +124,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
             (group % 2) != 0 && args.tiling.kNumHead > 1;
         if (!gatedDeadlockShape) {
-            RunFwdHGatedReuse<GateT, GatedStateT, QKV_SEQUENCE_MAJOR>(args);
+            RunFwdHGatedReuse<GateT, GatedStateT>(args);
             return;
         }
     }
@@ -161,7 +161,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 
 #ifndef TORCH_MODE
 template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
-          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16, bool QKV_SEQUENCE_MAJOR>
+          bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
 __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
@@ -193,7 +193,7 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.useInitialState = tilingData->useInitialState;
     args.tiling.storeFinalState = tilingData->storeFinalState;
     args.tiling.isVariedLen = tilingData->isVariedLen;
-    args.tiling.qkvSequenceMajor = QKV_SEQUENCE_MAJOR;
+    args.tiling.layout = tilingData->layout;
     args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
     args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
     args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);
@@ -209,9 +209,8 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.gatedNumSeqOffset = static_cast<uint64_t>(tilingData->gatedNumSeqOffset);
     args.tiling.gatedNumChunksOffset = static_cast<uint64_t>(tilingData->gatedNumChunksOffset);
     using Traits = GDN::FwdHKernelTraits<
-        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16,
-        QKV_SEQUENCE_MAJOR>;
+        D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
-                      Traits::STATE_V_FIRST_VALUE, QKV_SEQUENCE_MAJOR>(args);
+                      Traits::STATE_V_FIRST_VALUE>(args);
 }
 #endif

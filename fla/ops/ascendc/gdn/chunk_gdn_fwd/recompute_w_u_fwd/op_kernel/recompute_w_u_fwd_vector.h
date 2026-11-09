@@ -16,13 +16,15 @@
 #ifndef RECOMPUTE_W_U_FWD_VECTOR_H
 #define RECOMPUTE_W_U_FWD_VECTOR_H
 
+#include "qkv_layout.h"
+
 #include "recompute_w_u_fwd_struct.h"
 #include "catlass/arch/cross_core_sync.hpp"
 using namespace AscendC;
 
 using GDN::RecomputeWUFwdTilingData;
 
-template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR = false>
+template <typename kType, typename betaType>
 class RecomputeWUFwdVectorProcess {
 public:
     /** @brief constructor */
@@ -36,6 +38,7 @@ public:
     __aicore__ inline void Init(const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_);
 
 private:
+    int64_t layout_ = GDN::QKV_LAYOUT_BNSD;
     uint64_t B = 0;
     uint64_t T = 0;
     uint64_t Hv = 1;
@@ -84,16 +87,16 @@ private:
 
 };
 
-template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::RecomputeWUFwdVectorProcess(
+template <typename kType, typename betaType>
+__aicore__ inline RecomputeWUFwdVectorProcess<kType, betaType>::RecomputeWUFwdVectorProcess(
     GM_ADDR k_, GM_ADDR v_, GM_ADDR beta_, GM_ADDR A_, GM_ADDR g_,
     GM_ADDR cu_seqlens_, GM_ADDR chunk_indices_, GM_ADDR w_, GM_ADDR u_,
     GM_ADDR workspace_)
     : k(k_), v(v_), beta(beta_), A(A_), g(g_), cu_seqlens(cu_seqlens_),
       chunk_indices(chunk_indices_), w(w_), u(u_), workspace(workspace_){};
 
-template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::Init(
+template <typename kType, typename betaType>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Init(
     const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_)
 {
     pipe = pipe_;
@@ -103,6 +106,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
     betaTensor.SetGlobalBuffer((__gm__ betaType *)beta);
     gTensor.SetGlobalBuffer((__gm__ betaType *)g);
 
+    layout_ = tiling.layout;
     B = tiling.B;
     T = tiling.T;
     Hv = tiling.Hv;
@@ -117,8 +121,8 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
     return;
 }
 
-template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::Process()
+template <typename kType, typename betaType>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Process()
 {
     //计算K * Beta[:None]
     ProcessVb();
@@ -129,8 +133,8 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
 }
 
 
-template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::ProcessVb()
+template <typename kType, typename betaType>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
 {
     uint32_t coreLoops = chunkNum;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -169,7 +173,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
                 uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / ((T + chunkSize - 1) / chunkSize));
                 uint64_t tokenBase = cu_seqlens ? bos : (bos - bIdx * Hv * T);
-                auto vOffset = QKV_SEQUENCE_MAJOR
+                auto vOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
                                    ? ((bIdx * T + tokenBase + rowOffset) * Hv + h) * V
                                    : (h * T + bos + rowOffset) * V;
                 auto vDstOffset = (h * T + bos + rowOffset) * V;
@@ -179,7 +183,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
                     auto tensorVin = vInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
 
-                    if constexpr (QKV_SEQUENCE_MAJOR) {
+                    if ((layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
                         DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
                         DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
                                                  static_cast<uint32_t>(V * sizeof(kType)),
@@ -240,8 +244,8 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
     return;
 }
 
-template <typename kType, typename betaType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE_MAJOR>::ProcessKbgExp()
+template <typename kType, typename betaType>
+__aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgExp()
 {
     uint32_t coreLoops = chunkNum;
     uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
@@ -289,7 +293,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
                 uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / coreLoopsInB);
                 uint64_t tokenBase = cu_seqlens ? bos : (bos - bIdx * Hv * T);
                 uint64_t bosK = cu_seqlens ? bos : (bos - bIdx * (Hv - Hk) * T);
-                auto kSrcOffset = QKV_SEQUENCE_MAJOR
+                auto kSrcOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
                                       ? ((bIdx * T + tokenBase + rowOffset) * Hk + hk) * K
                                       : (hk * T + bosK + rowOffset) * K;
                 auto kDstOffset = (h * T + bos + rowOffset) * K;
@@ -299,7 +303,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, QKV_SEQUENCE
                     auto tensorKin = kInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
                     auto tensorGin = gInQue.AllocTensor<betaType>();
-                    if constexpr (QKV_SEQUENCE_MAJOR) {
+                    if ((layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
                         DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
                         DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
                                                  static_cast<uint32_t>(K * sizeof(kType)),

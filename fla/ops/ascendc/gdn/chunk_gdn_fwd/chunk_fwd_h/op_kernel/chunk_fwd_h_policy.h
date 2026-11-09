@@ -7,6 +7,8 @@
 #ifndef CHUNK_FWD_H_POLICY_H
 #define CHUNK_FWD_H_POLICY_H
 
+#include "qkv_layout.h"
+
 #include <cstdint>
 
 #include "kernel_operator.h"
@@ -19,7 +21,7 @@ enum class FwdHGateMode : uint8_t {
 };
 
 template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_,
-          bool DENSE_T16_ = false, bool QKV_SEQUENCE_MAJOR_ = false>
+          bool DENSE_T16_ = false>
 struct FwdHCompilePolicy {
     static constexpr FwdHGateMode GATE_MODE = GATE_MODE_;
     static constexpr bool USE_EXP2 = USE_EXP2_;
@@ -32,7 +34,6 @@ struct FwdHCompilePolicy {
     // 每 unit ≤2 head 才选 1；AIV 单 slot 大缓冲，per-tile 开销减半）。仅 arch22；
     // 变长/多 head-per-unit 路径恒 0，行为与既有二进制一致。
     static constexpr bool DENSE_T16 = DENSE_T16_;
-    static constexpr bool QKV_SEQUENCE_MAJOR = QKV_SEQUENCE_MAJOR_;
 };
 
 constexpr uint32_t FWD_H_CHUNK = 64;
@@ -167,7 +168,7 @@ struct FwdHRuntimeTiling {
     bool useInitialState = false;
     bool storeFinalState = false;
     bool isVariedLen = false;
-    bool qkvSequenceMajor = false;
+    int64_t layout = GDN::QKV_LAYOUT_BNSD;
     // P1：host 注入的均衡分区表（varlen）。coreBoundCount=0 表示无表，走均分。
     // 表本体留在 GM tiling data 内（不拷入 kernel 栈——260B 结构体膨胀曾致
     // AIV 指令缓冲等待 +48us 的代码足迹税），此处仅持 GM 指针，每核读 2 个字。

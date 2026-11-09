@@ -1,3 +1,4 @@
+#include "fla/ops/ascendc/common/qkv_layout.h"
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 
@@ -124,7 +125,7 @@ ge::graphStatus ValidateShape(gert::TilingContext *, const char *parameter,
 
 ge::graphStatus ValidateShapes(gert::TilingContext *context,
                                GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData &tiling,
-                               bool stateVFirst, bool qkvSequenceMajor)
+                               bool stateVFirst, int64_t inputLayout)
 {
     // 先检查真实输入 rank，再提取 shape；错误报告保留具体参数和 actual/expected。
     const gert::StorageShape *shapes[] = {
@@ -150,10 +151,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape &a = shapes[INPUT_A_IDX]->GetStorageShape();
     const gert::Shape &h = shapes[INPUT_H_IDX]->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = qkvSequenceMajor ? q.GetDim(2) : q.GetDim(1);
-    tiling.T = qkvSequenceMajor ? q.GetDim(1) : q.GetDim(2);
+    tiling.HK = (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = qkvSequenceMajor ? v.GetDim(2) : v.GetDim(1);
+    tiling.HV = (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -190,13 +191,13 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "k.shape", shapes[INPUT_K_IDX]->GetStorageShape(),
-                      qkvSequenceMajor ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HK, tiling.K}
+                      (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HK, tiling.K}
                                         : std::initializer_list<int64_t>{tiling.B, tiling.HK, tiling.T, tiling.K},
                       INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "v.shape", shapes[INPUT_V_IDX]->GetStorageShape(),
-                      qkvSequenceMajor ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HV, tiling.V}
+                      (inputLayout == GDN::QKV_LAYOUT_BSND || inputLayout == GDN::QKV_LAYOUT_TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HV, tiling.V}
                                         : std::initializer_list<int64_t>{tiling.B, tiling.HV, tiling.T, tiling.V},
                       INPUT_V_IDX) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -252,9 +253,12 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajorValue = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
-    tiling->qkvSequenceMajor = qkvSequenceMajorValue ? 1 : 0;
-    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, qkvSequenceMajorValue) != ge::GRAPH_SUCCESS, ,
+    const int64_t layoutValue =
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+    tiling->layout = layoutValue;
+    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, layoutValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
 
     const double *scale = attrs->GetAttrPointer<double>(0);
@@ -481,8 +485,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     const uint64_t actualTilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
         static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
-        static_cast<uint64_t>(useExp2Value), static_cast<uint64_t>(enableMhaOwner),
-        static_cast<uint64_t>(qkvSequenceMajorValue));
+        static_cast<uint64_t>(useExp2Value), static_cast<uint64_t>(enableMhaOwner));
     context->SetTilingKey(actualTilingKey);
     OP_LOGD(context->GetNodeName(),
             "GDN_FINALIZE_ARCH22_TILING actualKey=%" PRIu64 " owner=%u gKey=%d norm=%u sigmoid=%u exp2=%u",

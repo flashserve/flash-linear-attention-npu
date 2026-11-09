@@ -12,6 +12,7 @@
  * \brief
  */
 
+#include "fla/ops/ascendc/common/qkv_layout.h"
 #include <cstring>
 
 #include "chunk_bwd_dv_local_tiling_processor.h"
@@ -57,7 +58,10 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
         std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajor = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
+    const int64_t layoutValue =
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
 
     ChunkBwdDvLocalTilingContext ctx{
         context->GetNodeName(),
@@ -69,7 +73,7 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
         context->GetOptionalInputShape(CHUNK_BWD_DV_LOCAL_INPUT_CHUNK_INDICES_IDX),
         *(attrPtr->GetAttrPointer<double>(CHUNK_BWD_DV_LOCAL_ATTR_SCALE_IDX)),
         *(attrPtr->GetAttrPointer<int32_t>(CHUNK_BWD_DV_LOCAL_ATTR_CHUNK_SIZE_IDX)),
-        qkvSequenceMajor,
+        layoutValue,
     };
 
     ChunkBwdDvLocalTilingProcessor processor(ctx, *tiling);
@@ -91,7 +95,7 @@ ge::graphStatus Tiling4ChunkBwdDvLocal(gert::TilingContext *context)
     int v = static_cast<int>(tiling->v);
     OP_LOGD(context->GetNodeName(), "V value: %d", v);
 
-    uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, v, tiling->qkvSequenceMajor != 0);
+    uint64_t tilingKey = GET_TPL_TILING_KEY(strategyKey, dTQ, dTG, v);
     context->SetTilingKey(tilingKey);
 
     OP_LOGD(context->GetNodeName(), "tilingKey: %d", context->GetTilingKey());

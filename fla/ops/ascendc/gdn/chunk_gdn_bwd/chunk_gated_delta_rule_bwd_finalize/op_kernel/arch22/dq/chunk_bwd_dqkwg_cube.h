@@ -17,6 +17,8 @@
 #ifndef CHUNK_BWD_DQKWG_CUBE_H
 #define CHUNK_BWD_DQKWG_CUBE_H
 
+#include "qkv_layout.h"
+
 #include "chunk_bwd_dqkwg_schedule.h"
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -81,7 +83,7 @@ template <class BlockMmadPart1_, // dv @ h^T -> dw
           class BlockMmadPart5_, // v @ dh -> dk
           class BlockMmadPart6_, // ds @ k -> dq
           class BlockMmadPart7_, // ds^T @ q -> dk
-          bool WIDE_SCHEDULE = true, bool QKV_SEQUENCE_MAJOR = false>
+          bool WIDE_SCHEDULE = true>
 class ChunkBwdDqkwgTla {
 public:
     using BlockMmadPart1 = BlockMmadPart1_;
@@ -136,6 +138,7 @@ public:
         uint64_t wsDsTempOffset;
 
         // 形状参数 (GVA: H 拆为 HV/HK, HV = n_ratio * HK)
+        int64_t layout;
         uint64_t B;              // = CONST_B;
         uint64_t HV;             // value 侧 head 数 (v/g/h/do/dh/dv/dw/dg), == 原 H
         uint64_t HK;             // key/query 侧 head 数 (q/k), HV = n_ratio * HK
@@ -242,7 +245,7 @@ public:
         }
 
         // Layout 创建
-        const uint64_t qkStride = QKV_SEQUENCE_MAJOR ? params.HK * params.K : params.K;
+        const uint64_t qkStride = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND) ? params.HK * params.K : params.K;
         // gmV is vNew from FwdH and always remains head-major.
         auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, qkStride);
         auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(qkStride, params.BT);
@@ -330,7 +333,7 @@ public:
                     }
                     // GVA: q/k 为 HK 头; hv_idx=h -> hk_idx=h/n_ratio, 并把 HV-based bos 修正为 HK-based
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t qkOffset = QKV_SEQUENCE_MAJOR
+                    uint64_t qkOffset = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND)
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
@@ -403,7 +406,7 @@ public:
                     // GVA: k 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t kOffset = QKV_SEQUENCE_MAJOR
+                    uint64_t kOffset = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND)
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
@@ -452,7 +455,7 @@ public:
                     // GVA: q 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t qOffset = QKV_SEQUENCE_MAJOR
+                    uint64_t qOffset = (params.layout == GDN::QKV_LAYOUT_BSND || params.layout == GDN::QKV_LAYOUT_TND)
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
@@ -484,7 +487,7 @@ public:
 /**
  * Cube Process 类 (AIC 端入口)
  */
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR = false>
+template <typename DataType, typename GType>
 class ChunkBwdDqkwgCubeProcess {
 public:
     __aicore__ inline ChunkBwdDqkwgCubeProcess(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR do_, GM_ADDR dh,
@@ -517,6 +520,7 @@ private:
     GM_ADDR ptrWorkspace;
 
     // Tiling 参数
+    int64_t layout_;
     uint64_t B;
     uint64_t HV;
     uint64_t HK;
@@ -539,9 +543,10 @@ private:
     uint64_t wsDsTempOffset;
 };
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::Init(const ChunkBwdDqkwgTilingData &tiling)
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const ChunkBwdDqkwgTilingData &tiling)
 {
+    layout_ = tiling.layout;
     B = tiling.B;
     HV = tiling.HV;
     HK = tiling.HK;
@@ -562,9 +567,9 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, QKV_SEQUENCE_MA
     wsDsTempOffset = tiling.wsDsTempOffset;
 }
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
+template <typename DataType, typename GType>
 template <bool WIDE_SCHEDULE>
-__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::Process()
+__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
 {
     using namespace Catlass;
     using namespace Catlass::Gemm;
@@ -616,13 +621,14 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, QKV_SEQUENCE_MA
                                                           DataType, void, TileCopyPart7Tiled>;
     using MatmulKernelTiled =
         Kernel::ChunkBwdDqkwgTla<BlockMmadPart1Tiled, BlockMmadPart2Tiled, BlockMmadPart3Tiled, BlockMmadPart4Tiled,
-                                 BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled, WIDE_SCHEDULE, QKV_SEQUENCE_MAJOR>;
+                                 BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled, WIDE_SCHEDULE>;
 
     MatmulKernelTiled kernel;
     typename MatmulKernelTiled::Params params(ptrQ, ptrK, ptrV, ptrH, ptrDo, ptrDh, ptrDv, ptrCuSeqLen,
                                                 ptrChunkIndices, ptrDq, ptrDk, ptrDw, ptrWorkspace, B, HV, HK, T, K, V, BT,
                                                 numChunks, n_ratio, isVarLen, wsMm3Offset, wsMm4Offset, wsMm6Offset,
                                                 wsMm5Offset, wsMm7Offset, wsDsTempOffset);
+    params.layout = layout_;
     params.aicCoreNum = aicCoreNum;
     params.hkPartitions = hkPartitions;
     kernel(params);

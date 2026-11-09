@@ -12,6 +12,7 @@
  * \brief
  */
 
+#include "fla/ops/ascendc/common/qkv_layout.h"
 #include <cstring>
 
 #include "recompute_w_u_fwd_tiling.h"
@@ -76,7 +77,10 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
         std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajor = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
+    const int64_t layoutValue =
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
 
     RecomputeWUFwdTilingContext ctx{
         context->GetNodeName(),
@@ -90,7 +94,7 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
         cuSeqlensData,
         chunkIndicesData,
         *(attrPtr->GetAttrPointer<int32_t>(0)),
-        qkvSequenceMajor,
+        layoutValue,
         kDesc->GetDataType(),
         betaDesc->GetDataType(),
         ubSize,
@@ -106,8 +110,7 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
 #ifdef ASCENDC_DEBUG
     using GDN::g_tilingSelectParams;
 #endif
-    context->SetTilingKey(GET_TPL_TILING_KEY(static_cast<int>(tiling->V),
-                                           tiling->qkvSequenceMajor != 0));
+    context->SetTilingKey(GET_TPL_TILING_KEY(static_cast<int>(tiling->V)));
     OP_LOGD(context->GetNodeName(), "tilingKey: %d (V=%ld)", context->GetTilingKey(), tiling->V);
     RecomputeWUFwdTilingDataPrint(context, *tiling);
 

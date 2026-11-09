@@ -7,6 +7,8 @@
 #ifndef CHUNK_FWD_H_UTILS_H
 #define CHUNK_FWD_H_UTILS_H
 
+#include "qkv_layout.h"
+
 #include "chunk_fwd_h_policy.h"
 
 namespace GDN {
@@ -263,12 +265,11 @@ __aicore__ inline uint64_t FwdHInputOffset(const FwdHRuntimeTiling &tiling,
             tokenBegin) * dim;
 }
 
-template <bool QKV_SEQUENCE_MAJOR = false>
 __aicore__ inline uint64_t FwdHKOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t physicalBatch, uint32_t kh,
                                        uint32_t tokenBegin)
 {
-    if constexpr (QKV_SEQUENCE_MAJOR) {
+    if ((tiling.layout == GDN::QKV_LAYOUT_BSND || tiling.layout == GDN::QKV_LAYOUT_TND)) {
         return ((static_cast<uint64_t>(physicalBatch) * tiling.seqlen + tokenBegin) *
                 tiling.kNumHead + kh) * FWD_H_K;
     }

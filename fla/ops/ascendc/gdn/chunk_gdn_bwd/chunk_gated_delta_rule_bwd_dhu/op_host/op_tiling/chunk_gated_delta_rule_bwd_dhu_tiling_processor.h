@@ -12,6 +12,7 @@
  * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
  */
 
+#include "fla/ops/ascendc/common/qkv_layout.h"
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
@@ -82,7 +83,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     bool hasGk;
     bool useExp2;
     bool stateVFirst;
-    bool qkvSequenceMajor;
+    int64_t layout;
     bool hasDh0;
     bool isArch35;
     bool stage0Debug;
@@ -359,7 +360,7 @@ private:
     {
         gert::Shape qShape = ctx_.qShape->GetStorageShape();
         gert::Shape kShape = ctx_.kShape->GetStorageShape();
-        if (ctx_.qkvSequenceMajor) {
+        if ((ctx_.layout == GDN::QKV_LAYOUT_BSND || ctx_.layout == GDN::QKV_LAYOUT_TND)) {
             const int64_t tokens = qShape.GetDim(DIM_1);
             qShape.SetDim(DIM_1, qShape.GetDim(DIM_2));
             qShape.SetDim(DIM_2, tokens);
@@ -390,6 +391,7 @@ private:
             return ge::GRAPH_FAILED;
         }
 
+        tiling_.layout = ctx_.layout;
         tiling_.B = static_cast<int64_t>(qShape.GetDim(DIM_0));
         tiling_.HK = static_cast<int64_t>(qShape.GetDim(DIM_1));
         tiling_.T = static_cast<int64_t>(qShape.GetDim(DIM_2));
@@ -597,8 +599,7 @@ private:
         tilingKey_ = GET_TPL_TILING_KEY(
             static_cast<uint64_t>(DtypeKey(ctx_.qDataType)), static_cast<uint64_t>(DtypeKey(ctx_.gDataType)),
             static_cast<uint64_t>(tiling_.V), static_cast<uint64_t>(ctx_.hasGk ? 1 : 0),
-            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0),
-            static_cast<uint64_t>(ctx_.qkvSequenceMajor ? 1 : 0));
+            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0));
         return ge::GRAPH_SUCCESS;
     }
 

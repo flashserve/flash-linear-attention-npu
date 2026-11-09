@@ -15,6 +15,8 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_CUBE_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_CUBE_H
 
+#include "qkv_layout.h"
+
 #include "chunk_gated_delta_rule_bwd_dhu_common.h"
 #include "chunk_gated_delta_rule_bwd_dhu_struct.h"
 #define CATLASS_ARCH 2201
@@ -32,7 +34,7 @@
 
 namespace GDN {
 
-template <typename DT, int V_DIM, bool QKV_SEQUENCE_MAJOR = false>
+template <typename DT, int V_DIM>
 class ChunkGatedDeltaRuleBwdDhuCube {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuCube() = default;
@@ -152,7 +154,7 @@ public:
                         headOffset + 1 < headCnt && (hv / HRatio_) == ((hv + 1) / HRatio_);
                     const bool releaseKAfterUse = !nextHeadUsesSameK;
                     const int64_t hq = hv / HRatio_;
-                    const int64_t kBase = QKV_SEQUENCE_MAJOR
+                    const int64_t kBase = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
                         ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
                         : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
@@ -161,7 +163,7 @@ public:
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
 
                     LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_,
-                        QKV_SEQUENCE_MAJOR ? HK_ * K_ : K_);
+                        (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND) ? HK_ * K_ : K_);
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
                     // qg is produced into the contiguous internal workspace by VEC.

@@ -28,6 +28,7 @@ struct ChunkGdnBwdIntraTilingData {
     int64_t blockDim;
 
     // 运行时路径和算子属性。
+    int64_t layout;
     int64_t isVarlen;
     int64_t useExp2;
     float scale;

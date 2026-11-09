@@ -96,12 +96,10 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         actualChunkIndices = nullptr;
     }
 
-    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 ||
-                                  std::strcmp(layout, "TND") == 0;
     const auto &kShape = k->GetViewShape();
     const auto &uShape = u->GetViewShape();
-    const size_t headDim = qkvSequenceMajor ? 2 : 1;
-    const size_t sequenceDim = qkvSequenceMajor ? 1 : 2;
+    const size_t headDim = (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0) ? 2 : 1;
+    const size_t sequenceDim = (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0) ? 1 : 2;
     const int64_t logicalBatch = kShape.GetDim(0);
     const int64_t logicalKHeads = kShape.GetDim(headDim);
     const int64_t logicalSeqlen = kShape.GetDim(sequenceDim);

@@ -1,11 +1,14 @@
 #ifndef GDN_BWD_FINALIZE_A2_H
 #define GDN_BWD_FINALIZE_A2_H
 
+#include "qkv_layout.h"
+
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_finalize_workspace.h"
 
 // 私有适配结构，不复用其它算子的生成 tiling ABI。
 struct ChunkBwdDqkwgTilingData {
+    int64_t layout;
     uint64_t B, HV, HK, T, K, V, BT, numChunks;
     float scale;
     uint32_t mul0RowNum, aicCoreNum, hkPartitions;
@@ -85,6 +88,7 @@ __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
     ChunkBwdDqkwgTilingData d{};
+    d.layout = t.layout;
     d.B = t.B; d.HV = t.HV; d.HK = t.HK; d.T = t.T;
     d.K = t.K; d.V = t.V; d.BT = t.chunkSize;
     d.numChunks = t.isVariable != 0 ? t.totalChunkNum : t.chunkNumForT;
@@ -127,6 +131,7 @@ __aicore__ inline PrepareWyReprBwdTilingData A2FinalizeWyTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
     PrepareWyReprBwdTilingData w{};
+    w.layout = t.layout;
     w.B = t.B; w.HV = t.HV; w.HK = t.HK; w.groupSize = t.headRatio;
     w.T = t.T; w.K = t.K; w.V = t.V; w.chunkSize = t.chunkSize;
     w.chunkNum = t.totalChunkNum;
@@ -517,7 +522,7 @@ __aicore__ inline void A2FinalizeNormTile(
 }
 
 // S4：独占 (chunk, HK)，合并两条 DK 支路后执行可选 Q/K norm。
-template <typename QT, bool USE_QK_L2NORM, bool QKV_SEQUENCE_MAJOR>
+template <typename QT, bool USE_QK_L2NORM>
 __aicore__ inline void A2FinalizeQkTail(
     GM_ADDR q, GM_ADDR k, GM_ADDR qRstd, GM_ADDR kRstd,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dq, GM_ADDR dk,
@@ -570,14 +575,14 @@ __aicore__ inline void A2FinalizeQkTail(
             AscendC::DataCopy(dkInput, dk1Gm[offset], count);
             AscendC::DataCopy(dkWyInput, dk2Gm[offset], count);
             uint64_t qkPublicOffset = static_cast<uint64_t>(offset);
-            if constexpr (QKV_SEQUENCE_MAJOR) {
+            if ((t.layout == GDN::QKV_LAYOUT_BSND || t.layout == GDN::QKV_LAYOUT_TND)) {
                 const uint64_t headTokens = static_cast<uint64_t>(t.HK) * t.T;
                 const uint64_t batch = (cuSeqlens == nullptr) ? task.keyBos / headTokens : 0;
                 const uint64_t token = (cuSeqlens == nullptr) ? task.keyBos % headTokens : task.keyBos;
                 qkPublicOffset = ((batch * t.T + token + row) * t.HK + hk) * K;
             }
             if constexpr (USE_QK_L2NORM) {
-                if constexpr (QKV_SEQUENCE_MAJOR) {
+                if ((t.layout == GDN::QKV_LAYOUT_BSND || t.layout == GDN::QKV_LAYOUT_TND)) {
                     const DataCopyExtParams qkCopy{
                         static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)),
                         static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0, 0};
@@ -612,7 +617,7 @@ __aicore__ inline void A2FinalizeQkTail(
             }
             // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
             AscendC::PipeBarrier<PIPE_ALL>();
-            if constexpr (QKV_SEQUENCE_MAJOR) {
+            if ((t.layout == GDN::QKV_LAYOUT_BSND || t.layout == GDN::QKV_LAYOUT_TND)) {
                 const DataCopyExtParams outputCopy{
                     static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
                     static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0};
@@ -630,7 +635,7 @@ __aicore__ inline void A2FinalizeQkTail(
 
 template <typename QT, typename GT, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
-          bool ENABLE_MHA_OWNER = false, bool QKV_SEQUENCE_MAJOR = false>
+          bool ENABLE_MHA_OWNER = false>
 __aicore__ inline void A2FinalizeRun(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR vNew, GM_ADDR dO, GM_ADDR du,
     GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR a,
@@ -654,7 +659,7 @@ __aicore__ inline void A2FinalizeRun(
         dqTiling.aicCoreNum, dqTiling.hkPartitions);
     GM_ADDR stageWorkspace = workspace + layout.stageOffset;
     if ASCEND_IS_AIC {
-        ChunkBwdDqkwgCubeProcess<QT, float, QKV_SEQUENCE_MAJOR> cube(
+        ChunkBwdDqkwgCubeProcess<QT, float> cube(
             q, k, vNew, standardH, dO, standardDh, du, cuSeqlens, chunkIndices,
             workspace + layout.dqOffset, workspace + layout.dkOffset,
             workspace + layout.dwOffset, stageWorkspace);
@@ -668,7 +673,7 @@ __aicore__ inline void A2FinalizeRun(
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkBwdDqkwgVectorProcess<QT, float, QKV_SEQUENCE_MAJOR> vec(
+        ChunkBwdDqkwgVectorProcess<QT, float> vec(
             q, k, vNew, workspace + layout.gOffset, standardH, dO, standardDh, du,
             cuSeqlens, chunkIndices, workspace + layout.dqOffset,
             workspace + layout.dkOffset, workspace + layout.dwOffset,
@@ -686,14 +691,14 @@ __aicore__ inline void A2FinalizeRun(
     AscendC::SyncAll<false>();
     const auto wyTiling = A2FinalizeWyTiling(t);
     if ASCEND_IS_AIC {
-        PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE, QKV_SEQUENCE_MAJOR> cube(
+        PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE> cube(
             k, a, workspace + layout.dwOffset, du, cuSeqlens, chunkIndices, stageWorkspace);
         cube.Init(wyTiling);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, QKV_SEQUENCE_MAJOR> vec(
+        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER> vec(
             k, v, workspace + layout.betaOffset, workspace + layout.gOffset,
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
             workspace + layout.dbetaOffset, workspace + layout.dgWyOffset, stageWorkspace);
@@ -708,7 +713,7 @@ __aicore__ inline void A2FinalizeRun(
         AscendC::TPipe pipe;
         A2FinalizeGateTail<GT, USE_BETA_SIGMOID, CHUNK_SIZE>(
             betaRaw, cuSeqlens, chunkIndices, dbeta, dg, workspace, t, layout, pipe);
-        A2FinalizeQkTail<QT, USE_QK_L2NORM, QKV_SEQUENCE_MAJOR>(
+        A2FinalizeQkTail<QT, USE_QK_L2NORM>(
             q, k, qRstd, kRstd, cuSeqlens, chunkIndices, dq, dk, workspace, t, layout, pipe);
     }
 }

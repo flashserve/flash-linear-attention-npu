@@ -1,6 +1,8 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 
+#include "qkv_layout.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -19,7 +21,7 @@
 
 namespace GDN {
 
-template <typename DT, bool QKV_SEQUENCE_MAJOR = false>
+template <typename DT>
 class ChunkGatedDeltaRuleBwdFinalizeCube {
 public:
     __aicore__ inline void Init(
@@ -388,7 +390,7 @@ private:
         tla::Int<CHUNK_SIZE_64>{}, tla::Int<V_SIZE_128>{});
     __aicore__ inline auto MakePublicQkLayout() const
     {
-        if constexpr (QKV_SEQUENCE_MAJOR) {
+        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
             return tla::MakeLayoutFromTag(LayoutRowMajor(
                 CHUNK_SIZE_64, K_SIZE_128, tiling_->HK * K_SIZE_128));
         } else {
@@ -857,7 +859,7 @@ private:
         const uint32_t localHv = static_cast<uint32_t>(headOffset / AIV_COUNT_2);
         const uint32_t l1Event = static_cast<uint32_t>(headOffset);
         const int64_t hk = hv / tiling_->headRatio;
-        const int64_t kBase = QKV_SEQUENCE_MAJOR
+        const int64_t kBase = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
                                   : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
 
@@ -1417,7 +1419,7 @@ private:
         const uint32_t doGEvent = L1_RESIDENT_HEAD_COUNT_4 +
             (static_cast<uint32_t>(headOffset) & 1U);
         const uint32_t dhEvent = L1_RESIDENT_HEAD_COUNT_4 + BANK_COUNT_2 + dhSlot;
-        const int64_t qBase = QKV_SEQUENCE_MAJOR
+        const int64_t qBase = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
                                   ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * K_SIZE_128
                                   : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
         const int64_t workspaceBase = WorkspaceHeadOffset(headOffset);

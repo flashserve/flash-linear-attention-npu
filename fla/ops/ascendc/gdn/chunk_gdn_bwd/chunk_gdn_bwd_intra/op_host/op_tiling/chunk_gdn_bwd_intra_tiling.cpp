@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "fla/ops/ascendc/common/qkv_layout.h"
 #include <cstring>
 
 #include "chunk_gdn_bwd_intra_tiling.h"
@@ -60,7 +61,11 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
                 OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajor = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
+    const int64_t layoutValue =
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::QKV_LAYOUT_BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::QKV_LAYOUT_BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::QKV_LAYOUT_NTD : GDN::QKV_LAYOUT_TND;
+    tiling->layout = layoutValue;
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
@@ -100,10 +105,10 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "q/v rank must be 4 and chunk_size must be 64."),
                 return ge::GRAPH_FAILED);
     const int64_t batch = qStorage.GetDim(0);
-    const int64_t qkHeads = qStorage.GetDim(qkvSequenceMajor ? 2 : 1);
-    const int64_t seqlen = qStorage.GetDim(qkvSequenceMajor ? 1 : 2);
+    const int64_t qkHeads = qStorage.GetDim((layoutValue == GDN::QKV_LAYOUT_BSND || layoutValue == GDN::QKV_LAYOUT_TND) ? 2 : 1);
+    const int64_t seqlen = qStorage.GetDim((layoutValue == GDN::QKV_LAYOUT_BSND || layoutValue == GDN::QKV_LAYOUT_TND) ? 1 : 2);
     const int64_t keyDim = qStorage.GetDim(3);
-    const int64_t valueHeads = vStorage.GetDim(qkvSequenceMajor ? 2 : 1);
+    const int64_t valueHeads = vStorage.GetDim((layoutValue == GDN::QKV_LAYOUT_BSND || layoutValue == GDN::QKV_LAYOUT_TND) ? 2 : 1);
     const int64_t valueDim = vStorage.GetDim(3);
     OP_CHECK_IF(batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0,
                 OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
@@ -116,7 +121,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "K and V dims must be 128."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(vStorage.GetDim(0) != batch ||
-                    vStorage.GetDim(qkvSequenceMajor ? 1 : 2) != seqlen,
+                    vStorage.GetDim((layoutValue == GDN::QKV_LAYOUT_BSND || layoutValue == GDN::QKV_LAYOUT_TND) ? 1 : 2) != seqlen,
                 OP_LOGE(context->GetNodeName(), "v batch and T dims must match q."),
                 return ge::GRAPH_FAILED);
     uint64_t tensorBytes = 0;
@@ -213,8 +218,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         betaDtype, ge::DT_FLOAT,
         CHUNK_GDN_BWD_INTRA_BETA_BF16, CHUNK_GDN_BWD_INTRA_BETA_FP32);
     context->SetTilingKey(GET_TPL_TILING_KEY(
-        strategyKey, gKey, mainKey, gateKey, betaKey,
-        qkvSequenceMajor ? 1 : 0));
+        strategyKey, gKey, mainKey, gateKey, betaKey));
     context->SetBlockDim(schedule.blockDim);
     size_t *ws = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, ws);

@@ -38,8 +38,7 @@ struct IntraAuxType<CHUNK_GDN_BWD_INTRA_GATE_FP32> {
     using type = float;
 };
 
-template <uint32_t G_KEY, uint32_t MAIN_KEY, uint32_t GATE_KEY, uint32_t BETA_KEY,
-          bool QKV_SEQUENCE_MAJOR>
+template <uint32_t G_KEY, uint32_t MAIN_KEY, uint32_t GATE_KEY, uint32_t BETA_KEY>
 __aicore__ inline void DispatchKernel(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR a, GM_ADDR dO,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u,
@@ -54,25 +53,25 @@ __aicore__ inline void DispatchKernel(
     // 一个 MixBlock 包含 1 个 AIC 和 2 个 AIV：AIC 顺序执行 Stage 0/2，
     // 两个 AIV 并行执行 Stage 1 的前、后半行，二者通过 CrossCore flag 交接数据。
     if ASCEND_IS_AIC {
-        ChunkGdnBwdIntraCube<MainT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
+        ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
         kernel.Init(q, k, v, dO, w, u, dvLocal, workspace,
                     cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
     if ASCEND_IS_AIV {
-        ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
+        ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
         kernel.Init(v, dO, a, g, beta, dvLocal, workspace,
                     cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
 #else
     if ASCEND_IS_AIC {
-        Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
+        Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
         kernel.Init(q, k, a, dO, w, u, dvLocal, workspace, cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
     if ASCEND_IS_AIV {
-        Arch22::ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY, QKV_SEQUENCE_MAJOR> kernel;
+        Arch22::ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
         kernel.Init(k, v, g, beta, workspace, cuSeqlens, chunkIndices, tiling);
         kernel.Process();
     }
@@ -83,8 +82,7 @@ __aicore__ inline void DispatchKernel(
 
 #ifndef TORCH_MODE
 template <uint32_t STRATEGY_KEY, uint32_t G_KEY,
-          uint32_t MAIN_KEY, uint32_t GATE_KEY, uint32_t BETA_KEY,
-          bool QKV_SEQUENCE_MAJOR>
+          uint32_t MAIN_KEY, uint32_t GATE_KEY, uint32_t BETA_KEY>
 __global__ __aicore__ void chunk_gdn_bwd_intra(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR a,
     GM_ADDR dO, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u,
@@ -95,7 +93,7 @@ __global__ __aicore__ void chunk_gdn_bwd_intra(
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGdnBwdIntraTilingData, tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-    GDN::DispatchKernel<G_KEY, MAIN_KEY, GATE_KEY, BETA_KEY, QKV_SEQUENCE_MAJOR>(
+    GDN::DispatchKernel<G_KEY, MAIN_KEY, GATE_KEY, BETA_KEY>(
         q, k, v, g, beta, a, dO, cuSeqlens, chunkIndices, w, u, dvLocal,
         userWorkspace, &tilingData);
 }

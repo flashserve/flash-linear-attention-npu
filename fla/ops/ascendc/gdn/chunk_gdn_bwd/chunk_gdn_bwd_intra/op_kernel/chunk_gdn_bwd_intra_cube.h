@@ -5,6 +5,8 @@
 #ifndef CHUNK_GDN_BWD_INTRA_CUBE_H
 #define CHUNK_GDN_BWD_INTRA_CUBE_H
 
+#include "qkv_layout.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -21,7 +23,7 @@
 
 namespace GDN {
 
-template <typename MainT, uint32_t G, bool QKV_SEQUENCE_MAJOR = false>
+template <typename MainT, uint32_t G>
 class ChunkGdnBwdIntraCube {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -181,7 +183,7 @@ private:
 
     __aicore__ inline auto MakeQkvKLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
     {
-        if constexpr (QKV_SEQUENCE_MAJOR) {
+        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
             return tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128,
                 static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim)));
         } else {
@@ -191,7 +193,7 @@ private:
 
     __aicore__ inline auto MakeQkvQLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
     {
-        if constexpr (QKV_SEQUENCE_MAJOR) {
+        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
             return tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens,
                 static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim)));
         } else {
@@ -207,7 +209,7 @@ private:
             WaitScoreFree(r);
         }
         const int64_t hk = (meta.hvBegin + r) / G;
-        const uint64_t gmOffset = QKV_SEQUENCE_MAJOR
+        const uint64_t gmOffset = (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen + meta.tokenStart) *
                    tiling_->qkHeads + hk) * tiling_->keyDim
             : ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *

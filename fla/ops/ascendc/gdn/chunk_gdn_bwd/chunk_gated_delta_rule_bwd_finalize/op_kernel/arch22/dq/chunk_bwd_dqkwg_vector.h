@@ -22,6 +22,8 @@
 #ifndef CHUNK_BWD_DQKWG_VECTOR_H
 #define CHUNK_BWD_DQKWG_VECTOR_H
 
+#include "qkv_layout.h"
+
 #include "chunk_bwd_dqkwg_common.h"
 #include "chunk_bwd_dqkwg_schedule.h"
 #include "kernel_operator.h"
@@ -31,7 +33,7 @@
 
 using namespace AscendC;
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR = false>
+template <typename DataType, typename GType>
 class ChunkBwdDqkwgVectorProcess {
 public:
     __aicore__ inline ChunkBwdDqkwgVectorProcess(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h, GM_ADDR do_,
@@ -72,6 +74,7 @@ private:
     __aicore__ inline void ComputeDqState(const LocalTensor<float> &tensorDqInFp32, const LocalTensor<float> &tensorGFp32, const LocalTensor<float> &tensorGTmpFp32, uint32_t real_BT);
 
 private:
+    int64_t layout_;
     // 输入输出指针
     GM_ADDR ptrQ;
     GM_ADDR ptrK;
@@ -158,8 +161,8 @@ private:
 };
 
 // ============== 构造函数 ==============
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ChunkBwdDqkwgVectorProcess(
+template <typename DataType, typename GType>
+__aicore__ inline ChunkBwdDqkwgVectorProcess<DataType, GType>::ChunkBwdDqkwgVectorProcess(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR h, GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen,
     GM_ADDR chunk_indices, GM_ADDR dq, GM_ADDR dk, GM_ADDR dw, GM_ADDR dg, GM_ADDR workspace)
     : ptrQ(q), ptrK(k), ptrV(v), ptrG(g), ptrH(h), ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLen(cu_seqlen),
@@ -168,12 +171,13 @@ __aicore__ inline ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR
 }
 
 // ============== 初始化 ==============
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::Init(const ChunkBwdDqkwgTilingData &tiling,
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const ChunkBwdDqkwgTilingData &tiling,
                                                                          TPipe *pipe_)
 {
     pipe = pipe_;
 
+    layout_ = tiling.layout;
     scale = tiling.scale;
     B = tiling.B;
     HV = tiling.HV;
@@ -257,12 +261,12 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
     PipeBarrier<PIPE_V>();
 }
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::CopyQkRowsIn(
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsIn(
     const LocalTensor<DataType> &dst, const GlobalTensor<DataType> &src, uint64_t offset,
     uint32_t rows, uint32_t heads)
 {
-    if constexpr (!QKV_SEQUENCE_MAJOR) {
+    if (!(layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
         DataCopy(dst, src[offset], rows * K);
         return;
     }
@@ -272,12 +276,12 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
     DataCopyPad(dst, src[offset], cp, pad);
 }
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::CopyQkRowsOut(
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyQkRowsOut(
     const GlobalTensor<DataType> &dst, uint64_t offset, const LocalTensor<DataType> &src,
     uint32_t rows, uint32_t heads)
 {
-    if constexpr (!QKV_SEQUENCE_MAJOR) {
+    if (!(layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
         DataCopy(dst[offset], src, rows * K);
         return;
     }
@@ -286,12 +290,12 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
     DataCopyPad(dst[offset], src, cp);
 }
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline uint64_t ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::QkOffset(
+template <typename DataType, typename GType>
+__aicore__ inline uint64_t ChunkBwdDqkwgVectorProcess<DataType, GType>::QkOffset(
     uint32_t hk, uint32_t bos, uint32_t loopIdx) const
 {
     const uint64_t bIdx = loopIdx / numChunks;
-    if constexpr (QKV_SEQUENCE_MAJOR) {
+    if ((layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)) {
         const uint64_t token = isVarLen ? bos : bos - bIdx * HV * T;
         const uint64_t batchToken = isVarLen ? token : bIdx * T + token;
         return (batchToken * HK + hk) * K;
@@ -304,9 +308,9 @@ __aicore__ inline uint64_t ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUE
 }
 
 // ============== 主处理函数 (CV 深融合: A -> B -> C -> D, 每 stage 内 chunk 级与 cube 流水) ==============
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
+template <typename DataType, typename GType>
 template <bool WIDE_SCHEDULE>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::Process()
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Process()
 {
     // 预置三个信用，ds、mm3、mm4、mm5为空，cube会根据信用来生产
     SetVecClear();
@@ -350,9 +354,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
     }
 }
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
+template <typename DataType, typename GType>
 __aicore__ inline void
-ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::CopyGateWithPad(const LocalTensor<GType> &dst, const GlobalTensor<GType> &src,
+ChunkBwdDqkwgVectorProcess<DataType, GType>::CopyGateWithPad(const LocalTensor<GType> &dst, const GlobalTensor<GType> &src,
                                                              uint64_t offset, uint32_t validLen, uint32_t totalLen)
 {
     // 先注释掉，等待泛化验证
@@ -378,8 +382,8 @@ ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::CopyGateWithPad
 // mul1 一个 row-half 的计算: 输出 fp32 因果掩码 exp 到 outFp32 (该 half 的 [real_BT, BT], 行优先)。
 // 内核与 ProcessAVector Part2 完全一致 (同 buffer: inQue3 g / calcBuf1 brcb / calcBuf2,3 g±)。
 // 调用方需先 InitBuffer 这些 buffer 并构建 tensorMaskA。outFp32 必须指向该 half 的行起点。
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ComputeMul1HalfFp32(
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ComputeMul1HalfFp32(
     const LocalTensor<float> &outFp32, const LocalTensor<float> &tensorMaskA,
     const LocalTensor<float> &tensorGTmpFp32, const LocalTensor<float> &tensorGFp32Left,
     const LocalTensor<float> &tensorGFp32Right, uint32_t BT_sub_start, uint32_t real_BT)
@@ -442,8 +446,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
 }
 
 // ComputeDqState: dq_state = dq_inner * exp(g)[:,None] * scale
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ComputeDqState(
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ComputeDqState(
     const LocalTensor<float> &tensorDqInFp32, const LocalTensor<float> &tensorGFp32, const LocalTensor<float> &tensorGTmpFp32, uint32_t real_BT)
 {
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -468,9 +472,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
 // ============== A_vector: Part1 (dw 取负 + dg_last) ==============
 // 每 chunk: WaitCubeReady 一次 -> Part1 (head-split) -> SetVectorDone 一次。
 // 依赖: Part1 读 dw(由 A_cube 产出); mul1 改由 B_vector 内联计算, 不再预写 GM。
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
+template <typename DataType, typename GType>
 template <bool WIDE_SCHEDULE>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ProcessAVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessAVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
 {
     using ScheduleIndex = typename DqkwgScheduleIndex<WIDE_SCHEDULE>::Type;
     const ScheduleIndex scheduleNumChunks = static_cast<ScheduleIndex>(numChunks);
@@ -589,8 +593,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
 
 // ============== B_vector: 原 Part2 (mul1) + 原 Part3 (ds_temp + dg 部分) ==============
 // 每 chunk: WaitCubeReady 一次 -> head-split 处理 (读 ds(B_cube), 内联算 mul1, 读 mm5(A_cube)) -> SetVectorDone 一次。
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ProcessBVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessBVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
 {
     uint32_t actual_dsSize = real_BT * BT;
     WaitCubeReady();
@@ -750,8 +754,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
 // ============== C_vector: 原 Part4 + Part6 (dq 最终 + dg) ==============
 // C_cube 在一次 SetCubeReady 前已产出 dq_inner(ptrDq) 与 mm6(wsMm6); C_vector 一次 WaitCubeReady 后
 // 同时读取二者 (无 per-head phase 握手), 计算 dq_state/dg 并 dq += mm6。
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ProcessCVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
 {
     uint32_t actual_dqSize = real_BT * K;
     WaitCubeReady();
@@ -863,9 +867,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
     SetVecClear();
 }
 
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
+template <typename DataType, typename GType>
 template <bool WIDE_SCHEDULE>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ProcessCVectorForGva(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVectorForGva(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
 {
     using ScheduleIndex = typename DqkwgScheduleIndex<WIDE_SCHEDULE>::Type;
     const ScheduleIndex scheduleNumChunks = static_cast<ScheduleIndex>(numChunks);
@@ -1015,7 +1019,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
                 auto tensorQIn = tensorDqIn[half_dqSize * 2];
                 DataCopy(tensorDqIn[half_dqSize], gmMm4[mm4Offset + half_dqSize], second_dqSize);
                 if (BT != 64) {
-                    const uint64_t qSecondOffset = QKV_SEQUENCE_MAJOR
+                    const uint64_t qSecondOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
                         ? qkOffset + static_cast<uint64_t>(half_BT) * HK * K
                         : qkOffset + half_dqSize;
                     CopyQkRowsIn(tensorQIn[half_dqSize], gmQ, qSecondOffset, second_BT, HK);
@@ -1110,8 +1114,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
 // ============== D_vector: 原 Part5 + Part7 (dk 最终 + dg 最终) ==============
 // D_cube 在一次 SetCubeReady 前已产出 dk_inner(ptrDk) 与 mm7(wsMm7); D_vector 一次 WaitCubeReady 后
 // 读取二者, 完成 dk_state / dg 最终 / dk += mm7。dg_last 本地重算 (与原 Part5 一致)。
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ProcessDVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
+template <typename DataType, typename GType>
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVector(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
 {
     uint32_t real_BT_aligned = (real_BT + 15) / 16 * 16;
     uint32_t actual_dkSize = real_BT * K;
@@ -1297,9 +1301,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
 //  3. dk/k 因 UB 限制分两半拷入计算, dk_state 在 UB 上跨 n_ratio 个 HV head 累加;
 //  4. dg 仍逐 HV head 写回; dk 仅在 h % n_ratio == n_ratio - 1 时写回 (HK head 粒度);
 //  5. mm7 逐 HV head 累加到 dkSum。
-template <typename DataType, typename GType, bool QKV_SEQUENCE_MAJOR>
+template <typename DataType, typename GType>
 template <bool WIDE_SCHEDULE>
-__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_MAJOR>::ProcessDVectorForGva(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
+__aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVectorForGva(uint32_t coreIdx, uint32_t loopIdx, uint32_t bos, uint32_t real_BT)
 {
     using ScheduleIndex = typename DqkwgScheduleIndex<WIDE_SCHEDULE>::Type;
     const ScheduleIndex scheduleNumChunks = static_cast<ScheduleIndex>(numChunks);
@@ -1457,7 +1461,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, QKV_SEQUENCE_
                 auto tensorKIn = tensorDkIn[half_dkSize * 2];
                 DataCopy(tensorDkIn[half_dkSize], gmMm5[mm5Offset + half_dkSize], second_dkSize);
                 if (BT != 64) {
-                    const uint64_t kSecondOffset = QKV_SEQUENCE_MAJOR
+                    const uint64_t kSecondOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
                         ? kOffset + static_cast<uint64_t>(half_BT) * HK * K
                         : kOffset + half_dkSize;
                     CopyQkRowsIn(tensorKIn[half_dkSize], gmK, kSecondOffset, second_BT, HK);

@@ -85,3 +85,16 @@ T=1/63/64/65、G=1/2/3/4、多 batch、packed 空序列、状态布局、归一�
 性能用同一环境下的旧主线包和新包分别采集 msprof。完整 executor 时间取其计算与转换
 task 的 `Task Duration(us)` 之和，排除输入构造；BSND/TND 核对六次转置消失，
 BNSD/NTD 检查回归。逐平台测试结果以实际验收记录为准，不能从共享源码推导设备通过。
+
+### 小算子 layout 的运行时传递
+
+六个 L0 原型只保留一个声明，在末尾追加 `const char *layout = "BNSD"`；
+原有省略参数的源码调用继续选择 BNSD。公开 ACLNN C 接口和 Python 签名沿用既有契约。
+内部 L0 的返回类型、参数顺序及默认值单独记录在 `tests/stable_public_api.json`
+的 `internal_l0_signatures`，由现有 Stable coverage 门禁一并校验。
+
+host 将 BNSD、BSND、NTD、TND 分别解析为四个布局枚举值并写入 tiling data。
+kernel 根据运行时布局值选择 Q/K/V 的 GM offset 和行跨度；内部 W/U/H、workspace
+和 dO 的既有布局规则保持一致。布局不进入 `ASCENDC_TPL_ARGS_DECL`、
+`ASCENDC_TPL_SEL`、`GET_TPL_TILING_KEY` 或 kernel/helper 的模板参数。
+此前的 QKV 布尔属性、context 标记和布局模板维度全部移除。

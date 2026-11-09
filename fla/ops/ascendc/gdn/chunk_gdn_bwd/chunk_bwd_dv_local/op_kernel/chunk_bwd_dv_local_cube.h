@@ -15,6 +15,8 @@
 #ifndef CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 #define CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 
+#include "qkv_layout.h"
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
 #include "catlass/arch/arch.hpp"
@@ -51,7 +53,7 @@ using _128 = tla::Int<128>;
 using namespace tla;
 namespace GDN {
 
-template <typename QKVT, typename GT, typename Strategy, int V, bool QKV_SEQUENCE_MAJOR = false>
+template <typename QKVT, typename GT, typename Strategy, int V>
 class ChunkBwdDvLocalCube {
 private:
     Strategy strategy;
@@ -74,6 +76,7 @@ public:
     AscendC::GlobalTensor<QKVT> dVGm;
     AscendC::GlobalTensor<QKVT> workspaceGm;
 
+    int64_t layout_;
     int64_t H_qk;
     int64_t H_do;
     int64_t hRatio;
@@ -85,9 +88,9 @@ public:
     int64_t coreIdx;
 };
 
-template <typename QKVT, typename GT, typename Strategy, int V, bool QKV_SEQUENCE_MAJOR>
+template <typename QKVT, typename GT, typename Strategy, int V>
 __aicore__ inline void
-ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR cu_seqlens,
+ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d_o, GM_ADDR cu_seqlens,
                                               GM_ADDR chunk_indices, GM_ADDR d_v, GM_ADDR workspace,
                                               const ChunkBwdDvLocalTilingData *__restrict tilingData)
 {
@@ -97,6 +100,7 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR>::Init(GM_ADDR q, 
     dVGm.SetGlobalBuffer((__gm__ QKVT *)d_v);
     workspaceGm.SetGlobalBuffer((__gm__ QKVT *)workspace);
 
+    layout_ = tilingData->layout;
     H_qk = tilingData->hQk;
     H_do = tilingData->hDo;
     hRatio = tilingData->hRatio;
@@ -108,8 +112,8 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR>::Init(GM_ADDR q, 
     coreIdx = static_cast<int64_t>(AscendC::GetBlockIdx());
 }
 
-template <typename QKVT, typename GT, typename Strategy, int V, bool QKV_SEQUENCE_MAJOR>
-__aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_MAJOR>::Process()
+template <typename QKVT, typename GT, typename Strategy, int V>
+__aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
 {
     #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
         using ArchTag = Catlass::Arch::Ascend950;
@@ -142,9 +146,9 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_M
                                                            ElementB, ElementC, void, TileCopyV>;
 
     auto layoutA_QK = tla::MakeLayoutFromTag(Catlass::layout::RowMajor(
-        strategy.chunkSize, K, QKV_SEQUENCE_MAJOR ? H_qk * K : K));
+        strategy.chunkSize, K, (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND) ? H_qk * K : K));
     auto layoutB_QK = tla::MakeLayoutFromTag(Catlass::layout::ColumnMajor(
-        K, strategy.chunkSize, QKV_SEQUENCE_MAJOR ? H_qk * K : K));
+        K, strategy.chunkSize, (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND) ? H_qk * K : K));
     auto layoutC_QK = tla::MakeLayout<ElementC, Catlass::layout::RowMajor>(strategy.chunkSize, strategy.chunkSize);
     auto layoutA_V = tla::MakeLayout<ElementA, LayoutTagA_V>(strategy.chunkSize, strategy.chunkSize);
     auto layoutB_V = tla::MakeLayout<ElementB, LayoutTagB_V>(strategy.chunkSize, V);
@@ -202,10 +206,10 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V, QKV_SEQUENCE_M
                 int64_t qkHead = scheduleIdx;
                 int64_t p1Slot = qkHead % p1SlotNum;
                 BlockMmadQK blockMmadQK(resource);
-                const int64_t kOffset = QKV_SEQUENCE_MAJOR
+                const int64_t kOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
                                              ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
                                              : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
-                const int64_t qOffset = QKV_SEQUENCE_MAJOR
+                const int64_t qOffset = (layout_ == GDN::QKV_LAYOUT_BSND || layout_ == GDN::QKV_LAYOUT_TND)
                                              ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
                                              : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
                 auto tensorA = tla::MakeTensor(kGm[kOffset], layoutA_QK, Catlass::Arch::PositionGM{});
