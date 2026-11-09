@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / ".github/scripts/codeowner_approval_gate.js"
 WORKFLOW = ROOT / ".github/workflows/codeowner-approval.yml"
-EXPECTED = ["weinachuan", "weiwei-612", "chen-linxin", "Ensley0304"]
+EXPECTED = ["weinachuan", "weiwei-612", "chen-linxin", "Ensley0304", "zhangshuolei-hfut"]
 NODE = os.environ.get("CODEOWNER_NODE") or shutil.which("node") or shutil.which("nodejs")
 
 
