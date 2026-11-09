@@ -39,10 +39,6 @@ __global__ __aicore__ void chunk_kda_fwd_finalize(
     args.tiling.stateVFirst = tilingData.stateVFirst;
 
     constexpr bool kUseAivInputMover =
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        USE_AIV_INPUT_MOVER;
-#else
-        false;
-#endif
+        KdaFinalize::FinalizePlatform::isNonArch22 ? USE_AIV_INPUT_MOVER : false;
     KdaFinalize::DispatchFinalize<kUseAivInputMover>(args);
 }

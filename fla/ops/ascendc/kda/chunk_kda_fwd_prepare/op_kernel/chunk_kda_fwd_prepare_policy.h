@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include "arch22/chunk_kda_fwd_prepare_relay_config.h"
+#include "chunk_kda_fwd_prepare_platform.h"
 
 #define CHUNK_KDA_FWD_PREPARE_TPL_BF16 10
 #define CHUNK_KDA_FWD_PREPARE_TPL_FP32 30
@@ -139,21 +140,15 @@ constexpr uint32_t kHeadDim = 128;
 constexpr uint32_t kValueDim = 128;
 constexpr uint32_t kSubChunkRows = 16;
 constexpr uint32_t kSubChunkCount = 4;
-#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
-// A6(1:1)：单 AIV 三槽并行，3 个 head 一一对应 3 个计算槽，head 数=槽数，
-// 从源头消除 4 head > 3 槽的 slot-flag 环等待，不再需要 wave 锁步。
-constexpr uint32_t kHeadsPerGroup = 3;
-constexpr uint32_t kAivPerAic = 1;
-constexpr uint32_t kHeadsPerAiv = 3;
-constexpr uint32_t kComputeSlotCount = 3;
-constexpr uint32_t kSlotWavesPerGroup = 1;
-#else
-constexpr uint32_t kHeadsPerGroup = 4;
-constexpr uint32_t kAivPerAic = 2;
-constexpr uint32_t kHeadsPerAiv = 2;
-constexpr uint32_t kComputeSlotCount = 2;
-constexpr uint32_t kSlotWavesPerGroup = 1;
-#endif
+// head 并行铺排与计算槽数收敛到 PreparePlatform 单一判定点。A6(1:1) head=3/槽=3、
+// 每 AIV 3 个 head 一一对应 3 个计算槽，从源头消除 4 head > 3 槽的 slot-flag 环
+// 等待；arch35/arch22 为 head=4/槽=2、每 AIC 两个 AIV 各 2 head。共享消费方不再
+// 各自 #if，只从这里取值。
+constexpr uint32_t kHeadsPerGroup = PreparePlatform::headsPerGroup;
+constexpr uint32_t kAivPerAic = PreparePlatform::aivPerAic;
+constexpr uint32_t kHeadsPerAiv = PreparePlatform::headsPerAiv;
+constexpr uint32_t kComputeSlotCount = PreparePlatform::computeSlotCount;
+constexpr uint32_t kSlotWavesPerGroup = PreparePlatform::slotWavesPerGroup;
 constexpr uint32_t kBf16MatrixBytes = 0x4000;    // [64,128] * BF16
 constexpr uint32_t kGateMatrixBytes = 0x8000;    // [64,128] * FP32
 constexpr uint32_t kScoreMatrixBytes = 0x4000;   // [64,64] * FP32
@@ -223,12 +218,11 @@ constexpr uint32_t kArch35SlotCount = 4;
 constexpr uint32_t kArch35WorkgroupStride =
     kArch35SlotCount * kSlotStride;
 // A6(1:1) 每 workgroup 只同时在途 3 个 head，slot 数从 4 收敛到 3，
-// 省掉第 4 个空闲 slot 的 GM relay。host 侧需同步使用 3（见 tiling.cpp）。
-#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+// 省掉第 4 个空闲 slot 的 GM relay。该 3 槽是 A6 的固定契约，仅 arch92 代码消费，
+// host 侧需同步使用 3（见 tiling.cpp 的 GetPlatformTraits）。不再散点 #if 门控。
 constexpr uint32_t kArch92SlotCount = 3;
 constexpr uint32_t kArch92WorkgroupStride =
     kArch92SlotCount * kSlotStride;
-#endif
 } // namespace Workspace
 
 namespace ScorePayload {
@@ -241,14 +235,10 @@ constexpr uint32_t kKMinus[Shape::kSubChunkCount] = {
 namespace L1 {
 constexpr uint32_t kCapacity = 0x80000;
 constexpr uint32_t kHeadLaneBytes = 0x12000;
-#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
-// A6 只有 3 个 local head，score lane 缩为 3 项；else 保留 4 项给 arch35/arch22。
-constexpr uint32_t kHeadLane[Shape::kHeadsPerGroup] = {
-    0x00000, 0x12000, 0x24000};
-#else
-constexpr uint32_t kHeadLane[Shape::kHeadsPerGroup] = {
+// lane = head * 0x12000，固定保留 4 项覆盖 arch35/arch22 的 4 head；
+// A6 只有 3 个 local head，仅访问前 3 项，无需单独 #if 缩短数组。
+constexpr uint32_t kHeadLane[4] = {
     0x00000, 0x12000, 0x24000, 0x36000};
-#endif
 constexpr uint32_t kX0 = 0x48000;
 constexpr uint32_t kNegX1 = 0x4C000;
 constexpr uint32_t kT = 0x50000;
@@ -274,20 +264,18 @@ static_assert(kRhsLane[1] + 0x10000 <= L1::kCapacity);
 } // namespace Arch22L1
 
 namespace Arch35Ub {
-#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
-constexpr uint32_t kCapacity = 0x5E000; // 376 KiB
-#else
-constexpr uint32_t kCapacity = 0x3E000; // 248 KiB
-#endif
-constexpr uint32_t kComputeSlotBytes = 0x1C000;
-constexpr uint32_t kStateBytes = 0x03000;
-#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
-constexpr uint32_t kComputeSlotBase[3] = {0x00000, 0x1C000, 0x38000};
-constexpr uint32_t kStateBase[3] = {0x54000, 0x57000, 0x5A000};
-#else
-constexpr uint32_t kComputeSlotBase[2] = {0x00000, 0x1C000};
-constexpr uint32_t kStateBase[2] = {0x38000, 0x3B000};
-#endif
+// 容量与槽尺寸收敛到 PrepareUbLayout（UbLayout<PreparePlatform>），散点 #if 已移除；
+// arch92/arch35 共用同一套 Stage 内偏移，仅容量/槽数随平台 trait 变化。
+constexpr uint32_t kCapacity = PrepareUbLayout::kCapacity;
+constexpr uint32_t kComputeSlotBytes = PrepareUbLayout::kComputeSlotBytes;
+constexpr uint32_t kStateBytes = PrepareUbLayout::kStateBytes;
+// 槽基地址固定 4 项（上限 4 槽），按调用方的 localSlot 索引；A6 的 3 槽只用前 3 项。
+constexpr uint32_t kComputeSlotBase[4] = {
+    PrepareUbLayout::ComputeSlotBase(0), PrepareUbLayout::ComputeSlotBase(1),
+    PrepareUbLayout::ComputeSlotBase(2), PrepareUbLayout::ComputeSlotBase(3)};
+constexpr uint32_t kStateBase[4] = {
+    PrepareUbLayout::StateBase(0), PrepareUbLayout::StateBase(1),
+    PrepareUbLayout::StateBase(2), PrepareUbLayout::StateBase(3)};
 
 // V0/V1 的主计算区。
 constexpr uint32_t kQ = 0x0000;
@@ -327,6 +315,11 @@ constexpr uint32_t kQRstd = 0x1200;
 constexpr uint32_t kKRstd = 0x1300;
 constexpr uint32_t kGLast = 0x1400;
 constexpr uint32_t kVfScratch = 0x1600;
+
+// Stage 偏移不越界：计算槽内最深的 Stage（V6 的 qgScaled）连同其 BF16 [64,128]
+// 负载仍落在单槽内（0x18000 + 0x4000 = 0x1C000 = kComputeSlotBytes）。
+static_assert(kQgScaled + Shape::kBf16MatrixBytes <= kComputeSlotBytes,
+              "Arch35Ub 计算槽内 V6 qgScaled 越界");
 } // namespace Arch35Ub
 
 namespace Arch22Ub {

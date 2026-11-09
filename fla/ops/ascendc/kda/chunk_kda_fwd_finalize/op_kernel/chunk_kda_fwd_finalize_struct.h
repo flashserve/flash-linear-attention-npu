@@ -7,7 +7,10 @@
 #ifndef CHUNK_KDA_FWD_FINALIZE_STRUCT_H
 #define CHUNK_KDA_FWD_FINALIZE_STRUCT_H
 
+#include <type_traits>
+
 #include "kernel_operator.h"
+#include "chunk_kda_fwd_finalize_platform.h"
 
 namespace KdaFinalize {
 
@@ -50,17 +53,32 @@ constexpr uint32_t kHeadsPerGroup = 4;
 constexpr uint32_t kProductBytes = kChunkRows * kHeadDim * sizeof(float); // 32 KiB
 } // namespace Shape
 
-namespace A5Sync {
-// mode 0x4 下，两个 AIV 各自使用本地 flag 0/1、2/3 与 4/5；
+// 双 AIV（A5，1:2）同步 flag 布局：两个 AIV 各自使用本地 flag 0/1、2/3 与 4/5；
 // AIC 访问 AIV1 时由硬件 flag 空间加 16。
-constexpr uint8_t kCrossCoreMode = 0x4;
-constexpr uint16_t kAivQhReadyFlagId[2] = {0, 1};
-constexpr uint16_t kAivAvReadyFlagId[2] = {2, 3};
-constexpr uint16_t kAivL1ReusableFlagId[2] = {4, 5};
-constexpr uint16_t kAicQhReadyFlagId[4] = {0, 16, 1, 17};
-constexpr uint16_t kAicAvReadyFlagId[4] = {2, 18, 3, 19};
-constexpr uint16_t kAicL1ReusableFlagId[4] = {4, 20, 5, 21};
-} // namespace A5Sync
+struct A5Sync {
+    static constexpr uint8_t kCrossCoreMode = 0x4;
+    static constexpr uint16_t kAivQhReadyFlagId[2] = {0, 1};
+    static constexpr uint16_t kAivAvReadyFlagId[2] = {2, 3};
+    static constexpr uint16_t kAivL1ReusableFlagId[2] = {4, 5};
+    static constexpr uint16_t kAicQhReadyFlagId[4] = {0, 16, 1, 17};
+    static constexpr uint16_t kAicAvReadyFlagId[4] = {2, 18, 3, 19};
+    static constexpr uint16_t kAicL1ReusableFlagId[4] = {4, 20, 5, 21};
+};
+
+// 单 AIV（A6，1:1）同步 flag 布局：4 槽在途，flag 无跨 block 偏移。
+struct A6Sync {
+    static constexpr uint8_t kCrossCoreMode = 0x4;
+    static constexpr uint16_t kAivQhReadyFlagId[4] = {0, 1, 2, 3};
+    static constexpr uint16_t kAivAvReadyFlagId[4] = {4, 5, 6, 7};
+    static constexpr uint16_t kAivL1ReusableFlagId[4] = {8, 9, 10, 11};
+    static constexpr uint16_t kAicQhReadyFlagId[4] = {0, 1, 2, 3};
+    static constexpr uint16_t kAicAvReadyFlagId[4] = {4, 5, 6, 7};
+    static constexpr uint16_t kAicL1ReusableFlagId[4] = {8, 9, 10, 11};
+};
+
+// 依据平台 trait 选择同步布局；A5Sync/A6Sync 的名字保留可见，arch35 vec.h 仍直接
+// 引用 A5Sync::，无需随本开关改动。
+using FinalizeSync = std::conditional_t<FinalizePlatform::isSingleAiv, A6Sync, A5Sync>;
 
 __aicore__ inline uint32_t CeilDiv(uint32_t a, uint32_t b)
 {

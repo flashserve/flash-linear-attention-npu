@@ -125,6 +125,52 @@ bool CheckHeadPartitionWorkItemOverflow()
     return !optiling::ChunkKdaFwdPrepareTilingProcessor(context).Process(schedule);
 }
 
+bool CheckPlatformTraits()
+{
+    using namespace optiling;
+    constexpr auto arch22 = GetPlatformTraits(PrepareKernelTier::Arch22);
+    constexpr auto arch35 = GetPlatformTraits(PrepareKernelTier::Arch35);
+    constexpr auto arch92 = GetPlatformTraits(PrepareKernelTier::Arch92);
+    constexpr auto unknown = GetPlatformTraits(PrepareKernelTier::Unknown);
+    return arch22.tier == PrepareKernelTier::Arch22 && arch22.arch22TargetEligible &&
+        !arch22.useLegacyTilingKey &&
+        arch22.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES &&
+        arch22.slotsPerWorkgroup == CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP &&
+        arch35.tier == PrepareKernelTier::Arch35 && !arch35.arch22TargetEligible &&
+        arch35.useLegacyTilingKey &&
+        arch35.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES &&
+        arch35.slotsPerWorkgroup == CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP &&
+        arch92.tier == PrepareKernelTier::Arch92 && !arch92.arch22TargetEligible &&
+        arch92.useLegacyTilingKey &&
+        arch92.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES &&
+        arch92.slotsPerWorkgroup == 3 &&
+        unknown.tier == PrepareKernelTier::Unknown && unknown.workspaceSlotBytes == 0;
+}
+
+bool CheckTierForNpuArchId()
+{
+    using namespace optiling;
+    return TierForNpuArchId(2201) == PrepareKernelTier::Arch22 &&
+        TierForNpuArchId(3510) == PrepareKernelTier::Arch35 &&
+        TierForNpuArchId(9201) == PrepareKernelTier::Arch92 &&
+        TierForNpuArchId(9999) == PrepareKernelTier::Unknown;
+}
+
+bool CheckArch92Workspace()
+{
+    optiling::ChunkKdaFwdPrepareScheduleContext arch92Context{
+        2, 4, 8, 16, 0, 24, 1024, false};
+    arch92Context.workspaceSlotBytes =
+        optiling::CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES;
+    arch92Context.slotsPerWorkgroup = 3;
+    optiling::ChunkKdaFwdPrepareSchedule arch92Schedule;
+    return optiling::ChunkKdaFwdPrepareTilingProcessor(arch92Context)
+               .Process(arch92Schedule) &&
+        arch92Schedule.usedCoreNum == 24 &&
+        arch92Schedule.workspaceBytes ==
+            1024 + 24 * 3 * optiling::CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES;
+}
+
 } // namespace
 
 int main()
@@ -135,7 +181,9 @@ int main()
                    CheckGvaHeadSplitSchedule() &&
                    CheckVarLenSchedule() && CheckInvalidGva() &&
                    CheckChunkWorkItemOverflow() &&
-                   CheckHeadPartitionWorkItemOverflow()
+                   CheckHeadPartitionWorkItemOverflow() &&
+                   CheckPlatformTraits() && CheckTierForNpuArchId() &&
+                   CheckArch92Workspace()
                ? 0
                : 1;
 }

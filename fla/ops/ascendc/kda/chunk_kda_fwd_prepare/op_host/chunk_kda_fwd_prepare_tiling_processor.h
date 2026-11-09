@@ -35,6 +35,69 @@ constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES =
     CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES *
     CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
 
+// 平台 tier 与 kernel 侧的三段门控一一对应：
+//   Arch22 = A2/A3（DAV_2201），Arch35 = A5（DAV_3510），Arch92 = A6（DAV_9201）。
+// 只增不改是扩展契约：新增平台（如 A7）只在这里加一个 tier 值 + tiling.cpp 的
+// NpuArch 映射行 + 一条 traits 表记录，共享调度逻辑不受影响。
+enum class PrepareKernelTier : uint32_t {
+    Arch22 = 0,
+    Arch35 = 1,
+    Arch92 = 2,
+    Unknown = 3,
+};
+
+// 平台描述表的一行。所有平台差异收敛到这张表，替代 isNonArch22 / isArch35Like
+// 这类组合布尔值。字段与 kernel 侧布局/调度契约一一对应。
+struct PreparePlatformTraits {
+    PrepareKernelTier tier = PrepareKernelTier::Unknown;
+    // 仅 Arch22 可能命中 target 快速变体；A5/A6 恒 false。
+    bool arch22TargetEligible = false;
+    // Arch35/Arch92 用 legacy tiling key；Arch22 用 runtime key。
+    bool useLegacyTilingKey = false;
+    // 通用（非 target）workspace 单槽字节数与每 workgroup 槽数。
+    uint64_t workspaceSlotBytes = 0;
+    uint64_t slotsPerWorkgroup = 0;
+};
+
+// tier → 平台参数。Unknown 返回全零 sentinel，调用方须据此显式失败。
+constexpr PreparePlatformTraits GetPlatformTraits(PrepareKernelTier tier)
+{
+    switch (tier) {
+    case PrepareKernelTier::Arch22:
+        return {PrepareKernelTier::Arch22, true, false,
+                CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES,
+                CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP};
+    case PrepareKernelTier::Arch35:
+        return {PrepareKernelTier::Arch35, false, true,
+                CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES,
+                CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP};
+    case PrepareKernelTier::Arch92:
+        // A6(1:1) 每 workgroup 只 3 个在途 head，收敛为 3；必须与 kernel 侧
+        // Workspace::kArch92SlotCount 保持一致（见 op_kernel policy.h）。
+        return {PrepareKernelTier::Arch92, false, true,
+                CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES, 3};
+    default:
+        return {};
+    }
+}
+
+// NpuArch 枚举（见 platform/soc_spec.h）到 tier 的显式映射。用裸 uint32_t 接收，
+// 保持本头纯 C++、可被 host 单测直接覆盖；tiling.cpp 以
+// static_cast<uint32_t>(GetCurNpuArch()) 调用。未知平台返回 Unknown 以显式失败。
+constexpr PrepareKernelTier TierForNpuArchId(uint32_t archId)
+{
+    switch (archId) {
+    case 2201: // DAV_2201：A2/A3（910B/910C）共用 arch22。
+        return PrepareKernelTier::Arch22;
+    case 3510: // DAV_3510：A5（Ascend950）。
+        return PrepareKernelTier::Arch35;
+    case 9201: // DAV_9201：A6（Ascend960DT）。
+        return PrepareKernelTier::Arch92;
+    default:
+        return PrepareKernelTier::Unknown;
+    }
+}
+
 struct ChunkKdaFwdPrepareScheduleContext {
     uint64_t batch = 0;
     uint64_t qkHeadNum = 0;

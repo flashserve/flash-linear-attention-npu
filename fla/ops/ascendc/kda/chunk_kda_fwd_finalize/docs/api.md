@@ -46,7 +46,8 @@ aclnnStatus aclnnChunkKdaFwdFinalize(
 
 四个 tensor 输入和 `attnOut` 必传，且 descriptor 必须为非私有
 ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
-均为 BF16，`K=V=128`，`Aqk` 的列数为 64；支持 A2/A3/A5。
+均为 BF16，`K=V=128`，`Aqk` 的列数为 64；支持 A2/A3/A5/A6
+（A6 为 Ascend960DT、`__NPU_ARCH__=9201`，单 AIV 串行搬移）。
 `outputLayout` 对 rank-4 `qgScaled/Aqk` 只接受 `BSND/BNSD`，
 对 rank-3 `qgScaled/Aqk` 只接受 `TND/NTD`；packed 场景的
 `vNew` 可为 FwdH 的 `[1,HV,T,128]` 或独立调用的
