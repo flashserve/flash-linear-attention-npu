@@ -624,10 +624,8 @@ def npu_recurrent_kda(
     layout_code = _char_code("npu_recurrent_kda", "layout", layout)
 
     if initial_state is None:
-        if not inplace_final_state:
-            raise RuntimeError(
-                "npu_recurrent_kda: inplace_final_state=False requires initial_state")
-    elif initial_state.requires_grad:
+        raise RuntimeError("npu_recurrent_kda: initial_state must not be None")
+    if initial_state.requires_grad:
         if inplace_final_state:
             _refuse_grad_state("npu_recurrent_kda", initial_state)
         initial_state = initial_state.detach()

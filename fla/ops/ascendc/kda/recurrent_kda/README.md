@@ -18,9 +18,8 @@ out, final_state = recurrent_kda(
     v,
     g,
     beta,
-    initial_state=None,
-    *,
-    cu_seqlens,
+    initial_state,
+    cu_seqlens=cu_seqlens,
     ssm_state_indices=None,
     A_log=None,
     dt_bias=None,
@@ -42,7 +41,8 @@ out, final_state = recurrent_kda(
 
 - `layout="BSND"`：`q/k=[B,T,H,K]`，`v=[B,T,HV,V]`，`g=[B,T,HV,K]`，`beta=[B,T,HV]`。
 - `layout="TND"`：`q/k=[T,H,K]`，`v=[T,HV,V]`，`g=[T,HV,K]`，`beta=[T,HV]`。
-- `initial_state=None` 时，Python wrapper 会创建全零初始状态；显式传入时是 state pool。
+- `initial_state` 为必须显式传入的状态池。原位和非原位模式均要求非 `None`；
+  使用零初态时，由调用方在与 `q` 相同的设备上创建对应布局的零状态张量。
   `state_v_first=True` 对应 `[state_capacity,HV,V,K]`，`state_v_first=False` 对应
   `[state_capacity,HV,K,V]`。支持 slot/head 维带间隔的非连续 view，但内部二维 state
   矩阵必须稠密。
