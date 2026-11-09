@@ -4,7 +4,10 @@
 #include <cstring>
 #include <string>
 #include <register/op_impl_registry.h>
-#include "op_common/log/log.h"
+// 旧版 opbase 的 pkg_inc 里有一份残缺的 op_common/log/log.h（缺 OP_LOGE_FOR_INVALID_*
+// 家族且 OP_LOGE_WITH_INVALID_INPUT 有拼写缺陷），与 toolkit 版共用同一 include guard；
+// 短路径 "log/log.h" 经 -I.../include/op_common 稳定命中 toolkit 完整版。
+#include "log/log.h"
 #include "tiling/platform/platform_ascendc.h"
 
 namespace optiling {
