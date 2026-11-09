@@ -451,6 +451,59 @@ class HeaderKindGateTest(unittest.TestCase):
         )
         self.assertEqual(tool.filter_adapters(adapters, ""), adapters)
 
+    def test_comments_cannot_supply_adapter_calls(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        code = (
+            'FLA_STABLE_EXEC("aclnnFake", meta, stream, tensor(x));\n'
+            'auto get_ws = rt.symbol("aclnnFakeGetWorkspaceSize");\n'
+            "get_ws(view.get(), &workspace_size, &executor);\n"
+        )
+        for comment in ("/*\n" + code + "*/\n",
+                        "".join("// " + line + "\n" for line in code.splitlines())):
+            with self.subTest(comment=comment), tempfile.TemporaryDirectory() as tmp:
+                source_dir = Path(tmp)
+                (source_dir / "stable_fake.cpp").write_text(comment, encoding="utf-8")
+                self.assertEqual(tool.adapter_calls(source_dir), {})
+                self.assertEqual(tool.hand_written_calls(source_dir), {})
+
+    def test_recurrent_kda_is_checked_in_full_and_scoped_builds(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = tool.adapter_calls(SRC_DIR)
+        adapters.update(tool.hand_written_calls(SRC_DIR))
+        for ops in ("", "recurrent_kda"):
+            with self.subTest(ops=ops):
+                selected = tool.filter_adapters(adapters, ops)
+                self.assertIn("aclnnRecurrentKda", selected)
+                self.assertEqual(selected["aclnnRecurrentKda"][0].name,
+                                 "stable_recurrent_kda.cpp")
+
+    def test_legacy_macro_comment_does_not_hide_header_drift(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir, include_dir = root / "src", root / "include"
+            source_dir.mkdir()
+            include_dir.mkdir()
+            for comment in ("// Does not use FLA_STABLE_EXEC.\n",
+                            "/* Does not use FLA_STABLE_EXEC. */\n"):
+                (source_dir / "stable_demo.cpp").write_text(
+                    comment + "void run_demo(Tensor x, bool mode) {\n"
+                    '  auto get_ws = rt.symbol("aclnnDemoGetWorkspaceSize");\n'
+                    "  get_ws(view.get(), mode, &workspace_size, &executor);\n"
+                    "}\n", encoding="utf-8")
+                for header_type, expected in (("bool", 0), ("int64_t", 1)):
+                    (include_dir / "aclnn_demo.h").write_text(
+                        "aclnnStatus aclnnDemoGetWorkspaceSize("
+                        f"const aclTensor *x, {header_type} mode, "
+                        "uint64_t *workspaceSize, aclOpExecutor **executor);\n",
+                        encoding="utf-8")
+                    for ops in ([], ["--ops", "demo"]):
+                        argv = ["op_abi_validate.py", "--src-dir", str(source_dir),
+                                "--opp-include", str(include_dir), *ops]
+                        with self.subTest(comment=comment, header_type=header_type, ops=ops), \
+                                mock.patch.object(sys, "argv", argv):
+                            self.assertEqual(tool.main(), expected)
+
     def test_shared_adapter_is_selected_by_aclnn_symbol(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         adapters = tool.adapter_calls(SRC_DIR)
