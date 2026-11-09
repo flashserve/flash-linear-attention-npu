@@ -171,15 +171,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    const char *layout = attrs->GetStr(7);
-    if (layout == nullptr) {
-        layout = "BNSD";
+    const char *qkvLayout = attrs->GetStr(7);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
     }
-    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajorValue = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+    const bool qkvSequenceMajorValue = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
 #if GDN_FINALIZE_ENABLE_ARCH22
     // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
     const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());

@@ -244,15 +244,15 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    const char *layout = attrs->GetStr(7);
-    if (layout == nullptr) {
-        layout = "BNSD";
+    const char *qkvLayout = attrs->GetStr(7);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
     }
-    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajorValue = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+    const bool qkvSequenceMajorValue = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
     tiling->qkvSequenceMajor = qkvSequenceMajorValue ? 1 : 0;
     OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, qkvSequenceMajorValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);

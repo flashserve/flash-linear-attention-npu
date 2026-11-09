@@ -52,15 +52,15 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto *scale = attrs->GetAttrPointer<double>(INTRA_SCALE_ATTR_IDX);
     const auto *chunkSize = attrs->GetAttrPointer<int64_t>(INTRA_CHUNK_SIZE_ATTR_IDX);
     const auto *useExp2 = attrs->GetAttrPointer<bool>(INTRA_USE_EXP2_ATTR_IDX);
-    const char *layout = attrs->GetStr(INTRA_LAYOUT_ATTR_IDX);
-    if (layout == nullptr) {
-        layout = "BNSD";
+    const char *qkvLayout = attrs->GetStr(INTRA_LAYOUT_ATTR_IDX);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
     }
-    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+    const bool qkvSequenceMajor = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);

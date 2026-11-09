@@ -54,7 +54,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     if (layout == nullptr ||
         (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
          std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        OP_LOGE(OP_NAME, "layout must be BNSD, BSND, NTD or TND.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     L0_DFX(ChunkGatedDeltaRuleBwdFinalize, q, k, v, vNew, dO, du, g, beta, h, dh, a,

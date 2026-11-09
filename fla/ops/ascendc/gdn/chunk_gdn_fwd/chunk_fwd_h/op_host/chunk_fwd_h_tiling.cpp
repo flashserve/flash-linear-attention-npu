@@ -114,15 +114,15 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     bool saveNewValue = *(attrPtr->GetAttrPointer<bool>(ATTR_SAVE_NEW_VALUE_IDX));
     bool useExp2 = *(attrPtr->GetAttrPointer<bool>(ATTR_USE_EXP2_IDX));
     bool stateVFirst = *(attrPtr->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_IDX));
-    const char *layout = attrPtr->GetStr(ATTR_LAYOUT_IDX);
-    if (layout == nullptr) {
-        layout = "BNSD";
+    const char *qkvLayout = attrPtr->GetStr(ATTR_LAYOUT_IDX);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
     }
-    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+    const bool qkvSequenceMajor = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
     int64_t logicalBatch = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_BATCH_IDX));
     int64_t logicalSeqlen = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_SEQLEN_IDX));
     int64_t logicalKHeads = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_HEADS_IDX));

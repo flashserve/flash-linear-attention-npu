@@ -98,15 +98,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     const int32_t *chunkSizePtr = attrPtr->GetAttrPointer<int32_t>(CGDR_BWD_DHU_ATTR_CHUNK_SIZE_IDX);
     const bool *useExp2Ptr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_USE_EXP2_IDX);
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CGDR_BWD_DHU_ATTR_STATE_V_FIRST_IDX);
-    const char *layout = attrPtr->GetStr(CGDR_BWD_DHU_ATTR_LAYOUT_IDX);
-    if (layout == nullptr) {
-        layout = "BNSD";
+    const char *qkvLayout = attrPtr->GetStr(CGDR_BWD_DHU_ATTR_LAYOUT_IDX);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
     }
-    OP_CHECK_IF(std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-        std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "layout must be BNSD, BSND, NTD or TND."),
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
                 return ge::GRAPH_FAILED);
-    const bool qkvSequenceMajor = std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0;
+    const bool qkvSequenceMajor = std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0;
 
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
