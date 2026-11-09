@@ -176,11 +176,24 @@ jobs:
       contains(github.event.comment.body, '/package')
     runs-on: ubuntu-latest
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 分发到 package workflow
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/package(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -251,21 +264,7 @@ jobs:
             if (!jobs) jobs = '16';
 
             const actor = context.actor;
-            let actorPermission = 'none';
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: actor,
-              });
-              actorPermission = data.permission || 'none';
-            } catch (error) {
-              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
-            }
-            if (actorPermission !== 'admin') {
-              core.setFailed(`${actor} 无权触发 Package 编译：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
-              return;
-            }
+            await auth.authorizeCiRequest({ github, context, requestedBy: actor });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -276,6 +275,9 @@ jobs:
             if (pr.draft) {
               core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再触发 Package 编译。`);
               return;
+            }
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              await auth.requireCiAuthorAdmin({ github, context, pr });
             }
 
             // 出包代码来源: 不指定 branch 时默认编译 PR 合并结果，即

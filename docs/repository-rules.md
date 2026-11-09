@@ -72,8 +72,10 @@ Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状�
 
 | 触发入口 | 所需权限 |
 | --- | --- |
-| PR 评论 `/run-npu-ci` | 默认分支 CI 名单；不要求仓库 write 权限 |
-| 新版 CI 的 Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备仓库 write 权限 |
+| PR 评论 `/run-npu-ci`、`/package` | 默认分支 `.github/npu-ci-users.json` 名单；不要求仓库 write/Admin 权限 |
+| 新版 NPU CI / Package Build 的 Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备 GitHub 平台要求的仓库 write 权限 |
+
+`/package` 与 `/run-npu-ci` 共用名单校验，名单始终从默认分支读取，PR 或出包分支中的名单不能自行授权。Package 执行门禁同时校验原评论请求人；手动分发只校验实际触发者，不接受冒用 `requested_by`。两个入口均保留独立的 CI 修改作者规则：涉及 `ci/` 或 `.github/` 非 Markdown 修改时，PR 作者必须是仓库 Admin，触发人仍只需在名单中。
 
 GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)；REST 的 fine-grained token 还须具有 `Actions: write`，classic PAT 或 OAuth token 须具有 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。涉及 CI 文件修改时，默认评论入口和新版 workflow 均要求 PR 作者具有仓库 Admin 权限。
 
