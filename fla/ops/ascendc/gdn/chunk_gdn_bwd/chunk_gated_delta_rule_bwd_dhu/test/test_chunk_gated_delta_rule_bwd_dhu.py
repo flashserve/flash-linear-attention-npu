@@ -1,5 +1,6 @@
 import math
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 from typing import Optional, Tuple, List
 import ct
@@ -486,7 +487,7 @@ def test_fix(
     dv_npu = dv.npu()
     g_npu = g.npu()
 
-    dh_npu, dh0_npu, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh_npu, dh0_npu, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q_npu, k_npu, w_npu, d_o_npu, dv_npu, 
         scale=scale, 
         chunk_size=chunk_size,
@@ -553,7 +554,7 @@ def test_variable(
     dv_npu = dv.npu()
     g_npu = g.npu()
 
-    dh_npu, dh0_npu, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh_npu, dh0_npu, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q_npu, k_npu, w_npu, d_o_npu, dv_npu, 
         scale=scale, 
         chunk_size=chunk_size,

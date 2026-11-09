@@ -17,8 +17,9 @@ on:
 permissions:
   actions: write
   contents: read
-  issues: read
+  issues: write
   pull-requests: read
+  statuses: write
 
 jobs:
   dispatch:
@@ -29,11 +30,29 @@ jobs:
       contains(github.event.comment.body, '/run-npu-ci')
     runs-on: ubuntu-latest
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: |
+            .github/scripts/npu_ci_authorization.js
+            .github/scripts/npu_ci_checks.js
+            .github/scripts/npu_ci_checks.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 分发到 PR 目标分支
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_CHECKS_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_checks.js
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
+            const checks = require(process.env.NPU_CI_CHECKS_SCRIPT || './.github/scripts/npu_ci_checks.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/run-npu-ci(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -46,7 +65,6 @@ jobs:
             let modeProvided = false;
             let ops = '';
             let opsProvided = false;
-            let requestedRef = '';
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -62,12 +80,6 @@ jobs:
                 }
                 ops = part.slice('ops='.length);
                 opsProvided = true;
-              } else if (part.startsWith('ci_ref=') || part.startsWith('branch=')) {
-                if (requestedRef) {
-                  core.setFailed('CI 定义分支只能指定一次。');
-                  return;
-                }
-                requestedRef = part.slice(part.indexOf('=') + 1);
               } else {
                 core.setFailed(`不支持的 NPU CI 参数：${part}`);
                 return;
@@ -83,21 +95,7 @@ jobs:
             }
 
             const actor = context.actor;
-            let actorPermission = 'none';
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: actor,
-              });
-              actorPermission = data.permission || 'none';
-            } catch (error) {
-              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
-            }
-            if (actorPermission !== 'admin') {
-              core.setFailed(`${actor} 无权触发 NPU CI：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
-              return;
-            }
+            await auth.authorizeCiRequest({ github, context, requestedBy: actor });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -105,21 +103,25 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
             });
-            if (pr.draft) {
-              core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再运行 NPU CI。`);
-              return;
-            }
+            auth.requireOpenPullRequest(pr);
+            const targetRef = pr.base.ref;
+            const { data: baseBranch } = await github.rest.repos.getBranch({ ...context.repo, branch: targetRef });
+            auth.requireProtectedBase({ pr, branch: baseBranch });
 
-            const targetRef = requestedRef || pr.base.ref;
-            try {
-              await github.rest.repos.getBranch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                branch: targetRef,
-              });
-            } catch (error) {
-              core.setFailed(`找不到 CI 定义分支 \`${targetRef}\`：${error.message}`);
-              return;
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              try {
+                await auth.requireCiAuthorAdmin({ github, context, pr });
+              } catch (error) {
+                const contexts = ops.trim() ? [checks.diagnostic.context] : checks.contexts;
+                await Promise.all(contexts.map((statusContext) => github.rest.repos.createCommitStatus({
+                  ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
+                  description: 'CI 文件变更仅允许仓库 Admin 作者提交', target_url: pr.html_url,
+                })));
+                await github.rest.issues.createComment({ ...context.repo, issue_number: prNumber,
+                  body: `NPU CI 拒绝分发。\n\n原因及修改建议：${error.message}` });
+                core.setFailed(error.message);
+                return;
+              }
             }
 
             let workflowFile;
@@ -128,7 +130,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 path: '.github/workflows/ci.yml',
-                ref: targetRef,
+                ref: baseBranch.commit.sha,
               }));
             } catch (error) {
               core.setFailed(`分支 \`${targetRef}\` 不包含 .github/workflows/ci.yml：${error.message}`);
@@ -143,22 +145,22 @@ jobs:
             const workflowText = Buffer
               .from(workflowFile.content, workflowFile.encoding || 'base64')
               .toString('utf8');
-            if (!/^\s*workflow_dispatch\s*:/m.test(workflowText)) {
-              core.setFailed(`分支 \`${targetRef}\` 的 ci.yml 没有声明 workflow_dispatch。`);
-              return;
-            }
 
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'ci.yml',
               ref: targetRef,
-              inputs: {
+              inputs: auth.selectDispatchInputs(workflowText, {
                 pr_number: String(prNumber),
                 ci_mode: ciMode,
                 ops,
                 requested_by: actor,
-              },
+                expected_head_sha: pr.head.sha,
+                expected_base_ref: pr.base.ref,
+                expected_base_sha: baseBranch.commit.sha,
+                expected_workflow_sha: baseBranch.commit.sha,
+              }),
             });
 
             core.notice(
@@ -174,11 +176,24 @@ jobs:
       contains(github.event.comment.body, '/package')
     runs-on: ubuntu-latest
     steps:
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: 分发到 package workflow
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const body = (context.payload.comment.body || '').trim();
             const command = body.match(/^\/package(?:\s+([\s\S]*))?$/);
             if (!command) {
@@ -192,6 +207,7 @@ jobs:
             let socs = [];
             let arches = [];
             let branch = '';
+            let jobs = '';
             for (const part of parts) {
               if (part.startsWith('soc=')) {
                 if (socs.length > 0) {
@@ -215,6 +231,16 @@ jobs:
                   core.setFailed(`arch 参数不合法，可选值: ${ARCHES.join(', ')}`);
                   return;
                 }
+              } else if (part.startsWith('jobs=')) {
+                if (jobs) {
+                  core.setFailed('jobs 参数只能指定一次。');
+                  return;
+                }
+                jobs = part.slice('jobs='.length);
+                if (!/^[1-9][0-9]*$/.test(jobs) || !Number.isSafeInteger(Number(jobs))) {
+                  core.setFailed('jobs 参数必须是正整数，例如 /package jobs=16。');
+                  return;
+                }
               } else if (part.startsWith('branch=')) {
                 if (branch) {
                   core.setFailed('branch 参数只能指定一次。');
@@ -229,29 +255,16 @@ jobs:
                 core.setFailed(
                   `不支持的参数: ${part}。用法: /package ` +
                   `[soc=ascend910b,ascend910_93,ascend950] ` +
-                  `[arch=arm,x86] [branch=<分支名|head>]`);
+                  `[arch=arm,x86] [branch=<分支名|head>] [jobs=16]`);
                 return;
               }
             }
             if (!socs.length) socs = SOCS;
             if (!arches.length) arches = ARCHES;
+            if (!jobs) jobs = '16';
 
             const actor = context.actor;
-            let actorPermission = 'none';
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: actor,
-              });
-              actorPermission = data.permission || 'none';
-            } catch (error) {
-              core.warning(`Unable to inspect repository permission for ${actor}: ${error.message}`);
-            }
-            if (actorPermission !== 'admin') {
-              core.setFailed(`${actor} 无权触发 Package 编译：需要仓库 Admin 权限，当前权限为 ${actorPermission}。`);
-              return;
-            }
+            await auth.authorizeCiRequest({ github, context, requestedBy: actor });
 
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -262,6 +275,9 @@ jobs:
             if (pr.draft) {
               core.setFailed(`PR #${prNumber} 仍是草稿，请先标记为 ready for review 后再触发 Package 编译。`);
               return;
+            }
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              await auth.requireCiAuthorAdmin({ github, context, pr });
             }
 
             // 出包代码来源: 不指定 branch 时默认编译 PR 合并结果，即
@@ -322,6 +338,7 @@ jobs:
                 pr_number: String(prNumber),
                 socs: socs.join(','),
                 arches: arches.join(','),
+                jobs,
                 requested_by: actor,
                 build_sha: buildSha,
                 build_ref: buildRef,
@@ -332,5 +349,5 @@ jobs:
 
             core.notice(
               `已将 PR #${prNumber} 的 Package 编译分发到 package.yml，` +
-              `分支=${buildRef}@${buildSha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]。`
+              `分支=${buildRef}@${buildSha}，SOC=[${socs.join(',')}]，架构=[${arches.join(',')}]，编译并发=${jobs}。`
             );

@@ -127,9 +127,9 @@ def _arch22_dladdr(symbol):
 
 
 def _arch22_symbol_sources():
-    from fla_npu.ops.ascendc._runtime import runtime
-    actual_runtime = runtime()
-    return {name: _arch22_dladdr(actual_runtime.symbol(name)) for name in _TARGET_SYMBOLS}
+    from host_probe import HostProbe
+    probe = HostProbe()
+    return {name: _arch22_dladdr(probe.symbol(name)) for name in _TARGET_SYMBOLS}
 
 
 def _arch22_runtime_identity(*, require_tiling=False, refresh=False):

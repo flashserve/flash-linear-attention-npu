@@ -1,0 +1,56 @@
+name: Code Owner Approval
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - edited
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: codeowner-approval-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: Code Owner Approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出受信任的目标分支检查脚本
+        uses: actions/checkout@v6
+        with:
+          # The workflow itself is trusted; a long-lived PR may retain a base
+          # SHA that predates this helper.
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: |
+            .github/scripts/codeowner_approval_gate.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: 计算指定 Code Owner approval
+        uses: actions/github-script@v8
+        env:
+          CODEOWNER_APPROVAL_SCRIPT: ${{ github.workspace }}/.github/scripts/codeowner_approval_gate.js
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const gate = require(process.env.CODEOWNER_APPROVAL_SCRIPT);
+            try {
+              await gate.run({ github, context, core });
+            } catch (error) {
+              core.setFailed(error.message);
+            }

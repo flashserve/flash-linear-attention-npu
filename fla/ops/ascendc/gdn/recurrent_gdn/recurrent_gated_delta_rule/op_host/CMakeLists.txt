@@ -9,6 +9,13 @@
 
 add_op_to_compiled_list()
 
+# Preserve the established FP32 evaluation order for each architecture implementation.
+# Keep these options scoped to this operator.
+add_ops_compile_options(
+    OP_NAME RecurrentGatedDeltaRule
+    OPTIONS -ffp-contract=off -fno-fast-math
+)
+
 if (BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE
         recurrent_gated_delta_rule_def.cpp
@@ -16,20 +23,22 @@ if (BUILD_OPEN_PROJECT)
 endif()
 
 if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
-    add_ops_compile_options(
-        OP_NAME RecurrentGatedDeltaRule
-        OPTIONS --cce-auto-sync=on
-                -Wno-deprecated-declarations
-                -Werror
-    )
     if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         add_ops_compile_options(
             OP_NAME RecurrentGatedDeltaRule
             COMPUTE_UNIT Ascend950PR_9599
-            OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
+            OPTIONS -Wno-deprecated-declarations
+                    -Werror
+                    -mllvm -cce-aicore-dcci-before-kernel-end=false
+        )
+    else()
+        add_ops_compile_options(
+            OP_NAME RecurrentGatedDeltaRule
+            OPTIONS --cce-auto-sync=on
+                    -Wno-deprecated-declarations
+                    -Werror
         )
     endif()
 else()
     add_modules_sources(OPTYPE recurrent_gated_delta_rule ACLNNTYPE aclnn_exclude)
 endif()
-

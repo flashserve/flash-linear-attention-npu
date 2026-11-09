@@ -82,8 +82,8 @@ aclnnStatus aclnnOpName(void *workspace, uint64_t workspaceSize,
 | Stable-ABI | schema `Tensor(a!)` + 适配层原样下发 | 不在下发前做连续化或拷贝；原地参数照常用宏拆栈 |
 | Python | `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`） | 拒绝被写回张量的 `requires_grad=True`；调用成功后 `increment_version()`；按上游语义把被改写张量原对象返回/透传 |
 
-限制与回归：当前没有 FakeTensor / functionalization，暂不能作为 compiler-visible op 入图；ctypes 回退路径没有
-schema，原地契约只靠 `MUTATED_ARGUMENTS` 兜底；契约回归见 `tests/stable_abi/regression_mutation_contract.py`。
+限制与回归：当前没有 FakeTensor / functionalization，暂不能作为 compiler-visible op 入图；Stable schema 与
+`MUTATED_ARGUMENTS` 的原地声明须一致；契约回归见 `tests/stable_abi/regression_mutation_contract.py`。
 
 ## 返回值
 
