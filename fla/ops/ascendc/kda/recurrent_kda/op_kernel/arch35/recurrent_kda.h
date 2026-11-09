@@ -441,65 +441,77 @@ public:
             const uint64_t keyHead = head / (tiling_->nv / tiling_->nk);
             const int64_t taskTokens = sequenceEnd_ - sequenceBegin_;
             const bool hasFollowingTask = task + GetBlockNum() < taskCount;
-            currentBank = (currentBank + 1) % STATE_BANKS;
-            WaitFlag<HardEvent::V_MTE2>(EVENT_ID0);
-            stateReadyEvent = false;
-            Mutex::Lock<PIPE_MTE2>(STATE_MUTEX[currentBank]);
-            CopyStateIn(currentBank, initialSlot, head);
-            Mutex::Unlock<PIPE_MTE2>(STATE_MUTEX[currentBank]);
-            // Alternate only for executed tasks, including across empty requests.
-            // A second slot lets the next task's input DMA pass the current VF.
-            if (usesBias) {
-                Mutex::Lock<PIPE_MTE2>(PARAMETER_MUTEX[parameterBuffer]);
-                DataCopy(biasUb_[parameterBuffer], biasGm_[head * DIM], DIM);
-                Mutex::Unlock<PIPE_MTE2>(PARAMETER_MUTEX[parameterBuffer]);
-            }
-            const float aLog = tiling_->useGateInKernel ? aLogGm_.GetValue(head) : 0.0f;
-            if (hasFollowingTask && taskTokens == 1) {
-                SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
-                stateReadyEvent = true;
-            }
-            if (usesBias) Mutex::Lock<PIPE_V>(PARAMETER_MUTEX[parameterBuffer]);
-            for (int64_t start = sequenceBegin_; start < sequenceEnd_; start += TOKEN_TILE) {
-                const uint16_t rows = static_cast<uint16_t>((sequenceEnd_ - start < TOKEN_TILE ? sequenceEnd_ - start : TOKEN_TILE));
-                const uint32_t buffer = tileIndex++ % INPUT_BUFFERS;
-                CopyInputTile(buffer, start, rows, keyHead, head);
-                Mutex::Lock<PIPE_V>(INPUT_MUTEX[buffer]);
-                Mutex::Lock<PIPE_V>(OUTPUT_MUTEX[buffer]);
-                for (uint16_t token = 0; token < rows; ++token) {
-                    const uint32_t nextBank = (currentBank + 1) % STATE_BANKS;
-                    Mutex::Lock<PIPE_V>(STATE_MUTEX[nextBank]);
-                    ComputeToken(buffer, token, currentBank, nextBank, aLog, parameterBuffer);
-                    Mutex::Unlock<PIPE_V>(STATE_MUTEX[nextBank]);
-                    const int64_t position = start + token;
-                    // The spare next-task bank was last read by this penultimate VF.
-                    if (hasFollowingTask && position + 2 == sequenceEnd_) {
-                        SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
-                        stateReadyEvent = true;
-                    }
-                    if ((tiling_->inplaceFinalState || tiling_->outputFinalState) &&
-                        (tiling_->hasSsmStateIndices || position + 1 == sequenceEnd_)) {
-                        const uint64_t slot = StateSlot(request, position);
-                        Mutex::Lock<PIPE_MTE3>(STATE_MUTEX[nextBank]);
-                        CopyStateOut(nextBank, slot, head);
-                        Mutex::Unlock<PIPE_MTE3>(STATE_MUTEX[nextBank]);
-                    }
-                    currentBank = nextBank;
+            float aLog = 0.0f;
+            // Independent V slices share one task's metadata, parameters and bank protocol.
+            for (uint32_t valueOffset = 0; valueOffset < tiling_->dv; valueOffset += DIM) {
+                const bool hasFollowingWork = valueOffset + DIM < tiling_->dv || hasFollowingTask;
+                currentBank = (currentBank + 1) % STATE_BANKS;
+                WaitFlag<HardEvent::V_MTE2>(EVENT_ID0);
+                stateReadyEvent = false;
+                Mutex::Lock<PIPE_MTE2>(STATE_MUTEX[currentBank]);
+                CopyStateIn(currentBank, initialSlot, head, valueOffset);
+                Mutex::Unlock<PIPE_MTE2>(STATE_MUTEX[currentBank]);
+                // Alternate only for executed tasks, including across empty requests.
+                // A second slot lets the next task's input DMA pass the current VF.
+                if (usesBias && valueOffset == 0) {
+                    Mutex::Lock<PIPE_MTE2>(PARAMETER_MUTEX[parameterBuffer]);
+                    DataCopy(biasUb_[parameterBuffer], biasGm_[head * DIM], DIM);
+                    Mutex::Unlock<PIPE_MTE2>(PARAMETER_MUTEX[parameterBuffer]);
                 }
-                Mutex::Unlock<PIPE_V>(INPUT_MUTEX[buffer]);
-                Mutex::Unlock<PIPE_V>(OUTPUT_MUTEX[buffer]);
-                const uint64_t outOffset = (uint64_t(start) * tiling_->nv + head) * DIM;
-                const DataCopyExtParams outputParams{rows, DIM * sizeof(bfloat16_t), 0,
-                    uint32_t((tiling_->nv - 1) * DIM * sizeof(bfloat16_t)), 0};
-                Mutex::Lock<PIPE_MTE3>(OUTPUT_MUTEX[buffer]);
-                DataCopyPad(outputGm_[outOffset], outputTile_[buffer], outputParams);
-                Mutex::Unlock<PIPE_MTE3>(OUTPUT_MUTEX[buffer]);
+                if (valueOffset == 0) aLog = tiling_->useGateInKernel ? aLogGm_.GetValue(head) : 0.0f;
+                if (hasFollowingWork && taskTokens == 1) {
+                    SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
+                    stateReadyEvent = true;
+                }
+                if (usesBias && valueOffset == 0) Mutex::Lock<PIPE_V>(PARAMETER_MUTEX[parameterBuffer]);
+                for (int64_t start = sequenceBegin_; start < sequenceEnd_; start += TOKEN_TILE) {
+                    const uint16_t rows = static_cast<uint16_t>((sequenceEnd_ - start < TOKEN_TILE ? sequenceEnd_ - start : TOKEN_TILE));
+                    const uint32_t buffer = tileIndex++ % INPUT_BUFFERS;
+                    CopyInputTile(buffer, start, rows, keyHead, head, valueOffset);
+                    Mutex::Lock<PIPE_V>(INPUT_MUTEX[buffer]);
+                    Mutex::Lock<PIPE_V>(OUTPUT_MUTEX[buffer]);
+                    for (uint16_t token = 0; token < rows; ++token) {
+                        const uint32_t nextBank = (currentBank + 1) % STATE_BANKS;
+                        Mutex::Lock<PIPE_V>(STATE_MUTEX[nextBank]);
+                        ComputeToken(buffer, token, currentBank, nextBank, aLog, parameterBuffer);
+                        Mutex::Unlock<PIPE_V>(STATE_MUTEX[nextBank]);
+                        const int64_t position = start + token;
+                        // The next work item (V slice or task) may reuse this bank after its last read.
+                        if (hasFollowingWork && position + 2 == sequenceEnd_) {
+                            SetFlag<HardEvent::V_MTE2>(EVENT_ID0);
+                            stateReadyEvent = true;
+                        }
+                        if ((tiling_->inplaceFinalState || tiling_->outputFinalState) &&
+                            (tiling_->hasSsmStateIndices || position + 1 == sequenceEnd_)) {
+                            const uint64_t slot = StateSlot(request, position);
+                            Mutex::Lock<PIPE_MTE3>(STATE_MUTEX[nextBank]);
+                            CopyStateOut(nextBank, slot, head, valueOffset);
+                            Mutex::Unlock<PIPE_MTE3>(STATE_MUTEX[nextBank]);
+                        }
+                        currentBank = nextBank;
+                    }
+                    Mutex::Unlock<PIPE_V>(INPUT_MUTEX[buffer]);
+                    Mutex::Unlock<PIPE_V>(OUTPUT_MUTEX[buffer]);
+                    const uint64_t outOffset = (uint64_t(start) * tiling_->nv + head) * tiling_->dv + valueOffset;
+                    const DataCopyExtParams outputParams{rows, DIM * sizeof(bfloat16_t), 0,
+                        uint32_t((uint64_t(tiling_->nv) * tiling_->dv - DIM) * sizeof(bfloat16_t)), 0};
+                    Mutex::Lock<PIPE_MTE3>(OUTPUT_MUTEX[buffer]);
+                    DataCopyPad(outputGm_[outOffset], outputTile_[buffer], outputParams);
+                    Mutex::Unlock<PIPE_MTE3>(OUTPUT_MUTEX[buffer]);
+                }
             }
             if (usesBias) Mutex::Unlock<PIPE_V>(PARAMETER_MUTEX[parameterBuffer]);
             parameterBuffer = (parameterBuffer + 1) % PARAMETER_BUFFERS;
         }
         // Close the V->MTE2 handshake even if trailing tasks were empty/invalid.
         if (stateReadyEvent) WaitFlag<HardEvent::V_MTE2>(EVENT_ID0);
+        // Drain both output slots on V: the final tile output follows all
+        // preceding State DMA on MTE3. Unused slots are already unlocked.
+        // Each input DMA was already consumed under INPUT_MUTEX before its VF.
+        Mutex::Lock<PIPE_V>(OUTPUT_MUTEX[0]);
+        Mutex::Unlock<PIPE_V>(OUTPUT_MUTEX[0]);
+        Mutex::Lock<PIPE_V>(OUTPUT_MUTEX[1]);
+        Mutex::Unlock<PIPE_V>(OUTPUT_MUTEX[1]);
     }
 
 private:
@@ -608,9 +620,10 @@ private:
         return StateSlot(request, token);
     }
 
-    __aicore__ inline void CopyStateIn(uint32_t bank, uint64_t slot, uint64_t head)
+    __aicore__ inline void CopyStateIn(uint32_t bank, uint64_t slot, uint64_t head, uint32_t valueOffset)
     {
-        const uint64_t offset = slot * tiling_->stateInStride0 + head * tiling_->stateInStride1;
+        const uint64_t offset = slot * tiling_->stateInStride0 + head * tiling_->stateInStride1 +
+            valueOffset * (V_FIRST ? tiling_->stateInStride2 : tiling_->stateInStride3);
         if (tiling_->stateInStride2 == DIM) {
             DataCopy(stateBanks_[bank], stateGm_[offset], DIM * DIM);
         } else {
@@ -620,9 +633,10 @@ private:
         }
     }
 
-    __aicore__ inline void CopyStateOut(uint32_t bank, uint64_t slot, uint64_t head)
+    __aicore__ inline void CopyStateOut(uint32_t bank, uint64_t slot, uint64_t head, uint32_t valueOffset)
     {
-        const uint64_t offset = slot * tiling_->stateOutStride0 + head * tiling_->stateOutStride1;
+        const uint64_t offset = slot * tiling_->stateOutStride0 + head * tiling_->stateOutStride1 +
+            valueOffset * (V_FIRST ? tiling_->stateOutStride2 : tiling_->stateOutStride3);
         if (tiling_->stateOutStride2 == DIM) {
             DataCopy(stateOutGm_[offset], stateBanks_[bank], DIM * DIM);
         } else {
@@ -640,11 +654,12 @@ private:
         return uint64_t(token) * tokenStride + head * headStride;
     }
 
-    __aicore__ inline void CopyInputTile(uint32_t buffer, int64_t start, uint16_t rows, uint64_t keyHead, uint64_t head)
+    __aicore__ inline void CopyInputTile(uint32_t buffer, int64_t start, uint16_t rows, uint64_t keyHead, uint64_t head,
+        uint32_t valueOffset)
     {
         const uint64_t queryOffset = InputOffset(start, keyHead, tiling_->queryBatchStride, tiling_->queryTokenStride, tiling_->queryHeadStride);
         const uint64_t keyOffset = InputOffset(start, keyHead, tiling_->keyBatchStride, tiling_->keyTokenStride, tiling_->keyHeadStride);
-        const uint64_t valueOffset = InputOffset(start, head, tiling_->valueBatchStride, tiling_->valueTokenStride, tiling_->valueHeadStride);
+        const uint64_t valueGmOffset = InputOffset(start, head, tiling_->valueBatchStride, tiling_->valueTokenStride, tiling_->valueHeadStride) + valueOffset;
         const uint64_t gateOffset = (uint64_t(start) * tiling_->nv + head) * DIM;
         const uint64_t betaOffset = uint64_t(start) * tiling_->nv + head;
         const DataCopyPadExtParams<bfloat16_t> pad{false, 0, 0, bfloat16_t(0)};
@@ -656,7 +671,7 @@ private:
         Mutex::Lock<PIPE_MTE2>(INPUT_MUTEX[buffer]);
         DataCopyPad(queryTile_[buffer], queryGm_[queryOffset], queryParams, pad);
         DataCopyPad(keyTile_[buffer], keyGm_[keyOffset], keyParams, pad);
-        DataCopyPad(valueTile_[buffer], valueGm_[valueOffset], valueParams, pad);
+        DataCopyPad(valueTile_[buffer], valueGm_[valueGmOffset], valueParams, pad);
         DataCopyPad(gateTile_[buffer], gateGm_[gateOffset], gateParams, DataCopyPadExtParams<Gate>{false, 0, 0, Gate(0)});
         DataCopyPad(betaTile_[buffer], betaGm_[betaOffset], betaParams, DataCopyPadExtParams<Beta>{false, 0, 0, Beta(0)});
         Mutex::Unlock<PIPE_MTE2>(INPUT_MUTEX[buffer]);

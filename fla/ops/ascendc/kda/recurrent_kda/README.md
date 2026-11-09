@@ -82,7 +82,7 @@ o_t = S @ (q_t * scale)
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分、TND 为一条序列；传入时为与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
   token capacity。A2/A3 支持超过 8 token 的 dense 单序列与 varlen 分段，内部按 8-token 窗口递推；
-  A5 V=128 支持长序列，V=256 每段序列长度不超过8。末项小于 capacity 时，仅有效 token 对应的输出和 state
+  A5 的 V=128/V=256 均支持长序列。末项小于 capacity 时，仅有效 token 对应的输出和 state
   更新有定义，padding tail 输出不作保证。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 支持 V-first `[state_capacity,HV,V,K]` 和 K-first `[state_capacity,HV,K,V]`，state dtype 为
@@ -92,8 +92,8 @@ o_t = S @ (q_t * scale)
 
 ## A5 实现
 
-V=128 使用 PR #1083 风格的 `RecurrentKdaEngine` 类，统一管理初始化、任务循环、输入搬运、逐 token VF 和输出搬运。三个 State bank 轮换递推，输入和 out 使用两个槽，每个 tile 最多包含四个 token；tile 计算完成后批量搬出 out。Mutex 保护 State、输入、out 和 bias 的复用，下一任务初态搬入可与当前任务最后一个 token 的计算重叠。
+V=128/V=256 使用 PR #1083 风格的 `RecurrentKdaEngine` 类，统一管理初始化、任务循环、输入搬运、逐 token VF 和输出搬运。三个 State bank 轮换递推，输入和 out 使用两个槽，每个 tile 最多包含四个 token；tile 计算完成后批量搬出 out。Mutex 保护 State、输入、out 和 bias 的复用，下一任务初态搬入可与当前任务最后一个 token 的计算重叠。
 
 V-first 以两行为粒度读取两遍 State，先收集 prediction 到512 B scratch，再计算 residual 覆盖同一 scratch，逐行广播 residual 并重读 State 完成更新和 out。K-first 保持紧凑 [K,V] 布局，参考 x8-pr 沿连续 V 维读取两遍 State，prediction 和 out 各用两个 FP32 寄存器累加，512 B scratch 保存 alpha*k 系数。BF16 State 在寄存器中转换，跨 token 仅保留 BF16 结果；out 使用舍入前的 FP32 更新值。Q/K 的 L2 normalize 使用 `x/sqrt(sum(x*x)+1e-6)`。具体内存与同步见 [设计文档](docs/design.md)。
 
-公开接口、`cu_seqlens`、State 索引和非连续 view 的语义保持不变；元数据在设备每次执行时读取。A5 V=256 和 A2/A3 保留兼容实现。
+公开接口、`cu_seqlens`、State 索引和非连续 view 的语义保持不变；元数据在设备每次执行时读取。V=256 沿 V 拆成两个128列分块并复用相同 VF 和缓冲；A2/A3 保留兼容实现。

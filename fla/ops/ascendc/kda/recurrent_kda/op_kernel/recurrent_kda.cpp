@@ -12,8 +12,7 @@
  * \brief
  */
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-#include "arch35/recurrent_kda_engine.h"
-#include "arch35/recurrent_kda_legacy.h"
+#include "arch35/recurrent_kda.h"
 #else
 #include "recurrent_kda.h"
 #endif
@@ -36,14 +35,7 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     GM_ADDR stateOutput = tilingData.inplaceFinalState == 1 ? initialStateOut : finalState;
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-    if constexpr (KERNEL_MODE == RKDA_TPL_COMPAT) {
-        TPipe pipe;
-        RKDALegacyInitParams legacy{query, key, value, gate, beta, initialState, cuSeqlens,
-            ssmStateIndices, aLog, dtBias, numAcceptedTokens, out, stateOutput};
-        RKDALegacy<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
-        op.Init(legacy, &pipe);
-        op.Process();
-    } else {
+    {
         // Static Tensor programming owns UB and synchronization without a TPipe.
         InitSocState();
         constexpr bool stateVFirst = KERNEL_MODE != RKDA_TPL_K_FIRST && KERNEL_MODE != RKDA_TPL_K_FIRST_FUSED;
@@ -53,7 +45,6 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
         op.Init(query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
             aLog, dtBias, numAcceptedTokens, out, stateOutput);
         op.Process();
-        PipeBarrier<PIPE_ALL>();
     }
 #else
     RKDAInitParams initParams{query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,

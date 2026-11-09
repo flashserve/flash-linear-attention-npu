@@ -221,7 +221,7 @@ ge::graphStatus RecurrentKdaTiling::DoOpTiling()
 ge::graphStatus RecurrentKdaTiling::DoLibApiTiling()
 {
     uint32_t kernelMode = RKDA_TPL_COMPAT;
-    if (compileInfo_.isA5 && tilingData_.dv == 128) {
+    if (compileInfo_.isA5) {
         if (tilingData_.stateVFirst) {
             kernelMode = (tilingData_.a5VfFlags & RecurrentKda::RKDA_VF_FUSED) != 0
                 ? RKDA_TPL_V_FIRST_FUSED : RKDA_TPL_V_FIRST;

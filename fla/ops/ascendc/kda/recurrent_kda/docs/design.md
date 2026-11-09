@@ -5,13 +5,15 @@
 
 ## 目标与结构
 
-整体采用参考 PR 的类式 constructor / Init / Process 组织、静态 UB、X=4 输入/out 双缓冲、三个 State bank 轮换、每 token 一个 VF 和 Mutex 同步。V-first 沿用 UnalignRegForStore 输出收集，K-first 在寄存器中累计完整 out 后连续写 UB。A5 V=128 不沿用 x8-pr 调度器或 UB 地址规划；A2/A3、A5 V=256 继续走兼容实现。
+整体采用参考 PR 的类式 constructor / Init / Process 组织、静态 UB、X=4 输入/out 双缓冲、三个 State bank 轮换、每 token 一个 VF 和 Mutex 同步。V-first 沿用 UnalignRegForStore 输出收集，K-first 在寄存器中累计完整 out 后连续写 UB。A5 的 V=128/V=256 统一使用同一 Engine，不沿用 x8-pr 调度器或 UB 地址规划；A2/A3 继续走兼容实现。
 
 保留 KDA 原接口，包括向量 gate、128 维 dt_bias、K-first、空请求、非连续输入及各输出组合。host 依次完成形状检查、维度与 stride 填充、属性检查、分核和 UB 规划，复用既有公开接口校验。
 
 ## Stage 与分核
 
 每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做 grid-stride 分配，hk=hv/(HV/H)。blockDim=min(AIV 数,任务数)，不使用 AIC。B=32、HV=48 时共有 1536 个任务，56 个 AIV 每核 27 或 28 个任务。
+
+V=128 每任务处理一个128列 V 分块；V=256 沿 V 分成 `[0,128)`、`[128,256)`，同一 AIV 依次完成两个分块的全部 token。每个分块复用原128×128 VF、三个 State bank 和输入/out 槽。K-first 从 GM 的 `[K,256]` 中逐 K 行搬入对应128列，UB 保持 `[K,128]`，输出按原 stride 写回，无转置。V-first 对应128个 V 行。请求元数据、A_log 和 bias 每任务解析或搬入一次；q/k/g/beta 每分块读入。两种 V 维度均按四 token 的 tile 顺序递推，支持跨任意多个 tile，末 tile 仅处理有效 token；UB 占用不随序列长度增加。保留 cu_seqlens 和 State 索引容量校验。
 
 1. Scalar 解析请求、初态槽位和 head，MTE2 搬入初态与当前 tile 的 q/k/v/g/beta。
 2. Vector 对每个 token 计算归一化、gate、prediction、State 更新和 out。
@@ -48,7 +50,7 @@ engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、param
 
 任务入口等待 V→MTE2 握手，选择 (current+1)%3 的 bank 搬入初态；然后向当前参数槽提交 bias 和首 tile 输入，Vector 持有该槽参数锁直到任务结束。相邻有效任务选择不同参数槽，下一任务输入搬入无需等待当前任务释放参数槽；再次复用同一槽时仍须等待其上一个消费者释放。每个 token 锁住目标 bank，执行 VF，再按需提交 State 搬出。tile 完成后释放输入/out 锁并提交整个 tile out。
 
-倒数第二个 token VF 后发布 V→MTE2，保证下一任务所需 bank 已完成最后一次 Vector 读取。T=1 时下一任务所用 bank 不参与当前 VF，可提前发布。下一任务初态搬入允许与当前末 token VF 重叠；其后参数搬入使用另一参数槽，覆盖旧槽时仍由该槽独立的 parameter Mutex 保护。结尾关闭未消费的握手，用 PipeBarrier<PIPE_ALL> 保证最后搬出完成。无 MTE3_S。
+倒数第二个 token VF 后发布 V→MTE2，保证下一工作项（下一 V 分块或下一任务）所需 bank 已完成最后一次 Vector 读取。T=1 时下一任务所用 bank 不参与当前 VF，可提前发布。下一工作项初态搬入允许与当前末 token VF 重叠；同一任务的下一 V 分块继续复用参数槽，下一任务参数搬入使用另一参数槽，覆盖旧槽时仍由该槽独立的 parameter Mutex 保护。结尾关闭未消费的握手，再由 V 按槽0、槽1依次获取并立即释放 output Mutex，等待两槽最后的 MTE3 搬出完成，替代入口的 PipeBarrier<PIPE_ALL>。最后一笔 tile out 位于此前全部 State 搬出之后，因此该等待覆盖本 AIV 的 State/out 写回；全部 MTE2 输入已在 VF 前由 input/parameter Mutex 消费。未使用的 out 槽处于释放状态，不增加等待；cu_seqlens 校验早退时尚未提交算子数据 DMA。核尾不新增 Mutex 编号，不使用 MTE3_S 或 PIPE_S。
 
 沿用参考 PR 的逐 tile 提交方式，不额外引入 x8-pr 的 lookahead 输入预取。不同物理输入/out 槽可在复用保护下覆盖搬运与计算；是否形成有效流水重叠须由设备采集确认。
 
@@ -56,7 +58,7 @@ engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、param
 
 cu_seqlens、indices、accepted 是设备 tensor，host 不读取内容，保持 graph replay 时读取当前设备值。kernel 防御性检查 cu_seqlens 首值、单调性、范围，以及 State 槽位和 accepted，非法时本核跳过计算，保持既有接口行为，不声称可在 host 同步报错。空请求不发 DMA。
 
-KERNEL_MODE 为 compat、V 通用、K 通用、V 常用融合、K 常用融合五档；dtype 为编译期参数。常用融合覆盖 norm+raw+bias+sigmoid；其他功能组合在通用 VF 分支处理，避免枚举全部布尔组合造成编译膨胀。
+KERNEL_MODE 为 compat、V 通用、K 通用、V 常用融合、K 常用融合五档；compat 仅用于 A2/A3，A5 的两种 V 维度均选择后四档；dtype 为编译期参数。常用融合覆盖 norm+raw+bias+sigmoid；其他功能组合在通用 VF 分支处理，避免枚举全部布尔组合造成编译膨胀。
 
 ## 验证矩阵
 

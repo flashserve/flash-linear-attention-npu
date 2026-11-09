@@ -143,7 +143,7 @@ public:
     {
         tiling.a5VfFlags = 0;
         tiling.a5HeadRatio = 0;
-        if (ctx_.isA5 != 0 && tiling.dv == 128) {
+        if (ctx_.isA5 != 0) {
             return PlanA5Ub(tiling);
         }
         UbCalcContext ubCalcCtx;

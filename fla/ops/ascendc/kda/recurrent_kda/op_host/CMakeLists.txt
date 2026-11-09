@@ -25,7 +25,6 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_ops_compile_options(
         OP_NAME RecurrentKda
         OPTIONS --cce-auto-sync=off
-                --cce-long-scbz=true
                 -mllvm -cce-aicore-jump-expand=false
     )
 endif()
