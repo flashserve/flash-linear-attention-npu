@@ -30,9 +30,8 @@ _EXECUTE_SIGNATURE = ("void*", "uint64", "executor*", "stream")
 MANIFEST_NAME = "abi_manifest.json"
 LIBRARY = "op_api/lib/libcust_opapi.so"
 INCLUDE = "op_api/include/aclnnop"
-# Explicit, source-audited legacy contract. Kept as a fallback for OPP
-# packages whose aclnn_solve_tri.h predates the public C entry declarations;
-# it is a no-op once the header parses (setdefault below).
+# Explicit, source-audited legacy contract. The public header contains only
+# l0op::SolveTri; the C entry definitions live in op_api/aclnn_solve_tri.cpp.
 KNOWN_CONTRACTS = {
     "aclnnSolveTriGetWorkspaceSize":
         (TENSOR, INT_ARRAY, INT_ARRAY, "char_ptr", TENSOR, *_WORKSPACE_TAIL),
