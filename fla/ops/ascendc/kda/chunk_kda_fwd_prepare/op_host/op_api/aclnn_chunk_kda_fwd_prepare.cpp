@@ -25,10 +25,13 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
+#include "../../../../common/host_utils/log.h"
+
 using namespace op;
 
 namespace {
 
+constexpr const char *PREPARE_ENTITY = "aclnnChunkKdaFwdPrepare";
 constexpr int64_t PREPARE_CHUNK_SIZE = 64;
 constexpr int64_t PREPARE_K_DIM = 128;
 constexpr int64_t PREPARE_V_DIM = 128;
@@ -126,8 +129,10 @@ bool HasShape(const aclTensor *tensor,
 
 aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
 {
-    CHECK_COND(layout != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "layout 不能为 nullptr。");
+    if (layout == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "layout");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (std::strcmp(layout, "BNSD") == 0) {
         parsed = PrepareLayout::BNSD;
     } else if (std::strcmp(layout, "BSND") == 0) {
@@ -137,9 +142,8 @@ aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
     } else if (std::strcmp(layout, "TND") == 0) {
         parsed = PrepareLayout::TND;
     } else {
-        CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
-                   "layout 必须为大写 BNSD、BSND、NTD 或 TND，当前值=%s。",
-                   layout);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "layout", layout, "BNSD, BSND, NTD or TND");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
 }
@@ -150,8 +154,10 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
                                  params.beta};
     const char *inputNames[] = {"q", "k", "v", "g", "beta"};
     for (size_t index = 0; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
-        CHECK_COND(inputs[index] != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "%s 不能为 nullptr。", inputNames[index]);
+        if (inputs[index] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, inputNames[index]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
 
     const aclTensor *outputs[] = {
@@ -160,8 +166,10 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
     const char *outputNames[] = {
         "gkOut", "aqkOut", "wOut", "uOut", "kgOut", "qgScaledOut"};
     for (size_t index = 0; index < sizeof(outputs) / sizeof(outputs[0]); ++index) {
-        CHECK_COND(outputs[index] != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "%s 是必选公开输出，不能为 nullptr。", outputNames[index]);
+        if (outputs[index] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, outputNames[index]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -203,9 +211,10 @@ int64_t GetOutputMode(const ChunkKdaFwdPrepareParams &params)
 
 aclnnStatus CheckOutputMode(const ChunkKdaFwdPrepareParams &params)
 {
-    CHECK_COND(GetOutputMode(params) >= 0, ACLNN_ERR_PARAM_INVALID,
-               "输出 nullptr 组合只支持 none/forward/recompute/save 四档，当前 outputMask=0x%x。",
-               GetOutputMask(params));
+    if (GetOutputMode(params) < 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "outputMask", "invalid", "none/forward/recompute/save");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -234,12 +243,12 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
         const auto viewFormat = tensors[index]->GetViewFormat();
         // 只拦私有（分形）格式：ND/NCHW/NCL/NHWC 等非私有拼写在逻辑维度上等价，
         // 张量本身已由 CheckContiguous 保证连续，不能因为拼写不同就拒绝调用方。
-        CHECK_COND(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "%s must use a non-private storage/view format "
-                   "(ND/NCHW/NCL/NHWC are all accepted); got storage=%d, view=%d.",
-                   names[index], static_cast<int>(storageFormat),
-                   static_cast<int>(viewFormat));
+        if (IsPrivateFormat(storageFormat) || IsPrivateFormat(viewFormat)) {
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(PREPARE_ENTITY, names[index],
+                "storage=" + std::to_string(static_cast<int>(storageFormat)) + ",view=" + std::to_string(static_cast<int>(viewFormat)),
+                "non-private format");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
 
     const aclTensor *outputs[] = {
@@ -256,33 +265,45 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
         if (outputs[index] == nullptr) {
             continue;
         }
-        CHECK_COND(IsContiguous(outputs[index]), ACLNN_ERR_PARAM_INVALID,
-                   "%s 由 kernel 直接写入，必须连续。", outputNames[index]);
+        if (!IsContiguous(outputs[index])) {
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(PREPARE_ENTITY, outputNames[index], "non-contiguous", "contiguous");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
 {
-    CHECK_COND(params.q->GetDataType() == DataType::DT_BF16 &&
-                   params.k->GetDataType() == DataType::DT_BF16 &&
-                   params.v->GetDataType() == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "q/k/v 只支持 BF16。");
+    if (!(params.q->GetDataType() == DataType::DT_BF16 && params.k->GetDataType() == DataType::DT_BF16 &&
+          params.v->GetDataType() == DataType::DT_BF16)) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "q,k,v",
+            "q=" + fla_npu::host_utils::DfxDtypeString(params.q->GetDataType()) + ",k=" + fla_npu::host_utils::DfxDtypeString(params.k->GetDataType()) + ",v=" + fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()), "BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const auto gateDtype = params.g->GetDataType();
     const auto betaDtype = params.beta->GetDataType();
-    CHECK_COND(gateDtype == DataType::DT_BF16 ||
-                   gateDtype == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "g 只支持 BF16 或 FP32。");
-    CHECK_COND(betaDtype == DataType::DT_BF16 ||
-                   betaDtype == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "beta 只支持 BF16 或 FP32。");
+    if (!(gateDtype == DataType::DT_BF16 || gateDtype == DataType::DT_FLOAT)) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateDtype), "BF16,FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(betaDtype == DataType::DT_BF16 || betaDtype == DataType::DT_FLOAT)) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16,FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.aLogOptional != nullptr) {
-        CHECK_COND(params.aLogOptional->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "aLogOptional 只支持 FP32。");
+        if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "aLogOptional",
+                fla_npu::host_utils::DfxDtypeString(params.aLogOptional->GetDataType()), "FP32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND(params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "dtBiasOptional 只支持 FP32。");
+        if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "dtBiasOptional",
+                fla_npu::host_utils::DfxDtypeString(params.dtBiasOptional->GetDataType()), "FP32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
 
     const aclTensor *bf16Outputs[] = {
@@ -293,9 +314,11 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         if (output == nullptr) {
             continue;
         }
-        CHECK_COND(output->GetDataType() == DataType::DT_BF16,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16。");
+        if (output->GetDataType() != DataType::DT_BF16) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "output",
+                fla_npu::host_utils::DfxDtypeString(output->GetDataType()), "BF16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const aclTensor *fp32Outputs[] = {
         params.gkOut, params.qRstdOut, params.kRstdOut, params.betaEffOut};
@@ -303,9 +326,11 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         if (output == nullptr) {
             continue;
         }
-        CHECK_COND(output->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "gk/qRstd/kRstd/betaEff 输出必须为 FP32。");
+        if (output->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "output",
+                fla_npu::host_utils::DfxDtypeString(output->GetDataType()), "FP32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -341,25 +366,28 @@ aclnnStatus CheckSequenceMajorDmaStride(
         FitsDmaSourceStride(info.valueHeadNum,
                             PREPARE_K_DIM * gateElementBytes) &&
         FitsDmaSourceStride(info.valueHeadNum, betaElementBytes);
-    CHECK_COND(strideValid, ACLNN_ERR_PARAM_INVALID,
-               "BSND/TND 输入的跨 head DMA stride 超过 uint32 范围，当前 HK=%ld,HV=%ld。",
-               info.qkHeadNum, info.valueHeadNum);
+    if (!strideValid) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "HK,HV",
+            "HK=" + std::to_string(info.qkHeadNum) + ",HV=" + std::to_string(info.valueHeadNum), "DMA stride in uint32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
                          PrepareLayout layout, PrepareShapeInfo &info)
 {
-    CHECK_COND(SameShape(params.q, params.k), ACLNN_ERR_PARAM_INVALID,
-               "q 与 k shape 必须完全一致。");
+    if (!SameShape(params.q, params.k)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "q,k", "mismatch", "identical");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     info.packed = layout == PrepareLayout::NTD || layout == PrepareLayout::TND;
     const size_t matrixRank = info.packed ? 3 : 4;
     const size_t scalarRank = info.packed ? 2 : 3;
-    CHECK_COND(Rank(params.q) == matrixRank && Rank(params.v) == matrixRank &&
-                   Rank(params.g) == matrixRank && Rank(params.beta) == scalarRank,
-               ACLNN_ERR_PARAM_INVALID,
-               "BNSD/BSND 要求 q/k/v/g 为 rank-4、beta 为 rank-3；"
-               "NTD/TND 要求 q/k/v/g 为 rank-3、beta 为 rank-2。");
+    if (!(Rank(params.q) == matrixRank && Rank(params.v) == matrixRank && Rank(params.g) == matrixRank && Rank(params.beta) == scalarRank)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PREPARE_ENTITY, "q,k,v,g,beta", "rank mismatch", "layout-dependent rank");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (layout == PrepareLayout::TND) {
         info.batch = 1;
@@ -368,13 +396,13 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 2);
         info.valueHeadNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(
-            HasShape(params.v, {info.seqLen, info.valueHeadNum, info.vDim}) &&
-                HasShape(params.g,
-                         {info.seqLen, info.valueHeadNum, info.kDim}) &&
-                HasShape(params.beta, {info.seqLen, info.valueHeadNum}),
-            ACLNN_ERR_PARAM_INVALID,
-            "TND 要求 v/g/beta 分别为 [T,HV,V]、[T,HV,K]、[T,HV]。");
+        if (
+            !(HasShape(params.v, {info.seqLen, info.valueHeadNum, info.vDim}) &&
+              HasShape(params.g, {info.seqLen, info.valueHeadNum, info.kDim}) &&
+              HasShape(params.beta, {info.seqLen, info.valueHeadNum}))) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[T,HV,V],[T,HV,K],[T,HV]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else if (layout == PrepareLayout::NTD) {
         info.batch = 1;
         info.qkHeadNum = Dim(params.q, 0);
@@ -382,13 +410,13 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 2);
         info.valueHeadNum = Dim(params.v, 0);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(
-            HasShape(params.v, {info.valueHeadNum, info.seqLen, info.vDim}) &&
-                HasShape(params.g,
-                         {info.valueHeadNum, info.seqLen, info.kDim}) &&
-                HasShape(params.beta, {info.valueHeadNum, info.seqLen}),
-            ACLNN_ERR_PARAM_INVALID,
-            "NTD 要求 v/g/beta 分别为 [HV,T,V]、[HV,T,K]、[HV,T]。");
+        if (
+            !(HasShape(params.v, {info.valueHeadNum, info.seqLen, info.vDim}) &&
+              HasShape(params.g, {info.valueHeadNum, info.seqLen, info.kDim}) &&
+              HasShape(params.beta, {info.valueHeadNum, info.seqLen}))) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[HV,T,V],[HV,T,K],[HV,T]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else if (layout == PrepareLayout::BSND) {
         info.batch = Dim(params.q, 0);
         info.seqLen = Dim(params.q, 1);
@@ -396,16 +424,13 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 3);
         info.valueHeadNum = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(
-            HasShape(params.v,
-                     {info.batch, info.seqLen, info.valueHeadNum, info.vDim}) &&
-                HasShape(params.g,
-                         {info.batch, info.seqLen, info.valueHeadNum,
-                          info.kDim}) &&
-                HasShape(params.beta,
-                         {info.batch, info.seqLen, info.valueHeadNum}),
-            ACLNN_ERR_PARAM_INVALID,
-            "BSND 要求 v/g/beta 分别为 [B,T,HV,V]、[B,T,HV,K]、[B,T,HV]。");
+        if (
+            !(HasShape(params.v, {info.batch, info.seqLen, info.valueHeadNum, info.vDim}) &&
+              HasShape(params.g, {info.batch, info.seqLen, info.valueHeadNum, info.kDim}) &&
+              HasShape(params.beta, {info.batch, info.seqLen, info.valueHeadNum}))) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[B,T,HV,V],[B,T,HV,K],[B,T,HV]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
         info.batch = Dim(params.q, 0);
         info.qkHeadNum = Dim(params.q, 1);
@@ -413,81 +438,82 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 3);
         info.valueHeadNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(
-            HasShape(params.v,
-                     {info.batch, info.valueHeadNum, info.seqLen, info.vDim}) &&
-                HasShape(params.g,
-                         {info.batch, info.valueHeadNum, info.seqLen,
-                          info.kDim}) &&
-                HasShape(params.beta,
-                         {info.batch, info.valueHeadNum, info.seqLen}),
-            ACLNN_ERR_PARAM_INVALID,
-            "BNSD 要求 v/g/beta 分别为 [B,HV,T,V]、[B,HV,T,K]、[B,HV,T]。");
+        if (
+            !(HasShape(params.v, {info.batch, info.valueHeadNum, info.seqLen, info.vDim}) &&
+              HasShape(params.g, {info.batch, info.valueHeadNum, info.seqLen, info.kDim}) &&
+              HasShape(params.beta, {info.batch, info.valueHeadNum, info.seqLen}))) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[B,HV,T,V],[B,HV,T,K],[B,HV,T]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
 
-    CHECK_COND(FitsUint32(info.batch) && FitsUint32(info.seqLen) &&
-                   FitsUint32(info.qkHeadNum) &&
-                   FitsUint32(info.valueHeadNum),
-               ACLNN_ERR_PARAM_INVALID,
-               "B/T/HK/HV 必须为正数且可由 uint32 表示，当前 B=%ld,T=%ld,HK=%ld,HV=%ld。",
-               info.batch, info.seqLen, info.qkHeadNum, info.valueHeadNum);
-    CHECK_COND(info.kDim == PREPARE_K_DIM && info.vDim == PREPARE_V_DIM,
-               ACLNN_ERR_PARAM_INVALID,
-               "当前实现要求 K=V=128，当前 K=%ld,V=%ld。", info.kDim,
-               info.vDim);
-    CHECK_COND(info.valueHeadNum >= info.qkHeadNum &&
-                   info.valueHeadNum % info.qkHeadNum == 0,
-               ACLNN_ERR_PARAM_INVALID,
-               "GVA 要求 HV>=HK 且 HV 能被 HK 整除，当前 HK=%ld,HV=%ld。",
-               info.qkHeadNum, info.valueHeadNum);
+    if (!(FitsUint32(info.batch) && FitsUint32(info.seqLen) && FitsUint32(info.qkHeadNum) && FitsUint32(info.valueHeadNum))) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "B,T,HK,HV",
+            "B=" + std::to_string(info.batch) + ",T=" + std::to_string(info.seqLen) + ",HK=" + std::to_string(info.qkHeadNum) + ",HV=" + std::to_string(info.valueHeadNum), "positive uint32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(info.kDim == PREPARE_K_DIM && info.vDim == PREPARE_V_DIM)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PREPARE_ENTITY, "K,V",
+            "K=" + std::to_string(info.kDim) + ",V=" + std::to_string(info.vDim), "K=V=128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(info.valueHeadNum >= info.qkHeadNum && info.valueHeadNum % info.qkHeadNum == 0)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PREPARE_ENTITY, "HK,HV",
+            "HK=" + std::to_string(info.qkHeadNum) + ",HV=" + std::to_string(info.valueHeadNum), "HV>=HK and HV%HK==0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckModesAndOptionalInputs(
     const ChunkKdaFwdPrepareParams &params, const PrepareShapeInfo &info)
 {
-    CHECK_COND(params.chunkSize == PREPARE_CHUNK_SIZE,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunkSize 仅支持 64，当前值=%ld。", params.chunkSize);
+    if (params.chunkSize != PREPARE_CHUNK_SIZE) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // Tiling 和 kernel 均以 FP32 保存这些属性，必须按实际落盘精度校验。
     const float scaleFp32 = static_cast<float>(params.scale);
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     const float lowerBoundFp32 = static_cast<float>(params.lowerBound);
-    CHECK_COND(std::isfinite(scaleFp32) && std::isfinite(epsilonFp32) &&
-                   epsilonFp32 > 0.0F && std::isfinite(lowerBoundFp32),
-               ACLNN_ERR_PARAM_INVALID,
-               "scale/lowerBound 转为 FP32 后必须为有限数，epsilon 转为 FP32 后必须为正有限数。");
-    CHECK_COND(!params.allowNegEigval || params.useBetaSigmoidInKernel,
-               ACLNN_ERR_PARAM_INVALID,
-               "allowNegEigval=true 要求 useBetaSigmoidInKernel=true。");
+    if (!(std::isfinite(scaleFp32) && std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F && std::isfinite(lowerBoundFp32))) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "scale/epsilon/lowerBound", "non-finite", "finite, epsilon>0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.allowNegEigval && !params.useBetaSigmoidInKernel) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "allowNegEigval", "true", "requires useBetaSigmoidInKernel=true");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (!params.useGateInKernel) {
-        CHECK_COND(params.aLogOptional == nullptr &&
-                       params.dtBiasOptional == nullptr && !params.safeGate,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "useGateInKernel=false 时 aLogOptional、dtBiasOptional 必须为空且 safeGate 必须为 false。");
+        if (!(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr && !params.safeGate)) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "aLogOptional/dtBiasOptional/safeGate", "not empty",
+                "must be empty when useGateInKernel=false");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         return ACLNN_SUCCESS;
     }
 
-    CHECK_COND(params.aLogOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "useGateInKernel=true 时 aLogOptional 必传。");
-    CHECK_COND(HasShape(params.aLogOptional, {info.valueHeadNum}),
-               ACLNN_ERR_PARAM_INVALID,
-               "aLogOptional 必须为 [HV]，当前 HV=%ld。",
-               info.valueHeadNum);
+    if (params.aLogOptional == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "aLogOptional");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!HasShape(params.aLogOptional, {info.valueHeadNum})) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "aLogOptional", "mismatch", "[HV=" + std::to_string(info.valueHeadNum) + "]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND(
-            HasShape(params.dtBiasOptional,
-                     {info.valueHeadNum * info.kDim}),
-            ACLNN_ERR_PARAM_INVALID,
-            "dtBiasOptional 必须为展平的 [HV*K]，当前 HV=%ld,K=%ld。",
-            info.valueHeadNum, info.kDim);
+        if (!HasShape(params.dtBiasOptional, {info.valueHeadNum * info.kDim})) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "dtBiasOptional", "mismatch",
+                "[HV*K=" + std::to_string(info.valueHeadNum * info.kDim) + "]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.safeGate) {
-        CHECK_COND(lowerBoundFp32 >= -5.0F && lowerBoundFp32 < 0.0F,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "safeGate=true 时 lowerBound 必须在 [-5,0) 内，当前值=%f。",
-                   params.lowerBound);
+        if (!(lowerBoundFp32 >= -5.0F && lowerBoundFp32 < 0.0F)) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "lowerBound", std::to_string(params.lowerBound), "[-5,0)");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -510,29 +536,35 @@ aclnnStatus CheckVariableLengthInputs(
     const ChunkKdaFwdPrepareParams &params, const PrepareShapeInfo &info)
 {
     if (params.cuSeqlensOptional == nullptr) {
-        CHECK_COND(params.chunkIndicesOptional == nullptr,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "chunkIndicesOptional 要求同时传入 cuSeqlensOptional。");
+        if (params.chunkIndicesOptional != nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "chunkIndicesOptional", "present", "requires cuSeqlensOptional");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(info.packed || info.batch == 1, ACLNN_ERR_PARAM_INVALID,
-               "rank-4 变长输入要求 B=1，当前 B=%ld。", info.batch);
-    CHECK_COND(params.cuSeqlensOptional->Size() >= 2,
-               ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional 至少包含 [0,total_tokens]。");
-    CHECK_COND((*params.cuSeqlensOptional)[0] == 0,
-               ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional[0] 必须为 0。");
-    CHECK_COND(
-        (*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1] ==
-            info.seqLen,
-        ACLNN_ERR_PARAM_INVALID,
-        "cuSeqlensOptional 末元素必须等于 T=%ld。", info.seqLen);
+    if (!(info.packed || info.batch == 1)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "B", std::to_string(info.batch), "1");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.cuSeqlensOptional->Size() < 2) {
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional",
+            std::to_string(params.cuSeqlensOptional->Size()), ">=2");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*params.cuSeqlensOptional)[0] != 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional[0]", std::to_string((*params.cuSeqlensOptional)[0]), "0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1] != info.seqLen) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional[last]",
+            std::to_string((*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1]), std::to_string(info.seqLen));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     for (size_t seq = 0; seq + 1 < params.cuSeqlensOptional->Size(); ++seq) {
-        CHECK_COND((*params.cuSeqlensOptional)[seq] <=
-                       (*params.cuSeqlensOptional)[seq + 1],
-                   ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional 必须非递减，错误位置=%zu。", seq);
+        if ((*params.cuSeqlensOptional)[seq] > (*params.cuSeqlensOptional)[seq + 1]) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional", "non-monotonic", "nondecreasing");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
 
     if (params.chunkIndicesOptional == nullptr) {
@@ -540,11 +572,11 @@ aclnnStatus CheckVariableLengthInputs(
     }
     const int64_t totalChunks = CountChunks(
         params.cuSeqlensOptional, info.seqLen, params.chunkSize);
-    CHECK_COND(params.chunkIndicesOptional->Size() ==
-                   static_cast<size_t>(totalChunks) * 2,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunkIndicesOptional 必须为 [2*total_chunks]，total_chunks=%ld。",
-               totalChunks);
+    if (params.chunkIndicesOptional->Size() != static_cast<size_t>(totalChunks) * 2) {
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(PREPARE_ENTITY, "chunkIndicesOptional",
+            std::to_string(params.chunkIndicesOptional->Size()), std::to_string(totalChunks * 2));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     size_t offset = 0;
     for (size_t seq = 0; seq + 1 < params.cuSeqlensOptional->Size(); ++seq) {
         const int64_t length = (*params.cuSeqlensOptional)[seq + 1] -
@@ -552,12 +584,11 @@ aclnnStatus CheckVariableLengthInputs(
         const int64_t chunks =
             (length + params.chunkSize - 1) / params.chunkSize;
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-            CHECK_COND(
-                (*params.chunkIndicesOptional)[offset] ==
-                        static_cast<int64_t>(seq) &&
-                    (*params.chunkIndicesOptional)[offset + 1] == chunk,
-                ACLNN_ERR_PARAM_INVALID,
-                "chunkIndicesOptional 必须按 sequence-major 顺序保存规范的 (seq_id,local_chunk_id)。");
+            if (!((*params.chunkIndicesOptional)[offset] == static_cast<int64_t>(seq) &&
+                  (*params.chunkIndicesOptional)[offset + 1] == chunk)) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "chunkIndicesOptional", "non-canonical", "sequence-major (seq_id,local_chunk_id)");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             offset += 2;
         }
     }
@@ -594,40 +625,45 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdPrepareParams &params,
                        {info.batch, info.qkHeadNum, info.seqLen});
     };
 
-    CHECK_COND(valueMatrixValid(params.gkOut, info.kDim),
-               ACLNN_ERR_PARAM_INVALID,
-               "gkOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
-    CHECK_COND(valueMatrixValid(params.aqkOut, params.chunkSize),
-               ACLNN_ERR_PARAM_INVALID,
-               "aqkOut 必须使用固定 head-major [B,HV,T,64]/[HV,T,64] shape。");
-    CHECK_COND(params.akkOut == nullptr ||
-                   valueMatrixValid(params.akkOut, params.chunkSize),
-               ACLNN_ERR_PARAM_INVALID,
-               "非空 akkOut 必须使用固定 head-major [B,HV,T,64]/[HV,T,64] shape。");
-    CHECK_COND(valueMatrixValid(params.wOut, info.kDim) &&
-                   valueMatrixValid(params.kgOut, info.kDim) &&
-                   valueMatrixValid(params.qgScaledOut, info.kDim),
-               ACLNN_ERR_PARAM_INVALID,
-               "wOut/kgOut/qgScaledOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
-    CHECK_COND(params.qgOut == nullptr ||
-                   valueMatrixValid(params.qgOut, info.kDim),
-               ACLNN_ERR_PARAM_INVALID,
-               "非空 qgOut 必须使用固定 head-major [B,HV,T,K]/[HV,T,K] shape。");
-    CHECK_COND(valueMatrixValid(params.uOut, info.vDim),
-               ACLNN_ERR_PARAM_INVALID,
-               "uOut 必须使用固定 head-major [B,HV,T,V]/[HV,T,V] shape。");
-    CHECK_COND((params.qHatOut == nullptr || qkMatrixValid(params.qHatOut)) &&
-                   (params.kHatOut == nullptr || qkMatrixValid(params.kHatOut)),
-                ACLNN_ERR_PARAM_INVALID,
-                "非空 qHatOut/kHatOut 必须使用固定 head-major [B,HK,T,K]/[HK,T,K] shape。");
-    CHECK_COND((params.qRstdOut == nullptr || qkScalarValid(params.qRstdOut)) &&
-                   (params.kRstdOut == nullptr || qkScalarValid(params.kRstdOut)),
-                ACLNN_ERR_PARAM_INVALID,
-                "非空 qRstdOut/kRstdOut 必须使用固定 head-major [B,HK,T]/[HK,T] shape。");
-    CHECK_COND(params.betaEffOut == nullptr ||
-                   valueScalarValid(params.betaEffOut),
-                ACLNN_ERR_PARAM_INVALID,
-                "非空 betaEffOut 必须使用固定 head-major [B,HV,T]/[HV,T] shape。");
+    if (!valueMatrixValid(params.gkOut, info.kDim)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "gkOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!valueMatrixValid(params.aqkOut, params.chunkSize)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "aqkOut", "mismatch", "head-major [B,HV,T,64]/[HV,T,64]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.akkOut != nullptr && !valueMatrixValid(params.akkOut, params.chunkSize)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "akkOut", "mismatch", "head-major [B,HV,T,64]/[HV,T,64]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(valueMatrixValid(params.wOut, info.kDim) && valueMatrixValid(params.kgOut, info.kDim) &&
+          valueMatrixValid(params.qgScaledOut, info.kDim))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "wOut,kgOut,qgScaledOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.qgOut != nullptr && !valueMatrixValid(params.qgOut, info.kDim)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "qgOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!valueMatrixValid(params.uOut, info.vDim)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "uOut", "mismatch", "head-major [B,HV,T,V]/[HV,T,V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!((params.qHatOut == nullptr || qkMatrixValid(params.qHatOut)) &&
+          (params.kHatOut == nullptr || qkMatrixValid(params.kHatOut)))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "qHatOut,kHatOut", "mismatch", "head-major [B,HK,T,K]/[HK,T,K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!((params.qRstdOut == nullptr || qkScalarValid(params.qRstdOut)) &&
+          (params.kRstdOut == nullptr || qkScalarValid(params.kRstdOut)))) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "qRstdOut,kRstdOut", "mismatch", "head-major [B,HK,T]/[HK,T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.betaEffOut != nullptr && !valueScalarValid(params.betaEffOut)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "betaEffOut", "mismatch", "head-major [B,HV,T]/[HV,T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -742,10 +778,14 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize 不能为 nullptr。");
-    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "executor 不能为 nullptr。");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     ChunkKdaFwdPrepareParams params{
         q,          k,         v,          g,          beta,

@@ -29,6 +29,24 @@ except (AttributeError, ImportError):
     pass
 
 
+def _register_mixed_tolerance_bm_if_missing() -> None:
+    """ATK 26.8.8+ 自带 mixed_tolerance_bm；旧版本用同角色的 single_bm 顶上。"""
+    try:
+        from atk.tasks.task_plugins_register import ACCURACY_REGISTRY
+        import atk.tasks.post_process.single_benchmark_compare as sbc
+    except Exception:
+        return
+    if "mixed_tolerance_bm" in ACCURACY_REGISTRY:
+        return
+    ACCURACY_REGISTRY.register_with_key(
+        "mixed_tolerance_bm",
+        sbc.SingleBenchmarkAccuracyCompare,
+    )
+
+
+_register_mixed_tolerance_bm_if_missing()
+
+
 _DTYPE_MAP = {
     "bf16": torch.bfloat16,
     "fp16": torch.float16,

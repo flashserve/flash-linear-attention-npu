@@ -29,10 +29,13 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "../../../../../common/host_utils/log.h"
 #include "opdev/make_op_executor.h"
 
 
 using namespace op;
+
+static constexpr const char *CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY = "aclnnChunkGatedDeltaRuleFwdH";
 
 #ifdef __cplusplus
 extern "C" {
@@ -95,12 +98,26 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
 
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleFwdHParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
-    CHECK_COND(params.u != nullptr, ACLNN_ERR_PARAM_NULLPTR, "u must not be nullptr.");
-
-    CHECK_COND(params.hOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "hOut must not be nullptr.");
-    CHECK_COND(params.vNewOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "vNewOut must not be nullptr.");
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.w == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.u == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "u");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.hOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "hOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.vNewOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "vNewOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -127,20 +144,29 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
     auto kShape = params.k->GetViewShape();
     auto wShape = params.w->GetViewShape();
     auto uShape = params.u->GetViewShape();
-    CHECK_COND(kShape.GetDimNum() == 4 && wShape.GetDimNum() == 4 && uShape.GetDimNum() == 4,
-               ACLNN_ERR_PARAM_INVALID, "k, w and u must be rank-4 BNSD tensors.");
-    CHECK_COND(kShape.GetDim(0) == wShape.GetDim(0) && kShape.GetDim(0) == uShape.GetDim(0) &&
-                   wShape.GetDim(1) == uShape.GetDim(1) && kShape.GetDim(2) == wShape.GetDim(2) &&
-                   kShape.GetDim(2) == uShape.GetDim(2) && kShape.GetDim(3) == wShape.GetDim(3),
-               ACLNN_ERR_PARAM_INVALID,
-               "k, w and u must match in B/T, w and u must match in HV, and k and w must match in K.");
-    CHECK_COND(uShape.GetDim(1) >= kShape.GetDim(1) && uShape.GetDim(1) % kShape.GetDim(1) == 0,
-               ACLNN_ERR_PARAM_INVALID, "u HV must be greater than or equal to k H and divisible by H.");
+    if (kShape.GetDimNum() != 4 || wShape.GetDimNum() != 4 || uShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "k,w,u", "rank mismatch", "rank-4 BNSD tensors");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (kShape.GetDim(0) != wShape.GetDim(0) || kShape.GetDim(0) != uShape.GetDim(0) ||
+        wShape.GetDim(1) != uShape.GetDim(1) || kShape.GetDim(2) != wShape.GetDim(2) ||
+        kShape.GetDim(2) != uShape.GetDim(2) || kShape.GetDim(3) != wShape.GetDim(3)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "k,w,u", "mismatch",
+            "match B/T, w/u HV, k/w K");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (uShape.GetDim(1) < kShape.GetDim(1) || uShape.GetDim(1) % kShape.GetDim(1) != 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "u.HV,k.H", "not divisible",
+            "u HV >= k H and divisible by H");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.gOptional != nullptr) {
         auto gShape = params.gOptional->GetViewShape();
-        CHECK_COND(gShape.GetDimNum() == 3 && gShape.GetDim(0) == uShape.GetDim(0) &&
-                       gShape.GetDim(1) == uShape.GetDim(1) && gShape.GetDim(2) == uShape.GetDim(2),
-                   ACLNN_ERR_PARAM_INVALID, "g must have shape [B, HV, T].");
+        if (gShape.GetDimNum() != 3 || gShape.GetDim(0) != uShape.GetDim(0) ||
+            gShape.GetDim(1) != uShape.GetDim(1) || gShape.GetDim(2) != uShape.GetDim(2)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "g", "mismatch", "[B, HV, T]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const int64_t batch = kShape.GetDim(0);
     const int64_t hv = uShape.GetDim(1);
@@ -151,19 +177,26 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
                                : static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
     auto hShape = params.hOut->GetViewShape();
     const int64_t chunks = CountChunks(params.cuSeqlensOptional, kShape.GetDim(2), params.chunkSize);
-    CHECK_COND(hShape.GetDimNum() == 5 &&
-                   hShape.GetDim(0) == batch &&
-                   hShape.GetDim(1) == chunks && hShape.GetDim(2) == hv,
-               ACLNN_ERR_PARAM_INVALID, "hOut must be [B, NT, HV, K, V] with matching chunk count.");
+    if (hShape.GetDimNum() != 5 ||
+        hShape.GetDim(0) != batch ||
+        hShape.GetDim(1) != chunks || hShape.GetDim(2) != hv) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "hOut", "mismatch", "[B, NT, HV, K, V] with matching chunk count");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const int64_t hK = hShape.GetDim(params.stateVFirst ? 4 : 3);
     const int64_t hV = hShape.GetDim(params.stateVFirst ? 3 : 4);
-    CHECK_COND(hK == kDim && hV == vDim, ACLNN_ERR_PARAM_INVALID,
-               "hOut state dimensions must be [K, V] when stateVFirst=false and [V, K] otherwise.");
+    if (hK != kDim || hV != vDim) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "hOut", "state dim mismatch",
+            "[K, V] when stateVFirst=false, [V, K] otherwise");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto vNewShape = params.vNewOut->GetViewShape();
-    CHECK_COND(vNewShape.GetDimNum() == 4 && vNewShape.GetDim(0) == batch &&
-                   vNewShape.GetDim(1) == hv && vNewShape.GetDim(2) == kShape.GetDim(2) &&
-                   vNewShape.GetDim(3) == vDim,
-               ACLNN_ERR_PARAM_INVALID, "vNewOut must have shape [B, HV, T, V].");
+    if (vNewShape.GetDimNum() != 4 || vNewShape.GetDim(0) != batch ||
+        vNewShape.GetDim(1) != hv || vNewShape.GetDim(2) != kShape.GetDim(2) ||
+        vNewShape.GetDim(3) != vDim) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "vNewOut", "mismatch", "[B, HV, T, V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclTensor *states[] = {params.initialStateOptional, params.finalStateOut};
     const char *stateNames[] = {"initialStateOptional", "finalStateOut"};
     for (size_t idx = 0; idx < 2; ++idx) {
@@ -171,15 +204,18 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
             continue;
         }
         auto stateShape = states[idx]->GetViewShape();
-        CHECK_COND(stateShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID,
-                   "%s must be rank 4.", stateNames[idx]);
+        if (stateShape.GetDimNum() != 4) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, stateNames[idx], "rank mismatch", "rank 4");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         const int64_t stateK = params.stateVFirst ? stateShape.GetDim(3) : stateShape.GetDim(2);
         const int64_t stateV = params.stateVFirst ? stateShape.GetDim(2) : stateShape.GetDim(3);
-        CHECK_COND(stateShape.GetDim(0) == seqNum &&
-                       stateShape.GetDim(1) == hv && stateK == kDim && stateV == vDim,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "%s must be [N, HV, K, V] when stateVFirst=false and [N, HV, V, K] otherwise.",
-                   stateNames[idx]);
+        if (stateShape.GetDim(0) != seqNum ||
+            stateShape.GetDim(1) != hv || stateK != kDim || stateV != vDim) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, stateNames[idx], "mismatch",
+                "[N, HV, K, V] or [N, HV, V, K] per stateVFirst");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -187,26 +223,43 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
 static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
 {
     auto inputDtype = params.k->GetDataType();
-    CHECK_COND(inputDtype == DataType::DT_FLOAT16 || inputDtype == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "k dtype must be float16 or bfloat16.");
-    CHECK_COND(params.w->GetDataType() == inputDtype && params.u->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "k, w and u must have the same dtype.");
-    CHECK_COND(params.hOut->GetDataType() == inputDtype && params.vNewOut->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "hOut and vNewOut dtype must match k, w and u.");
+    if (inputDtype != DataType::DT_FLOAT16 && inputDtype != DataType::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "k",
+            fla_npu::host_utils::DfxDtypeString(inputDtype), "FLOAT16,BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.w->GetDataType() != inputDtype || params.u->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "w,u", "dtype mismatch", "match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.hOut->GetDataType() != inputDtype || params.vNewOut->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "hOut,vNewOut", "dtype mismatch", "match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto gateDtype = params.gOptional != nullptr ? params.gOptional->GetDataType() : params.gkOptional->GetDataType();
-    CHECK_COND(gateDtype == DataType::DT_FLOAT || gateDtype == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "g/gk dtype must be float32 or match k dtype.");
-    if (params.gOptional != nullptr && params.gkOptional != nullptr) {
-        CHECK_COND(params.gOptional->GetDataType() == params.gkOptional->GetDataType(),
-                   ACLNN_ERR_PARAM_INVALID, "g and gk must have the same dtype when both are provided.");
+    if (gateDtype != DataType::DT_FLOAT && gateDtype != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "g,gk",
+            fla_npu::host_utils::DfxDtypeString(gateDtype), "FLOAT32 or match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.gOptional != nullptr && params.gkOptional != nullptr &&
+        params.gOptional->GetDataType() != params.gkOptional->GetDataType()) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "g,gk", "dtype mismatch", "same dtype");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.outputFinalState) {
-        CHECK_COND(params.finalStateOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "finalStateOut must be provided when outputFinalState is true.");
+        if (params.finalStateOut == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "finalStateOut");
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
         auto stateDtype = params.initialStateOptional != nullptr ? params.initialStateOptional->GetDataType()
                                                                 : DataType::DT_FLOAT;
-        CHECK_COND(params.finalStateOut->GetDataType() == stateDtype, ACLNN_ERR_PARAM_INVALID,
-                   "finalStateOut dtype must match initial state, or be float32 when initial state is absent.");
+        if (params.finalStateOut->GetDataType() != stateDtype) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "finalStateOut",
+                fla_npu::host_utils::DfxDtypeString(params.finalStateOut->GetDataType()),
+                "match initial state, or FLOAT32 when absent");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -244,8 +297,10 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, a
 
 static aclnnStatus CheckGateOptionalNonNull(const ChunkGatedDeltaRuleFwdHParams &params)
 {
-    CHECK_COND(params.gOptional != nullptr || params.gkOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "Either g or gk must be provided.");
+    if (params.gOptional == nullptr && params.gkOptional == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "g,gk");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -253,19 +308,31 @@ static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
 {
     if (params.gkOptional != nullptr) {
         auto gkShape = params.gkOptional->GetViewShape();
-        CHECK_COND(gkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID,
-                   "gk must have rank 4 when provided, got rank %ld.", gkShape.GetDimNum());
-        CHECK_COND(gkShape.GetDim(3) == params.k->GetViewShape().GetDim(3), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[3] (K) must match k.shape[3] (K).");
-        CHECK_COND(gkShape.GetDim(2) == params.k->GetViewShape().GetDim(2), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[2] (T) must match k.shape[2] (T).");
-        CHECK_COND(gkShape.GetDim(1) == params.u->GetViewShape().GetDim(1), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[1] (HV) must match u.shape[1] (HV).");
-        CHECK_COND(gkShape.GetDim(0) == params.k->GetViewShape().GetDim(0), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[0] (B) must match k.shape[0] (B).");
-        if (params.gOptional != nullptr) {
-            CHECK_COND(params.gkOptional->GetDataType() == params.gOptional->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-                       "gk.dtype must match g.dtype when both are provided.");
+        if (gkShape.GetDimNum() != 4) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "gk",
+                "rank=" + std::to_string(gkShape.GetDimNum()), "rank 4");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (gkShape.GetDim(3) != params.k->GetViewShape().GetDim(3)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "gk", "K mismatch", "match k K");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (gkShape.GetDim(2) != params.k->GetViewShape().GetDim(2)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "gk", "T mismatch", "match k T");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (gkShape.GetDim(1) != params.u->GetViewShape().GetDim(1)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "gk", "HV mismatch", "match u HV");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (gkShape.GetDim(0) != params.k->GetViewShape().GetDim(0)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "gk", "B mismatch", "match k B");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.gOptional != nullptr &&
+            params.gkOptional->GetDataType() != params.gOptional->GetDataType()) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "g,gk", "dtype mismatch", "same dtype");
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     return ACLNN_SUCCESS;
@@ -274,27 +341,38 @@ static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
 static aclnnStatus CheckVariableLength(const ChunkGatedDeltaRuleFwdHParams &params)
 {
     if (params.cuSeqlensOptional == nullptr) {
-        CHECK_COND(params.chunkIndicesOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
-                   "chunkIndicesOptional requires cuSeqlensOptional.");
+        if (params.chunkIndicesOptional != nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "chunkIndicesOptional", "present",
+                "requires cuSeqlensOptional");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         return ACLNN_SUCCESS;
     }
 
     const auto kShape = params.k->GetViewShape();
     const int64_t seqNum = static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
-    CHECK_COND(seqNum >= 1, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional must contain at least [0, total_tokens].");
-    CHECK_COND((*params.cuSeqlensOptional)[0] == 0, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional[0] must be 0, but got %ld.",
-               (*params.cuSeqlensOptional)[0]);
-    CHECK_COND((*params.cuSeqlensOptional)[seqNum] == kShape.GetDim(2),
-               ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional last element must equal T=%ld, but got %ld.",
-               kShape.GetDim(2), (*params.cuSeqlensOptional)[seqNum]);
-    // 与 ChunkFwdH 保持同一准入口径：非递减，允许相等项表示零长度序列。
+    if (seqNum < 1) {
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "cuSeqlensOptional",
+            std::to_string(params.cuSeqlensOptional->Size()), "at least [0, total_tokens]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*params.cuSeqlensOptional)[0] != 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "cuSeqlensOptional[0]",
+            std::to_string((*params.cuSeqlensOptional)[0]), "0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*params.cuSeqlensOptional)[seqNum] != kShape.GetDim(2)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "cuSeqlensOptional[-1]",
+            std::to_string((*params.cuSeqlensOptional)[seqNum]),
+            "T=" + std::to_string(kShape.GetDim(2)));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     for (int64_t seq = 0; seq < seqNum; ++seq) {
-        CHECK_COND((*params.cuSeqlensOptional)[seq] <= (*params.cuSeqlensOptional)[seq + 1],
-                   ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional must be non-decreasing; equal neighbours denote empty sequences.");
+        if ((*params.cuSeqlensOptional)[seq] > (*params.cuSeqlensOptional)[seq + 1]) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "cuSeqlensOptional", "non-decreasing",
+                "non-decreasing; equal neighbours denote empty sequences");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
 
     if (params.chunkIndicesOptional == nullptr) {
@@ -302,19 +380,24 @@ static aclnnStatus CheckVariableLength(const ChunkGatedDeltaRuleFwdHParams &para
     }
     const int64_t totalChunks =
         CountChunks(params.cuSeqlensOptional, kShape.GetDim(2), params.chunkSize);
-    CHECK_COND(params.chunkIndicesOptional->Size() == static_cast<size_t>(totalChunks) * 2,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunkIndicesOptional must contain exactly one (seq_id, chunk_id) pair per chunk.");
+    if (params.chunkIndicesOptional->Size() != static_cast<size_t>(totalChunks) * 2) {
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "chunkIndicesOptional",
+            std::to_string(params.chunkIndicesOptional->Size()),
+            std::to_string(totalChunks * 2));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     int64_t offset = 0;
     for (int64_t seq = 0; seq < seqNum; ++seq) {
         const int64_t length =
             (*params.cuSeqlensOptional)[seq + 1] - (*params.cuSeqlensOptional)[seq];
         const int64_t chunks = (length + params.chunkSize - 1) / params.chunkSize;
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-            CHECK_COND((*params.chunkIndicesOptional)[offset] == seq &&
-                           (*params.chunkIndicesOptional)[offset + 1] == chunk,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "chunkIndicesOptional must use canonical sequence-major chunk order.");
+            if ((*params.chunkIndicesOptional)[offset] != seq ||
+                (*params.chunkIndicesOptional)[offset + 1] != chunk) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "chunkIndicesOptional", "non-canonical",
+                    "canonical sequence-major chunk order");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             offset += 2;
         }
     }
@@ -323,15 +406,36 @@ static aclnnStatus CheckVariableLength(const ChunkGatedDeltaRuleFwdHParams &para
 
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
                "chunkSize must be 64 or 128.");
-    CHECK_RET(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckGkParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckVariableLength(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    status = CheckGateOptionalNonNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckGkParams(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckFormat(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckShape(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckDtype(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckVariableLength(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -376,7 +480,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
     const auto kShape = params.k->GetViewShape();

@@ -18,6 +18,10 @@
 #include "platform/platform_infos_def.h"
 #include "err/ops_err.h"
 #include "log/log.h"
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
 #include "tiling/platform/platform_ascendc.h"
 
 #include <cmath>
@@ -186,40 +190,51 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
     auto queryDtype = context_->GetInputDesc(QUERY_INDEX)->GetDataType();
     auto keyDtype = context_->GetInputDesc(KEY_INDEX)->GetDataType();
     auto valueDtype = context_->GetInputDesc(VALUE_INDEX)->GetDataType();
-    OP_CHECK_IF(queryDtype != ge::DT_BF16 || keyDtype != ge::DT_BF16 || valueDtype != ge::DT_BF16,
-                OP_LOGE(context_->GetNodeName(), "query dtype, key dtype and value dtype should be bfloat16"),
-                return ge::GRAPH_FAILED);
+    if (queryDtype != ge::DT_BF16 || keyDtype != ge::DT_BF16 || valueDtype != ge::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context_->GetNodeName(), "query,key,value", "dtype mismatch", "BF16");
+        return ge::GRAPH_FAILED;
+    }
 
     auto betaDtype = context_->GetInputDesc(BETA_INDEX)->GetDataType();
     auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
-    OP_CHECK_IF(betaDtype != ge::DT_BF16, OP_LOGE(context_->GetNodeName(), "beta dtype should be bfloat16"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16,
-                OP_LOGE(context_->GetNodeName(), "state dtype should be bfloat16 or float32"),
-                return ge::GRAPH_FAILED);
+    if (betaDtype != ge::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "beta", fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16");
+        return ge::GRAPH_FAILED;
+    }
+    if (stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "state", fla_npu::host_utils::DfxDtypeString(stateDtype), "BF16,FP32");
+        return ge::GRAPH_FAILED;
+    }
     auto cuSeqlensDtype = context_->GetInputDesc(CUSEQLENS_INDEX)->GetDataType();
     auto ssmStateIndicesDtype = context_->GetInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType();
-    OP_CHECK_IF(cuSeqlensDtype != ge::DT_INT32 || ssmStateIndicesDtype != ge::DT_INT32,
-                OP_LOGE(context_->GetNodeName(), "cuSeqlens dtype and ssmStateIndices dtype should be int32"),
-                return ge::GRAPH_FAILED);
+    if (cuSeqlensDtype != ge::DT_INT32 || ssmStateIndicesDtype != ge::DT_INT32) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context_->GetNodeName(), "cuSeqlens,ssmStateIndices", "dtype mismatch", "INT32");
+        return ge::GRAPH_FAILED;
+    }
 
     if (context_->GetOptionalInputDesc(G_INDEX) != nullptr) {
         auto gamaDtype = context_->GetOptionalInputDesc(G_INDEX)->GetDataType();
-        OP_CHECK_IF(gamaDtype != ge::DT_FLOAT, OP_LOGE(context_->GetNodeName(), "gama dtype should be float32"),
-                    return ge::GRAPH_FAILED);
+        if (gamaDtype != ge::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "gama", fla_npu::host_utils::DfxDtypeString(gamaDtype), "FP32");
+            return ge::GRAPH_FAILED;
+        }
     }
 
     if (context_->GetOptionalInputDesc(GK_INDEX) != nullptr) {
         auto gamaKDtype = context_->GetOptionalInputDesc(GK_INDEX)->GetDataType();
-        OP_CHECK_IF(gamaKDtype != ge::DT_FLOAT, OP_LOGE(context_->GetNodeName(), "gamaK dtype should be float32"),
-                    return ge::GRAPH_FAILED);
+        if (gamaKDtype != ge::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "gamaK", fla_npu::host_utils::DfxDtypeString(gamaKDtype), "FP32");
+            return ge::GRAPH_FAILED;
+        }
     }
 
     if (context_->GetOptionalInputDesc(ACC_TO_INDEX) != nullptr) {
         auto numAcceptedTokensDtype = context_->GetOptionalInputDesc(ACC_TO_INDEX)->GetDataType();
-        OP_CHECK_IF(numAcceptedTokensDtype != ge::DT_INT32,
-                    OP_LOGE(context_->GetNodeName(), "numAcceptedTokens dtype should be int32"),
-                    return ge::GRAPH_FAILED);
+        if (numAcceptedTokensDtype != ge::DT_INT32) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "numAcceptedTokens",
+                fla_npu::host_utils::DfxDtypeString(numAcceptedTokensDtype), "INT32");
+            return ge::GRAPH_FAILED;
+        }
     }
 
     return ge::GRAPH_SUCCESS;
@@ -234,7 +249,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
 bool RecurrentGatedDeltaRuleTiling::CheckFormat(ge::Format format, const std::string &Desc)
 {
     if (format == ge::FORMAT_FRACTAL_NZ) {
-        OP_LOGE(context_->GetNodeName(), "%s format not support NZ", Desc.c_str());
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(context_->GetNodeName(), Desc.c_str(), "NZ", "non-NZ");
         return false;
     }
     return true;
@@ -253,18 +268,24 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeFormat()
 
     if (context_->GetOptionalInputDesc(G_INDEX) != nullptr) {
         auto gamaFormat = context_->GetOptionalInputDesc(G_INDEX)->GetStorageFormat();
-        OP_CHECK_IF(gamaFormat == ge::FORMAT_FRACTAL_NZ, OP_LOGE(context_->GetNodeName(), "gama format not support NZ"),
-                    return ge::GRAPH_FAILED);
+        if (gamaFormat == ge::FORMAT_FRACTAL_NZ) {
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(context_->GetNodeName(), "gama", "NZ", "non-NZ");
+            return ge::GRAPH_FAILED;
+        }
     }
     if (context_->GetOptionalInputDesc(GK_INDEX) != nullptr) {
         auto gamaKFormat = context_->GetOptionalInputDesc(GK_INDEX)->GetStorageFormat();
-        OP_CHECK_IF(gamaKFormat == ge::FORMAT_FRACTAL_NZ, OP_LOGE(context_->GetNodeName(), "gamaK format not support NZ"),
-                    return ge::GRAPH_FAILED);
+        if (gamaKFormat == ge::FORMAT_FRACTAL_NZ) {
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(context_->GetNodeName(), "gamaK", "NZ", "non-NZ");
+            return ge::GRAPH_FAILED;
+        }
     }
     if (context_->GetOptionalInputDesc(ACC_TO_INDEX) != nullptr) {
         auto numAcceptedTokensFormat = context_->GetOptionalInputDesc(ACC_TO_INDEX)->GetStorageFormat();
-        OP_CHECK_IF(numAcceptedTokensFormat == ge::FORMAT_FRACTAL_NZ,
-                    OP_LOGE(context_->GetNodeName(), "numAcceptedTokens format not support NZ"), return ge::GRAPH_FAILED);
+        if (numAcceptedTokensFormat == ge::FORMAT_FRACTAL_NZ) {
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(context_->GetNodeName(), "numAcceptedTokens", "NZ", "non-NZ");
+            return ge::GRAPH_FAILED;
+        }
     }
 
     return ge::GRAPH_SUCCESS;
@@ -275,8 +296,10 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetScale()
     auto attrs = context_->GetAttrs();
     OP_CHECK_IF(attrs == nullptr, OP_LOGE(context_->GetNodeName(), "attrs is null"), return ge::GRAPH_FAILED);
     const float *scalePtr = attrs->GetAttrPointer<float>(0);
-    OP_CHECK_IF(scalePtr == nullptr || !std::isfinite(*scalePtr),
-                OP_LOGE(context_->GetNodeName(), "scaleValue must be finite"), return ge::GRAPH_FAILED);
+    if (scalePtr == nullptr || !std::isfinite(*scalePtr)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context_->GetNodeName(), "scaleValue", "non-finite", "finite");
+        return ge::GRAPH_FAILED;
+    }
     float scaleValue = *scalePtr;
     tilingData_.scale = scaleValue;
 

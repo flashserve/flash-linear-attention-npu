@@ -20,10 +20,13 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
-#include <cstring>
-#include <cstdint>
+
+#include "../../../../../common/host_utils/log.h"
+
 
 using namespace op;
+
+static constexpr const char *CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY = "aclnnChunkGatedDeltaRuleFwdPrepare";
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,15 +81,42 @@ static bool IsGateDtype(DataType dtype)
 
 static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.beta != nullptr, ACLNN_ERR_PARAM_NULLPTR, "beta must not be nullptr.");
-    CHECK_COND(params.gOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "gOut must not be nullptr.");
-    CHECK_COND(params.wOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "wOut must not be nullptr.");
-    CHECK_COND(params.uOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "uOut must not be nullptr.");
-    CHECK_COND(params.aOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "aOut must not be nullptr.");
+    if (params.q == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.beta == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.gOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "gOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.wOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "wOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.uOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "uOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.aOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_PREPARE_ENTITY, "aOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     {
         const bool hasQHat = params.qHatOptional != nullptr;
         const bool hasKHat = params.kHatOptional != nullptr;
@@ -386,9 +416,18 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
 
 static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckDtype(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckShape(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -435,7 +474,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckParams(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
 

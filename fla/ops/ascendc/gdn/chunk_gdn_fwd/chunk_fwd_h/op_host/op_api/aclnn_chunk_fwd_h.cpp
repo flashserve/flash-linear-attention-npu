@@ -25,10 +25,13 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "../../../../../common/host_utils/log.h"
 #include "opdev/make_op_executor.h"
 
 
 using namespace op;
+
+static constexpr const char *CHUNK_FWD_H_ENTITY = "aclnnChunkFwdH";
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,12 +58,27 @@ struct ChunkFwdHParams {
 
 static aclnnStatus CheckNotNull(ChunkFwdHParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
-    CHECK_COND(params.u != nullptr, ACLNN_ERR_PARAM_NULLPTR, "u must not be nullptr.");
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.w == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.u == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "u");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
-    CHECK_COND(params.hOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "hOut must not be nullptr.");
-    CHECK_COND(params.vNewOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "vNewOut must not be nullptr.");
+    if (params.hOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "hOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.vNewOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "vNewOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     CHECK_COND(params.outputFinalState == (params.finalStateOut != nullptr), ACLNN_ERR_PARAM_INVALID,
                "outputFinalState must equal the physical presence of finalStateOut.");
     return ACLNN_SUCCESS;

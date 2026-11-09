@@ -23,8 +23,11 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "../../../../../common/host_utils/log.h"
 
 using namespace op;
+
+static constexpr const char *CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY = "aclnnChunkGatedDeltaRuleBwdDhu";
 
 static constexpr size_t CHUNK_BWD_DHU_QKV_DIM_NUM = 4;
 static constexpr size_t CHUNK_BWD_DHU_G_DIM_NUM = 3;
@@ -67,20 +70,41 @@ struct ChunkGatedDeltaRuleBwdDhuParams {
 
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
-    CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dO must not be nullptr.");
-    CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv must not be nullptr.");
+    if (params.q == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.w == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dO == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dO");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dv == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     CHECK_COND((params.gOptional != nullptr) != (params.gkOptional != nullptr), ACLNN_ERR_PARAM_NULLPTR,
                "Exactly one of g and gk must be provided.");
     CHECK_COND(params.gkOptional == nullptr || params.useExp2, ACLNN_ERR_PARAM_INVALID,
                "use_exp2 must be true when gk is provided.");
-    CHECK_COND(params.dhOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhOut must not be nullptr.");
+    if (params.dhOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dhOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (params.h0Optional != nullptr) {
         CHECK_COND(params.dh0Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dh0Out must not be nullptr when h0Optional is not nullptr.");
     }
-    CHECK_COND(params.dv2Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv2Out must not be nullptr.");
+    if (params.dv2Out == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv2Out");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 

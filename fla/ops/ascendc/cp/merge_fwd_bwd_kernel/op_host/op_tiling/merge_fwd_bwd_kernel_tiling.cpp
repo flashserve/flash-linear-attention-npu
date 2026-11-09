@@ -11,6 +11,16 @@
 #include <register/op_impl_registry.h>
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
+#endif
+#endif
+
 
 namespace optiling {
 
@@ -43,27 +53,43 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, hShapePtr);
 
     const ge::DataType dtype = agDesc->GetDataType();
-    OP_CHECK_IF(dtype != ge::DT_FLOAT && dtype != ge::DT_BF16,
-                OP_LOGE(context->GetNodeName(), "ag_hm dtype must be FP32 or BF16."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(hDesc->GetDataType() != dtype || hInDesc->GetDataType() != dtype,
-                OP_LOGE(context->GetNodeName(), "h dtype must match ag_hm."),
-                return ge::GRAPH_FAILED);
+    if (dtype != ge::DT_FLOAT && dtype != ge::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "ag_hm",
+                                                   fla_npu::host_utils::DfxDtypeString(dtype), "FLOAT,BF16");
+        return ge::GRAPH_FAILED;
+    }
+    if (hDesc->GetDataType() != dtype || hInDesc->GetDataType() != dtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(
+            context->GetNodeName(), "h,ag_hm",
+            "h=" + fla_npu::host_utils::DfxDtypeString(hDesc->GetDataType()) +
+                ",ag_hm=" + fla_npu::host_utils::DfxDtypeString(dtype),
+            "both same");
+        return ge::GRAPH_FAILED;
+    }
 
     const gert::Shape ag = agShapePtr->GetStorageShape();
-    OP_CHECK_IF(ag.GetDimNum() != 4,
-                OP_LOGE(context->GetNodeName(), "ag_hm must be rank-4 [S,HV,K,V+K]."),
-                return ge::GRAPH_FAILED);
+    if (ag.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(
+            context->GetNodeName(), "ag_hm", "rank=" + std::to_string(ag.GetDimNum()),
+            "rank must be 4 [S,HV,128,256]");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t S = ag.GetDim(0);
     const int64_t Hv = ag.GetDim(1);
     const int64_t K = ag.GetDim(2);
     const int64_t VK = ag.GetDim(3);
-    OP_CHECK_IF(S < 1 || S > 1024 || Hv < 1 || Hv > 256,
-                OP_LOGE(context->GetNodeName(), "S/HV out of range."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(K != kK || VK != kVK,
-                OP_LOGE(context->GetNodeName(), "K must be 128 and last dim must be 256."),
-                return ge::GRAPH_FAILED);
+    if (S < 1 || S > 1024 || Hv < 1 || Hv > 256) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+            context->GetNodeName(), "ag_hm.shape[S,HV]",
+            "S=" + std::to_string(S) + ",HV=" + std::to_string(Hv), "S in [1,1024], HV in [1,256]");
+        return ge::GRAPH_FAILED;
+    }
+    if (K != kK || VK != kVK) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(
+            context->GetNodeName(), "ag_hm.shape[K],ag_hm.shape[V+K]",
+            "K=" + std::to_string(K) + ",V+K=" + std::to_string(VK), "K=128, V+K=256");
+        return ge::GRAPH_FAILED;
+    }
 
     const gert::Shape hIn = hInShapePtr->GetStorageShape();
     const gert::Shape h = hShapePtr->GetStorageShape();
@@ -72,9 +98,12 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
         return shape.GetDimNum() == 3 && shape.GetDim(0) == hv && shape.GetDim(1) == kK &&
                shape.GetDim(2) == kV;
     };
-    OP_CHECK_IF(!hOk(hIn, Hv) || !hOk(h, Hv),
-                OP_LOGE(context->GetNodeName(), "h must be [HV,128,128] for both state layouts."),
-                return ge::GRAPH_FAILED);
+    if (!hOk(hIn, Hv) || !hOk(h, Hv)) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(
+            context->GetNodeName(), "h", fla_npu::host_utils::DfxShapeString(h),
+            "[" + std::to_string(Hv) + ",128,128]");
+        return ge::GRAPH_FAILED;
+    }
 
     auto *attrPtr = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
@@ -83,22 +112,33 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
     const int64_t N = *(attrPtr->GetAttrPointer<int64_t>(ATTR_N));
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
     const bool stateVFirst = stateVFirstPtr != nullptr && *stateVFirstPtr;
-    OP_CHECK_IF(N < 1 || N > S,
-                OP_LOGE(context->GetNodeName(), "preOrPostNumRanks must be in [1, S]."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(rank < 0 || rank >= S,
-                OP_LOGE(context->GetNodeName(), "rank must be in [0, S)."),
-                return ge::GRAPH_FAILED);
+    if (N < 1 || N > S) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+            context->GetNodeName(), "preOrPostNumRanks", std::to_string(N),
+            "in [1, S=" + std::to_string(S) + "]");
+        return ge::GRAPH_FAILED;
+    }
+    if (rank < 0 || rank >= S) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+            context->GetNodeName(), "rank", std::to_string(rank), "in [0, S=" + std::to_string(S) + ")");
+        return ge::GRAPH_FAILED;
+    }
     const bool unitWorld = (S == 1 && N == 1 && rank == 0);
     if (!unitWorld) {
         if (forward) {
-            OP_CHECK_IF(rank < N,
-                        OP_LOGE(context->GetNodeName(), "forward merge requires rank >= N."),
-                        return ge::GRAPH_FAILED);
+            if (rank < N) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+                    context->GetNodeName(), "rank", std::to_string(rank),
+                    ">= N=" + std::to_string(N) + " for forward merge");
+                return ge::GRAPH_FAILED;
+            }
         } else {
-            OP_CHECK_IF(rank + N >= S,
-                        OP_LOGE(context->GetNodeName(), "backward merge requires rank + N < S."),
-                        return ge::GRAPH_FAILED);
+            if (rank + N >= S) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+                    context->GetNodeName(), "rank", std::to_string(rank),
+                    "rank + N < S=" + std::to_string(S) + " for backward merge");
+                return ge::GRAPH_FAILED;
+            }
         }
     }
     tiling->S = S;

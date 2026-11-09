@@ -88,7 +88,7 @@ def build_inputs(spec: dict, device: torch.device) -> dict:
         "gk": None,
     }
     gate = str(spec.get("gate", "none"))
-    # gate="both" 用于反向用例：同时给出 g 与 gk，校验算子必须按互斥拦截（返回 161001）。
+    # gate="both" 用于反向用例：同时给出 g 与 gk，校验算子必须按互斥拦截（返回 161002）。
     if gate in ("g", "both"):
         gate_dtype = (torch.float32 if spec.get("g_dtype") == "fp32" else model_dtype)
         # 反向用例 neg_07：g 按 [B,Hk,T] 构造（正常 GVA 路径要求 [B,Hv,T]），必须被拦截。
@@ -118,8 +118,42 @@ def _validate_outputs(outputs, spec: dict, tensors: dict) -> None:
 
 
 _ACLNN_CODES = {
-    "ACLNN_ERR_PARAM_INVALID": 161001,
-    "ACLNN_ERR_PARAM_NULLPTR": 161002,
+    "ACLNN_ERR_PARAM_INVALID": 161002,
+    "ACLNN_ERR_PARAM_NULLPTR": 161001,
+}
+
+# Only the stable middle portion is matched because CANN 9.x inserts the node name between
+# the parameter list and the verb, while the CANN 8.5 fallback path omits it.
+_NEGATIVE_ERROR_FRAGMENTS = {
+    "neg_01_g_and_gk_both":
+        "have incorrect values present,present. Reason: g and gk are mutually exclusive",
+    "neg_02_k_too_large":
+        "have incorrect values K=512,V=128. Reason: this version requires K=128, V=128",
+    "neg_03_hv_not_multiple_of_hk":
+        "have incorrect values 3,4. Reason: Hv must be an integer multiple of Hk",
+    "neg_04_dense_b_greater_than_one":
+        "has incorrect value 2. Reason: dense path requires B=1",
+    "neg_05_varlen_b_greater_than_one":
+        "has incorrect value 2. Reason: when cu_seqlens is provided B must be 1",
+    "neg_06_chunk_size_not_64":
+        "has incorrect value 128. It should be 64.",
+    "neg_07_g_shape_mismatch":
+        (
+            "has incorrect shape [[1,2,256]]. It should be [[1,4,256]].",
+            "has incorrect shape [1,2,256]. It should be [1,4,256].",
+        ),
+    "neg_08_gk_dtype_fp32":
+        "has incorrect dtype FLOAT. It should be the same dtype as q/k (BF16).",
+    "neg_09_cu_seqlens_too_short":
+        "has incorrect value 1. It should be >=2.",
+    "neg_10_empty_tensor":
+        "Reason: B/T/Hk/Hv/K/V must all be greater than 0",
+    "neg_11_k64_not_128":
+        "have incorrect values K=64,V=64. Reason: this version requires K=128, V=128",
+    "neg_12_v96_not_128":
+        "have incorrect values K=128,V=96. Reason: this version requires K=128, V=128",
+    "neg_13_k256_not_128":
+        "have incorrect values K=256,V=128. Reason: this version requires K=128, V=128",
 }
 
 
@@ -134,7 +168,7 @@ def _negative_expected_code(spec: dict):
             raise RuntimeError(f"{OP_NAME}: unknown expected_return_code {text!r}")
         return _ACLNN_CODES[text]
     # 期望码缺失时用 case_key 兜底识别反向用例（本算子的反向用例统一以 neg_ 命名，
-    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161001）；避免依赖 ATK 传递哪些字段。
+    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161002）；避免依赖 ATK 传递哪些字段。
     if "neg_" in str(spec.get("case_key", "")):
         return _ACLNN_CODES["ACLNN_ERR_PARAM_INVALID"]
     return None
@@ -198,12 +232,26 @@ def run_npu(spec: dict, input_data: InputDataset):
                     f"{OP_NAME}: negative case {spec.get('case_key')} returned {got}, "
                     f"expected {want}: {exc}"
                 ) from exc
+            case_key = str(spec.get("case_key", ""))
+            fragments = _NEGATIVE_ERROR_FRAGMENTS.get(case_key)
+            if fragments is None:
+                raise RuntimeError(
+                    f"{OP_NAME}: negative case {case_key} has no expected error fragment"
+                ) from exc
+            if isinstance(fragments, str):
+                fragments = (fragments,)
+            if not any(fragment in str(exc) for fragment in fragments):
+                raise RuntimeError(
+                    f"{OP_NAME}: negative case {case_key} did not report expected DFX detail. "
+                    f"Missing fragments: {fragments!r}. Actual error: {exc}"
+                ) from exc
             # 返回码与声明一致：抛出与用例 expected_error_msg **完全一致**的文本，
             # 交由 ATK 的"预期失败"判定（照 tests/atk/chunk_kda_fwd 的口径）。
-            print(f"NPU negative case intercepted as expected: {spec['case_key']} code={got}", flush=True)
-            raise RuntimeError(str(spec.get("expected_error_msg")
-                                   or "{} ({}): {}".format(spec["expected_return_code"], got,
-                                                           spec.get("note", ""))))
+            print(f"NPU negative case intercepted as expected: {case_key} code={got}", flush=True)
+            expected = str(spec.get("expected_error_msg")
+                           or "{} ({}): {}".format(spec["expected_return_code"], got,
+                                                   spec.get("note", "")))
+            raise RuntimeError(f"{expected} | actual_dfx={exc}") from exc
         raise RuntimeError(
             f"{OP_NAME}: negative case {spec.get('case_key')} unexpectedly succeeded, "
             f"expected code {want}"

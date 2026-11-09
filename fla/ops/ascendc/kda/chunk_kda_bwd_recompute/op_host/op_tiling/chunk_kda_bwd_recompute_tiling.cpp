@@ -9,6 +9,15 @@
 #include <register/op_impl_registry.h>
 #include "platform/soc_spec.h"
 #include "tiling_base/tiling_templates_registry.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#endif
+#endif
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
 
 namespace optiling {
 
@@ -20,10 +29,12 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     auto attrPtr = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
     const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
-    OP_CHECK_IF(inputLayout == nullptr ||
-                    (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0),
-                OP_LOGE(context->GetNodeName(), "Recompute input_layout must be BNSD or NTD."),
-                return ge::GRAPH_FAILED);
+    if (inputLayout == nullptr ||
+        (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "inputLayout",
+                                            inputLayout == nullptr ? "null" : inputLayout, "BNSD or NTD");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ubSize = 0;
@@ -41,18 +52,21 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
 
     const bool isAscend950 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
-    OP_CHECK_IF(!isAscend950 && context->GetOutputShape(4) == nullptr,
-                OP_LOGE(context->GetNodeName(), "gk output buffer is required on A2/A3."),
-                return ge::GRAPH_FAILED);
+    if (!isAscend950 && context->GetOutputShape(4) == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "gk output buffer");
+        return ge::GRAPH_FAILED;
+    }
     const char *modelLayout = attrPtr->GetStr(5);
     const bool mixed = modelLayout && modelLayout[0];
     const bool modelTm = mixed && (std::strcmp(modelLayout, "BSND") == 0 || std::strcmp(modelLayout, "TND") == 0);
     const auto *qkHeadAttr = attrPtr->GetAttrPointer<bool>(6);
     const bool qkTm = modelTm && !(qkHeadAttr && *qkHeadAttr);
-    OP_CHECK_IF(mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
-                    std::strcmp(modelLayout, "NTD") != 0),
-                OP_LOGE(context->GetNodeName(), "Unsupported Recompute model_layout on this platform."),
-                return ge::GRAPH_FAILED);
+    if (mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
+                  std::strcmp(modelLayout, "NTD") != 0)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "modelLayout",
+            modelLayout == nullptr ? "null" : modelLayout, "BSND/TND or BNSD/NTD");
+        return ge::GRAPH_FAILED;
+    }
     if (mixed) {
         const auto &canonical = context->GetOutputShape(4)->GetStorageShape();
         OP_CHECK_IF(canonical.GetDimNum() != 4, , return ge::GRAPH_FAILED);
@@ -62,9 +76,10 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             auto expected = canonical;
             const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
             if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
-            OP_CHECK_IF(input->GetStorageShape() != expected,
-                        OP_LOGE(context->GetNodeName(), "Invalid mixed-layout Recompute input."),
-                        return ge::GRAPH_FAILED);
+            if (input->GetStorageShape() != expected) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "Recompute input", "mismatch", "mixed-layout");
+                return ge::GRAPH_FAILED;
+            }
         }
     }
     ChunkKdaBwdRecomputeTilingContext ctx{

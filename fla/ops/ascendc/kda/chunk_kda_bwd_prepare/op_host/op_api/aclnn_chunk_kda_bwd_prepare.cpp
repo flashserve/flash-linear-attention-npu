@@ -3,6 +3,7 @@
 #include "op_common/log/log.h"
 #include "aclnn_chunk_kda_bwd_prepare.h"
 #include "chunk_kda_bwd_prepare.h"
+#include "../../../../common/host_utils/log.h"
 
 #include <cmath>
 #include <sstream>
@@ -51,7 +52,7 @@ aclnnStatus InvalidValue(const char *name, const std::string &actual, const std:
 #ifdef OP_LOGE_FOR_INVALID_VALUE
     OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, actual, expected);
 #else
-    OP_LOGE_WITH_INVALID_ATTR(OP_NAME, name, actual.c_str(), expected.c_str());
+    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(OP_NAME, name, actual, expected);
 #endif
     return ACLNN_ERR_PARAM_INVALID;
 }
@@ -72,7 +73,7 @@ aclnnStatus InvalidShape(const aclTensor *tensor, const char *name, const std::s
     OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, name, shape, correct);
 #else
     // Older SDKs have no EZ0008 catalog entry. Keep details in their EZ0002 report.
-    OP_LOGE_WITH_INVALID_ATTR(OP_NAME, name, actual.c_str(), expected.c_str());
+    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(OP_NAME, name, actual, expected);
 #endif
     return ACLNN_ERR_PARAM_INVALID;
 }
@@ -88,7 +89,7 @@ aclnnStatus CheckTensor(const aclTensor *tensor, DataType dtype, const char *nam
 #else
         const auto actual = ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType());
         const auto expected = ge::TypeUtils::DataTypeToSerialString(dtype);
-        OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, name, actual.c_str(), expected.c_str());
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(OP_NAME, name, actual, expected);
 #endif
         return ACLNN_ERR_PARAM_INVALID;
     }

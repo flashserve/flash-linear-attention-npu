@@ -15,6 +15,10 @@
 
 #include "err/ops_err.h"
 #include "log/log.h"
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../common/host_utils/log.h"
 #include "platform/soc_spec.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_def_registry.h"
@@ -267,47 +271,63 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     auto queryDtype = context_->GetInputDesc(QUERY_INDEX)->GetDataType();
     auto keyDtype = context_->GetInputDesc(KEY_INDEX)->GetDataType();
     auto valueDtype = context_->GetInputDesc(VALUE_INDEX)->GetDataType();
-    OP_CHECK_IF(queryDtype != ge::DT_BF16 || keyDtype != ge::DT_BF16 || valueDtype != ge::DT_BF16,
-                OP_LOGE(context_->GetNodeName(), "query, key and value dtype should be bfloat16"),
-                return ge::GRAPH_FAILED);
+    if (queryDtype != ge::DT_BF16 || keyDtype != ge::DT_BF16 || valueDtype != ge::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context_->GetNodeName(), "query,key,value",
+            "dtype mismatch", "BF16");
+        return ge::GRAPH_FAILED;
+    }
 
     auto gateDtype = context_->GetInputDesc(GATE_INDEX)->GetDataType();
     auto betaDtype = context_->GetInputDesc(BETA_INDEX)->GetDataType();
     auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
-    OP_CHECK_IF((gateDtype != ge::DT_FLOAT && gateDtype != ge::DT_BF16 && gateDtype != ge::DT_FLOAT16) ||
-                    (betaDtype != ge::DT_FLOAT && betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT16),
-                OP_LOGE(context_->GetNodeName(), "gate and beta dtype should be float32, bfloat16 or float16"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16,
-                OP_LOGE(context_->GetNodeName(), "initial_state dtype should be bfloat16 or float32"),
-                return ge::GRAPH_FAILED);
+    if ((gateDtype != ge::DT_FLOAT && gateDtype != ge::DT_BF16 && gateDtype != ge::DT_FLOAT16) ||
+        (betaDtype != ge::DT_FLOAT && betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT16)) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context_->GetNodeName(), "gate,beta",
+            "dtype mismatch", "float32, bfloat16 or float16");
+        return ge::GRAPH_FAILED;
+    }
+    if (stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "initial_state",
+            fla_npu::host_utils::DfxDtypeString(stateDtype), "BF16 or FP32");
+        return ge::GRAPH_FAILED;
+    }
     if (context_->GetOptionalInputDesc(CU_SEQLENS_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(CU_SEQLENS_INDEX)->GetDataType();
-        OP_CHECK_IF(dtype != ge::DT_INT32 && dtype != ge::DT_INT64,
-                    OP_LOGE(context_->GetNodeName(), "cu_seqlens dtype should be int32 or int64"),
-                    return ge::GRAPH_FAILED);
+        if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "cu_seqlens",
+                fla_npu::host_utils::DfxDtypeString(dtype), "int32 or int64");
+            return ge::GRAPH_FAILED;
+        }
     }
     if (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType();
-        OP_CHECK_IF(dtype != ge::DT_INT32 && dtype != ge::DT_INT64,
-                    OP_LOGE(context_->GetNodeName(), "ssm_state_indices dtype should be int32 or int64"),
-                    return ge::GRAPH_FAILED);
+        if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "ssm_state_indices",
+                fla_npu::host_utils::DfxDtypeString(dtype), "int32 or int64");
+            return ge::GRAPH_FAILED;
+        }
     }
     if (context_->GetOptionalInputDesc(A_LOG_INDEX) != nullptr) {
-        OP_CHECK_IF(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType() != ge::DT_FLOAT,
-                    OP_LOGE(context_->GetNodeName(), "A_log dtype should be float32"),
-                    return ge::GRAPH_FAILED);
+        if (context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType() != ge::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "A_log",
+                fla_npu::host_utils::DfxDtypeString(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType()), "FP32");
+            return ge::GRAPH_FAILED;
+        }
     }
     if (context_->GetOptionalInputDesc(DT_BIAS_INDEX) != nullptr) {
-        OP_CHECK_IF(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType() != ge::DT_FLOAT,
-                    OP_LOGE(context_->GetNodeName(), "dt_bias dtype should be float32"),
-                    return ge::GRAPH_FAILED);
+        if (context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType() != ge::DT_FLOAT) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "dt_bias",
+                fla_npu::host_utils::DfxDtypeString(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType()), "FP32");
+            return ge::GRAPH_FAILED;
+        }
     }
     if (context_->GetOptionalInputDesc(ACC_TOKEN_INDEX) != nullptr) {
         auto dtype = context_->GetOptionalInputDesc(ACC_TOKEN_INDEX)->GetDataType();
-        OP_CHECK_IF(dtype != ge::DT_INT32 && dtype != ge::DT_INT64,
-                    OP_LOGE(context_->GetNodeName(), "num_accepted_tokens dtype should be int32 or int64"),
-                    return ge::GRAPH_FAILED);
+        if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context_->GetNodeName(), "num_accepted_tokens",
+                fla_npu::host_utils::DfxDtypeString(dtype), "int32 or int64");
+            return ge::GRAPH_FAILED;
+        }
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -321,7 +341,7 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeShapes()
 bool RecurrentKdaTiling::CheckFormat(ge::Format format, const std::string &desc)
 {
     if (format == ge::FORMAT_FRACTAL_NZ) {
-        OP_LOGE(context_->GetNodeName(), "%s format does not support NZ", desc.c_str());
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(context_->GetNodeName(), desc.c_str(), "NZ", "non-NZ format");
         return false;
     }
     return true;
@@ -364,7 +384,7 @@ ge::graphStatus RecurrentKdaTiling::GetAttrsInfo()
     } else if (std::strcmp(layout, "TND") == 0) {
         tilingData_.layout = RKDA_LAYOUT_TND;
     } else {
-        OP_LOGE(context_->GetNodeName(), "layout must be BSND or TND for RecurrentKda, got %s", layout);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context_->GetNodeName(), "layout", layout, "BSND or TND");
         return ge::GRAPH_FAILED;
     }
     tilingData_.scale = *attrs->GetAttrPointer<float>(ATTR_SCALE_INDEX);

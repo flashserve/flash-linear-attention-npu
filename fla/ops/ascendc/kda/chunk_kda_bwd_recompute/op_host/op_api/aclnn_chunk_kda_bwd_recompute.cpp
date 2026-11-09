@@ -9,6 +9,8 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 
+#include "../../../../common/host_utils/log.h"
+
 using namespace op;
 
 #ifdef __cplusplus
@@ -16,6 +18,8 @@ extern "C" {
 #endif
 
 namespace {
+
+constexpr const char *CHUNK_KDA_BWD_RECOMPUTE_ENTITY = "aclnnChunkKdaBwdRecompute";
 
 struct ChunkKdaBwdRecomputeParams {
     const aclTensor *q = nullptr;
@@ -45,25 +49,41 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (tensor == nullptr) {
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Making input contiguous failed in %s.", CHUNK_KDA_BWD_RECOMPUTE_ENTITY);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus ParamsDataContiguous(ChunkKdaBwdRecomputeParams &params, aclOpExecutor *executor)
 {
-    CHECK_RET(DataContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.a, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.wOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.uOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    aclnnStatus status = DataContiguous(params.q, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.k, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.v, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.g, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.beta, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.a, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.aLogOptional, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.dtBiasOptional, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.wOut, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.uOut, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.qgOut, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.kgOut, executor);
+    if (status != ACLNN_SUCCESS) return status;
+    status = DataContiguous(params.gkOutOptional, executor);
+    if (status != ACLNN_SUCCESS) return status;
     return ACLNN_SUCCESS;
 }
 
@@ -80,21 +100,37 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     ChunkKdaBwdRecomputeParams params{
         q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
         chunkSize, useExp2, lowerBound, inputLayout, wOut, uOut, qgOut, kgOut, gkOutOptional};
-    CHECK_COND(inputLayout && (std::strcmp(inputLayout, "BNSD") == 0 ||
-                              std::strcmp(inputLayout, "NTD") == 0),
-               ACLNN_ERR_PARAM_INVALID, "Recompute input_layout must be BNSD or NTD.");
-    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr && params.g != nullptr &&
-                   params.beta != nullptr && params.a != nullptr && params.wOut != nullptr &&
-                   params.uOut != nullptr && params.qgOut != nullptr && params.kgOut != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "Required tensors must not be nullptr.");
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize and executor must not be nullptr.");
+    if (inputLayout == nullptr || (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "inputLayout",
+                                                   inputLayout == nullptr ? "null" : inputLayout, "BNSD or NTD");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    const aclTensor *required[] = {params.q, params.k, params.v, params.g, params.beta, params.a,
+                                   params.wOut, params.uOut, params.qgOut, params.kgOut};
+    const char *names[] = {"q", "k", "v", "g", "beta", "a", "wOut", "uOut", "qgOut", "kgOut"};
+    for (size_t idx = 0; idx < sizeof(required) / sizeof(required[0]); ++idx) {
+        if (required[idx] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, names[idx]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
+    if (workspaceSize == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto ret = ParamsDataContiguous(params, executorPtr);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
     const bool useGateInKernel = params.gkOutOptional != nullptr;
     const aclTensor *gkBuffer = params.gkOutOptional;
     if (gkBuffer == nullptr) {

@@ -8,6 +8,7 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include "../../../../../common/host_utils/log.h"
 
 using namespace op;
 
@@ -67,18 +68,16 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
     const bool noHats = qHatOptional == nullptr && kHatOptional == nullptr &&
                         qRstdOptional == nullptr && kRstdOptional == nullptr;
     if (!hasHats && !noHats) {
-        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR,
-                "ChunkGatedDeltaRuleFwdPrepare qHat/kHat/qRstd/kRstd must all be set or all nullptr.");
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd", "partial", "all set or all null");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     if (useQkL2norm && !hasHats) {
-        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR,
-                "ChunkGatedDeltaRuleFwdPrepare useQkL2norm=true requires qHat, kHat, qRstd and kRstd.");
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     if (!useQkL2norm && !noHats) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "ChunkGatedDeltaRuleFwdPrepare useQkL2norm=false requires omitting qHat/kHat/qRstd/kRstd.");
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd", "present",
+                                                   "must be omitted when useQkL2norm=false");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 

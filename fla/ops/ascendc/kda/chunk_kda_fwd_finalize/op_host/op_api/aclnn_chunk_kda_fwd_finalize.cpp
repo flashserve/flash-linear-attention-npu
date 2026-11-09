@@ -16,10 +16,13 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
+#include "../../../../common/host_utils/log.h"
+
 using namespace op;
 
 namespace {
 
+constexpr const char *CHUNK_KDA_FWD_FINALIZE_ENTITY = "aclnnChunkKdaFwdFinalize";
 constexpr int64_t FINALIZE_CHUNK_ROWS = 64;
 
 struct FinalizeParams {
@@ -59,17 +62,18 @@ bool HasShape(const aclTensor *tensor, std::initializer_list<int64_t> dims)
 
 aclnnStatus ResolveLayout(const FinalizeParams &params, FinalizeShape &shape)
 {
-    CHECK_COND(params.outputLayout != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "outputLayout 不能为 nullptr。");
+    if (params.outputLayout == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "outputLayout");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     shape.packed = std::strcmp(params.outputLayout, "NTD") == 0 ||
                    std::strcmp(params.outputLayout, "TND") == 0;
     shape.sequenceMajor = std::strcmp(params.outputLayout, "BSND") == 0 ||
                           std::strcmp(params.outputLayout, "TND") == 0;
-    CHECK_COND(shape.packed || shape.sequenceMajor ||
-                   std::strcmp(params.outputLayout, "BNSD") == 0,
-               ACLNN_ERR_PARAM_INVALID,
-               "outputLayout 只支持大写 BSND、BNSD、TND 或 NTD，当前值=%s。",
-               params.outputLayout);
+    if (!(shape.packed || shape.sequenceMajor || std::strcmp(params.outputLayout, "BNSD") == 0)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "outputLayout", params.outputLayout, "BSND, BNSD, TND or NTD");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -80,19 +84,24 @@ aclnnStatus CheckDtypeAndFormat(const FinalizeParams &params)
     const char *names[] = {
         "qgScaled", "aqk", "vNew", "h", "attnOut"};
     for (size_t index = 0; index < 5; ++index) {
-        CHECK_COND(tensors[index]->GetDataType() == DataType::DT_BF16,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "%s 只支持 BF16。", names[index]);
+        if (tensors[index]->GetDataType() != DataType::DT_BF16) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
+                fla_npu::host_utils::DfxDtypeString(tensors[index]->GetDataType()), "BF16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         const auto storage = tensors[index]->GetStorageFormat();
         const auto view = tensors[index]->GetViewFormat();
-        CHECK_COND(storage == Format::FORMAT_ND &&
-                       view == Format::FORMAT_ND && !IsPrivateFormat(storage),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "%s 必须为非私有 ND storage/view format，当前=%d/%d。",
-                   names[index], static_cast<int>(storage), static_cast<int>(view));
+        if (!(storage == Format::FORMAT_ND && view == Format::FORMAT_ND && !IsPrivateFormat(storage))) {
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
+                "storage=" + std::to_string(static_cast<int>(storage)) + ",view=" + std::to_string(static_cast<int>(view)),
+                "non-private ND");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    CHECK_COND(IsContiguous(params.attnOut), ACLNN_ERR_PARAM_INVALID,
-               "attnOut 由 kernel 直接写入，必须连续。");
+    if (!IsContiguous(params.attnOut)) {
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "attnOut", "non-contiguous", "contiguous");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -101,47 +110,52 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
 {
     const auto &q = params.qgScaled->GetViewShape();
     if (shape.packed) {
-        CHECK_COND(q.GetDimNum() == 3 && q.GetDim(2) == 128,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "NTD/TND 的 qgScaled 必须为 head-major [HV,T,128]。");
+        if (!(q.GetDimNum() == 3 && q.GetDim(2) == 128)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled",
+                "rank=" + std::to_string(q.GetDimNum()), "head-major [HV,T,128]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         shape.batch = 1;
         shape.heads = q.GetDim(0);
         shape.seqLen = q.GetDim(1);
-        CHECK_COND(
-            HasShape(params.aqk, {shape.heads, shape.seqLen, 64}) &&
-                (HasShape(params.vNew, {shape.heads, shape.seqLen, 128}) ||
-                 HasShape(params.vNew, {1, shape.heads, shape.seqLen, 128})),
-            ACLNN_ERR_PARAM_INVALID,
-            "packed 输入要求 Aqk=[HV,T,64]，vNew=[HV,T,128] 或 FwdH 输出 [1,HV,T,128]。");
+        if (!(HasShape(params.aqk, {shape.heads, shape.seqLen, 64}) &&
+              (HasShape(params.vNew, {shape.heads, shape.seqLen, 128}) ||
+               HasShape(params.vNew, {1, shape.heads, shape.seqLen, 128})))) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "aqk,vNew", "mismatch",
+                "Aqk=[HV,T,64], vNew=[HV,T,128] or [1,HV,T,128]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
-        CHECK_COND(q.GetDimNum() == 4 && q.GetDim(3) == 128,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "BNSD/BSND 的 qgScaled 必须为 head-major [B,HV,T,128]。");
+        if (!(q.GetDimNum() == 4 && q.GetDim(3) == 128)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled",
+                "rank=" + std::to_string(q.GetDimNum()), "head-major [B,HV,T,128]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         shape.batch = q.GetDim(0);
         shape.heads = q.GetDim(1);
         shape.seqLen = q.GetDim(2);
-        CHECK_COND(HasShape(params.aqk,
-                            {shape.batch, shape.heads, shape.seqLen, 64}) &&
-                       HasShape(params.vNew,
-                                {shape.batch, shape.heads, shape.seqLen, 128}),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "dense 输入要求 Aqk=[B,HV,T,64]，vNew=[B,HV,T,128]。");
+        if (!(HasShape(params.aqk, {shape.batch, shape.heads, shape.seqLen, 64}) &&
+              HasShape(params.vNew, {shape.batch, shape.heads, shape.seqLen, 128}))) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "aqk,vNew", "mismatch",
+                "Aqk=[B,HV,T,64], vNew=[B,HV,T,128]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    CHECK_COND(shape.batch > 0 && shape.heads > 0 && shape.seqLen > 0 &&
-                   shape.batch <= std::numeric_limits<uint32_t>::max() &&
-                   shape.heads <= std::numeric_limits<uint32_t>::max() &&
-                   shape.seqLen <= std::numeric_limits<uint32_t>::max(),
-               ACLNN_ERR_PARAM_INVALID,
-               "B/HV/T 必须为正且可用 uint32 表示，当前 B=%ld,HV=%ld,T=%ld。",
-               shape.batch, shape.heads, shape.seqLen);
+    if (!(shape.batch > 0 && shape.heads > 0 && shape.seqLen > 0)) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B/HV/T]",
+            "B=" + std::to_string(shape.batch) + ",HV=" + std::to_string(shape.heads) + ",T=" + std::to_string(shape.seqLen),
+            "positive");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // 设备端以 64 位元素索引计算 head-major 数据和 H 偏移。
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t t = static_cast<uint64_t>(shape.seqLen);
-    CHECK_COND(b <= std::numeric_limits<uint64_t>::max() / hv / t / 128,
-               ACLNN_ERR_PARAM_INVALID,
-               "B*HV*T*128 超过 uint64 元素索引范围。");
+    if (b > std::numeric_limits<uint64_t>::max() / hv / t / 128) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape", "overflow", "B*HV*T*128 in uint64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -149,64 +163,75 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
                                  FinalizeShape &shape)
 {
     if (params.cuSeqlens == nullptr) {
-        CHECK_COND(params.chunkIndices == nullptr, ACLNN_ERR_PARAM_INVALID,
-                   "chunkIndicesOptional 要求同时传入 cuSeqlensOptional。");
+        if (params.chunkIndices != nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional", "present",
+                "requires cuSeqlensOptional");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         shape.totalChunks = (shape.seqLen - 1) / FINALIZE_CHUNK_ROWS + 1;
     } else {
-        CHECK_COND(shape.batch == 1, ACLNN_ERR_PARAM_INVALID,
-                   "变长输入要求 B=1，当前 B=%ld。", shape.batch);
+        if (shape.batch != 1) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B]", std::to_string(shape.batch), "1");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         const auto *cu = params.cuSeqlens;
-        CHECK_COND(cu->Size() >= 2 && (*cu)[0] == 0 &&
-                       (*cu)[cu->Size() - 1] == shape.seqLen,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional 必须从 0 到 T=%ld 且至少包含两个边界。",
-                   shape.seqLen);
+        if (!(cu->Size() >= 2 && (*cu)[0] == 0 && (*cu)[cu->Size() - 1] == shape.seqLen)) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "invalid bounds",
+                "from 0 to T=" + std::to_string(shape.seqLen));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         uint64_t total = 0;
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t length = (*cu)[seq + 1] - (*cu)[seq];
-            CHECK_COND(length > 0 && (*cu)[seq + 1] <= shape.seqLen,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "cuSeqlensOptional 必须严格递增，错误位置=%zu。", seq);
+            if (!(length > 0 && (*cu)[seq + 1] <= shape.seqLen)) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "non-increasing", "strictly increasing");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             total += static_cast<uint64_t>((length - 1) / FINALIZE_CHUNK_ROWS + 1);
-            CHECK_COND(total <= std::numeric_limits<uint32_t>::max(),
-                       ACLNN_ERR_PARAM_INVALID,
-                       "变长 total_chunks 超出 uint32 范围。");
+            if (total > std::numeric_limits<uint32_t>::max()) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "total_chunks in uint32");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         }
-        CHECK_COND(cu->Size() - 1 <= std::numeric_limits<uint32_t>::max(),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "变长 sequence 数超出 uint32 范围。");
+        if (cu->Size() - 1 > std::numeric_limits<uint32_t>::max()) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "sequence count in uint32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         shape.totalChunks = static_cast<int64_t>(total);
         if (params.chunkIndices != nullptr) {
-            CHECK_COND(params.chunkIndices->Size() == total * 2,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "chunkIndicesOptional 长度应为 2*total_chunks=%lu。",
-                       static_cast<unsigned long>(total * 2));
+            if (params.chunkIndices->Size() != total * 2) {
+                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional",
+                    std::to_string(params.chunkIndices->Size()), std::to_string(total * 2));
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             size_t offset = 0;
             for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
                 const int64_t length = (*cu)[seq + 1] - (*cu)[seq];
                 const int64_t chunks = (length - 1) / FINALIZE_CHUNK_ROWS + 1;
                 for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-                    CHECK_COND((*params.chunkIndices)[offset] ==
-                                   static_cast<int64_t>(seq) &&
-                                   (*params.chunkIndices)[offset + 1] == chunk,
-                               ACLNN_ERR_PARAM_INVALID,
-                               "chunkIndicesOptional 必须为规范的 sequence-major (seq,chunk) 序列。");
+                    if (!((*params.chunkIndices)[offset] == static_cast<int64_t>(seq) &&
+                          (*params.chunkIndices)[offset + 1] == chunk)) {
+                        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional", "non-canonical",
+                            "sequence-major (seq,chunk)");
+                        return ACLNN_ERR_PARAM_INVALID;
+                    }
                     offset += 2;
                 }
             }
         }
     }
-    CHECK_COND(HasShape(params.h,
-                        {shape.batch, shape.totalChunks, shape.heads, 128, 128}),
-               ACLNN_ERR_PARAM_INVALID,
-               "h 必须为 [B,C,HV,128,128]，当前 B=%ld,HV=%ld,C=%ld。",
-               shape.batch, shape.heads, shape.totalChunks);
+    if (!HasShape(params.h, {shape.batch, shape.totalChunks, shape.heads, 128, 128})) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h", "mismatch",
+            "[B=" + std::to_string(shape.batch) + ",C=" + std::to_string(shape.totalChunks) + ",HV=" + std::to_string(shape.heads) + ",128,128]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t c = static_cast<uint64_t>(shape.totalChunks);
-    CHECK_COND(b <= std::numeric_limits<uint64_t>::max() / hv / c / 128 / 128,
-               ACLNN_ERR_PARAM_INVALID,
-               "B*HV*C*128*128 超过 uint64 元素索引范围。");
+    if (b > std::numeric_limits<uint64_t>::max() / hv / c / 128 / 128) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h.shape", "overflow", "B*HV*C*128*128 in uint64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -220,19 +245,25 @@ aclnnStatus CheckOutputShape(const FinalizeParams &params,
         : (shape.sequenceMajor
             ? HasShape(params.attnOut, {shape.batch, shape.seqLen, shape.heads, 128})
             : HasShape(params.attnOut, {shape.batch, shape.heads, shape.seqLen, 128}));
-    CHECK_COND(shapeValid, ACLNN_ERR_PARAM_INVALID,
-               "attnOut shape 与 outputLayout=%s 不匹配，期望 B=%ld,HV=%ld,T=%ld,V=128。",
-               params.outputLayout, shape.batch, shape.heads, shape.seqLen);
+    if (!shapeValid) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "attnOut", "mismatch",
+            "outputLayout=" + std::string(params.outputLayout) + ", B=" + std::to_string(shape.batch) +
+                ",HV=" + std::to_string(shape.heads) + ",T=" + std::to_string(shape.seqLen) + ",V=128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckParams(const FinalizeParams &params)
 {
-    CHECK_COND(params.qgScaled != nullptr && params.aqk != nullptr &&
-                   params.vNew != nullptr && params.h != nullptr &&
-                   params.attnOut != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR,
-               "qgScaled、aqk、vNew、h 和 attnOut 均不能为空。");
+    const aclTensor *requiredT[] = {params.qgScaled, params.aqk, params.vNew, params.h, params.attnOut};
+    const char *requiredN[] = {"qgScaled", "aqk", "vNew", "h", "attnOut"};
+    for (size_t i = 0; i < sizeof(requiredT) / sizeof(requiredT[0]); ++i) {
+        if (requiredT[i] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, requiredN[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
     FinalizeShape shape;
     aclnnStatus status = ResolveLayout(params, shape);
     if (status != ACLNN_SUCCESS) {
@@ -287,9 +318,14 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize 与 executor 不能为空。");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     L2_DFX_PHASE_1(
         aclnnChunkKdaFwdFinalize,
         DFX_IN(qgScaled, aqk, vNew, h, cuSeqlensOptional,

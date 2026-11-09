@@ -5,6 +5,7 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include "../../../../common/host_utils/log.h"
 
 using namespace op;
 
@@ -38,14 +39,14 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
     if (allowNegEigval && !useBetaSigmoidInKernel) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT("ChunkKdaBwdFinalize", "allowNegEigval", "true",
+                                            "requires useBetaSigmoidInKernel=true");
         return empty;
     }
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT("ChunkKdaBwdFinalize", "useBetaSigmoidInKernel", "true",
+                                            "reserved but not supported on A5");
         return empty;
     }
 #endif

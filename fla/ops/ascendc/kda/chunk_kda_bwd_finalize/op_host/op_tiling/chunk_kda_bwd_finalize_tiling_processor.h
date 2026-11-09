@@ -8,6 +8,16 @@
 #include <exe_graph/runtime/storage_shape.h>
 #include <register/op_impl_registry.h>
 #include "tiling_base/tiling_templates_registry.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
+#endif
+#endif
+
 
 #include "../../op_kernel/chunk_kda_bwd_finalize_struct.h"
 
@@ -51,23 +61,23 @@ public:
         if (ctx_.q == nullptr || ctx_.k == nullptr || ctx_.v == nullptr ||
             ctx_.gk == nullptr || ctx_.beta == nullptr || ctx_.akk == nullptr ||
             ctx_.h == nullptr || ctx_.dh == nullptr || ctx_.dvScan == nullptr) {
-            OP_LOGE(ctx_.nodeName, "required Stage0--2 input shape is null");
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(ctx_.nodeName, "Stage0-2 input shape");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.chunkSize != 64 || !ctx_.safeGate || !ctx_.useGateInKernel ||
             !ctx_.useExp2 || ctx_.stateVFirst) {
-            OP_LOGE(ctx_.nodeName,
-                    "A5 v1 requires chunk_size=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "chunkSize/safeGate/useGate/useExp2/stateVFirst",
+                    "not matching", "C=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
             return ge::GRAPH_FAILED;
         }
         const bool hasRstd = ctx_.qRstd != nullptr || ctx_.kRstd != nullptr;
         if ((ctx_.qRstd == nullptr) != (ctx_.kRstd == nullptr)) {
-            OP_LOGE(ctx_.nodeName, "q_rstd and k_rstd must appear together");
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "qRstd,kRstd", "not together", "must appear together");
             return ge::GRAPH_FAILED;
         }
         const bool variable = ctx_.cuSeqlens != nullptr || ctx_.chunkIndices != nullptr;
         if ((ctx_.cuSeqlens == nullptr) != (ctx_.chunkIndices == nullptr)) {
-            OP_LOGE(ctx_.nodeName, "cu_seqlens and chunk_indices must appear together");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "cuSeqlens,chunkIndices", "not together", "must appear together");
             return ge::GRAPH_FAILED;
         }
 
@@ -86,7 +96,8 @@ public:
             v.GetDimNum() != tokenRank || gk.GetDimNum() != tokenRank ||
             akk.GetDimNum() != tokenRank || beta.GetDimNum() != scalarRank ||
             h.GetDimNum() != stateRank || dh.GetDimNum() != stateRank) {
-            OP_LOGE(ctx_.nodeName, "dense/varlen rank does not match KernelC contract");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, "q,k,v,gk,akk,beta,h,dh",
+                    "rank mismatch", "KernelC contract");
             return ge::GRAPH_FAILED;
         }
 
@@ -105,7 +116,7 @@ public:
             const gert::Shape indices = ctx_.chunkIndices->GetStorageShape();
             if (cu.GetDimNum() != 1 || indices.GetDimNum() != 1 || cu.GetDim(0) < 2 ||
                 indices.GetDim(0) != 2 * tiling_.totalChunkNum) {
-                OP_LOGE(ctx_.nodeName, "invalid varlen metadata shape");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "cuSeqlens,chunkIndices", "mismatch", "1D, cu>=0, indices=2*chunks");
                 return ge::GRAPH_FAILED;
             }
             tiling_.seqNum = cu.GetDim(0) - 1;
@@ -117,7 +128,8 @@ public:
         if (tiling_.B <= 0 || tiling_.NQ != tiling_.NV || tiling_.NV <= 0 ||
             tiling_.T <= 0 || tiling_.K != 128 || tiling_.V != 128 ||
             tiling_.totalChunkNum <= 0) {
-            OP_LOGE(ctx_.nodeName, "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "B,NQ,NV,T,K,V",
+                    "invalid", "NQ=NV, K=V=128, nonempty");
             return ge::GRAPH_FAILED;
         }
         const int64_t chunks = variable ? tiling_.totalChunkNum : tiling_.denseChunkNum;
@@ -128,7 +140,7 @@ public:
             dh.GetDim(base + 3) == tiling_.V &&
             (variable || chunks == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize);
         if (!validStates) {
-            OP_LOGE(ctx_.nodeName, "expected NT-first h and dh");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "h,dh", "mismatch", "NT-first");
             return ge::GRAPH_FAILED;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;

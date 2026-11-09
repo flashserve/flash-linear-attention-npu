@@ -13,6 +13,15 @@
  */
 
 #include "tiling_base/tiling_templates_registry.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#endif
+#endif
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
 #include "causal_conv1d_tiling_utils.h"
 #include "causal_conv1d_tiling_planner.h"
 #include "causal_conv1d_tiling_validation.h"
@@ -43,7 +52,10 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
 
     const int64_t &dim = tiling->dim;
     const int64_t &batch = tiling->batch;
-    OP_CHECK_IF(dim <= 0 || batch <= 0, OP_LOGE(context, "dim/batch must be positive"), return ge::GRAPH_FAILED);
+    if (dim <= 0 || batch <= 0) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "x", "non-positive", "positive dim/batch");
+        return ge::GRAPH_FAILED;
+    }
 
     const uint32_t runModeKey = static_cast<uint32_t>(attrInfo.runMode);
     const bool &isFn = (runModeKey == CAUSAL_CONV1D_TPL_RUN_MODE_FN);

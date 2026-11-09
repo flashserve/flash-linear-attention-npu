@@ -7,6 +7,8 @@
 
 #include <cstddef>
 #include <initializer_list>
+#include <sstream>
+#include <string>
 
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
@@ -17,6 +19,8 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
+#include "../../../../common/host_utils/log.h"
+
 using namespace op;
 
 namespace {
@@ -26,6 +30,8 @@ constexpr int64_t kV = 128;
 constexpr int64_t kVK = kV + kK;
 constexpr int64_t kSMax = 1024;
 constexpr int64_t kHvMax = 256;
+
+constexpr const char *MERGE_FWD_BWD_ENTITY = "aclnnMergeFwdBwdKernel";
 
 bool MatchesShape(const Shape &shape, std::initializer_list<int64_t> expect)
 {
@@ -42,14 +48,34 @@ bool MatchesShape(const Shape &shape, std::initializer_list<int64_t> expect)
     return true;
 }
 
+std::string DfxTensorShapeString(const aclTensor *tensor)
+{
+    const auto &shape = tensor->GetViewShape();
+    std::ostringstream stream;
+    stream << "[";
+    for (size_t idx = 0; idx < shape.GetDimNum(); ++idx) {
+        if (idx != 0) {
+            stream << ",";
+        }
+        stream << shape.GetDim(idx);
+    }
+    stream << "]";
+    return stream.str();
+}
+
 aclnnStatus CheckPublicFormat(const aclTensor *tensor, const char *name)
 {
     const auto storageFormat = tensor->GetStorageFormat();
     const auto viewFormat = tensor->GetViewFormat();
     // ND/NCHW/NCL/NHWC name the same packed layout. NZ and other private formats do not.
-    CHECK_COND(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat), ACLNN_ERR_PARAM_INVALID,
-               "%s must use a non-private format, but got storage=%d and view=%d.", name,
-               static_cast<int>(storageFormat), static_cast<int>(viewFormat));
+    if (IsPrivateFormat(storageFormat) || IsPrivateFormat(viewFormat)) {
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(
+            MERGE_FWD_BWD_ENTITY, name,
+            "storage=" + std::to_string(static_cast<int>(storageFormat)) +
+                ",view=" + std::to_string(static_cast<int>(viewFormat)),
+            "non-private format");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -65,36 +91,83 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
         return agFormat;
     }
     // h is inplace. A contiguous copy would be written and then dropped.
-    CHECK_COND(IsContiguous(h), ACLNN_ERR_PARAM_INVALID, "h is written in place and must be contiguous.");
+    if (!IsContiguous(h)) {
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(MERGE_FWD_BWD_ENTITY, "h", "non-contiguous", "contiguous");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const DataType dtype = agHm->GetDataType();
-    CHECK_COND(dtype == DataType::DT_FLOAT || dtype == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID,
-               "agHm dtype must be FP32 or BF16.");
-    CHECK_COND(h->GetDataType() == dtype, ACLNN_ERR_PARAM_INVALID, "h dtype must match agHm.");
+    if (dtype != DataType::DT_FLOAT && dtype != DataType::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(MERGE_FWD_BWD_ENTITY, "agHm",
+                                                   fla_npu::host_utils::DfxDtypeString(dtype), "FLOAT,BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (h->GetDataType() != dtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(MERGE_FWD_BWD_ENTITY, "h,agHm",
+                                                    "h=" + fla_npu::host_utils::DfxDtypeString(h->GetDataType()) +
+                                                        ",agHm=" + fla_npu::host_utils::DfxDtypeString(dtype),
+                                                    "both same");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const Shape agView = agHm->GetViewShape();
-    CHECK_COND(agView.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "agHm must be rank-4 [S,HV,128,256].");
+    if (agView.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(
+            MERGE_FWD_BWD_ENTITY, "agHm", "rank=" + std::to_string(agView.GetDimNum()),
+            "rank must be 4 [S,HV,128,256]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const int64_t s = agView.GetDim(0);
     const int64_t hv = agView.GetDim(1);
     const int64_t k = agView.GetDim(2);
     const int64_t vk = agView.GetDim(3);
-    CHECK_COND(s >= 1 && s <= kSMax && hv >= 1 && hv <= kHvMax, ACLNN_ERR_PARAM_INVALID,
-               "S must be in [1,1024] and HV must be in [1,256].");
-    CHECK_COND(k == kK && vk == kVK, ACLNN_ERR_PARAM_INVALID, "K must be 128 and the last dim must be 256.");
+    if (s < 1 || s > kSMax || hv < 1 || hv > kHvMax) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+            MERGE_FWD_BWD_ENTITY, "agHm.shape[S,HV]", "S=" + std::to_string(s) + ",HV=" + std::to_string(hv),
+            "S in [1,1024], HV in [1,256]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (k != kK || vk != kVK) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(
+            MERGE_FWD_BWD_ENTITY, "agHm.shape[K],agHm.shape[V+K]",
+            "K=" + std::to_string(k) + ",V+K=" + std::to_string(vk), "K=128, V+K=256");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // Tiling reads the storage shape. Both must be the dense [HV,128,128] buffer.
-    CHECK_COND(MatchesShape(h->GetViewShape(), {hv, kK, kV}) && MatchesShape(h->GetStorageShape(), {hv, kK, kV}),
-               ACLNN_ERR_PARAM_INVALID, "h must be [HV,128,128] for both state layouts.");
+    if (!MatchesShape(h->GetViewShape(), {hv, kK, kV}) || !MatchesShape(h->GetStorageShape(), {hv, kK, kV})) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(
+            MERGE_FWD_BWD_ENTITY, "h", DfxTensorShapeString(h),
+            "[" + std::to_string(hv) + ",128,128]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
-    CHECK_COND(preOrPostNumRanks >= 1 && preOrPostNumRanks <= s, ACLNN_ERR_PARAM_INVALID,
-               "preOrPostNumRanks must be in [1, S].");
-    CHECK_COND(rank >= 0 && rank < s, ACLNN_ERR_PARAM_INVALID, "rank must be in [0, S).");
+    if (preOrPostNumRanks < 1 || preOrPostNumRanks > s) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+            MERGE_FWD_BWD_ENTITY, "preOrPostNumRanks", std::to_string(preOrPostNumRanks),
+            "in [1, S=" + std::to_string(s) + "]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (rank < 0 || rank >= s) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(MERGE_FWD_BWD_ENTITY, "rank", std::to_string(rank),
+                                                   "in [0, S=" + std::to_string(s) + ")");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const bool unitWorld = (s == 1 && preOrPostNumRanks == 1 && rank == 0);
     if (!unitWorld) {
         if (forward) {
-            CHECK_COND(rank >= preOrPostNumRanks, ACLNN_ERR_PARAM_INVALID, "forward merge requires rank >= N.");
+            if (rank < preOrPostNumRanks) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+                    MERGE_FWD_BWD_ENTITY, "rank", std::to_string(rank),
+                    ">= N=" + std::to_string(preOrPostNumRanks) + " for forward merge");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         } else {
-            CHECK_COND(rank + preOrPostNumRanks < s, ACLNN_ERR_PARAM_INVALID,
-                       "backward merge requires rank + N < S.");
+            if (rank + preOrPostNumRanks >= s) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+                    MERGE_FWD_BWD_ENTITY, "rank", std::to_string(rank),
+                    "rank + N < S=" + std::to_string(s) + " for backward merge");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         }
     }
     return ACLNN_SUCCESS;
@@ -110,9 +183,22 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     const aclTensor *h, const aclTensor *agHm, int64_t preOrPostNumRanks, int64_t rank, bool forward,
     bool stateVFirst, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    CHECK_COND(agHm != nullptr && h != nullptr, ACLNN_ERR_PARAM_NULLPTR, "agHm and h must not be nullptr.");
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize and executor must not be nullptr.");
+    if (agHm == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(MERGE_FWD_BWD_ENTITY, "agHm");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (h == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(MERGE_FWD_BWD_ENTITY, "h");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (workspaceSize == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(MERGE_FWD_BWD_ENTITY, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(MERGE_FWD_BWD_ENTITY, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     const aclnnStatus paramStatus = CheckMergeFwdBwdKernelParams(h, agHm, preOrPostNumRanks, rank, forward);
     if (paramStatus != ACLNN_SUCCESS) {
         return paramStatus;

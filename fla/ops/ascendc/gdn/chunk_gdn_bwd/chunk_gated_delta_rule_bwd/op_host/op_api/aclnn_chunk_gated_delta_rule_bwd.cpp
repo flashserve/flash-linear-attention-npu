@@ -23,6 +23,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
+#include "../../../../../common/host_utils/log.h"
 
 #include <array>
 #include <cmath>
@@ -38,6 +39,8 @@
 #endif
 
 using namespace op;
+
+static constexpr const char *CHUNK_GATED_DELTA_RULE_BWD_ENTITY = "aclnnChunkGatedDeltaRuleBwd";
 
 namespace {
 
@@ -193,13 +196,17 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 
 aclnnStatus CheckRequiredInputs(const Params &params)
 {
-    const std::array<const aclTensor *, 12> required = {
+    const std::array<const char *, 12> required = {
+        "q", "k", "v", "g", "beta", "a", "dO", "dqOut", "dkOut", "dvOut", "dBetaOut", "dGOut"};
+    const std::array<const aclTensor *, 12> tensors = {
         params.q, params.k, params.v, params.g, params.beta, params.a,
         params.dO, params.dqOut, params.dkOut, params.dvOut,
         params.dBetaOut, params.dGOut};
-    for (const aclTensor *tensor : required) {
-        CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "required tensor must not be nullptr.");
+    for (size_t idx = 0; idx < required.size(); ++idx) {
+        if (tensors[idx] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_ENTITY, required[idx]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -376,7 +383,10 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
                "chunk_size must be 64.");
     CHECK_COND(std::isfinite(params.scale), ACLNN_ERR_PARAM_INVALID,
                "scale must be finite.");
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = ResolveShapeInfo(params, info);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     CHECK_COND(info.batch > 0 && info.hk > 0 && info.hv > 0 && info.tokens > 0,
                ACLNN_ERR_PARAM_INVALID, "B/HK/HV/T must be positive.");
     CHECK_COND(info.keyDim == DIM_128 && info.valueDim == DIM_128,
@@ -591,7 +601,10 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     }
 
     ShapeInfo info;
-    CHECK_RET(CheckParams(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto checkStatus = CheckParams(params, info);
+    if (checkStatus != ACLNN_SUCCESS) {
+        return checkStatus;
+    }
 
     CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

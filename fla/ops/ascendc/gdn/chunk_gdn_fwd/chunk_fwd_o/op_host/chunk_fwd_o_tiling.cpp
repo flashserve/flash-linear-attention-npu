@@ -18,6 +18,15 @@
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#endif
+#endif
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
 
 namespace optiling {
 
@@ -77,9 +86,10 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CHUNK_FWD_O_ATTR_STATE_V_FIRST_IDX);
     const bool stateVFirst = stateVFirstPtr != nullptr ? *stateVFirstPtr : false;
     const char *outputLayout = attrPtr->GetStr(CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX);
-    OP_CHECK_IF(useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(), "use_exp2=true is supported only on A5."),
-                return ge::GRAPH_FAILED);
+    if (useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "useExp2", "true", "supported only on A5");
+        return ge::GRAPH_FAILED;
+    }
 
     ChunkFwdOTilingContext ctx{
         context->GetNodeName(),

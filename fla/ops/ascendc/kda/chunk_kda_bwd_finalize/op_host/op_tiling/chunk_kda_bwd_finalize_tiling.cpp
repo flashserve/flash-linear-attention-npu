@@ -5,6 +5,15 @@
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "chunk_kda_bwd_finalize_arch22.h"
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#endif
+#endif
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#include "../../../../common/host_utils/log.h"
 
 namespace optiling {
 
@@ -15,12 +24,13 @@ ge::graphStatus ValidateFinalize(
     bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout)
 {
     if (allowNegEigval && !useBetaSigmoid) {
-        OP_LOGE(ctx.nodeName, "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx.nodeName, "allowNegEigval", "true",
+                                                   "requires useBetaSigmoidInKernel=true");
         return ge::GRAPH_FAILED;
     }
     if (!arch22 && useBetaSigmoid) {
-        OP_LOGE(ctx.nodeName,
-                "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx.nodeName, "useBetaSigmoid", "true",
+                                                   "reserved but not supported on A5");
         return ge::GRAPH_FAILED;
     }
     auto fail = [&]() {
@@ -162,7 +172,8 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
     if (!std::isfinite(static_cast<float>(*scale)) || !std::isfinite(static_cast<float>(*lowerBound)) ||
         *lowerBound < -5.0 || static_cast<float>(*lowerBound) >= 0.0f) {
-        OP_LOGE(context->GetNodeName(), "scale/lower_bound must be finite");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "scale/lowerBound",
+                                                   "non-finite or out of range", "finite, lowerBound in [-5, 0)");
         return ge::GRAPH_FAILED;
     }
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());

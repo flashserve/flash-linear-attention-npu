@@ -29,6 +29,8 @@
 #include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
 
+#include "../../../../../common/host_utils/log.h"
+
 using namespace op;
 
 #ifdef __cplusplus
@@ -36,6 +38,7 @@ extern "C" {
 #endif
 
 namespace {
+constexpr const char *RECURRENT_GDN_ENTITY = "aclnnRecurrentGatedDeltaRule";
 constexpr size_t QUERY_DIM_NUM = 3;
 constexpr size_t KEY_DIM_NUM = 3;
 constexpr size_t VALUE_DIM_NUM = 3;
@@ -73,42 +76,74 @@ static const std::initializer_list<op::DataType> OUT_TYPE_SUPPORT_LIST = {op::Da
 
 static inline bool CheckNotNull(const RecurrentGatedDeltaRuleParams &params)
 {
-    // 必选参数
-    OP_CHECK_NULL(params.query, return false);
-    OP_CHECK_NULL(params.key, return false);
-    OP_CHECK_NULL(params.value, return false);
-    OP_CHECK_NULL(params.state, return false);
-    OP_CHECK_NULL(params.beta, return false);
-    OP_CHECK_NULL(params.actual_seq_lengths, return false);
-    OP_CHECK_NULL(params.ssm_state_indices, return false);
-    OP_CHECK_NULL(params.out, return false);
-
+    const aclTensor *required[] = {params.query, params.key, params.value, params.state, params.beta,
+                                   params.actual_seq_lengths, params.ssm_state_indices, params.out};
+    const char *names[] = {"query", "key", "value", "state", "beta", "actual_seq_lengths", "ssm_state_indices", "out"};
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (required[i] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_GDN_ENTITY, names[i]);
+            return false;
+        }
+    }
     return true;
 }
 
+static inline bool CheckDtype(const aclTensor *tensor, const char *name, const std::string &expected)
+{
+    if (tensor->GetDataType() != op::DataType::DT_BF16 &&
+        tensor->GetDataType() != op::DataType::DT_FLOAT &&
+        tensor->GetDataType() != op::DataType::DT_INT32) {
+        return false;
+    }
+    return true;
+}
 static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
 {
-    // 检查必选参数数据类型
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.query, QKV_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.key, QKV_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.value, QKV_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.state, STATE_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.beta, BETA_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.actual_seq_lengths, SEQ_LENS_TYPE_SUPPORT_LIST, return false);
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.ssm_state_indices, SSM_TYPE_SUPPORT_LIST, return false);
-
-    // 检查可选参数数据类型
-    if (params.g != nullptr) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(params.g, G_TYPE_SUPPORT_LIST, return false);
+    if (params.query->GetDataType() != op::DataType::DT_BF16 || params.key->GetDataType() != op::DataType::DT_BF16 ||
+        params.value->GetDataType() != op::DataType::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "query/key/value", "not BF16", "BF16");
+        return false;
     }
-    if (params.gk != nullptr) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(params.gk, G_TYPE_SUPPORT_LIST, return false);
+    if (params.state->GetDataType() != op::DataType::DT_BF16 && params.state->GetDataType() != op::DataType::DT_FLOAT) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "state",
+            fla_npu::host_utils::DfxDtypeString(params.state->GetDataType()), "BF16,FP32");
+        return false;
     }
-    if (params.num_accepted_tokens != nullptr) {
-        OP_CHECK_DTYPE_NOT_SUPPORT(params.num_accepted_tokens, ACC_TO_TYPE_SUPPORT_LIST, return false);
+    if (params.beta->GetDataType() != op::DataType::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "beta",
+            fla_npu::host_utils::DfxDtypeString(params.beta->GetDataType()), "BF16");
+        return false;
     }
-
-    OP_CHECK_DTYPE_NOT_SUPPORT(params.out, OUT_TYPE_SUPPORT_LIST, return false);
+    if (params.actual_seq_lengths->GetDataType() != op::DataType::DT_INT32) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "actual_seq_lengths",
+            fla_npu::host_utils::DfxDtypeString(params.actual_seq_lengths->GetDataType()), "INT32");
+        return false;
+    }
+    if (params.ssm_state_indices->GetDataType() != op::DataType::DT_INT32) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "ssm_state_indices",
+            fla_npu::host_utils::DfxDtypeString(params.ssm_state_indices->GetDataType()), "INT32");
+        return false;
+    }
+    if (params.g != nullptr && params.g->GetDataType() != op::DataType::DT_FLOAT) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "g",
+            fla_npu::host_utils::DfxDtypeString(params.g->GetDataType()), "FP32");
+        return false;
+    }
+    if (params.gk != nullptr && params.gk->GetDataType() != op::DataType::DT_FLOAT) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "gk",
+            fla_npu::host_utils::DfxDtypeString(params.gk->GetDataType()), "FP32");
+        return false;
+    }
+    if (params.num_accepted_tokens != nullptr && params.num_accepted_tokens->GetDataType() != op::DataType::DT_INT32) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "num_accepted_tokens",
+            fla_npu::host_utils::DfxDtypeString(params.num_accepted_tokens->GetDataType()), "INT32");
+        return false;
+    }
+    if (params.out->GetDataType() != op::DataType::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_GDN_ENTITY, "out",
+            fla_npu::host_utils::DfxDtypeString(params.out->GetDataType()), "BF16");
+        return false;
+    }
     return true;
 }
 
@@ -144,6 +179,14 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
                                                          float scaleValue, aclTensor *out, uint64_t *workspaceSize,
                                                          aclOpExecutor **executor)
 {
+    if (workspaceSize == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_GDN_ENTITY, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_GDN_ENTITY, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     L2_DFX_PHASE_1(aclnnRecurrentGatedDeltaRule,
                    DFX_IN(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk,
                           numAcceptedTokens, scaleValue),
@@ -154,8 +197,13 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
-    CHECK_RET(CheckNotNull(params), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!CheckNotNull(params)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    auto checkRet = CheckParams(params);
+    if (checkRet != ACLNN_SUCCESS) {
+        return checkRet;
+    }
     auto ret = PreProcess(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
