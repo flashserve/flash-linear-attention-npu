@@ -347,10 +347,11 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         // 原始输入缓冲：x/dy/y 各 2 份 slot；fp32 时其元素位宽为 4 字节。
         need += (2 * btBdAl + 4 * dyBdAl + wBdAl + regPad) * rawDtypeSize;
         if (isB16Input) {
-            // b16 额外 3 份原始位宽缓冲：castBuf_（x 的转换 staging）、dxOutBuf_（dx 输出 staging）、
-            // dbOutBuf_（db 输出 staging，hasBias 恒为 1）。与 kernel InitBuffer 逐项对齐，
-            // 漏算会让 BT 选到实际分配已超过 UB 的取值。
-            need += (2 * btBdAl + bdAl) * rawDtypeSize;
+            // b16 额外 3 份原始位宽缓冲：castBuf_（x 的转换 staging、dw 的输出 staging，容量取
+            // max(BT*BD, W*BD)）、dxOutBuf_（dx 输出 staging）、dbOutBuf_（db 输出 staging，
+            // hasBias 恒为 1）。与 kernel InitBuffer 逐项对齐，漏算会让 BT 选到实际分配已超过
+            // UB 的取值。
+            need += (std::max(btBdAl, wBdAl) + btBdAl + bdAl) * rawDtypeSize;
         }
         // fp32 计算/输出缓冲：dx + dyAct(temp) + dw + db。
         need += (btBdAl + dyBdAl + wBdAl + 2 * regPad + dbAl) * FP32_DTYPE_SIZE;

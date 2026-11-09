@@ -314,7 +314,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
         pipe_->InitBuffer(dyBuf_, 2 * dyBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dxBuf_, btBdCount_ * FP32_DTYPE_SIZE);
         if constexpr (!IsSameType<inputT, float>::value) {
-            pipe_->InitBuffer(castBuf_, btBdCount_ * sizeof(inputT));
+            // castBuf_ 既做 x 的 cast staging，也做 dw 的输出 staging（CopyOutDwDb 一次 Cast
+            // wBdCount_ 个元素）。BT < W 时（如 T=1、W=3 的极小 shape）wBdCount_ > btBdCount_，
+            // 按 btBdCount_ 分配会让 dw 的 Cast 越过 UB 缓冲末尾，踩坏相邻的 dxOutBuf_，
+            // 导致相邻 i_d 的 dx 输出被污染。与普通路径一致，取两者的较大值。
+            const uint32_t castCount = (btBdCount_ > wBdCount_) ? btBdCount_ : wBdCount_;
+            pipe_->InitBuffer(castBuf_, castCount * sizeof(inputT));
             pipe_->InitBuffer(dxOutBuf_, btBdCount_ * sizeof(inputT));
         }
         pipe_->InitBuffer(tempBuf_, (dyBdCount_ + regPad) * FP32_DTYPE_SIZE);
