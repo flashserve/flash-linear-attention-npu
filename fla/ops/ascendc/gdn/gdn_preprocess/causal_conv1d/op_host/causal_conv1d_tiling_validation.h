@@ -461,7 +461,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                     return ge::GRAPH_FAILED;
                 }
                 if (nxt < cur) {
-                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc", "non-decreasing", "non-decreasing");
+                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc",
+                    "[" + std::to_string(i + 1) + "]=" + std::to_string(nxt),
+                    "non-decreasing, >= queryStartLoc[" + std::to_string(i) + "]=" + std::to_string(cur));
                     return ge::GRAPH_FAILED;
                 }
                 const int64_t segmentLen = nxt - cur;

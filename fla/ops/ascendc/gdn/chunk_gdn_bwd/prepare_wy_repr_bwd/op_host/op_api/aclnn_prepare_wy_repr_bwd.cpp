@@ -28,8 +28,11 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "../../../../../common/host_utils/log.h"
 
 using namespace op;
+
+static constexpr const char *PREPARE_WY_REPR_BWD_ENTITY = "aclnnPrepareWyReprBwd";
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,17 +57,50 @@ struct PrepareWyReprBwdParams {
 
 static aclnnStatus CheckNotNull(PrepareWyReprBwdParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.beta != nullptr, ACLNN_ERR_PARAM_NULLPTR, "beta must not be nullptr.");
-    CHECK_COND(params.a != nullptr, ACLNN_ERR_PARAM_NULLPTR, "a must not be nullptr.");
-    CHECK_COND(params.dw != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dw must not be nullptr.");
-    CHECK_COND(params.du != nullptr, ACLNN_ERR_PARAM_NULLPTR, "du must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.dkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dkOut must not be nullptr.");
-    CHECK_COND(params.dvOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dvOut must not be nullptr.");
-    CHECK_COND(params.dbetaOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dbetaOut must not be nullptr.");
-    CHECK_COND(params.dgOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dgOut must not be nullptr.");
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.beta == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.a == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "a");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dw == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "dw");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.du == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "du");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dkOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "dkOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dvOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "dvOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dbetaOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "dbetaOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dgOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_ENTITY, "dgOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -88,10 +124,22 @@ static aclnnStatus CheckDtype(PrepareWyReprBwdParams params)
 
 static aclnnStatus CheckParams(PrepareWyReprBwdParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckFormat(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckShape(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckDtype(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -143,7 +191,10 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
             "January 15, 2027 (v26.12.0); use the fused "
             "npu_chunk_gated_delta_rule_bwd instead.");
 
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckParams(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
 

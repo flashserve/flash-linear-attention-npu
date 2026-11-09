@@ -246,7 +246,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t maxSeqLen = 0;
         for (uint32_t i = 0; i < B; i++) {
             if (qslData[i + 1] < qslData[i]) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc", "non-decreasing", "non-decreasing");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc",
+                    "[" + std::to_string(i + 1) + "]=" + std::to_string(qslData[i + 1]),
+                    "non-decreasing, >= queryStartLoc[" + std::to_string(i) + "]=" + std::to_string(qslData[i]));
                 return ge::GRAPH_FAILED;
             }
             uint32_t seqLen = static_cast<uint32_t>(qslData[i + 1] - qslData[i]);

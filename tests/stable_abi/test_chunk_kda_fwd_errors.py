@@ -3,6 +3,7 @@
 
 import argparse
 import ctypes
+import re
 
 import torch
 import torch_npu  # noqa: F401
@@ -99,9 +100,17 @@ def check_raw(name, updates, code, parameter, *, status=161002, null_output_poin
         result = api(*args)
         message = runtime._recent_error_message()
         assert result == status, (name, result, status, message)
-        # CANN 9.2+ emits the structured EZ code; CANN 9.0/9.1 compatibility
-        # fallback emits EZ1001 while retaining the same parameter details.
-        assert (code in message or "EZ1001" in message) and parameter in message and "aclnnChunkKdaFwd" in message, (
+        # CANN 9.2+ emits the specific structured EZ code; CANN 9.0/9.1
+        # compatibility fallback emits EZ1001 while retaining the same parameter
+        # details. Require the exact code whenever any structured code is present,
+        # so a wrong/generic EZ code cannot pass via the EZ1001 escape hatch;
+        # only fall back to EZ1001 when the runtime emitted no specific code.
+        structured = [c for c in re.findall(r"EZ\d{4}", message) if c != "EZ1001"]
+        if structured:
+            assert code in structured, (name, code, parameter, message)
+        else:
+            assert "EZ1001" in message, (name, code, parameter, message)
+        assert parameter in message and "aclnnChunkKdaFwd" in message, (
             name,
             code,
             parameter,

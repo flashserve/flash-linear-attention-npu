@@ -7,6 +7,8 @@ run_cpu、run_npu 和 FunctionApi 均放在各算子自己的 ATK 目录中。
 from __future__ import annotations
 
 import json
+import os
+import warnings
 from typing import Any, Tuple
 
 import torch
@@ -30,7 +32,13 @@ except (AttributeError, ImportError):
 
 
 def _register_mixed_tolerance_bm_if_missing() -> None:
-    """ATK 26.8.8+ 自带 mixed_tolerance_bm；旧版本用同角色的 single_bm 顶上。"""
+    """ATK 26.8.8+ 自带 mixed_tolerance_bm；旧版本用同角色的 single_bm 顶上。
+
+    该回退会在 import 时修改 ATK 全局 ACCURACY_REGISTRY（对所有用例生效），
+    因此显式告警；如需禁用可设环境变量 FLA_NPU_ATK_DISABLE_MIXED_TOLERANCE_FALLBACK=1。
+    """
+    if os.environ.get("FLA_NPU_ATK_DISABLE_MIXED_TOLERANCE_FALLBACK", "0") == "1":
+        return
     try:
         from atk.tasks.task_plugins_register import ACCURACY_REGISTRY
         import atk.tasks.post_process.single_benchmark_compare as sbc
@@ -38,6 +46,12 @@ def _register_mixed_tolerance_bm_if_missing() -> None:
         return
     if "mixed_tolerance_bm" in ACCURACY_REGISTRY:
         return
+    warnings.warn(
+        "ATK 未注册 mixed_tolerance_bm，回退到 SingleBenchmarkAccuracyCompare 判定；"
+        "如需禁用请设置 FLA_NPU_ATK_DISABLE_MIXED_TOLERANCE_FALLBACK=1",
+        RuntimeWarning,
+        stacklevel=2,
+    )
     ACCURACY_REGISTRY.register_with_key(
         "mixed_tolerance_bm",
         sbc.SingleBenchmarkAccuracyCompare,
