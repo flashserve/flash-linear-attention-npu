@@ -253,6 +253,28 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(set(inputs), set(allowed))
         self.assertNotIn("expected_head_sha", inputs)
 
+    def test_comment_passes_requested_device_and_rejects_invalid_device_parameters(self):
+        for device in ("0", "2"):
+            result = self.run_entry("dispatch", command=f"/run-npu-ci quick device-id={device} ops=chunk_fwd_o")
+            self.assertEqual(self.records(result, "dispatch")[0]["inputs"]["device_id"], device)
+        for value in ("", "-1", "00", "2,3", "1;true", "9007199254740992", "2 device-id=3"):
+            with self.subTest(value=value):
+                result = self.run_entry("dispatch", command=f"/run-npu-ci quick device-id={value}")
+                self.assertTrue(self.records(result, "failed"))
+                self.assertFalse(self.records(result, "dispatch"))
+
+    def test_manual_workflow_validates_requested_device(self):
+        result = self.run_entry("prepare", inputs={"device_id": "2"})
+        self.assertIn({"name": "device_id", "value": "2"}, self.records(result, "output"))
+        result = self.run_entry("prepare", inputs={"device_id": "-1"})
+        self.assertIn("device_id", self.records(result, "failed")[0])
+
+    def test_legacy_workflow_cannot_silently_drop_explicit_device_selection(self):
+        legacy = "on:\n  workflow_dispatch:\n    inputs:\n      pr_number:\n        required: true\n"
+        result = self.run_entry("dispatch", command="/run-npu-ci quick device-id=2", workflow_text=legacy)
+        self.assertIn("尚未支持 device-id", self.records(result, "failed")[0])
+        self.assertFalse(self.records(result, "dispatch"))
+
     def test_workflow_with_no_inputs_can_dispatch_without_new_contract(self):
         for text in ("on:\n  workflow_dispatch:\n", "on:\n  workflow_dispatch: {}\n"):
             with self.subTest(workflow=text):

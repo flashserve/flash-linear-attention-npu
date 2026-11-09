@@ -87,7 +87,14 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci quick
 /run-npu-ci full
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
+/run-npu-ci quick device-id=2
 ```
+
+`device-id` 指定各 runner 上 `npu-smi info` 显示的物理 NPU 编号（非负整数），A2、A5 各自使用同一编号；
+它不指定 runner 主机。省略时继续自动选卡。指定的卡不存在则明确失败，被其他 CI 锁定则等待该卡，
+不回退到其他卡。容器通过 `ASCEND_RT_VISIBLE_DEVICES` 映射选中的物理卡，测试仍使用容器内逻辑设备 0。
+Actions 手动运行可填写同义输入 `device_id`，本地复现可设置 `CI_NPU_DEVICE_ID=2`。
+旧分支未声明 `device_id` 时，省略该参数仍按原流程分发；显式指定时提示同步设备选择功能，避免静默忽略。
 
 默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 

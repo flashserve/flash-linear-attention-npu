@@ -26,6 +26,10 @@ on:
         description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
         default: ''
+      device_id:
+        description: "Optional physical NPU ID on each A2/A5 runner; empty selects automatically"
+        required: false
+        default: ''
       requested_by:
         description: "Original authorized requester; set by the PR comment dispatcher"
         required: false
@@ -71,6 +75,7 @@ jobs:
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       ops: ${{ steps.prepare.outputs.ops }}
+      device_id: ${{ steps.prepare.outputs.device_id }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
       workflow_ref: ${{ steps.prepare.outputs.workflow_ref }}
       requested_by: ${{ steps.prepare.outputs.requested_by }}
@@ -187,6 +192,12 @@ jobs:
             prNumber = Number(workflowInputs.pr_number);
             ciMode = workflowInputs.ci_mode || 'quick';
             ops = workflowInputs.ops || '';
+            const deviceId = (workflowInputs.device_id || '').trim();
+            if (deviceId && (!/^(0|[1-9][0-9]*)$/.test(deviceId) || !Number.isSafeInteger(Number(deviceId)))) {
+              core.setFailed('device_id 必须是非负整数；留空表示自动选卡。');
+              return;
+            }
+            core.setOutput('device_id', deviceId);
 
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
               core.setFailed(`无效的 PR 编号：${prNumber}`);
@@ -236,9 +247,10 @@ jobs:
             const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
             ops = normalizedOps;
             const requestScope = normalizedOps ? 'scoped' : 'all';
-            const requestKey = requestScope === 'all'
+            const requestKey = (requestScope === 'all'
               ? 'all'
-              : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10);
+              : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10)) +
+              (deviceId ? `:npu${deviceId}` : '');
             const requestedModeSuffix = `(${ciMode},${requestKey},A2+A5)`;
             const isInitialWorkflowAttempt = process.env.NPU_CI_RUN_ATTEMPT === '1';
             const checkContexts = requestScope === 'all' ? requiredCheckContexts : [scopedCheckContext];
@@ -286,6 +298,7 @@ jobs:
                   `本次 NPU CI 请求已经在 \`${pr.head.sha}\` 上通过，不会重复运行。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
+                  `- 物理 NPU：${deviceId || '自动选择'}`,
                   `- 触发人：@${requestedBy}`,
                   `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
@@ -315,6 +328,7 @@ jobs:
                   `NPU CI 已在验证 \`${pr.head.sha}\`，本次评论不会重复启动新任务。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
+                  `- 物理 NPU：${deviceId || '自动选择'}`,
                   `- 触发人：@${requestedBy}`,
                   `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
@@ -358,6 +372,7 @@ jobs:
                 `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
                 '',
                 `- 模式：\`${ciMode}\``,
+                `- 物理 NPU：${deviceId || '自动选择'}`,
                 `- 触发人：@${requestedBy}`,
                 `- CI 定义分支：\`${workflowRef}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
@@ -413,6 +428,7 @@ jobs:
     env:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_NPU_DEVICE_ID: ${{ needs.prepare.outputs.device_id }}
       CI_JOBS: '16'
       CI_CPACK_JOBS: '16'
       CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
@@ -879,6 +895,7 @@ jobs:
         env:
           NPU_CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
           NPU_OPS: ${{ needs.prepare.outputs.ops }}
+          NPU_DEVICE_ID: ${{ needs.prepare.outputs.device_id }}
           NPU_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_COMMENT_ID: ${{ needs.prepare.outputs.comment_id }}
           NPU_MATRIX_RESULT: ${{ needs.ascend-npu.result }}
