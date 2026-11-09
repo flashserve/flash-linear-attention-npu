@@ -577,9 +577,23 @@ private:
 
     __aicore__ inline bool ValidateSlots(uint64_t request) const
     {
+        const int64_t sequenceLength = sequenceEnd_ - sequenceBegin_;
         if (tiling_->hasAcceptedTokens) {
             const int64_t accepted = Metadata(acceptedAddress_, tiling_->acceptedTokensDtype, request);
-            if (accepted < 1 || accepted > sequenceEnd_ - sequenceBegin_) return false;
+            // A two-dimensional speculative index table describes a state
+            // window, which may be longer than the current query window.  The
+            // accepted prefix selects the initial State from that window, so
+            // it is bounded by max_step (ssmStateStride), not by the number of
+            // tokens currently being queried.  A packed one-dimensional table
+            // has no such extra window and remains bounded by sequenceLength.
+            const uint64_t acceptedLimit = tiling_->ssmStateStride != 0 ?
+                static_cast<uint64_t>(tiling_->ssmStateStride) : static_cast<uint64_t>(sequenceLength);
+            if (accepted < 1 || static_cast<uint64_t>(accepted) > acceptedLimit) return false;
+
+            // The accepted prefix can point beyond the current query window;
+            // validate that InitialSlot itself is still inside the State pool.
+            const int64_t initialToken = sequenceBegin_ + accepted - 1;
+            if (StateSlot(request, initialToken) >= tiling_->sBlockNum) return false;
         }
         if (!tiling_->hasSsmStateIndices) return request < tiling_->sBlockNum;
         for (int64_t token = sequenceBegin_; token < sequenceEnd_; ++token)
