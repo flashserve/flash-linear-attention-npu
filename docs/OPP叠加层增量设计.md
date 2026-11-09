@@ -205,7 +205,7 @@ Docker 进程由 daemon 管理，除本地客户端进程组外，还要按本�
 | 来源顺序 | `fla_npu_opp_env.py`、`fla_npu/__init__.py`、`csrc/src/runtime.cpp` | 默认、禁用、多 overlay、缺项回落；验证 `.pth` 或手动 source 在 CANN 初始化前配置正确 |
 | ABI/恢复 | `_op_abi.py`、`install_opp.py`、`fla_npu_opp_manage.py` | 两阶段类型漂移、缺/坏清单、哈希损坏、包外软链、独立移除 |
 | 日落/构建 | `_stable.py`、`ops/ascendc/__init__.py`、`stable_build_policy.py`、两套 setup | 无回退，实际 launcher 校验，旧选项拒绝，完整 wheel 检查 |
-| 测试迁移 | `stable_public_api.json`、`stable_coverage.py`、仓内调用方 | 签名与调用参数、返回及 mutation、枚举、负例和真实 NPU 结果 |
+| 测试迁移 | `test_stable_only_runtime.py`、`stable_coverage.py`、仓内调用方 | 当前 wrapper 与公开入口的签名一致性、调用参数、返回及 mutation、枚举、负例和真实 NPU 结果；不冻结历史签名或 dispatch 表达式 |
 | ATK 增量调用 | `tests/atk/run_test_cpu.sh`、ATK executor、生成的 `set_env.bash` | worker 启动前路径顺序、公共 wrapper、overlay 命中与 base 回落、远程 worker 环境 |
 | 取消清理 | `ci/pkg/make_packages.py` | 组长退出但子进程存活、信号忽略、PID 身份变化、清理失败不重试 |
 | KDA/KKT 修复 | KDA host 返回码、ATK executor/golden | 旧库/新库负例差异、独立标杆、原用例保留、无容差放宽 |
