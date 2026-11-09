@@ -46,6 +46,10 @@ on:
         description: "Workflow commit captured by the comment dispatcher"
         required: false
         default: ''
+      workflow_source_ref:
+        description: "Trusted default branch workflow ref used for legacy target branches"
+        required: false
+        default: ''
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
@@ -105,6 +109,16 @@ jobs:
             const workflowInputs = context.payload.inputs || {};
             const requestedBy = actor === 'github-actions[bot]' ? workflowInputs.requested_by : actor;
             const workflowRef = process.env.NPU_CI_WORKFLOW_REF || '';
+            const workflowSourceRef = workflowInputs.workflow_source_ref || '';
+            let defaultBranch = context.payload.repository?.default_branch || '';
+            if (!defaultBranch) {
+              ({ data: { default_branch: defaultBranch } } = await github.rest.repos.get(context.repo));
+            }
+            if (workflowSourceRef &&
+                (workflowSourceRef !== defaultBranch || workflowRef !== defaultBranch)) {
+              core.setFailed('无效的受信任 CI workflow 来源，只允许使用默认分支流程。');
+              return;
+            }
             await auth.authorizeCiRequest({ github, context, requestedBy });
 
             const requiredCheckContexts = checks.prepareChecks;
@@ -209,10 +223,21 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef });
+            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef, trustedWorkflowRef: workflowSourceRef });
             auth.requireDispatchIdentity({ pr, inputs: workflowInputs,
               required: actor === 'github-actions[bot]', rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
             core.setOutput('base_sha', baseSha);
+            let legacyStatusContexts = [];
+            if (workflowSourceRef) {
+              try {
+                const profilePr = { ...pr, base: { ...pr.base, sha: baseSha } };
+                const targetContexts = await checks.readBranchContexts({ github, context, pr: profilePr });
+                const currentContexts = new Set(requiredCheckContexts.map(([statusContext]) => statusContext));
+                legacyStatusContexts = targetContexts.filter((statusContext) => !currentContexts.has(statusContext));
+              } catch (error) {
+                core.warning(`无法读取旧目标分支的 NPU CI 状态定义，将保留现有状态：${error.message}`);
+              }
+            }
             if (await auth.hasCiChanges({ github, context, pr })) {
               try {
                 await auth.requireCiAuthorAdmin({ github, context, pr });
@@ -251,6 +276,32 @@ jobs:
               ref: pr.head.sha,
               per_page: 100,
             });
+            if (legacyStatusContexts.length > 0) {
+              const latestStatus = new Map();
+              for (const status of [...statuses].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))) {
+                if (!latestStatus.has(status.context)) latestStatus.set(status.context, status);
+              }
+              const obsoletePlaceholders = legacyStatusContexts.filter((statusContext) => {
+                const status = latestStatus.get(statusContext);
+                return !status || (status.state === 'pending' &&
+                  !/\/actions\/runs\/\d+/.test(status.target_url || ''));
+              });
+              const obsoleteResults = await Promise.allSettled(obsoletePlaceholders.map((statusContext) =>
+                github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: pr.head.sha,
+                  state: 'success',
+                  context: statusContext,
+                  description: `旧目标分支检查项由默认分支 NPU CI 兼容流程覆盖（${workflowSourceRef}）`,
+                  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              ));
+              const obsoleteFailures = obsoleteResults.filter((result) => result.status === 'rejected');
+              if (obsoleteFailures.length > 0) {
+                core.warning(`有 ${obsoleteFailures.length} 个旧目标分支检查项未能标记为已覆盖。`);
+              }
+            }
             const compareStatusRecency = (a, b) =>
               new Date(b.created_at) - new Date(a.created_at) || Number(b.id || 0) - Number(a.id || 0);
             const latestStatusForContext = (statusContext) => statuses

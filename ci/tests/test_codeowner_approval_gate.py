@@ -111,6 +111,8 @@ try {
         )
         self.assertIn("synchronize", events["pull_request_target"]["types"])
         self.assertEqual(workflow["permissions"]["statuses"], "write")
+        checkout = workflow["jobs"]["evaluate"]["steps"][0]["with"]
+        self.assertEqual(checkout["ref"], "${{ github.workflow_sha }}")
         script = workflow["jobs"]["evaluate"]["steps"][1]["with"]["script"]
         self.assertIn("gate.run", script)
 

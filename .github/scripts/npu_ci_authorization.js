@@ -9,9 +9,9 @@ function requireOpenPullRequest(pr) {
   if (pr.draft) throw new Error(`PR #${pr.number} 仍是草稿，请先标记为 ready for review。`);
 }
 
-function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref }) {
+function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, trustedWorkflowRef = '' }) {
   requireOpenPullRequest(pr);
-  if (workflowRef !== pr.base.ref || branch.protected !== true) {
+  if ((workflowRef !== pr.base.ref && workflowRef !== trustedWorkflowRef) || branch.protected !== true) {
     throw new Error('NPU CI 只允许在 PR 当前受保护的目标分支执行，不支持其他 CI 定义分支。');
   }
 }
@@ -53,6 +53,11 @@ function selectDispatchInputs(text, inputs) {
     }
   }
   return Object.fromEntries(Object.entries(inputs).filter(([name]) => declared.has(name)));
+}
+
+function hasDispatchContract(inputs) {
+  return ['expected_head_sha', 'expected_base_ref', 'expected_base_sha', 'expected_workflow_sha']
+    .every((name) => Object.prototype.hasOwnProperty.call(inputs, name));
 }
 
 async function loadCiUsers({ github, context }) {
@@ -123,4 +128,4 @@ async function requireCiAuthorAdmin({ github, context, pr }) {
 
 module.exports = { USERS_PATH, loadCiUsers, requireAuthorizedCiUser, authorizeCiRequest,
   requireOpenPullRequest, requireProtectedBase, requireDispatchIdentity, selectDispatchInputs,
-  hasCiChanges, requireCiAuthorAdmin };
+  hasDispatchContract, hasCiChanges, requireCiAuthorAdmin };
