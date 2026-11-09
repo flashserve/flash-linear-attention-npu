@@ -241,9 +241,6 @@ def _reference(
     output_final_state: bool,
     use_exp2: bool,
     state_v_first: bool,
-    compute_dtype: torch.dtype | None = None,
-    vector_store=None,
-    p_store_dtype: torch.dtype | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     k, w, u, g, gk = inputs.k, inputs.w, inputs.u, inputs.g, inputs.gk
     batch, _, total_tokens, _ = k.shape
@@ -256,23 +253,16 @@ def _reference(
     dense_chunks = (total_tokens + CHUNK_SIZE - 1) // CHUNK_SIZE
     h_chunk_count = total_chunks if inputs.seqlens is not None else dense_chunks
 
-    if compute_dtype is None:
-        compute_dtype = torch.bfloat16
-    accumulation_dtype = torch.float64 if compute_dtype == torch.float64 else torch.float32
-
-    def store_vector(value, dtype):
-        return value.to(dtype) if vector_store is None else vector_store(value, dtype)
-
     h_logical = torch.empty(
         (batch, h_chunk_count, v_heads, K_DIM, V_DIM),
-        dtype=compute_dtype,
+        dtype=torch.bfloat16,
         device=k.device,
     )
-    v_new = torch.empty(tuple(u.shape), dtype=compute_dtype, device=u.device)
+    v_new = torch.empty(tuple(u.shape), dtype=torch.bfloat16, device=u.device)
     state_dtype = (
         inputs.initial_state.dtype
         if inputs.initial_state is not None
-        else (torch.float64 if compute_dtype == torch.float64 else torch.float32)
+        else torch.float32
     )
     final_logical = (
         torch.empty(
@@ -309,17 +299,17 @@ def _reference(
                     if inputs.seqlens is not None
                     else sequence_chunk
                 )
-                h_current = state.to(compute_dtype)
+                h_current = state.to(torch.bfloat16)
                 h_logical[physical_batch, chunk_slot, value_head] = h_current
 
                 w_chunk = w[physical_batch, value_head, token_begin:token_end]
-                p_acc = w_chunk.to(accumulation_dtype) @ h_current.to(accumulation_dtype)
-                p = p_acc.to(state_dtype if p_store_dtype is None else p_store_dtype)
+                p_acc = w_chunk.float() @ h_current.float()
+                p = p_acc.to(state_dtype)
                 v_new_fp32 = (
-                    u[physical_batch, value_head, token_begin:token_end].to(accumulation_dtype)
-                    - p.to(accumulation_dtype)
+                    u[physical_batch, value_head, token_begin:token_end].float()
+                    - p.float()
                 )
-                v_new_chunk = store_vector(v_new_fp32, compute_dtype)
+                v_new_chunk = v_new_fp32.to(torch.bfloat16)
                 v_new[physical_batch, value_head, token_begin:token_end] = v_new_chunk
 
                 is_last = token_end == sequence_end
@@ -327,34 +317,33 @@ def _reference(
                     if g is not None:
                         gate = g[
                             physical_batch, value_head, token_begin:token_end
-                        ].to(accumulation_dtype)
-                        right = store_vector(
+                        ].float()
+                        right = (
                             v_new_fp32
-                            * _gate_exp(gate[-1] - gate, use_exp2).unsqueeze(-1),
-                            compute_dtype,
-                        )
+                            * _gate_exp(gate[-1] - gate, use_exp2).unsqueeze(-1)
+                        ).to(torch.bfloat16)
                         group_size = v_heads // k.shape[1]
                         key_head = value_head // group_size
                         left = k[
                             physical_batch, key_head, token_begin:token_end
                         ]
                         next_state = (
-                            _gate_exp(gate[-1], use_exp2).to(accumulation_dtype) * state.to(accumulation_dtype)
-                            + left.to(accumulation_dtype).transpose(0, 1) @ right.to(accumulation_dtype)
+                            _gate_exp(gate[-1], use_exp2) * state.float()
+                            + left.float().transpose(0, 1) @ right.float()
                         )
                     else:
                         assert gk is not None
                         gate = gk[
                             physical_batch, value_head, token_end - 1
-                        ].to(accumulation_dtype)
+                        ].float()
                         left = k[
                             physical_batch, value_head, token_begin:token_end
                         ]
                         next_state = (
-                            _gate_exp(gate, use_exp2).unsqueeze(-1).to(accumulation_dtype) * state.to(accumulation_dtype)
-                            + left.to(accumulation_dtype).transpose(0, 1) @ v_new_chunk.to(accumulation_dtype)
+                            _gate_exp(gate, use_exp2).unsqueeze(-1) * state.float()
+                            + left.float().transpose(0, 1) @ v_new_chunk.float()
                         )
-                    state = store_vector(next_state, state_dtype)
+                    state = next_state.to(state_dtype)
                 sequence_chunk += 1
 
             if final_logical is not None:

@@ -5,8 +5,6 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     use_qk_l2_norm_in_kernel=False, use_beta_sigmoid_in_kernel=False,
     use_gate_in_kernel=False, state_v_first=False, use_exp2=True,
     nt_first=False,
-    compute_dtype=None,
-    vector_store=None,
 ):
     """CPU reference for the fused gated-delta-rule backward finalize range.
 
@@ -124,21 +122,16 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
 
     head_ratio = value_heads // key_heads
     work_dtype = q.dtype
-    calc_dtype = torch.float64 if work_dtype == torch.float64 else torch.float32
-
-    def store_vector(value, dtype=work_dtype):
-        return value.to(dtype) if vector_store is None else vector_store(value, dtype)
-
-    g_fp32 = g.to(calc_dtype)
-    beta_fp32 = beta.to(calc_dtype)
+    g_fp32 = g.float()
+    beta_fp32 = beta.float()
     gate_exp = torch.exp2 if use_exp2 else torch.exp
     g_exp = gate_exp(g_fp32)
     bg = beta_fp32 * g_exp
     hv_to_hk = torch.arange(value_heads, dtype=torch.int64) // head_ratio
     k_hv = k[:, hv_to_hk]
-    kbg = store_vector(k_hv.to(calc_dtype) * bg[:, :, :, None])
-    vb = store_vector(v.to(calc_dtype) * beta_fp32[:, :, :, None])
-    kb = store_vector(k_hv.to(calc_dtype) * beta_fp32[:, :, :, None])
+    kbg = (k_hv.float() * bg[:, :, :, None]).to(work_dtype)
+    vb = (v.float() * beta_fp32[:, :, :, None]).to(work_dtype)
+    kb = (k_hv.float() * beta_fp32[:, :, :, None]).to(work_dtype)
 
     matrix_shape = a.shape
     hv_vector_shape = (batch, value_heads, total_tokens, dim)
@@ -149,19 +142,19 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     d_a1 = torch.zeros(matrix_shape, dtype=work_dtype)
     a2 = torch.zeros(matrix_shape, dtype=work_dtype)
     dv = torch.empty_like(v)
-    db_v_partial = torch.empty(scalar_shape, dtype=calc_dtype)
+    db_v_partial = torch.empty(scalar_shape, dtype=torch.float32)
     d_a2 = torch.zeros(matrix_shape, dtype=work_dtype)
     dkbg0 = torch.empty(hv_vector_shape, dtype=work_dtype)
     d_a = torch.zeros(matrix_shape, dtype=work_dtype)
-    db_v = torch.empty(scalar_shape, dtype=calc_dtype)
-    dg_prepare = torch.empty(scalar_shape, dtype=calc_dtype)
+    db_v = torch.empty(scalar_shape, dtype=torch.float32)
+    dg_prepare = torch.empty(scalar_shape, dtype=torch.float32)
     dkb = torch.empty(hv_vector_shape, dtype=work_dtype)
     dkb_t = torch.empty(hv_vector_shape, dtype=work_dtype)
-    state_term = torch.empty((batch, value_heads, state_chunk_num), dtype=calc_dtype)
+    state_term = torch.empty((batch, value_heads, state_chunk_num), dtype=torch.float32)
     ds0 = torch.zeros(matrix_shape, dtype=work_dtype)
     dk_prepare = torch.empty(hv_vector_shape, dtype=work_dtype)
-    db_prepare = torch.empty(scalar_shape, dtype=calc_dtype)
-    dbeta = torch.empty(scalar_shape, dtype=calc_dtype)
+    db_prepare = torch.empty(scalar_shape, dtype=torch.float32)
+    dbeta = torch.empty(scalar_shape, dtype=torch.float32)
     ds = torch.zeros(matrix_shape, dtype=work_dtype)
     do_g = torch.empty_like(v)
     v_decay = torch.empty_like(v)
@@ -169,21 +162,21 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     dk_base = torch.empty(hv_vector_shape, dtype=work_dtype)
     dk_intra = torch.empty(hv_vector_shape, dtype=work_dtype)
     dk_raw_hv = torch.empty(hv_vector_shape, dtype=work_dtype)
-    dg = torch.empty(scalar_shape, dtype=calc_dtype)
+    dg = torch.empty(scalar_shape, dtype=torch.float32)
     dq = torch.empty_like(q)
     dk = torch.empty_like(k)
 
     for batch_idx, token_start, chunk_len, state_chunk_idx in tasks:
         token_end = token_start + chunk_len
         for hv in range(value_heads):
-            du_chunk = du[batch_idx, hv, token_start:token_end].to(calc_dtype)
-            vb_chunk = vb[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            du_chunk = du[batch_idx, hv, token_start:token_end].float()
+            vb_chunk = vb[batch_idx, hv, token_start:token_end].float()
             if nt_first:
                 index = (batch_idx, state_chunk_idx, hv)
             else:
                 index = (batch_idx, hv, state_chunk_idx)
-            h_chunk = h[index].to(calc_dtype)
-            dh_chunk = dh[index].to(calc_dtype)
+            h_chunk = h[index].float()
+            dh_chunk = dh[index].float()
             if state_v_first:
                 h_chunk = h_chunk.transpose(-1, -2)
                 dh_chunk = dh_chunk.transpose(-1, -2)
@@ -192,56 +185,56 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
                 d_a_u, diagonal=-1
             )
             dw0 = torch.matmul(du_chunk, h_chunk.transpose(-1, -2)).to(work_dtype)
-            kbg_chunk = kbg[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            kbg_chunk = kbg[batch_idx, hv, token_start:token_end].float()
             d_a_w0[batch_idx, hv, token_start:token_end, :chunk_len] = torch.matmul(
-                dw0.to(calc_dtype), kbg_chunk.transpose(-1, -2)
+                dw0.float(), kbg_chunk.transpose(-1, -2)
             ).to(work_dtype)
-            a_chunk = a[batch_idx, hv, token_start:token_end, :chunk_len].to(calc_dtype)
+            a_chunk = a[batch_idx, hv, token_start:token_end, :chunk_len].float()
             dvb_chunk = torch.matmul(a_chunk.transpose(-1, -2), du_chunk).to(work_dtype)
             dvb[batch_idx, hv, token_start:token_end] = dvb_chunk
-            d_a0_chunk = store_vector(
-                d_a_u_lower[batch_idx, hv, token_start:token_end, :chunk_len].to(calc_dtype)
+            d_a0_chunk = (
+                d_a_u_lower[batch_idx, hv, token_start:token_end, :chunk_len].float()
                 - torch.tril(
-                    d_a_w0[batch_idx, hv, token_start:token_end, :chunk_len].to(calc_dtype),
+                    d_a_w0[batch_idx, hv, token_start:token_end, :chunk_len].float(),
                     diagonal=-1,
                 )
-            )
+            ).to(work_dtype)
             d_a0[batch_idx, hv, token_start:token_end, :chunk_len] = d_a0_chunk
             d_a1_chunk = torch.matmul(
-                d_a0_chunk.to(calc_dtype), a_chunk.transpose(-1, -2)
+                d_a0_chunk.float(), a_chunk.transpose(-1, -2)
             ).to(work_dtype)
             d_a1[batch_idx, hv, token_start:token_end, :chunk_len] = d_a1_chunk
-            k_chunk = k_hv[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            k_chunk = k_hv[batch_idx, hv, token_start:token_end].float()
             a2[batch_idx, hv, token_start:token_end, :chunk_len] = torch.matmul(
                 k_chunk, k_chunk.transpose(-1, -2)
             ).to(work_dtype)
-            dv[batch_idx, hv, token_start:token_end] = store_vector(
-                dvb_chunk.to(calc_dtype) * beta_fp32[batch_idx, hv, token_start:token_end, None]
-            )
+            dv[batch_idx, hv, token_start:token_end] = (
+                dvb_chunk.float() * beta_fp32[batch_idx, hv, token_start:token_end, None]
+            ).to(work_dtype)
             db_v_partial[batch_idx, hv, token_start:token_end] = (
-                dvb_chunk.to(calc_dtype) * v[batch_idx, hv, token_start:token_end].to(calc_dtype)
+                dvb_chunk.float() * v[batch_idx, hv, token_start:token_end].float()
             ).sum(dim=-1)
             d_a2[batch_idx, hv, token_start:token_end, :chunk_len] = torch.matmul(
-                a_chunk.transpose(-1, -2), d_a1_chunk.to(calc_dtype)
+                a_chunk.transpose(-1, -2), d_a1_chunk.float()
             ).to(work_dtype)
             dkbg0[batch_idx, hv, token_start:token_end] = torch.matmul(
-                a_chunk.transpose(-1, -2), dw0.to(calc_dtype)
+                a_chunk.transpose(-1, -2), dw0.float()
             ).to(work_dtype)
-            gate_chunk = store_vector(gate_exp(
+            gate_chunk = gate_exp(
                 g_fp32[batch_idx, hv, token_start:token_end, None]
                 - g_fp32[batch_idx, hv, None, token_start:token_end]
-            ))
-            d_a_chunk = store_vector(torch.tril(
-                -(d_a2[batch_idx, hv, token_start:token_end, :chunk_len].to(calc_dtype)
-                  * gate_chunk.to(calc_dtype)), diagonal=-1,
-            ))
+            ).to(work_dtype)
+            d_a_chunk = torch.tril(
+                -(d_a2[batch_idx, hv, token_start:token_end, :chunk_len].float()
+                  * gate_chunk.float()), diagonal=-1,
+            ).to(work_dtype)
             d_a[batch_idx, hv, token_start:token_end, :chunk_len] = d_a_chunk
-            ad_a_chunk = store_vector(
-                d_a_chunk.to(calc_dtype)
-                * a2[batch_idx, hv, token_start:token_end, :chunk_len].to(calc_dtype)
+            ad_a_chunk = (
+                d_a_chunk.float()
+                * a2[batch_idx, hv, token_start:token_end, :chunk_len].float()
                 * beta_fp32[batch_idx, hv, token_start:token_end, None]
-            )
-            dkbg0_chunk = dkbg0[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            ).to(work_dtype)
+            dkbg0_chunk = dkbg0[batch_idx, hv, token_start:token_end].float()
             g_exp_chunk = g_exp[batch_idx, hv, token_start:token_end]
             bg_chunk = bg[batch_idx, hv, token_start:token_end]
             db0_chunk = -(dkbg0_chunk * k_chunk * g_exp_chunk[:, None]).sum(dim=-1)
@@ -250,87 +243,87 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
                 db0_chunk + db_v_partial[batch_idx, hv, token_start:token_end]
             )
             dg_prepare[batch_idx, hv, token_start:token_end] = (
-                dg0_chunk + ad_a_chunk.to(calc_dtype).sum(dim=-1) - ad_a_chunk.to(calc_dtype).sum(dim=-2)
+                dg0_chunk + ad_a_chunk.float().sum(dim=-1) - ad_a_chunk.float().sum(dim=-2)
             )
-            kb_chunk = kb[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            kb_chunk = kb[batch_idx, hv, token_start:token_end].float()
             dkb[batch_idx, hv, token_start:token_end] = torch.matmul(
-                d_a_chunk.to(calc_dtype), k_chunk
+                d_a_chunk.float(), k_chunk
             ).to(work_dtype)
             dkb_t[batch_idx, hv, token_start:token_end] = torch.matmul(
-                d_a_chunk.to(calc_dtype).transpose(-1, -2), kb_chunk
+                d_a_chunk.float().transpose(-1, -2), kb_chunk
             ).to(work_dtype)
             state_term[batch_idx, hv, state_chunk_idx] = (
                 h_chunk * dh_chunk
             ).sum() * gate_exp(g_fp32[batch_idx, hv, token_end - 1])
             ds0[batch_idx, hv, token_start:token_end, :chunk_len] = torch.matmul(
-                do[batch_idx, hv, token_start:token_end].to(calc_dtype),
-                v_new[batch_idx, hv, token_start:token_end].to(calc_dtype).transpose(-1, -2),
+                do[batch_idx, hv, token_start:token_end].float(),
+                v_new[batch_idx, hv, token_start:token_end].float().transpose(-1, -2),
             ).to(work_dtype)
-            dk_prepare_chunk = store_vector(
-                -dkbg0[batch_idx, hv, token_start:token_end].to(calc_dtype) * bg_chunk[:, None]
-                + dkb[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            dk_prepare_chunk = (
+                -dkbg0[batch_idx, hv, token_start:token_end].float() * bg_chunk[:, None]
+                + dkb[batch_idx, hv, token_start:token_end].float()
                 * beta_fp32[batch_idx, hv, token_start:token_end, None]
-                + dkb_t[batch_idx, hv, token_start:token_end].to(calc_dtype)
-            )
+                + dkb_t[batch_idx, hv, token_start:token_end].float()
+            ).to(work_dtype)
             dk_prepare[batch_idx, hv, token_start:token_end] = dk_prepare_chunk
             db_prepare_chunk = db_v[batch_idx, hv, token_start:token_end] + (
-                dkb[batch_idx, hv, token_start:token_end].to(calc_dtype) * k_chunk
+                dkb[batch_idx, hv, token_start:token_end].float() * k_chunk
             ).sum(dim=-1)
             db_prepare[batch_idx, hv, token_start:token_end] = db_prepare_chunk
             if use_beta_sigmoid_in_kernel:
                 beta_sigmoid = torch.sigmoid(
-                    beta_raw[batch_idx, hv, token_start:token_end].to(calc_dtype)
+                    beta_raw[batch_idx, hv, token_start:token_end].float()
                 )
                 dbeta[batch_idx, hv, token_start:token_end] = (
                     db_prepare_chunk * beta_sigmoid * (1.0 - beta_sigmoid)
                 )
             else:
                 dbeta[batch_idx, hv, token_start:token_end] = db_prepare_chunk
-            ds_chunk = store_vector(
+            ds_chunk = (
                 torch.tril(
-                    ds0[batch_idx, hv, token_start:token_end, :chunk_len].to(calc_dtype)
-                    * gate_chunk.to(calc_dtype)
+                    ds0[batch_idx, hv, token_start:token_end, :chunk_len].float()
+                    * gate_chunk.float()
                 ) * scale
-            )
+            ).to(work_dtype)
             ds[batch_idx, hv, token_start:token_end, :chunk_len] = ds_chunk
-            do_g_chunk = store_vector(
-                do[batch_idx, hv, token_start:token_end].to(calc_dtype)
+            do_g_chunk = (
+                do[batch_idx, hv, token_start:token_end].float()
                 * g_exp_chunk[:, None] * scale
-            )
+            ).to(work_dtype)
             do_g[batch_idx, hv, token_start:token_end] = do_g_chunk
             decay_chunk = gate_exp(
                 g_fp32[batch_idx, hv, token_end - 1]
                 - g_fp32[batch_idx, hv, token_start:token_end]
             )
-            v_decay_chunk = store_vector(
-                v_new[batch_idx, hv, token_start:token_end].to(calc_dtype) * decay_chunk[:, None]
-            )
+            v_decay_chunk = (
+                v_new[batch_idx, hv, token_start:token_end].float() * decay_chunk[:, None]
+            ).to(work_dtype)
             v_decay[batch_idx, hv, token_start:token_end] = v_decay_chunk
-            q_chunk = q[batch_idx, hv // head_ratio, token_start:token_end].to(calc_dtype)
+            q_chunk = q[batch_idx, hv // head_ratio, token_start:token_end].float()
             dq_hv[batch_idx, hv, token_start:token_end] = (
-                torch.matmul(do_g_chunk.to(calc_dtype), h_chunk.transpose(-1, -2))
-                + torch.matmul(ds_chunk.to(calc_dtype), k_chunk)
+                torch.matmul(do_g_chunk.float(), h_chunk.transpose(-1, -2))
+                + torch.matmul(ds_chunk.float(), k_chunk)
             ).to(work_dtype)
             dk_base[batch_idx, hv, token_start:token_end] = torch.matmul(
-                v_decay_chunk.to(calc_dtype),
+                v_decay_chunk.float(),
                 dh_chunk.transpose(-1, -2),
             ).to(work_dtype)
             dk_intra[batch_idx, hv, token_start:token_end] = torch.matmul(
-                ds_chunk.to(calc_dtype).transpose(-1, -2), q_chunk
+                ds_chunk.float().transpose(-1, -2), q_chunk
             ).to(work_dtype)
-            dk_raw_chunk = store_vector(
-                dk_base[batch_idx, hv, token_start:token_end].to(calc_dtype)
-                + dk_intra[batch_idx, hv, token_start:token_end].to(calc_dtype)
-                + dk_prepare_chunk.to(calc_dtype)
-            )
+            dk_raw_chunk = (
+                dk_base[batch_idx, hv, token_start:token_end].float()
+                + dk_intra[batch_idx, hv, token_start:token_end].float()
+                + dk_prepare_chunk.float()
+            ).to(work_dtype)
             dk_raw_hv[batch_idx, hv, token_start:token_end] = dk_raw_chunk
             base_dot = (
-                dk_base[batch_idx, hv, token_start:token_end].to(calc_dtype) * k_chunk
+                dk_base[batch_idx, hv, token_start:token_end].float() * k_chunk
             ).sum(dim=-1)
             dg_chunk = (
-                (dq_hv[batch_idx, hv, token_start:token_end].to(calc_dtype) * q_chunk).sum(dim=-1)
+                (dq_hv[batch_idx, hv, token_start:token_end].float() * q_chunk).sum(dim=-1)
                 - base_dot
-                - (dk_intra[batch_idx, hv, token_start:token_end].to(calc_dtype) * k_chunk).sum(dim=-1)
+                - (dk_intra[batch_idx, hv, token_start:token_end].float() * k_chunk).sum(dim=-1)
                 + dg_prepare[batch_idx, hv, token_start:token_end]
             )
             dg_chunk[-1] += state_term[batch_idx, hv, state_chunk_idx] + base_dot.sum()
@@ -343,21 +336,21 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
             dq_acc = dq_hv[batch_idx, hv_start, token_start:token_end].clone()
             dk_acc = dk_raw_hv[batch_idx, hv_start, token_start:token_end].clone()
             for hv in range(hv_start + 1, min(hv_start + head_ratio, value_heads)):
-                dq_acc = store_vector(
-                    dq_acc.to(calc_dtype) + dq_hv[batch_idx, hv, token_start:token_end].to(calc_dtype)
-                )
-                dk_acc = store_vector(
-                    dk_acc.to(calc_dtype) + dk_raw_hv[batch_idx, hv, token_start:token_end].to(calc_dtype)
-                )
+                dq_acc = (
+                    dq_acc.float() + dq_hv[batch_idx, hv, token_start:token_end].float()
+                ).to(work_dtype)
+                dk_acc = (
+                    dk_acc.float() + dk_raw_hv[batch_idx, hv, token_start:token_end].float()
+                ).to(work_dtype)
             dq[batch_idx, hk, token_start:token_end] = dq_acc
             dk[batch_idx, hk, token_start:token_end] = dk_acc
 
     if use_qk_l2_norm_in_kernel:
-        q_fp32, dq_fp32 = q.to(calc_dtype), dq.to(calc_dtype)
+        q_fp32, dq_fp32 = q.float(), dq.float()
         q_dot = (dq_fp32 * q_fp32).sum(dim=-1, keepdim=True)
-        dq = store_vector((dq_fp32 - q_fp32 * q_dot) * q_rstd[..., None], q.dtype)
-        k_fp32, dk_fp32 = k.to(calc_dtype), dk.to(calc_dtype)
+        dq = ((dq_fp32 - q_fp32 * q_dot) * q_rstd[..., None]).to(q.dtype)
+        k_fp32, dk_fp32 = k.float(), dk.float()
         k_dot = (dk_fp32 * k_fp32).sum(dim=-1, keepdim=True)
-        dk = store_vector((dk_fp32 - k_fp32 * k_dot) * k_rstd[..., None], k.dtype)
+        dk = ((dk_fp32 - k_fp32 * k_dot) * k_rstd[..., None]).to(k.dtype)
 
-    return dq, dk, dv, store_vector(dbeta, beta.dtype), store_vector(dg, g.dtype)
+    return dq, dk, dv, dbeta.to(beta.dtype), dg.to(g.dtype)
