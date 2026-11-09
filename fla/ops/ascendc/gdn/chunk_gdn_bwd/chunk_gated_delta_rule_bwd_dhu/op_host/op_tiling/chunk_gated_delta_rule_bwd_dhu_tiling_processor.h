@@ -25,14 +25,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../../common/host_utils/log.h"
 
 using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
@@ -164,19 +157,19 @@ private:
                                              const char *inputName)
     {
         if (curShape == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(ctx_.nodeName, inputName);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, inputName);
             return ge::GRAPH_FAILED;
         }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         if (dimNum != validDimNum) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, inputName,
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName,
                 "rank=" + std::to_string(dimNum), "rank=" + std::to_string(validDimNum));
             return ge::GRAPH_FAILED;
         }
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
             if (storageShape.GetDim(dimIndex) == 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, inputName, "zero dim", "non-zero dim");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName, "zero dim", "non-zero dim");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -189,7 +182,7 @@ private:
         const size_t dim1 = shape1.GetDim(dimIndex);
         const size_t dim2 = shape2.GetDim(dimIndex);
         if (dim1 != dim2) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(ctx_.nodeName,
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName,
                 (std::string(inputName1) + "," + inputName2).c_str(), "dim mismatch", "same shape");
             return ge::GRAPH_FAILED;
         }
@@ -340,11 +333,11 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG == ctx_.hasGk) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(ctx_.nodeName, "g,gk");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, "g,gk");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(ctx_.nodeName, "g,gk",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g,gk",
                 fla_npu::host_utils::DfxDtypeString(ctx_.gDataType), "FLOAT or match q/k");
             return ge::GRAPH_FAILED;
         }
@@ -435,7 +428,7 @@ private:
         tiling_.hasDh0 = ctx_.hasDh0 ? 1 : 0;
         tiling_.hasGk = ctx_.hasGk ? 1 : 0;
         if (ctx_.hasGk && !ctx_.useExp2) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "useExp2", "false", "true when gk is provided");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "useExp2", "false", "true when gk is provided");
             return ge::GRAPH_FAILED;
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;

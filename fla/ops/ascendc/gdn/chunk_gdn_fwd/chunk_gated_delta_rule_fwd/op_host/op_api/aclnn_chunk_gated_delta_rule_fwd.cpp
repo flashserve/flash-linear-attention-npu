@@ -391,7 +391,7 @@ static aclnnStatus CheckRequiredInputs(const ChunkGatedDeltaRuleFwdParams &param
         params.q, params.k, params.v, params.g, params.beta, params.oOut};
     for (size_t idx = 0; idx < required.size(); ++idx) {
         if (tensors[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_ENTITY, required[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_ENTITY, required[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -427,7 +427,7 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
 static aclnnStatus CheckRank(const aclTensor *tensor, size_t rank, const char *name)
 {
     if (tensor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_ENTITY, name);
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_ENTITY, name);
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     CHECK_COND(tensor->GetViewShape().GetDimNum() == rank, ACLNN_ERR_PARAM_INVALID,
@@ -513,7 +513,7 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
 {
 
     if (params.layout == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_FWD_ENTITY, "layout");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_ENTITY, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
 
     }

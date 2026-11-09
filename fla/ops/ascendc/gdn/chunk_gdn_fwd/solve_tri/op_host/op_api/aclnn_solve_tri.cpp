@@ -36,11 +36,11 @@ static constexpr const char *SOLVE_TRI_ENTITY = "aclnnSolveTri";
  static aclnnStatus CheckNotNull(SolveTriParams params)
  {
      if (params.x == nullptr) {
-         OP_LOGE_LIBOPAPI_REPORT_IMPAT(SOLVE_TRI_ENTITY, "x");
+         OP_LOGE_LIBOPAPI_REPORT_COMPAT(SOLVE_TRI_ENTITY, "x");
          return ACLNN_ERR_PARAM_NULLPTR;
      }
      if (params.xOut == nullptr) {
-         OP_LOGE_LIBOPAPI_REPORT_IMPAT(SOLVE_TRI_ENTITY, "xOut");
+         OP_LOGE_LIBOPAPI_REPORT_COMPAT(SOLVE_TRI_ENTITY, "xOut");
          return ACLNN_ERR_PARAM_NULLPTR;
      }
      return ACLNN_SUCCESS;

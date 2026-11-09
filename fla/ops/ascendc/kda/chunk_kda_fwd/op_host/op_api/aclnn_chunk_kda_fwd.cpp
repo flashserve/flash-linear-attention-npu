@@ -223,7 +223,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
 {
     if (layout == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "layout");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(layout, "BSND") == 0) {
@@ -235,7 +235,7 @@ static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
     } else if (std::strcmp(layout, "NTD") == 0) {
         parsed = KdaFwdLayout::NTD;
     } else {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "layout", layout, "BSND,BNSD,TND,NTD");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "layout", layout, "BSND,BNSD,TND,NTD");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -247,22 +247,22 @@ aclnnStatus CheckCuSeqlens(const aclIntArray *cuSeqlens, int64_t seqlen)
         return ACLNN_SUCCESS;
     }
     if (cuSeqlens->Size() < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional", std::to_string(cuSeqlens->Size()), ">=2");
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional", std::to_string(cuSeqlens->Size()), ">=2");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((*cuSeqlens)[0] != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional[0]", std::to_string((*cuSeqlens)[0]), "0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional[0]", std::to_string((*cuSeqlens)[0]), "0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((*cuSeqlens)[cuSeqlens->Size() - 1] != seqlen) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional[last]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional[last]",
                               std::to_string((*cuSeqlens)[cuSeqlens->Size() - 1]),
                               std::to_string(seqlen));
         return ACLNN_ERR_PARAM_INVALID;
     }
     for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
         if ((*cuSeqlens)[idx] > (*cuSeqlens)[idx + 1]) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional[idx],cuSeqlensOptional[idx+1]",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional[idx],cuSeqlensOptional[idx+1]",
                                    std::to_string((*cuSeqlens)[idx]) + "," +
                                        std::to_string((*cuSeqlens)[idx + 1]),
                                    "cu_seqlens must be nondecreasing");
@@ -291,12 +291,12 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
         return ACLNN_SUCCESS;
     }
     if (cuSeqlens == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(KDA_FWD_ENTITY, "chunkIndicesOptional,cuSeqlensOptional", "present,missing",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(KDA_FWD_ENTITY, "chunkIndicesOptional,cuSeqlensOptional", "present,missing",
                                "chunk_indices requires cu_seqlens");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (chunkIndices->Size() != static_cast<size_t>(totalChunks) * 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(KDA_FWD_ENTITY, "chunkIndicesOptional", std::to_string(chunkIndices->Size()),
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(KDA_FWD_ENTITY, "chunkIndicesOptional", std::to_string(chunkIndices->Size()),
                                  std::to_string(static_cast<size_t>(totalChunks) * 2));
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -307,7 +307,7 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
             if ((*chunkIndices)[offset] != static_cast<int64_t>(seq) ||
                 (*chunkIndices)[offset + 1] != chunk) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(KDA_FWD_ENTITY,
+                OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(KDA_FWD_ENTITY,
                     "chunkIndicesOptional[offset],chunkIndicesOptional[offset+1]",
                     std::to_string((*chunkIndices)[offset]) + "," +
                         std::to_string((*chunkIndices)[offset + 1]),
@@ -330,20 +330,20 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
     const char *rankedNames[] = {"q", "k", "v", "g"};
     for (size_t idx = 0; idx < sizeof(rankedInputs) / sizeof(rankedInputs[0]); ++idx) {
         if (Rank(rankedInputs[idx]) != tensorRank) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(KDA_FWD_ENTITY,
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(KDA_FWD_ENTITY,
                 rankedNames[idx], std::to_string(Rank(rankedInputs[idx])) + "D",
                 "rank must be " + std::to_string(tensorRank) + " for the selected layout");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (Rank(params.beta) != betaRank) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(KDA_FWD_ENTITY,
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(KDA_FWD_ENTITY,
             "beta", std::to_string(Rank(params.beta)) + "D",
             "rank must be " + std::to_string(betaRank) + " for the selected layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!SameShape(params.q, params.k)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(KDA_FWD_ENTITY, "q,k",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(KDA_FWD_ENTITY, "q,k",
                                "q=" + DfxTensorShapeString(params.q) + ",k=" +
                                    DfxTensorShapeString(params.k),
                                "q and k must have identical shape");
@@ -361,15 +361,15 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         const std::string expectedG = fla_npu::host_utils::DfxMakeShapeString({info.seqlen, info.hvNum, info.kDim});
         const std::string expectedBeta = fla_npu::host_utils::DfxMakeShapeString({info.seqlen, info.hvNum});
         if (!HasShape(params.v, {info.seqlen, info.hvNum, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.seqlen, info.hvNum, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.seqlen, info.hvNum})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else if (layout == KdaFwdLayout::NTD) {
@@ -383,15 +383,15 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         const std::string expectedG = fla_npu::host_utils::DfxMakeShapeString({info.hvNum, info.seqlen, info.kDim});
         const std::string expectedBeta = fla_npu::host_utils::DfxMakeShapeString({info.hvNum, info.seqlen});
         if (!HasShape(params.v, {info.hvNum, info.seqlen, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.hvNum, info.seqlen, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.hvNum, info.seqlen})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else if (layout == KdaFwdLayout::BSND) {
@@ -408,15 +408,15 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         const std::string expectedBeta =
             fla_npu::host_utils::DfxMakeShapeString({info.batch, info.seqlen, info.hvNum});
         if (!HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.batch, info.seqlen, info.hvNum})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
@@ -433,15 +433,15 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         const std::string expectedBeta =
             fla_npu::host_utils::DfxMakeShapeString({info.batch, info.hvNum, info.seqlen});
         if (!HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "v", DfxTensorShapeString(params.v), expectedV);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "g", DfxTensorShapeString(params.g), expectedG);
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!HasShape(params.beta, {info.batch, info.hvNum, info.seqlen})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "beta", DfxTensorShapeString(params.beta), expectedBeta);
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -456,11 +456,11 @@ aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
 {
     const DataType dataType = params.q->GetDataType();
     if (dataType != DataType::DT_FLOAT16 && dataType != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "q", fla_npu::host_utils::DfxDtypeString(dataType), "FLOAT16,BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "q", fla_npu::host_utils::DfxDtypeString(dataType), "FLOAT16,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.k->GetDataType() != dataType || params.v->GetDataType() != dataType) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(KDA_FWD_ENTITY, "k,v",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(KDA_FWD_ENTITY, "k,v",
                                "q=" + fla_npu::host_utils::DfxDtypeString(dataType) + ",k=" +
                                    fla_npu::host_utils::DfxDtypeString(params.k->GetDataType()) + ",v=" +
                                    fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()),
@@ -469,31 +469,31 @@ aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
     }
     const DataType gateType = params.g->GetDataType();
     if (gateType != DataType::DT_FLOAT && gateType != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateType), "FLOAT,BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateType), "FLOAT,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType betaType = params.beta->GetDataType();
     if (betaType != DataType::DT_FLOAT && betaType != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaType), "FLOAT,BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaType), "FLOAT,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.aLogOptional != nullptr) {
         if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "aLogOptional",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "aLogOptional",
                                   fla_npu::host_utils::DfxDtypeString(params.aLogOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.dtBiasOptional != nullptr) {
         if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "dtBiasOptional",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "dtBiasOptional",
                                   fla_npu::host_utils::DfxDtypeString(params.dtBiasOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.initialStateOptional != nullptr) {
         if (params.initialStateOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "initialStateOptional",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "initialStateOptional",
                                   fla_npu::host_utils::DfxDtypeString(params.initialStateOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -513,7 +513,7 @@ aclnnStatus CheckStateShape(const aclTensor *state, const char *name, const KdaS
         const std::string expected =
             stateVFirst ? fla_npu::host_utils::DfxMakeShapeString({info.seqNum, info.hvNum, info.vDim, info.kDim})
                         : fla_npu::host_utils::DfxMakeShapeString({info.seqNum, info.hvNum, info.kDim, info.vDim});
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, name, DfxTensorShapeString(state), expected);
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, name, DfxTensorShapeString(state), expected);
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -526,11 +526,11 @@ aclnnStatus CheckOptionalOutput(const aclTensor *output, const char *name, DataT
         return ACLNN_SUCCESS;
     }
     if (!HasShape(output, expectedDims)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, name, DfxTensorShapeString(output), fla_npu::host_utils::DfxMakeShapeString(expectedDims));
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, name, DfxTensorShapeString(output), fla_npu::host_utils::DfxMakeShapeString(expectedDims));
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (output->GetDataType() != expectedDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, name, fla_npu::host_utils::DfxDtypeString(output->GetDataType()), fla_npu::host_utils::DfxDtypeString(expectedDtype));
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, name, fla_npu::host_utils::DfxDtypeString(output->GetDataType()), fla_npu::host_utils::DfxDtypeString(expectedDtype));
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -606,7 +606,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
               ACLNN_ERR_PARAM_INVALID);
     if (params.finalStateOut != nullptr) {
         if (params.finalStateOut->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_FWD_ENTITY, "finalStateOut",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_FWD_ENTITY, "finalStateOut",
                                   fla_npu::host_utils::DfxDtypeString(params.finalStateOut->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -620,22 +620,22 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     const char *requiredInputNames[] = {"q", "k", "v", "g", "beta"};
     for (size_t idx = 0; idx < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++idx) {
         if (requiredInputs[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, requiredInputNames[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, requiredInputNames[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
     if (params.attnOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "attnOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "attnOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     // aqkOut 对应 op def 的 REQUIRED 输出；akkOut 对应 OPTIONAL，省略时算子内部
     // 自建不导出的占位张量，V2 组合入口随之使用 Prepare 的 none 档。
     if (params.aqkOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "aqkOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "aqkOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.chunkSize != 64) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     auto status = ParseLayout(params.layout, layout);
@@ -649,21 +649,21 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
     if (info.batch <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "q.shape[B]", std::to_string(info.batch), ">0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "q.shape[B]", std::to_string(info.batch), ">0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (info.seqlen <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "q.shape[T]", std::to_string(info.seqlen), ">0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "q.shape[T]", std::to_string(info.seqlen), ">0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (info.hNum <= 0 || info.hvNum < info.hNum || info.hvNum % info.hNum != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(KDA_FWD_ENTITY, "H,HV",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(KDA_FWD_ENTITY, "H,HV",
                                std::to_string(info.hNum) + "," + std::to_string(info.hvNum),
                                "H and HV must be positive, HV >= H, and HV must be divisible by H");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (info.hNum > MAX_KDA_HEAD_NUM || info.hvNum > MAX_KDA_HEAD_NUM) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(KDA_FWD_ENTITY, "H,HV",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(KDA_FWD_ENTITY, "H,HV",
                                std::to_string(info.hNum) + "," + std::to_string(info.hvNum),
                                "H and HV must be <= 128");
         return ACLNN_ERR_PARAM_INVALID;
@@ -674,7 +674,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         (info.kDim == KDA_FWD_KV_DIM_SMALL && info.vDim == KDA_FWD_KV_DIM_SMALL) ||
         (info.kDim == KDA_FWD_KV_DIM_LARGE && info.vDim == KDA_FWD_KV_DIM_LARGE);
     if (!kvDimSupported) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(KDA_FWD_ENTITY, "q.shape[K],v.shape[V]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(KDA_FWD_ENTITY, "q.shape[K],v.shape[V]",
                                "K=" + std::to_string(info.kDim) + ",V=" + std::to_string(info.vDim),
                                "K and V must both be 64 or both be 128");
         return ACLNN_ERR_PARAM_INVALID;
@@ -688,12 +688,12 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         return status;
     }
     if (params.cuSeqlensOptional != nullptr && !info.isRank3 && info.batch != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_IMPAT(KDA_FWD_ENTITY, "q.shape[0]", std::to_string(info.batch),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(KDA_FWD_ENTITY, "q.shape[0]", std::to_string(info.batch),
                                         "rank4 input with cu_seqlens requires B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.cuSeqlensOptional != nullptr && info.seqNum > MAX_KDA_VARLEN_SEQUENCES) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional.size", std::to_string(info.seqNum), "<=1024");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "cuSeqlensOptional.size", std::to_string(info.seqNum), "<=1024");
         return ACLNN_ERR_PARAM_INVALID;
     }
     status = CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
@@ -710,34 +710,34 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     // allowNegEigval 依赖 in-kernel beta sigmoid。
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     if (!std::isfinite(epsilonFp32) || epsilonFp32 <= 0.0F) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "epsilon", std::to_string(params.epsilon), "positive finite number");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "epsilon", std::to_string(params.epsilon), "positive finite number");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.allowNegEigval && !params.useBetaSigmoidInKernel) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_IMPAT(KDA_FWD_ENTITY, "allowNegEigval", "true",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(KDA_FWD_ENTITY, "allowNegEigval", "true",
                                         "allowNegEigval=true requires useBetaSigmoidInKernel=true");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.useGateInKernel) {
         if (params.aLogOptional == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "aLogOptional");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "aLogOptional");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         if (!HasShape(params.aLogOptional, {info.hvNum})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "aLogOptional", DfxTensorShapeString(params.aLogOptional),
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "aLogOptional", DfxTensorShapeString(params.aLogOptional),
                                   fla_npu::host_utils::DfxMakeShapeString({info.hvNum}));
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (params.dtBiasOptional != nullptr) {
             if (!HasShape(params.dtBiasOptional, {info.hvNum * info.kDim})) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_FWD_ENTITY, "dtBiasOptional", DfxTensorShapeString(params.dtBiasOptional),
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_FWD_ENTITY, "dtBiasOptional", DfxTensorShapeString(params.dtBiasOptional),
                                       fla_npu::host_utils::DfxMakeShapeString({info.hvNum * info.kDim}));
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }
         if (params.safeGate) {
             if (params.lowerBound < -5.0 || params.lowerBound >= 0.0) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_FWD_ENTITY, "lowerBound", std::to_string(params.lowerBound),
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_FWD_ENTITY, "lowerBound", std::to_string(params.lowerBound),
                                       "[-5,0) when safeGate is true");
                 return ACLNN_ERR_PARAM_INVALID;
             }
@@ -911,11 +911,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         safeGate, lowerBound, useGateInKernel, stateVFirst, 1.0e-6, false, false, false, true,
         attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(
@@ -1201,11 +1201,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
         qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_FWD_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(
@@ -1235,7 +1235,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
     if (!CanUseKdaFwdV2Path(params, info)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_IMPAT(KDA_FWD_ENTITY,
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(KDA_FWD_ENTITY,
             "entry", "aclnnChunkKdaFwdV2",
             "requires BF16 q/k/v, K=V=128, chunk_size=64, contiguous outputs, and strictly "
             "increasing cu_seqlens; use aclnnChunkKdaFwd instead");

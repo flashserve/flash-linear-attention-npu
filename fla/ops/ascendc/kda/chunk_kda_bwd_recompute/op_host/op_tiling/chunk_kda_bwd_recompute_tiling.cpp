@@ -9,14 +9,7 @@
 #include <register/op_impl_registry.h>
 #include "platform/soc_spec.h"
 #include "tiling_base/tiling_templates_registry.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 
 namespace optiling {
@@ -31,7 +24,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
     if (inputLayout == nullptr ||
         (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "inputLayout",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "inputLayout",
                                             inputLayout == nullptr ? "null" : inputLayout, "BNSD or NTD");
         return ge::GRAPH_FAILED;
     }
@@ -53,7 +46,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
 
     const bool isAscend950 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     if (!isAscend950 && context->GetOutputShape(4) == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "gk output buffer");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "gk output buffer");
         return ge::GRAPH_FAILED;
     }
     const char *modelLayout = attrPtr->GetStr(5);
@@ -63,7 +56,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const bool qkTm = modelTm && !(qkHeadAttr && *qkHeadAttr);
     if (mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
                   std::strcmp(modelLayout, "NTD") != 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "modelLayout",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "modelLayout",
             modelLayout == nullptr ? "null" : modelLayout, "BSND/TND or BNSD/NTD");
         return ge::GRAPH_FAILED;
     }
@@ -77,7 +70,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
             if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
             if (input->GetStorageShape() != expected) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "Recompute input", "mismatch", "mixed-layout");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "Recompute input", "mismatch", "mixed-layout");
                 return ge::GRAPH_FAILED;
             }
         }

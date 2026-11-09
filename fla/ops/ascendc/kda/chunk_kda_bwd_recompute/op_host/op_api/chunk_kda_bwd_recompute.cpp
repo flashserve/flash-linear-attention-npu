@@ -37,7 +37,7 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
     // Reserved attribute: tensors still use the existing rank-4 BNSD contract.
     if (!inputLayout || (std::strcmp(inputLayout, "BNSD") != 0 &&
                          std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT("ChunkKdaBwdRecompute", "inputLayout",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT("ChunkKdaBwdRecompute", "inputLayout",
                                             inputLayout == nullptr ? "null" : inputLayout, "BNSD or NTD");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }

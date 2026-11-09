@@ -54,23 +54,23 @@ struct ChunkBwdDvLocalParams {
 static aclnnStatus CheckNotNull(ChunkBwdDvLocalParams params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dO == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "dO");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "dO");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.out == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "out");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "out");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -84,20 +84,20 @@ static aclnnStatus CheckFormat(ChunkBwdDvLocalParams params)
 static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
 {
     if (params.chunkSize <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkSize", std::to_string(params.chunkSize), "positive");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkSize", std::to_string(params.chunkSize), "positive");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.chunkSize != 64 && params.chunkSize != 128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64 or 128");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64 or 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.q->GetViewShape().GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q",
             "rank=" + std::to_string(params.q->GetViewShape().GetDimNum()), "4 [B, H, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.chunkIndicesOptional != nullptr && params.cuSeqlensOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices", "present", "requires cu_seqlens in variable-length mode");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices", "present", "requires cu_seqlens in variable-length mode");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.cuSeqlensOptional == nullptr) {
@@ -105,17 +105,17 @@ static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
     }
     const aclIntArray &cuSeqlens = *params.cuSeqlensOptional;
     if (cuSeqlens.Size() < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens",
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens",
             std::to_string(cuSeqlens.Size()), "at least 2");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t totalTokens = params.q->GetViewShape().GetDim(2);
     if (cuSeqlens[0] != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens[0]", std::to_string(cuSeqlens[0]), "0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens[0]", std::to_string(cuSeqlens[0]), "0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (cuSeqlens[cuSeqlens.Size() - 1] != totalTokens) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens[-1]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens[-1]",
             std::to_string(cuSeqlens[cuSeqlens.Size() - 1]),
             "equal q sequence length " + std::to_string(totalTokens));
         return ACLNN_ERR_PARAM_INVALID;
@@ -123,7 +123,7 @@ static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
     int64_t totalChunks = 0;
     for (size_t seq = 0; seq + 1 < cuSeqlens.Size(); ++seq) {
         if (cuSeqlens[seq] < 0 || cuSeqlens[seq + 1] < cuSeqlens[seq]) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens", "nondecreasing, non-negative",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens", "nondecreasing, non-negative",
                 "cu_seqlens must be nondecreasing and non-negative");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -131,16 +131,16 @@ static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
         totalChunks += (length + params.chunkSize - 1) / params.chunkSize;
     }
     if (totalChunks <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens", "empty", "at least one chunk");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens", "empty", "at least one chunk");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.chunkIndicesOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclIntArray &chunkIndices = *params.chunkIndicesOptional;
     if (chunkIndices.Size() != static_cast<size_t>(totalChunks) * 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices",
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices",
             std::to_string(chunkIndices.Size()),
             std::to_string(totalChunks * 2));
         return ACLNN_ERR_PARAM_INVALID;
@@ -152,7 +152,7 @@ static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
             if (chunkIndices[offset] != static_cast<int64_t>(seq) ||
                 chunkIndices[offset + 1] != chunk) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices", "non-canonical",
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices", "non-canonical",
                     "canonical sequence-major chunk order");
                 return ACLNN_ERR_PARAM_INVALID;
             }

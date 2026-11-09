@@ -60,12 +60,12 @@ static aclnnStatus CheckNotNull(PreProcessFwdKernelMergedParams params)
     const char *names[] = {"k", "w", "u", "hmOut"};
     for (size_t idx = 0; idx < sizeof(required) / sizeof(required[0]); ++idx) {
         if (required[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(PPFM_ENTITY, names[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(PPFM_ENTITY, names[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
     if (params.cuSeqlensOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PPFM_ENTITY, "cuSeqlensOptional");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PPFM_ENTITY, "cuSeqlensOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -76,26 +76,26 @@ static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
     const auto bf16 = DataType::DT_BF16;
     const auto kDtype = params.k->GetDataType();
     if (kDtype != bf16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PPFM_ENTITY, "k", fla_npu::host_utils::DfxDtypeString(kDtype), "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "k", fla_npu::host_utils::DfxDtypeString(kDtype), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.w->GetDataType() != bf16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PPFM_ENTITY, "w", fla_npu::host_utils::DfxDtypeString(params.w->GetDataType()), "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "w", fla_npu::host_utils::DfxDtypeString(params.w->GetDataType()), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.u->GetDataType() != bf16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PPFM_ENTITY, "u", fla_npu::host_utils::DfxDtypeString(params.u->GetDataType()), "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "u", fla_npu::host_utils::DfxDtypeString(params.u->GetDataType()), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // DPLR 不支持：bg / v 是 DPLR 专用输入。两者留着 ABI 槽位，但必须为空——否则会被带到
     // 只注册未实现的 USE_BG 分派上，或者被静默当成 GDN/KDA 算错。host 侧显式拒绝。
     if (params.bg != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PPFM_ENTITY, "bg", "non-null",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PPFM_ENTITY, "bg", "non-null",
                                                    "nullptr (DPLR not implemented in this release)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.v != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PPFM_ENTITY, "v", "non-null",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PPFM_ENTITY, "v", "non-null",
                                                    "nullptr (DPLR-only; GDN/KDA takes values from u)");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -104,13 +104,13 @@ static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
     const bool gkOk = params.gk != nullptr &&
                       (params.gk->GetDataType() == DataType::DT_FLOAT || params.gk->GetDataType() == bf16);
     if (gOk == gkOk) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PPFM_ENTITY, "g,gk",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(PPFM_ENTITY, "g,gk",
                                                     "gOk=" + std::to_string(gOk) + ",gkOk=" + std::to_string(gkOk),
                                                     "exactly one of g / gk must be given");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.hmOut->GetDataType() != DataType::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PPFM_ENTITY, "hmOut",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PPFM_ENTITY, "hmOut",
                                                    fla_npu::host_utils::DfxDtypeString(params.hmOut->GetDataType()), "FLOAT");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -125,22 +125,22 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     const auto hmShape = params.hmOut->GetViewShape();
 
     if (kShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "k",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "k",
                                                              "rank=" + std::to_string(kShape.GetDimNum()), "rank must be 4 [1,HK,T,K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (wShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "w",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "w",
                                                              "rank=" + std::to_string(wShape.GetDimNum()), "rank must be 4 [1,HV,T,K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (uShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "u",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "u",
                                                              "rank=" + std::to_string(uShape.GetDimNum()), "rank must be 4 [1,HV,T,V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (hmShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "hmOut",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "hmOut",
                                                              "rank=" + std::to_string(hmShape.GetDimNum()), "rank must be 4 [Nseq,HV,K,V+K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -153,44 +153,44 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     const int64_t V = uShape.GetDim(3);
 
     if (B != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PPFM_ENTITY, "k.shape[B]", std::to_string(B),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PPFM_ENTITY, "k.shape[B]", std::to_string(B),
                                                    "1 (varlen packed)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (K != PPFM_K || V != PPFM_V) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PPFM_ENTITY, "k.shape[K],u.shape[V]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(PPFM_ENTITY, "k.shape[K],u.shape[V]",
                                                     "K=" + std::to_string(K) + ",V=" + std::to_string(V), "K=128, V=128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.chunkSize != PPFM_CHUNK) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PPFM_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PPFM_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(HK > 0 && HV > 0 && HV % HK == 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PPFM_ENTITY, "k.shape[HK],u.shape[HV]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(PPFM_ENTITY, "k.shape[HK],u.shape[HV]",
                                                     "HK=" + std::to_string(HK) + ",HV=" + std::to_string(HV), "HV % HK == 0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(wShape.GetDim(0) == 1 && wShape.GetDim(2) == T && wShape.GetDim(3) == K)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "w", "mismatch with k",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "w", "mismatch with k",
                                                              "w must be [1,HV,T,K] matching k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(uShape.GetDim(0) == 1 && uShape.GetDim(2) == T)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "u", "mismatch with k",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "u", "mismatch with k",
                                                              "u must be [1,HV,T,V] matching k");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     const int64_t cuNumel = params.cuSeqlensOptional->Size();
     if (cuNumel < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(PPFM_ENTITY, "cuSeqlensOptional", std::to_string(cuNumel), ">=2");
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(PPFM_ENTITY, "cuSeqlensOptional", std::to_string(cuNumel), ">=2");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t Nseq = cuNumel - 1;
     if (!(hmShape.GetDim(0) == Nseq && hmShape.GetDim(1) == HV && hmShape.GetDim(2) == K &&
           hmShape.GetDim(3) == V + K)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PPFM_ENTITY, "hmOut", "mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PPFM_ENTITY, "hmOut", "mismatch",
                                                              "hm must be [Nseq=" + std::to_string(Nseq) + ", HV=" + std::to_string(HV) + ", K, V+K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -200,13 +200,13 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     for (int64_t i = 0; i < cuNumel; ++i) {
         const int64_t cur = cuData[i];
         if (!(cur >= 0 && cur <= T)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PPFM_ENTITY, "cuSeqlensOptional[i]",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PPFM_ENTITY, "cuSeqlensOptional[i]",
                                                        "i=" + std::to_string(i) + ",val=" + std::to_string(cur),
                                                        "0 <= cu[i] <= T=" + std::to_string(T));
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!(cur > prev)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PPFM_ENTITY, "cuSeqlensOptional", "non-increasing",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PPFM_ENTITY, "cuSeqlensOptional", "non-increasing",
                                                        "strictly increasing");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -290,11 +290,11 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     PreProcessFwdKernelMergedParams params{k,          w,   u,   gOptional, gkOptional,
                                            bgOptional, vOptional, cuSeqlensOptional, chunkSize, hmOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PPFM_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PPFM_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PPFM_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PPFM_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(aclnnPreProcessFwdKernelMerged,

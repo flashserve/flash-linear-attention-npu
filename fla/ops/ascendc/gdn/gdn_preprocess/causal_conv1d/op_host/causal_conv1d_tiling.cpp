@@ -13,14 +13,7 @@
  */
 
 #include "tiling_base/tiling_templates_registry.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 #include "causal_conv1d_tiling_utils.h"
 #include "causal_conv1d_tiling_planner.h"
@@ -53,7 +46,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     const int64_t &dim = tiling->dim;
     const int64_t &batch = tiling->batch;
     if (dim <= 0 || batch <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "x", "non-positive", "positive dim/batch");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "non-positive", "positive dim/batch");
         return ge::GRAPH_FAILED;
     }
 

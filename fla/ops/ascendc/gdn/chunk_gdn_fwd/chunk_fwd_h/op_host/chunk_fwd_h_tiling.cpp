@@ -18,14 +18,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../op_kernel/chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_tiling_processor.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 
 namespace optiling {
@@ -102,7 +95,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
     if (useG == useGk) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "g,gk", useG ? "both present" : "both absent",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "g,gk", useG ? "both present" : "both absent",
                                                    "exactly one of g and gk");
         return ge::GRAPH_FAILED;
     }
@@ -110,7 +103,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
 
     uint64_t gateDtypeToken = 0;
     if (!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "g,gk",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "g,gk",
                                                    fla_npu::host_utils::DfxDtypeString(gateTensor->GetDataType()),
                                                    "BF16,FP32");
         return ge::GRAPH_FAILED;
@@ -142,7 +135,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     }
     uint64_t stateDtypeToken = 0;
     if (!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "state",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "state",
                                                    fla_npu::host_utils::DfxDtypeString(resolvedStateDataType),
                                                    "BF16,FP32");
         return ge::GRAPH_FAILED;
@@ -172,21 +165,21 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     }
 
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "batch,seqlen,HK,HV", "non-positive",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "batch,seqlen,HK,HV", "non-positive",
                                                    "positive batch/seqlen/HK/HV");
         return ge::GRAPH_FAILED;
     }
     if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "K,V,chunkSize", "not matching",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "K,V,chunkSize", "not matching",
                                                    "K=128, V=128, chunk_size=64");
         return ge::GRAPH_FAILED;
     }
     if (!saveNewValue) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "saveNewValue", "false", "true");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "saveNewValue", "false", "true");
         return ge::GRAPH_FAILED;
     }
     if ((useG && logicalVHeads % logicalKHeads != 0) || (useGk && logicalKHeads != logicalVHeads)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "HK,HV", "head ratio mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "HK,HV", "head ratio mismatch",
                                                    "g: HV % HK == 0; gk: HK == HV");
         return ge::GRAPH_FAILED;
     }

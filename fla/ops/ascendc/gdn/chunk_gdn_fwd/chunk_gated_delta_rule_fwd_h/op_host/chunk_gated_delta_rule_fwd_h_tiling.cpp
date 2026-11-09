@@ -17,14 +17,7 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "chunk_gated_delta_rule_fwd_h_tiling_processor.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 
 namespace optiling {
@@ -98,7 +91,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
     if (gTensor == nullptr && gkTensor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "g,gk");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "g,gk");
         return ge::GRAPH_FAILED;
     }
     auto gateTensor = useGk ? gkTensor : gTensor;
@@ -140,12 +133,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 ||
         logicalVHeads <= 0 || logicalKDim <= 0 || logicalVDim <= 0 ||
         tilingCtx.vNumHead % tilingCtx.kNumHead != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "q", "invalid logical shape",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "q", "invalid logical shape",
                                                    "positive batch/seqlen/K/V, HV % HK == 0");
         return ge::GRAPH_FAILED;
     }
     if (tilingCtx.vHeadDim > V_DIM_256) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "u", "vHeadDim too large",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "u", "vHeadDim too large",
             "vHeadDim <= " + std::to_string(V_DIM_256));
         return ge::GRAPH_FAILED;
     }

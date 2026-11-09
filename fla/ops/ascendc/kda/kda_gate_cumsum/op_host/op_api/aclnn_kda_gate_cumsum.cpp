@@ -74,23 +74,23 @@ aclnnStatus KdaGateCheckCuSeqlens(const aclIntArray *cuSeqlensOptional, int64_t 
     }
     const aclIntArray &cu = *cuSeqlensOptional;
     if (cu.Size() < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional",
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional",
                                                       std::to_string(cu.Size()), ">=2");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (cu[0] != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional[0]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional[0]",
                                                    std::to_string(cu[0]), "0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (cu[cu.Size() - 1] != seqlen) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional[last]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional[last]",
                                                    std::to_string(cu[cu.Size() - 1]), std::to_string(seqlen));
         return ACLNN_ERR_PARAM_INVALID;
     }
     for (size_t idx = 0; idx + 1 < cu.Size(); ++idx) {
         if (cu[idx] > cu[idx + 1]) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional", "non-monotonic",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "cuSeqlensOptional", "non-monotonic",
                                                        "nondecreasing");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -110,38 +110,38 @@ aclnnStatus KdaGateCheckParams(
     const aclTensor *gkOut)
 {
     if (g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_GATE_CUMSUM_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_GATE_CUMSUM_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (gkOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(chunkSize == 32 || chunkSize == 64 || chunkSize == 128)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "chunkSize",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "chunkSize",
                                                    std::to_string(chunkSize), "32, 64 or 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     size_t rank = KdaGateRank(g);
     if (!(rank == 3 || rank == 4)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(KDA_GATE_CUMSUM_ENTITY, "g",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(KDA_GATE_CUMSUM_ENTITY, "g",
                                                              "rank=" + std::to_string(rank),
                                                              "head-major BNSD rank4 or NTD rank3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     size_t kDimIdx = rank == 4 ? 3 : 2;
     if (KdaGateDim(g, kDimIdx) > MAX_KDA_K_DIM) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "g.shape[K]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "g.shape[K]",
                                                    std::to_string(KdaGateDim(g, kDimIdx)), "<=256");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (gkOut->GetDataType() != DataType::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut",
                                                    fla_npu::host_utils::DfxDtypeString(gkOut->GetDataType()), "FLOAT");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!KdaGateSameShape(gkOut, g)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut", "mismatch with g", "same as g");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "gkOut", "mismatch with g", "same as g");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t seqlen = KdaGateDim(g, rank == 4 ? 2 : 1);
@@ -150,7 +150,7 @@ aclnnStatus KdaGateCheckParams(
         return ret;
     }
     if (!(cuSeqlensOptional == nullptr || rank == 3 || KdaGateDim(g, 0) == 1)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "g.shape[B]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "g.shape[B]",
                                                    std::to_string(KdaGateDim(g, 0)),
                                                    "1 (rank4 varlen with cuSeqlens)");
         return ACLNN_ERR_PARAM_INVALID;
@@ -158,24 +158,24 @@ aclnnStatus KdaGateCheckParams(
     int64_t hv = KdaGateDim(g, rank == 4 ? 1 : 0);
     if (useGateInKernel) {
         if (aLogOptional == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         if (aLogOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional",
                                                        fla_npu::host_utils::DfxDtypeString(aLogOptional->GetDataType()), "FLOAT");
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (safeGate) {
             if (!(lowerBound >= -5.0 && lowerBound < 0.0)) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "lowerBound",
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "lowerBound",
                                                            std::to_string(lowerBound), "in [-5, 0)");
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }
         int64_t k = KdaGateDim(g, kDimIdx);
         if (!(KdaGateRank(aLogOptional) == 1 && KdaGateDim(aLogOptional, 0) == hv)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "aLogOptional",
                                                        "rank=" + std::to_string(KdaGateRank(aLogOptional)),
                                                        "[HV=" + std::to_string(hv) + "]");
             return ACLNN_ERR_PARAM_INVALID;
@@ -184,7 +184,7 @@ aclnnStatus KdaGateCheckParams(
             if (!(dtBiasOptional->GetDataType() == DataType::DT_FLOAT &&
                   KdaGateRank(dtBiasOptional) == 1 &&
                   KdaGateDim(dtBiasOptional, 0) == hv * k)) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(KDA_GATE_CUMSUM_ENTITY, "dtBiasOptional",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(KDA_GATE_CUMSUM_ENTITY, "dtBiasOptional",
                                                            "rank=" + std::to_string(KdaGateRank(dtBiasOptional)) + ",dim0=" +
                                                                std::to_string(KdaGateRank(dtBiasOptional) == 1 ? KdaGateDim(dtBiasOptional, 0) : -1),
                                                            "[HV*K=" + std::to_string(hv * k) + "]");
@@ -210,11 +210,11 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_GATE_CUMSUM_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_GATE_CUMSUM_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(KDA_GATE_CUMSUM_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_GATE_CUMSUM_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(

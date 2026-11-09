@@ -63,7 +63,7 @@ bool HasShape(const aclTensor *tensor, std::initializer_list<int64_t> dims)
 aclnnStatus ResolveLayout(const FinalizeParams &params, FinalizeShape &shape)
 {
     if (params.outputLayout == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "outputLayout");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "outputLayout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     shape.packed = std::strcmp(params.outputLayout, "NTD") == 0 ||
@@ -71,7 +71,7 @@ aclnnStatus ResolveLayout(const FinalizeParams &params, FinalizeShape &shape)
     shape.sequenceMajor = std::strcmp(params.outputLayout, "BSND") == 0 ||
                           std::strcmp(params.outputLayout, "TND") == 0;
     if (!(shape.packed || shape.sequenceMajor || std::strcmp(params.outputLayout, "BNSD") == 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "outputLayout", params.outputLayout, "BSND, BNSD, TND or NTD");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "outputLayout", params.outputLayout, "BSND, BNSD, TND or NTD");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -85,21 +85,21 @@ aclnnStatus CheckDtypeAndFormat(const FinalizeParams &params)
         "qgScaled", "aqk", "vNew", "h", "attnOut"};
     for (size_t index = 0; index < 5; ++index) {
         if (tensors[index]->GetDataType() != DataType::DT_BF16) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
                 fla_npu::host_utils::DfxDtypeString(tensors[index]->GetDataType()), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
         const auto storage = tensors[index]->GetStorageFormat();
         const auto view = tensors[index]->GetViewFormat();
         if (!(storage == Format::FORMAT_ND && view == Format::FORMAT_ND && !IsPrivateFormat(storage))) {
-            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, names[index],
                 "storage=" + std::to_string(static_cast<int>(storage)) + ",view=" + std::to_string(static_cast<int>(view)),
                 "non-private ND");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!IsContiguous(params.attnOut)) {
-        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "attnOut", "non-contiguous", "contiguous");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "attnOut", "non-contiguous", "contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -111,7 +111,7 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
     const auto &q = params.qgScaled->GetViewShape();
     if (shape.packed) {
         if (!(q.GetDimNum() == 3 && q.GetDim(2) == 128)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled",
                 "rank=" + std::to_string(q.GetDimNum()), "head-major [HV,T,128]");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -121,13 +121,13 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
         if (!(HasShape(params.aqk, {shape.heads, shape.seqLen, 64}) &&
               (HasShape(params.vNew, {shape.heads, shape.seqLen, 128}) ||
                HasShape(params.vNew, {1, shape.heads, shape.seqLen, 128})))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "aqk,vNew", "mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "aqk,vNew", "mismatch",
                 "Aqk=[HV,T,64], vNew=[HV,T,128] or [1,HV,T,128]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
         if (!(q.GetDimNum() == 4 && q.GetDim(3) == 128)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled",
                 "rank=" + std::to_string(q.GetDimNum()), "head-major [B,HV,T,128]");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -136,13 +136,13 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
         shape.seqLen = q.GetDim(2);
         if (!(HasShape(params.aqk, {shape.batch, shape.heads, shape.seqLen, 64}) &&
               HasShape(params.vNew, {shape.batch, shape.heads, shape.seqLen, 128}))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "aqk,vNew", "mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "aqk,vNew", "mismatch",
                 "Aqk=[B,HV,T,64], vNew=[B,HV,T,128]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!(shape.batch > 0 && shape.heads > 0 && shape.seqLen > 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B/HV/T]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B/HV/T]",
             "B=" + std::to_string(shape.batch) + ",HV=" + std::to_string(shape.heads) + ",T=" + std::to_string(shape.seqLen),
             "positive");
         return ACLNN_ERR_PARAM_INVALID;
@@ -153,7 +153,7 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t t = static_cast<uint64_t>(shape.seqLen);
     if (b > std::numeric_limits<uint64_t>::max() / hv / t / 128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape", "overflow", "B*HV*T*128 in uint64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape", "overflow", "B*HV*T*128 in uint64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -164,19 +164,19 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
 {
     if (params.cuSeqlens == nullptr) {
         if (params.chunkIndices != nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional", "present",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional", "present",
                 "requires cuSeqlensOptional");
             return ACLNN_ERR_PARAM_INVALID;
         }
         shape.totalChunks = (shape.seqLen - 1) / FINALIZE_CHUNK_ROWS + 1;
     } else {
         if (shape.batch != 1) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B]", std::to_string(shape.batch), "1");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B]", std::to_string(shape.batch), "1");
             return ACLNN_ERR_PARAM_INVALID;
         }
         const auto *cu = params.cuSeqlens;
         if (!(cu->Size() >= 2 && (*cu)[0] == 0 && (*cu)[cu->Size() - 1] == shape.seqLen)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "invalid bounds",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "invalid bounds",
                 "from 0 to T=" + std::to_string(shape.seqLen));
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -184,23 +184,23 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t length = (*cu)[seq + 1] - (*cu)[seq];
             if (!(length > 0 && (*cu)[seq + 1] <= shape.seqLen)) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "non-increasing", "strictly increasing");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "non-increasing", "strictly increasing");
                 return ACLNN_ERR_PARAM_INVALID;
             }
             total += static_cast<uint64_t>((length - 1) / FINALIZE_CHUNK_ROWS + 1);
             if (total > std::numeric_limits<uint32_t>::max()) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "total_chunks in uint32");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "total_chunks in uint32");
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }
         if (cu->Size() - 1 > std::numeric_limits<uint32_t>::max()) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "sequence count in uint32");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "sequence count in uint32");
             return ACLNN_ERR_PARAM_INVALID;
         }
         shape.totalChunks = static_cast<int64_t>(total);
         if (params.chunkIndices != nullptr) {
             if (params.chunkIndices->Size() != total * 2) {
-                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional",
+                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional",
                     std::to_string(params.chunkIndices->Size()), std::to_string(total * 2));
                 return ACLNN_ERR_PARAM_INVALID;
             }
@@ -211,7 +211,7 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
                 for (int64_t chunk = 0; chunk < chunks; ++chunk) {
                     if (!((*params.chunkIndices)[offset] == static_cast<int64_t>(seq) &&
                           (*params.chunkIndices)[offset + 1] == chunk)) {
-                        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional", "non-canonical",
+                        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "chunkIndicesOptional", "non-canonical",
                             "sequence-major (seq,chunk)");
                         return ACLNN_ERR_PARAM_INVALID;
                     }
@@ -221,7 +221,7 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
         }
     }
     if (!HasShape(params.h, {shape.batch, shape.totalChunks, shape.heads, 128, 128})) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h", "mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h", "mismatch",
             "[B=" + std::to_string(shape.batch) + ",C=" + std::to_string(shape.totalChunks) + ",HV=" + std::to_string(shape.heads) + ",128,128]");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -229,7 +229,7 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t c = static_cast<uint64_t>(shape.totalChunks);
     if (b > std::numeric_limits<uint64_t>::max() / hv / c / 128 / 128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h.shape", "overflow", "B*HV*C*128*128 in uint64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h.shape", "overflow", "B*HV*C*128*128 in uint64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -246,7 +246,7 @@ aclnnStatus CheckOutputShape(const FinalizeParams &params,
             ? HasShape(params.attnOut, {shape.batch, shape.seqLen, shape.heads, 128})
             : HasShape(params.attnOut, {shape.batch, shape.heads, shape.seqLen, 128}));
     if (!shapeValid) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "attnOut", "mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "attnOut", "mismatch",
             "outputLayout=" + std::string(params.outputLayout) + ", B=" + std::to_string(shape.batch) +
                 ",HV=" + std::to_string(shape.heads) + ",T=" + std::to_string(shape.seqLen) + ",V=128");
         return ACLNN_ERR_PARAM_INVALID;
@@ -260,7 +260,7 @@ aclnnStatus CheckParams(const FinalizeParams &params)
     const char *requiredN[] = {"qgScaled", "aqk", "vNew", "h", "attnOut"};
     for (size_t i = 0; i < sizeof(requiredT) / sizeof(requiredT[0]); ++i) {
         if (requiredT[i] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, requiredN[i]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, requiredN[i]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -319,11 +319,11 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(

@@ -11,14 +11,7 @@
 #include "../chunk_gdn_bwd_intra_schedule.h"
 #include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../../common/host_utils/log.h"
 
 namespace optiling {
@@ -77,17 +70,17 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const ge::DataType gDtype = gDesc->GetDataType();
     const ge::DataType betaDtype = betaDesc->GetDataType();
     if (mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "mainDtype",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "mainDtype",
             fla_npu::host_utils::DfxDtypeString(mainDtype), "BF16,FP16");
         return ge::GRAPH_FAILED;
     }
     if (gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "g",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "g",
             fla_npu::host_utils::DfxDtypeString(gDtype), "BF16,FP32");
         return ge::GRAPH_FAILED;
     }
     if (betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "beta",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "beta",
             fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16,FP32");
         return ge::GRAPH_FAILED;
     }
@@ -95,7 +88,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto qStorage = qShape->GetStorageShape();
     const auto vStorage = vShape->GetStorageShape();
     if (qStorage.GetDimNum() != 4 || vStorage.GetDimNum() != 4 || *chunkSize != 64) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "q,v,chunkSize",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "q,v,chunkSize",
             "invalid", "q/v rank 4, chunk_size 64");
         return ge::GRAPH_FAILED;
     }
@@ -106,20 +99,20 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const int64_t valueHeads = vStorage.GetDim(1);
     const int64_t valueDim = vStorage.GetDim(3);
     if (batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "B,T,HK,HV", "non-positive", "positive");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "B,T,HK,HV", "non-positive", "positive");
         return ge::GRAPH_FAILED;
     }
     const int64_t headRatio = valueHeads / qkHeads;
     if (valueHeads % qkHeads != 0 || headRatio > 4) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "HV/HK", "unsupported", "1/2/3/4");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "HV/HK", "unsupported", "1/2/3/4");
         return ge::GRAPH_FAILED;
     }
     if (keyDim != 128 || valueDim != 128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "K,V", "invalid", "128");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "K,V", "invalid", "128");
         return ge::GRAPH_FAILED;
     }
     if (vStorage.GetDim(0) != batch || vStorage.GetDim(2) != seqlen) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "v,q", "batch/T mismatch", "match q");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "v,q", "batch/T mismatch", "match q");
         return ge::GRAPH_FAILED;
     }
     uint64_t tensorBytes = 0;
@@ -134,7 +127,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto *chunkTensor = context->GetOptionalInputTensor(INTRA_CHUNK_INDICES_IDX);
     const bool isVarlen = cuTensor != nullptr;
     if (isVarlen != (chunkTensor != nullptr) || (isVarlen && batch != 1)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "cuSeqlens,chunkIndices,B",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cuSeqlens,chunkIndices,B",
             "invalid", "paired varlen metadata, B=1");
         return ge::GRAPH_FAILED;
     }
@@ -153,7 +146,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         const bool matrixMetadata = metadataShape.GetDimNum() == 2 && metadataShape.GetDim(1) == 2;
         const bool flatMetadata = metadataShape.GetDimNum() == 1 && metadataShape.GetDim(0) % 2 == 0;
         if (!matrixMetadata && !flatMetadata) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "chunk_indices",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "chunk_indices",
                 "invalid", "flattened pairs or [Nchunk,2]");
             return ge::GRAPH_FAILED;
         }
@@ -164,7 +157,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto arch = platform.GetCurNpuArch();
     const bool arch22 = arch == NpuArch::DAV_2201;
     if (!arch22 && arch != NpuArch::DAV_3510) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "arch", "unsupported", "DAV_2201 or DAV_3510");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "arch", "unsupported", "DAV_2201 or DAV_3510");
         return ge::GRAPH_FAILED;
     }
     const uint32_t aicCores = platform.GetCoreNumAic();

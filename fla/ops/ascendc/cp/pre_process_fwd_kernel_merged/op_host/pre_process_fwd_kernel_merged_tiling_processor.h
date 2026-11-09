@@ -12,15 +12,8 @@
 #define PRE_PROCESS_FWD_KERNEL_MERGED_TILING_PROCESSOR_H
 
 #include "pre_process_fwd_kernel_merged_tiling.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../common/host_utils/log.h"
-#endif
-#endif
 
 
 // 注意：调用方 op_host/*_tiling.cpp 本身已在 namespace optiling 内 ⇒ 本头**不再**包 namespace，
@@ -50,34 +43,34 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
 
     if (B != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "k.shape[B]", std::to_string(B),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "k.shape[B]", std::to_string(B),
                                                    "1 (varlen packed)");
         return ge::GRAPH_FAILED;
     }
     if (K != PPFM_FIXED_K || V != PPFM_FIXED_V) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(
             context->GetNodeName(), "k.shape[K],u.shape[V]",
             "K=" + std::to_string(K) + ",V=" + std::to_string(V), "K=128, V=128");
         return ge::GRAPH_FAILED;
     }
     if (chunkSize != PPFM_FIXED_CHUNK) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "chunkSize", std::to_string(chunkSize), "64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "chunkSize", std::to_string(chunkSize), "64");
         return ge::GRAPH_FAILED;
     }
     if (Hk <= 0 || Hv <= 0 || Hv % Hk != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(
             context->GetNodeName(), "k.shape[HK],u.shape[HV]",
             "Hk=" + std::to_string(Hk) + ",Hv=" + std::to_string(Hv), "Hv % Hk == 0");
         return ge::GRAPH_FAILED;
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(
             context->GetNodeName(), "w", fla_npu::host_utils::DfxShapeString(wShapePtr->GetStorageShape()),
             "[1," + std::to_string(Hv) + ",T,K]");
         return ge::GRAPH_FAILED;
     }
     if (uShape.GetDim(0) != 1 || uShape.GetDim(2) != T || uShape.GetDim(3) != V) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(
             context->GetNodeName(), "u", fla_npu::host_utils::DfxShapeString(uShape),
             "u must be [1,Hv,T,V] and match k's T");
         return ge::GRAPH_FAILED;
@@ -92,17 +85,17 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const bool hasBg = bgTensor != nullptr;
     const bool hasV = context->GetOptionalInputTensor(INPUT_V_IDX) != nullptr;
     if (hasG == hasGk) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(context->GetNodeName(), "g,gk", "hasG==hasGk",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(context->GetNodeName(), "g,gk", "hasG==hasGk",
                                                     "exactly one of g / gk must be given");
         return ge::GRAPH_FAILED;
     }
     if (hasBg) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "bg", "non-null",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "bg", "non-null",
                                                    "nullptr (DPLR not implemented in this release)");
         return ge::GRAPH_FAILED;
     }
     if (hasV) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "v", "non-null",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "v", "non-null",
                                                    "nullptr (DPLR-only; GDN/KDA takes values from u)");
         return ge::GRAPH_FAILED;
     }
@@ -112,12 +105,12 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     // cu_seqlens：host int 数组，必给；校验 0 <= cu[0] < ... < cu[-1] <= T
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
     if (cuSeqlensTensor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "cu_seqlens");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "cu_seqlens");
         return ge::GRAPH_FAILED;
     }
     const int64_t cuNumel = static_cast<int64_t>(cuSeqlensTensor->GetShapeSize());
     if (cuNumel < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(context->GetNodeName(), "cu_seqlens", std::to_string(cuNumel),
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(context->GetNodeName(), "cu_seqlens", std::to_string(cuNumel),
                                                       ">=2");
         return ge::GRAPH_FAILED;
     }
@@ -125,7 +118,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, cuData);
     for (int64_t i = 0; i < cuNumel; ++i) {
         if (cuData[i] < 0 || cuData[i] > T) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(
                 context->GetNodeName(), "cu_seqlens[i]",
                 "i=" + std::to_string(i) + ",val=" + std::to_string(cuData[i]),
                 "in [0," + std::to_string(T) + "]");
@@ -133,7 +126,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
         }
         if (i > 0) {
             if (cuData[i] <= cuData[i - 1]) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "cu_seqlens", "non-increasing",
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cu_seqlens", "non-increasing",
                                                            "strictly increasing");
                 return ge::GRAPH_FAILED;
             }

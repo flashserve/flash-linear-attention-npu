@@ -130,7 +130,7 @@ bool HasShape(const aclTensor *tensor,
 aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
 {
     if (layout == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "layout");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_ENTITY, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(layout, "BNSD") == 0) {
@@ -142,7 +142,7 @@ aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
     } else if (std::strcmp(layout, "TND") == 0) {
         parsed = PrepareLayout::TND;
     } else {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "layout", layout, "BNSD, BSND, NTD or TND");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "layout", layout, "BNSD, BSND, NTD or TND");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -155,7 +155,7 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
     const char *inputNames[] = {"q", "k", "v", "g", "beta"};
     for (size_t index = 0; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
         if (inputs[index] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, inputNames[index]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_ENTITY, inputNames[index]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -167,7 +167,7 @@ aclnnStatus CheckNotNull(const ChunkKdaFwdPrepareParams &params)
         "gkOut", "aqkOut", "wOut", "uOut", "kgOut", "qgScaledOut"};
     for (size_t index = 0; index < sizeof(outputs) / sizeof(outputs[0]); ++index) {
         if (outputs[index] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, outputNames[index]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_ENTITY, outputNames[index]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -212,7 +212,7 @@ int64_t GetOutputMode(const ChunkKdaFwdPrepareParams &params)
 aclnnStatus CheckOutputMode(const ChunkKdaFwdPrepareParams &params)
 {
     if (GetOutputMode(params) < 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "outputMask", "invalid", "none/forward/recompute/save");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "outputMask", "invalid", "none/forward/recompute/save");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -244,7 +244,7 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
         // 只拦私有（分形）格式：ND/NCHW/NCL/NHWC 等非私有拼写在逻辑维度上等价，
         // 张量本身已由 CheckContiguous 保证连续，不能因为拼写不同就拒绝调用方。
         if (IsPrivateFormat(storageFormat) || IsPrivateFormat(viewFormat)) {
-            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(PREPARE_ENTITY, names[index],
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(PREPARE_ENTITY, names[index],
                 "storage=" + std::to_string(static_cast<int>(storageFormat)) + ",view=" + std::to_string(static_cast<int>(viewFormat)),
                 "non-private format");
             return ACLNN_ERR_PARAM_INVALID;
@@ -266,7 +266,7 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
             continue;
         }
         if (!IsContiguous(outputs[index])) {
-            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(PREPARE_ENTITY, outputNames[index], "non-contiguous", "contiguous");
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(PREPARE_ENTITY, outputNames[index], "non-contiguous", "contiguous");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -277,30 +277,30 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
 {
     if (!(params.q->GetDataType() == DataType::DT_BF16 && params.k->GetDataType() == DataType::DT_BF16 &&
           params.v->GetDataType() == DataType::DT_BF16)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "q,k,v",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "q,k,v",
             "q=" + fla_npu::host_utils::DfxDtypeString(params.q->GetDataType()) + ",k=" + fla_npu::host_utils::DfxDtypeString(params.k->GetDataType()) + ",v=" + fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()), "BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto gateDtype = params.g->GetDataType();
     const auto betaDtype = params.beta->GetDataType();
     if (!(gateDtype == DataType::DT_BF16 || gateDtype == DataType::DT_FLOAT)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateDtype), "BF16,FP32");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "g", fla_npu::host_utils::DfxDtypeString(gateDtype), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(betaDtype == DataType::DT_BF16 || betaDtype == DataType::DT_FLOAT)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16,FP32");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "beta", fla_npu::host_utils::DfxDtypeString(betaDtype), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.aLogOptional != nullptr) {
         if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "aLogOptional",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "aLogOptional",
                 fla_npu::host_utils::DfxDtypeString(params.aLogOptional->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.dtBiasOptional != nullptr) {
         if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "dtBiasOptional",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "dtBiasOptional",
                 fla_npu::host_utils::DfxDtypeString(params.dtBiasOptional->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -315,7 +315,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
             continue;
         }
         if (output->GetDataType() != DataType::DT_BF16) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "output",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "output",
                 fla_npu::host_utils::DfxDtypeString(output->GetDataType()), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -327,7 +327,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
             continue;
         }
         if (output->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(PREPARE_ENTITY, "output",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(PREPARE_ENTITY, "output",
                 fla_npu::host_utils::DfxDtypeString(output->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -367,7 +367,7 @@ aclnnStatus CheckSequenceMajorDmaStride(
                             PREPARE_K_DIM * gateElementBytes) &&
         FitsDmaSourceStride(info.valueHeadNum, betaElementBytes);
     if (!strideValid) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "HK,HV",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "HK,HV",
             "HK=" + std::to_string(info.qkHeadNum) + ",HV=" + std::to_string(info.valueHeadNum), "DMA stride in uint32");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -378,14 +378,14 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
                          PrepareLayout layout, PrepareShapeInfo &info)
 {
     if (!SameShape(params.q, params.k)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "q,k", "mismatch", "identical");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "q,k", "mismatch", "identical");
         return ACLNN_ERR_PARAM_INVALID;
     }
     info.packed = layout == PrepareLayout::NTD || layout == PrepareLayout::TND;
     const size_t matrixRank = info.packed ? 3 : 4;
     const size_t scalarRank = info.packed ? 2 : 3;
     if (!(Rank(params.q) == matrixRank && Rank(params.v) == matrixRank && Rank(params.g) == matrixRank && Rank(params.beta) == scalarRank)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(PREPARE_ENTITY, "q,k,v,g,beta", "rank mismatch", "layout-dependent rank");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(PREPARE_ENTITY, "q,k,v,g,beta", "rank mismatch", "layout-dependent rank");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -400,7 +400,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             !(HasShape(params.v, {info.seqLen, info.valueHeadNum, info.vDim}) &&
               HasShape(params.g, {info.seqLen, info.valueHeadNum, info.kDim}) &&
               HasShape(params.beta, {info.seqLen, info.valueHeadNum}))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[T,HV,V],[T,HV,K],[T,HV]");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[T,HV,V],[T,HV,K],[T,HV]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else if (layout == PrepareLayout::NTD) {
@@ -414,7 +414,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             !(HasShape(params.v, {info.valueHeadNum, info.seqLen, info.vDim}) &&
               HasShape(params.g, {info.valueHeadNum, info.seqLen, info.kDim}) &&
               HasShape(params.beta, {info.valueHeadNum, info.seqLen}))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[HV,T,V],[HV,T,K],[HV,T]");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[HV,T,V],[HV,T,K],[HV,T]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else if (layout == PrepareLayout::BSND) {
@@ -428,7 +428,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             !(HasShape(params.v, {info.batch, info.seqLen, info.valueHeadNum, info.vDim}) &&
               HasShape(params.g, {info.batch, info.seqLen, info.valueHeadNum, info.kDim}) &&
               HasShape(params.beta, {info.batch, info.seqLen, info.valueHeadNum}))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[B,T,HV,V],[B,T,HV,K],[B,T,HV]");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[B,T,HV,V],[B,T,HV,K],[B,T,HV]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
@@ -442,23 +442,23 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             !(HasShape(params.v, {info.batch, info.valueHeadNum, info.seqLen, info.vDim}) &&
               HasShape(params.g, {info.batch, info.valueHeadNum, info.seqLen, info.kDim}) &&
               HasShape(params.beta, {info.batch, info.valueHeadNum, info.seqLen}))) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[B,HV,T,V],[B,HV,T,K],[B,HV,T]");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "v,g,beta", "mismatch", "[B,HV,T,V],[B,HV,T,K],[B,HV,T]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
 
     if (!(FitsUint32(info.batch) && FitsUint32(info.seqLen) && FitsUint32(info.qkHeadNum) && FitsUint32(info.valueHeadNum))) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "B,T,HK,HV",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "B,T,HK,HV",
             "B=" + std::to_string(info.batch) + ",T=" + std::to_string(info.seqLen) + ",HK=" + std::to_string(info.qkHeadNum) + ",HV=" + std::to_string(info.valueHeadNum), "positive uint32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.kDim == PREPARE_K_DIM && info.vDim == PREPARE_V_DIM)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PREPARE_ENTITY, "K,V",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(PREPARE_ENTITY, "K,V",
             "K=" + std::to_string(info.kDim) + ",V=" + std::to_string(info.vDim), "K=V=128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.valueHeadNum >= info.qkHeadNum && info.valueHeadNum % info.qkHeadNum == 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(PREPARE_ENTITY, "HK,HV",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(PREPARE_ENTITY, "HK,HV",
             "HK=" + std::to_string(info.qkHeadNum) + ",HV=" + std::to_string(info.valueHeadNum), "HV>=HK and HV%HK==0");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -469,7 +469,7 @@ aclnnStatus CheckModesAndOptionalInputs(
     const ChunkKdaFwdPrepareParams &params, const PrepareShapeInfo &info)
 {
     if (params.chunkSize != PREPARE_CHUNK_SIZE) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // Tiling 和 kernel 均以 FP32 保存这些属性，必须按实际落盘精度校验。
@@ -477,17 +477,17 @@ aclnnStatus CheckModesAndOptionalInputs(
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     const float lowerBoundFp32 = static_cast<float>(params.lowerBound);
     if (!(std::isfinite(scaleFp32) && std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F && std::isfinite(lowerBoundFp32))) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "scale/epsilon/lowerBound", "non-finite", "finite, epsilon>0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "scale/epsilon/lowerBound", "non-finite", "finite, epsilon>0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.allowNegEigval && !params.useBetaSigmoidInKernel) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "allowNegEigval", "true", "requires useBetaSigmoidInKernel=true");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "allowNegEigval", "true", "requires useBetaSigmoidInKernel=true");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     if (!params.useGateInKernel) {
         if (!(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr && !params.safeGate)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "aLogOptional/dtBiasOptional/safeGate", "not empty",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "aLogOptional/dtBiasOptional/safeGate", "not empty",
                 "must be empty when useGateInKernel=false");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -495,23 +495,23 @@ aclnnStatus CheckModesAndOptionalInputs(
     }
 
     if (params.aLogOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "aLogOptional");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_ENTITY, "aLogOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!HasShape(params.aLogOptional, {info.valueHeadNum})) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "aLogOptional", "mismatch", "[HV=" + std::to_string(info.valueHeadNum) + "]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "aLogOptional", "mismatch", "[HV=" + std::to_string(info.valueHeadNum) + "]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.dtBiasOptional != nullptr) {
         if (!HasShape(params.dtBiasOptional, {info.valueHeadNum * info.kDim})) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "dtBiasOptional", "mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "dtBiasOptional", "mismatch",
                 "[HV*K=" + std::to_string(info.valueHeadNum * info.kDim) + "]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (params.safeGate) {
         if (!(lowerBoundFp32 >= -5.0F && lowerBoundFp32 < 0.0F)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "lowerBound", std::to_string(params.lowerBound), "[-5,0)");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "lowerBound", std::to_string(params.lowerBound), "[-5,0)");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -537,32 +537,32 @@ aclnnStatus CheckVariableLengthInputs(
 {
     if (params.cuSeqlensOptional == nullptr) {
         if (params.chunkIndicesOptional != nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "chunkIndicesOptional", "present", "requires cuSeqlensOptional");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "chunkIndicesOptional", "present", "requires cuSeqlensOptional");
             return ACLNN_ERR_PARAM_INVALID;
         }
         return ACLNN_SUCCESS;
     }
     if (!(info.packed || info.batch == 1)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "B", std::to_string(info.batch), "1");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "B", std::to_string(info.batch), "1");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.cuSeqlensOptional->Size() < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional",
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(PREPARE_ENTITY, "cuSeqlensOptional",
             std::to_string(params.cuSeqlensOptional->Size()), ">=2");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((*params.cuSeqlensOptional)[0] != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional[0]", std::to_string((*params.cuSeqlensOptional)[0]), "0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "cuSeqlensOptional[0]", std::to_string((*params.cuSeqlensOptional)[0]), "0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1] != info.seqLen) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional[last]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "cuSeqlensOptional[last]",
             std::to_string((*params.cuSeqlensOptional)[params.cuSeqlensOptional->Size() - 1]), std::to_string(info.seqLen));
         return ACLNN_ERR_PARAM_INVALID;
     }
     for (size_t seq = 0; seq + 1 < params.cuSeqlensOptional->Size(); ++seq) {
         if ((*params.cuSeqlensOptional)[seq] > (*params.cuSeqlensOptional)[seq + 1]) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "cuSeqlensOptional", "non-monotonic", "nondecreasing");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "cuSeqlensOptional", "non-monotonic", "nondecreasing");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -573,7 +573,7 @@ aclnnStatus CheckVariableLengthInputs(
     const int64_t totalChunks = CountChunks(
         params.cuSeqlensOptional, info.seqLen, params.chunkSize);
     if (params.chunkIndicesOptional->Size() != static_cast<size_t>(totalChunks) * 2) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(PREPARE_ENTITY, "chunkIndicesOptional",
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(PREPARE_ENTITY, "chunkIndicesOptional",
             std::to_string(params.chunkIndicesOptional->Size()), std::to_string(totalChunks * 2));
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -586,7 +586,7 @@ aclnnStatus CheckVariableLengthInputs(
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
             if (!((*params.chunkIndicesOptional)[offset] == static_cast<int64_t>(seq) &&
                   (*params.chunkIndicesOptional)[offset + 1] == chunk)) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(PREPARE_ENTITY, "chunkIndicesOptional", "non-canonical", "sequence-major (seq_id,local_chunk_id)");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(PREPARE_ENTITY, "chunkIndicesOptional", "non-canonical", "sequence-major (seq_id,local_chunk_id)");
                 return ACLNN_ERR_PARAM_INVALID;
             }
             offset += 2;
@@ -626,42 +626,42 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdPrepareParams &params,
     };
 
     if (!valueMatrixValid(params.gkOut, info.kDim)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "gkOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "gkOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!valueMatrixValid(params.aqkOut, params.chunkSize)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "aqkOut", "mismatch", "head-major [B,HV,T,64]/[HV,T,64]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "aqkOut", "mismatch", "head-major [B,HV,T,64]/[HV,T,64]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.akkOut != nullptr && !valueMatrixValid(params.akkOut, params.chunkSize)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "akkOut", "mismatch", "head-major [B,HV,T,64]/[HV,T,64]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "akkOut", "mismatch", "head-major [B,HV,T,64]/[HV,T,64]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(valueMatrixValid(params.wOut, info.kDim) && valueMatrixValid(params.kgOut, info.kDim) &&
           valueMatrixValid(params.qgScaledOut, info.kDim))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "wOut,kgOut,qgScaledOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "wOut,kgOut,qgScaledOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.qgOut != nullptr && !valueMatrixValid(params.qgOut, info.kDim)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "qgOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "qgOut", "mismatch", "head-major [B,HV,T,K]/[HV,T,K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!valueMatrixValid(params.uOut, info.vDim)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "uOut", "mismatch", "head-major [B,HV,T,V]/[HV,T,V]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "uOut", "mismatch", "head-major [B,HV,T,V]/[HV,T,V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((params.qHatOut == nullptr || qkMatrixValid(params.qHatOut)) &&
           (params.kHatOut == nullptr || qkMatrixValid(params.kHatOut)))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "qHatOut,kHatOut", "mismatch", "head-major [B,HK,T,K]/[HK,T,K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "qHatOut,kHatOut", "mismatch", "head-major [B,HK,T,K]/[HK,T,K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((params.qRstdOut == nullptr || qkScalarValid(params.qRstdOut)) &&
           (params.kRstdOut == nullptr || qkScalarValid(params.kRstdOut)))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "qRstdOut,kRstdOut", "mismatch", "head-major [B,HK,T]/[HK,T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "qRstdOut,kRstdOut", "mismatch", "head-major [B,HK,T]/[HK,T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.betaEffOut != nullptr && !valueScalarValid(params.betaEffOut)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(PREPARE_ENTITY, "betaEffOut", "mismatch", "head-major [B,HV,T]/[HV,T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(PREPARE_ENTITY, "betaEffOut", "mismatch", "head-major [B,HV,T]/[HV,T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -779,11 +779,11 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 

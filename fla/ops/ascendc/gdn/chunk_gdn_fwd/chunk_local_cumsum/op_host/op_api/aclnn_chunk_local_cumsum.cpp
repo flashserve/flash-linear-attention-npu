@@ -40,15 +40,15 @@ struct ChunkLocalCumsumParams {
 static aclnnStatus CheckNotNull(ChunkLocalCumsumParams params)
 {
     if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.out == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "out");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "out");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.outputDtypeOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "outputDtype");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "outputDtype");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -61,7 +61,7 @@ static aclnnStatus CheckParams(ChunkLocalCumsumParams params)
         return status;
     }
     if (params.chunkSize <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "chunkSize", std::to_string(params.chunkSize), "positive");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_LOCAL_CUMSUM_ENTITY, "chunkSize", std::to_string(params.chunkSize), "positive");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;

@@ -25,14 +25,7 @@
 #include "../op_kernel/chunk_fwd_o_struct.h"
 #include "../op_kernel/chunk_fwd_o_a5_constants.h"
 #include "tiling/platform/platform_ascendc.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 
 using GDN::ChunkFwdOTilingData;
@@ -142,19 +135,19 @@ public:
                                              const char *inputName)
     {
         if (curShape == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(ctx_.nodeName, inputName);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, inputName);
             return ge::GRAPH_FAILED;
         }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         if (dimNum != validDimNum) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, inputName,
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName,
                 "rank=" + std::to_string(dimNum), "rank=" + std::to_string(validDimNum));
             return ge::GRAPH_FAILED;
         }
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
             if (storageShape.GetDim(dimIndex) == 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, inputName,
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName,
                     "zero dim", "non-zero dim");
                 return ge::GRAPH_FAILED;
             }
@@ -194,20 +187,20 @@ public:
             qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
             qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != kShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) ||
             qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(ctx_.nodeName, "q,k", "mismatch", "same shape");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "q,k", "mismatch", "same shape");
             return ge::GRAPH_FAILED;
         }
 
         if (qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
             qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != vShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(ctx_.nodeName, "q,v", "batch/seqlen mismatch", "same batch/seqlen");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "q,v", "batch/seqlen mismatch", "same batch/seqlen");
             return ge::GRAPH_FAILED;
         }
 
         if (vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != gShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
             vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != gShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
             vShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != gShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(ctx_.nodeName, "v,g", "mismatch", "g=[B, HV, T]");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "v,g", "mismatch", "g=[B, HV, T]");
             return ge::GRAPH_FAILED;
         }
 
@@ -217,17 +210,17 @@ public:
             hShape.GetDim(CHUNK_FWD_O_H_DIM_HEAD_NUM) != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
             hK != qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) ||
             hV != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(ctx_.nodeName, "h", "mismatch", "match q/v");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "h", "mismatch", "match q/v");
             return ge::GRAPH_FAILED;
         }
 
         if (vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) % qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "vNumHead,kNumHead", "not divisible", "HV % HK == 0");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "vNumHead,kNumHead", "not divisible", "HV % HK == 0");
             return ge::GRAPH_FAILED;
         }
 
         if (vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) > CHUNK_FWD_O_MAX_V_HEAD_DIM) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "v", "vHeadDim too large",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "v", "vHeadDim too large",
                 "vHeadDim <= " + std::to_string(CHUNK_FWD_O_MAX_V_HEAD_DIM));
             return ge::GRAPH_FAILED;
         }
@@ -256,7 +249,7 @@ public:
         tiling_.gDataType = ctx_.gDataType;
 
         if (tiling_.chunkSize <= 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "chunkSize", "non-positive", "positive");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "chunkSize", "non-positive", "positive");
             return ge::GRAPH_FAILED;
         }
 
@@ -270,7 +263,7 @@ public:
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
             const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();
             if (chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) % CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE != 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "chunkOffsets", "dim0 not divisible by 2",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "chunkOffsets", "dim0 not divisible by 2",
                     "dim0 % 2 == 0");
                 return ge::GRAPH_FAILED;
             }
@@ -278,7 +271,7 @@ public:
             tiling_.shapeBatch = 1;
             tiling_.tokenBatch = static_cast<int64_t>(cuSeqlensShape.GetDim(CHUNK_FWD_O_DIM_BATCH)) - 1;
             if (tiling_.tokenBatch <= 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "cuSeqlens", "non-positive", "positive tokenBatch");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "cuSeqlens", "non-positive", "positive tokenBatch");
                 return ge::GRAPH_FAILED;
             }
         } else {
@@ -293,29 +286,29 @@ public:
     ge::graphStatus A5ShapeCheck()
     {
         if (tiling_.chunkSize != CHUNK_FWD_O_A5_BT) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "chunkSize", std::to_string(tiling_.chunkSize),
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "chunkSize", std::to_string(tiling_.chunkSize),
                 "chunk_size=" + std::to_string(CHUNK_FWD_O_A5_BT));
             return ge::GRAPH_FAILED;
         }
         if (tiling_.kHeadDim != CHUNK_FWD_O_A5_K || tiling_.vHeadDim != CHUNK_FWD_O_A5_V) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "kHeadDim,vHeadDim",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "kHeadDim,vHeadDim",
                 "K=" + std::to_string(tiling_.kHeadDim) + " V=" + std::to_string(tiling_.vHeadDim),
                 "K=V=" + std::to_string(CHUNK_FWD_O_A5_K));
             return ge::GRAPH_FAILED;
         }
         if (ctx_.dataType != CHUNK_FWD_O_DTYPE_BF16) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(ctx_.nodeName, "q,k,v,h",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "q,k,v,h",
                 std::to_string(ctx_.dataType), "BF16");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.gDataType != CHUNK_FWD_O_DTYPE_FP32 && ctx_.gDataType != CHUNK_FWD_O_DTYPE_BF16) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(ctx_.nodeName, "g",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g",
                 std::to_string(ctx_.gDataType), "FP32,BF16");
             return ge::GRAPH_FAILED;
         }
         const int64_t headRatio = tiling_.vNumHead / tiling_.kNumHead;
         if (headRatio < 1 || headRatio > 4) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "HV/HK", std::to_string(headRatio), "[1,4]");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "HV/HK", std::to_string(headRatio), "[1,4]");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -333,22 +326,22 @@ public:
         } else if (std::strcmp(layout, "NTD") == 0) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_NTD;
         } else {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "outputLayout", layout, "BNSD, BSND, TND or NTD");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "outputLayout", layout, "BNSD, BSND, TND or NTD");
             return ge::GRAPH_FAILED;
         }
 
         const bool useOptimizedLayout = tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
                                         tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND;
         if (useOptimizedLayout && !ctx_.isA5) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "outputLayout", "BSND/TND", "requires A5");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "outputLayout", "BSND/TND", "requires A5");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.useExp2 && !useOptimizedLayout) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "useExp2", "true", "requires A5 BSND/TND path");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "useExp2", "true", "requires A5 BSND/TND path");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.stateVFirst && !useOptimizedLayout) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "stateVFirst", "true", "requires A5 BSND/TND path");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "stateVFirst", "true", "requires A5 BSND/TND path");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -374,7 +367,7 @@ public:
     ge::graphStatus A5ChunkTilingVarLen()
     {
         if (tiling_.shapeBatch != 1) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "batch", std::to_string(tiling_.shapeBatch), "1");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "batch", std::to_string(tiling_.shapeBatch), "1");
             return ge::GRAPH_FAILED;
         }
         const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();

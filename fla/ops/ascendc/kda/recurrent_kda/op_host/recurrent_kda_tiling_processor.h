@@ -18,9 +18,7 @@
 #include "../op_kernel/recurrent_kda_struct.h"
 #include "err/ops_err.h"
 #include "log/log.h"
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
+#include "op_common/log/log.h"
 #include "../../../common/host_utils/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
@@ -218,7 +216,7 @@ private:
         const size_t rank = shape.GetDimNum();
         for (size_t i = 0; i < rank; ++i) {
             if (strides[i] <= 0) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "stride non-positive", "positive stride");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "stride non-positive", "positive stride");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -231,36 +229,36 @@ private:
         const uint64_t tokenStride = static_cast<uint64_t>(strides[tokenDim]);
         const uint64_t headStride = static_cast<uint64_t>(strides[headDim]);
         if (strides[featureDim] != 1 || headStride < featureCount) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "non-dense", "feature stride=1, head stride>=feature count");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "non-dense", "feature stride=1, head stride>=feature count");
             return ge::GRAPH_FAILED;
         }
 
         const uint64_t maxUint64 = std::numeric_limits<uint64_t>::max();
         if (headCount > 1 && headStride > (maxUint64 - featureCount) / (headCount - 1)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "head stride overflow", "in uint64");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "head stride overflow", "in uint64");
             return ge::GRAPH_FAILED;
         }
         const uint64_t minTokenStride = (headCount - 1) * headStride + featureCount;
         if (tokenStride < minTokenStride) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "token stride overlaps heads", ">= minimum");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "token stride overlaps heads", ">= minimum");
             return ge::GRAPH_FAILED;
         }
 
         const uint64_t srcGapElements = tokenStride - featureCount;
         if (srcGapElements > std::numeric_limits<uint32_t>::max() / sizeof(uint16_t)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "token gap overflow", "in uint32 range");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "token gap overflow", "in uint32 range");
             return ge::GRAPH_FAILED;
         }
 
         if (rank == RKDA_RANK4_QKV_DIM_NUM && shape.GetDim(RKDA_DIM_0) > 1) {
             const uint64_t seqLen = static_cast<uint64_t>(shape.GetDim(RKDA_DIM_1));
             if (tokenStride > maxUint64 / seqLen) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "batch stride overflow", "in uint64");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "batch stride overflow", "in uint64");
                 return ge::GRAPH_FAILED;
             }
             const uint64_t expectedBatchStride = seqLen * tokenStride;
             if (static_cast<uint64_t>(strides[RKDA_DIM_0]) != expectedBatchStride) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "batch stride mismatch", "T * token stride");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "batch stride mismatch", "T * token stride");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -285,7 +283,7 @@ private:
     {
         for (size_t i = 0; i < RKDA_STATE_DIM_NUM; ++i) {
             if (strides[i] <= 0) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "stride non-positive", "positive stride");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "stride non-positive", "positive stride");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -293,13 +291,13 @@ private:
         const int64_t denseRow = shape.GetDim(RKDA_DIM_3);
         const int64_t densePlane = shape.GetDim(RKDA_DIM_2) * denseRow;
         if (strides[RKDA_DIM_3] != 1 || strides[RKDA_DIM_2] != denseRow) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "inner matrix not dense", "stride[3]=1, stride[2]=row");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "inner matrix not dense", "stride[3]=1, stride[2]=row");
             return ge::GRAPH_FAILED;
         }
         const int64_t minSlotStride =
             (shape.GetDim(RKDA_DIM_1) - 1) * strides[RKDA_DIM_1] + densePlane;
         if (strides[RKDA_DIM_1] < densePlane || strides[RKDA_DIM_0] < minSlotStride) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, name, "outer strides overlap", "non-overlapping");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "outer strides overlap", "non-overlapping");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -319,7 +317,7 @@ private:
     bool CheckDim(const gert::Shape &shape, const size_t dim, const std::string &dimDesc) const
     {
         if (shape.GetDimNum() != dim) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, dimDesc.c_str(),
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, dimDesc.c_str(),
                 "rank=" + std::to_string(shape.GetDimNum()), "rank=" + std::to_string(dim));
             return false;
         }
@@ -330,7 +328,7 @@ private:
                        const std::string &nameA, const std::string &nameB, const std::string &dimDesc) const
     {
         if (a.GetDim(dimA) != b.GetDim(dimB)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName,
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName,
                 (nameA + "," + nameB).c_str(), dimDesc + " mismatch", "same " + dimDesc);
             return false;
         }
@@ -352,7 +350,7 @@ private:
                 return ge::GRAPH_FAILED;
             }
             if (cuSeqlensShape.GetDim(RKDA_DIM_0) < 2) {
-                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(ctx_.nodeName, "cu_seqlens",
+                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(ctx_.nodeName, "cu_seqlens",
                     std::to_string(cuSeqlensShape.GetDim(RKDA_DIM_0)), ">=2");
                 return ge::GRAPH_FAILED;
             }
@@ -370,7 +368,7 @@ private:
                                  ctx_.ssmStateShape.GetDim(RKDA_DIM_0) == seqNum &&
                                  ctx_.ssmStateShape.GetDim(RKDA_DIM_1) > 0;
             if (!packed1d && !speculative2d) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "ssm_state_indices", "mismatch",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "ssm_state_indices", "mismatch",
                     "packed [T] or speculative [seq_num,max_step]");
                 return ge::GRAPH_FAILED;
             }
@@ -380,7 +378,7 @@ private:
                 return ge::GRAPH_FAILED;
             }
             if (ctx_.acceptedTokensShape.GetDim(RKDA_DIM_0) != seqNum) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "num_accepted_tokens", "mismatch", "[seq_num]");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "num_accepted_tokens", "mismatch", "[seq_num]");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -390,7 +388,7 @@ private:
     ge::graphStatus CheckOptionalGateShapes(int64_t hvNum, int64_t kDim) const
     {
         if (ctx_.useGateInKernel && !ctx_.hasALog) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(ctx_.nodeName, "A_log");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, "A_log");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasALog) {
@@ -398,7 +396,7 @@ private:
                 return ge::GRAPH_FAILED;
             }
             if (ctx_.aLogShape.GetDim(RKDA_DIM_0) != hvNum) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "A_log", "mismatch", "[HV]");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "A_log", "mismatch", "[HV]");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -408,7 +406,7 @@ private:
                          (rank == 2 && ctx_.dtBiasShape.GetDim(RKDA_DIM_0) == hvNum &&
                           ctx_.dtBiasShape.GetDim(RKDA_DIM_1) == kDim);
             if (!valid) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "dt_bias", "mismatch", "[HV*K] or [HV, K]");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "dt_bias", "mismatch", "[HV*K] or [HV, K]");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -443,7 +441,7 @@ private:
             if (valueShape.GetDim(RKDA_DIM_0) != totalTokens || gateShape.GetDim(RKDA_DIM_0) != totalTokens ||
                 betaShape.GetDim(RKDA_DIM_0) != totalTokens || gateShape.GetDim(RKDA_DIM_1) != hvNum ||
                 betaShape.GetDim(RKDA_DIM_1) != hvNum || gateShape.GetDim(RKDA_DIM_2) != kDim) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "value,gate,beta", "mismatch",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "value,gate,beta", "mismatch",
                     "TND [T,HV,V],[T,HV,K],[T,HV]");
                 return ge::GRAPH_FAILED;
             }
@@ -467,7 +465,7 @@ private:
                 gateShape.GetDim(RKDA_DIM_2) != hvNum || gateShape.GetDim(RKDA_DIM_3) != kDim ||
                 betaShape.GetDim(RKDA_DIM_0) != batch || betaShape.GetDim(RKDA_DIM_1) != denseSeqLen ||
                 betaShape.GetDim(RKDA_DIM_2) != hvNum) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "value,gate,beta", "mismatch",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "value,gate,beta", "mismatch",
                     "BSND [B,T,HV,V],[B,T,HV,K],[B,T,HV]");
                 return ge::GRAPH_FAILED;
             }
@@ -483,11 +481,11 @@ private:
         }
 
         if (hNum <= 0 || hvNum <= 0 || kDim <= 0 || vDim <= 0 || totalTokens <= 0 || denseSeqLen <= 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "shape dims", "non-positive", "positive");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "shape dims", "non-positive", "positive");
             return ge::GRAPH_FAILED;
         }
         if (hvNum % hNum != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "H,HV",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(ctx_.nodeName, "H,HV",
                 "H=" + std::to_string(hNum) + ",HV=" + std::to_string(hvNum), "HV % H == 0");
             return ge::GRAPH_FAILED;
         }
@@ -501,7 +499,7 @@ private:
         if (stateShape.GetDim(RKDA_DIM_0) <= 0 ||
             (!ctx_.hasSsmStateIndices && stateShape.GetDim(RKDA_DIM_0) != seqNum) ||
             stateShape.GetDim(RKDA_DIM_1) != hvNum || !stateTailMatches) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "initialStateRef", "mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "initialStateRef", "mismatch",
                 "[state_capacity,HV,V,K] or [state_capacity,HV,K,V]");
             return ge::GRAPH_FAILED;
         }
@@ -592,22 +590,22 @@ private:
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentKdaTilingData &tiling) const
     {
         if (tiling.nk > 256 || tiling.nv > 256) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "H,HV",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(ctx_.nodeName, "H,HV",
                 "H=" + std::to_string(tiling.nk) + ",HV=" + std::to_string(tiling.nv), "<=256");
             return ge::GRAPH_FAILED;
         }
         if (tiling.dk != 128 || (tiling.dv != 128 && tiling.dv != 256)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "K,V",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(ctx_.nodeName, "K,V",
                 "K=" + std::to_string(tiling.dk) + ",V=" + std::to_string(tiling.dv), "K=128,V=128 or V=256");
             return ge::GRAPH_FAILED;
         }
         if (tiling.nv % tiling.nk != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "H,HV",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(ctx_.nodeName, "H,HV",
                 "H=" + std::to_string(tiling.nk) + ",HV=" + std::to_string(tiling.nv), "HV % H == 0");
             return ge::GRAPH_FAILED;
         }
         if (tiling.safeGate && (tiling.lowerBound < -5.0f || tiling.lowerBound >= 0.0f)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "lower_bound",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "lower_bound",
                 std::to_string(tiling.lowerBound), "[-5, 0)");
             return ge::GRAPH_FAILED;
         }

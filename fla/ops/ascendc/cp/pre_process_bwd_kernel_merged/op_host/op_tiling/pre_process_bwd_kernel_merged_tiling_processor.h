@@ -25,15 +25,8 @@
 #include <string>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
-#endif
-#endif
 #include "err/ops_err.h"
 #include "tiling_base/tiling_base.h"
 #include "../../op_kernel/pre_process_bwd_kernel_merged_struct.h"
@@ -147,7 +140,7 @@ public:
         const char *rankedNames[] = {"q", "k", "w", "d_o", "dv"};
         for (size_t idx = 0; idx < sizeof(rankedShapes) / sizeof(rankedShapes[0]); ++idx) {
             if (rankedShapes[idx]->GetDimNum() != 4) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, rankedNames[idx],
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, rankedNames[idx],
                                                 std::to_string(rankedShapes[idx]->GetDimNum()) + "D",
                                                 "rank must be 4 in [B,H,T,D] layout");
                 return ge::GRAPH_FAILED;
@@ -162,7 +155,7 @@ public:
         V_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_3));
 
         if (fla_npu::host_utils::DfxShapeString(kShape) != fla_npu::host_utils::DfxShapeString(qShape)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_IMPAT(ctx_.nodeName, "q,k",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(ctx_.nodeName, "q,k",
                                              "q=" + fla_npu::host_utils::DfxShapeString(qShape) + ",k=" + fla_npu::host_utils::DfxShapeString(kShape),
                                              "k must equal q with shape [B,Hk,T,K]");
             return ge::GRAPH_FAILED;
@@ -171,33 +164,33 @@ public:
             fla_npu::host_utils::DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_),
                             static_cast<int64_t>(K_)});
         if (fla_npu::host_utils::DfxShapeString(wShape) != expectedW) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "w", fla_npu::host_utils::DfxShapeString(wShape), expectedW);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "w", fla_npu::host_utils::DfxShapeString(wShape), expectedW);
             return ge::GRAPH_FAILED;
         }
         if (doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
             doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(
                 ctx_.nodeName, "d_o", fla_npu::host_utils::DfxShapeString(doShape),
                 "batch and time must match q: expected [B,*,T,V] with B=" + std::to_string(B_) +
                     ",T=" + std::to_string(T_));
             return ge::GRAPH_FAILED;
         }
         if (fla_npu::host_utils::DfxShapeString(dvShape) != fla_npu::host_utils::DfxShapeString(doShape)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_IMPAT(
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(
                 ctx_.nodeName, "d_o,dv",
                 "d_o=" + fla_npu::host_utils::DfxShapeString(doShape) + ",dv=" + fla_npu::host_utils::DfxShapeString(dvShape),
                 "dv must have the same [B,Hv,T,V] shape as d_o");
             return ge::GRAPH_FAILED;
         }
         if (B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_IMPAT(
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(
                 ctx_.nodeName, "q,d_o",
                 "q=" + fla_npu::host_utils::DfxShapeString(qShape) + ",d_o=" + fla_npu::host_utils::DfxShapeString(doShape),
                 "B/T/Hk/Hv/K/V must all be greater than 0");
             return ge::GRAPH_FAILED;
         }
         if ((Hv_ % Hk_) != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_IMPAT(ctx_.nodeName, "Hk,Hv",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(ctx_.nodeName, "Hk,Hv",
                                              std::to_string(Hk_) + "," + std::to_string(Hv_),
                                              "Hv must be an integer multiple of Hk");
             return ge::GRAPH_FAILED;
@@ -207,14 +200,14 @@ public:
         // 区域，表现为设备报错或结果错误，所以这里只放开目标场景，其余取值直接拦截。
         if (K_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM ||
             V_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_IMPAT(
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(
                 ctx_.nodeName, "q.shape[3],d_o.shape[3]", "K=" + std::to_string(K_) + ",V=" + std::to_string(V_),
                 "this version requires K=" + std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM) +
                     ", V=" + std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM));
             return ge::GRAPH_FAILED;
         }
         if (static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize),
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize),
                                   std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE));
             return ge::GRAPH_FAILED;
         }
@@ -228,7 +221,7 @@ public:
     ge::graphStatus ResolveGateMode()
     {
         if (ctx_.hasG && ctx_.hasGk) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_IMPAT(ctx_.nodeName, "g,gk", "present,present",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(ctx_.nodeName, "g,gk", "present,present",
                                              "g and gk are mutually exclusive: pass scalar g for GDN or per-K gk "
                                              "for KDA/GDN2");
             return ge::GRAPH_FAILED;
@@ -237,7 +230,7 @@ public:
         if (ctx_.hasGk) {
             const gert::Shape gkShape = ctx_.gkShape->GetStorageShape();
             if (gkShape.GetDimNum() != 4) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, "gk",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, "gk",
                                                 std::to_string(gkShape.GetDimNum()) + "D",
                                                 "rank must be 4 in [B,Hv,T,K] layout");
                 return ge::GRAPH_FAILED;
@@ -246,11 +239,11 @@ public:
                 fla_npu::host_utils::DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_),
                                 static_cast<int64_t>(T_), static_cast<int64_t>(K_)});
             if (fla_npu::host_utils::DfxShapeString(gkShape) != expectedGk) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "gk", fla_npu::host_utils::DfxShapeString(gkShape), expectedGk);
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "gk", fla_npu::host_utils::DfxShapeString(gkShape), expectedGk);
                 return ge::GRAPH_FAILED;
             }
             if (ctx_.gkDtype != ctx_.qDtype) {
-                OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(ctx_.nodeName, "gk", fla_npu::host_utils::DfxDtypeString(ctx_.gkDtype),
+                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "gk", fla_npu::host_utils::DfxDtypeString(ctx_.gkDtype),
                                       "the same dtype as q/k (" + fla_npu::host_utils::DfxDtypeString(ctx_.qDtype) + ")");
                 return ge::GRAPH_FAILED;
             }
@@ -262,18 +255,18 @@ public:
         if (ctx_.hasG) {
             const gert::Shape gShape = ctx_.gShape->GetStorageShape();
             if (gShape.GetDimNum() != 3) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, "g", std::to_string(gShape.GetDimNum()) + "D",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, "g", std::to_string(gShape.GetDimNum()) + "D",
                                                 "rank must be 3 in [B,Hv,T] layout");
                 return ge::GRAPH_FAILED;
             }
             const std::string expectedG =
                 fla_npu::host_utils::DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_)});
             if (fla_npu::host_utils::DfxShapeString(gShape) != expectedG) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "g", fla_npu::host_utils::DfxShapeString(gShape), expectedG);
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "g", fla_npu::host_utils::DfxShapeString(gShape), expectedG);
                 return ge::GRAPH_FAILED;
             }
             if (ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT) {
-                OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(ctx_.nodeName, "g", fla_npu::host_utils::DfxDtypeString(ctx_.gDtype),
+                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g", fla_npu::host_utils::DfxDtypeString(ctx_.gDtype),
                                       "FLOAT or the same dtype as q/k (" + fla_npu::host_utils::DfxDtypeString(ctx_.qDtype) + ")");
                 return ge::GRAPH_FAILED;
             }
@@ -294,19 +287,19 @@ public:
         if (isVarLen_) {
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
             if (cuSeqlensShape.GetDimNum() != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, "cu_seqlens",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, "cu_seqlens",
                                                 std::to_string(cuSeqlensShape.GetDimNum()) + "D",
                                                 "rank must be 1 in [N+1] layout");
                 return ge::GRAPH_FAILED;
             }
             const int64_t seqNum = cuSeqlensShape.GetDim(CDHP_DIM_0) - 1;
             if (seqNum < 1) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "cu_seqlens.shape[0]",
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "cu_seqlens.shape[0]",
                                       std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), ">=2");
                 return ge::GRAPH_FAILED;
             }
             if (B_ != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_IMPAT(ctx_.nodeName, "q.shape[0]", std::to_string(B_),
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(ctx_.nodeName, "q.shape[0]", std::to_string(B_),
                                                 "when cu_seqlens is provided B must be 1 for one packed segment per "
                                                 "launch");
                 return ge::GRAPH_FAILED;
@@ -317,7 +310,7 @@ public:
             tiling_.eos = T_;
         } else {
             if (B_ != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_IMPAT(
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(
                     ctx_.nodeName, "q.shape[0]", std::to_string(B_),
                     "dense path requires B=1 because one launch handles a single [0,T) segment; pass "
                     "cu_seqlens for packed input");

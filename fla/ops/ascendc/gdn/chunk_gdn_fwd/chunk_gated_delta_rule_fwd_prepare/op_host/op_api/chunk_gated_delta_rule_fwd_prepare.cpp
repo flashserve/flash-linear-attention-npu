@@ -68,15 +68,15 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
     const bool noHats = qHatOptional == nullptr && kHatOptional == nullptr &&
                         qRstdOptional == nullptr && kRstdOptional == nullptr;
     if (!hasHats && !noHats) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd", "partial", "all set or all null");
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd", "partial", "all set or all null");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     if (useQkL2norm && !hasHats) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     if (!useQkL2norm && !noHats) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd", "present",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT("ChunkGatedDeltaRuleFwdPrepare", "qHat,kHat,qRstd,kRstd", "present",
                                                    "must be omitted when useQkL2norm=false");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }

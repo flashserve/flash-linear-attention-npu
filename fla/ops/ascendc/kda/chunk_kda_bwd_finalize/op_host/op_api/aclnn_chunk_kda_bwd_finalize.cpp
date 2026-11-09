@@ -23,15 +23,15 @@ constexpr const char *CHUNK_KDA_BWD_FINALIZE_ENTITY = "aclnnChunkKdaBwdFinalize"
 aclnnStatus CheckRequired(const aclTensor *tensor, DataType dtype, const char *name)
 {
     if (tensor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name);
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name);
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!IsContiguous(tensor)) {
-        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name, "non-contiguous", "contiguous");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name, "non-contiguous", "contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (tensor->GetDataType() != dtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name,
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, name,
                                                    fla_npu::host_utils::DfxDtypeString(tensor->GetDataType()),
                                                    fla_npu::host_utils::DfxDtypeString(dtype));
         return ACLNN_ERR_PARAM_INVALID;
@@ -58,21 +58,21 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (allowNegEigval && !useBetaSigmoidInKernel) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "allowNegEigval", "true",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "allowNegEigval", "true",
                                                    "requires useBetaSigmoidInKernel=true");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "useBetaSigmoidInKernel", "true",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "useBetaSigmoidInKernel", "true",
                                                    "reserved but not supported on A5");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -89,11 +89,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         }
     }
     if (beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (beta->GetDataType() != DataType::DT_BF16 && beta->GetDataType() != DataType::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta",
                                                    fla_npu::host_utils::DfxDtypeString(beta->GetDataType()), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -113,16 +113,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         }
     }
     if (aLog != nullptr && !IsContiguous(aLog)) {
-        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log", "non-contiguous", "contiguous");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log", "non-contiguous", "contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT && aLog->GetDataType() != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log",
                                                    fla_npu::host_utils::DfxDtypeString(aLog->GetDataType()), "FP32,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "qRstdOptional,kRstdOptional",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "qRstdOptional,kRstdOptional",
                                                     "not together", "must appear together");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -134,13 +134,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         if (ret != ACLNN_SUCCESS) return ret;
     }
     if (cuSeqlensOptional == nullptr && chunkIndicesOptional != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "chunkIndicesOptional", "present",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "chunkIndicesOptional", "present",
                                                    "requires cuSeqlensOptional");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto rank = q->GetViewShape().GetDimNum();
     if (rank != 3 && rank != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "q",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "q",
                                                              "rank=" + std::to_string(rank), "rank 3 or 4");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -149,30 +149,30 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     if (outputLayout == nullptr ||
         (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") != 0 &&
          std::strcmp(outputLayout, rank3 ? "TND" : "BSND") != 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "outputLayout",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "outputLayout",
                                                    outputLayout == nullptr ? "null" : outputLayout, rank3 ? "NTD or TND" : "BNSD or BSND");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #ifdef KDA_BWD_STAGES_ARCH22
     if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "a_log",
                                                    fla_npu::host_utils::DfxDtypeString(aLog->GetDataType()), "FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #endif
     if (useBetaSigmoidInKernel && beta->GetDataType() != DataType::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "beta",
                                                    fla_npu::host_utils::DfxDtypeString(beta->GetDataType()), "FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)) &&
           lowerBound >= -5.0 && static_cast<float>(lowerBound) < 0.0f)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "lowerBound",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "lowerBound",
                                                    std::to_string(lowerBound), "finite, in [-5, 0)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "chunkSize/safeGate/useGate/useExp2/stateVFirst",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "chunkSize/safeGate/useGate/useExp2/stateVFirst",
                                                    "not matching", "C=64, safe_gate/use_gate/use_exp2=true, K-first state");
         return ACLNN_ERR_PARAM_INVALID;
     }

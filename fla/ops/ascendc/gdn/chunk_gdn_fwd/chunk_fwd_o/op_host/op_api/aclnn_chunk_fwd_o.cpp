@@ -65,27 +65,27 @@ struct ChunkFwdOParams {
 static aclnnStatus CheckNotNull(ChunkFwdOParams params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_O_ENTITY, "q");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_O_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_O_ENTITY, "v");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "v");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.h == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_O_ENTITY, "h");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "h");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_O_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.oOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_O_ENTITY, "oOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "oOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

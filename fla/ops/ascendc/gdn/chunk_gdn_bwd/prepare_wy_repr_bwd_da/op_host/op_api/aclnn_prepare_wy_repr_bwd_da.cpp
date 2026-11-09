@@ -54,35 +54,35 @@ struct PrepareWyReprBwdDaParams {
 static aclnnStatus CheckNotNull(PrepareWyReprBwdDaParams params)
 {
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "v");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "v");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "beta");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "beta");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.a == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "a");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "a");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dw == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "dw");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "dw");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.du == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "du");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "du");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dAOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "dAOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "dAOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

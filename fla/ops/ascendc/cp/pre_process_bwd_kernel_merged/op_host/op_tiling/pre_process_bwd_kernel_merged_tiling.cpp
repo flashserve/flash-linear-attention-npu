@@ -20,6 +20,30 @@ using namespace CP;
 
 namespace optiling {
 namespace {
+// 本地元数据/资源检查：使用公共 DFX 宏（不再依赖已移除的 CP_DFX_*）。
+inline ge::graphStatus CheckTilingResource(const char *nodeName, const void *resource, const char *name)
+{
+    if (resource != nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    OP_LOGE(nodeName, "Tiling4PreProcessBwdKernelMerged: %s is nullptr; check graph registration and tiling context construction.", name);
+    return ge::GRAPH_FAILED;
+}
+
+inline ge::graphStatus CheckRequiredInputMetadata(const char *nodeName, const gert::StorageShape *shape,
+                                                  const void *descriptor, const char *name)
+{
+    if (shape == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(nodeName, name);
+        return ge::GRAPH_FAILED;
+    }
+    if (descriptor == nullptr) {
+        OP_LOGE(nodeName, "CheckContext: %s input descriptor is nullptr although its shape is present; check TilingContext metadata construction.", name);
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static void PreProcessBwdKernelMergedTilingDataPrint(gert::TilingContext *context,
                                                     const PreProcessBwdKernelMergedTilingData &tiling)
 {
@@ -86,7 +110,8 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
         if (CheckRequiredInputMetadata(context->GetNodeName(), context->GetInputShape(i), desc,
                                        inputNames[i]) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
         if (desc->GetDataType() != qInputDesc->GetDataType()) {
-            CP_DFX_DTYPE(context->GetNodeName(), inputNames[i], std::to_string(desc->GetDataType()),
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), inputNames[i],
+                std::to_string(desc->GetDataType()),
                 "dtype must match q=" + std::to_string(qInputDesc->GetDataType()));
             return ge::GRAPH_FAILED;
         }

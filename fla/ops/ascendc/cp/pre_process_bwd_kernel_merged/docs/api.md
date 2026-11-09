@@ -124,8 +124,6 @@ kernel 使用 uint32 偏移和 chunk ceiling arithmetic，因此 `T <= 429496723
 当前定向补丁不新增 C++ function-try-block 或修改框架分配异常承接方式；沿用基线。
 测试中的原生执行器返回161001与公开执行接口返回561000是两个层次，不能混用。
 
-本次范围、实际测试证据和未关闭项见 [错误码整改报告](error_code_return_status.md)。
-
 报错文本会给出实际 shape、`Hk`/`Hv` 与触发的约束，便于定位；`g`/`gk` 同时非空的报错会明确指出二者互斥。
 
 ## 6. 典型 shape

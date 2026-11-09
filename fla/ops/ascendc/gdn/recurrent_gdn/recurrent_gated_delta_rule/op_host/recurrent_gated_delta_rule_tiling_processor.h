@@ -18,9 +18,7 @@
 #include "../op_kernel/recurrent_gated_delta_rule_struct.h"
 #include "err/ops_err.h"
 #include "log/log.h"
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
+#include "op_common/log/log.h"
 #include "../../../../common/host_utils/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
@@ -159,7 +157,7 @@ private:
                        const std::string &nameA, const std::string &nameB, const std::string &dimDesc) const
     {
         if (a.GetDim(dimA) != b.GetDim(dimB)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, (nameA + "," + nameB).c_str(),
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, (nameA + "," + nameB).c_str(),
                 dimDesc + " mismatch", "same " + dimDesc);
             return false;
         }
@@ -169,7 +167,7 @@ private:
     bool CheckDim(const gert::Shape shape, const size_t dim, const std::string &dimDesc) const
     {
         if (shape.GetDimNum() != dim) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(ctx_.nodeName, dimDesc.c_str(),
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, dimDesc.c_str(),
                 "rank=" + std::to_string(shape.GetDimNum()), "rank=" + std::to_string(dim));
             return false;
         }
@@ -190,12 +188,12 @@ private:
         }
 
         if (cuSeqlensShape.GetDim(RGDR_DIM_0) < 2) {
-            OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(ctx_.nodeName, "actual_seq_lengths",
+            OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(ctx_.nodeName, "actual_seq_lengths",
                 std::to_string(cuSeqlensShape.GetDim(RGDR_DIM_0)), ">=2");
             return ge::GRAPH_FAILED;
         }
         if (ssmStateShape.GetDim(RGDR_DIM_0) != queryShape.GetDim(RGDR_DIM_0)) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(ctx_.nodeName, "ssm_state_indices", "length mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "ssm_state_indices", "length mismatch",
                 "[T=" + std::to_string(queryShape.GetDim(RGDR_DIM_0)) + "]");
             return ge::GRAPH_FAILED;
         }
@@ -230,19 +228,19 @@ private:
     ge::graphStatus CheckShapeValueRangeAndRule(const RecurrentGatedDeltaRuleTilingData &tiling) const
     {
         if (tiling.t == 0 || tiling.nk == 0 || tiling.nv == 0 || tiling.sBlockNum == 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(ctx_.nodeName, "T,nk,nv,BlockNum", "non-positive", "positive");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "T,nk,nv,BlockNum", "non-positive", "positive");
             return ge::GRAPH_FAILED;
         }
 
         if (tiling.nk > 256 || tiling.nv > 256 || tiling.dk != RGDR_REQUIRED_DIM || tiling.dv != RGDR_REQUIRED_DIM) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "nk,nv,dk,dv",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(ctx_.nodeName, "nk,nv,dk,dv",
                 "nk=" + std::to_string(tiling.nk) + ",nv=" + std::to_string(tiling.nv) + ",dk=" + std::to_string(tiling.dk) + ",dv=" + std::to_string(tiling.dv),
                 "nk/nv<=256, dk/dv=" + std::to_string(RGDR_REQUIRED_DIM));
             return ge::GRAPH_FAILED;
         }
 
         if (tiling.nv % tiling.nk != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(ctx_.nodeName, "nk,nv",
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(ctx_.nodeName, "nk,nv",
                 "nk=" + std::to_string(tiling.nk) + ",nv=" + std::to_string(tiling.nv), "nv % nk == 0");
             return ge::GRAPH_FAILED;
         }
@@ -269,7 +267,7 @@ private:
         if (ctx_.queryShape == nullptr || ctx_.keyShape == nullptr || ctx_.valueShape == nullptr ||
             ctx_.betaShape == nullptr || ctx_.stateShape == nullptr || ctx_.cuSeqlensShape == nullptr ||
             ctx_.ssmStateShape == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(ctx_.nodeName, "required shape");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, "required shape");
             return ge::GRAPH_FAILED;
         }
         return CheckShapeDimAndRelation(*ctx_.queryShape, *ctx_.keyShape, *ctx_.valueShape, *ctx_.betaShape,

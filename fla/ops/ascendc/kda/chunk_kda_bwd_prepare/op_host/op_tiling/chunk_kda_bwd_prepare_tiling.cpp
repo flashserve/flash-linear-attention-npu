@@ -7,14 +7,7 @@
 #include <cmath>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 
 namespace optiling {
@@ -41,7 +34,7 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     if (!std::isfinite(*scale)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "scale", "non-finite", "finite");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "scale", "non-finite", "finite");
         return ge::GRAPH_FAILED;
     }
 

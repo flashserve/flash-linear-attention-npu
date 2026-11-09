@@ -101,7 +101,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
         chunkSize, useExp2, lowerBound, inputLayout, wOut, uOut, qgOut, kgOut, gkOutOptional};
     if (inputLayout == nullptr || (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "inputLayout",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "inputLayout",
                                                    inputLayout == nullptr ? "null" : inputLayout, "BNSD or NTD");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -110,16 +110,16 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     const char *names[] = {"q", "k", "v", "g", "beta", "a", "wOut", "uOut", "qgOut", "kgOut"};
     for (size_t idx = 0; idx < sizeof(required) / sizeof(required[0]); ++idx) {
         if (required[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, names[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, names[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 

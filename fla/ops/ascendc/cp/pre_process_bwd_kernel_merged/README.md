@@ -1,9 +1,5 @@
 # PreProcessBwdKernelMerged
 
-当前 DFX 整改、A2/A5 三种子模型矩阵、真实 TilingKey、原版/当前版性能对照和 sanitizer 未关闭项，
-统一见 [错误码整改报告](docs/error_code_return_status.md) 与 [ATK 验证说明](../../../../../tests/atk/pre_process_bwd_kernel_merged/README.md)。
-本文保留的历史精度/性能数字不替代该轮验收结果。
-
 ## 功能
 
 把本 rank 边界序列的反向状态递推压缩成仿射摘要：
@@ -207,7 +203,7 @@ FLA_NPU_ENV=<custom opp>/bin/set_env.bash ATK_OUTPUT_ROOT=<output root> \
 - 一次 launch 只处理一个 segment；多 segment 需要 host 多次 launch，或在后续版本增加 segment 维 grid。
 - **本版只支持 `K = V = 128`、`chunk_size = 64`**；序列维 dense/varlen、`Hv % Hk == 0` 的多头（含 GVA）、
   三种 gate 模式、尾 chunk、多 task 都是该场景内的泛化，已覆盖（用例矩阵见
-  [测试 README](../../../../tests/atk/pre_process_bwd_kernel_merged/README.md)）。`K`/`V` 取其它值时 host 直接拦截：
+  [测试 README](../../../../../tests/atk/pre_process_bwd_kernel_merged/README.md)）。`K`/`V` 取其它值时 host 直接拦截：
   状态行按 64 行分组、列按 16 个元素（64B）成组，改尺寸需要同步改 tiling、workspace 账本与 tile 布局。
 - `state_v_first` 与本算子无关：本算子只读 token-major 的 `q/k/w/do/dv`，只写固定 `[Hv, K, V+K]` 的 `dhm`。
 - `dv` 必须是 `dv_local`。若调用方传入已经加入 `K̄ @ dH` 的 `dv`，状态贡献会被累计两次。

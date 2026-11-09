@@ -18,18 +18,26 @@
 #include "graph/types.h"
 #include "base/err_msg.h"
 
+// 上下文分流：tiling TU 已引入 op_common/log/log.h 时统一定义 FLA_NPU_HOST_TILING。
+#if defined(OP_COMMON_LOG_LOG_H)
+#ifndef FLA_NPU_HOST_TILING
+#define FLA_NPU_HOST_TILING
+#endif
+#endif
+
 // 兼容性桥接层：为 aclnn 层与 tiling 层提供统一的结构化 DFX 上报接口。
 //
-// 调用方须在 include 本文件之前引入对应的日志头：
-//   - aclnn 层：  #include "opdev/op_log.h"           （OP_LOGE(errno, ...)）
-//   - tiling 层： #include "op_common/log/log.h"      （OP_LOGE(opName, ...)）
+// 上下文自动分流（issue #991 / PR review：宏检查统一放本文件）：
+//   - tiling 层：本 TU 已引入 op_common/log/log.h（其保护宏 OP_COMMON_LOG_LOG_H
+//                 已定义）时，在此统一定义 FLA_NPU_HOST_TILING，
+//                 OP_LOGE 为 (opName, ...) 签名；
+//   - aclnn 层： 默认不定义 FLA_NPU_HOST_TILING，OP_LOGE 为 (errno, ...) 签名；
+//                 aclnn TU 不引入 op_common，故不会误判为 tiling。
+//  算子文件不再维护 __has_include / FLA_NPU_HOST_TILING 探测。
 //
 // 新版本（CANN 9.2+ / 提供 OP_LOGE_FOR_* 结构化宏的环境）走结构化宏，
 // 产生 EZ 语义码（EZ0004/EZ0024/...）；旧版本（CANN 8.5/9.0/9.1 或 opbase
 // 无 FOR_* 宏的环境）自动降级为可读文本，保证算子的旧版本兼容性承诺。
-//
-// tiling 编译单元须定义 FLA_NPU_HOST_TILING（OP_LOGE 为 opName 签名）；
-// aclnn 编译单元不定义（OP_LOGE 为 errno 签名）。
 
 namespace fla_npu {
 namespace host_utils {
@@ -311,51 +319,51 @@ inline void DfxReportInvalidFormatWithReason(const char *entity, const char *par
 } // namespace fla_npu
 
 // ---------------------------------------------------------------------------
-// 宏封装层（_IMPAT 兼容接口）：把上层调用从 "fla_npu::host_utils::DfxReport*"
+// 宏封装层（_COMPAT 兼容接口）：把上层调用从 "fla_npu::host_utils::DfxReport*"
 // 的多层调用封装成单层宏，调用点只写一个宏名 + 参数，不再逐层展开。
-// _IMPAT 后缀表明这是兼容层（compatible）宏，同时保留结构化 EZ 码上报。
+// _COMPAT 后缀表明这是兼容层（compatible）宏，同时保留结构化 EZ 码上报。
 // ---------------------------------------------------------------------------
 
-#define OP_LOGE_LIBOPAPI_REPORT_IMPAT(entity, paramName) \
+#define OP_LOGE_LIBOPAPI_REPORT_COMPAT(entity, paramName) \
     fla_npu::host_utils::DfxReportInvalidInput((entity), (paramName))
 
-#define OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(entity, paramName, actual, expected) \
+#define OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(entity, paramName, actual, expected) \
     fla_npu::host_utils::DfxReportInvalidShape((entity), (paramName), (actual), (expected))
 
-#define OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(entity, paramName, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(entity, paramName, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidShapeWithReason((entity), (paramName), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(entity, paramNames, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidShapes((entity), (paramNames), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_IMPAT(entity, paramNames, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidShapesWithReason((entity), (paramNames), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(entity, paramName, actual, expected) \
+#define OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(entity, paramName, actual, expected) \
     fla_npu::host_utils::DfxReportInvalidDtype((entity), (paramName), (actual), (expected))
 
-#define OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(entity, paramNames, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidDtypes((entity), (paramNames), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(entity, paramName, actual, expected) \
+#define OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(entity, paramName, actual, expected) \
     fla_npu::host_utils::DfxReportInvalidValue((entity), (paramName), (actual), (expected))
 
-#define OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_IMPAT(entity, paramName, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(entity, paramName, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidValueWithReason((entity), (paramName), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(entity, paramNames, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidValues((entity), (paramNames), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_IMPAT(entity, paramNames, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidValuesWithReason((entity), (paramNames), (actual), (reason))
 
-#define OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(entity, paramName, actual, expected) \
+#define OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(entity, paramName, actual, expected) \
     fla_npu::host_utils::DfxReportInvalidListSize((entity), (paramName), (actual), (expected))
 
-#define OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(entity, paramName, actual, expected) \
+#define OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(entity, paramName, actual, expected) \
     fla_npu::host_utils::DfxReportInvalidFormat((entity), (paramName), (actual), (expected))
 
-#define OP_LOGE_LIBOPAPI_REPORT_FORMAT_WITH_REASON_IMPAT(entity, paramName, actual, reason) \
+#define OP_LOGE_LIBOPAPI_REPORT_FORMAT_WITH_REASON_COMPAT(entity, paramName, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidFormatWithReason((entity), (paramName), (actual), (reason))
 
 #endif // FLA_NPU_ASCENDC_COMMON_HOST_UTILS_LOG_H

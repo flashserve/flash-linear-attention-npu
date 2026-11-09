@@ -24,7 +24,7 @@ const std::array<const aclTensor *, 1> MergeFwdBwdKernel(
     if (IsPrivateFormat(h->GetStorageFormat()) || IsPrivateFormat(h->GetViewFormat()) ||
         IsPrivateFormat(agHm->GetStorageFormat()) || IsPrivateFormat(agHm->GetViewFormat()) ||
         !IsContiguous(h)) {
-        OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT("MergeFwdBwdKernel", "h,agHm",
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT("MergeFwdBwdKernel", "h,agHm",
             "non-contiguous or private format", "contiguous non-private format");
         return {nullptr};
     }

@@ -21,14 +21,7 @@
 #include "platform/platform_infos_def.h"
 #include "causal_conv1d_tiling_utils.h"
 #include "../op_kernel/causal_conv1d_tiling_data.h"
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../common/host_utils/log.h"
 
 namespace optiling::causal_conv1d_host {
@@ -72,7 +65,7 @@ inline ge::graphStatus ResolveMetadataPair(gert::TilingContext *context, uint32_
     const bool hasDevice = IsOptionalInputPresent(context, deviceIndex);
     const bool hasCpu = IsOptionalInputPresent(context, cpuIndex);
     if (hasDevice && hasCpu) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(context->GetNodeName(), "device,cpu metadata", "both present",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(context->GetNodeName(), "device,cpu metadata", "both present",
             "provide only one");
         return ge::GRAPH_FAILED;
     }
@@ -133,7 +126,7 @@ inline ge::graphStatus EncodeMetadataDtype(gert::TilingContext *context, uint32_
             encoded = METADATA_DTYPE_INT64;
             return ge::GRAPH_SUCCESS;
         }
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), (std::string(inputName) + "Cpu").c_str(), "not int64", "INT64");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), (std::string(inputName) + "Cpu").c_str(), "not int64", "INT64");
         return ge::GRAPH_FAILED;
     }
     if (dtype == ge::DT_INT32) {
@@ -144,7 +137,7 @@ inline ge::graphStatus EncodeMetadataDtype(gert::TilingContext *context, uint32_
         encoded = METADATA_DTYPE_BOOL;
         return ge::GRAPH_SUCCESS;
     }
-    OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), inputName, "not int32/bool", allowBool ? "bool/int32" : "int32");
+    OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), inputName, "not int32/bool", allowBool ? "bool/int32" : "int32");
     return ge::GRAPH_FAILED;
 }
 
@@ -185,7 +178,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     } else if (std::strcmp(activationPtr, "silu") == 0 || std::strcmp(activationPtr, "swish") == 0) {
         attrInfo.activationMode = 1;
     } else {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "activation", activationPtr, "none/silu/swish");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "activation", activationPtr, "none/silu/swish");
         return ge::GRAPH_FAILED;
     }
 
@@ -197,14 +190,14 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     const int64_t *runModePtr = attrs->GetAttrPointer<int64_t>(ATTR_RUN_MODE_INDEX);
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;
     if (attrInfo.runMode != 0 && attrInfo.runMode != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "runMode", std::to_string(attrInfo.runMode), "0/1");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "runMode", std::to_string(attrInfo.runMode), "0/1");
         return ge::GRAPH_FAILED;
     }
 
     const int64_t *headNumPtr = attrs->GetAttrPointer<int64_t>(ATTR_HEAD_NUM_INDEX);
     attrInfo.headNum = (headNumPtr == nullptr) ? 0 : *headNumPtr;
     if (attrInfo.headNum < 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "headNum", std::to_string(attrInfo.headNum), ">=0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "headNum", std::to_string(attrInfo.headNum), ">=0");
         return ge::GRAPH_FAILED;
     }
 
@@ -212,7 +205,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     attrInfo.maxQueryLen = (maxQueryLenPtr == nullptr) ? -1 : *maxQueryLenPtr;
     if (attrInfo.maxQueryLen < -1 ||
         attrInfo.maxQueryLen > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "maxQueryLen", std::to_string(attrInfo.maxQueryLen),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "maxQueryLen", std::to_string(attrInfo.maxQueryLen),
             "-1 or int32 range");
         return ge::GRAPH_FAILED;
     }
@@ -222,7 +215,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
 inline ge::graphStatus ValidateAlignedDim(gert::TilingContext *context, int64_t dim)
 {
     if (dim % DIM_ALIGN_ELEMS != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "dim", std::to_string(dim),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "dim", std::to_string(dim),
             "multiple of " + std::to_string(DIM_ALIGN_ELEMS));
         return ge::GRAPH_FAILED;
     }
@@ -270,7 +263,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             seqLen = 1;
             cuSeqlen = batch;
             if (batch <= 0 || dim <= 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "x", "non-positive", "positive batch/dim");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "non-positive", "positive batch/dim");
                 return ge::GRAPH_FAILED;
             }
         } else {
@@ -279,7 +272,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             dim = xShape.GetDim(1);
             seqLen = 0;
             if (dim <= 0 || cuSeqlen < 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "x", "invalid", "dim>0, cuSeqlen>=0");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "invalid", "dim>0, cuSeqlen>=0");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -290,11 +283,11 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         dim = xShape.GetDim(2);
         cuSeqlen = batch * seqLen;
         if (batch <= 0 || dim <= 0 || seqLen <= 0) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "x", "non-positive", "positive batch/dim/seqLen");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "non-positive", "positive batch/dim/seqLen");
             return ge::GRAPH_FAILED;
         }
     } else {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(context->GetNodeName(), "x", "rank mismatch", "2D or 3D");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(context->GetNodeName(), "x", "rank mismatch", "2D or 3D");
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(ValidateAlignedDim(context, dim) != ge::GRAPH_SUCCESS,
@@ -302,17 +295,17 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 return ge::GRAPH_FAILED);
     if (tiling.headNum > 0) {
         if (isDecodeMode) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "headNum", ">0", "only runMode=0");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "headNum", ">0", "only runMode=0");
             return ge::GRAPH_FAILED;
         }
         if (tiling.headNum > dim || dim % tiling.headNum != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "headNum", std::to_string(tiling.headNum),
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "headNum", std::to_string(tiling.headNum),
                 "in (0, dim=" + std::to_string(dim) + "] and divide dim");
             return ge::GRAPH_FAILED;
         }
         tiling.headDim = dim / tiling.headNum;
         if (tiling.headDim % DIM_ALIGN_ELEMS != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "headDim", std::to_string(tiling.headDim),
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "headDim", std::to_string(tiling.headDim),
                 "multiple of " + std::to_string(DIM_ALIGN_ELEMS));
             return ge::GRAPH_FAILED;
         }
@@ -322,17 +315,17 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     OP_CHECK_NULL_WITH_CONTEXT(context, wShapePtr);
     auto wShape = EnsureNotScalar(wShapePtr->GetStorageShape());
     if (wShape.GetDimNum() != 2) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "weight", "rank mismatch", "2D (width, dim)");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "weight", "rank mismatch", "2D (width, dim)");
         return ge::GRAPH_FAILED;
     }
     const int64_t width = wShape.GetDim(0);
     const int64_t wDim = wShape.GetDim(1);
     if (wDim != dim) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "weight", "dim mismatch", "shape[1]=dim");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "weight", "dim mismatch", "shape[1]=dim");
         return ge::GRAPH_FAILED;
     }
     if (width < 2 || width > 4) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "width", std::to_string(width), "[2,4]");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "width", std::to_string(width), "[2,4]");
         return ge::GRAPH_FAILED;
     }
 
@@ -340,7 +333,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const bool hasConvStates =
         (sShapePtr != nullptr) && (sShapePtr->GetStorageShape().GetShapeSize() != 0);
     if (!hasConvStates && isDecodeMode) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "convStates");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "convStates");
         return ge::GRAPH_FAILED;
     }
     int64_t numCacheLines = 0;
@@ -348,7 +341,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     if (hasConvStates) {
         auto sShape = EnsureNotScalar(sShapePtr->GetStorageShape());
         if (sShape.GetDimNum() != 3) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "convStates", "rank mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "convStates", "rank mismatch",
                 "3D (num_cache_lines, state_len, dim)");
             return ge::GRAPH_FAILED;
         }
@@ -356,15 +349,15 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         stateLen = sShape.GetDim(1);
         const int64_t sDim = sShape.GetDim(2);
         if (numCacheLines <= 0) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "convStates.shape[0]", std::to_string(numCacheLines), ">0");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "convStates.shape[0]", std::to_string(numCacheLines), ">0");
             return ge::GRAPH_FAILED;
         }
         if (sDim != dim) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "convStates", "dim mismatch", "shape[2]=dim");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "convStates", "dim mismatch", "shape[2]=dim");
             return ge::GRAPH_FAILED;
         }
         if (stateLen < (width - 1)) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "convStates.shape[1]", std::to_string(stateLen),
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "convStates.shape[1]", std::to_string(stateLen),
                 ">=width-1=" + std::to_string(width - 1));
             return ge::GRAPH_FAILED;
         }
@@ -375,7 +368,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             const int64_t stride1 = inputStride->GetStride(1);
             const int64_t stride2 = inputStride->GetStride(2);
             if (stride0 <= 0 || stride1 <= 0 || stride2 != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "convStates stride", "invalid", "stride0>0, stride1>0, stride2=1");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "convStates stride", "invalid", "stride0>0, stride1>0, stride2=1");
                 return ge::GRAPH_FAILED;
             }
             tiling.convStateStride0 = stride0;
@@ -401,12 +394,12 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         if (!qslAbsent) {
             auto qslShape = EnsureNotScalar(qslStorageShape);
             if (qslShape.GetDimNum() != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "queryStartLoc", "rank mismatch", "1D");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "queryStartLoc", "rank mismatch", "1D");
                 return ge::GRAPH_FAILED;
             }
             qslSize = qslShape.GetDim(0);
             if (qslSize < 1) {
-                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(context->GetNodeName(), "queryStartLoc", std::to_string(qslSize), ">=1");
+                OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(context->GetNodeName(), "queryStartLoc", std::to_string(qslSize), ">=1");
                 return ge::GRAPH_FAILED;
             }
             OP_CHECK_NULL_WITH_CONTEXT(context, qslDesc);
@@ -419,14 +412,14 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
 
     if (qslAbsent) {
         if (inputMode == 0) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "queryStartLoc");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "queryStartLoc");
             return ge::GRAPH_FAILED;
         }
         qslSize = batch + 1;
     }
 
     if (cuSeqlen > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "cuSeqlen", std::to_string(cuSeqlen), "int32 range");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cuSeqlen", std::to_string(cuSeqlen), "int32 range");
         return ge::GRAPH_FAILED;
     }
 
@@ -438,12 +431,12 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         qslDataVisible = HasVisibleMetadataData(qslTensor, tiling.queryStartLocDtype);
         if (qslDataVisible) {
             if (ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, 0) != 0) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc[0]", "not 0", "0");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc[0]", "not 0", "0");
                 return ge::GRAPH_FAILED;
             }
             const int64_t qslLast = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, qslSize - 1);
             if (qslLast != cuSeqlen) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc[last]", std::to_string(qslLast),
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc[last]", std::to_string(qslLast),
                     std::to_string(cuSeqlen));
                 return ge::GRAPH_FAILED;
             }
@@ -451,17 +444,17 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 const int64_t cur = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
                 const int64_t nxt = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1);
                 if (cur < 0 || cur > cuSeqlen) {
-                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc[i]", std::to_string(cur),
+                    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc[i]", std::to_string(cur),
                         "in [0, cuSeqlen=" + std::to_string(cuSeqlen) + "]");
                     return ge::GRAPH_FAILED;
                 }
                 if (nxt < 0 || nxt > cuSeqlen) {
-                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc[i+1]", std::to_string(nxt),
+                    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc[i+1]", std::to_string(nxt),
                         "in [0, cuSeqlen=" + std::to_string(cuSeqlen) + "]");
                     return ge::GRAPH_FAILED;
                 }
                 if (nxt < cur) {
-                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "queryStartLoc",
+                    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc",
                     "[" + std::to_string(i + 1) + "]=" + std::to_string(nxt),
                     "non-decreasing, >= queryStartLoc[" + std::to_string(i) + "]=" + std::to_string(cur));
                     return ge::GRAPH_FAILED;
@@ -480,7 +473,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             batch = batchFromQsl;
             seqLen = 0;
             if (dim <= 0 || cuSeqlen < 0 || batch < 0) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "x/queryStartLoc", "invalid",
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x/queryStartLoc", "invalid",
                     "dim>0, cuSeqlen>=0, batch>=0");
                 return ge::GRAPH_FAILED;
             }
@@ -492,7 +485,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
     if (!qslAbsent && (inputMode == 1 || inputMode == 2)) {
         if (qslSize != batch + 1) {
-            OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(context->GetNodeName(), "queryStartLoc", std::to_string(qslSize),
+            OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(context->GetNodeName(), "queryStartLoc", std::to_string(qslSize),
                 std::to_string(batch + 1));
             return ge::GRAPH_FAILED;
         }
@@ -500,7 +493,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     if (isDecodeMode) {
         const int64_t decodeSeqLen = (inputMode == 1) ? seqLen : 1;
         if (decodeSeqLen < 1) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "seqlen", std::to_string(decodeSeqLen), ">=1");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "seqlen", std::to_string(decodeSeqLen), ">=1");
             return ge::GRAPH_FAILED;
         }
     }
@@ -508,7 +501,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         tiling.maxQueryLen = attrInfo.maxQueryLen;
         if (qslDataVisible) {
             if (attrInfo.maxQueryLen >= 0 && attrInfo.maxQueryLen < observedMaxQueryLen) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "maxQueryLen", std::to_string(attrInfo.maxQueryLen),
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "maxQueryLen", std::to_string(attrInfo.maxQueryLen),
                     ">= observed max segment " + std::to_string(observedMaxQueryLen));
                 return ge::GRAPH_FAILED;
             }
@@ -530,11 +523,11 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         if (!ciAbsent) {
             auto ciShape = EnsureNotScalar(ciStorageShape);
             if (ciShape.GetDimNum() != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "cacheIndices", "rank mismatch", "1D");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "cacheIndices", "rank mismatch", "1D");
                 return ge::GRAPH_FAILED;
             }
             if (ciShape.GetDim(0) != batch) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "cacheIndices", "size mismatch", "=batch");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "cacheIndices", "size mismatch", "=batch");
                 return ge::GRAPH_FAILED;
             }
             OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.cacheIndicesIndex, "cacheIndices", false,
@@ -556,12 +549,12 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                     }
                     if (hasConvStates) {
                         if (v > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-                            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "cacheIndices[i]", std::to_string(v),
+                            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cacheIndices[i]", std::to_string(v),
                                 "int32 range");
                             return ge::GRAPH_FAILED;
                         }
                         if (v < 0 || v >= numCacheLines) {
-                            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "cacheIndices[i]", std::to_string(v),
+                            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cacheIndices[i]", std::to_string(v),
                                 "in [0, num_cache_lines=" + std::to_string(numCacheLines) + ")");
                             return ge::GRAPH_FAILED;
                         }
@@ -572,7 +565,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
     if (ciAbsent) {
         if (hasConvStates && numCacheLines < batch) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "num_cache_lines", std::to_string(numCacheLines),
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "num_cache_lines", std::to_string(numCacheLines),
                 ">= batch=" + std::to_string(batch));
             return ge::GRAPH_FAILED;
         }
@@ -586,16 +579,16 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         const bool hisAbsent = (hisDimNum == 0) || (hisDimNum == 1 && hisStorageShape.GetDim(0) <= 0);
         if (!hisAbsent) {
             if (isDecodeMode) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "hasInitialState", "present", "only runMode=0");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "hasInitialState", "present", "only runMode=0");
                 return ge::GRAPH_FAILED;
             }
             auto hisShape = EnsureNotScalar(hisStorageShape);
             if (hisShape.GetDimNum() != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "hasInitialState", "rank mismatch", "1D");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "hasInitialState", "rank mismatch", "1D");
                 return ge::GRAPH_FAILED;
             }
             if (hisShape.GetDim(0) != batch) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "hasInitialState", "size mismatch", "=batch");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "hasInitialState", "size mismatch", "=batch");
                 return ge::GRAPH_FAILED;
             }
             OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.hasInitialStateIndex, "hasInitialState", true,
@@ -611,7 +604,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t v = ReadVisibleMetadataValue(hisTensor, tiling.hasInitialStateDtype, i);
                     if (v != 0 && v != 1) {
-                        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "hasInitialState[i]", std::to_string(v), "0/1");
+                        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "hasInitialState[i]", std::to_string(v), "0/1");
                         return ge::GRAPH_FAILED;
                     }
                     hasTrueInitialState = hasTrueInitialState || (v != 0);
@@ -636,16 +629,16 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         const bool natAbsent = (natDimNum == 0) || (natDimNum == 1 && natStorageShape.GetDim(0) <= 0);
         if (!natAbsent) {
             if (!isDecodeMode) {
-                OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "numAcceptedTokens", "present", "only runMode=1");
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "numAcceptedTokens", "present", "only runMode=1");
                 return ge::GRAPH_FAILED;
             }
             auto natShape = EnsureNotScalar(natStorageShape);
             if (natShape.GetDimNum() != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "numAcceptedTokens", "rank mismatch", "1D");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "numAcceptedTokens", "rank mismatch", "1D");
                 return ge::GRAPH_FAILED;
             }
             if (natShape.GetDim(0) != batch) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "numAcceptedTokens", "size mismatch", "=batch");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "numAcceptedTokens", "size mismatch", "=batch");
                 return ge::GRAPH_FAILED;
             }
             OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.numAcceptedTokensIndex, "numAcceptedTokens", false,
@@ -657,7 +650,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 const int64_t effectiveSeqLen = (inputMode == 1) ? seqLen : tiling.maxQueryLen;
                 const int64_t reqStateLen = (width - 1) + ((effectiveSeqLen > 0) ? (effectiveSeqLen - 1) : 0);
                 if (stateLen < reqStateLen) {
-                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "stateLen", std::to_string(stateLen),
+                    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "stateLen", std::to_string(stateLen),
                         ">= " + std::to_string(reqStateLen));
                     return ge::GRAPH_FAILED;
                 }
@@ -670,18 +663,18 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t a = ReadVisibleMetadataValue(natTensor, tiling.numAcceptedTokensDtype, i);
                     if (a < 0) {
-                        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a), ">=0");
+                        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a), ">=0");
                         return ge::GRAPH_FAILED;
                     }
 
                     if (inputMode == 2) {
                         if (a > 1) {
-                            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a), "<=1");
+                            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a), "<=1");
                             return ge::GRAPH_FAILED;
                         }
                     } else if (inputMode == 1) {
                         if (a > seqLen) {
-                            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a),
+                            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a),
                                 "<=seqlen=" + std::to_string(seqLen));
                             return ge::GRAPH_FAILED;
                         }
@@ -690,7 +683,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1) -
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
                         if (a > lenI) {
-                            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a),
+                            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "numAcceptedTokens[i]", std::to_string(a),
                                 "<=segment length=" + std::to_string(lenI));
                             return ge::GRAPH_FAILED;
                         }
@@ -712,11 +705,11 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         if (!biasAbsent) {
             auto biasShape = EnsureNotScalar(biasStorageShape);
             if (biasShape.GetDimNum() != 1) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "bias", "rank mismatch", "1D (dim,)");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "bias", "rank mismatch", "1D (dim,)");
                 return ge::GRAPH_FAILED;
             }
             if (biasShape.GetDim(0) != dim) {
-                OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "bias", "size mismatch", "=dim");
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "bias", "size mismatch", "=dim");
                 return ge::GRAPH_FAILED;
             }
             tiling.hasBias = 1;
@@ -728,14 +721,14 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     const ge::DataType xDtype = xDesc->GetDataType();
     if (xDtype != ge::DT_BF16 && xDtype != ge::DT_FLOAT16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(context->GetNodeName(), "x", fla_npu::host_utils::DfxDtypeString(xDtype), "BF16,FP16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "x", fla_npu::host_utils::DfxDtypeString(xDtype), "BF16,FP16");
         return ge::GRAPH_FAILED;
     }
 
     auto wDesc = context->GetInputDesc(WEIGHT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, wDesc);
     if (wDesc->GetDataType() != xDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "weight,x", "dtype mismatch", "equal");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "weight,x", "dtype mismatch", "equal");
         return ge::GRAPH_FAILED;
     }
 
@@ -743,7 +736,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         auto biasDesc = context->GetOptionalInputDesc(BIAS_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context, biasDesc);
         if (biasDesc->GetDataType() != xDtype) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "bias,x", "dtype mismatch", "equal");
+            OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "bias,x", "dtype mismatch", "equal");
             return ge::GRAPH_FAILED;
         }
     }
@@ -751,14 +744,14 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const auto *sDesc = context->GetOptionalInputDesc(CONV_STATES_INDEX);
     if (sDesc != nullptr) {
         if (sDesc->GetDataType() != xDtype) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "convStates,x", "dtype mismatch", "equal");
+            OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "convStates,x", "dtype mismatch", "equal");
             return ge::GRAPH_FAILED;
         }
     }
 
     if (tiling.hasNumAcceptedTokens == 1) {
         if (width != 4) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "width", std::to_string(width), "4");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "width", std::to_string(width), "4");
             return ge::GRAPH_FAILED;
         }
     }

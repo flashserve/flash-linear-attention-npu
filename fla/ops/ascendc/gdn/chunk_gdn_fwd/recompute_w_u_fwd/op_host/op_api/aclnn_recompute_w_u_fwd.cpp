@@ -54,35 +54,35 @@ struct RecomputeWUFwdParams {
 static aclnnStatus CheckNotNull(RecomputeWUFwdParams params)
 {
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.a == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.gk != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "gk");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "gk");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.wOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.uOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -104,31 +104,31 @@ static aclnnStatus CheckShape(RecomputeWUFwdParams params)
     const auto uOutShape = params.uOut->GetViewShape();
 
     if (kShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k", "rank=" + std::to_string(kShape.GetDimNum()), "4 [B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k", "rank=" + std::to_string(kShape.GetDimNum()), "4 [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (vShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v", "rank=" + std::to_string(vShape.GetDimNum()), "4 [B, HV, T, V]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v", "rank=" + std::to_string(vShape.GetDimNum()), "4 [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (betaShape.GetDimNum() != 3) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta", "rank=" + std::to_string(betaShape.GetDimNum()), "3 [B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta", "rank=" + std::to_string(betaShape.GetDimNum()), "3 [B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (aShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "A", "rank=" + std::to_string(aShape.GetDimNum()), "4 [B, HV, T, chunkSize]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "A", "rank=" + std::to_string(aShape.GetDimNum()), "4 [B, HV, T, chunkSize]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (gShape.GetDimNum() != 3) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g", "rank=" + std::to_string(gShape.GetDimNum()), "3 [B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g", "rank=" + std::to_string(gShape.GetDimNum()), "3 [B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (wOutShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut", "rank=" + std::to_string(wOutShape.GetDimNum()), "4 [B, HV, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut", "rank=" + std::to_string(wOutShape.GetDimNum()), "4 [B, HV, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (uOutShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut", "rank=" + std::to_string(uOutShape.GetDimNum()), "4 [B, HV, T, V]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut", "rank=" + std::to_string(uOutShape.GetDimNum()), "4 [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -140,46 +140,46 @@ static aclnnStatus CheckShape(RecomputeWUFwdParams params)
     const int64_t V = vShape.GetDim(3);
 
     if (HK <= 0 || HV <= 0 || HV % HK != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "HK,HV", "invalid", "positive and HV % HK == 0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "HK,HV", "invalid", "positive and HV % HK == 0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (vShape.GetDim(0) != B || vShape.GetDim(2) != T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v", "mismatch", "match k batch/sequence");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v", "mismatch", "match k batch/sequence");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (betaShape.GetDim(0) != B || betaShape.GetDim(1) != HV || betaShape.GetDim(2) != T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta", "mismatch", "[B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta", "mismatch", "[B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (aShape.GetDim(0) != B || aShape.GetDim(1) != HV || aShape.GetDim(2) != T ||
         aShape.GetDim(3) != params.chunkSize) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "A", "mismatch", "[B, HV, T, chunkSize]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "A", "mismatch", "[B, HV, T, chunkSize]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (gShape.GetDim(0) != B || gShape.GetDim(1) != HV || gShape.GetDim(2) != T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g", "mismatch", "[B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g", "mismatch", "[B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (wOutShape.GetDim(0) != B || wOutShape.GetDim(1) != HV || wOutShape.GetDim(2) != T ||
         wOutShape.GetDim(3) != K) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut", "mismatch", "[B, HV, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut", "mismatch", "[B, HV, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (uOutShape.GetDim(0) != B || uOutShape.GetDim(1) != HV || uOutShape.GetDim(2) != T ||
         uOutShape.GetDim(3) != V) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut", "mismatch", "[B, HV, T, V]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut", "mismatch", "[B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.chunkSize != 64 && params.chunkSize != 128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64 or 128");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64 or 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (K != 128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "K", std::to_string(K), "128");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "K", std::to_string(K), "128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (V != 128 && V != 256) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "V", std::to_string(V), "128 or 256");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "V", std::to_string(V), "128 or 256");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -222,31 +222,31 @@ static aclnnStatus CheckDtype(RecomputeWUFwdParams params)
 {
     auto inputDtype = params.k->GetDataType();
     if (inputDtype != DataType::DT_FLOAT16 && inputDtype != DataType::DT_BF16) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k",
             fla_npu::host_utils::DfxDtypeString(inputDtype), "FLOAT16,BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.v->GetDataType() != inputDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v",
             fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()), "match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.a->GetDataType() != inputDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a",
             fla_npu::host_utils::DfxDtypeString(params.a->GetDataType()), "match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.wOut->GetDataType() != inputDtype || params.uOut->GetDataType() != inputDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut,uOut", "dtype mismatch", "match k");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut,uOut", "dtype mismatch", "match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.beta->GetDataType() != DataType::DT_FLOAT && params.beta->GetDataType() != inputDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta",
             fla_npu::host_utils::DfxDtypeString(params.beta->GetDataType()), "FLOAT32 or match k");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.g->GetDataType() != DataType::DT_FLOAT && params.g->GetDataType() != inputDtype) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g",
             fla_npu::host_utils::DfxDtypeString(params.g->GetDataType()), "FLOAT32 or match k");
         return ACLNN_ERR_PARAM_INVALID;
     }

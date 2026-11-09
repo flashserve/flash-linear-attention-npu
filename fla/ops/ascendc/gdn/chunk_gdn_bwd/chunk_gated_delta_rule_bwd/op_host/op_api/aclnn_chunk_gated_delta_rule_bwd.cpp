@@ -204,7 +204,7 @@ aclnnStatus CheckRequiredInputs(const Params &params)
         params.dBetaOut, params.dGOut};
     for (size_t idx = 0; idx < required.size(); ++idx) {
         if (tensors[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_ENTITY, required[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_ENTITY, required[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }

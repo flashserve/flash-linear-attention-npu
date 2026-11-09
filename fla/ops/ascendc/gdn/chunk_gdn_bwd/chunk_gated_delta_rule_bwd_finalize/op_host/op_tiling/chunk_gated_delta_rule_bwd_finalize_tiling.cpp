@@ -12,14 +12,7 @@
 #include "platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../../common/host_utils/log.h"
 
 
@@ -96,7 +89,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         !CheckRank(vNewShape, 4) || !CheckRank(dOShape, 4) || !CheckRank(duShape, 4) ||
         !CheckRank(gShape, 3) || !CheckRank(betaShape, 3) || !CheckRank(hShape, 5) ||
         !CheckRank(dhShape, 5) || !CheckRank(aShape, 4)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "q,k,v,vNew,dO,du,g,beta,h,dh,A",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "q,k,v,vNew,dO,du,g,beta,h,dh,A",
             "rank mismatch", "q/k/v/vNew/dO/du/A rank-4, g/beta rank-3, h/dh rank-5");
         return ge::GRAPH_FAILED;
     }
@@ -118,30 +111,30 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "B,HK,HV,T", "non-positive", "positive");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "B,HK,HV,T", "non-positive", "positive");
         return ge::GRAPH_FAILED;
     }
     if (tiling.K != K_SIZE_128 || tiling.V != V_SIZE_128) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "K,V", "invalid", "128");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "K,V", "invalid", "128");
         return ge::GRAPH_FAILED;
     }
     if (tiling.chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "chunkSize", std::to_string(tiling.chunkSize), "64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "chunkSize", std::to_string(tiling.chunkSize), "64");
         return ge::GRAPH_FAILED;
     }
     if (tiling.HV % tiling.HK != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "HV,HK", "not divisible", "HV % HK == 0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "HV,HK", "not divisible", "HV % HK == 0");
         return ge::GRAPH_FAILED;
     }
     tiling.headRatio = tiling.HV / tiling.HK;
     if (tiling.headRatio < 1 || tiling.headRatio > 4) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "HV/HK", std::to_string(tiling.headRatio), "[1, 4]");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "HV/HK", std::to_string(tiling.headRatio), "[1, 4]");
         return ge::GRAPH_FAILED;
     }
 
     if (k.GetDim(0) != tiling.B || k.GetDim(1) != tiling.HK ||
         k.GetDim(2) != tiling.T || k.GetDim(3) != tiling.K) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "q,k", "mismatch", "same shape");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "q,k", "mismatch", "same shape");
         return ge::GRAPH_FAILED;
     }
     if (v.GetDim(0) != tiling.B || v.GetDim(2) != tiling.T ||
@@ -151,7 +144,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         dO.GetDim(2) != tiling.T || dO.GetDim(3) != tiling.V ||
         du.GetDim(0) != tiling.B || du.GetDim(1) != tiling.HV ||
         du.GetDim(2) != tiling.T || du.GetDim(3) != tiling.V) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "v,vNew,dO,du", "mismatch", "[B, HV, T, V]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "v,vNew,dO,du", "mismatch", "[B, HV, T, V]");
         return ge::GRAPH_FAILED;
     }
 
@@ -159,11 +152,11 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape beta = betaShape->GetStorageShape();
     if (g.GetDim(0) != tiling.B || g.GetDim(1) != tiling.HV || g.GetDim(2) != tiling.T ||
         beta.GetDim(0) != tiling.B || beta.GetDim(1) != tiling.HV || beta.GetDim(2) != tiling.T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "g,beta", "mismatch", "[B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "g,beta", "mismatch", "[B, HV, T]");
         return ge::GRAPH_FAILED;
     }
     if (a.GetDim(0) != tiling.B || a.GetDim(1) != tiling.HV || a.GetDim(2) != tiling.T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "A", "mismatch", "[B, HV, T, 64]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "A", "mismatch", "[B, HV, T, 64]");
         return ge::GRAPH_FAILED;
     }
     const int64_t stateDim3 = stateVFirst ? tiling.V : tiling.K;
@@ -173,7 +166,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         dh.GetDim(0) != tiling.B || dh.GetDim(2) != tiling.HV ||
         dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
         dh.GetDim(4) != stateDim4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "h,dh", "state dim mismatch", "match state_v_first layout");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "h,dh", "state dim mismatch", "match state_v_first layout");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -211,23 +204,23 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const bool useExp2Value = useExp2 == nullptr ? true : *useExp2;
     const int64_t actualChunkSize = chunkSize == nullptr ? tiling->chunkSize : *chunkSize;
     if (actualChunkSize != tiling->chunkSize) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "chunkSize", std::to_string(actualChunkSize), "64");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "chunkSize", std::to_string(actualChunkSize), "64");
         return ge::GRAPH_FAILED;
     }
     if (useGateValue) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "useGateInKernel", "true", "false");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "useGateInKernel", "true", "false");
         return ge::GRAPH_FAILED;
     }
     const auto cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS_IDX);
     const auto chunkIndicesShape = context->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX);
     if ((cuShape == nullptr) != (chunkIndicesShape == nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "cu_seqlens,chunk_indices");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "cu_seqlens,chunk_indices");
         return ge::GRAPH_FAILED;
     }
     tiling->isVariable = cuShape != nullptr ? 1 : 0;
     if (tiling->isVariable != 0) {
         if (!CheckRank(cuShape, 1) || !CheckRank(chunkIndicesShape, 1) || tiling->B != 1) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "B,cu_seqlens,chunk_indices",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "B,cu_seqlens,chunk_indices",
                 "invalid", "varlen B=1, rank-1 metadata");
             return ge::GRAPH_FAILED;
         }
@@ -236,7 +229,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         // aclIntArray 转成的 chunk_indices 是一维扁平数组，按
         // [seqIdx0, chunkIdx0, seqIdx1, chunkIdx1, ...] 两两分组。
         if (cu.GetDim(0) < 2 || chunks.GetDim(0) <= 0 || chunks.GetDim(0) % 2 != 0) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "cu_seqlens,chunk_indices", "invalid", "valid varlen index shapes");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "cu_seqlens,chunk_indices", "invalid", "valid varlen index shapes");
             return ge::GRAPH_FAILED;
         }
         tiling->seqNum = cu.GetDim(0) - 1;
@@ -251,7 +244,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
     const int64_t stateChunkNum = tiling->isVariable != 0 ? tiling->totalChunkNum : tiling->chunkNumForT;
     if (hShape->GetStorageShape().GetDim(1) != stateChunkNum) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "h,dh", "NT mismatch", "match chunk schedule");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "h,dh", "NT mismatch", "match chunk schedule");
         return ge::GRAPH_FAILED;
     }
 
@@ -305,12 +298,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     if (qKey != TPL_BF16 ||
         (gKey != TPL_BF16 && gKey != TPL_FP32) ||
         (betaKey != TPL_BF16 && betaKey != TPL_FP32)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "q,g,beta", "unsupported",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "q,g,beta", "unsupported",
             "q BF16, g/beta BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
     if (gDesc->GetDataType() != betaDesc->GetDataType()) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "g,beta", "dtype mismatch", "same dtype");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "g,beta", "dtype mismatch", "same dtype");
         return ge::GRAPH_FAILED;
     }
     if (kDesc->GetDataType() != qDesc->GetDataType() ||
@@ -321,7 +314,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         hDesc->GetDataType() != qDesc->GetDataType() ||
         dhDesc->GetDataType() != qDesc->GetDataType() ||
         aDesc->GetDataType() != qDesc->GetDataType()) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "q,k,v,vNew,dO,du,h,dh,A", "dtype mismatch", "BF16");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "q,k,v,vNew,dO,du,h,dh,A", "dtype mismatch", "BF16");
         return ge::GRAPH_FAILED;
     }
 

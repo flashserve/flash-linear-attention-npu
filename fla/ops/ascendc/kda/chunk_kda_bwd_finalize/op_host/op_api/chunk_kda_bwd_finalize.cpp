@@ -39,13 +39,13 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
     if (allowNegEigval && !useBetaSigmoidInKernel) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT("ChunkKdaBwdFinalize", "allowNegEigval", "true",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT("ChunkKdaBwdFinalize", "allowNegEigval", "true",
                                             "requires useBetaSigmoidInKernel=true");
         return empty;
     }
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT("ChunkKdaBwdFinalize", "useBetaSigmoidInKernel", "true",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT("ChunkKdaBwdFinalize", "useBetaSigmoidInKernel", "true",
                                             "reserved but not supported on A5");
         return empty;
     }

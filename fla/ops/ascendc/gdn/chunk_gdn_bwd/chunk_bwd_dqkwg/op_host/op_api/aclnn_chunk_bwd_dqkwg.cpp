@@ -61,51 +61,51 @@ struct ChunkBwdDqkwgParams {
 static aclnnStatus CheckNotNull(ChunkBwdDqkwgParams params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "q");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "v");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "v");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.h == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "h");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "h");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dox == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "do");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "do");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dh == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dh");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dh");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dv == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dv");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dv");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dqOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dkOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dwOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dgOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -128,35 +128,35 @@ static aclnnStatus CheckShape(ChunkBwdDqkwgParams params)
     const auto dgShape = params.dgOut->GetViewShape();
 
     if (qShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "q", "rank=" + std::to_string(qShape.GetDimNum()), "4 [B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "q", "rank=" + std::to_string(qShape.GetDimNum()), "4 [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (kShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "k", "rank=" + std::to_string(kShape.GetDimNum()), "4 [B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "k", "rank=" + std::to_string(kShape.GetDimNum()), "4 [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (vShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "v", "rank=" + std::to_string(vShape.GetDimNum()), "4 [B, HV, T, V]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "v", "rank=" + std::to_string(vShape.GetDimNum()), "4 [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (gShape.GetDimNum() != 3) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "g", "rank=" + std::to_string(gShape.GetDimNum()), "3 [B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "g", "rank=" + std::to_string(gShape.GetDimNum()), "3 [B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dqShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut", "rank=" + std::to_string(dqShape.GetDimNum()), "4 [B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut", "rank=" + std::to_string(dqShape.GetDimNum()), "4 [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dkShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut", "rank=" + std::to_string(dkShape.GetDimNum()), "4 [B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut", "rank=" + std::to_string(dkShape.GetDimNum()), "4 [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dwShape.GetDimNum() != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut", "rank=" + std::to_string(dwShape.GetDimNum()), "4 [B, HV, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut", "rank=" + std::to_string(dwShape.GetDimNum()), "4 [B, HV, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dgShape.GetDimNum() != 3) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut", "rank=" + std::to_string(dgShape.GetDimNum()), "3 [B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut", "rank=" + std::to_string(dgShape.GetDimNum()), "3 [B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -169,35 +169,35 @@ static aclnnStatus CheckShape(ChunkBwdDqkwgParams params)
     if (HK > 0 && HV > 0 && HV % HK == 0) {
         // valid
     } else {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "HK,HV", "invalid", "positive and HV % HK == 0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "HK,HV", "invalid", "positive and HV % HK == 0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (kShape.GetDim(0) != B || kShape.GetDim(1) != HK || kShape.GetDim(2) != T || kShape.GetDim(3) != K) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "k", "mismatch", "[B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "k", "mismatch", "[B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (vShape.GetDim(0) != B || vShape.GetDim(2) != T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "v", "mismatch", "match q batch and sequence");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "v", "mismatch", "match q batch and sequence");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (gShape.GetDim(0) != B || gShape.GetDim(1) != HV || gShape.GetDim(2) != T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "g", "mismatch", "[B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "g", "mismatch", "[B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dqShape.GetDim(0) != B || dqShape.GetDim(1) != HK || dqShape.GetDim(2) != T || dqShape.GetDim(3) != K) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut", "mismatch", "[B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut", "mismatch", "[B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dkShape.GetDim(0) != B || dkShape.GetDim(1) != HK || dkShape.GetDim(2) != T || dkShape.GetDim(3) != K) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut", "mismatch", "[B, HK, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut", "mismatch", "[B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dwShape.GetDim(0) != B || dwShape.GetDim(1) != HV || dwShape.GetDim(2) != T || dwShape.GetDim(3) != K) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut", "mismatch", "[B, HV, T, K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut", "mismatch", "[B, HV, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dgShape.GetDim(0) != B || dgShape.GetDim(1) != HV || dgShape.GetDim(2) != T) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut", "mismatch", "[B, HV, T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut", "mismatch", "[B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -300,7 +300,7 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
 {
     ChunkBwdDqkwgParams params{q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize, dqOut, dkOut, dwOut, dgOut};
     if (use_exp2 != false || transpose_state_layout != false) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_BWD_DQKWG_ENTITY, "useExp2,transposeStateLayout",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "useExp2,transposeStateLayout",
             "not matching", "both false");
         return ACLNN_ERR_PARAM_INVALID;
     }

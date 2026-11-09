@@ -71,23 +71,23 @@ struct ChunkGatedDeltaRuleBwdDhuParams {
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "q");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.w == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "w");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "w");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dO == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dO");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dO");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dv == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     CHECK_COND((params.gOptional != nullptr) != (params.gkOptional != nullptr), ACLNN_ERR_PARAM_NULLPTR,
@@ -95,14 +95,14 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     CHECK_COND(params.gkOptional == nullptr || params.useExp2, ACLNN_ERR_PARAM_INVALID,
                "use_exp2 must be true when gk is provided.");
     if (params.dhOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dhOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dhOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.h0Optional != nullptr) {
         CHECK_COND(params.dh0Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dh0Out must not be nullptr when h0Optional is not nullptr.");
     }
     if (params.dv2Out == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv2Out");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv2Out");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

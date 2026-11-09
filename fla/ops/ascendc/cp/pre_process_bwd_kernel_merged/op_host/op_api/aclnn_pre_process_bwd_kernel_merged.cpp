@@ -61,7 +61,7 @@ static aclnnStatus CheckNotNull(PreProcessBwdKernelMergedParams params)
     const char *names[] = {"q", "k", "w", "d_o", "dv", "dhm"};
     for (size_t idx = 0; idx < sizeof(required) / sizeof(required[0]); ++idx) {
         if (required[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CP_BWD_ENTITY, names[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CP_BWD_ENTITY, names[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -140,11 +140,11 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
     PreProcessBwdKernelMergedParams params{q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional, scale, chunkSize,
                                           dhmOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CP_BWD_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CP_BWD_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CP_BWD_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CP_BWD_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(aclnnPreProcessBwdKernelMerged,

@@ -105,7 +105,7 @@ static bool SameShape(const aclTensor *a, const aclTensor *b)
 static aclnnStatus ParseLayout(const char *text, Layout &layout)
 {
     if (text == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "layout");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (std::strcmp(text, "BSND") == 0) {
@@ -120,7 +120,7 @@ static aclnnStatus ParseLayout(const char *text, Layout &layout)
         layout = Layout::TND;
         return ACLNN_SUCCESS;
     }
-    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "layout", text, "BSND, BNSD or TND");
+    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "layout", text, "BSND, BNSD or TND");
     return ACLNN_ERR_PARAM_INVALID;
 }
 
@@ -128,22 +128,22 @@ aclnnStatus ValidateVarLenMetadata(
     const Params &p, int64_t totalTokens, int64_t &totalChunks)
 {
     if (p.cuSeqlens == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(p.cuSeqlens->Size() >= 2 && p.cuSeqlens->Size() <= 65)) {
-        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens",
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens",
                                                       std::to_string(p.cuSeqlens->Size()), "2..65");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclIntArray &cu = *p.cuSeqlens;
     if (cu[0] != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens[0]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens[0]",
                                                    std::to_string(cu[0]), "0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (cu[cu.Size() - 1] != totalTokens) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens[last]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens[last]",
                                                    std::to_string(cu[cu.Size() - 1]), std::to_string(totalTokens));
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -151,7 +151,7 @@ aclnnStatus ValidateVarLenMetadata(
     totalChunks = 0;
     for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
         if (!(cu[seq] >= 0 && cu[seq + 1] >= cu[seq])) {
-            OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens",
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens",
                                                        "non-monotonic", "nondecreasing");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -159,14 +159,14 @@ aclnnStatus ValidateVarLenMetadata(
         totalChunks += (length + p.chunkSize - 1) / p.chunkSize;
     }
     if (totalChunks <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens", "empty",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "cu_seqlens", "empty",
                                                    "at least one non-empty sequence");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     if (p.chunkIndices != nullptr) {
         if (p.chunkIndices->Size() != static_cast<size_t>(totalChunks) * 2) {
-            OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunk_indices",
+            OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunk_indices",
                                                           std::to_string(p.chunkIndices->Size()),
                                                           std::to_string(totalChunks * 2));
             return ACLNN_ERR_PARAM_INVALID;
@@ -179,7 +179,7 @@ aclnnStatus ValidateVarLenMetadata(
             for (int64_t localChunk = 0; localChunk < count; ++localChunk) {
                 if (!((*p.chunkIndices)[index] == static_cast<int64_t>(seq) &&
                       (*p.chunkIndices)[index + 1] == localChunk)) {
-                    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunk_indices",
+                    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunk_indices",
                                                                "non-canonical", "sequence-major order");
                     return ACLNN_ERR_PARAM_INVALID;
                 }
@@ -198,24 +198,24 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
     };
     for (const aclTensor *tensor : required) {
         if (tensor == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "tensor");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "tensor");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         if (!IsContiguous(tensor)) {
-            OP_LOGE_LIBOPAPI_REPORT_FORMAT_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "tensor", "non-contiguous", "contiguous");
+            OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "tensor", "non-contiguous", "contiguous");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     const aclTensor *bf16[] = {p.q, p.k};
     for (const aclTensor *tensor : bf16) {
         if (tensor->GetDataType() != DataType::DT_BF16) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q/k",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q/k",
                                                        fla_npu::host_utils::DfxDtypeString(tensor->GetDataType()), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!(p.beta->GetDataType() == DataType::DT_BF16 || p.beta->GetDataType() == DataType::DT_FLOAT)) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta",
                                                    fla_npu::host_utils::DfxDtypeString(p.beta->GetDataType()), "BF16,FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -225,7 +225,7 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
     };
     for (const aclTensor *tensor : fp32) {
         if (tensor->GetDataType() != DataType::DT_FLOAT) {
-            OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "gk/dA/gradient",
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "gk/dA/gradient",
                                                        fla_npu::host_utils::DfxDtypeString(tensor->GetDataType()), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -233,30 +233,30 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
     auto parseRet = ParseLayout(p.layout, layout);
     if (parseRet != ACLNN_SUCCESS) return parseRet;
     if (!p.safeGate) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "safeGate", "false",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "safeGate", "false",
                                                    "reserved but not supported in v1");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (p.chunkSize != 64) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunkSize",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunkSize",
                                                    std::to_string(p.chunkSize), "64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const bool isVarLen = p.cuSeqlens != nullptr;
     if (!isVarLen && p.chunkIndices != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunk_indices", "present",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "chunk_indices", "present",
                                                    "requires cu_seqlens");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((isVarLen && layout == Layout::BNSD) || (!isVarLen && layout == Layout::TND)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "layout", "mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "layout", "mismatch",
                                                    "varlen supports TND/BSND; dense supports BSND/BNSD");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto q = p.q->GetViewShape();
     const size_t expectedRank = layout == Layout::TND ? 3 : 4;
     if (q.GetDimNum() != expectedRank) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q",
                                                              "rank=" + std::to_string(q.GetDimNum()),
                                                              "rank=" + std::to_string(expectedRank));
         return ACLNN_ERR_PARAM_INVALID;
@@ -268,29 +268,29 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
                       q.GetDim(layout == Layout::BSND ? 2 : 1);
     const int64_t k = layout == Layout::TND ? q.GetDim(2) : q.GetDim(3);
     if (!(b > 0 && h > 0 && t > 0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q.shape[B/H/T]",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q.shape[B/H/T]",
                                                    "non-positive", "positive");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!((isVarLen && k == 128) || (!isVarLen && (k == 64 || k == 128 || k == 256)))) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q.shape[K]", std::to_string(k),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q.shape[K]", std::to_string(k),
                                                    "varlen 128; dense 64/128/256");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (isVarLen && layout == Layout::BSND && b != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q.shape[B]", std::to_string(b), "1");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q.shape[B]", std::to_string(b), "1");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(SameShape(p.q, p.k) && SameShape(p.q, p.gk) && SameShape(p.q, p.dq) && SameShape(p.q, p.dk) &&
           SameShape(p.q, p.dg) && SameShape(p.q, p.dqOut) && SameShape(p.q, p.dkOut) && SameShape(p.q, p.dgOut))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q,k,gk,dq,dk,dg,dqOut,dkOut,dgOut",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "q,k,gk,dq,dk,dg,dqOut,dkOut,dgOut",
                                                    "mismatch", "identical");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto beta = p.beta->GetViewShape();
     const size_t scalarRank = layout == Layout::TND ? 2 : 3;
     if (beta.GetDimNum() != scalarRank) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta",
                                                              "rank=" + std::to_string(beta.GetDimNum()),
                                                              "rank=" + std::to_string(scalarRank));
         return ACLNN_ERR_PARAM_INVALID;
@@ -301,13 +301,13 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
          beta.GetDim(layout == Layout::BSND ? 1 : 2) == t &&
          beta.GetDim(layout == Layout::BSND ? 2 : 1) == h);
     if (!(scalarDimsMatch && SameShape(p.beta, p.db) && SameShape(p.beta, p.dbOut))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta,db,dbOut", "mismatch", "match layout");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "beta,db,dbOut", "mismatch", "match layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto da = p.dAqk->GetViewShape();
     const size_t matrixRank = layout == Layout::TND ? 3 : 4;
     if (da.GetDimNum() != matrixRank) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "dAqk/dAkk",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "dAqk/dAkk",
                                                              "rank=" + std::to_string(da.GetDimNum()),
                                                              "rank=" + std::to_string(matrixRank));
         return ACLNN_ERR_PARAM_INVALID;
@@ -320,7 +320,7 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
          da.GetDim(layout == Layout::BSND ? 2 : 1) == h &&
          da.GetDim(3) == p.chunkSize);
     if (!(matrixDimsMatch && SameShape(p.dAqk, p.dAkk))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "dAqk,dAkk", "mismatch", "match layout");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "dAqk,dAkk", "mismatch", "match layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     totalChunks = 0;
@@ -347,11 +347,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
                           cuSeqlensOptional, chunkIndicesOptional, chunkSize, safeGate, layout),
                    DFX_OUT(dqOut, dkOut, dbOut, dgOut));
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     Params params{q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg,

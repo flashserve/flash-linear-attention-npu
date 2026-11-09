@@ -17,14 +17,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <register/op_impl_registry.h>
-#if defined(__has_include)
-#if __has_include("op_common/log/log.h")
 #include "op_common/log/log.h"
-#endif
-#endif
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
 #include "../../../../../../common/host_utils/log.h"
 
 namespace optiling {
@@ -200,7 +193,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         betaShape->GetStorageShape().GetDimNum() != 3 ||
         aShape->GetStorageShape().GetDimNum() != 4 ||
         gShape->GetStorageShape().GetDimNum() != 3) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPES_IMPAT(context->GetNodeName(), "q,k,v,beta,A,g",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(context->GetNodeName(), "q,k,v,beta,A,g",
             "rank mismatch", "q/k/v/A rank-4, beta/raw_g rank-3");
         return ge::GRAPH_FAILED;
     }
@@ -212,7 +205,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
     if (qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
         aDesc == nullptr || gDesc == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(context->GetNodeName(), "q,k,v,beta,A,g");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "q,k,v,beta,A,g");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType inputDtype = qDesc->GetDataType();
@@ -222,27 +215,27 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     const int64_t *rawGLayoutAttr = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_RAW_G_LAYOUT);
     const int64_t rawGLayout = rawGLayoutAttr == nullptr ? 0 : *rawGLayoutAttr;
     if (rawGLayout != 0 && rawGLayout != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "rawGLayout", std::to_string(rawGLayout), "0 (BHT) or 1 (BTH)");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "rawGLayout", std::to_string(rawGLayout), "0 (BHT) or 1 (BTH)");
         return ge::GRAPH_FAILED;
     }
     const int64_t *qkvLayoutAttr = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_QKV_LAYOUT);
     const int64_t qkvLayout = qkvLayoutAttr == nullptr ? 0 : *qkvLayoutAttr;
     if (qkvLayout != 0 && qkvLayout != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "qkvLayout", std::to_string(qkvLayout), "0 (BHTD) or 1 (BTHD)");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "qkvLayout", std::to_string(qkvLayout), "0 (BHTD) or 1 (BTHD)");
         return ge::GRAPH_FAILED;
     }
     if (qkvLayout == 1 && platform.GetCurNpuArch() != NpuArch::DAV_2201) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "qkvLayout", "1", "requires DAV_2201");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "qkvLayout", "1", "requires DAV_2201");
         return ge::GRAPH_FAILED;
     }
     const int64_t *oLayoutAttr = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_O_LAYOUT);
     const int64_t oLayout = oLayoutAttr == nullptr ? 0 : *oLayoutAttr;
     if (oLayout != 0 && oLayout != 1) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "oLayout", std::to_string(oLayout), "0 (BHTV) or 1 (BTHV)");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "oLayout", std::to_string(oLayout), "0 (BHTV) or 1 (BTHV)");
         return ge::GRAPH_FAILED;
     }
     if (oLayout == 1 && platform.GetCurNpuArch() != NpuArch::DAV_2201) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "oLayout", "1", "requires DAV_2201");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "oLayout", "1", "requires DAV_2201");
         return ge::GRAPH_FAILED;
     }
     const size_t headAxis = qkvLayout == 1 ? 2 : 1;
@@ -266,27 +259,27 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         batch <= 0 || heads <= 0 || tokens <= 0 || kDim != SUPPORTED_K_DIM ||
         (vDim != SUPPORTED_V_DIM_128 && vDim != SUPPORTED_V_DIM_256) ||
         valueHeads <= 0 || (valueHeads % heads) != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(context->GetNodeName(), "dtype,B,Hk,T,K,V,Hv",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(context->GetNodeName(), "dtype,B,Hk,T,K,V,Hv",
             "unsupported", "FP16/BF16, positive B/Hk/T, Hk | Hv, K=128, V=128/256");
         return ge::GRAPH_FAILED;
     }
     if (!(qkvLayout == 1 ? IsShape(kShape, {batch, tokens, heads, kDim}) :
                            IsShape(kShape, {batch, heads, tokens, kDim}))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "k", "mismatch", "match q in [B,H,T,K]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "k", "mismatch", "match q in [B,H,T,K]");
         return ge::GRAPH_FAILED;
     }
     if (!(qkvLayout == 1 ? IsShape(vShape, {batch, tokens, valueHeads, vDim}) :
                            IsShape(vShape, {batch, valueHeads, tokens, vDim}))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "v", "mismatch", "[B,Hv,T,V] with Hv % Hk == 0");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "v", "mismatch", "[B,Hv,T,V] with Hv % Hk == 0");
         return ge::GRAPH_FAILED;
     }
     if (!IsShape(betaShape, {batch, valueHeads, tokens})) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "beta", "mismatch", "[B,Hv,T]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "beta", "mismatch", "[B,Hv,T]");
         return ge::GRAPH_FAILED;
     }
     if ((rawGLayout == 0 && !IsShape(gShape, {batch, valueHeads, tokens})) ||
         (rawGLayout == 1 && !IsShape(gShape, {batch, tokens, valueHeads}))) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "raw_g", "mismatch", "0:[B,Hv,T] or 1:[B,T,Hv]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "raw_g", "mismatch", "0:[B,Hv,T] or 1:[B,T,Hv]");
         return ge::GRAPH_FAILED;
     }
     if (kDesc->GetDataType() != inputDtype ||
@@ -294,7 +287,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         aDesc->GetDataType() != inputDtype ||
         betaDesc->GetDataType() != ge::DT_FLOAT ||
         gDesc->GetDataType() != ge::DT_FLOAT) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPES_IMPAT(context->GetNodeName(), "k,v,A,beta,g", "mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(context->GetNodeName(), "k,v,A,beta,g", "mismatch",
             "FP16/BF16 k/v/A, FP32 beta/g");
         return ge::GRAPH_FAILED;
     }
@@ -313,7 +306,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                       cuShape->GetStorageShape().GetDimNum() != 1 ||
                       cuShape->GetStorageShape().GetDim(0) < 2 ||
                       !GetChunkCount(chunkShape, &varlenChunks)))) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(context->GetNodeName(), "chunkSize,cuSeqlens,chunkIndices",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(context->GetNodeName(), "chunkSize,cuSeqlens,chunkIndices",
             "unsupported", "chunk_size 64/128 and paired valid varlen metadata");
         return ge::GRAPH_FAILED;
     }
@@ -323,17 +316,17 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
          (vDim != SUPPORTED_V_DIM_128 && vDim != SUPPORTED_V_DIM_256) ||
          (*chunkSize != CHUNK_64 && *chunkSize != CHUNK_128) ||
          (isVarlen && batch != 1))) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "rawGLayout", "1",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "rawGLayout", "1",
             "requires DAV_2201, K=128, V=128/256, BT64/128, varlen B=1");
         return ge::GRAPH_FAILED;
     }
     if (rawGLayout == 1 && static_cast<uint64_t>(valueHeads) > MAX_PREPARE_HEADS) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "valueHeads", std::to_string(valueHeads),
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "valueHeads", std::to_string(valueHeads),
             "<= " + std::to_string(MAX_PREPARE_HEADS) + " for raw_g_layout=1");
         return ge::GRAPH_FAILED;
     }
     if (!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize})) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(context->GetNodeName(), "a_storage", "mismatch", "[B,Hv,T,chunk_size]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "a_storage", "mismatch", "[B,Hv,T,chunk_size]");
         return ge::GRAPH_FAILED;
     }
 
@@ -348,7 +341,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         MulOverflow(static_cast<uint64_t>(batch), numChunks, &prepareTaskNum) ||
         MulOverflow(prepareTaskNum, static_cast<uint64_t>(valueHeads), &abcTaskNum) ||
         abcTaskNum > MAX_KERNEL_TASKS) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(context->GetNodeName(), "task count",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "task count",
             std::to_string(prepareTaskNum) + "/" + std::to_string(abcTaskNum),
             "1 <= B*NT*Hv <= " + std::to_string(MAX_KERNEL_TASKS));
         return ge::GRAPH_FAILED;

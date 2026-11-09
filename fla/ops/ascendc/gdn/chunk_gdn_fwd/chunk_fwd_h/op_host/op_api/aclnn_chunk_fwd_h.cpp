@@ -59,24 +59,24 @@ struct ChunkFwdHParams {
 static aclnnStatus CheckNotNull(ChunkFwdHParams params)
 {
     if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "k");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_H_ENTITY, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.w == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "w");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_H_ENTITY, "w");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.u == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "u");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_H_ENTITY, "u");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
     if (params.hOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "hOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_H_ENTITY, "hOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.vNewOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_FWD_H_ENTITY, "vNewOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_H_ENTITY, "vNewOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     CHECK_COND(params.outputFinalState == (params.finalStateOut != nullptr), ACLNN_ERR_PARAM_INVALID,

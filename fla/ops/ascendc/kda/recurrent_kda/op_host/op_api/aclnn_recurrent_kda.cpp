@@ -144,7 +144,7 @@ static bool ParseLayout(const char *layout, RecurrentKdaLayout &parsed)
         parsed = RecurrentKdaLayout::TND;
         return true;
     }
-    OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, "layout", layout, "BSND or TND");
+    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, "layout", layout, "BSND or TND");
     return false;
 }
 
@@ -217,12 +217,12 @@ bool CheckQkvMaterializationSafety(
     }
     const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
     if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, name, "head span overflow", "in int64 range");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, name, "head span overflow", "in int64 range");
         return false;
     }
     const int64_t minTokenStride = (headCount - 1) * headStride + featureCount;
     if (tokenStride < minTokenStride) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, name, "token/head axis overlap", "supported order");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, name, "token/head axis overlap", "supported order");
         return false;
     }
     return true;
@@ -234,7 +234,7 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
         return true;
     }
     if (Rank(cuSeqlens) != 1 || Dim(cuSeqlens, DIM0) < 2) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "cuSeqlensOptional", "mismatch", "1D, >=2 elements");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "cuSeqlensOptional", "mismatch", "1D, >=2 elements");
         return false;
     }
     return true;
@@ -243,7 +243,7 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
 bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
 {
     if (!SameShape(params.query, params.key)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "query,key", "mismatch", "identical");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "query,key", "mismatch", "identical");
         return false;
     }
     int64_t totalTokens = 0;
@@ -255,7 +255,7 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
     int64_t vDim = 0;
     if (layout == RecurrentKdaLayout::TND) {
         if (Rank(params.query) != 3 || Rank(params.value) != 3 || Rank(params.gate) != 3 || Rank(params.beta) != 2) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "q,k,v,g,beta", "rank mismatch", "TND ranks");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "q,k,v,g,beta", "rank mismatch", "TND ranks");
             return false;
         }
         totalTokens = Dim(params.query, DIM0);
@@ -267,12 +267,12 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         if (Dim(params.value, DIM0) != totalTokens || Dim(params.gate, DIM0) != totalTokens ||
             Dim(params.beta, DIM0) != totalTokens || Dim(params.gate, DIM1) != hv ||
             Dim(params.beta, DIM1) != hv || Dim(params.gate, DIM2) != kDim) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "v,g,beta", "mismatch", "TND shapes");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "v,g,beta", "mismatch", "TND shapes");
             return false;
         }
     } else {
         if (Rank(params.query) != 4 || Rank(params.value) != 4 || Rank(params.gate) != 4 || Rank(params.beta) != 3) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "q,k,v,g,beta", "rank mismatch", "BSND ranks");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "q,k,v,g,beta", "rank mismatch", "BSND ranks");
             return false;
         }
         batch = Dim(params.query, DIM0);
@@ -287,20 +287,20 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
             Dim(params.gate, DIM2) != hv || Dim(params.gate, DIM3) != kDim ||
             Dim(params.beta, DIM0) != batch || Dim(params.beta, DIM1) != denseSeqLen ||
             Dim(params.beta, DIM2) != hv) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "v,g,beta", "mismatch", "BSND shapes");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "v,g,beta", "mismatch", "BSND shapes");
             return false;
         }
     }
     if (h <= 0 || hv <= 0 || kDim <= 0 || vDim <= 0 || totalTokens <= 0 || denseSeqLen <= 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, "shape dims", "non-positive", "positive");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, "shape dims", "non-positive", "positive");
         return false;
     }
     if (hv % h != 0) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, "H,HV", "HV%H!=0", "HV%H==0");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, "H,HV", "HV%H!=0", "HV%H==0");
         return false;
     }
     if (kDim != 128 || (vDim != 128 && vDim != 256)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUES_IMPAT(RECURRENT_KDA_ENTITY, "K,V",
+        OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(RECURRENT_KDA_ENTITY, "K,V",
             "K=" + std::to_string(kDim) + ",V=" + std::to_string(vDim), "K=128,V=128 or K=128,V=256");
         return false;
     }
@@ -311,7 +311,7 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         ((layout == RecurrentKdaLayout::BSND) ? batch : 1) :
         Dim(params.cuSeqlensOptional, DIM0) - 1;
     if (Rank(params.initialStateRef) != 4) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_IMPAT(RECURRENT_KDA_ENTITY, "initialStateRef",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(RECURRENT_KDA_ENTITY, "initialStateRef",
             "rank=" + std::to_string(Rank(params.initialStateRef)), "rank 4");
         return false;
     }
@@ -321,16 +321,16 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         (Dim(params.initialStateRef, DIM2) == kDim && Dim(params.initialStateRef, DIM3) == vDim);
     if (stateCapacity <= 0 || Dim(params.initialStateRef, DIM1) != hv || !stateTailMatches ||
         (params.ssmStateIndicesOptional == nullptr && stateCapacity != seqNum)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "initialStateRef", "mismatch",
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "initialStateRef", "mismatch",
             "[state_capacity,HV,V,K] or [state_capacity,HV,K,V]");
         return false;
     }
     if (!SameShape(params.attnOut, params.value)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "attnOut", "mismatch", "match value");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "attnOut", "mismatch", "match value");
         return false;
     }
     if (!SameShape(params.finalState, params.initialStateRef)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "finalState", "mismatch", "match initialStateRef");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "finalState", "mismatch", "match initialStateRef");
         return false;
     }
     if (params.ssmStateIndicesOptional != nullptr) {
@@ -339,27 +339,27 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         bool speculative2d = rank == 2 && Dim(params.ssmStateIndicesOptional, DIM0) == seqNum &&
                              Dim(params.ssmStateIndicesOptional, DIM1) > 0;
         if (!packed1d && !speculative2d) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "ssmStateIndicesOptional", "mismatch",
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "ssmStateIndicesOptional", "mismatch",
                 "packed [T] or speculative [seq_num,max_step]");
             return false;
         }
     }
     if (params.numAcceptedTokensOptional != nullptr &&
         (Rank(params.numAcceptedTokensOptional) != 1 || Dim(params.numAcceptedTokensOptional, DIM0) != seqNum)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "numAcceptedTokensOptional", "mismatch", "[seq_num]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "numAcceptedTokensOptional", "mismatch", "[seq_num]");
         return false;
     }
     if (params.useGateInKernel && params.aLogOptional == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "A_log");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "A_log");
         return false;
     }
     if (!params.useGateInKernel && (params.safeGate || params.aLogOptional != nullptr || params.dtBiasOptional != nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, "A_log/dt_bias/safe_gate", "present",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, "A_log/dt_bias/safe_gate", "present",
             "require use_gate_in_kernel=True");
         return false;
     }
     if (params.aLogOptional != nullptr && (Rank(params.aLogOptional) != 1 || Dim(params.aLogOptional, DIM0) != hv)) {
-        OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "A_log", "mismatch", "float32 [HV]");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "A_log", "mismatch", "float32 [HV]");
         return false;
     }
     if (params.dtBiasOptional != nullptr) {
@@ -367,12 +367,12 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
                         (Rank(params.dtBiasOptional) == 2 && Dim(params.dtBiasOptional, DIM0) == hv &&
                          Dim(params.dtBiasOptional, DIM1) == kDim);
         if (!dtBiasOk) {
-            OP_LOGE_LIBOPAPI_REPORT_SHAPE_IMPAT(RECURRENT_KDA_ENTITY, "dt_bias", "mismatch", "float32 [HV*K] or [HV,K]");
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECURRENT_KDA_ENTITY, "dt_bias", "mismatch", "float32 [HV*K] or [HV,K]");
             return false;
         }
     }
     if (params.safeGate && (params.lowerBound < -5.0 || params.lowerBound >= 0.0)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, "lower_bound", "out of range", "[-5, 0)");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, "lower_bound", "out of range", "[-5, 0)");
         return false;
     }
     return true;
@@ -381,35 +381,35 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
 aclnnStatus CheckNotNull(const RecurrentKdaParams &params)
 {
     if (params.query == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "query");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "query");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.key == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "key");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "key");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.value == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "value");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "value");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.gate == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "gate");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "gate");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "beta");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "beta");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.initialStateRef == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "initialStateRef");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "initialStateRef");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.attnOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "attnOut");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "attnOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.finalState == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(RECURRENT_KDA_ENTITY, "finalState");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECURRENT_KDA_ENTITY, "finalState");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -426,7 +426,7 @@ bool CheckDtypeValid(const RecurrentKdaParams &params)
     OP_CHECK_DTYPE_NOT_SUPPORT(params.attnOut, QKV_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.finalState, STATE_TYPE_SUPPORT_LIST, return false);
     if (params.finalState->GetDataType() != params.initialStateRef->GetDataType()) {
-        OP_LOGE_LIBOPAPI_REPORT_DTYPE_IMPAT(RECURRENT_KDA_ENTITY, "finalState",
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECURRENT_KDA_ENTITY, "finalState",
             fla_npu::host_utils::DfxDtypeString(params.finalState->GetDataType()), "match initialStateRef");
         return false;
     }
@@ -524,7 +524,7 @@ aclnnStatus PreProcess(
     CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.numAcceptedTokensOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_IMPAT(RECURRENT_KDA_ENTITY, "num_accepted_tokens", "present",
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, "num_accepted_tokens", "present",
             "requires ssm_state_indices");
         return ACLNN_ERR_PARAM_INVALID;
     }

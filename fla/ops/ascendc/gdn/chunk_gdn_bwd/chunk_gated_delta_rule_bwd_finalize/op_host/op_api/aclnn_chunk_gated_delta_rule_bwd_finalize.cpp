@@ -79,7 +79,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         q, k, v, vNew, dO, du, g, beta, h, dh, a};
     for (size_t idx = 0; idx < required.size(); ++idx) {
         if (requiredTensors[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, required[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, required[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -87,16 +87,16 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const std::array<const aclTensor *, 5> gradTensors = {dqOut, dkOut, dvOut, dbetaOut, dgOut};
     for (size_t idx = 0; idx < gradNames.size(); ++idx) {
         if (gradTensors[idx] == nullptr) {
-            OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, gradNames[idx]);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, gradNames[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_IMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, "executor");
 
         return ACLNN_ERR_PARAM_NULLPTR;
     }
