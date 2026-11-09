@@ -183,22 +183,18 @@ private:
 
     __aicore__ inline auto MakeQkvKLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
     {
-        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
-            return tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128,
-                static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim)));
-        } else {
-            return tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, 128);
-        }
+        const uint32_t rowStride =
+            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128;
+        return tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128, rowStride));
     }
 
     __aicore__ inline auto MakeQkvQLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
     {
-        if ((tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)) {
-            return tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens,
-                static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim)));
-        } else {
-            return tla::MakeLayout<MainT, LayoutCM>(128, meta.validTokens);
-        }
+        const uint32_t rowStride =
+            (tiling_->layout == GDN::QKV_LAYOUT_BSND || tiling_->layout == GDN::QKV_LAYOUT_TND)
+                ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128;
+        return tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens, rowStride));
     }
 
     __aicore__ inline void PrefetchLeader(
