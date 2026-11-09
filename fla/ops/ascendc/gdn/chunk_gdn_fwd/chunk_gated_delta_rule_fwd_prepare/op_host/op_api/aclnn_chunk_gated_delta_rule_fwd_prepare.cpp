@@ -37,8 +37,6 @@ constexpr int64_t DIM_4 = 4;
 constexpr int64_t DIM_3 = 3;
 constexpr int64_t DIM_1 = 1;
 
-// A2/A3 share DAV_2201. This matches the tiling dispatch in
-// chunk_gated_delta_rule_fwd_prepare_tiling.cpp; Ascend950 is DAV_3510.
 static bool IsA2PrepareSoc()
 {
     return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
