@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from tests.opp_abi_fixtures import write_elf_exports
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "torch_custom/fla_npu"
@@ -27,14 +28,66 @@ def vendor(path, scalar="double", exports=None, *, name="Demo"):
         "uint64_t *workspaceSize, aclOpExecutor **executor);\n"
         f"aclnnStatus aclnn{name}(void *workspace, uint64_t workspaceSize, "
         "aclOpExecutor *executor, aclrtStream stream);\n", encoding="utf-8")
-    with mock.patch.object(abi, "exported_symbols", return_value=(
-        exports if exports is not None else set(abi.public_prototypes(path / abi.INCLUDE))
-    )):
+    exports = exports if exports is not None else set(abi.public_prototypes(path / abi.INCLUDE))
+    write_elf_exports(path / abi.LIBRARY, exports)
+    with mock.patch.object(abi, "exported_symbols", return_value=exports):
         abi.write_manifest(path)
     return path
 
 
 class ContractTest(unittest.TestCase):
+    def test_elf_reader_supports_classes_and_byte_orders(self):
+        for bits in (32, 64):
+            for byteorder in ("<", ">"):
+                with self.subTest(bits=bits, byteorder=byteorder), tempfile.TemporaryDirectory() as tmp:
+                    library = Path(tmp) / "vendor.so"
+                    symbols = {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+                    write_elf_exports(library, symbols | {"private_helper"}, bits=bits, byteorder=byteorder)
+                    self.assertEqual(abi.elf_exported_symbols(library), symbols)
+
+    def test_invalid_elf_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp) / "vendor.so"
+            write_elf_exports(library, {"aclnnDemo"})
+            complete = library.read_bytes()
+            for content in (b"not ELF", complete[:20], complete[:-1]):
+                library.write_bytes(content)
+                with self.assertRaisesRegex(RuntimeError, "Invalid ELF"):
+                    abi.elf_exported_symbols(library)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("cc") and shutil.which("nm"), "native ELF compiler/nm")
+    def test_native_elf_matches_nm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, library = Path(tmp) / "test.c", Path(tmp) / "test.so"
+            source.write_text('extern int puts(const char *);\n'
+                              'int aclnnDemo(void) { return puts("unused"); }\n'
+                              'int aclnnDemoGetWorkspaceSize(void) { return 0; }\n'
+                              'int unrelated(void) { return 0; }\n')
+            subprocess.run(["cc", "-shared", "-fPIC", str(source), "-o", str(library)], check=True, capture_output=True)
+            self.assertEqual(abi.elf_exported_symbols(library), abi.exported_symbols(library))
+
+    def test_omitted_interface_pair_is_not_treated_as_new(self):
+        for omitted in ("base", "overlay"):
+            with self.subTest(omitted=omitted), tempfile.TemporaryDirectory() as tmp:
+                base = vendor(Path(tmp) / "base", "double")
+                vendor(base, name="Keep")
+                overlay = vendor(Path(tmp) / "overlay", "float")
+                vendor(overlay, name="Keep")
+                manifest = (base if omitted == "base" else overlay) / abi.MANIFEST_NAME
+                data = json.loads(manifest.read_text())
+                for symbol in ("aclnnDemo", "aclnnDemoGetWorkspaceSize"):
+                    del data["contracts"][symbol]
+                manifest.write_text(json.dumps(data))
+                problems = abi.compare_overlay_to_base(overlay, base)
+                self.assertTrue(any("Incomplete ABI manifest" in p for p in problems), problems)
+
+    def test_extra_unexported_header_declarations_are_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = vendor(Path(tmp))
+            vendor(path, name="DeclarationOnly", exports={"aclnnDemo", "aclnnDemoGetWorkspaceSize"})
+            self.assertEqual(set(abi.validated_contracts(path, require_manifest=True)),
+                             {"aclnnDemo", "aclnnDemoGetWorkspaceSize"})
+
     def test_exact_pointer_levels_and_unknown_types(self):
         for left, right in [("double scale", "double *scale"),
                             ("aclTensor *x", "aclTensor **x"),

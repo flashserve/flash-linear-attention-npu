@@ -62,7 +62,13 @@ def _stable_tree(tmp: str, *, wrapper_args: int = 2):
         'STABLE_TORCH_LIBRARY(fla_npu_stable, m) { m.def(kSchema_npu_new_op); }\n'
         'STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {\n'
         'm.impl("npu_new_op", &boxed_adapter<run_npu_new_op>); }\n', encoding="utf-8")
-    return ops, src
+    contract = Path(tmp) / "public.json"
+    contract.write_text(json.dumps({
+        "operators": ["npu_new_op"],
+        "public_signatures": {"npu_new_op": {"arguments": "a", "return": None}},
+        "dispatch_arguments": {"npu_new_op": [{"op": "npu_new_op", "expressions": ["a", "_current_stream_ptr()"]}]},
+    }), encoding="utf-8")
+    return ops, src, contract
 
 
 class BuildStampTest(unittest.TestCase):
@@ -125,16 +131,43 @@ class CoverageGateTest(unittest.TestCase):
         self.assertEqual(set(self.tool.public_ops()), {row["op"] for row in report["rows"]})
         self.assertEqual(report["adapter_count"], len(self.tool.public_ops()))
 
-    def test_public_signature_changes_do_not_require_a_snapshot(self) -> None:
+    def test_existing_public_calling_conventions_remain_protected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ops, src = _stable_tree(tmp)
+            ops, src, contract = _stable_tree(tmp)
             original = (ops / "_stable.py").read_text(encoding="utf-8")
-            for header in ("def npu_new_op(a=None):", "def npu_new_op(*, a):", "def npu_new_op(a: int):"):
+            for header in ("def npu_new_op(a=None):", "def npu_new_op(*, a):"):
                 (ops / "_stable.py").write_text(original.replace("def npu_new_op(a):", header), encoding="utf-8")
                 with mock.patch.object(self.tool, "OPS_DIR", ops), \
-                        mock.patch.object(self.tool, "SRC_DIR", src):
+                        mock.patch.object(self.tool, "SRC_DIR", src), \
+                        mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
                     report = self.tool.evaluate()
-                self.assertEqual(report["blockers"], [], header)
+                self.assertTrue(report["blockers"], header)
+
+    def test_signature_compatibility_is_additive(self) -> None:
+        def check(old, new):
+            return self.tool._signature_problems(
+                {"arguments": old, "return": None}, {"arguments": new, "return": None})
+        for new in ("a, b=1, is_out_l2norm=None", "a, b=1, *, is_out_l2norm=None", "a: int, b=1"):
+            self.assertEqual(check("a, b=1", new), [], new)
+        for new in ("*, a, b=1", "b, a=1", "a, b=2", "a, c=1", "a, b=1, *, c"):
+            self.assertTrue(check("a, b=1", new), new)
+        self.assertTrue(check("a, *args", "a, b=None, *args"))
+        self.assertEqual(check("a, *args", "a, *args, b=None"), [])
+
+    def test_new_operator_does_not_need_baseline_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, src, contract = _stable_tree(tmp)
+            # The baseline operator still exists; another fully wired API is new.
+            for path in (ops / "_stable.py", src / "stable_ops.cpp"):
+                original = path.read_text()
+                path.write_text(original + original.replace("new_op", "added_op"))
+            (src / "stable_added_op.cpp").write_text(
+                (src / "stable_new_op.cpp").read_text().replace("new_op", "added_op"))
+            (ops / "__init__.py").write_text('_ASCENDC_OPS = ("npu_new_op", "npu_added_op")\n')
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                self.assertEqual(self.tool.evaluate()["blockers"], [])
 
     def test_missing_wrapper_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -499,11 +532,12 @@ class StableOnlyCoverageTest(unittest.TestCase):
 
     def check_tree(self, mutation=None, **kwargs):
         with tempfile.TemporaryDirectory() as tmp:
-            ops, src = _stable_tree(tmp, **kwargs)
+            ops, src, contract = _stable_tree(tmp, **kwargs)
             if mutation:
                 mutation(ops, src)
             with mock.patch.object(self.tool, "OPS_DIR", ops), \
-                    mock.patch.object(self.tool, "SRC_DIR", src):
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
                 return self.tool.evaluate()
 
     def assert_mutation(self, file, before, after, expected):
@@ -548,6 +582,19 @@ class StableOnlyCoverageTest(unittest.TestCase):
 
     def test_empty_inventory(self):
         self.assert_mutation("__init__.py", '"npu_new_op",', "", "operator inventory is empty")
+        self.assert_mutation("__init__.py", '"npu_new_op",', "", "historical public API was removed")
+
+    def test_existing_same_type_argument_reorder_is_rejected(self):
+        old_call = {"op": "npu_new_op", "expressions": ["a", "b", "_current_stream_ptr()"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, _, contract = _stable_tree(tmp)
+            data = json.loads(contract.read_text())
+            data["dispatch_arguments"]["npu_new_op"] = [old_call]
+            contract.write_text(json.dumps(data))
+            calls = {"npu_new_op": [{"op": "npu_new_op", "expressions": ["b", "a", "_current_stream_ptr()"]}]}
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                self.assertTrue(any("argument order" in p for p in self.tool.public_api_problems(["npu_new_op"], calls)))
 
     def test_duplicate_registration(self):
         self.assert_mutation("stable_ops.cpp", "m.def(kSchema_npu_new_op);", "m.def(kSchema_npu_new_op); m.def(kSchema_npu_new_op);", "duplicate schema")
@@ -559,7 +606,7 @@ class StableOnlyCoverageTest(unittest.TestCase):
     def test_optional_parameter_and_dispatch_can_evolve_together(self):
         """Adding is_out_l2norm needs matching code, not another JSON edit."""
         with tempfile.TemporaryDirectory() as tmp:
-            ops, src = _stable_tree(tmp)
+            ops, src, contract = _stable_tree(tmp)
             path = ops / "_stable.py"
             path.write_text(path.read_text(encoding="utf-8")
                             .replace('def npu_new_op(a):', 'def npu_new_op(a, is_out_l2norm=None):')
@@ -567,7 +614,8 @@ class StableOnlyCoverageTest(unittest.TestCase):
                                      '(a, bool(is_out_l2norm), _current_stream_ptr())'), encoding="utf-8")
             # A new wrapper argument still requires the current schema to match.
             with mock.patch.object(self.tool, "OPS_DIR", ops), \
-                    mock.patch.object(self.tool, "SRC_DIR", src):
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
                 report = self.tool.evaluate()
             self.assertTrue(any("wrapper passes 3 arguments" in item for item in report["blockers"]), report)
             path = src / "stable_new_op.cpp"
@@ -576,7 +624,8 @@ class StableOnlyCoverageTest(unittest.TestCase):
                             .replace('Tensor a, int64_t stream',
                                      'Tensor a, bool is_out_l2norm, int64_t stream'), encoding="utf-8")
             with mock.patch.object(self.tool, "OPS_DIR", ops), \
-                    mock.patch.object(self.tool, "SRC_DIR", src):
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
                 report = self.tool.evaluate()
             self.assertEqual(report["blockers"], [])
 
