@@ -26,9 +26,12 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include "../../../../../common/host_utils/log.h"
 
 
 using namespace op;
+
+static constexpr const char *CHUNK_BWD_DQKWG_ENTITY = "aclnnChunkBwdDqkwg";
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,19 +60,54 @@ struct ChunkBwdDqkwgParams {
 
 static aclnnStatus CheckNotNull(ChunkBwdDqkwgParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.h != nullptr, ACLNN_ERR_PARAM_NULLPTR, "h must not be nullptr.");
-    CHECK_COND(params.dox != nullptr, ACLNN_ERR_PARAM_NULLPTR, "do must not be nullptr.");
-    CHECK_COND(params.dh != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dh must not be nullptr.");
-    CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv must not be nullptr.");
-
-    CHECK_COND(params.dqOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dqOut must not be nullptr.");
-    CHECK_COND(params.dkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dkvOut must not be nullptr.");
-    CHECK_COND(params.dwOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dwOut must not be nullptr.");
-    CHECK_COND(params.dgOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dgOut must not be nullptr.");
+    if (params.q == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.h == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "h");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dox == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "do");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dh == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dh");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dv == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dv");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dqOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dkOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dwOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dgOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -89,14 +127,38 @@ static aclnnStatus CheckShape(ChunkBwdDqkwgParams params)
     const auto dwShape = params.dwOut->GetViewShape();
     const auto dgShape = params.dgOut->GetViewShape();
 
-    CHECK_COND(qShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "q must be [B, HK, T, K].");
-    CHECK_COND(kShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "k must be [B, HK, T, K].");
-    CHECK_COND(vShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "v must be [B, HV, T, V].");
-    CHECK_COND(gShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "g must be [B, HV, T].");
-    CHECK_COND(dqShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "dqOut must be [B, HK, T, K].");
-    CHECK_COND(dkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "dkOut must be [B, HK, T, K].");
-    CHECK_COND(dwShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "dwOut must be [B, HV, T, K].");
-    CHECK_COND(dgShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "dgOut must be [B, HV, T].");
+    if (qShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "q", "rank=" + std::to_string(qShape.GetDimNum()), "4 [B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (kShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "k", "rank=" + std::to_string(kShape.GetDimNum()), "4 [B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (vShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "v", "rank=" + std::to_string(vShape.GetDimNum()), "4 [B, HV, T, V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (gShape.GetDimNum() != 3) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "g", "rank=" + std::to_string(gShape.GetDimNum()), "3 [B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dqShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut", "rank=" + std::to_string(dqShape.GetDimNum()), "4 [B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dkShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut", "rank=" + std::to_string(dkShape.GetDimNum()), "4 [B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dwShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut", "rank=" + std::to_string(dwShape.GetDimNum()), "4 [B, HV, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dgShape.GetDimNum() != 3) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut", "rank=" + std::to_string(dgShape.GetDimNum()), "3 [B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const int64_t B = qShape.GetDim(0);
     const int64_t HK = qShape.GetDim(1);
@@ -104,22 +166,40 @@ static aclnnStatus CheckShape(ChunkBwdDqkwgParams params)
     const int64_t K = qShape.GetDim(3);
     const int64_t HV = vShape.GetDim(1);
 
-    CHECK_COND(HK > 0 && HV > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID,
-               "GVA requires HV divisible by HK.");
-    CHECK_COND(kShape.GetDim(0) == B && kShape.GetDim(1) == HK && kShape.GetDim(2) == T && kShape.GetDim(3) == K,
-               ACLNN_ERR_PARAM_INVALID, "k must match q shape [B, HK, T, K].");
-    CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
-               "v must match q batch and sequence dimensions.");
-    CHECK_COND(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
-               "g must be [B, HV, T].");
-    CHECK_COND(dqShape.GetDim(0) == B && dqShape.GetDim(1) == HK && dqShape.GetDim(2) == T && dqShape.GetDim(3) == K,
-               ACLNN_ERR_PARAM_INVALID, "dqOut must be [B, HK, T, K].");
-    CHECK_COND(dkShape.GetDim(0) == B && dkShape.GetDim(1) == HK && dkShape.GetDim(2) == T && dkShape.GetDim(3) == K,
-               ACLNN_ERR_PARAM_INVALID, "dkOut must be [B, HK, T, K].");
-    CHECK_COND(dwShape.GetDim(0) == B && dwShape.GetDim(1) == HV && dwShape.GetDim(2) == T && dwShape.GetDim(3) == K,
-               ACLNN_ERR_PARAM_INVALID, "dwOut must be [B, HV, T, K].");
-    CHECK_COND(dgShape.GetDim(0) == B && dgShape.GetDim(1) == HV && dgShape.GetDim(2) == T,
-               ACLNN_ERR_PARAM_INVALID, "dgOut must be [B, HV, T].");
+    if (HK > 0 && HV > 0 && HV % HK == 0) {
+        // valid
+    } else {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "HK,HV", "invalid", "positive and HV % HK == 0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (kShape.GetDim(0) != B || kShape.GetDim(1) != HK || kShape.GetDim(2) != T || kShape.GetDim(3) != K) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "k", "mismatch", "[B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (vShape.GetDim(0) != B || vShape.GetDim(2) != T) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "v", "mismatch", "match q batch and sequence");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (gShape.GetDim(0) != B || gShape.GetDim(1) != HV || gShape.GetDim(2) != T) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "g", "mismatch", "[B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dqShape.GetDim(0) != B || dqShape.GetDim(1) != HK || dqShape.GetDim(2) != T || dqShape.GetDim(3) != K) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dqOut", "mismatch", "[B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dkShape.GetDim(0) != B || dkShape.GetDim(1) != HK || dkShape.GetDim(2) != T || dkShape.GetDim(3) != K) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dkOut", "mismatch", "[B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dwShape.GetDim(0) != B || dwShape.GetDim(1) != HV || dwShape.GetDim(2) != T || dwShape.GetDim(3) != K) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dwOut", "mismatch", "[B, HV, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (dgShape.GetDim(0) != B || dgShape.GetDim(1) != HV || dgShape.GetDim(2) != T) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "dgOut", "mismatch", "[B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -132,22 +212,38 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkBwdDqkwgParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
-    CHECK_COND(DataContiguous(params.h, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous h failed.");
-    CHECK_COND(DataContiguous(params.dox, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous do failed.");
-    CHECK_COND(DataContiguous(params.dh, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dh failed.");
-    CHECK_COND(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dv failed.");
+    auto dfxRetStatus1 = DataContiguous(params.q, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.v, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = DataContiguous(params.h, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
+    auto dfxRetStatus6 = DataContiguous(params.dox, executorPtr);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = DataContiguous(params.dh, executorPtr);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = DataContiguous(params.dv, executorPtr);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -159,10 +255,22 @@ static aclnnStatus CheckDtype(ChunkBwdDqkwgParams params)
 
 static aclnnStatus CheckParams(ChunkBwdDqkwgParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckFormat(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckShape(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckDtype(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -191,8 +299,11 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     ChunkBwdDqkwgParams params{q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize, dqOut, dkOut, dwOut, dgOut};
-    CHECK_COND(use_exp2 == false && transpose_state_layout == false, ACLNN_ERR_INNER,
-               "use_exp2 and transpose_state_layout must be false.");
+    if (use_exp2 != false || transpose_state_layout != false) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DQKWG_ENTITY, "useExp2,transposeStateLayout",
+            "not matching", "both false");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(
         aclnnChunkBwdDqkwg,
@@ -210,9 +321,13 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
             "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_bwd instead.");
 
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
+    auto dfxRetStatus9 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus9 != ACLNN_SUCCESS) {
+        return dfxRetStatus9;
+    }
     auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.w, params.gGamma, params.scale, params.chunkSize, executorPtr);
 
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);

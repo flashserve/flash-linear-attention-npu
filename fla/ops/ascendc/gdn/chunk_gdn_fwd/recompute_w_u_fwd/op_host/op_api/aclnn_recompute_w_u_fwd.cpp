@@ -26,9 +26,12 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include "../../../../../common/host_utils/log.h"
 
 
 using namespace op;
+
+static constexpr const char *RECOMPUTE_W_U_FWD_ENTITY = "aclnnRecomputeWUFwd";
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,16 +53,38 @@ struct RecomputeWUFwdParams {
 
 static aclnnStatus CheckNotNull(RecomputeWUFwdParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.beta != nullptr, ACLNN_ERR_PARAM_NULLPTR, "beta must not be nullptr.");
-    CHECK_COND(params.a != nullptr, ACLNN_ERR_PARAM_NULLPTR, "a must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.gk == nullptr, ACLNN_ERR_PARAM_NULLPTR, "gk must be nullptr.");
-
-
-    CHECK_COND(params.wOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "wOut must not be nullptr.");
-    CHECK_COND(params.uOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "uOut must not be nullptr.");
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.beta == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.a == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.gk != nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "gk");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.wOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.uOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -78,13 +103,34 @@ static aclnnStatus CheckShape(RecomputeWUFwdParams params)
     const auto wOutShape = params.wOut->GetViewShape();
     const auto uOutShape = params.uOut->GetViewShape();
 
-    CHECK_COND(kShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "k must be [B, HK, T, K].");
-    CHECK_COND(vShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "v must be [B, HV, T, V].");
-    CHECK_COND(betaShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "beta must be [B, HV, T].");
-    CHECK_COND(aShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "A must be [B, HV, T, chunkSize].");
-    CHECK_COND(gShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "g must be [B, HV, T].");
-    CHECK_COND(wOutShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "wOut must be [B, HV, T, K].");
-    CHECK_COND(uOutShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "uOut must be [B, HV, T, V].");
+    if (kShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k", "rank=" + std::to_string(kShape.GetDimNum()), "4 [B, HK, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (vShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v", "rank=" + std::to_string(vShape.GetDimNum()), "4 [B, HV, T, V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (betaShape.GetDimNum() != 3) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta", "rank=" + std::to_string(betaShape.GetDimNum()), "3 [B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (aShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "A", "rank=" + std::to_string(aShape.GetDimNum()), "4 [B, HV, T, chunkSize]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (gShape.GetDimNum() != 3) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g", "rank=" + std::to_string(gShape.GetDimNum()), "3 [B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (wOutShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut", "rank=" + std::to_string(wOutShape.GetDimNum()), "4 [B, HV, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (uOutShape.GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut", "rank=" + std::to_string(uOutShape.GetDimNum()), "4 [B, HV, T, V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const int64_t B = kShape.GetDim(0);
     const int64_t HK = kShape.GetDim(1);
@@ -93,25 +139,49 @@ static aclnnStatus CheckShape(RecomputeWUFwdParams params)
     const int64_t HV = vShape.GetDim(1);
     const int64_t V = vShape.GetDim(3);
 
-    CHECK_COND(HK > 0 && HV > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID,
-               "GVA requires HV divisible by HK.");
-    CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
-               "v must match k batch and sequence dimensions.");
-    CHECK_COND(betaShape.GetDim(0) == B && betaShape.GetDim(1) == HV && betaShape.GetDim(2) == T,
-               ACLNN_ERR_PARAM_INVALID, "beta must be [B, HV, T].");
-    CHECK_COND(aShape.GetDim(0) == B && aShape.GetDim(1) == HV && aShape.GetDim(2) == T &&
-               aShape.GetDim(3) == params.chunkSize, ACLNN_ERR_PARAM_INVALID,
-               "A must be [B, HV, T, chunkSize].");
-    CHECK_COND(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T,
-               ACLNN_ERR_PARAM_INVALID, "g must be [B, HV, T].");
-    CHECK_COND(wOutShape.GetDim(0) == B && wOutShape.GetDim(1) == HV && wOutShape.GetDim(2) == T &&
-               wOutShape.GetDim(3) == K, ACLNN_ERR_PARAM_INVALID, "wOut must be [B, HV, T, K].");
-    CHECK_COND(uOutShape.GetDim(0) == B && uOutShape.GetDim(1) == HV && uOutShape.GetDim(2) == T &&
-               uOutShape.GetDim(3) == V, ACLNN_ERR_PARAM_INVALID, "uOut must be [B, HV, T, V].");
-    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize must be 64 or 128.");
-    CHECK_COND(K == 128, ACLNN_ERR_PARAM_INVALID, "K must be 128.");
-    CHECK_COND(V == 128 || V == 256, ACLNN_ERR_PARAM_INVALID, "V must be 128 or 256.");
+    if (HK <= 0 || HV <= 0 || HV % HK != 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "HK,HV", "invalid", "positive and HV % HK == 0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (vShape.GetDim(0) != B || vShape.GetDim(2) != T) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v", "mismatch", "match k batch/sequence");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (betaShape.GetDim(0) != B || betaShape.GetDim(1) != HV || betaShape.GetDim(2) != T) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta", "mismatch", "[B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (aShape.GetDim(0) != B || aShape.GetDim(1) != HV || aShape.GetDim(2) != T ||
+        aShape.GetDim(3) != params.chunkSize) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "A", "mismatch", "[B, HV, T, chunkSize]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (gShape.GetDim(0) != B || gShape.GetDim(1) != HV || gShape.GetDim(2) != T) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g", "mismatch", "[B, HV, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (wOutShape.GetDim(0) != B || wOutShape.GetDim(1) != HV || wOutShape.GetDim(2) != T ||
+        wOutShape.GetDim(3) != K) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut", "mismatch", "[B, HV, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (uOutShape.GetDim(0) != B || uOutShape.GetDim(1) != HV || uOutShape.GetDim(2) != T ||
+        uOutShape.GetDim(3) != V) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "uOut", "mismatch", "[B, HV, T, V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.chunkSize != 64 && params.chunkSize != 128) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64 or 128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (K != 128) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "K", std::to_string(K), "128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (V != 128 && V != 256) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "V", std::to_string(V), "128 or 256");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -124,16 +194,26 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(RecomputeWUFwdParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous beta failed.");
-    CHECK_COND(DataContiguous(params.a, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous a failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    auto dfxRetStatus1 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.v, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.beta, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.a, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
+    auto dfxRetStatus5 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -141,26 +221,52 @@ static aclnnStatus ParamsDataContiguous(RecomputeWUFwdParams &params, aclOpExecu
 static aclnnStatus CheckDtype(RecomputeWUFwdParams params)
 {
     auto inputDtype = params.k->GetDataType();
-    CHECK_COND(inputDtype == DataType::DT_FLOAT16 || inputDtype == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "k dtype must be float16 or bfloat16.");
-    CHECK_COND(params.v->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "v dtype must match k.");
-    CHECK_COND(params.a->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "a dtype must match k.");
-    CHECK_COND(params.wOut->GetDataType() == inputDtype && params.uOut->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "wOut and uOut dtype must match k.");
-    CHECK_COND(params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "beta dtype must be float32 or match k dtype.");
-    CHECK_COND(params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == inputDtype,
-               ACLNN_ERR_PARAM_INVALID, "g dtype must be float32 or match k dtype.");
+    if (inputDtype != DataType::DT_FLOAT16 && inputDtype != DataType::DT_BF16) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "k",
+            fla_npu::host_utils::DfxDtypeString(inputDtype), "FLOAT16,BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.v->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "v",
+            fla_npu::host_utils::DfxDtypeString(params.v->GetDataType()), "match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.a->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "a",
+            fla_npu::host_utils::DfxDtypeString(params.a->GetDataType()), "match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.wOut->GetDataType() != inputDtype || params.uOut->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPES_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "wOut,uOut", "dtype mismatch", "match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.beta->GetDataType() != DataType::DT_FLOAT && params.beta->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "beta",
+            fla_npu::host_utils::DfxDtypeString(params.beta->GetDataType()), "FLOAT32 or match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.g->GetDataType() != DataType::DT_FLOAT && params.g->GetDataType() != inputDtype) {
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(RECOMPUTE_W_U_FWD_ENTITY, "g",
+            fla_npu::host_utils::DfxDtypeString(params.g->GetDataType()), "FLOAT32 or match k");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckParams(RecomputeWUFwdParams params)
 {
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus6 = CheckFormat(params);
+    if (dfxRetStatus6 != ACLNN_SUCCESS) {
+        return dfxRetStatus6;
+    }
+    auto dfxRetStatus7 = CheckShape(params);
+    if (dfxRetStatus7 != ACLNN_SUCCESS) {
+        return dfxRetStatus7;
+    }
+    auto dfxRetStatus8 = CheckDtype(params);
+    if (dfxRetStatus8 != ACLNN_SUCCESS) {
+        return dfxRetStatus8;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -195,10 +301,17 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
             "npu_chunk_gated_delta_rule_bwd instead.");
 
     // 固定写法，参数检查
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckParams(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto result = l0op::RecomputeWUFwd(params.k, params.v, params.beta, params.a, params.g, params.gk, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.wOut, params.uOut, executorPtr);
     CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);

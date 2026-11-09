@@ -23,6 +23,8 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "../../op_kernel/recompute_w_u_fwd_struct.h"
+#include "op_common/log/log.h"
+#include "../../../../../../../../../common/host_utils/log.h"
 
 using GDN::GdnMegaArch35RecomputeWUTilingData;
 
@@ -124,16 +126,17 @@ public:
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
                                              const char *inputName)
     {
-        OP_CHECK_IF(curShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName),
-                    return ge::GRAPH_FAILED);
+        if (curShape == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, inputName);
+            return ge::GRAPH_FAILED;
+        }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
-        OP_CHECK_IF(dimNum != validDimNum,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check input %s shape failed, the dim num should be %zu, but get %zu.", inputName,
-                            validDimNum, dimNum),
-                    return ge::GRAPH_FAILED);
+        if (dimNum != validDimNum) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName,
+                "rank=" + std::to_string(dimNum), "rank=" + std::to_string(validDimNum));
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -165,12 +168,11 @@ public:
         for (size_t dimIndex = 0; dimIndex < compareDimNum; dimIndex++) {
             shapeDim1 = shape1.GetDim(dimIndex);
             shapeDim2 = shape2.GetDim(dimIndex);
-            OP_CHECK_IF(shapeDim1 != shapeDim2,
-                        OP_LOGE(ctx_.nodeName,
-                                "Compare input shape of %s and %s failed, the length of dim %zu should be same,but got "
-                                "%zu and %zu.",
-                                inputName1, inputName2, dimIndex, shapeDim1, shapeDim2),
-                        return ge::GRAPH_FAILED);
+            if (shapeDim1 != shapeDim2) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName,
+                    (std::string(inputName1) + "," + inputName2).c_str(), "dim mismatch", "same shape");
+                return ge::GRAPH_FAILED;
+            }
         }
         return ge::GRAPH_SUCCESS;
     }
@@ -241,9 +243,11 @@ public:
             kType == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 : RECOMPUTE_W_U_FWD_SIZE_HALF;
         const uint64_t sizeofBetaType =
             betaType == ge::DataType::DT_FLOAT ? RECOMPUTE_W_U_FWD_SIZE_FP32 : RECOMPUTE_W_U_FWD_SIZE_HALF;
-        OP_CHECK_IF(ubSize <= RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES,
-                    OP_LOGE(ctx_.nodeName, "UB size is too small for the A5 interleaved recompute path."),
-                    return ge::GRAPH_FAILED);
+        if (ubSize <= RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "ubSize", std::to_string(ubSize),
+                ">" + std::to_string(RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES));
+            return ge::GRAPH_FAILED;
+        }
 
         const uint64_t usableUbSize = ubSize - RECOMPUTE_W_U_FWD_INTERLEAVED_UB_RESERVED_BYTES;
         const uint64_t dataDim = static_cast<uint64_t>(K > V ? K : V);
@@ -256,9 +260,10 @@ public:
             rowNum /= 2;
             useUbSize = rowNum * bytesPerRow;
         }
-        OP_CHECK_IF(rowNum < RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW || useUbSize > usableUbSize,
-                    OP_LOGE(ctx_.nodeName, "UB size is insufficient for the A5 interleaved recompute path."),
-                    return ge::GRAPH_FAILED);
+        if (rowNum < RECOMPUTE_W_U_FWD_INTERLEAVED_MIN_VEC_ROW || useUbSize > usableUbSize) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "ubSize", std::to_string(ubSize), "sufficient for A5 interleaved path");
+            return ge::GRAPH_FAILED;
+        }
 
         // Keep the fused trailer layout unchanged: the A5 vector path consumes
         // vbVecRow as its shared interleaved row count; the legacy path retains
@@ -278,52 +283,54 @@ public:
         B = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0));
         Hk = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
         Hv = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1));
-        OP_CHECK_IF(Hk <= 0 || Hv <= 0,
-                    OP_LOGE(ctx_.nodeName,
-                            "Invalid head dim: Hk and Hv must be positive, but got Hk=%ld, Hv=%ld.", Hk, Hv),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(Hv % Hk != 0,
-                    OP_LOGE(ctx_.nodeName,
-                            "GVA check: Hv must be divisible by Hk, but got Hk=%ld, Hv=%ld.", Hk, Hv),
-                    return ge::GRAPH_FAILED);
+        if (Hk <= 0 || Hv <= 0) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "Hk,Hv", "non-positive", "positive");
+            return ge::GRAPH_FAILED;
+        }
+        if (Hv % Hk != 0) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "Hv,Hk", "not divisible", "Hv % Hk == 0");
+            return ge::GRAPH_FAILED;
+        }
         hvPerHk = Hv / Hk;
-        OP_CHECK_IF(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                    OP_LOGE(ctx_.nodeName, "Compare B: v B=%ld vs k B=%ld mismatch.",
-                            vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0), kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                    OP_LOGE(ctx_.nodeName, "Compare T: v T=%ld vs k T=%ld mismatch.",
-                            vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2), kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
-                    return ge::GRAPH_FAILED);
+        if (vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "v,k", "B mismatch", "same B");
+            return ge::GRAPH_FAILED;
+        }
+        if (vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "v,k", "T mismatch", "same T");
+            return ge::GRAPH_FAILED;
+        }
         OP_CHECK_IF(CompareShape(betaStorageShape, gStorageShape, RECOMPUTE_W_U_FWD_INPUT_BETA_NAME,
                                  RECOMPUTE_W_U_FWD_INPUT_G_NAME, RECOMPUTE_W_U_FWD_DIM_NUM_3) != ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                    OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs g B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                            gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                    OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs g T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                            gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                    OP_LOGE(ctx_.nodeName, "Compare B: k B=%ld vs A B=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0),
-                            AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                    OP_LOGE(ctx_.nodeName, "Compare T: k T=%ld vs A T=%ld mismatch.", kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2),
-                            AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
-                    OP_LOGE(ctx_.nodeName, "Compare head: A H=%ld must equal Hv=%ld.", AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1), Hv),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(betaStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
-                    OP_LOGE(ctx_.nodeName, "Compare head: beta H=%ld must equal Hv=%ld.",
-                            betaStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1), Hv),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv,
-                    OP_LOGE(ctx_.nodeName, "Compare head: g H=%ld must equal Hv=%ld.", gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1), Hv),
-                    return ge::GRAPH_FAILED);
+        if (kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "k,g", "B mismatch", "same B");
+            return ge::GRAPH_FAILED;
+        }
+        if (kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "k,g", "T mismatch", "same T");
+            return ge::GRAPH_FAILED;
+        }
+        if (kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "k,A", "B mismatch", "same B");
+            return ge::GRAPH_FAILED;
+        }
+        if (kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2) != AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName, "k,A", "T mismatch", "same T");
+            return ge::GRAPH_FAILED;
+        }
+        if (AStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "A", "head mismatch", "A H == Hv");
+            return ge::GRAPH_FAILED;
+        }
+        if (betaStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "beta", "head mismatch", "beta H == Hv");
+            return ge::GRAPH_FAILED;
+        }
+        if (gStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_1) != Hv) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "g", "head mismatch", "g H == Hv");
+            return ge::GRAPH_FAILED;
+        }
         T = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_2));
         K = static_cast<int64_t>(kStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_3));
         V = static_cast<int64_t>(vStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_3));
@@ -334,16 +341,15 @@ public:
         tiling_.T = T;
         tiling_.K = K;
         tiling_.V = V;
-        OP_CHECK_IF(V != RECOMPUTE_W_U_FWD_V_DIM_128 && V != RECOMPUTE_W_U_FWD_V_DIM_256,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check value dim V failed: only %ld or %ld is supported, but get %ld.",
-                            RECOMPUTE_W_U_FWD_V_DIM_128, RECOMPUTE_W_U_FWD_V_DIM_256, V),
-                    return ge::GRAPH_FAILED);
+        if (V != RECOMPUTE_W_U_FWD_V_DIM_128 && V != RECOMPUTE_W_U_FWD_V_DIM_256) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "V", std::to_string(V), "128 or 256");
+            return ge::GRAPH_FAILED;
+        }
         chunkSize = static_cast<int64_t>(ctx_.chunkSize);
-        OP_CHECK_IF(chunkSize != RECOMPUTE_W_U_FWD_CHUNK_SIZE_64 && chunkSize != RECOMPUTE_W_U_FWD_CHUNK_SIZE_128,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check attr chunkSize failed, the chunkSize should be 64 or 128, but get %ld.", chunkSize),
-                    return ge::GRAPH_FAILED);
+        if (chunkSize != RECOMPUTE_W_U_FWD_CHUNK_SIZE_64 && chunkSize != RECOMPUTE_W_U_FWD_CHUNK_SIZE_128) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "chunkSize", std::to_string(chunkSize), "64 or 128");
+            return ge::GRAPH_FAILED;
+        }
         tiling_.chunkSize = chunkSize;
 
         OP_CHECK_IF(SetVbVecRow(ctx_.ubSize, ctx_.kDtype, ctx_.betaDtype) != ge::GRAPH_SUCCESS,
@@ -373,13 +379,14 @@ public:
 
     ge::graphStatus VariableLenTiling()
     {
-        OP_CHECK_IF(ctx_.cuSeqlensShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", RECOMPUTE_W_U_FWD_INPUT_SEQLENS_NAME),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.chunkIndicesShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.",
-                            RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_NAME),
-                    return ge::GRAPH_FAILED);
+        if (ctx_.cuSeqlensShape == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, RECOMPUTE_W_U_FWD_INPUT_SEQLENS_NAME);
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.chunkIndicesShape == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_NAME);
+            return ge::GRAPH_FAILED;
+        }
         OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.chunkIndicesShape, 1, RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_NAME) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
@@ -389,27 +396,27 @@ public:
 
         const gert::Shape seqlensStorageShape = ctx_.cuSeqlensShape->GetStorageShape();
         int64_t seqlensDim0 = seqlensStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0);
-        OP_CHECK_IF(seqlensDim0 < 2,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check seqlens shape failed, the dim 0 of seqlens should be larger than 1, but get %ld.",
-                            seqlensDim0),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.cuSeqlensData == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Input %s data is required, but got nullptr.", RECOMPUTE_W_U_FWD_INPUT_SEQLENS_NAME),
-                    return ge::GRAPH_FAILED);
+        if (seqlensDim0 < 2) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "seqlens", "dim0 < 2", "dim0 >= 2");
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.cuSeqlensData == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, RECOMPUTE_W_U_FWD_INPUT_SEQLENS_NAME);
+            return ge::GRAPH_FAILED;
+        }
         const int64_t *cuSeqlens = ctx_.cuSeqlensData;
         if (cuSeqlens[0] != 0) {
-            OP_LOGE(ctx_.nodeName, "Check seqlens data failed, the seqlens[0] should be 0, but get %ld.", cuSeqlens[0]);
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "seqlens[0]", std::to_string(cuSeqlens[0]), "0");
             return ge::GRAPH_FAILED;
         }
         std::vector<int64_t> expectChunkIndices;
         for (int64_t i = 1; i < seqlensDim0; i++) {
             int64_t curSeqLen = cuSeqlens[i] - cuSeqlens[i - 1];
-            OP_CHECK_IF(curSeqLen <= 0,
-                        OP_LOGE(ctx_.nodeName,
-                                "Check seqlens data failed, the seqlens[%ld]:[%ld] should be larger than seqlens[%ld]:[%ld]",
-                                i, cuSeqlens[i], i - 1, cuSeqlens[i - 1]),
-                        return ge::GRAPH_FAILED);
+            if (curSeqLen <= 0) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "seqlens", "non-increasing",
+                    "strictly increasing seqlens");
+                return ge::GRAPH_FAILED;
+            }
             for (int64_t j = 0; j < curSeqLen; j += chunkSize) {
                 expectChunkIndices.push_back(i - 1);
                 expectChunkIndices.push_back(j / chunkSize);
@@ -418,22 +425,21 @@ public:
 
         const gert::Shape chunkIndicesStorageShape = ctx_.chunkIndicesShape->GetStorageShape();
         int64_t chunkIndicesDim0 = chunkIndicesStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0);
-        OP_CHECK_IF(chunkIndicesDim0 != static_cast<int64_t>(expectChunkIndices.size()),
-                    OP_LOGE(ctx_.nodeName,
-                            "Check chunk_indices shape failed, the len of chunk_indices should be %zu, but get %ld.",
-                            expectChunkIndices.size(), chunkIndicesDim0),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.chunkIndicesData == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Input %s data is required, but got nullptr.",
-                            RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_NAME),
-                    return ge::GRAPH_FAILED);
+        if (chunkIndicesDim0 != static_cast<int64_t>(expectChunkIndices.size())) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "chunk_indices", "length mismatch",
+                "len == " + std::to_string(expectChunkIndices.size()));
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.chunkIndicesData == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_NAME);
+            return ge::GRAPH_FAILED;
+        }
         const int64_t *chunkIndices = ctx_.chunkIndicesData;
         for (size_t i = 0; i < expectChunkIndices.size(); i++) {
-            OP_CHECK_IF(expectChunkIndices[i] != chunkIndices[i],
-                        OP_LOGE(ctx_.nodeName,
-                                "Check chunk_indices data failed, the chunk_indices[%zu] should be %ld, but get %ld.",
-                                i, expectChunkIndices[i], chunkIndices[i]),
-                        return ge::GRAPH_FAILED);
+            if (expectChunkIndices[i] != chunkIndices[i]) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "chunk_indices", "non-canonical", "canonical (seq,chunk) pairs");
+                return ge::GRAPH_FAILED;
+            }
         }
         tiling_.chunkNum = chunkIndicesStorageShape.GetDim(RECOMPUTE_W_U_FWD_DIM_0) / 2;
         return ge::GRAPH_SUCCESS;
@@ -464,11 +470,11 @@ public:
         OP_CHECK_IF(PreCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CommonTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
         if (IsVariableLength()) {
-            OP_CHECK_IF(tiling_.B != RECOMPUTE_W_U_FWD_VAR_LEN_B_DIM_1,
-                        OP_LOGE(ctx_.nodeName,
-                                "If cu_seqlens is not nullptr, the dim 0 of q needs to be 1, but now is %ld.",
-                                tiling_.B),
-                        return ge::GRAPH_FAILED);
+            if (tiling_.B != RECOMPUTE_W_U_FWD_VAR_LEN_B_DIM_1) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "B", std::to_string(tiling_.B),
+                    "1 (varlen)");
+                return ge::GRAPH_FAILED;
+            }
             OP_CHECK_IF(VariableLenTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
             tiling_.isVariable = 1;
         } else {

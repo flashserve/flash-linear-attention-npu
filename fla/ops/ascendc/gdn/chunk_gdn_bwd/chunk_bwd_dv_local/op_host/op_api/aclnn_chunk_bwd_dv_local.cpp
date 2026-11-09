@@ -26,9 +26,12 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include "../../../../../common/host_utils/log.h"
 
 
 using namespace op;
+
+static constexpr const char *CHUNK_BWD_DV_LOCAL_ENTITY = "aclnnChunkBwdDvLocal";
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,12 +53,26 @@ struct ChunkBwdDvLocalParams {
 
 static aclnnStatus CheckNotNull(ChunkBwdDvLocalParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dO must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "out must not be nullptr.");
-
+    if (params.q == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dO == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "dO");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.out == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "out");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -66,53 +83,79 @@ static aclnnStatus CheckFormat(ChunkBwdDvLocalParams params)
 
 static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
 {
-    CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID,
-               "chunk_size must be positive.");
-    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128,
-               ACLNN_ERR_PARAM_INVALID, "chunk_size must be 64 or 128.");
-    CHECK_COND(params.q->GetViewShape().GetDimNum() == 4,
-               ACLNN_ERR_PARAM_INVALID, "q must be a rank-4 tensor [B, H, T, K].");
-    if (params.chunkIndicesOptional != nullptr) {
-        CHECK_COND(params.cuSeqlensOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-                   "chunk_indices requires cu_seqlens in variable-length mode.");
+    if (params.chunkSize <= 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkSize", std::to_string(params.chunkSize), "positive");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.chunkSize != 64 && params.chunkSize != 128) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkSize", std::to_string(params.chunkSize), "64 or 128");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.q->GetViewShape().GetDimNum() != 4) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q",
+            "rank=" + std::to_string(params.q->GetViewShape().GetDimNum()), "4 [B, H, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.chunkIndicesOptional != nullptr && params.cuSeqlensOptional == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices", "present", "requires cu_seqlens in variable-length mode");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.cuSeqlensOptional == nullptr) {
         return ACLNN_SUCCESS;
     }
     const aclIntArray &cuSeqlens = *params.cuSeqlensOptional;
-    CHECK_COND(cuSeqlens.Size() >= 2, ACLNN_ERR_PARAM_INVALID,
-               "cu_seqlens must contain at least [0, total_tokens].");
+    if (cuSeqlens.Size() < 2) {
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens",
+            std::to_string(cuSeqlens.Size()), "at least 2");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const int64_t totalTokens = params.q->GetViewShape().GetDim(2);
-    CHECK_COND(cuSeqlens[0] == 0, ACLNN_ERR_PARAM_INVALID,
-               "cu_seqlens[0] must be 0.");
-    CHECK_COND(cuSeqlens[cuSeqlens.Size() - 1] == totalTokens,
-               ACLNN_ERR_PARAM_INVALID,
-               "cu_seqlens[-1] must equal q's sequence length.");
+    if (cuSeqlens[0] != 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens[0]", std::to_string(cuSeqlens[0]), "0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (cuSeqlens[cuSeqlens.Size() - 1] != totalTokens) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens[-1]",
+            std::to_string(cuSeqlens[cuSeqlens.Size() - 1]),
+            "equal q sequence length " + std::to_string(totalTokens));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     int64_t totalChunks = 0;
     for (size_t seq = 0; seq + 1 < cuSeqlens.Size(); ++seq) {
-        CHECK_COND(cuSeqlens[seq] >= 0 && cuSeqlens[seq + 1] >= cuSeqlens[seq],
-                   ACLNN_ERR_PARAM_INVALID,
-                   "cu_seqlens must be nondecreasing and non-negative.");
+        if (cuSeqlens[seq] < 0 || cuSeqlens[seq + 1] < cuSeqlens[seq]) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens", "nondecreasing, non-negative",
+                "cu_seqlens must be nondecreasing and non-negative");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         const int64_t length = cuSeqlens[seq + 1] - cuSeqlens[seq];
         totalChunks += (length + params.chunkSize - 1) / params.chunkSize;
     }
-    CHECK_COND(totalChunks > 0, ACLNN_ERR_PARAM_INVALID,
-               "variable-length input must contain at least one chunk.");
-    CHECK_COND(params.chunkIndicesOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "variable-length mode requires chunk_indices.");
+    if (totalChunks <= 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "cuSeqlens", "empty", "at least one chunk");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.chunkIndicesOptional == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclIntArray &chunkIndices = *params.chunkIndicesOptional;
-    CHECK_COND(chunkIndices.Size() == static_cast<size_t>(totalChunks) * 2,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunk_indices must contain exactly one (sequence, chunk) pair per chunk.");
+    if (chunkIndices.Size() != static_cast<size_t>(totalChunks) * 2) {
+        OP_LOGE_LIBOPAPI_REPORT_LISTSIZE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices",
+            std::to_string(chunkIndices.Size()),
+            std::to_string(totalChunks * 2));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     size_t offset = 0;
     for (size_t seq = 0; seq + 1 < cuSeqlens.Size(); ++seq) {
         const int64_t length = cuSeqlens[seq + 1] - cuSeqlens[seq];
         const int64_t chunks = (length + params.chunkSize - 1) / params.chunkSize;
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-            CHECK_COND(chunkIndices[offset] == static_cast<int64_t>(seq) &&
-                           chunkIndices[offset + 1] == chunk,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "chunk_indices must use canonical sequence-major chunk order.");
+            if (chunkIndices[offset] != static_cast<int64_t>(seq) ||
+                chunkIndices[offset + 1] != chunk) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "chunkIndices", "non-canonical",
+                    "canonical sequence-major chunk order");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             offset += 2;
         }
     }
@@ -128,14 +171,22 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkBwdDvLocalParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dO failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    auto dfxRetStatus1 = DataContiguous(params.q, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
+    auto dfxRetStatus2 = DataContiguous(params.k, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
+    auto dfxRetStatus3 = DataContiguous(params.dO, executorPtr);
+    if (dfxRetStatus3 != ACLNN_SUCCESS) {
+        return dfxRetStatus3;
+    }
+    auto dfxRetStatus4 = DataContiguous(params.g, executorPtr);
+    if (dfxRetStatus4 != ACLNN_SUCCESS) {
+        return dfxRetStatus4;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -147,10 +198,22 @@ static aclnnStatus CheckDtype(ChunkBwdDvLocalParams params)
 
 static aclnnStatus CheckParams(ChunkBwdDvLocalParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto status = CheckNotNull(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckFormat(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckShape(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = CheckDtype(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -184,9 +247,13 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
 
     // 固定写法，参数检查
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
+    auto dfxRetStatus5 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus5 != ACLNN_SUCCESS) {
+        return dfxRetStatus5;
+    }
     auto result = l0op::ChunkBwdDvLocal(params.q, params.k,  params.dO, params.g, params.gGammaOptional, params.aOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize, params.out, executorPtr);
     CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
