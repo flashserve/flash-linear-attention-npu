@@ -13,7 +13,7 @@
 - A2/A3 支持多时间窗口长序列；A5 的 V=128/V=256 路径均支持长序列，内部按最多四个 token 的窗口递推；显式 `ssm_state_indices` 可使 `state_capacity > seq_num`。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
 
-A5 验收须按[设计文档的验证矩阵](../../../fla/ops/ascendc/kda/recurrent_kda/docs/design.md#验证矩阵)覆盖 V-first/K-first 的通用与常用融合四种模板模式，并分别验证 FP32/BF16 State、V=128/V=256、长序列和 indexed State。默认小用例只用于基础检查，不能作为全部 A5 TilingKey 的覆盖证据；compat 模式仅用于 A2/A3。
+A5 验收须按 [API 文档的模板选择说明](../../../fla/ops/ascendc/kda/recurrent_kda/docs/api.md)覆盖 V-first/K-first 的通用与常用融合四种模板模式，并分别验证 FP32/BF16 State、V=128/V=256、长序列和 indexed State。默认小用例只用于基础检查，不能作为全部 A5 TilingKey 的覆盖证据；compat 模式仅用于 A2/A3。
 
 ## 标杆来源
 
