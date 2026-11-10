@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -32,14 +33,43 @@ class LogCollectionTest(unittest.TestCase):
         self.assertTrue(STEPS[upload]["with"]["include-hidden-files"])
         self.assertEqual(STEPS[upload]["with"]["retention-days"], 7)
 
-    def test_debug_is_opt_in_and_controls_both_streaming_and_archival(self):
+    def test_debug_is_opt_in(self):
         inputs = WORKFLOW.get("on", WORKFLOW.get(True))["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["debug"]["type"], "boolean")
         self.assertIs(inputs["debug"]["default"], False)
         self.assertEqual(WORKFLOW["jobs"]["prepare"]["outputs"]["debug"],
                          "${{ steps.prepare.outputs.debug }}")
-        env = WORKFLOW["jobs"]["ascend-npu"]["env"]
-        self.assertEqual(env["FLA_NPU_BUILD_VERBOSE"], "${{ needs.prepare.outputs.debug }}")
+
+    def test_existing_quiet_pip_log_preserves_early_backend_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "pyproject.toml").write_text(
+                '[build-system]\nrequires = []\nbuild-backend = "backend"\nbackend-path = ["."]\n',
+                encoding="utf-8",
+            )
+            (root / "backend.py").write_text(
+                "from pathlib import Path\n"
+                "def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):\n"
+                "    directory = Path(metadata_directory) / 'ci_log_fixture-1.0.dist-info'\n"
+                "    directory.mkdir()\n"
+                "    (directory / 'METADATA').write_text('Metadata-Version: 2.1\\nName: ci-log-fixture\\nVersion: 1.0\\n')\n"
+                "    return directory.name\n"
+                "def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):\n"
+                "    print('fixture.cpp:7: error: ORIGINAL_BACKEND_ERROR', flush=True)\n"
+                "    for index in range(1000): print('later build output', index, flush=True)\n"
+                "    raise RuntimeError('fixture build failed')\n",
+                encoding="utf-8",
+            )
+            log = root / "fla-npu-build.log"
+            command = [sys.executable, "-m", "pip", "wheel", "--no-index",
+                       "--disable-pip-version-check", "--no-build-isolation", "--no-deps",
+                       "--log", str(log), ".", "-w", str(root / "dist")]
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            raw = log.read_text(encoding="utf-8")
+            self.assertIn("ORIGINAL_BACKEND_ERROR", raw)
+            self.assertNotIn("ORIGINAL_BACKEND_ERROR", "\n".join(raw.splitlines()[-40:]))
+            self.assertTrue(all(f"later build output {i}\n" in raw for i in range(1000)))
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
     def test_failure_cancellation_and_missing_outputs_still_produce_diagnostics(self):

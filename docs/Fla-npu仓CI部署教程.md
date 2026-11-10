@@ -892,11 +892,9 @@ export CI_LOG_CLEANUP_ENABLED=false
 
 平台 artifact 保留结构化执行结果、精度报告和关键诊断。成功报告中的逐 Tensor 指标仍可从精度 JSON 读取，但不会填满 PR 评论。精度报告只有在全部选中 case 已结束，或剩余 case 已明确记为 `not_run` 后才标记完整；进程中断留下的部分报告不会被计为精度通过。CI 不使用 `-w` 或其他方式关闭编译告警，避免丢失有价值的原始诊断。
 
-构建脚本支持 `--verbose` / `--no-verbose`，或通过 `FLA_NPU_BUILD_VERBOSE`
-控制是否实时输出 pip 后端日志。NPU CI 默认保持原有简洁输出和日志保留方式；
-使用 `/run-npu-ci quick debug`（或 `full debug`、`debug`）才为该次运行开启
-详细输出和完整日志 artifact。`debug` 可与 `ops=...` 组合，也可在 Actions
-手动触发时勾选同名布尔输入；编译参数与并行度不变。
+NPU CI 默认保持原有日志行为。使用 `/run-npu-ci quick debug` 才为本次运行保存
+已有的完整日志 artifact，控制台输出、编译参数与并行度不变。
+参数组合和手动触发方式见[仓库规则](repository-rules.md#npu-ci-门禁)。
 
 独立的 `always()` 诊断步骤会在构建失败或取消后尝试生成摘要。仅调试运行随后上传
 `npu-ci-logs-<平台>-<run>-<attempt>`，包含 `.ci-tmp/npu-ci-<平台>.log`

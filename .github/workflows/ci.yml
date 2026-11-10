@@ -23,7 +23,7 @@ on:
         required: false
         default: quick
       debug:
-        description: "Stream and save complete build logs for this run"
+        description: "Save existing complete build logs for this run"
         type: boolean
         required: false
         default: false
@@ -442,7 +442,6 @@ jobs:
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
       CI_STAGE_REPORT_FILE: .ci-tmp/npu-ci-stages-${{ matrix.platform }}.json
       CI_RAW_LOG_FILE: .ci-tmp/npu-ci-${{ matrix.platform }}.log
-      FLA_NPU_BUILD_VERBOSE: ${{ needs.prepare.outputs.debug }}
       CI_DIAGNOSTIC_FILE: .ci-tmp/npu-ci-diagnostics-${{ matrix.platform }}.json
       CI_SUMMARY_FILE: .ci-tmp/npu-ci-summary-${{ matrix.platform }}.md
       CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
