@@ -1,6 +1,13 @@
 name: Code Owner Approval
 
 on:
+  push:
+    branches:
+      - v26.10.0
+    paths:
+      - .github/CODEOWNERS
+      - .github/scripts/codeowner_approval_gate.js
+      - .github/workflows/codeowner-approval.yml
   pull_request_target:
     types:
       - opened
@@ -21,7 +28,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: codeowner-approval-${{ github.repository }}-${{ github.event.pull_request.number }}
+  group: codeowner-approval-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -33,7 +40,9 @@ jobs:
       - name: 检出受信任的目标分支检查脚本
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          # The workflow itself is trusted; a long-lived PR may retain a base
+          # SHA that predates this helper.
+          ref: ${{ github.workflow_sha }}
           sparse-checkout: |
             .github/scripts/codeowner_approval_gate.js
           sparse-checkout-cone-mode: false
