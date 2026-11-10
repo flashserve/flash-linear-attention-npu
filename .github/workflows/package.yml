@@ -245,8 +245,64 @@ jobs:
       FLA_PKG_THIRD_PARTY_CACHE: /workspace/flash-linear-attention-npu-ci/cache/third_party
       FLA_PKG_DOCKER_IMAGE: ${{ matrix.docker_image }}
       FLA_PKG_JOBS: ${{ needs.prepare.outputs.jobs }}
+      CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
     steps:
       - name: Checkout build source (${{ inputs.build_repo }} @ ${{ inputs.build_sha }})
+        id: checkout_source
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/checkout@v4
+        env:
+          http_proxy: ''
+          https_proxy: ''
+          all_proxy: ''
+          GIT_HTTP_PROXY: ''
+          GIT_HTTPS_PROXY: ''
+          no_proxy: '*'
+        with:
+          repository: ${{ inputs.build_repo }}
+          ref: ${{ inputs.build_sha }}
+          fetch-depth: 1
+
+      - name: 启动代理后重试源码拉取
+        if: steps.checkout_source.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
+          source "$CI_PROXY_SCRIPT"
+          proxyon
+          for variable in http_proxy https_proxy all_proxy no_proxy \
+            GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+            uppercase="${variable^^}"
+            value="${!variable-}"
+            value="${value:-${!uppercase-}}"
+            if [[ -z "$value" && "$variable" != no_proxy ]]; then continue; fi
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "[pkg][ERROR] Proxy variable $variable contains a newline." >&2
+              exit 1
+            fi
+            printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Checkout build source through proxy (attempt 1)
+        id: checkout_source_proxy_1
+        if: steps.checkout_source.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.build_repo }}
+          ref: ${{ inputs.build_sha }}
+          fetch-depth: 1
+
+      - name: 等待后再次通过代理拉取源码
+        if: steps.checkout_source.outcome == 'failure' && steps.checkout_source_proxy_1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Checkout build source through proxy (attempt 2)
+        if: steps.checkout_source.outcome == 'failure' && steps.checkout_source_proxy_1.outcome == 'failure'
+        timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.build_repo }}
