@@ -96,8 +96,8 @@ kernel 侧不使用 `TILING_KEY_IS` 分支，由 key 直接选中模板实例。
 
 | 返回码 | 触发条件 |
 | --- | --- |
-| `ACLNN_ERR_PARAM_NULLPTR` (`161001`) | `workspaceSize` 或 `executor` 输出指针为空；沿用旧接口行为，tiling/launcher 失败导致 L0 结果为空也映射为此状态 |
-| `ACLNN_ERR_PARAM_INVALID` (`161002`) | 沿用旧接口行为，必选 `q`/`k`/`w`/`d_o`/`dv`/`dhm` 为空；新增边界检查包括 `dhm` shape/dtype/连续性非法及 host `cu_seqlens[0:2]` 越界 |
+| `ACLNN_ERR_PARAM_NULLPTR` (`161001`) | 指针为空：必选 `q`/`k`/`w`/`d_o`/`dv`/`dhm` 为空，或 `workspaceSize`/`executor` 输出指针为空；沿用旧接口行为，tiling/launcher 失败导致 L0 结果为空也映射为此状态 |
+| `ACLNN_ERR_PARAM_INVALID` (`161002`) | 非指针类非法参数：shape/正维度/rank 错误、dtype 不符、属性/长度/segment 边界/组合关系非法、`dhm` 非连续或 shape/dtype 非法、host `cu_seqlens[0:2]` 越界 |
 | `ACLNN_ERR_INNER` (`561000`) | 二阶段执行器运行失败；保持原接口映射，下层真实 rc 记录在 PLOG，原生首错消息不被外层覆盖 |
 
 正式 EZ 消息表达根因，公开返回值独立保持现有兼容映射。不能仅凭 `161001` 推断根因是用户传空指针。
