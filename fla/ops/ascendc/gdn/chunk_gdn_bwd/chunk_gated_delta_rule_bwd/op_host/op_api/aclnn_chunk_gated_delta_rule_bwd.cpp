@@ -609,53 +609,16 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         return checkStatus;
     }
 
-    auto dfxRetStatus2 = MakeContiguous(params.q, executorPtr);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
-    auto dfxRetStatus3 = MakeContiguous(params.k, executorPtr);
-    if (dfxRetStatus3 != ACLNN_SUCCESS) {
-        return dfxRetStatus3;
-    }
-    auto dfxRetStatus4 = MakeContiguous(params.v, executorPtr);
-    if (dfxRetStatus4 != ACLNN_SUCCESS) {
-        return dfxRetStatus4;
-    }
-    auto dfxRetStatus5 = MakeContiguous(params.g, executorPtr);
-    if (dfxRetStatus5 != ACLNN_SUCCESS) {
-        return dfxRetStatus5;
-    }
-    auto dfxRetStatus6 = MakeContiguous(params.beta, executorPtr);
-    if (dfxRetStatus6 != ACLNN_SUCCESS) {
-        return dfxRetStatus6;
-    }
-    auto dfxRetStatus7 = MakeContiguous(params.a, executorPtr);
-    if (dfxRetStatus7 != ACLNN_SUCCESS) {
-        return dfxRetStatus7;
-    }
-    auto dfxRetStatus8 = MakeContiguous(params.dO, executorPtr);
-    if (dfxRetStatus8 != ACLNN_SUCCESS) {
-        return dfxRetStatus8;
-    }
-    auto dfxRetStatus9 = MakeContiguous(params.initialState, executorPtr);
-    if (dfxRetStatus9 != ACLNN_SUCCESS) {
-        return dfxRetStatus9;
-    }
-    auto dfxRetStatus10 = MakeContiguous(params.dht, executorPtr);
-    if (dfxRetStatus10 != ACLNN_SUCCESS) {
-        return dfxRetStatus10;
-    }
-    auto dfxRetStatus11 = MakeContiguous(params.qRstd, executorPtr);
-    if (dfxRetStatus11 != ACLNN_SUCCESS) {
-        return dfxRetStatus11;
-    }
-    auto dfxRetStatus12 = MakeContiguous(params.kRstd, executorPtr);
-    if (dfxRetStatus12 != ACLNN_SUCCESS) {
-        return dfxRetStatus12;
-    }
-    auto dfxRetStatus13 = MakeContiguous(params.betaRaw, executorPtr);
-    if (dfxRetStatus13 != ACLNN_SUCCESS) {
-        return dfxRetStatus13;
+    const aclTensor *Params::*contigTensors[] = {
+        &Params::q, &Params::k, &Params::v, &Params::g,
+        &Params::beta, &Params::a, &Params::dO,
+        &Params::initialState, &Params::dht,
+        &Params::qRstd, &Params::kRstd, &Params::betaRaw};
+    for (const auto contigMember : contigTensors) {
+        auto dfxRetStatus = MakeContiguous(params.*contigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
     }
 
     const aclTensor *qHead = params.q;
