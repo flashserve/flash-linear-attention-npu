@@ -94,22 +94,6 @@ inline void DfxReportInvalidShapeWithReason(const char *entity, const char *para
 #endif
 }
 
-inline void DfxReportInvalidShapes(const char *entity, const char *paramNames, const std::string &actual,
-                                   const std::string &reason)
-{
-#if defined(OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON)
-    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(entity, paramNames, actual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
-    const std::vector<const char *> msgKey = {"param_names", "op_name", "incorrect_shapes", "reason"};
-    const std::vector<const char *> msgvalue = {paramNames, entity, actual.c_str(), reason.c_str()};
-    REPORT_PREDEFINED_ERR_MSG("EZ0010", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameters %s of %s have incorrect shapes %s. Reason: %s.",
-                     paramNames, entity, actual.c_str(), reason.c_str());
-#endif
-}
-
 inline void DfxReportInvalidShapesWithReason(const char *entity, const char *paramNames,
                                              const std::string &actual, const std::string &reason)
 {
@@ -187,22 +171,6 @@ inline void DfxReportInvalidValueWithReason(const char *entity, const char *para
     FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
                      "Parameter %s of %s has incorrect value %s. Reason: %s.",
                      paramName, entity, actual.c_str(), reason.c_str());
-#endif
-}
-
-inline void DfxReportInvalidValues(const char *entity, const char *paramNames, const std::string &actual,
-                                   const std::string &reason)
-{
-#if defined(OP_LOGE_FOR_INVALID_VALUES_WITH_REASON)
-    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(entity, paramNames, actual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
-    const std::vector<const char *> msgKey = {"param_names", "op_name", "incorrect_values", "reason"};
-    const std::vector<const char *> msgvalue = {paramNames, entity, actual.c_str(), reason.c_str()};
-    REPORT_PREDEFINED_ERR_MSG("EZ0027", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameters %s of %s have incorrect values %s. Reason: %s.",
-                     paramNames, entity, actual.c_str(), reason.c_str());
 #endif
 }
 
@@ -291,7 +259,7 @@ inline void DfxReportInvalidFormatWithReason(const char *entity, const char *par
     fla_npu::host_utils::DfxReportInvalidShapeWithReason((entity), (paramName), (actual), (reason))
 
 #define OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(entity, paramNames, actual, reason) \
-    fla_npu::host_utils::DfxReportInvalidShapes((entity), (paramNames), (actual), (reason))
+    fla_npu::host_utils::DfxReportInvalidShapesWithReason((entity), (paramNames), (actual), (reason))
 
 #define OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidShapesWithReason((entity), (paramNames), (actual), (reason))
@@ -309,7 +277,7 @@ inline void DfxReportInvalidFormatWithReason(const char *entity, const char *par
     fla_npu::host_utils::DfxReportInvalidValueWithReason((entity), (paramName), (actual), (reason))
 
 #define OP_LOGE_LIBOPAPI_REPORT_VALUES_COMPAT(entity, paramNames, actual, reason) \
-    fla_npu::host_utils::DfxReportInvalidValues((entity), (paramNames), (actual), (reason))
+    fla_npu::host_utils::DfxReportInvalidValuesWithReason((entity), (paramNames), (actual), (reason))
 
 #define OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(entity, paramNames, actual, reason) \
     fla_npu::host_utils::DfxReportInvalidValuesWithReason((entity), (paramNames), (actual), (reason))
