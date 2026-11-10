@@ -459,6 +459,9 @@ class HeaderKindGateTest(unittest.TestCase):
         self.assertEqual(selected["aclnnCausalConv1d"][0].name, "stable_causal_conv1d_common.cpp")
         with self.assertRaisesRegex(RuntimeError, "No ABI call sites"):
             tool.filter_adapters(adapters, "unknown_operator")
+        # A // comment may sit between FLA_STABLE_EXEC( and the symbol.
+        prepare = tool.filter_adapters(adapters, "chunk_gated_delta_rule_fwd_prepare")
+        self.assertIn("aclnnChunkGatedDeltaRuleFwdPrepare", prepare)
 
     def test_pointer_changes_are_not_scalar_matches(self) -> None:
         tool = _load_tool("op_abi_validate.py")
