@@ -11,11 +11,12 @@
 #include "arch35/chunk_fwd_h_cube.h"
 #include "arch35/chunk_fwd_h_vec.h"
 #else
+// gated 复用（仅 A2/arch22）：复用 chunk_gated_delta_rule_fwd_h 的 preload kernel。
+// 基座/调度器/epilogue 特化在 arch22/chunk_fwd_h_utils.h，gated 双引擎类分别在
+// arch22/chunk_fwd_h_cube.h 与 arch22/chunk_fwd_h_vec.h；复用谓词/入口在本文件。
+#include "arch22/chunk_fwd_h_utils.h"
 #include "arch22/chunk_fwd_h_cube.h"
 #include "arch22/chunk_fwd_h_vec.h"
-// gated 复用（仅 A2/arch22）：复用 chunk_gated_delta_rule_fwd_h 的 preload kernel，
-// 引擎内联于 arch22/chunk_fwd_h_utils.h；复用谓词/入口在本文件（RunFwdHTyped 前）。
-#include "arch22/chunk_fwd_h_utils.h"
 #endif
 
 #include "kernel_operator.h"
@@ -69,7 +70,6 @@ template <typename GateT, typename StateT, bool USE_EXP2>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float, USE_EXP2>;
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
@@ -98,13 +98,24 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
         gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
         gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
     }
-    GatedKernel gatedKernel;
-    gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
-                     args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
-                     args.finalState,
-                     reinterpret_cast<GM_ADDR>(gtiling),
-                     user);
-    gatedKernel.Process();
+    if ASCEND_IS_AIC {
+        Catlass::Gemm::Kernel::ChunkFwdHGatedCubeArch22<DataT, GateT, StateT, float, USE_EXP2> gatedCube;
+        gatedCube.Init(args.k, args.w, args.u, args.g, args.initialState,
+                       args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
+                       args.finalState,
+                       reinterpret_cast<GM_ADDR>(gtiling),
+                       user);
+        gatedCube.Process();
+    }
+    if ASCEND_IS_AIV {
+        Catlass::Gemm::Kernel::ChunkFwdHGatedVecArch22<DataT, GateT, StateT, float, USE_EXP2> gatedVec;
+        gatedVec.Init(args.k, args.w, args.u, args.g, args.initialState,
+                      args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
+                      args.finalState,
+                      reinterpret_cast<GM_ADDR>(gtiling),
+                      user);
+        gatedVec.Process();
+    }
 }
 
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
