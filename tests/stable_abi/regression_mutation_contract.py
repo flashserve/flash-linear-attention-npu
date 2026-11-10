@@ -119,13 +119,19 @@ def scenario_recurrent_kda():
     check_bump("recurrent_kda(flag omitted)", state, before, 1)
     # 非原位调用返回独立状态池，保留输入值和版本计数。
     snapshot = state.clone()
+    expected_state = snapshot.clone()
+    expected_out, expected_final = kda_public(
+        q, k, v, g, beta, expected_state, inplace_final_state=True, **kw)
+    assert expected_final is expected_state
     before = version_of(state)
-    _, final_state = kda_public(q, k, v, g, beta, state, inplace_final_state=False, **kw)
+    actual_out, final_state = kda_public(q, k, v, g, beta, state, inplace_final_state=False, **kw)
     torch.npu.synchronize()
     check_bump("recurrent_kda(inplace=False, output=True)", state, before, 0)
     assert final_state.data_ptr() != state.data_ptr()
     assert final_state.shape == state.shape and final_state.dtype == state.dtype
     torch.testing.assert_close(state, snapshot, rtol=0, atol=0)
+    torch.testing.assert_close(actual_out, expected_out, rtol=0, atol=0)
+    torch.testing.assert_close(final_state, expected_state, rtol=0, atol=0)
 
     grad_state = state.detach().requires_grad_(True)
     try:
@@ -137,11 +143,26 @@ def scenario_recurrent_kda():
 
     for output in (True, False):
         before = version_of(grad_state)
-        _, final_state = kda_public(q, k, v, g, beta, grad_state, inplace_final_state=False,
-                                   **dict(kw, output_final_state=output))
+        actual_out, final_state = kda_public(
+            q, k, v, g, beta, grad_state, inplace_final_state=False,
+            **dict(kw, output_final_state=output))
         torch.npu.synchronize()
         check_bump(f"recurrent_kda(inplace=False, output={output})", grad_state, before, 0)
         assert (final_state is not None) == output
+        torch.testing.assert_close(actual_out, expected_out, rtol=0, atol=0)
+        torch.testing.assert_close(grad_state, snapshot, rtol=0, atol=0)
+        if output:
+            torch.testing.assert_close(final_state, expected_state, rtol=0, atol=0)
+
+    for inplace in (True, False):
+        for output in (True, False):
+            try:
+                kda_public(q, k, v, g, beta, None, inplace_final_state=inplace,
+                           **dict(kw, output_final_state=output))
+            except RuntimeError as exc:
+                assert str(exc) == "npu_recurrent_kda: initial_state must not be None"
+            else:
+                raise AssertionError("None initial state was accepted")
 
 
 def main():

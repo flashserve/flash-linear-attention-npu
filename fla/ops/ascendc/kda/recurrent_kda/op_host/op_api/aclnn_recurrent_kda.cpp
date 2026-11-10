@@ -746,15 +746,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         }
     }
 
-    // Empty requests and untouched pool slots must preserve their initial value
-    // on every public entry, including direct ACLNN and ctypes. Enqueue the copy
-    // before recurrence; the executor orders both writes to the same output.
-    if (!params.inplaceFinalState && params.outputFinalState &&
-        !SameTensorView(params.initialStateRef, params.finalState)) {
-        if (CopyStateView(initialStateForKernel, finalStateForKernel, executorPtr) != ACLNN_SUCCESS) {
-            return ACLNN_ERR_INNER_NULLPTR;
-        }
-    }
+    // Non-inplace recurrence reads the caller's initial state directly and
+    // writes only active destinations. Untouched output slots are unspecified,
+    // matching the Stable-ABI state contract; do not prefill the output pool.
     auto result = l0op::RecurrentKda(
         params.query, params.key, params.value, params.gate, params.beta, initialStateForKernel,
         params.cuSeqlensOptional, params.ssmStateIndicesOptional, params.aLogOptional,

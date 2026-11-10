@@ -142,7 +142,10 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
 使用零初态时，由调用方创建与 `q` 同设备、符合 `state_v_first` 布局的零状态池，
 容量须满足序列数和索引约束。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
 同样保留 storage offset 并直接读取，不满足时自动连续化。原位模式返回与输入相同 storage/stride
-的 state，非原位模式保持输入不变并返回独立 state。
+的 state。非原位模式直接读取输入状态池，保持其数值和版本计数不变；仅在
+`output_final_state=True` 时分配并返回同 shape/dtype 的独立状态池。kernel 只写入实际处理的状态槽位，
+未写入的输出槽位（包括空序列对应槽位）内容未定义，不保证复制输入池；调用方不得依赖这些值。
+`inplace_final_state=False, output_final_state=False` 不分配状态输出池，也不写回状态，返回的最终状态为 `None`。
 
 ### 4.2 调用示例
 

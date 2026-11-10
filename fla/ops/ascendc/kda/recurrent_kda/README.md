@@ -56,7 +56,8 @@ out, final_state = recurrent_kda(
   - `safe_gate=True`：`gate = lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - `use_beta_sigmoid_in_kernel=True` 时，kernel 使用 `sigmoid(beta)`；若 `allow_neg_eigval=True`，再乘 2。
 - Python/aclnn 入口支持非连续 `initial_state`。Python 主入口在原位模式返回输入 State，非原位模式
-  先复制初态再递推，返回独立存储的 State，且不修改输入。
+  直接读取初态且不修改输入，仅在 `output_final_state=True` 时分配并返回同 shape/dtype 的独立状态池。
+  非原位输出池中未写入的槽位（包括空序列对应槽位）内容未定义，不保证保留输入值。
 - `cu_seqlens` 是可选的同设备 INT32/INT64 tensor，shape 为 `[seq_num+1]`，使用与 fla-org 一致的
   累积 offset 语义。首项必须为 0，末项等于有效 packed token 数且可小于图捕获的 token capacity，
   相邻差值是各序列长度。host 不读取其值，兼容 ACLGraph capture/replay。
