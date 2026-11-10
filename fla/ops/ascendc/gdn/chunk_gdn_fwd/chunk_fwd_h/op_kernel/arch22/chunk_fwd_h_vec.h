@@ -987,30 +987,11 @@ class ChunkFwdHGatedVecArch22 {
 public:
     
     using ArchTag = Arch::AtlasA2;
-    using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadCube;
     using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadVec;
 
-    using DispatchPolicyTla = Gemm::MmadPingpongTlaPreload<ArchTag, true, false>;
-    using L1TileShapeTla = Shape<_128, _128, _128>;
-    using L0TileShapeTla = L1TileShapeTla;
 
-    using WType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using HType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using VworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
-    using KType = Gemm::GemmType<INPUT_TYPE, layout::ColumnMajor>;
-    using HworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
-    using VType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using GType = Gemm::GemmType<G_TYPE, layout::RowMajor>;
-    using UType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using FinalStateType = Gemm::GemmType<STATE_TYPE, layout::RowMajor>;
 
-    // cube 1
-    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-    using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
 
-    // cube 2
-    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
 
     // V1/V2 epilogue 已解体为本类 RunVnewStage/RunUpdateStage 方法（缓冲成员，
     // 获取点在散射段之后的 Init*EpilogueBuffers，UB 相位复用边界不变）。
@@ -1028,10 +1009,6 @@ public:
     using ElementInitialState = STATE_TYPE;
     using ElementFinalState = STATE_TYPE;
     
-    using LayoutW = Catlass::layout::RowMajor;
-    using LayoutH = Catlass::layout::RowMajor;
-    using LayoutV = Catlass::layout::RowMajor;
-    using LayoutK = Catlass::layout::ColumnMajor;
 
     
     uint32_t batch{0};
@@ -1122,8 +1099,8 @@ public:
 
     // ---- V1/V2 epilogue（自 utils.h 的 BlockEpilogue 两特化解体为方法；
     // 缓冲成员化，获取点保持在散射段之后的 Init*EpilogueBuffers——与散射段
-    // 的 UB 相位复用边界、ping/pong 别名（vNewOutput 与 vNewDecay 同址、pong
-    // gBrcb 用 PING 槽）均逐字保留）----
+    // 的 UB 相位复用边界、ping/pong 别名（vNewOutput 与 vNewDecay 同址）
+    // 均逐字保留；gBrcb 死缓冲已删）----
     static constexpr float LN2 = 0.6931471805599453f;
     uint32_t pongBaseEvent = 4;
 
@@ -1142,7 +1119,6 @@ public:
     AscendC::LocalTensor<float> gUbTensor_ping;
     AscendC::LocalTensor<float> gLastUbTensor_ping;
     AscendC::LocalTensor<ElementG> gInputUbTensor_ping;
-    AscendC::LocalTensor<float> gBrcbUbTensor_ping;
     AscendC::LocalTensor<ElementV> vNewOutputUbTensor_ping;
     AscendC::LocalTensor<ElementV> vNewDecayUbTensor_ping;
 
@@ -1151,7 +1127,6 @@ public:
     AscendC::LocalTensor<float> gUbTensor_pong;
     AscendC::LocalTensor<float> gLastUbTensor_pong;
     AscendC::LocalTensor<ElementG> gInputUbTensor_pong;
-    AscendC::LocalTensor<float> gBrcbUbTensor_pong;
     AscendC::LocalTensor<ElementV> vNewOutputUbTensor_pong;
     AscendC::LocalTensor<ElementV> vNewDecayUbTensor_pong;
 
@@ -1183,7 +1158,6 @@ public:
         gUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_BUF_OFFSET);
         gLastUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_SUB_BUF_OFFSET);
         gInputUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementG>(PING_G_SUB_BUF_OFFSET);
-        gBrcbUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_BUF_0_OFFSET);
         vNewOutputUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementV>(PING_BUF_2_OFFSET);
         vNewDecayUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementV>(PING_BUF_2_OFFSET);
 
@@ -1192,7 +1166,6 @@ public:
         gUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_BUF_OFFSET);
         gLastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_SUB_BUF_OFFSET);
         gInputUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementG>(PONG_G_SUB_BUF_OFFSET);
-        gBrcbUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PING_BUF_0_OFFSET);
         vNewOutputUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementV>(PONG_BUF_2_OFFSET);
         vNewDecayUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementV>(PONG_BUF_2_OFFSET);
 
@@ -1298,7 +1271,6 @@ public:
         AscendC::LocalTensor<float> gUbTensor = isPing ? gUbTensor_ping : gUbTensor_pong;
         AscendC::LocalTensor<float> gLastUbTensor = isPing ? gLastUbTensor_ping : gLastUbTensor_pong;
         AscendC::LocalTensor<ElementG> gInputUbTensor = isPing ? gInputUbTensor_ping : gInputUbTensor_pong;
-        AscendC::LocalTensor<float> gBrcbUbTensor = isPing ? gBrcbUbTensor_ping : gBrcbUbTensor_pong;
         AscendC::LocalTensor<ElementV> vNewOutputUbTensor = isPing ? vNewOutputUbTensor_ping : vNewOutputUbTensor_pong;
         AscendC::LocalTensor<ElementV> vNewDecayUbTensor = isPing ? vNewDecayUbTensor_ping : vNewDecayUbTensor_pong;
 

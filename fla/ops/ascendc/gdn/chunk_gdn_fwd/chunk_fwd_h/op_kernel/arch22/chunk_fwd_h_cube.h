@@ -710,21 +710,11 @@ public:
     
     using ArchTag = Arch::AtlasA2;
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadCube;
-    using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadVec;
 
     using DispatchPolicyTla = Gemm::MmadPingpongTlaPreload<ArchTag, true, false>;
     using L1TileShapeTla = Shape<_128, _128, _128>;
     using L0TileShapeTla = L1TileShapeTla;
 
-    using WType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using HType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using VworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
-    using KType = Gemm::GemmType<INPUT_TYPE, layout::ColumnMajor>;
-    using HworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
-    using VType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using GType = Gemm::GemmType<G_TYPE, layout::RowMajor>;
-    using UType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
-    using FinalStateType = Gemm::GemmType<STATE_TYPE, layout::RowMajor>;
 
     // cube 1
     using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
