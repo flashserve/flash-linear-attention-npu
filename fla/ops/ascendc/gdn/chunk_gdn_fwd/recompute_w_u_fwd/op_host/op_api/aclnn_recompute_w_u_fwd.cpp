@@ -165,25 +165,14 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(RecomputeWUFwdParams &params, aclOpExecutor *executorPtr)
 {
-    auto dfxRetStatus1 = DataContiguous(params.k, executorPtr);
-    if (dfxRetStatus1 != ACLNN_SUCCESS) {
-        return dfxRetStatus1;
-    }
-    auto dfxRetStatus2 = DataContiguous(params.v, executorPtr);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
-    auto dfxRetStatus3 = DataContiguous(params.beta, executorPtr);
-    if (dfxRetStatus3 != ACLNN_SUCCESS) {
-        return dfxRetStatus3;
-    }
-    auto dfxRetStatus4 = DataContiguous(params.a, executorPtr);
-    if (dfxRetStatus4 != ACLNN_SUCCESS) {
-        return dfxRetStatus4;
-    }
-    auto dfxRetStatus5 = DataContiguous(params.g, executorPtr);
-    if (dfxRetStatus5 != ACLNN_SUCCESS) {
-        return dfxRetStatus5;
+    const aclTensor *RecomputeWUFwdParams::*contigMembers[] = {
+        &RecomputeWUFwdParams::k, &RecomputeWUFwdParams::v, &RecomputeWUFwdParams::beta,
+        &RecomputeWUFwdParams::a, &RecomputeWUFwdParams::g};
+    for (const auto contigMember : contigMembers) {
+        auto dfxRetStatus = DataContiguous(params.*contigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
     }
 
     return ACLNN_SUCCESS;

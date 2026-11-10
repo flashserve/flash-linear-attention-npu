@@ -152,33 +152,15 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(PrepareWyReprBwdParams &params, aclOpExecutor *executor)
 {
-    auto dfxRetStatus1 = DataContiguous(params.k, executor);
-    if (dfxRetStatus1 != ACLNN_SUCCESS) {
-        return dfxRetStatus1;
-    }
-    auto dfxRetStatus2 = DataContiguous(params.v, executor);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
-    auto dfxRetStatus3 = DataContiguous(params.beta, executor);
-    if (dfxRetStatus3 != ACLNN_SUCCESS) {
-        return dfxRetStatus3;
-    }
-    auto dfxRetStatus4 = DataContiguous(params.a, executor);
-    if (dfxRetStatus4 != ACLNN_SUCCESS) {
-        return dfxRetStatus4;
-    }
-    auto dfxRetStatus5 = DataContiguous(params.dw, executor);
-    if (dfxRetStatus5 != ACLNN_SUCCESS) {
-        return dfxRetStatus5;
-    }
-    auto dfxRetStatus6 = DataContiguous(params.du, executor);
-    if (dfxRetStatus6 != ACLNN_SUCCESS) {
-        return dfxRetStatus6;
-    }
-    auto dfxRetStatus7 = DataContiguous(params.g, executor);
-    if (dfxRetStatus7 != ACLNN_SUCCESS) {
-        return dfxRetStatus7;
+    const aclTensor *PrepareWyReprBwdParams::*contigMembers[] = {
+        &PrepareWyReprBwdParams::k, &PrepareWyReprBwdParams::v, &PrepareWyReprBwdParams::beta,
+        &PrepareWyReprBwdParams::a, &PrepareWyReprBwdParams::dw, &PrepareWyReprBwdParams::du,
+        &PrepareWyReprBwdParams::g};
+    for (const auto contigMember : contigMembers) {
+        auto dfxRetStatus = DataContiguous(params.*contigMember, executor);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
     }
     return ACLNN_SUCCESS;
 }

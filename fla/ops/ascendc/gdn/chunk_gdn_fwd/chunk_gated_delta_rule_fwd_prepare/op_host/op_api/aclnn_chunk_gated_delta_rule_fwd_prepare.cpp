@@ -296,25 +296,14 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdPrepareParams &params, aclOpExecutor *executorPtr)
 {
-    auto dfxRetStatus2 = DataContiguous(params.q, executorPtr);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
-    auto dfxRetStatus3 = DataContiguous(params.k, executorPtr);
-    if (dfxRetStatus3 != ACLNN_SUCCESS) {
-        return dfxRetStatus3;
-    }
-    auto dfxRetStatus4 = DataContiguous(params.v, executorPtr);
-    if (dfxRetStatus4 != ACLNN_SUCCESS) {
-        return dfxRetStatus4;
-    }
-    auto dfxRetStatus5 = DataContiguous(params.g, executorPtr);
-    if (dfxRetStatus5 != ACLNN_SUCCESS) {
-        return dfxRetStatus5;
-    }
-    auto dfxRetStatus6 = DataContiguous(params.beta, executorPtr);
-    if (dfxRetStatus6 != ACLNN_SUCCESS) {
-        return dfxRetStatus6;
+    const aclTensor *ChunkGatedDeltaRuleFwdPrepareParams::*contigMembers[] = {
+        &ChunkGatedDeltaRuleFwdPrepareParams::q, &ChunkGatedDeltaRuleFwdPrepareParams::k, &ChunkGatedDeltaRuleFwdPrepareParams::v,
+        &ChunkGatedDeltaRuleFwdPrepareParams::g, &ChunkGatedDeltaRuleFwdPrepareParams::beta};
+    for (const auto contigMember : contigMembers) {
+        auto dfxRetStatus = DataContiguous(params.*contigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
     }
     auto dfxRetStatus7 = OptionalDataContiguous(params.aLogOptional, executorPtr);
     if (dfxRetStatus7 != ACLNN_SUCCESS) {

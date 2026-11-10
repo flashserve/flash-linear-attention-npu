@@ -273,17 +273,13 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, aclOpExecutor *executorPtr)
 {
-    auto dfxRetStatus1 = DataContiguous(params.k, executorPtr);
-    if (dfxRetStatus1 != ACLNN_SUCCESS) {
-        return dfxRetStatus1;
-    }
-    auto dfxRetStatus2 = DataContiguous(params.w, executorPtr);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
-    auto dfxRetStatus3 = DataContiguous(params.u, executorPtr);
-    if (dfxRetStatus3 != ACLNN_SUCCESS) {
-        return dfxRetStatus3;
+    const aclTensor *ChunkGatedDeltaRuleFwdHParams::*contigMembers[] = {
+        &ChunkGatedDeltaRuleFwdHParams::k, &ChunkGatedDeltaRuleFwdHParams::w, &ChunkGatedDeltaRuleFwdHParams::u};
+    for (const auto contigMember : contigMembers) {
+        auto dfxRetStatus = DataContiguous(params.*contigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
     }
     if (params.gOptional != nullptr) {
         auto dfxRetStatus4 = DataContiguous(params.gOptional, executorPtr);

@@ -171,21 +171,14 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkBwdDvLocalParams &params, aclOpExecutor *executorPtr)
 {
-    auto dfxRetStatus1 = DataContiguous(params.q, executorPtr);
-    if (dfxRetStatus1 != ACLNN_SUCCESS) {
-        return dfxRetStatus1;
-    }
-    auto dfxRetStatus2 = DataContiguous(params.k, executorPtr);
-    if (dfxRetStatus2 != ACLNN_SUCCESS) {
-        return dfxRetStatus2;
-    }
-    auto dfxRetStatus3 = DataContiguous(params.dO, executorPtr);
-    if (dfxRetStatus3 != ACLNN_SUCCESS) {
-        return dfxRetStatus3;
-    }
-    auto dfxRetStatus4 = DataContiguous(params.g, executorPtr);
-    if (dfxRetStatus4 != ACLNN_SUCCESS) {
-        return dfxRetStatus4;
+    const aclTensor *ChunkBwdDvLocalParams::*contigMembers[] = {
+        &ChunkBwdDvLocalParams::q, &ChunkBwdDvLocalParams::k, &ChunkBwdDvLocalParams::dO,
+        &ChunkBwdDvLocalParams::g};
+    for (const auto contigMember : contigMembers) {
+        auto dfxRetStatus = DataContiguous(params.*contigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
     }
 
     return ACLNN_SUCCESS;
