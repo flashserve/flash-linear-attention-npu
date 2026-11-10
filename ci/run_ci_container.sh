@@ -23,6 +23,11 @@ cache_root="${CI_CACHE_ROOT:-}"
 container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
 timing_root="${CI_TIMING_ROOT:-}"
+requested_device="${CI_NPU_DEVICE_ID:-}"
+if [[ -n "$requested_device" && ! "$requested_device" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "[CI][ERROR] CI_NPU_DEVICE_ID must be a non-negative physical NPU ID; leave it empty for automatic selection." >&2
+    exit 2
+fi
 npu_lock_fd=""
 npu_lock_file=""
 container_id_dir=""
@@ -94,11 +99,22 @@ acquire_npu_lock() {
     local lock_wait_seconds="${CI_NPU_LOCK_WAIT_SECONDS:-14400}"
     local lock_retry_seconds="${CI_NPU_LOCK_RETRY_SECONDS:-10}"
     local started_at="$SECONDS"
+    if [[ -n "$requested_device" ]]; then
+        if ! bash ci/detect_npu.sh --env-for "$requested_device" >/dev/null; then
+            echo "[CI][ERROR] Requested physical NPU $requested_device is unavailable on this runner. Check npu-smi info or remove device-id for automatic selection." >&2
+            exit 2
+        fi
+        echo "[CI] Using requested physical NPU $requested_device; other devices will not be selected."
+    fi
     mkdir -p "$lock_dir"
 
     while true; do
         local candidates=()
-        mapfile -t candidates < <(bash ci/detect_npu.sh --candidates)
+        if [[ -n "$requested_device" ]]; then
+            candidates=("$requested_device")
+        else
+            mapfile -t candidates < <(bash ci/detect_npu.sh --candidates)
+        fi
         if (( ${#candidates[@]} == 0 )); then
             echo "[CI][ERROR] No NPU device was found on host." >&2
             exit 1
@@ -124,7 +140,7 @@ acquire_npu_lock() {
             echo "[CI][ERROR] Timed out waiting for an unlocked NPU after ${lock_wait_seconds}s." >&2
             exit 1
         fi
-        echo "[CI] All detected NPU devices are locked; retrying in ${lock_retry_seconds}s."
+        echo "[CI] Candidate NPU devices (${candidates[*]}) are locked; retrying in ${lock_retry_seconds}s."
         sleep "$lock_retry_seconds"
     done
 }

@@ -7,6 +7,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const path = require('path');
   const mode = process.env.NPU_CI_MODE || '';
   const ops = process.env.NPU_OPS || '';
+  const deviceId = process.env.NPU_DEVICE_ID || '';
   const opsItems = ops.split(',').map((item) => item.trim());
   if (ops.trim() && opsItems.some((item) =>
     !item || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(item))) {
@@ -14,9 +15,10 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   }
   const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
   const requestScope = normalizedOps ? 'scoped' : 'all';
-  const requestKey = requestScope === 'all'
+  const requestKey = (requestScope === 'all'
     ? 'all'
-    : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10);
+    : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10)) +
+    (deviceId ? `:npu${deviceId}` : '');
   const prNumber = process.env.NPU_PR_NUMBER || '';
   const commentId = process.env.NPU_COMMENT_ID || '';
   const sha = process.env.NPU_EXPECTED_HEAD_SHA;
@@ -178,6 +180,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       ['CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK', 'true'],
       ['CI_STAGE', failedStage || 'all'],
     ];
+    if (deviceId) assignments.push(['CI_NPU_DEVICE_ID', deviceId]);
     if (platform.key === 'a5') {
       assignments.push(
         ['CI_IMAGE', 'fla-npu-ci:9.1.0-950'],

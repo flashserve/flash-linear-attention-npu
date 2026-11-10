@@ -17,13 +17,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
     def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False,
-               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True):
+               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True,
+               device_id=""):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
         (repo / "ci/detect_npu.sh").write_text(
-            'if [[ "$1" == --candidates ]]; then echo 0; else\n'
-            'echo "NPU_SELECTED_DEVICE=0 NPU_SELECTED_NAME=test '
+            'if [[ "$1" == --candidates ]]; then printf "0\\n2\\n"; else\n'
+            'if [[ "$2" != 0 && "$2" != 2 ]]; then exit 2; fi\n'
+            'echo "NPU_SELECTED_DEVICE=$2 NPU_SELECTED_NAME=test '
             'NPU_SELECTED_HEALTH=OK NPU_SELECTED_FREE=100 NPU_SOC=ascend950"\nfi\n'
         )
         commands = root / "bin"
@@ -66,6 +68,9 @@ class RunCiContainerTests(unittest.TestCase):
             CI_HOST_TMPDIR=str(root / "storage/container"),
             CI_CACHE_ROOT=str(root / "storage/cache"),
             CI_NPU_LOCK_DIR=str(root / "storage/locks"),
+            CI_NPU_DEVICE_ID=device_id,
+            CI_NPU_LOCK_WAIT_SECONDS="1",
+            CI_NPU_LOCK_RETRY_SECONDS="0.05",
             CI_IMAGE="test-image",
             CI_CONTAINER_NAME="ci-test",
             CI_REQUIRE_PRELOADED_IMAGE="true",
@@ -104,7 +109,8 @@ class RunCiContainerTests(unittest.TestCase):
                 process.wait()
         else:
             result = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True, check=False)
-        calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
+        record = root / "docker.jsonl"
+        calls = [json.loads(line) for line in record.read_text().splitlines()] if record.exists() else []
         return result, calls, env
 
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
@@ -204,6 +210,38 @@ class RunCiContainerTests(unittest.TestCase):
             self.assertIn("Required preloaded Docker image is missing", result.stderr)
             self.assertFalse(Path(env["CI_NPU_LOCK_DIR"]).exists())
             self.assertFalse(any(call[0] in ("run", "build") for call in calls))
+
+    def test_requested_device_reaches_docker_and_keeps_container_logical_device_zero(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, calls, env = self.run_ci(Path(temporary), device_id="2")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            run = next(call for call in calls if "--cidfile" in call)
+            self.assertIn("ASCEND_RT_VISIBLE_DEVICES=2", run)
+            self.assertIn("NPU_SELECTED_DEVICE=2", run)
+            self.assertIn("CI_CONTAINER_DEVICE=0", run)
+            self.assertTrue((Path(env["CI_NPU_LOCK_DIR"]) / "fla-npu-ci-npu-2.lock").exists())
+            self.assertFalse((Path(env["CI_NPU_LOCK_DIR"]) / "fla-npu-ci-npu-0.lock").exists())
+
+    def test_invalid_or_missing_requested_device_cannot_start_container(self):
+        for device in ("-1", "1;true", "00", "9"):
+            with self.subTest(device=device), tempfile.TemporaryDirectory() as temporary:
+                result, calls, _ = self.run_ci(Path(temporary), device_id=device)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertFalse(any(call[0] == "run" for call in calls))
+
+    def test_locked_requested_device_waits_without_using_another_free_device(self):
+        import fcntl
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            lock = root / "storage/locks/fla-npu-ci-npu-2.lock"
+            lock.parent.mkdir(parents=True)
+            with lock.open("w") as stream:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                result, calls, _ = self.run_ci(root, device_id="2")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("Timed out waiting", result.stderr)
+            self.assertFalse(any(call[0] == "run" for call in calls))
+            self.assertFalse((lock.parent / "fla-npu-ci-npu-0.lock").exists())
 
 
 if __name__ == "__main__":

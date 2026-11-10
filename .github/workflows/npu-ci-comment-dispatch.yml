@@ -65,6 +65,8 @@ jobs:
             let modeProvided = false;
             let ops = '';
             let opsProvided = false;
+            let deviceId = '';
+            let deviceProvided = false;
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -80,12 +82,23 @@ jobs:
                 }
                 ops = part.slice('ops='.length);
                 opsProvided = true;
+              } else if (part.startsWith('device-id=')) {
+                if (deviceProvided) {
+                  core.setFailed('device-id 参数只能指定一次。');
+                  return;
+                }
+                deviceId = part.slice('device-id='.length);
+                deviceProvided = true;
               } else {
                 core.setFailed(`不支持的 NPU CI 参数：${part}`);
                 return;
               }
             }
 
+            if (deviceProvided && (!/^(0|[1-9][0-9]*)$/.test(deviceId) || !Number.isSafeInteger(Number(deviceId)))) {
+              core.setFailed('device-id 必须是非负整数，例如 /run-npu-ci quick device-id=2。');
+              return;
+            }
             const opsItems = ops.split(',').map((item) => item.trim());
             if ((opsProvided && !ops.trim()) ||
                 (ops.trim() && opsItems.some((item) =>
@@ -146,26 +159,32 @@ jobs:
               .from(workflowFile.content, workflowFile.encoding || 'base64')
               .toString('utf8');
 
+            const dispatchInputs = auth.selectDispatchInputs(workflowText, {
+              pr_number: String(prNumber),
+              ci_mode: ciMode,
+              ops,
+              ...(deviceProvided ? { device_id: deviceId } : {}),
+              requested_by: actor,
+              expected_head_sha: pr.head.sha,
+              expected_base_ref: pr.base.ref,
+              expected_base_sha: baseBranch.commit.sha,
+              expected_workflow_sha: baseBranch.commit.sha,
+            });
+            if (deviceProvided && !Object.hasOwn(dispatchInputs, 'device_id')) {
+              core.setFailed(`目标分支 ${targetRef} 尚未支持 device-id；请同步设备选择功能，或移除 device-id 使用自动选卡。`);
+              return;
+            }
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'ci.yml',
               ref: targetRef,
-              inputs: auth.selectDispatchInputs(workflowText, {
-                pr_number: String(prNumber),
-                ci_mode: ciMode,
-                ops,
-                requested_by: actor,
-                expected_head_sha: pr.head.sha,
-                expected_base_ref: pr.base.ref,
-                expected_base_sha: baseBranch.commit.sha,
-                expected_workflow_sha: baseBranch.commit.sha,
-              }),
+              inputs: dispatchInputs,
             });
 
             core.notice(
               `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
-              `head=${pr.head.sha}，模式=${ciMode}。`
+              `head=${pr.head.sha}，模式=${ciMode}，物理 NPU=${deviceId || '自动选择'}。`
             );
 
   dispatch-package:

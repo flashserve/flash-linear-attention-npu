@@ -77,6 +77,7 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         altered_metric_threshold=False,
         ops="",
         expected_run_attempt="1",
+        device_id="",
         platform_attempts=None,
         nested_artifacts=False,
         publish_script_path=None,
@@ -633,6 +634,7 @@ globalThis.core = {
                     "NPU_PUBLISH_SCRIPT_PATH": str(publish_script_path or PUBLISH_SCRIPT_PATH),
                     "NPU_CI_MODE": "quick",
                     "NPU_OPS": ops,
+                    "NPU_DEVICE_ID": device_id,
                     "NPU_PR_NUMBER": "527",
                     "NPU_COMMENT_ID": "123",
                     "NPU_EXPECTED_HEAD_SHA": sha,
@@ -672,6 +674,7 @@ globalThis.core = {
         *,
         mode="quick",
         ops="",
+        device_id="",
         workflow_run_status="completed",
         workflow_run=None,
         workflow_run_error=False,
@@ -700,6 +703,7 @@ globalThis.context = {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
     ops: process.env.PREPARE_OPS,
+    device_id: process.env.PREPARE_DEVICE_ID,
     ...JSON.parse(process.env.PREPARE_EXPECTED_SNAPSHOT),
   } },
   repo: { owner: 'example', repo: 'repo' },
@@ -774,6 +778,7 @@ globalThis.core = {
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
                     "PREPARE_OPS": ops,
+                    "PREPARE_DEVICE_ID": device_id,
                     "PREPARE_PR_AUTHOR": pr_author,
                     "PREPARE_AUTHOR_PERMISSION": author_permission,
                     "PREPARE_EXPECTED_SNAPSHOT": json.dumps(expected_snapshot or {}),
@@ -1486,6 +1491,33 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         }
         self.assertEqual(outputs["should_run"], "false")
         self.assertFalse(any(item["kind"] == "status" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_requested_device_reuses_only_results_for_the_same_device(self):
+        for previous, expected in (("", "true"), (":npu3", "true"), (":npu2", "false")):
+            statuses = [{
+                "id": index + 1, "context": name, "state": "success",
+                "description": f"result (quick,all{previous},A2+A5)",
+                "target_url": "https://github.com/example/repo/actions/runs/88",
+                "created_at": f"2026-09-14T00:00:{index:02d}Z",
+            } for index, name in enumerate(STATUS_CONTEXTS)]
+            with self.subTest(previous=previous):
+                completed, records = self._run_prepare_script(statuses, device_id="2")
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                outputs = {item["payload"]["name"]: item["payload"]["value"]
+                           for item in records if item["kind"] == "output"}
+                self.assertEqual(outputs["should_run"], expected)
+                self.assertEqual(outputs["device_id"], "2")
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_publisher_preserves_requested_device_in_status_and_reproduction(self):
+        completed, _, records = self._run_finalize_script(device_id="2")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        statuses = [item["payload"] for item in records if item["kind"] == "status"]
+        self.assertIn("(quick,all:npu2,A2+A5)", statuses[-1]["description"])
+        completed, comment, _ = self._run_finalize_script(device_id="2", matrix_result="failure")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("CI_NPU_DEVICE_ID='2'", comment)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_reuse_requires_current_base_and_workflow_run_identity(self):
