@@ -12,7 +12,7 @@
 #include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
 #include "op_common/log/log.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 namespace optiling {
 namespace {

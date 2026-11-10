@@ -27,7 +27,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 
@@ -290,11 +290,11 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     PreProcessFwdKernelMergedParams params{k,          w,   u,   gOptional, gkOptional,
                                            bgOptional, vOptional, cuSeqlensOptional, chunkSize, hmOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PPFM_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(PPFM_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PPFM_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(PPFM_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(aclnnPreProcessFwdKernelMerged,

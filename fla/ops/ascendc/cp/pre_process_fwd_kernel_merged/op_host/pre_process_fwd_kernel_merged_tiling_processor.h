@@ -13,7 +13,7 @@
 
 #include "pre_process_fwd_kernel_merged_tiling.h"
 #include "op_common/log/log.h"
-#include "../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 
 // 注意：调用方 op_host/*_tiling.cpp 本身已在 namespace optiling 内 ⇒ 本头**不再**包 namespace，

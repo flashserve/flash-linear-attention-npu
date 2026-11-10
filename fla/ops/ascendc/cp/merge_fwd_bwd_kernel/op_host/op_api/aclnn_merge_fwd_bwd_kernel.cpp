@@ -19,7 +19,7 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 
@@ -178,11 +178,11 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(MERGE_FWD_BWD_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(MERGE_FWD_BWD_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(MERGE_FWD_BWD_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(MERGE_FWD_BWD_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const aclnnStatus paramStatus = CheckMergeFwdBwdKernelParams(h, agHm, preOrPostNumRanks, rank, forward);

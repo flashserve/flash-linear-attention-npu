@@ -18,7 +18,7 @@
 #include <cinttypes>
 #include <register/op_impl_registry.h>
 #include "op_common/log/log.h"
-#include "../../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 namespace optiling {
 

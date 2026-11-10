@@ -29,7 +29,7 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "opdev/make_op_executor.h"
 
 

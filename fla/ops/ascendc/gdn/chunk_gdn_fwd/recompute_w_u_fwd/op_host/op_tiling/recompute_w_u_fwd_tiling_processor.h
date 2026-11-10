@@ -24,7 +24,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../../op_kernel/recompute_w_u_fwd_struct.h"
 #include "op_common/log/log.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using GDN::RecomputeWUFwdTilingData;
 

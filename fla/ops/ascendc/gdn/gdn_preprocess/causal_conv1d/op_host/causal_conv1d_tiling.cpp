@@ -14,7 +14,7 @@
 
 #include "tiling_base/tiling_templates_registry.h"
 #include "op_common/log/log.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "causal_conv1d_tiling_utils.h"
 #include "causal_conv1d_tiling_planner.h"
 #include "causal_conv1d_tiling_validation.h"

@@ -16,7 +16,7 @@
 #include "err/ops_err.h"
 #include "log/log.h"
 #include "op_common/log/log.h"
-#include "../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "platform/soc_spec.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_def_registry.h"

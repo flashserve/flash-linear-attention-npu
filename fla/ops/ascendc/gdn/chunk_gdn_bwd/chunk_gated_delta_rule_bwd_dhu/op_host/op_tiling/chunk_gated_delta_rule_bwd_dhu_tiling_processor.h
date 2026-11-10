@@ -26,7 +26,7 @@
 
 #include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include "op_common/log/log.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
 

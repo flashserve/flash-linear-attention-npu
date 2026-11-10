@@ -86,7 +86,7 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
         return ge::GRAPH_FAILED;
     }
     const double *scalePtr = attrs->GetAttrPointer<double>(CDHP_ATTR_SCALE_IDX);
-    const int64_t *chunkSizePtr = attrs->GetAttrPointer<int64_t>(CDHP_ATTR_CHUNK_SIZE_IDX);
+    const uint32_t *chunkSizePtr = attrs->GetAttrPointer<uint32_t>(CDHP_ATTR_CHUNK_SIZE_IDX);
 
     auto platformInfoPtr = context->GetPlatformInfo();
     if (CheckTilingResource(context->GetNodeName(), platformInfoPtr, "platformInfo") != ge::GRAPH_SUCCESS) {
@@ -146,7 +146,8 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
         gkShapePtr != nullptr,
         scalePtr != nullptr,
         scalePtr != nullptr ? *scalePtr : 1.0,
-        chunkSizePtr != nullptr ? *chunkSizePtr : static_cast<int64_t>(PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE),
+        chunkSizePtr != nullptr ? static_cast<int32_t>(*chunkSizePtr)
+                                : static_cast<int32_t>(PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE),
         static_cast<uint32_t>(ascendcPlatform.GetCoreNumAic()),
         aivPerBlock,
         static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize()),

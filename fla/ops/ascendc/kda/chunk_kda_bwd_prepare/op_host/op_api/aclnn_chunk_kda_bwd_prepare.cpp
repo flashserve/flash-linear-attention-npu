@@ -3,7 +3,7 @@
 #include "op_common/log/log.h"
 #include "aclnn_chunk_kda_bwd_prepare.h"
 #include "chunk_kda_bwd_prepare.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 #include <cmath>
 #include <sstream>

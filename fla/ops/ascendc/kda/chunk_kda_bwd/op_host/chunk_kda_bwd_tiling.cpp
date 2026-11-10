@@ -9,7 +9,7 @@
 
 #include "chunk_kda_bwd_a_tiling_processor.h"
 #include "op_common/log/log.h"
-#include "../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "chunk_kda_bwd_c_tiling_processor.h"
 #include "../op_kernel/kda_gate_bwd_post_common.h"
 

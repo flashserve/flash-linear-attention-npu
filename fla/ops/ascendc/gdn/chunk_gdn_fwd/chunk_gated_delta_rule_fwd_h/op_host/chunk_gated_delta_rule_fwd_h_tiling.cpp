@@ -18,7 +18,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 #include "op_common/log/log.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 namespace optiling {
 

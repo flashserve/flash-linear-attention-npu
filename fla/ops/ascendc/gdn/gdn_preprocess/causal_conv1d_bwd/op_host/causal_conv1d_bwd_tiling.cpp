@@ -21,7 +21,7 @@
 #include "platform/soc_spec.h"
 #include "log/log.h"
 #include "op_common/log/log.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"

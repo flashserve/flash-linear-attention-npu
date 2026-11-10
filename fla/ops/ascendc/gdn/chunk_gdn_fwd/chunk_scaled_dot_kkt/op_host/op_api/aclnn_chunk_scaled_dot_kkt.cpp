@@ -21,7 +21,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 
@@ -213,11 +213,11 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
     int64_t chunkSize, const aclTensor *a, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     ChunkScaledDotKktParams p{k, g, beta, cuSeqlensOptional, chunkIndicesOptional, chunkSize, a};

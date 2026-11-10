@@ -5,7 +5,7 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 

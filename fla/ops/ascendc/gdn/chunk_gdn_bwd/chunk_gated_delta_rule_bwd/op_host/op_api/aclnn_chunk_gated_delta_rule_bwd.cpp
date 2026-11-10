@@ -23,7 +23,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 #include <array>
 #include <cmath>

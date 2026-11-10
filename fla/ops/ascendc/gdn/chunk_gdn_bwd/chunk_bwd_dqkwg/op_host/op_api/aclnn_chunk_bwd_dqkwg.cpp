@@ -26,7 +26,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 
 using namespace op;
@@ -308,10 +308,13 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     }
     auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.w, params.gGamma, params.scale, params.chunkSize, executorPtr);
 
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    for (size_t outIdx = 0; outIdx < result.size(); ++outIdx) {
+        if (result[outIdx] == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                "ChunkBwdDqkwg: l0op output[%zu] is nullptr (launcher failure).", outIdx);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
+    }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dqOut, executorPtr);
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);

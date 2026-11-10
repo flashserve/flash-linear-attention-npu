@@ -22,7 +22,7 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 #include <cstring>
 #include <limits>

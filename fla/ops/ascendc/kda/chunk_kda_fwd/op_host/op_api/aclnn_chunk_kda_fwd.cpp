@@ -7,7 +7,7 @@
 #include "aclnn_chunk_kda_fwd.h"
 #include "chunk_kda_fwd.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
 
@@ -899,11 +899,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         safeGate, lowerBound, useGateInKernel, stateVFirst, 1.0e-6, false, false, false, true,
         attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(KDA_FWD_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(KDA_FWD_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(
@@ -1189,11 +1189,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
         qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut};
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(KDA_FWD_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(KDA_FWD_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(KDA_FWD_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(

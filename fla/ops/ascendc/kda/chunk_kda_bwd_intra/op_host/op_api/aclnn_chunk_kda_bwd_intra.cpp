@@ -15,7 +15,7 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 
@@ -347,11 +347,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
                           cuSeqlensOptional, chunkIndicesOptional, chunkSize, safeGate, layout),
                    DFX_OUT(dqOut, dkOut, dbOut, dgOut));
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_KDA_BWD_INTRA_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     Params params{q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg,

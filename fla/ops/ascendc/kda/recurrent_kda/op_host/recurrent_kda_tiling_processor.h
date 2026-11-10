@@ -19,7 +19,7 @@
 #include "err/ops_err.h"
 #include "log/log.h"
 #include "op_common/log/log.h"
-#include "../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
 #include "util/math_util.h"

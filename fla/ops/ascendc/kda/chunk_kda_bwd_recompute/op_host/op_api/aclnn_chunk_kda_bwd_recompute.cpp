@@ -9,7 +9,7 @@
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 
@@ -115,11 +115,11 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         }
     }
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_KDA_BWD_RECOMPUTE_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 

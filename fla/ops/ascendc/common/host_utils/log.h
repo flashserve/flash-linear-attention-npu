@@ -52,6 +52,34 @@ namespace fla_npu {
 namespace host_utils {
 
 // EZ0008/EZ0009 的 shape 槽位自带方括号，这里去掉调用方传来的外层方括号。
+inline std::string DfxShapeString(const gert::Shape &shape)
+{
+    std::ostringstream stream;
+    stream << "[";
+    for (size_t idx = 0; idx < static_cast<size_t>(shape.GetDimNum()); ++idx) {
+        if (idx != 0) {
+            stream << ",";
+        }
+        stream << shape.GetDim(idx);
+    }
+    stream << "]";
+    return stream.str();
+}
+
+inline std::string DfxDtypeString(ge::DataType dtype)
+{
+    switch (dtype) {
+        case ge::DT_FLOAT16:
+            return "FLOAT16";
+        case ge::DT_BF16:
+            return "BF16";
+        case ge::DT_FLOAT:
+            return "FLOAT";
+        default:
+            return std::to_string(static_cast<int32_t>(dtype));
+    }
+}
+
 inline std::string DfxStripBrackets(const std::string &text)
 {
     if (text.size() >= 2 && text.front() == '[' && text.back() == ']') {
@@ -65,6 +93,15 @@ inline void DfxReportInvalidInput(const char *entity, const char *paramName)
     const std::vector<const char *> msgKey = {"param_name", "op_name"};
     const std::vector<const char *> msgvalue = {paramName, entity};
     REPORT_PREDEFINED_ERR_MSG("EZ0004", msgKey, msgvalue);
+}
+
+inline void DfxReportInvalidOutputPointer(const char *entity, const char *paramName)
+{
+    // EZ0037: a required *output* pointer (workspaceSize / executor) is null; keep it
+    // distinct from EZ0004 (required input missing) so callers can triage correctly.
+    const std::vector<const char *> msgKey = {"param_name", "op_name"};
+    const std::vector<const char *> msgvalue = {paramName, entity};
+    REPORT_PREDEFINED_ERR_MSG("EZ0037", msgKey, msgvalue);
 }
 
 inline void DfxReportInvalidShape(const char *entity, const char *paramName, const std::string &actual,
@@ -214,6 +251,9 @@ inline void DfxReportInvalidFormatWithReason(const char *entity, const char *par
 
 #define OP_LOGE_LIBOPAPI_REPORT_COMPAT(entity, paramName) \
     fla_npu::host_utils::DfxReportInvalidInput((entity), (paramName))
+
+#define OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(entity, paramName) \
+    fla_npu::host_utils::DfxReportInvalidOutputPointer((entity), (paramName))
 
 #define OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(entity, paramName, actual, expected) \
     fla_npu::host_utils::DfxReportInvalidShape((entity), (paramName), (actual), (expected))

@@ -12,7 +12,7 @@
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
 
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using namespace op;
 
@@ -58,11 +58,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "workspaceSize");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "executor");
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_KDA_BWD_FINALIZE_ENTITY, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (allowNegEigval && !useBetaSigmoidInKernel) {

@@ -38,8 +38,8 @@ const aclTensor *PreProcessBwdKernelMerged(
     if (cuSeqlensOptional != nullptr) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (actualCuSeqlens == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR,
-                "PreProcessBwdKernelMerged: ConvertToTensor(cu_seqlens) returned nullptr.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+                "PreProcessBwdKernelMerged: ConvertToTensor(cu_seqlens) returned nullptr (inner failure).");
             return nullptr;
         }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);

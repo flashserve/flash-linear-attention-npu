@@ -26,7 +26,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "op_common/log/log.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "err/ops_err.h"
 #include "tiling_base/tiling_base.h"
 #include "../../op_kernel/pre_process_bwd_kernel_merged_struct.h"

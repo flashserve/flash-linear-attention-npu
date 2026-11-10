@@ -31,7 +31,7 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 #include "opdev/make_op_executor.h"
 
 
@@ -327,7 +327,7 @@ static bool SocSupportsGatedPath()
 
 static aclnnStatus TranslationNullptr(const char *name, const char *expected)
 {
-    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "nullptr", expected);
+    OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(OP_NAME, name, "nullptr", expected);
     return ACLNN_ERR_INNER_NULLPTR;
 }
 
@@ -351,8 +351,8 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
     std::swap(perm[rank - 2], perm[rank - 1]);
     const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
     if (permArray == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "perm", "nullptr perm array",
-                                  "int64 perm swapping the last two dims");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(OP_NAME, "perm", "nullptr perm array",
+                                             "int64 perm swapping the last two dims");
         return nullptr;
     }
     return l0op::Transpose(input, permArray, executor);

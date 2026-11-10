@@ -26,7 +26,7 @@
 #include "../op_kernel/chunk_fwd_o_a5_constants.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "op_common/log/log.h"
-#include "../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 using GDN::ChunkFwdOTilingData;
 

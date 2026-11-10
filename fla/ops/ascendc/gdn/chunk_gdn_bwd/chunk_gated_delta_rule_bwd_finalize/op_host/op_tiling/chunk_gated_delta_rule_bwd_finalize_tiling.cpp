@@ -13,7 +13,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "op_common/log/log.h"
-#include "../../../../../common/host_utils/log.h"
+#include "host_utils/log.h"
 
 
 #if GDN_FINALIZE_ENABLE_ARCH22
