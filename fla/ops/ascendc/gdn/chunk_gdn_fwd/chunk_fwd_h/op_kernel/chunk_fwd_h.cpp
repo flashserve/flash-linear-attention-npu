@@ -51,7 +51,9 @@ template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-    // gated 复用分流：eligible 走 gated preload kernel，其余（gk/vfirst=1）回落原路径。
+    // gated 复用分流：eligible 走 gated preload kernel，其余（gk/vfirst=1）回落
+    // 原路径；log2/ln 两域均可进 gated（域随 CompilePolicy::USE_EXP2 作模板维
+    // 传入，epilogue 内 LN2 换算按域取舍）。
     if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
         using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
         // varlen 且 head 组数为奇（kNumHead>1）时 gated kernel 会死锁，回落老路径。
@@ -61,7 +63,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
             (group % 2) != 0 && args.tiling.kNumHead > 1;
         if (!gatedDeadlockShape) {
-            RunFwdHGatedReuse<GateT, GatedStateT>(args);
+            RunFwdHGatedReuse<GateT, GatedStateT, CompilePolicy::USE_EXP2>(args);
             return;
         }
     }

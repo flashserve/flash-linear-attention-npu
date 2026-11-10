@@ -78,10 +78,14 @@ struct EpilogueAtlasGDNFwdHUpdate {
     using ArchTag = Arch::AtlasA2;
 };
 
+// 域模板维（2026-11-10 exp 域复用释放）：USE_EXP2_=true（log2 域，2^x）/
+// false（ln 域，e^x）——epilogue 内两处 LN2 换算按此 if constexpr 取舍。
+template <bool USE_EXP2_>
 struct EpilogueAtlasGDNFwdHVnewPreload {
     using ArchTag = Arch::AtlasA2;
 };
 
+template <bool USE_EXP2_>
 struct EpilogueAtlasGDNFwdHUpdatePreload {
     using ArchTag = Arch::AtlasA2;
 };
@@ -96,6 +100,7 @@ struct EpilogueAtlasGDNFwdHUpdatePreload {
 namespace Catlass::Epilogue::Block {
 
 template <
+    bool USE_EXP2_,
     class HOutputType_,
     class GInputType_,
     class HInputType_,
@@ -103,7 +108,7 @@ template <
     class FinalStateType_
 >
 class BlockEpilogue <
-    EpilogueAtlasGDNFwdHUpdatePreload,
+    EpilogueAtlasGDNFwdHUpdatePreload<USE_EXP2_>,
     HOutputType_,
     GInputType_,
     HInputType_,
@@ -113,7 +118,7 @@ class BlockEpilogue <
     static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
-    using DispatchPolicy = EpilogueAtlasGDNFwdHUpdatePreload;
+    using DispatchPolicy = EpilogueAtlasGDNFwdHUpdatePreload<USE_EXP2_>;
     using ArchTag = typename DispatchPolicy::ArchTag;
 
     using HElementOutput = typename HOutputType_::Element;
@@ -227,8 +232,12 @@ public:
 
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        // 复用谓词限定 use_exp2=true：g_last 为 log2 域，×LN2 换算到 ln 域（2^x = e^(LN2·x)）
-        AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+        // 域换算（对齐主线 vec 的 CompilePolicy::USE_EXP2 分支写法）：log2 域
+        // （USE_EXP2_=true）×LN2 换算到 ln 域（2^x = e^(LN2·x)）；ln 域（false）
+        // e^g 直取免换算。
+        if constexpr (USE_EXP2_) {
+            AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+        }
         AscendC::PipeBarrier<PIPE_V>();
         AscendC::Exp(glastUbTensor, glastUbTensor, 1);
         AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
@@ -299,6 +308,7 @@ private:
 namespace Catlass::Epilogue::Block {
 
 template <
+    bool USE_EXP2_,
     class VOutputType_,
     class GInputType_,
     class UInputType_,
@@ -306,7 +316,7 @@ template <
     class FinalStateType_
 >
 class BlockEpilogue <
-    EpilogueAtlasGDNFwdHVnewPreload,
+    EpilogueAtlasGDNFwdHVnewPreload<USE_EXP2_>,
     VOutputType_,
     GInputType_,
     UInputType_,
@@ -316,7 +326,7 @@ class BlockEpilogue <
     static constexpr float LN2 = 0.6931471805599453f;
 public:
     // Type aliases
-    using DispatchPolicy = EpilogueAtlasGDNFwdHVnewPreload;
+    using DispatchPolicy = EpilogueAtlasGDNFwdHVnewPreload<USE_EXP2_>;
     using ArchTag = typename DispatchPolicy::ArchTag;
 
     using VElementOutput = typename VOutputType_::Element;
@@ -484,9 +494,11 @@ public:
 
         AscendC::Sub<float>(gUbTensor, gLastUbTensor, gUbTensor, mActual);
         AscendC::PipeBarrier<PIPE_V>();
-        // 复用谓词限定 use_exp2=true：g 为 log2 域，×LN2 换算到 ln 域（2^x = e^(LN2·x)）
-        AscendC::Muls(gUbTensor, gUbTensor, LN2, mActual);
-        AscendC::PipeBarrier<PIPE_V>();
+        // 域换算（同 update epilogue）：log2 域 ×LN2；ln 域 e^g 直取免换算。
+        if constexpr (USE_EXP2_) {
+            AscendC::Muls(gUbTensor, gUbTensor, LN2, mActual);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
 
         AscendC::Exp(gUbTensor, gUbTensor, mActual);
         AscendC::PipeBarrier<PIPE_V>();
@@ -901,7 +913,8 @@ template<
     typename INPUT_TYPE,
     typename G_TYPE,
     typename STATE_TYPE,
-    typename WORKSPACE_TYPE
+    typename WORKSPACE_TYPE,
+    bool USE_EXP2_
 >
 class GDNFwdHKernelPreload {
 public:
@@ -933,11 +946,11 @@ public:
     using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
 
     // vec 1
-    using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnewPreload;
+    using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnewPreload<USE_EXP2_>;
     using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType>;
 
     // vec 2
-    using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdatePreload;
+    using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdatePreload<USE_EXP2_>;
     using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType>;
 
     using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsetsPreload;
@@ -1302,24 +1315,27 @@ public:
 
 // ---- 自原 chunk_fwd_h.cpp 移入：gated 复用谓词与入口（RunFwdHTyped 分流调用）
 namespace GDN {
-// gated 复用谓词：g 模式 + use_exp2 + vfirst=0（gated 恒按 [K,V] 产出 state，
+// gated 复用谓词：g 模式 + vfirst=0（gated 恒按 [K,V] 产出 state，
 // vfirst=1 须经 aclnn 层转置翻译）；storeFinal 与 gate/state 的 fp32/bf16 均支持。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
-    // USE_EXP2 须 true（gated 按 log2 域 gate 计算）；与 host 侧 gatedEligible 两处同条件。
+    // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
+    // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
+    // 与 host 侧 gatedEligible 两处同条件。
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
-           CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
+           !STATE_V_FIRST &&
            (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
 }
 
 // gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
-// 各 AIC 幂等同值写）后调用 gated preload kernel；g 须为 log2 域输入。
-template <typename GateT, typename StateT>
+// 各 AIC 幂等同值写）后调用 gated preload kernel；USE_EXP2 携带 g 输入域
+// （true=log2，false=ln），gated epilogue 的 LN2 换算按此模板维取舍。
+template <typename GateT, typename StateT, bool USE_EXP2>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float>;
+    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float, USE_EXP2>;
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
