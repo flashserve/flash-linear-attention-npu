@@ -75,6 +75,7 @@ RUN set -e; \
     python3 -c "from triton import Config; print('triton Config OK')"
 
 # Build and install ATK from source using the upstream README procedure.
+# ATK 26.9.8 filesystem exchange names are incompatible with Kombu 5.7.
 ARG ATK_COMMIT=0683181571486a6654571d7a433f43a4fe7a66c0
 RUN set -e; \
     git init /opt/ATK; \
@@ -85,7 +86,7 @@ RUN set -e; \
     python3 -m pip install wheel; \
     python3 setup.py bdist_wheel; \
     cd dist; \
-    python3 -m pip install ./*.whl; \
+    python3 -m pip install ./*.whl 'kombu==5.6.2'; \
     python3 -m pip show ATK; \
     command -v atk
 
