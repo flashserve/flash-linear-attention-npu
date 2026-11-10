@@ -823,10 +823,12 @@ globalThis.core = {
         )
         self.assertIn("::group::", run_script)
         self.assertIn('tee "$CI_RAW_LOG_FILE"', run_script)
-        self.assertIn("summarize_npu_ci.py", run_script)
-        self.assertIn("--require-accuracy-report", run_script)
-        self.assertIn("--require-stage-report", run_script)
-        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', run_script)
+        self.assertNotIn("summarize_npu_ci.py", run_script)
+        summary = next(step for step in self.matrix_steps if step.get("id") == "npu_ci_summary")
+        self.assertIn("always()", summary["if"])
+        self.assertIn("--require-accuracy-report", summary["run"])
+        self.assertIn("--require-stage-report", summary["run"])
+        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', summary["run"])
         self.assertIn('elif wait "$ci_pid"; then', run_script)
 
     def test_platforms_share_container_tmpdir_and_isolate_host_storage(self):
@@ -1797,7 +1799,7 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         upload = next(
             step
             for step in self.matrix_steps
-            if step.get("uses") == "actions/upload-artifact@v6"
+            if step.get("with", {}).get("name", "").startswith("npu-ci-result-")
         )
         paths = upload["with"]["path"]
         self.assertIn("CI_ACCURACY_REPORT_FILE", paths)

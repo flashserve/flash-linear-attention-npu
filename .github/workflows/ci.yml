@@ -425,6 +425,7 @@ jobs:
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
       CI_STAGE_REPORT_FILE: .ci-tmp/npu-ci-stages-${{ matrix.platform }}.json
       CI_RAW_LOG_FILE: .ci-tmp/npu-ci-${{ matrix.platform }}.log
+      FLA_NPU_BUILD_VERBOSE: ${{ vars.NPU_CI_BUILD_VERBOSE || 'true' }}
       CI_DIAGNOSTIC_FILE: .ci-tmp/npu-ci-diagnostics-${{ matrix.platform }}.json
       CI_SUMMARY_FILE: .ci-tmp/npu-ci-summary-${{ matrix.platform }}.md
       CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
@@ -666,6 +667,8 @@ jobs:
           rm -f \
             "$CI_ACCURACY_REPORT_FILE" \
             "$CI_ACCURACY_REPORT_FILE.tmp" \
+            "$CI_STAGE_REPORT_FILE" \
+            dist/fla-npu-build.log \
             "$CI_RAW_LOG_FILE" \
             "$CI_DIAGNOSTIC_FILE" \
             "$CI_SUMMARY_FILE"
@@ -735,6 +738,29 @@ jobs:
             ci_status=$?
           fi
           echo "::endgroup::"
+          echo "exit_code=$ci_status" >>"$GITHUB_OUTPUT"
+          exit "$ci_status"
+
+      - name: 汇总 ${{ matrix.name }} 诊断
+        id: npu_ci_summary
+        if: always() && steps.npu_ci.outcome != 'skipped'
+        working-directory: repo
+        env:
+          NPU_CI_OUTCOME: ${{ steps.npu_ci.outcome }}
+          NPU_CI_EXIT_CODE: ${{ steps.npu_ci.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$CI_RAW_LOG_FILE")"
+          # Cancellation can interrupt the run step before it writes outputs.
+          # Never infer success from a missing exit code after interruption.
+          case "$NPU_CI_OUTCOME" in
+            success) ci_status="${NPU_CI_EXIT_CODE:-0}" ;;
+            cancelled) ci_status=130 ;;
+            *) ci_status="${NPU_CI_EXIT_CODE:-1}" ;;
+          esac
+          if [[ "$NPU_CI_OUTCOME" == cancelled ]]; then
+            echo "[CI][ERROR] NPU CI was cancelled; diagnostics may be incomplete." | tee -a "$CI_RAW_LOG_FILE"
+          fi
 
           summary_status=0
           accuracy_requirement=()
@@ -766,10 +792,19 @@ jobs:
             summary_status=1
           fi
 
-          if [[ "$ci_status" -ne 0 ]]; then
-            exit "$ci_status"
-          fi
           exit "$summary_status"
+
+      - name: 保存 ${{ matrix.name }} 完整日志
+        if: always() && steps.npu_ci.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: npu-ci-logs-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            repo/${{ env.CI_RAW_LOG_FILE }}
+            repo/dist/fla-npu-build.log
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
 
       - name: 清理 ${{ matrix.name }} 临时完整日志
         if: always()

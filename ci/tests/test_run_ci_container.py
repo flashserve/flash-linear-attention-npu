@@ -17,7 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
     def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False,
-               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True):
+               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True,
+               verbose="false"):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
@@ -70,6 +71,7 @@ class RunCiContainerTests(unittest.TestCase):
             CI_CONTAINER_NAME="ci-test",
             CI_REQUIRE_PRELOADED_IMAGE="true",
             CI_REBUILD_IMAGE="false",
+            FLA_NPU_BUILD_VERBOSE=verbose,
             CI_REQUIRE_HEALTHY_NPU="false",
             TEST_HOST_ARCH=host_arch,
             TEST_IMAGE_PLATFORM=image_platform,
@@ -128,6 +130,14 @@ class RunCiContainerTests(unittest.TestCase):
             lock = Path(env["CI_NPU_LOCK_DIR"]) / "fla-npu-ci-npu-0.lock"
             self.assertTrue(lock.exists())
             self.assertEqual(subprocess.run(["flock", "-n", str(lock), "true"]).returncode, 0)
+
+    def test_build_log_verbosity_reaches_container(self):
+        for verbose in ("true", "false"):
+            with self.subTest(verbose=verbose), tempfile.TemporaryDirectory() as temporary:
+                result, calls, _ = self.run_ci(Path(temporary), verbose=verbose)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                run = next(call for call in calls if "--cidfile" in call)
+                self.assertIn(f"FLA_NPU_BUILD_VERBOSE={verbose}", run)
 
     def test_cleanup_preserves_ci_failure_and_reports_cleanup_failure(self):
         for run_status, cleanup_status, expected in (

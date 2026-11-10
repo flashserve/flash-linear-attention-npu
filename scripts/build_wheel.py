@@ -381,6 +381,7 @@ def _run_with_progress(
             break
         progress.echo(line)
     reader.join(timeout=1.0)
+    stdout.close()
     returncode = process.wait()
     if follower is not None:
         stop_follow.set()
@@ -619,6 +620,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--verbose",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("FLA_NPU_BUILD_VERBOSE", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        help=(
+            "stream pip/backend build output to the console (pip wheel -v). "
+            "Defaults to FLA_NPU_BUILD_VERBOSE, or false; --no-verbose overrides it. "
+            "The full pip log is saved in either mode."
+        ),
+    )
+    parser.add_argument(
         "--no-progress",
         action="store_true",
         help=(
@@ -657,12 +669,18 @@ def main() -> int:
             "-w",
             str(staging_dir),
         ]
+        if args.verbose:
+            command.append("-v")
 
         env = os.environ.copy()
         build_args = _assemble_build_args(args)
         if build_args:
             env["FLA_NPU_BUILD_ARGS"] = build_args
-        returncode = _run_with_progress(command, env, progress, follow_path=build_log)
+        # Verbose pip already streams backend progress. Following the file too
+        # would count each compiled target twice.
+        returncode = _run_with_progress(
+            command, env, progress, follow_path=None if args.verbose else build_log
+        )
         progress.close(returncode == 0)
         if returncode != 0:
             _report_build_log(build_log)
