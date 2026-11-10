@@ -95,10 +95,17 @@ try {
         result = self.run_helper("computeActiveApprovals", args=[reviews, EXPECTED])
         self.assertEqual(result["result"], ["weiwei-612"])
 
-    def test_designated_owner_without_write_permission_fails_closed(self):
+    def test_designated_owner_write_permission_is_accepted(self):
         result = self.run_helper(
             "requireReviewerWritePermissions",
-            args=[{"weinachuan": "write", "weiwei-612": "read"}],
+            args=[{"zhangshuolei-hfut": "write"}],
+        )
+        self.assertNotIn("error", result)
+
+    def test_designated_owner_read_permission_fails_closed(self):
+        result = self.run_helper(
+            "requireReviewerWritePermissions",
+            args=[{"zhangshuolei-hfut": "read"}],
         )
         self.assertIn("至少需要 write", result["error"])
 
