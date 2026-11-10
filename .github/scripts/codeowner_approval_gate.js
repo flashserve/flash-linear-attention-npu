@@ -14,8 +14,11 @@ const EXPECTED_CODEOWNERS = Object.freeze([
 const permissionRank = Object.freeze({
   admin: 4,
   maintain: 3,
+  // GitHub's collaborator permission endpoint returns role names such as write/read.
+  write: 2,
   push: 2,
   triage: 1,
+  read: 0,
   pull: 0,
   none: -1,
 });
