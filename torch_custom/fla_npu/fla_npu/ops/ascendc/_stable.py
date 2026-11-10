@@ -617,45 +617,18 @@ def npu_recurrent_kda(
     """Recurrent KDA forward via the Stable-ABI launcher.
 
     ``layout`` is mapped to an int code (BSND=0, TND=1) because the stable
-    argument conversions do not carry strings.  Mutates ``initial_state`` in
-    place when ``inplace_final_state`` is true.
+    argument conversions do not carry strings. Non-inplace calls read the
+    input state and return a separate pool when ``output_final_state`` is true.
     """
 
     layout_code = _char_code("npu_recurrent_kda", "layout", layout)
 
-    # The contract only covers the in-place form: with
-    # `inplace_final_state=False` the caller's tensor is not written (the
-    # recursion below runs the kernel on a scratch state instead), which is the
-    # same split the dispatch layer's MUTATION_FLAGS entry declares.
-    if (inplace_final_state and initial_state is not None
-            and initial_state.requires_grad):
-        _refuse_grad_state("npu_recurrent_kda", initial_state)
-    if not inplace_final_state:
-        # Run the same kernel with a scratch state and return it, leaving the
-        # caller's tensor untouched. The stable launcher only
-        # exposes the inplace form (handing the caller's handle back as a second
-        # output trips over shared ownership), so build the scratch here -- which
-        # is also what keeps the mutation contract honest: the caller's tensor is
-        # genuinely not written, and the dispatch layer's MUTATION_FLAGS entry
-        # already skips the version bump for this case.
-        if initial_state is None:
-            raise RuntimeError(
-                "npu_recurrent_kda: inplace_final_state=False requires "
-                "initial_state (no shape to build the scratch from)")
-        import torch
-
-        scratch = torch.empty_like(initial_state)
-        out, _ = npu_recurrent_kda(
-            q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
-            ssm_state_indices=ssm_state_indices, A_log=A_log, dt_bias=dt_bias,
-            num_accepted_tokens=num_accepted_tokens, layout=layout, scale=scale,
-            output_final_state=False, inplace_final_state=True,
-            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-            use_gate_in_kernel=use_gate_in_kernel,
-            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-            allow_neg_eigval=allow_neg_eigval, safe_gate=safe_gate,
-            lower_bound=lower_bound, state_v_first=state_v_first)
-        return out, (scratch if output_final_state else None)
+    if initial_state is None:
+        raise RuntimeError("npu_recurrent_kda: initial_state must not be None")
+    if initial_state.requires_grad:
+        if inplace_final_state:
+            _refuse_grad_state("npu_recurrent_kda", initial_state)
+        initial_state = initial_state.detach()
 
     scale_value = (128.0 ** -0.5) if scale is None else float(scale)
     lower = -5.0 if lower_bound is None else float(lower_bound)
@@ -689,19 +662,13 @@ def npu_recurrent_kda(
         bool(state_v_first),
         stream,
     )
-    if not output_final_state:
-        final_state = None
-    elif inplace_final_state and final_state is None:
-        # The launcher returns the inplace result implicitly (the kernel writes
-        # the caller's tensor); the stable ABI cannot hand that handle back as a
-        # second output without a double ownership release, so return the
-        # caller's object here.
-        final_state = initial_state
-    if initial_state is not None:
+    if inplace_final_state and initial_state is not None:
         bump = _INC_VERSION
         if bump is None:
             bump = _increment_version()
         bump((initial_state,))
+    if inplace_final_state and output_final_state:
+        final_state = initial_state
     return out, final_state
 
 
