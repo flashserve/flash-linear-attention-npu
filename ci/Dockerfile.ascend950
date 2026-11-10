@@ -1,4 +1,5 @@
 # Official CANN Dockerfile: Ascend/cann-container-image, 9.2.1-950-ubuntu22.04-py3.12.
+# Native x86_64 and aarch64 builds share this file; wheels follow the native CPU.
 FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.2.1-950-ubuntu22.04-py3.12
 
 ARG PREWARM_THIRD_PARTY=true
