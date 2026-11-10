@@ -22,6 +22,7 @@
 #include "catlass/layout/layout.hpp"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
+#include "chunk_fwd_h_utils.h"
 
 namespace GDN {
 
@@ -688,5 +689,243 @@ private:
 };
 
 } // namespace GDN
+
+// ---- gated 复用引擎（AIC 侧）：自 arch22/chunk_fwd_h_utils.h 的
+// GDNFwdHKernelPreload 拆出（Init 保留 AIC 调度器分支，Process = 原
+// ProcessCube 体；纯搬移，指令序列不变）。
+namespace Catlass::Gemm::Kernel {
+
+using namespace Catlass;
+using namespace tla;
+
+template<
+    typename INPUT_TYPE,
+    typename G_TYPE,
+    typename STATE_TYPE,
+    typename WORKSPACE_TYPE,
+    bool USE_EXP2_
+>
+class ChunkFwdHGatedCubeArch22 {
+public:
+    
+    using ArchTag = Arch::AtlasA2;
+    using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadCube;
+    using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadVec;
+
+    using DispatchPolicyTla = Gemm::MmadPingpongTlaPreload<ArchTag, true, false>;
+    using L1TileShapeTla = Shape<_128, _128, _128>;
+    using L0TileShapeTla = L1TileShapeTla;
+
+    using WType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using HType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using VworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
+    using KType = Gemm::GemmType<INPUT_TYPE, layout::ColumnMajor>;
+    using HworkType = Gemm::GemmType<WORKSPACE_TYPE, layout::RowMajor>;
+    using VType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using GType = Gemm::GemmType<G_TYPE, layout::RowMajor>;
+    using UType = Gemm::GemmType<INPUT_TYPE, layout::RowMajor>;
+    using FinalStateType = Gemm::GemmType<STATE_TYPE, layout::RowMajor>;
+
+    // cube 1
+    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
+
+    // cube 2
+    using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
+
+    // vec 1
+    using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnewPreload<USE_EXP2_>;
+    using EpilogueGDNFwdHVnew = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHVnew, VType, GType, UType, VworkType, FinalStateType>;
+
+    // vec 2
+    using DispatchPolicyGDNFwdHUpdate = Epilogue::EpilogueAtlasGDNFwdHUpdatePreload<USE_EXP2_>;
+    using EpilogueGDNFwdHUpdate = Epilogue::Block::BlockEpilogue<DispatchPolicyGDNFwdHUpdate, HType, GType, HType, HworkType, FinalStateType>;
+
+    using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsetsPreload;
+
+    using ElementK = INPUT_TYPE;
+    using ElementW = INPUT_TYPE;
+    using ElementU = INPUT_TYPE;
+    using ElementG = G_TYPE;
+    using ElementH = INPUT_TYPE;
+    using ElementV = INPUT_TYPE;
+    using ElementVWork = WORKSPACE_TYPE;
+    using ElementHWork = WORKSPACE_TYPE;
+    using ElementInitialState = STATE_TYPE;
+    using ElementFinalState = STATE_TYPE;
+    
+    using LayoutW = Catlass::layout::RowMajor;
+    using LayoutH = Catlass::layout::RowMajor;
+    using LayoutV = Catlass::layout::RowMajor;
+    using LayoutK = Catlass::layout::ColumnMajor;
+
+    
+    uint32_t batch{0};
+    uint32_t seqlen{0};
+    uint32_t kNumHead{0};
+    uint32_t vNumHead{0};
+    uint32_t kHeadDim{0};
+    uint32_t vHeadDim{0};
+    uint32_t chunkSize{0};
+    bool useInitialState{false};
+    bool storeFinalState{false};
+    uint32_t isVariedLen{0};
+    uint32_t shapeBatch{0};
+    uint32_t tokenBatch{0};
+    uint64_t vWorkspaceOffset{0};
+    uint64_t vUpdateWorkspaceOffset{0};
+    uint64_t hWorkspaceOffset{0};
+    uint64_t numSeqWorkspaceOffset{0};
+    uint64_t numChunksWorkspaceOffset{0};
+    
+    AscendC::GlobalTensor<ElementK> gmK;
+    AscendC::GlobalTensor<ElementW> gmW;
+    AscendC::GlobalTensor<ElementU> gmU;
+    AscendC::GlobalTensor<ElementG> gmG;
+    AscendC::GlobalTensor<ElementInitialState> gmInitialState;
+    AscendC::GlobalTensor<ElementH> gmH;
+    AscendC::GlobalTensor<ElementV> gmV;
+    AscendC::GlobalTensor<ElementFinalState> gmFinalState;
+    AscendC::GlobalTensor<ElementVWork> gmVWorkspace;
+    AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
+    AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
+    
+    AscendC::GlobalTensor<int64_t> gmSeqlen;
+    AscendC::GlobalTensor<int64_t> gmNumSeq;
+    AscendC::GlobalTensor<int64_t> gmNumChunks;
+
+    CubeScheduler cubeBlockScheduler;
+
+    Arch::Resource<ArchTag> resource;
+
+
+    __aicore__ inline ChunkFwdHGatedCubeArch22() {}
+
+    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, 
+        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
+        
+        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+
+        batch = gdnFwdHTilingData->batch;
+        seqlen = gdnFwdHTilingData->seqlen;
+        kNumHead = gdnFwdHTilingData->kNumHead;
+        vNumHead = gdnFwdHTilingData->vNumHead;
+        kHeadDim = gdnFwdHTilingData->kHeadDim;
+        vHeadDim = gdnFwdHTilingData->vHeadDim;
+        chunkSize = gdnFwdHTilingData->chunkSize;
+        useInitialState = gdnFwdHTilingData->useInitialState;
+        storeFinalState = gdnFwdHTilingData->storeFinalState;
+        isVariedLen = gdnFwdHTilingData->isVariedLen;
+        shapeBatch = gdnFwdHTilingData->shapeBatch;
+        tokenBatch = gdnFwdHTilingData->tokenBatch;
+        vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
+        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
+        hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
+        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        
+        gmK.SetGlobalBuffer((__gm__ ElementK *)k);
+        gmW.SetGlobalBuffer((__gm__ ElementW *)w);
+        gmU.SetGlobalBuffer((__gm__ ElementU *)u);
+        gmG.SetGlobalBuffer((__gm__ ElementG *)g);
+        gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
+        gmH.SetGlobalBuffer((__gm__ ElementH *)h);
+        gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
+        gmFinalState.SetGlobalBuffer((__gm__ ElementFinalState *)final_state);
+        gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
+        gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
+        gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+
+        gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
+        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
+        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+
+        if ASCEND_IS_AIC {
+            cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+        }
+    }
+
+    __aicore__ inline void Process()
+    {
+            uint32_t coreIdx = AscendC::GetBlockIdx();
+            uint32_t coreNum = AscendC::GetBlockNum();
+
+            BlockMmadWH blockMmadWH(resource);
+            BlockMmadKV blockMmadKV(resource);
+
+            auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kHeadDim);
+            auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
+            auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
+            
+            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
+            auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
+            auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
+            AscendC::SyncAll<false>();    
+            uint32_t currStage = 0; // 0: C1, 1: C2
+            blockMmadWH.preSetFlags();
+            while (cubeBlockScheduler.isRunning) {
+                if (currStage == 0) {
+                    /* C1: v_work = w @ h[i] */                    
+                    cubeBlockScheduler.InitTasks();
+                    for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        const auto& stream = cubeBlockScheduler.GetStream(i);
+                        if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            continue;
+                        }
+
+                        const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
+                        int64_t cube1OffsetW = cube1Offsets.wOffset;
+                        int64_t cube1OffsetH = cube1Offsets.hSrcOffset;
+                        int64_t cube1OffsetVwork = cube1Offsets.vWorkOffset;
+                        auto tensorW = tla::MakeTensor(gmW[cube1OffsetW], wLayout, Catlass::Arch::PositionGM{});
+                        auto tensorH = tla::MakeTensor(gmH[cube1OffsetH], hLayout, Catlass::Arch::PositionGM{});
+                        auto tensorV = tla::MakeTensor(gmVWorkspace[cube1OffsetVwork], vLayout, Catlass::Arch::PositionGM{});
+                        GemmCoord cube1Shape {cube1Offsets.blockTokens, vHeadDim, kHeadDim};
+                        auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
+                        auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
+                        auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
+                        blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape, cubeBlockScheduler.vec2Done[i]);
+                        Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done);
+                    }
+                } else {
+                    /* C2: h[i+1] = k.T @ v_work */
+                    for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        const auto& stream = cubeBlockScheduler.GetStream(i);
+                        if (cubeBlockScheduler.StreamIsDone(stream)) {
+                            continue;
+                        }
+                        const GDNFwdHOffsets& cube2Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
+
+                        if (cubeBlockScheduler.NeedProcessStage2(stream)) {
+                            // step 3: h[i+1] = k.T @ v_work
+                            int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
+                            int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
+                            auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
+                            auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
+                            auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
+                            GemmCoord cube2Shape{kHeadDim, vHeadDim, cube2Offsets.blockTokens};
+                            auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
+                            auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
+                            auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
+                            blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape, cubeBlockScheduler.vec1Done);
+                        } else {
+                            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
+                        }
+                        Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube2Done);
+                    }
+                }
+                currStage ^= 0x01;
+            }
+            blockMmadKV.finalWaitFlags();
+            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
+            Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
+
+    }
+
+};
+
+} // namespace Catlass::Gemm::Kernel
 
 #endif // ARCH22_CHUNK_FWD_H_CUBE_H
