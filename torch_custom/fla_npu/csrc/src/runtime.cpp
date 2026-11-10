@@ -1,7 +1,12 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "stable/runtime.h"
 
 #include <dlfcn.h>
+#include <link.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -33,6 +38,29 @@ void* dlopen_required(const std::string& path, const char* what) {
         std::string(what) + ": dlopen failed for " + path + ": " + dlerror());
   }
   return handle;
+}
+
+link_map* symbol_owner(void* address) {
+  Dl_info info{};
+  void* extra = nullptr;
+  if (dladdr1(address, &info, &extra, RTLD_DL_LINKMAP) == 0 || extra == nullptr) {
+    throw std::runtime_error("stable launcher: cannot identify ACLNN symbol owner");
+  }
+  return static_cast<link_map*>(extra);
+}
+
+void* own_symbol(void* handle, const std::string& name) {
+  void* address = dlsym(handle, name.c_str());
+  if (address == nullptr) {
+    return nullptr;
+  }
+  link_map* library = nullptr;
+  if (dlinfo(handle, RTLD_DI_LINKMAP, &library) != 0 || library == nullptr) {
+    throw std::runtime_error("stable launcher: cannot identify custom opapi library");
+  }
+  // dlsym searches DT_NEEDED dependencies too. Their ACLNN definitions must not
+  // jump ahead of the next FLA vendor. Compare loaded objects, not path strings.
+  return symbol_owner(address) == library ? address : nullptr;
 }
 
 // torch_npu is loaded by the time an operator runs (fla_npu imports it first),
@@ -88,6 +116,21 @@ std::vector<std::string> split_path_list(const char* value) {
 
 }  // namespace
 
+bool Runtime::set_verified_base(const std::string& path) {
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (path.empty()) {
+    return false;
+  }
+  if (path == verified_base_path_) {
+    return true;
+  }
+  if (initialized_ || !verified_base_path_.empty()) {
+    return false;
+  }
+  verified_base_path_ = path;
+  return true;
+}
+
 void Runtime::init(const std::string& custom_lib_path) {
   std::lock_guard<std::mutex> guard(mutex_);
   if (initialized_) {
@@ -119,6 +162,13 @@ void Runtime::init(const std::string& custom_lib_path) {
   for (const std::string& path : custom_paths) {
     custom_handles_.push_back(open_custom_library(path));
   }
+  // Only the explicitly verified, last vendor may use the original base/CANN
+  // lookup. A lone arbitrary library is not evidence of a validated base.
+  if (!verified_base_path_.empty() && custom_paths.back() == verified_base_path_ &&
+      std::find(custom_handles_.begin(), custom_handles_.end() - 1,
+                custom_handles_.back()) == custom_handles_.end() - 1) {
+    verified_base_handle_ = custom_handles_.back();
+  }
   cann_handle_ = dlopen_required("libopapi.so", "CANN opapi");
   initialized_ = true;
 }
@@ -141,7 +191,9 @@ void* Runtime::symbol(const std::string& name) {
     if (handle == nullptr) {
       continue;
     }
-    addr = dlsym(handle, name.c_str());
+    addr = name.compare(0, 5, "aclnn") == 0 && handle != verified_base_handle_
+               ? own_symbol(handle, name)
+               : dlsym(handle, name.c_str());
     if (addr != nullptr) {
       break;
     }
@@ -154,6 +206,40 @@ void* Runtime::symbol(const std::string& name) {
   }
   cache_[name] = addr;
   return addr;
+}
+
+OpApi Runtime::op_api(const std::string& name) {
+  init();
+  std::lock_guard<std::mutex> guard(mutex_);
+  auto found = op_cache_.find(name);
+  if (found != op_cache_.end()) {
+    return found->second;
+  }
+  const std::string workspace = name + "GetWorkspaceSize";
+  for (void* handle : custom_handles_) {
+    // A validated base contains complete pairs. Its dependencies are already
+    // the terminal CANN fallback, so no per-interface ownership scan is needed.
+    OpApi api = handle == verified_base_handle_
+        ? OpApi{dlsym(handle, workspace.c_str()), dlsym(handle, name.c_str())}
+        : OpApi{own_symbol(handle, workspace), own_symbol(handle, name)};
+    if (api.get_workspace == nullptr && api.launch == nullptr) {
+      continue;
+    }
+    if (api.get_workspace == nullptr || api.launch == nullptr) {
+      throw std::runtime_error("stable launcher: incomplete custom ACLNN pair: " + name);
+    }
+    op_cache_[name] = api;
+    return api;
+  }
+  OpApi api{dlsym(cann_handle_, workspace.c_str()), dlsym(cann_handle_, name.c_str())};
+  if (api.get_workspace == nullptr || api.launch == nullptr) {
+    throw std::runtime_error("stable launcher: missing CANN ACLNN pair: " + name);
+  }
+  if (symbol_owner(api.get_workspace) != symbol_owner(api.launch)) {
+    throw std::runtime_error("stable launcher: CANN ACLNN phases have different providers: " + name);
+  }
+  op_cache_[name] = api;
+  return api;
 }
 
 std::string Runtime::recent_error_message() {
@@ -225,4 +311,15 @@ void Runtime::enqueue(const std::string& name, const std::function<int()>& fn) {
 extern "C" __attribute__((visibility("default")))
 std::int32_t fla_npu_stable_overlay_order_version() {
   return 1;
+}
+
+// This is a loader handshake, not an environment switch. Unregistered native
+// callers retain strict ownership checks even when only one library is loaded.
+extern "C" __attribute__((visibility("default")))
+std::int32_t fla_npu_stable_set_verified_base(const char* path) noexcept {
+  try {
+    return path != nullptr && fla_npu_stable::Runtime::instance().set_verified_base(path) ? 0 : 1;
+  } catch (...) {
+    return 1;
+  }
 }

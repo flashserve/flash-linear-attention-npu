@@ -217,6 +217,23 @@ assert 'torch' not in sys.modules and 'torch_npu' not in sys.modules
         self.assertEqual(params.optional_float("2.5", 0.0), 2.5)
         self.assertEqual([params.ACL_FORMAT_NCHW, params.ACL_FORMAT_ND, params.ACL_FORMAT_NCDHW, params.ACL_FORMAT_NCL], [0, 2, 30, 47])
 
+    def test_verified_base_handshake_targets_actual_launcher(self):
+        configure = mock.Mock(return_value=0)
+        library = types.SimpleNamespace(fla_npu_stable_set_verified_base=configure)
+        with mock.patch.object(sys.modules["fla_npu"], "_VERIFIED_BASE_OPAPI", "/package/base.so", create=True), \
+                mock.patch("ctypes.CDLL", return_value=library) as load:
+            self.stable._configure_verified_base("override-launcher.so")
+            load.assert_called_once_with("override-launcher.so")
+            configure.assert_called_once_with(os.fsencode("/package/base.so"))
+            configure.return_value = 1
+            with self.assertRaisesRegex(RuntimeError, "already initialized"):
+                self.stable._configure_verified_base("override-launcher.so")
+
+    def test_unverified_base_has_no_loader_handshake(self):
+        with mock.patch("ctypes.CDLL") as load:
+            self.stable._configure_verified_base("launcher.so")
+            load.assert_not_called()
+
     def test_overlay_capability_checks_actual_override_library(self):
         class Probe:
             def __init__(self, value): self.value = value

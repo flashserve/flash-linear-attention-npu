@@ -74,13 +74,14 @@ _TENSOR_HOLDERS = {
 }
 
 # The two oldest adapters predate the macro: they call the entry point
-# themselves (`get_ws(...)` on a `Runtime::symbol(...)` pointer) and build their
+# themselves (`get_ws(...)` on a resolved pointer) and build their
 # argument list from local `AclTensorView`s.  Their call sites are checked the
 # same way, or aclnn signature drift would go unnoticed exactly where the code
 # is oldest.
 _HAND_WRITTEN_CALL = re.compile(
     r"get_ws\s*\((.*?)\)\s*;\s*\n", re.S)
 _SYMBOL_RE = re.compile(r'rt\.symbol\("(\w+)GetWorkspaceSize"\)')
+_OP_API_RE = re.compile(r'rt\.op_api\("(\w+)"\)')
 
 
 def _enclosing_params(text: str, position: int) -> dict[str, str]:
@@ -205,10 +206,10 @@ def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
     calls: dict[str, tuple[Path, list[str]]] = {}
     for source in sorted(src_dir.glob("stable_*.cpp")):
-        text = source.read_text(encoding="utf-8")
+        text = strip_comments(source.read_text(encoding="utf-8"))
         if "FLA_STABLE_EXEC" in text:
             continue
-        symbol = _SYMBOL_RE.search(text)
+        symbol = _OP_API_RE.search(text) or _SYMBOL_RE.search(text)
         call = _HAND_WRITTEN_CALL.search(text)
         if symbol is None or call is None:
             continue

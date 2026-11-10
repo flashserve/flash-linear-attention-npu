@@ -87,9 +87,9 @@ void run_recurrent_kda(AtenTensorHandle q, AtenTensorHandle k,
                        bool state_v_first, int64_t stream, Tensor* out,
                        Tensor* final_state, bool* has_final_state) {
   auto& rt = fla_npu_stable::Runtime::instance();
-  auto get_ws = reinterpret_cast<KdaGetWorkspaceFn>(
-      rt.symbol("aclnnRecurrentKdaGetWorkspaceSize"));
-  auto launch = reinterpret_cast<LaunchFn>(rt.symbol("aclnnRecurrentKda"));
+  const auto api_pair = rt.op_api("aclnnRecurrentKda");
+  auto get_ws = reinterpret_cast<KdaGetWorkspaceFn>(api_pair.get_workspace);
+  auto launch = reinterpret_cast<LaunchFn>(api_pair.launch);
   // A queued launch reports its failure where no caller can catch it: the next
   // operator call on this thread raises it instead.
   check_async_failure();

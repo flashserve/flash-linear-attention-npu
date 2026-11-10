@@ -23,6 +23,9 @@ _OVERLAY_VENDOR_NAME_RE = re.compile(
     rf"{re.escape(_OVERLAY_VENDOR_PREFIX)}[A-Za-z0-9][A-Za-z0-9_.-]*\Z"
 )
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
+# Set only after validating the installed base's binary/header hashes and pairs.
+# Replacing OPP files after import requires a fresh process.
+_VERIFIED_BASE_OPAPI: Optional[str] = None
 
 
 def _prepend_env_path(name: str, value: pathlib.Path) -> None:
@@ -94,8 +97,9 @@ def overlay_vendor_names() -> list[str]:
 def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
     """Fail before loading code when an overlay changes the wheel's aclnn ABI."""
 
+    global _VERIFIED_BASE_OPAPI
     try:
-        from ._op_abi import compare_overlay_to_base
+        from ._op_abi import compare_overlay_to_base, validated_contracts
     except ImportError:  # run_path/direct-script diagnostics lack package context
         abi_path = _PACKAGE_DIR / "_op_abi.py"
         abi_spec = importlib.util.spec_from_file_location(
@@ -106,6 +110,7 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
         abi_module = importlib.util.module_from_spec(abi_spec)
         abi_spec.loader.exec_module(abi_module)
         compare_overlay_to_base = abi_module.compare_overlay_to_base
+        validated_contracts = abi_module.validated_contracts
 
     base_vendor = next(
         (path for path in vendor_dirs if path.name == _DEFAULT_VENDOR_DIR), None
@@ -115,6 +120,22 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
             "fla_npu: no base vendor is available to validate overlay aclnn ABI. "
             "Reinstall the complete wheel before using an overlay."
         )
+    base_library = str(_resolve_packaged_opapi(base_vendor))
+    if not (base_vendor / "abi_manifest.json").is_file():
+        # Legacy wheels have no proof of their own exports: keep strict lookup.
+        _VERIFIED_BASE_OPAPI = None
+    elif _VERIFIED_BASE_OPAPI != base_library:
+        try:
+            validated_contracts(base_vendor, require_manifest=True, check_header_signatures=False)
+        except (OSError, ValueError, RuntimeError) as exc:
+            # This proof enables an optimization; it is not a new base ABI gate.
+            # Missing/stale evidence keeps the original strict owner checks.
+            _VERIFIED_BASE_OPAPI = None
+            warnings.warn(
+                f"fla_npu: base manifest cannot enable fast lookup; using strict "
+                f"ACLNN ownership checks. {exc}", RuntimeWarning, stacklevel=2)
+        else:
+            _VERIFIED_BASE_OPAPI = base_library
     failures: list[str] = []
     for vendor_dir in vendor_dirs:
         if vendor_dir == base_vendor:
