@@ -111,6 +111,12 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
         stateDtypeKey, gateKey, betaKey, tilingData_.useQkL2NormInKernel != 0,
         tilingData_.useGateInKernel != 0, betaSigmoid,
         betaSigmoid && tilingData_.allowNegEigval != 0);
+    OP_LOGD(context_->GetNodeName(),
+            "RGDR_TILING_KEY key=%llu state=%llu g=%llu beta=%llu norm=%u gate=%u sigmoid=%u neg=%u",
+            static_cast<unsigned long long>(tilingKey_), static_cast<unsigned long long>(stateDtypeKey),
+            static_cast<unsigned long long>(gateKey), static_cast<unsigned long long>(betaKey),
+            tilingData_.useQkL2NormInKernel != 0, tilingData_.useGateInKernel != 0,
+            betaSigmoid != 0, betaSigmoid && tilingData_.allowNegEigval != 0);
     return ge::GRAPH_SUCCESS;
 };
 

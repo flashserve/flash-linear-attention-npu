@@ -28,7 +28,8 @@ struct RGDRInitParams {
 
 // Each physical region has one owner. In particular a BF16 snapshot lives in
 // the consumed source bank, never in the FP32 bank used by the next recurrence.
-template <typename State, typename Beta, typename Gate>
+template <typename State, typename Beta, typename Gate, bool USE_QK_L2NORM = false,
+          bool USE_GATE_IN_KERNEL = false, bool USE_BETA_SIGMOID = false, bool ALLOW_NEG_EIGVAL = false>
 class RGDR {
     static constexpr uint32_t kHeadDim = 128;
     static constexpr uint32_t kWindowTokens = 8;
@@ -217,7 +218,7 @@ private:
         if constexpr (std::is_same<Beta, float>::value) DataCopy(beta, betaRaw, vectorCount);
         else Cast(beta, betaRaw, RoundMode::CAST_NONE, vectorCount);
         PipeBarrier<PIPE_V>();
-        if (td_.useBetaSigmoidInKernel) {
+        if constexpr (USE_BETA_SIGMOID) {
             // Both exponent arguments are nonpositive. This preserves sigmoid
             // tails without a packed-mask select for the short metadata window.
             Abs(tmp0, beta, vectorCount);
@@ -227,7 +228,7 @@ private:
             Exp(tmp1, tmp1, vectorCount);
             PipeBarrier<PIPE_V>();
             Exp(tmp0, tmp0, vectorCount);
-            if (td_.allowNegEigval) {
+            if constexpr (ALLOW_NEG_EIGVAL) {
                 Muls(tmp1, tmp1, 2.0f, vectorCount);
             }
             PipeBarrier<PIPE_V>();
@@ -239,7 +240,7 @@ private:
             if constexpr (std::is_same<Gate, float>::value) DataCopy(gate, gateRaw, vectorCount);
             else Cast(gate, gateRaw, RoundMode::CAST_NONE, vectorCount);
             PipeBarrier<PIPE_V>();
-            if (td_.useGateInKernel) {
+            if constexpr (USE_GATE_IN_KERNEL) {
                 Adds(gate, gate, bias, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Maxs(tmp0, gate, 0.0f, vectorCount);
@@ -285,7 +286,7 @@ private:
         rawPending_[bank] = true;
         auto q = ub_.GetWithOffset<float>(kWindowElements, kQueryOffset);
         auto k = ub_.GetWithOffset<float>(kWindowElements, kKeyOffset);
-        if (td_.useQkL2NormInKernel) {
+        if constexpr (USE_QK_L2NORM) {
             NormalizeWindow(q, count);
             NormalizeWindow(k, count);
         }

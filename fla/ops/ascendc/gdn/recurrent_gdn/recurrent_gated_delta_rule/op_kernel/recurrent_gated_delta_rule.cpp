@@ -66,7 +66,8 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
     TPipe pipe;
     using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
     using GType = typename RGDRDTypeTraits<D_T_G>::type;
-    RGDR<StateType, BetaType, GType> op(&tilingData);
+    RGDR<StateType, BetaType, GType, USE_QK_L2NORM, USE_GATE_IN_KERNEL, USE_BETA_SIGMOID,
+         ALLOW_NEG_EIGVAL> op(&tilingData);
     RGDRInitParams params{query, key, value, beta, state, cuSeqlens, ssmStateIndices,
                           g, numAcceptedTokens, aLog, dtBias, out};
     op.Init(params, &pipe);

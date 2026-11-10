@@ -8,10 +8,21 @@
 保留两个 host ABI。该迁移不改变融合实现的计算、任务划分、地址规划和同步协议。
 host 统一按融合契约校验 dtype 与属性，不再设置版本选择字段或隐藏属性。A2/A3 与 A5
 分别编译 arch22 和 arch35，各架构内部的两个 host ABI 进入同一实现。
-CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；固定原输入值域及混合容差。
+CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；保持原输入值域及 ATK 原生双标杆标准。
 性能采用 msprof `Task Duration(us)`，本次没有额外性能提升目标。
 
 ## 2. A2/A3 Stage 0–N 完整详设
+
+### TilingKey 模板与跨架构契约
+
+A2/A3 与 A5 共享模板参数顺序：State、g、beta 的 dtype，随后为 Q/K L2 norm、
+kernel gate、beta sigmoid、negative eigenvalue 四个布尔参数。host 仅通过
+`GET_TPL_TILING_KEY` 选择实例；beta sigmoid 关闭时将 negative eigenvalue 规范化为 false。
+因此 128 个注册模板中有 96 个可达 key，另外 32 个组合不由 host 选择。
+A2/A3 将四个布尔参数传入 arch22 模板，在 Stage 0 使用 `if constexpr` 选择归一化、
+门控和 beta 预处理。数学公式、dtype 舍入、UB 布局、任务划分和全部同步保持当前设计。
+旧 fast-launch 的三个 dtype 参数调用使用全 false 的默认属性，保持原有非融合语义。
+每个可达 key 的输入、SDK 生成的数值 key 和实际 host 选择由专用 ATK 用例建立映射。
 
 令 B 为请求数，T 为总 token 数，HK/HV 为 QK/value head 数，K=V=128。
 任务域为 `[0,B*HV)`：`batch=task/HV`，`hv=task%HV`，`hk=hv/(HV/HK)`。
@@ -54,9 +65,12 @@ V 内读写复用使用 PIPE_V barrier；跨 pipe 依赖由硬事件表达。
 
 ### 验证范围
 
-200 条合法精度用例，覆盖 8 个模板 dtype 组合、12 个合法开关组合、变长/零长度序列、
-accepted token、State padding/offset/转置、QKV 行 padding、窗口 8/9/16/17 边界。
-确定性和内存各使用 50 条代表用例；额外验证 gk 拒绝与两个 host ABI 的有效控制。
+本次 A2/A3 使用 513 条合法用例，覆盖四个布尔属性、三类可变 dtype、变长/零长度序列、
+accepted token、State padding/offset/转置、QKV view，以及窗口和长序列边界。
+另用 96 条专用用例逐个覆盖 host 可达 TilingKey；每条沿用原矩阵的输入规格与 seed，
+key 数值由 CANN SDK 生成，并通过实际 host 日志核对，不能仅凭属性组合推断覆盖。
+精度使用 `cv_fused_double_benchmark` 比较 NPU DUT、FP32 bench 和 FP64 golden，
+阈值和输入值域保持不变；执行数、精度结果及失败复检记录见当前 ATK README。
 
 ## 3. A5 arch35 流水
 
