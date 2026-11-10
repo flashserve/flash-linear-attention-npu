@@ -169,7 +169,9 @@ def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
     return found
 
 
-_EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
+_EXEC_CALL = re.compile(
+    r"FLA_STABLE_EXEC\(\s*(?:/\*.*?\*/\s*|//[^\n]*\n\s*)*\"(\w+)\"\s*,(.*?)\)\s*;",
+    re.S)
 
 # The two oldest adapters predate the macro: they call the entry point
 # themselves (`get_ws(...)` on a `Runtime::symbol(...)` pointer) and build their
