@@ -88,8 +88,18 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci
 /run-npu-ci quick
 /run-npu-ci full
+/run-npu-ci quick debug
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
+/run-npu-ci quick debug ops=causal_conv1d,chunk_bwd_dv_local
 ```
+
+`debug` 是可选的日志调试参数，不改变 `quick/full` 或算子选择；省略模式时仍为 `quick`。
+不设置时保持原有日志输出与保留方式。设置后仅在清理前将本次已有的原始 CI 日志
+和 `dist/fla-npu-build.log` 保存为独立 artifact，保留 7 天；控制台输出和构建参数不变。
+Actions 手动触发入口提供同名布尔输入，默认关闭。旧目标分支尚未声明该输入时，
+显式 `debug` 请求会提示不支持，不会静默丢弃参数。
+调试请求不复用已完成的成功结果，以便生成本次日志；已有同模式、同算子范围的调试运行
+处于排队或执行中时仍避免重复启动。
 
 默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 

@@ -207,6 +207,49 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                              if item["path"] == ".github/workflows/ci.yml")
         self.assertEqual(workflow_read["ref"], "c"*40)
 
+    def test_comment_debug_is_optional_and_combines_with_mode_and_ops(self):
+        for command, mode, ops, debug in (
+            ("/run-npu-ci", "quick", "", False),
+            ("/run-npu-ci quick", "quick", "", False),
+            ("/run-npu-ci full", "full", "", False),
+            ("/run-npu-ci debug", "quick", "", True),
+            ("/run-npu-ci quick debug", "quick", "", True),
+            ("/run-npu-ci full debug ops=chunk_fwd_o", "full", "chunk_fwd_o", True),
+            ("/run-npu-ci debug quick ops=chunk_fwd_o", "quick", "chunk_fwd_o", True),
+        ):
+            with self.subTest(command=command):
+                result = self.run_entry("dispatch", command=command)
+                self.assertNotIn("error", result)
+                self.assertFalse(self.records(result, "failed"))
+                inputs = self.records(result, "dispatch")[0]["inputs"]
+                self.assertEqual(inputs["ci_mode"], mode)
+                self.assertEqual(inputs["ops"], ops)
+                if debug:
+                    self.assertEqual(inputs["debug"], "true")
+                else:
+                    self.assertNotIn("debug", inputs)
+
+    def test_debug_duplicate_or_unsupported_target_is_not_silently_ignored(self):
+        duplicate = self.run_entry("dispatch", command="/run-npu-ci quick debug debug")
+        self.assertIn("只能指定一次", self.records(duplicate, "failed")[0])
+        self.assertEqual(self.records(duplicate, "dispatch"), [])
+        legacy = "on:\n  workflow_dispatch:\n    inputs:\n      pr_number:\n        required: true\n"
+        unsupported = self.run_entry("dispatch", command="/run-npu-ci quick debug", workflow_text=legacy)
+        self.assertIn("尚不支持 debug", self.records(unsupported, "failed")[0])
+        self.assertEqual(self.records(unsupported, "dispatch"), [])
+
+    def test_prepare_normalizes_boolean_debug_and_rejects_invalid_values(self):
+        for value in (True, False, "true", "false", None):
+            with self.subTest(value=value):
+                result = self.run_entry("prepare", inputs={} if value is None else {"debug": value})
+                self.assertNotIn("error", result)
+                self.assertFalse(self.records(result, "failed"))
+                outputs = {item["name"]: item["value"] for item in self.records(result, "output")}
+                self.assertEqual(outputs["debug"], "true" if value in (True, "true") else "false")
+        invalid = self.run_entry("prepare", inputs={"debug": "verbose"})
+        self.assertIn("必须为 true 或 false", self.records(invalid, "failed")[0])
+        self.assertEqual(self.records(invalid, "status"), [])
+
     def test_custom_ci_ref_cannot_select_an_unapproved_workflow(self):
         for parameter in ("ci_ref=malicious", "branch=malicious", "ci_ref=main", "ci_modified=true", "head=" + "a"*40):
             with self.subTest(parameter=parameter):
