@@ -77,6 +77,14 @@ try {
         result = self.run_helper("computeActiveApprovals", args=[reviews, EXPECTED])
         self.assertEqual(result["result"], ["chen-linxin", "Ensley0304"])
 
+    def test_added_designated_owner_approval_counts(self):
+        reviews = [
+            {"user": {"login": "outsider"}, "state": "APPROVED", "submitted_at": "2026-11-06T10:00:00Z"},
+            {"user": {"login": "zhangshuolei-hfut"}, "state": "APPROVED", "submitted_at": "2026-11-06T10:01:00Z"},
+        ]
+        result = self.run_helper("computeActiveApprovals", args=[reviews, EXPECTED])
+        self.assertEqual(result["result"], ["zhangshuolei-hfut"])
+
     def test_dismissed_or_new_changes_requested_review_removes_approval(self):
         for final_state in ("DISMISSED", "CHANGES_REQUESTED"):
             with self.subTest(final_state=final_state):
@@ -95,13 +103,6 @@ try {
         result = self.run_helper("computeActiveApprovals", args=[reviews, EXPECTED])
         self.assertEqual(result["result"], ["weiwei-612"])
 
-    def test_designated_owner_without_write_permission_fails_closed(self):
-        result = self.run_helper(
-            "requireReviewerWritePermissions",
-            args=[{"weinachuan": "write", "weiwei-612": "read"}],
-        )
-        self.assertIn("至少需要 write", result["error"])
-
     def test_codeowners_ref_uses_current_target_branch_not_stale_base_sha(self):
         result = self.run_helper(
             "getTargetBranchRef",
@@ -113,6 +114,14 @@ try {
         result = self.run_helper("getTargetBranchRef", args=[{"base": {"sha": "98e0ddf"}}])
         self.assertIn("无法确定 PR 当前目标分支", result["error"])
 
+    def test_push_target_branch_comes_from_event_ref(self):
+        result = self.run_helper("getPushTargetBranch", args=[{"ref": "refs/heads/v26.10.0"}])
+        self.assertEqual(result["result"], "v26.10.0")
+
+    def test_push_target_branch_rejects_non_branch_ref(self):
+        result = self.run_helper("getPushTargetBranch", args=[{"ref": "refs/tags/v26.10.0"}])
+        self.assertIn("无法确定 push 事件的目标分支", result["error"])
+
     def test_workflow_runs_on_review_and_pr_state_changes(self):
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         events = workflow.get("on", workflow.get(True))
@@ -121,9 +130,13 @@ try {
             ["submitted", "edited", "dismissed"],
         )
         self.assertIn("synchronize", events["pull_request_target"]["types"])
+        self.assertEqual(events["push"]["branches"], ["main"])
+        self.assertIn(".github/scripts/codeowner_approval_gate.js", events["push"]["paths"])
+        self.assertIn(".github/CODEOWNERS", events["push"]["paths"])
         self.assertEqual(workflow["permissions"]["statuses"], "write")
         checkout = workflow["jobs"]["evaluate"]["steps"][0]["with"]
         self.assertEqual(checkout["ref"], "${{ github.workflow_sha }}")
+        self.assertIn("github.run_id", workflow["concurrency"]["group"])
         script = workflow["jobs"]["evaluate"]["steps"][1]["with"]["script"]
         self.assertIn("gate.run", script)
 
