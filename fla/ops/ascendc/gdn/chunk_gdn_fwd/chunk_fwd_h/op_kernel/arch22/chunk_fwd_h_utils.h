@@ -15,7 +15,8 @@
  * epilogue/block/block_epilogue_gdn_fwdh_{update,vnew}_preload.hpp、
  * gemm/block/block_scheduler_gdn_fwd_h_preload.hpp、gemm/kernel/gdn_fwd_h_kernel_preload.hpp）
  * 按原 include 展开顺序内联为单文件，芯片目录回归 cube.h/vec.h + 本文件布局；
- * 另将 chunk_fwd_h.cpp 的 gated 复用谓词/入口移至文末。纯搬移，无代码语义变化。
+ * gated 复用谓词/入口已归位回 chunk_fwd_h.cpp（优化前入口位置），
+ * Process 按核型分相为 ProcessCube/ProcessVec。纯搬移，无代码语义变化。
  */
 
 #ifndef ARCH22_CHUNK_FWD_H_UTILS_H
@@ -1062,9 +1063,20 @@ public:
         }
     }
     
-    __aicore__ inline void Process() {
-
+    __aicore__ inline void Process()
+    {
         if ASCEND_IS_AIC {
+            ProcessCube();
+        }
+
+        if ASCEND_IS_AIV {
+            ProcessVec();
+        }
+    }
+
+    // AIC 分支（自 Process 的 if ASCEND_IS_AIC 块原样提出；纯搬移）。
+    __aicore__ inline void ProcessCube()
+    {
             uint32_t coreIdx = AscendC::GetBlockIdx();
             uint32_t coreNum = AscendC::GetBlockNum();
 
@@ -1139,9 +1151,11 @@ public:
             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
 
-        }
+    }
 
-        if ASCEND_IS_AIV {
+    // AIV 分支（自 Process 的 if ASCEND_IS_AIV 块原样提出；纯搬移）。
+    __aicore__ inline void ProcessVec()
+    {
             uint32_t coreIdx = AscendC::GetBlockIdx();
             uint32_t coreNum = AscendC::GetBlockNum();
             uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
@@ -1305,73 +1319,10 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pongBaseEvent);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3); // preset g
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pongBaseEvent);
-
-        }
     }
 
 };
 
 }
-
-// ---- 自原 chunk_fwd_h.cpp 移入：gated 复用谓词与入口（RunFwdHTyped 分流调用）
-namespace GDN {
-// gated 复用谓词：g 模式 + vfirst=0（gated 恒按 [K,V] 产出 state，
-// vfirst=1 须经 aclnn 层转置翻译）；storeFinal 与 gate/state 的 fp32/bf16 均支持。
-template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
-__aicore__ inline constexpr bool FwdHGatedReusable()
-{
-    // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
-    // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
-    // 与 host 侧 gatedEligible 两处同条件。
-    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
-           !STATE_V_FIRST &&
-           (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
-}
-
-// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
-// 各 AIC 幂等同值写）后调用 gated preload kernel；USE_EXP2 携带 g 输入域
-// （true=log2，false=ln），gated epilogue 的 LN2 换算按此模板维取舍。
-template <typename GateT, typename StateT, bool USE_EXP2>
-__aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
-{
-    using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float, USE_EXP2>;
-    __gm__ uint8_t *user = args.workspace;
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
-    {
-        gtiling->batch = args.tiling.batch;
-        gtiling->seqlen = args.tiling.seqlen;
-        gtiling->kNumHead = args.tiling.kNumHead;
-        gtiling->vNumHead = args.tiling.vNumHead;
-        gtiling->kHeadDim = args.tiling.kHeadDim;
-        gtiling->vHeadDim = args.tiling.vHeadDim;
-        gtiling->chunkSize = args.tiling.chunkSize;
-        gtiling->useInitialState = args.tiling.useInitialState;
-        gtiling->storeFinalState = args.tiling.storeFinalState;
-        gtiling->dataType = 1; // bf16 输入
-        gtiling->gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
-        gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
-        gtiling->isVariedLen = args.tiling.isVariedLen;
-        gtiling->shapeBatch = args.tiling.shapeBatch;
-        gtiling->tokenBatch = args.tiling.tokenBatch;
-        gtiling->useG = true;
-        gtiling->useGk = false;
-        gtiling->vWorkspaceOffset = args.tiling.vWorkspaceOffset;
-        gtiling->vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
-        gtiling->kDecayWorkspaceOffset = 0;
-        gtiling->hWorkspaceOffset = args.tiling.hWorkspaceOffset;
-        gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
-        gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
-    }
-    GatedKernel gatedKernel;
-    gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
-                     args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
-                     args.finalState,
-                     reinterpret_cast<GM_ADDR>(gtiling),
-                     user);
-    gatedKernel.Process();
-}
-} // namespace GDN
 
 #endif // ARCH22_CHUNK_FWD_H_UTILS_H
