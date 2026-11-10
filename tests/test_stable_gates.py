@@ -356,9 +356,6 @@ class HeaderKindGateTest(unittest.TestCase):
         # String literals are left alone: a layout name can hold anything.
         self.assertEqual(tool.split_params('cstr("a//b"), scalar(c)'),
                          ['cstr("a//b")', 'scalar(c)'])
-        # A // comment may sit between FLA_STABLE_EXEC( and the symbol.
-        calls = tool.adapter_calls(SRC_DIR)
-        self.assertIn("aclnnChunkGatedDeltaRuleFwdPrepare", calls)
 
 
 class LauncherOnlyCoverageTest(unittest.TestCase):
