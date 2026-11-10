@@ -65,6 +65,7 @@ jobs:
             let modeProvided = false;
             let ops = '';
             let opsProvided = false;
+            let debug = false;
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -73,6 +74,12 @@ jobs:
                 }
                 ciMode = part;
                 modeProvided = true;
+              } else if (part === 'debug') {
+                if (debug) {
+                  core.setFailed('debug 参数只能指定一次。');
+                  return;
+                }
+                debug = true;
               } else if (part.startsWith('ops=')) {
                 if (opsProvided) {
                   core.setFailed('ops 参数只能指定一次。');
@@ -146,26 +153,32 @@ jobs:
               .from(workflowFile.content, workflowFile.encoding || 'base64')
               .toString('utf8');
 
+            const dispatchInputs = auth.selectDispatchInputs(workflowText, {
+              pr_number: String(prNumber),
+              ci_mode: ciMode,
+              ...(debug ? { debug: 'true' } : {}),
+              ops,
+              requested_by: actor,
+              expected_head_sha: pr.head.sha,
+              expected_base_ref: pr.base.ref,
+              expected_base_sha: baseBranch.commit.sha,
+              expected_workflow_sha: baseBranch.commit.sha,
+            });
+            if (debug && dispatchInputs.debug !== 'true') {
+              core.setFailed(`分支 \`${targetRef}\` 的 NPU CI 尚不支持 debug，请先更新目标分支的 CI workflow。`);
+              return;
+            }
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'ci.yml',
               ref: targetRef,
-              inputs: auth.selectDispatchInputs(workflowText, {
-                pr_number: String(prNumber),
-                ci_mode: ciMode,
-                ops,
-                requested_by: actor,
-                expected_head_sha: pr.head.sha,
-                expected_base_ref: pr.base.ref,
-                expected_base_sha: baseBranch.commit.sha,
-                expected_workflow_sha: baseBranch.commit.sha,
-              }),
+              inputs: dispatchInputs,
             });
 
             core.notice(
               `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
-              `head=${pr.head.sha}，模式=${ciMode}。`
+              `head=${pr.head.sha}，模式=${ciMode}${debug ? ' debug（保存完整构建日志）' : ''}。`
             );
 
   dispatch-package:

@@ -24,12 +24,22 @@ class LogCollectionTest(unittest.TestCase):
         cleanup = next(i for i, step in enumerate(STEPS) if step["name"].startswith("清理 "))
         self.assertLess(summary, upload)
         self.assertLess(upload, cleanup)
-        for index in (summary, upload):
-            self.assertEqual(STEPS[index]["if"], "always() && steps.npu_ci.outcome != 'skipped'")
+        self.assertEqual(STEPS[summary]["if"], "always() && steps.npu_ci.outcome != 'skipped'")
+        self.assertEqual(STEPS[upload]["if"],
+                         "always() && needs.prepare.outputs.debug == 'true' && steps.npu_ci.outcome != 'skipped'")
         paths = STEPS[upload]["with"]["path"].splitlines()
         self.assertEqual(paths, ["repo/${{ env.CI_RAW_LOG_FILE }}", "repo/dist/fla-npu-build.log"])
         self.assertTrue(STEPS[upload]["with"]["include-hidden-files"])
         self.assertEqual(STEPS[upload]["with"]["retention-days"], 7)
+
+    def test_debug_is_opt_in_and_controls_both_streaming_and_archival(self):
+        inputs = WORKFLOW.get("on", WORKFLOW.get(True))["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["debug"]["type"], "boolean")
+        self.assertIs(inputs["debug"]["default"], False)
+        self.assertEqual(WORKFLOW["jobs"]["prepare"]["outputs"]["debug"],
+                         "${{ steps.prepare.outputs.debug }}")
+        env = WORKFLOW["jobs"]["ascend-npu"]["env"]
+        self.assertEqual(env["FLA_NPU_BUILD_VERBOSE"], "${{ needs.prepare.outputs.debug }}")
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
     def test_failure_cancellation_and_missing_outputs_still_produce_diagnostics(self):
