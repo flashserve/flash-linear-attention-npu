@@ -100,32 +100,6 @@ kernel 侧不使用 `TILING_KEY_IS` 分支，由 key 直接选中模板实例。
 | `ACLNN_ERR_PARAM_INVALID` (`161002`) | 非指针类非法参数：shape/正维度/rank 错误、dtype 不符、属性/长度/segment 边界/组合关系非法、`dhm` 非连续或 shape/dtype 非法、host `cu_seqlens[0:2]` 越界 |
 | `ACLNN_ERR_INNER` (`561000`) | 二阶段执行器运行失败；保持原接口映射，下层真实 rc 记录在 PLOG，原生首错消息不被外层覆盖 |
 
-正式 EZ 消息表达根因，公开返回值独立保持现有兼容映射。不能仅凭 `161001` 推断根因是用户传空指针。
-
-| 根因 | 正式消息 |
-| --- | --- |
-| 必选 Tensor 或输入 shape 缺失 | `EZ0004`，包含参数名和接口名 |
-| `workspaceSize`/`executor` 输出指针为空 | `EZ0037`，包含参数名、接口名及可写输出指针要求 |
-| 输入 shape 存在但 descriptor 缺失（包括已提供的 g/gk） | `EZ1008`，标明具体参数和 TilingContext 元数据构造原因 |
-| shape、正维度、rank 错误 | `EZ0008` / `EZ0009` / `EZ0011` |
-| dtype 不符 | `EZ0020` |
-| 属性、列表长度、segment 边界及组合关系 | `EZ0024` / `EZ0025` / `EZ0026` / `EZ0027` |
-| 非连续 `dhm` 输出 | `EZ0028`，实际 stride 与连续输出约束 |
-| host 规划缺少框架资源、平台返回零核 | `EZ1008`，包含算子名和资源/规划原因 |
-
-host tiling 继续统一检查输入 shape/dtype、`Hv % Hk == 0`、`K=V=128`、`chunk_size=64`、
-门控互斥、门控 shape/dtype、metadata rank/长度及 `B=1`。读取 shape 维度前先验证 rank 和正维度。
-`chunk_size` 按 `int64_t` 读取并检查，不能将 `(1<<32)+64` 截断为 64。
-
-kernel 使用 uint32 偏移和 chunk ceiling arithmetic，因此 `T <= 4294967232`；超过此界限由 host 以
-`EZ0026` 拒绝。ACLNN 的 host `cu_seqlens` 前两项要求 `0 <= bos <= eos <= T` 且可表示为 uint32。
-`dhm` 必须是 FP32 连续输出；当前 kernel 不支持对任意 stride 的输出视图写回。
-
-当前定向补丁不新增 C++ function-try-block 或修改框架分配异常承接方式；沿用基线。
-测试中的原生执行器返回161001与公开执行接口返回561000是两个层次，不能混用。
-
-报错文本会给出实际 shape、`Hk`/`Hv` 与触发的约束，便于定位；`g`/`gk` 同时非空的报错会明确指出二者互斥。
-
 ## 6. 典型 shape
 
 shape 与取值范围的唯一维护处是 [README](../README.md) 的「支持的场景」「不支持（本版显式拦截）」「已知限制」三节；
