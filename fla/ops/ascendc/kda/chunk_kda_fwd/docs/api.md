@@ -226,10 +226,11 @@ aclnn L2 只描述张量与算法契约，不接收或解释 autograd 重计算�
 | `aclnnChunkKdaFwdGetWorkspaceSize` | 私有 L0 融合实现 | 固定默认组合（调用方预先归一化 q/k、预先 sigmoid beta、`exp2` 门控） |
 | `aclnnChunkKdaFwdV2GetWorkspaceSize` | 三个独立算子组合 | 由 5 个可选开关控制 |
 
-V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续、`cu_seqlens`
-严格递增；不满足时返回 `ACLNN_ERR_PARAM_INVALID`（提示改用融合入口）。
-场景选择由 Python 入口完成：`fla_npu.ops.ascendc.chunk_kda_fwd` 命中上述场景时优先调用 V2，
-其余场景（FP16、`K=V=64`、含空序列、输出非连续）回落到
+V2 支持范围：`q/k/v` 为 BF16、`K=V=128`、`chunk_size=64`、公开输出连续；
+`cu_seqlens` 非递减，允许零长序列。不满足时返回 `ACLNN_ERR_PARAM_INVALID`
+（提示改用融合入口）。
+场景选择由 Python 入口完成：`fla_npu.ops.ascendc.chunk_kda_fwd` 命中上述场景时调用 V2，
+其余场景（FP16、`K=V=64`、输出非连续）回落到
 `aclnnChunkKdaFwd`。两个入口共用同一套参数校验、输出指针语义与返回码契约，公开输出布局一致。
 
 V2 入口的形参尾部另有 5 个可选输出指针 `qHatOut/kHatOut/qRstdOut/kRstdOut/betaEffOut`，

@@ -22,7 +22,7 @@ rank-4/rank-5 BF16 形状，h 为 NT-first `[B,C,HV,128,128]`，packed 时首维
 | `atk_chunk_kda_fwd_finalize_mss.json` | 12 | 4 个输出 layout × 2 种 state 轴顺序的尾块输入，以及 AIV 搬运模板的 dense/packed、KV/VK 确定性输入 |
 
 精度包括 T 为 `1/15/16/17/31/32/33/63/64/65` 的边界、
-多 chunk、严格递增变长序列、显式/自动 canonical chunk indices、
+多 chunk、含零长段的非递减变长序列、显式/自动 canonical chunk indices、
 不同 HV、`B=2` dense，以及 `B=384,HV=5,T=17` 和由 382 个单
 token 序列加 33/64 行序列组成的 AIV 搬运模板 dense/varlen 边界。这些
 用例同时覆盖不足 4 个 head 的尾组、显式 `chunk_indices` 及

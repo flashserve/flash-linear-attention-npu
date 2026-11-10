@@ -46,7 +46,7 @@ def _profiles():
     )
     varlen = (
         (1, (1, 63), False),
-        (2, (15, 16, 17), True),
+        (2, (15, 0, 16, 17), True),
         (4, (31, 32, 33), False),
         (8, (63, 64, 65), True),
         (16, (1, 64, 1), False),
@@ -142,7 +142,10 @@ def _case(index, profile, layout, state_v_first):
             _input("state_v_first", "attr_bool", state_v_first),
         ],
         "save_name": name,
-        "is_boundary": tokens in (1, 15, 16, 17, 31, 32, 33, 63, 64, 65),
+        "is_boundary": (
+            tokens in (1, 15, 16, 17, 31, 32, 33, 63, 64, 65)
+            or bool(cu and any(left == right for left, right in zip(cu, cu[1:])))
+        ),
     }
 
 

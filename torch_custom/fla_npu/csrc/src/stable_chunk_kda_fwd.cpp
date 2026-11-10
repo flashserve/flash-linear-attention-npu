@@ -45,14 +45,9 @@ using fla_npu_stable::stable::tensor;
 constexpr const char* kChunkKdaFwdLayoutNames[] = {"BSND", "BNSD", "TND",
                                                    "NTD"};
 
-// V2 的三算子组合（ChunkKdaFwdPrepare + ChunkFwdH + ChunkKdaFwdFinalize）与融合
-// 入口共用同一套数学；组合入口在大工作量下更快，但 ChunkFwdH 的耗时对 head 数
-// 不敏感，当 (chunk, head) 总工作量偏小时整链会慢于单 kernel 的融合实现。
-// 这里只按工作量门控，并与 ctypes 参考
-// （_aclnn_ctypes.py 的 _CHUNK_KDA_FWD_V2_MIN_WORK_ITEMS）保持同一条判据，
-// 两条后端才会逐位一致。门控值取自 A2 实测：head 数 16、T=8192（2048 work item）
-// 时组合略慢，head 数 32 及以上组合领先 15% 以上。
-constexpr int64_t kChunkKdaFwdV2MinWorkItems = 4096;
+// V2 的三算子组合（ChunkKdaFwdPrepare + ChunkFwdH + ChunkKdaFwdFinalize）
+// 是 BF16、K=V=128、chunk_size=64 场景的唯一运行时实现。达到该支持域后
+// 不再按 head/chunk 工作量回落到融合实现。
 constexpr double kChunkKdaFwdDefaultEpsilon = 1e-6;
 
 constexpr const char* kSchema_chunk_kda_fwd =
@@ -159,28 +154,15 @@ run_npu_chunk_kda_fwd(
     out_h = allocate_sizes(h_sizes, q_dtype, q_meta);
   }
 
-  // 场景选择：命中三个独立算子的组合场景且工作量足够时走 aclnnChunkKdaFwdV2，
-  // 其余场景回落到签名未变的 aclnnChunkKdaFwd（私有 L0 融合实现）。
-  // 非默认 gate/L2norm 开关只有组合入口支持，此时必须命中组合场景（wrapper
-  // 已在 Python 侧按参考实现拦截非法组合）。
-  bool cu_strictly_increasing = true;
-  for (size_t idx = 0; idx + 1 < cu.size(); ++idx) {
-    if (cu[idx] >= cu[idx + 1]) {
-      cu_strictly_increasing = false;
-      break;
-    }
-  }
+  // 场景选择：命中三个独立算子的组合场景时始终走
+  // aclnnChunkKdaFwdV2，其余不再支持的结构回落到 aclnnChunkKdaFwd。
   const bool switches_requested =
       epsilon != kChunkKdaFwdDefaultEpsilon || use_qk_l2norm_in_kernel ||
       use_beta_sigmoid_in_kernel || allow_neg_eigval || !use_exp2;
   const bool v2_scenario =
       q_meta.scalar_type == kBFloat16 && k_dim == 128 && v_dim == 128 &&
-      chunk_size == 64 && cu_strictly_increasing;
-  const int64_t work_items =
-      heads * layout_math::chunks(cu, ci, chunk_size, tokens);
-  const bool use_v2 = v2_scenario &&
-                      (switches_requested ||
-                       work_items >= kChunkKdaFwdV2MinWorkItems);
+      chunk_size == 64;
+  const bool use_v2 = v2_scenario;
 
   if (use_v2) {
     FLA_STABLE_EXEC(
@@ -214,8 +196,13 @@ run_npu_chunk_kda_fwd(
                            out_w, out_u, out_qg, out_kg, out_v_new, out_h);
   }
 
-  // 保存值只有组合入口（V2）产出；落在融合入口的场景里给了输出槽就拒绝，
-  // 与 ctypes 后端同一句话（_aclnn_ctypes.py 的同名判据）。
+  if (!use_v2 && switches_requested) {
+    throw std::runtime_error(
+        "npu_chunk_kda_fwd: non-default gate/L2norm switches require "
+        "the three-stage scenario (bfloat16, K=V=128, chunk_size=64).");
+  }
+
+  // 保存值只有组合入口（V2）产出；落在融合入口的场景里给了输出槽就拒绝。
   if (wants_saved) {
     throw std::runtime_error(
         "npu_chunk_kda_fwd: q_hat/k_hat/q_rstd/k_rstd/beta_eff are only "

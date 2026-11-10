@@ -183,7 +183,7 @@ sequence 内也按连续 value head 每四个一组拆分，因此每个 unit �
 
 ## 7. 变长序列
 
-变长模式要求 BNSD 容器 `B=1`。`cu_seqlens` 从 0 开始、以 T 结束且严格递增；
+变长模式要求 BNSD 容器 `B=1`。`cu_seqlens` 从 0 开始、以 T 结束且非递减；
 `chunk_indices` 若存在，必须是 sequence-major canonical `(seq_id, chunk_id)`。连续 head task
 区间跨 sequence 时按边界拆为独立 work unit；同一 sequence 的不同 value head 也可分配到
 不同核。state/final_state 的首维是 sequence 数，H 的 chunk 维使用全局 chunk 前缀，各 head

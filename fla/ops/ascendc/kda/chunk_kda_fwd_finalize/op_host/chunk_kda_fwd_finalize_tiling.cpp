@@ -211,16 +211,18 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
     totalChunks = 0;
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
-        if (lengths[seq + 1] <= lengths[seq] ||
+        if (lengths[seq + 1] < lengths[seq] ||
             lengths[seq + 1] > static_cast<int64_t>(info.seqLen)) {
             OP_LOGE(context->GetNodeName(),
-                    "cu_seqlens 必须从 0 到 T 严格递增，错误序列=%lu。",
+                    "cu_seqlens 必须从 0 到 T 非递减，错误序列=%lu。",
                     static_cast<unsigned long>(seq));
             return false;
         }
         const uint64_t length = static_cast<uint64_t>(
             lengths[seq + 1] - lengths[seq]);
-        totalChunks += (length - 1) / FINALIZE_CHUNK_ROWS + 1;
+        if (length != 0) {
+            totalChunks += (length - 1) / FINALIZE_CHUNK_ROWS + 1;
+        }
         if (totalChunks > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
@@ -241,7 +243,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
         const uint64_t length = static_cast<uint64_t>(
             lengths[seq + 1] - lengths[seq]);
-        const uint64_t chunks = (length - 1) / FINALIZE_CHUNK_ROWS + 1;
+        const uint64_t chunks =
+            length == 0 ? 0 : (length - 1) / FINALIZE_CHUNK_ROWS + 1;
         for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
             if (pairs[offset] != static_cast<int64_t>(seq) ||
                 pairs[offset + 1] != static_cast<int64_t>(chunk)) {

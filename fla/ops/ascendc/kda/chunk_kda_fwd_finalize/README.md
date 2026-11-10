@@ -58,7 +58,7 @@ chunk 数之和。`Aqk` 最后一维始终是 64，包括尾 chunk。
 时，`h` 的末两维物理顺序是 `[K,V]`；为 true 时是 `[V,K]`。
 
 `cu_seqlens` 可选，按 host int array 传入：首元素为 0，末元素为 T，
-元素严格递增。rank-4 变长输入要求 `B=1`。`chunk_indices` 可选，
+元素非递减，相邻相等表示零长序列。rank-4 变长输入要求 `B=1`。`chunk_indices` 可选，
 仅能与 `cu_seqlens` 同时传入，并按 sequence-major 顺序依次列出
 `(sequence_id, local_chunk_id)`。不传时按 `cu_seqlens` 生成相同顺序。
 
