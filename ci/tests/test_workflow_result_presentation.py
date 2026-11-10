@@ -680,8 +680,20 @@ globalThis.core = {
         pr_author="ci-admin-author",
         author_permission="admin",
         expected_snapshot=None,
+        workflow_source="base",
+        current_base_sha="c" * 40,
+        snapshot_base_sha="c" * 40,
+        workflow_sha=None,
+        workflow_commit=None,
     ):
         sha = "a" * 40
+        workflow_sha = workflow_sha or ("d" * 40 if workflow_source == "pr-merge" else "c" * 40)
+        workflow_ref = f"npu-ci/pr-527/{workflow_sha}" if workflow_source == "pr-merge" else "main"
+        snapshot = {"workflow_source": workflow_source}
+        if workflow_source == "pr-merge":
+            snapshot.update(expected_head_sha=sha, expected_base_ref="main",
+                            expected_base_sha=snapshot_base_sha, expected_workflow_sha=workflow_sha)
+        snapshot.update(expected_snapshot or {})
         wrapper = """
 const fs = require('fs');
 const record = (kind, payload) => fs.appendFileSync(
@@ -732,13 +744,17 @@ globalThis.github = {
       get: async () => ({ data: {
         number: 527, changed_files: files.length, state: 'open', draft: false,
         user: { login: process.env.PREPARE_PR_AUTHOR },
-        base: { sha: 'c'.repeat(40), ref: 'main' },
+        base: { sha: process.env.PREPARE_CURRENT_BASE_SHA, ref: 'main' },
         head: { sha: process.env.PREPARE_HEAD_SHA, repo: { full_name: 'example/repo' } },
       } }),
     },
     repos: {
       createCommitStatus: async (payload) => record('status', payload),
-      getBranch: async () => ({ data: { name: 'main', protected: true, commit: { sha: 'c'.repeat(40) } } }),
+      getBranch: async () => ({ data: { name: 'main', protected: true, commit: { sha: process.env.PREPARE_CURRENT_BASE_SHA } } }),
+      getCommit: async (payload) => {
+        record('workflow_commit', payload);
+        return { data: JSON.parse(process.env.PREPARE_WORKFLOW_COMMIT) };
+      },
       get: async () => ({ data: { default_branch: 'main' } }),
       getContent: async () => ({data:{type:'file',content:Buffer.from(JSON.stringify({users:['ci-admin']})).toString('base64')}}),
       getCollaboratorPermissionLevel: async ({ username }) => {
@@ -769,14 +785,19 @@ globalThis.core = {
             env = os.environ.copy()
             env.update(
                 {
-                    "NPU_CI_WORKFLOW_SHA": "c" * 40,
-                    "NPU_CI_WORKFLOW_REF": "main",
+                    "NPU_CI_WORKFLOW_SHA": workflow_sha,
+                    "NPU_CI_WORKFLOW_REF": workflow_ref,
+                    "PREPARE_CURRENT_BASE_SHA": current_base_sha,
+                    "PREPARE_WORKFLOW_COMMIT": json.dumps(workflow_commit if workflow_commit is not None else {
+                        "sha": workflow_sha,
+                        "parents": [{"sha": snapshot_base_sha}, {"sha": sha}],
+                    }),
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
                     "PREPARE_OPS": ops,
                     "PREPARE_PR_AUTHOR": pr_author,
                     "PREPARE_AUTHOR_PERMISSION": author_permission,
-                    "PREPARE_EXPECTED_SNAPSHOT": json.dumps(expected_snapshot or {}),
+                    "PREPARE_EXPECTED_SNAPSHOT": json.dumps(snapshot),
                     "PREPARE_FILES": json.dumps(files or []),
                     "NPU_CI_RUN_ATTEMPT": run_attempt,
                     "NPU_CI_AUTH_SCRIPT": str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js"),
@@ -785,8 +806,8 @@ globalThis.core = {
                         "status": workflow_run_status,
                         "event": "workflow_dispatch",
                         "path": ".github/workflows/ci.yml",
-                        "head_sha": "c" * 40,
-                        "head_branch": "main",
+                        "head_sha": workflow_sha,
+                        "head_branch": workflow_ref,
                         "repository": {"full_name": "example/repo"},
                     }),
                     "PREPARE_WORKFLOW_RUN_ERROR": "1" if workflow_run_error else "0",
@@ -1180,7 +1201,8 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_admin_author_ci_changes_publish_without_confirmation_parameters(self):
         prepared, initial_records = self._run_prepare_script(
-            [], files=[{"filename": ".github/workflows/ci.yml", "status": "modified"}])
+            [], files=[{"filename": ".github/workflows/ci.yml", "status": "modified"}],
+            workflow_source="pr-merge")
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, initial_records)
         self.assertEqual([item["payload"] for item in initial_records if item["kind"] == "permission"],
@@ -1572,7 +1594,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         ops = "chunk_fwd_o"
         files = [{"filename": "ci/run_checks.sh", "status": "modified"}]
         prepared, initial_records = self._run_prepare_script(
-            [], ops=ops, files=files)
+            [], ops=ops, files=files, workflow_source="pr-merge")
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         outputs = {item["payload"]["name"]: item["payload"]["value"]
                    for item in initial_records if item["kind"] == "output"}
@@ -1586,9 +1608,43 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertNotIn("ci-ok=", statuses[0]["description"])
 
         completed, records = self._run_prepare_script(
-            statuses, ops=ops, files=files)
+            statuses, ops=ops, files=files, workflow_source="pr-merge")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "false"}}, records)
+        self.assertFalse(any(item["kind"] == "status" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_admin_snapshot_allows_target_branch_advance(self):
+        completed, records = self._run_prepare_script(
+            [], files=[{"filename": "ci/README.md", "status": "modified"}],
+            workflow_source="pr-merge", current_base_sha="e" * 40,
+            snapshot_base_sha="c" * 40)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        outputs = {item["payload"]["name"]: item["payload"]["value"]
+                   for item in records if item["kind"] == "output"}
+        self.assertEqual(outputs["should_run"], "true")
+        self.assertEqual(outputs["base_sha"], "e" * 40)
+        self.assertEqual([item["payload"]["ref"] for item in records
+                          if item["kind"] == "workflow_commit"], ["d" * 40])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_admin_snapshot_rejects_wrong_merge_parents(self):
+        for parents in (("b" * 40, "a" * 40), ("c" * 40, "b" * 40)):
+            with self.subTest(parents=parents):
+                completed, records = self._run_prepare_script(
+                    [], files=[{"filename": ".github/workflows/ci.yml", "status": "modified"}],
+                    workflow_source="pr-merge", workflow_commit={
+                        "sha": "d" * 40, "parents": [{"sha": parent} for parent in parents]})
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertNotIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
+                self.assertFalse(any(item["kind"] == "status" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_admin_ci_changes_require_pr_snapshot(self):
+        completed, records = self._run_prepare_script(
+            [], files=[{"filename": ".github/README.md", "status": "modified"}])
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertNotIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
         self.assertFalse(any(item["kind"] == "status" for item in records))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")

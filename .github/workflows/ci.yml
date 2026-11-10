@@ -46,6 +46,10 @@ on:
         description: "Workflow commit captured by the comment dispatcher"
         required: false
         default: ''
+      workflow_source:
+        description: "Internal workflow source: base or pr-merge"
+        required: false
+        default: base
 
 concurrency:
   group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
@@ -158,7 +162,7 @@ jobs:
               }
             };
 
-            const getMatchingExecutionRun = async (status, { pr, baseSha, workflowSha }) => {
+            const getMatchingExecutionRun = async (status, { pr, baseSha, workflowSha, workflowSource, workflowRef }) => {
               const runPrefix = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/`;
               const targetUrl = status?.target_url || '';
               if (!targetUrl.startsWith(runPrefix)) return null;
@@ -174,8 +178,11 @@ jobs:
                 // Commit statuses belong to the PR head. The workflow run also
                 // records the base commit, so head-only statuses cannot reuse
                 // a result built before the target branch or workflow changed.
-                if (run.head_sha !== baseSha || run.head_sha !== workflowSha || run.head_branch !== pr.base.ref ||
-                    run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
+                const expectedRunRef = workflowSource === 'pr-merge' ? workflowRef : pr.base.ref;
+                if ((workflowSource === 'base' && run.head_sha !== baseSha) ||
+                    run.head_sha !== workflowSha || run.head_branch !== expectedRunRef ||
+                    run.event !== 'workflow_dispatch' ||
+                    !['.github/workflows/ci.yml', `.github/workflows/ci.yml@${expectedRunRef}`].includes(run.path) ||
                     run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
                 return run;
               } catch (error) {
@@ -209,11 +216,19 @@ jobs:
             });
             const baseSha = baseBranch.commit.sha;
             const workflowSha = process.env.NPU_CI_WORKFLOW_SHA || '';
-            auth.requireProtectedBase({ pr, branch: baseBranch, workflowRef });
-            auth.requireDispatchIdentity({ pr, inputs: workflowInputs,
-              required: actor === 'github-actions[bot]', rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
+            const workflowSource = workflowInputs.workflow_source || 'base';
+            let workflowCommit;
+            if (workflowSource === 'pr-merge') {
+              ({ data: workflowCommit } = await github.rest.repos.getCommit({ ...context.repo, ref: workflowSha }));
+            }
+            auth.requirePullRequestBase({ pr, branch: baseBranch, workflowRef, workflowSha, workflowSource,
+              workflowCommit, expectedBaseSha: workflowInputs.expected_base_sha });
+            auth.requireDispatchIdentity({ pr, inputs: workflowInputs, workflowSha, workflowSource,
+              required: actor === 'github-actions[bot]' || workflowSource === 'pr-merge',
+              rerun: Number(process.env.NPU_CI_RUN_ATTEMPT || '1') > 1 });
             core.setOutput('base_sha', baseSha);
-            if (await auth.hasCiChanges({ github, context, pr })) {
+            const ciChanged = await auth.hasCiChanges({ github, context, pr });
+            if (ciChanged || workflowSource === 'pr-merge') {
               try {
                 await auth.requireCiAuthorAdmin({ github, context, pr });
               } catch (error) {
@@ -225,6 +240,9 @@ jobs:
                 core.setFailed(error.message);
                 return;
               }
+            }
+            if (ciChanged && workflowSource !== 'pr-merge') {
+              throw new Error('PR 修改了 ci/ 或 .github/ 的 CI 代码；请使用更新后的 /run-npu-ci 评论入口，从固定 PR 合并版本执行当前 PR 的 CI。');
             }
 
             const opsItems = ops.split(',').map((item) => item.trim());
@@ -265,7 +283,9 @@ jobs:
               (latestExecutionCi.description || '').includes(requestedModeSuffix)
             );
             const matchingExecutionRun = latestExecutionMatchesRequest
-              ? await getMatchingExecutionRun(latestExecutionCi, { pr, baseSha, workflowSha }) : null;
+              ? await getMatchingExecutionRun(latestExecutionCi, {
+                pr, baseSha, workflowSha, workflowSource, workflowRef,
+              }) : null;
             const allContextsPassedInSameRun = Boolean(
               latestExecutionCi &&
               latestExecutionCi.target_url &&
@@ -287,7 +307,7 @@ jobs:
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${requestedBy}`,
-                  `- CI 定义分支：\`${workflowRef}\``,
+                  `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   requestScope === 'all'
                     ? '- 分项结果：6/6 通过'
@@ -316,7 +336,7 @@ jobs:
                   '',
                   `- 请求模式：\`${ciMode}\``,
                   `- 触发人：@${requestedBy}`,
-                  `- CI 定义分支：\`${workflowRef}\``,
+                  `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                   '- 当前状态：排队或运行中',
                   '- 执行方式：按顺序执行；前置失败时后续项跳过',
@@ -359,7 +379,7 @@ jobs:
                 '',
                 `- 模式：\`${ciMode}\``,
                 `- 触发人：@${requestedBy}`,
-                `- CI 定义分支：\`${workflowRef}\``,
+                `- CI 定义来源：\`${workflowSource}\` · \`${workflowRef}\` · \`${workflowSha}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
                 requestScope === 'all'
                   ? '- 分项：6 项按顺序执行'

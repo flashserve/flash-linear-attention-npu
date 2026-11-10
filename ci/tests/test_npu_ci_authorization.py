@@ -22,6 +22,15 @@ def workflow_script(filename, job, step_id=None):
 
 class CiAuthorizationTest(unittest.TestCase):
     def run_entry(self, entry="helper", **options):
+        if options.pop("pr_merge", False):
+            merge_sha = "e" * 40
+            options.setdefault("workflow_sha", merge_sha)
+            options.setdefault("workflow_ref", "npu-ci/pr-527/" + merge_sha)
+            options["inputs"] = {
+                "workflow_source": "pr-merge", "expected_head_sha": "a" * 40,
+                "expected_base_ref": "main", "expected_base_sha": "c" * 40,
+                "expected_workflow_sha": merge_sha, **options.get("inputs", {}),
+            }
         scripts = {
             "dispatch": workflow_script("npu-ci-comment-dispatch.yml", "dispatch"),
             "package-dispatch": workflow_script("npu-ci-comment-dispatch.yml", "dispatch-package"),
@@ -40,6 +49,7 @@ const files = (settings.files || ['fla/example.cpp']).map((file) =>
 const pr = {number:527, state:'open', draft:false, changed_files:settings.file_count ?? files.length,
   merge_commit_sha:'c'.repeat(40),
   html_url:'https://github.com/example/repo/pull/527',user:{login:settings.author || 'ci-author'},
+  mergeable:true, merge_commit_sha:'e'.repeat(40),
   base:{ref:settings.base_ref || 'main',sha:'c'.repeat(40)},head:{sha:'a'.repeat(40),repo:{full_name:'example/fork'}},...settings.initial_pr};
 const context = {actor:settings.actor || 'ci-user',serverUrl:'https://github.com',runId:99,runNumber:12,
   ref:'refs/heads/main',
@@ -81,6 +91,7 @@ const github = {
         if (settings.permission_error) throw new Error('permission unavailable');
         return {data:{permission:(settings.permissions || {})[username] || 'read'}};
       },
+      getCommit:async request => ({data:{sha:request.ref,parents:[{sha:'c'.repeat(40)},{sha:pr.head.sha}]}}),
       getBranch:async () => ({data:{protected:settings.protected !== false,commit:{sha:settings.branch_sha || pr.base.sha}}}),
       getCommit:async () => ({data:{}}),
       createCommitStatus:async (payload) => record('status',payload),
@@ -88,6 +99,7 @@ const github = {
     },
     issues:{listComments,createComment:async (payload) => {record('comment',payload);return {data:{id:123}};},
       updateComment:async (payload) => record('comment',payload)},
+    git:{createRef:async payload => record('tag',payload)},
     actions:{createWorkflowDispatch:async (payload) => {
         if (settings.accepted_inputs && Object.keys(payload.inputs).some((name) => !settings.accepted_inputs.includes(name))) {
           throw new Error('422 Unexpected inputs: ' + Object.keys(payload.inputs).filter((name) => !settings.accepted_inputs.includes(name)).join(','));
@@ -246,7 +258,7 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
     def test_partially_updated_workflow_receives_supported_snapshot_fields_only(self):
         current = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         partial = current.replace("      expected_head_sha:", "      ignored_head_sha:")
-        allowed = ["pr_number", "ci_mode", "ops", "requested_by", "expected_base_ref", "expected_base_sha", "expected_workflow_sha"]
+        allowed = ["pr_number", "ci_mode", "ops", "requested_by", "expected_base_ref", "expected_base_sha", "expected_workflow_sha", "workflow_source"]
         result = self.run_entry("dispatch", workflow_text=partial, accepted_inputs=allowed)
         self.assertNotIn("error", result)
         inputs = self.records(result, "dispatch")[0]["inputs"]
@@ -317,10 +329,13 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 result = self.run_entry("prepare", **options)
                 self.assertNotIn("error", result)
 
-    def test_ci_documentation_does_not_need_admin_author(self):
-        result = self.run_entry("dispatch", files=["ci/README.MD", ".github/notes.md"])
-        self.assertEqual(len(self.records(result, "dispatch")), 1)
-        self.assertEqual(self.records(result, "permission"), [])
+    def test_ci_documentation_also_requires_admin_author(self):
+        for entry in ("dispatch", "default"):
+            with self.subTest(entry=entry):
+                result = self.run_entry(entry, files=["ci/README.MD", ".github/notes.md"])
+                self.assertEqual(self.records(result, "dispatch"), [])
+                self.assertTrue(all(item["state"] == "failure" for item in self.records(result, "status")))
+                self.assertEqual(self.records(result, "permission"), ["ci-author"])
 
     def test_rename_out_of_ci_still_needs_admin_author(self):
         result = self.run_entry("dispatch", files=[{"filename":"tools/run.sh", "previous_filename":"ci/run.sh", "status":"renamed"}])
@@ -411,14 +426,17 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
     def test_listed_reader_can_run_admin_author_ci_changes_without_confirmation(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):
-                result = self.run_entry(entry, files=[".github/workflows/ci.yml"], permissions={"ci-author":"admin"})
+                result = self.run_entry(entry, files=[".github/workflows/ci.yml"], pr_merge=entry == "prepare",
+                                        permissions={"ci-author":"admin"})
                 self.assertNotIn("error", result)
                 self.assertEqual(self.records(result, "failed"), [])
-                self.assertEqual(self.records(result, "permission"), ["ci-author"])
+                self.assertEqual(self.records(result, "permission"), ["ci-author"] * (2 if entry == "dispatch" else 1))
                 if entry == "dispatch":
                     inputs = self.records(result, "dispatch")[0]["inputs"]
                     self.assertNotIn("ci_modified", inputs)
-                    self.assertEqual(len(inputs), 8)
+                    self.assertEqual(len(inputs), 9)
+                    self.assertEqual(inputs["workflow_source"], "pr-merge")
+                    self.assertEqual(self.records(result, "dispatch")[0]["ref"], "npu-ci/pr-527/" + "e" * 40)
                 else:
                     self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
                     self.assertTrue(all(item["state"] == "pending" for item in self.records(result, "status")))
@@ -429,7 +447,7 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         result = self.run_entry("dispatch", files=["ci/run.sh"], author="admin-author", users=["ci-user"],
                                 permissions={"admin-author":"admin"})
         self.assertNotIn("error", result)
-        self.assertEqual(self.records(result, "permission"), ["admin-author"])
+        self.assertEqual(self.records(result, "permission"), ["admin-author", "admin-author"])
         self.assertEqual(len(self.records(result, "dispatch")), 1)
 
     def test_ci_author_permission_failure_or_missing_author_fails_closed(self):
@@ -440,7 +458,7 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 self.assertEqual([item["state"] for item in self.records(result, "status")], ["failure"] * 6)
 
     def test_default_status_preserves_admin_author_execution_but_rejects_non_admin_author(self):
-        prepared = self.run_entry("prepare", files=["ci/run_checks.sh"], permissions={"ci-author":"admin"})
+        prepared = self.run_entry("prepare", files=["ci/run_checks.sh"], pr_merge=True, permissions={"ci-author":"admin"})
         statuses = self.records(prepared, "status")
         allowed = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses, permissions={"ci-author":"admin"})
         self.assertEqual(self.records(allowed, "status"), [])
