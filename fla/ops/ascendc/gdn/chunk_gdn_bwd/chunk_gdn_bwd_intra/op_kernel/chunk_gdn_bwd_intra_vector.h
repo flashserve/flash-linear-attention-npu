@@ -141,24 +141,18 @@ __simd_vf__ inline void ChunkGdnBwdIntraPackMatrixVF(
     using namespace AscendC;
     using namespace AscendC::MicroAPI;
     constexpr uint32_t ROW_ELEMENTS = 128;
-    constexpr uint32_t REG_ELEMENTS = 64;
-    constexpr uint32_t COL_BLOCKS_PER_REG = 4;
     constexpr uint32_t NZ_ROWS = 32;
+    static_assert(ROW_ELEMENTS * sizeof(MainT) == 256);
     RegTensor<MainT> dataReg;
     MaskReg mask = CreateMask<MainT, MaskPattern::ALL>();
 
-    // 每个 AIV 将自己负责的 32 行从 ND 重排为 Cube 可直接读取的 NZ 半片。
+    // A5 的 256B 寄存器恰好容纳一整行，按八个 32B 列块写入 NZ 半片。
     for (uint16_t row = 0; row < rows; ++row) {
         const uint32_t ndRow = static_cast<uint32_t>(row) * ROW_ELEMENTS;
         const uint32_t nzRow = static_cast<uint32_t>(row) * 16;
-        for (uint32_t colPart = 0; colPart < 2; ++colPart) {
-            const uint32_t ndOffset = ndRow + colPart * REG_ELEMENTS;
-            const uint32_t nzOffset =
-                nzRow + colPart * COL_BLOCKS_PER_REG * NZ_ROWS * 16;
-            LoadIn<MainT, false>(dataReg, ndIn + ndOffset);
-            StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(
-                nzOut + nzOffset, dataReg, NZ_ROWS, mask);
-        }
+        LoadIn<MainT, false>(dataReg, ndIn + ndRow);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(
+            nzOut + nzRow, dataReg, NZ_ROWS, mask);
     }
 }
 
