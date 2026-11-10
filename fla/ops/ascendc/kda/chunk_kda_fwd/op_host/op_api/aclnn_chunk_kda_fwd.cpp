@@ -734,11 +734,13 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
 
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    const aclTensor *inputs[] = {params.q, params.k, params.v, params.g, params.beta,
-                                 params.aLogOptional, params.dtBiasOptional,
-                                 params.initialStateOptional};
-    for (const aclTensor *&input : inputs) {
-        auto status = MakeContiguous(input, executor);
+    const aclTensor *ChunkKdaFwdParams::*contigMembers[] = {
+        &ChunkKdaFwdParams::q, &ChunkKdaFwdParams::k, &ChunkKdaFwdParams::v,
+        &ChunkKdaFwdParams::g, &ChunkKdaFwdParams::beta,
+        &ChunkKdaFwdParams::aLogOptional, &ChunkKdaFwdParams::dtBiasOptional,
+        &ChunkKdaFwdParams::initialStateOptional};
+    for (const auto contigMember : contigMembers) {
+        auto status = MakeContiguous(params.*contigMember, executor);
         if (status != ACLNN_SUCCESS) {
             return status;
         }
