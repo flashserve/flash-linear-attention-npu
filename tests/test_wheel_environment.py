@@ -115,22 +115,25 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
     _write_aclnn_header(vendor_dir, "int64_t")
 
 
-def _write_aclnn_header(vendor_dir: Path, scalar_type: str) -> None:
+def _write_aclnn_header(vendor_dir: Path, scalar_type: str, *, symbol: str = "aclnnDemo") -> None:
+    from tests.opp_abi_fixtures import write_elf_exports
     header = vendor_dir / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        f"aclnnStatus {symbol}GetWorkspaceSize(\n"
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
         "    aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);\n",
+        f"aclnnStatus {symbol}(void *workspace, uint64_t workspaceSize, "
+        "aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
 
     abi = runpy.run_path(str(OP_ABI_SOURCE))
+    write_elf_exports(vendor_dir / abi["LIBRARY"], {symbol, symbol + "GetWorkspaceSize"})
     with mock.patch.dict(abi["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
     }):
         abi["write_manifest"](vendor_dir)
 
@@ -1316,14 +1319,65 @@ source {set_env!s}
                     _load_runtime(runtime_path)
 
     def test_overlay_import_prepares_order_without_loading_torch_or_launcher(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        for symbol in ("aclnnDemo", "aclnnRecurrentGatedDeltaRuleV2"):
+            self._check_overlay_import(symbol)
+
+    def test_latest_installed_overlay_is_the_only_loaded_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "ASCEND_HOME_PATH": "/fake/cann", "FLA_NPU_STABLE_ABI": "stable",
+        }, clear=True):
+            site = Path(temp_dir) / "package"
+            runtime, base, _ = _create_runtime_package(site)
+            _create_minimal_vendor(base)
+            source = Path(temp_dir) / "source"
+            _create_minimal_vendor(source)
+            installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
+            installer["install_overlay"].__globals__["PACKAGE_OPP_ROOT"] = base.parent.parent
+            _write_aclnn_header(source, "float", symbol="aclnnNew")
+            a = installer["install_overlay"](source, overlay_name="fla_npu_overlay_a")
+            _write_aclnn_header(source, "double", symbol="aclnnNew")
+            b = installer["install_overlay"](source, overlay_name="fla_npu_overlay_b")
+            self.assertFalse(a.exists())
+            hook = site / "fla_npu_opp_env.py"
+            shutil.copy2(REPO_ROOT / "torch_custom/fla_npu/fla_npu_opp_env.py", hook)
+            runpy.run_path(str(hook))
+            self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"].split(os.pathsep), [str(b), str(base)])
+            with mock.patch("ctypes.CDLL", return_value=mock.sentinel.library):
+                _load_runtime(runtime)
+            self.assertEqual(os.environ["FLA_NPU_OP_API_LIBS"].split(os.pathsep),
+                             [str(path / "op_api/lib/libcust_opapi.so") for path in (b, base)])
+
+    def test_multiple_overlay_signatures_and_explicit_load_order(self) -> None:
+        for conflict in (False, True):
+            with self.subTest(conflict=conflict), tempfile.TemporaryDirectory() as temp_dir:
+                runtime, base, _ = _create_runtime_package(Path(temp_dir) / "package")
+                _create_minimal_vendor(base)
+                one, two = [base.parent / f"fla_npu_overlay_{name}" for name in ("one", "two")]
+                for path, scalar in ((one, "float"), (two, "double" if conflict else "float")):
+                    _create_minimal_vendor(path)
+                    _write_aclnn_header(path, scalar, symbol="aclnnNew")
+                for selected in ((one, two), (two, one), (one,)):
+                    with self.subTest(selected=selected), mock.patch.dict(os.environ, {
+                        "ASCEND_HOME_PATH": "/fake/cann", "FLA_NPU_STABLE_ABI": "stable",
+                        "FLA_NPU_OVERLAY_VENDOR": os.pathsep.join(path.name for path in selected),
+                    }, clear=True), mock.patch("ctypes.CDLL", return_value=mock.sentinel.library):
+                        if conflict and len(selected) == 2:
+                            with self.assertRaisesRegex(RuntimeError, "aclnnNewGetWorkspaceSize"):
+                                _load_runtime(runtime)
+                        else:
+                            _load_runtime(runtime)
+                            self.assertEqual(os.environ["FLA_NPU_OP_API_LIBS"].split(os.pathsep),
+                                [str(path / "op_api/lib/libcust_opapi.so") for path in (*selected, base)])
+
+    def _check_overlay_import(self, symbol: str) -> None:
+        with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as temp_dir:
             runtime_path, base, _ = _create_runtime_package(
                 Path(temp_dir) / "site-packages"
             )
             overlay = base.parent / "fla_npu_overlay_transformer"
             _create_minimal_vendor(overlay)
             _write_aclnn_header(base, "int64_t")
-            _write_aclnn_header(overlay, "int64_t")
+            _write_aclnn_header(overlay, "int64_t", symbol=symbol)
 
             with mock.patch.dict(
                 os.environ,

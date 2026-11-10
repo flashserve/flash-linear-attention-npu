@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 try:
-    from ._op_abi import compare_overlay_to_base
+    from ._op_abi import compare_overlay_to_base, compare_overlays_to_base
 except ImportError:  # run_path/direct-script tests have no package context
     _abi_spec = importlib.util.spec_from_file_location(
         "fla_npu_standalone_op_abi", Path(__file__).with_name("_op_abi.py")
@@ -23,6 +23,7 @@ except ImportError:  # run_path/direct-script tests have no package context
     _abi_module = importlib.util.module_from_spec(_abi_spec)
     _abi_spec.loader.exec_module(_abi_module)
     compare_overlay_to_base = _abi_module.compare_overlay_to_base
+    compare_overlays_to_base = _abi_module.compare_overlays_to_base
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -362,6 +363,7 @@ def _validate_overlay_abi(vendor_src: Path) -> None:
         raise RuntimeError(
             f"Cannot validate overlay aclnn ABI because the base vendor is missing: {base_vendor}"
         )
+    # Installation replaces every old overlay; only the base remains a peer.
     problems = compare_overlay_to_base(vendor_src, base_vendor)
     if not problems:
         return
@@ -395,13 +397,15 @@ def _overlay_update_lock():
 
 
 def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[str]:
-    """Stage first; roll back the directory and config on a failed switch."""
+    """Replace the complete overlay slot, restoring all old vendors on failure."""
     if (vendor_dst.exists() or vendor_dst.is_symlink()) and not force:
         raise FileExistsError(f"{vendor_dst} already exists. Use --force to replace the overlay.")
     vendors_root = vendor_dst.parent
     # Outside vendors/: neither auto-discovery nor external export sees staging.
     transaction = Path(tempfile.mkdtemp(prefix=".overlay-", dir=vendors_root.parent))
     staged, backup = transaction / "new", transaction / "previous"
+    retired = transaction / "previous-overlays"
+    moved: list[tuple[Path, Path]] = []
     config = vendors_root / "config.ini"
     saved_config = transaction / "config.ini"
     installed = False
@@ -416,8 +420,17 @@ def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[st
             alias.unlink()
         _write_set_env(staged)
         try:
+            retired.mkdir()
             if vendor_dst.exists() or vendor_dst.is_symlink():
                 vendor_dst.rename(backup)
+                moved.append((vendor_dst, backup))
+            # The new overlay replaces the old one as a whole, including when
+            # --overlay-name changes. Never retain A as fallback after installing B.
+            for old in sorted(vendors_root.iterdir()):
+                if _is_overlay_name(old.name) and (old.is_dir() or old.is_symlink()):
+                    saved = retired / old.name
+                    old.rename(saved)
+                    moved.append((old, saved))
             staged.rename(vendor_dst)
             installed = True
             order = _write_vendors_config(vendors_root)
@@ -425,8 +438,9 @@ def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[st
             try:
                 if installed:
                     shutil.rmtree(vendor_dst)
-                if backup.exists() or backup.is_symlink():
-                    backup.rename(vendor_dst)
+                for old, saved in reversed(moved):
+                    if saved.exists() or saved.is_symlink():
+                        saved.rename(old)
                 if saved_config.exists():
                     saved_config.replace(config)
                 else:
@@ -453,7 +467,8 @@ def install_overlay(
 ) -> Path:
     """Install an overlay vendor next to the base vendor, inside the package.
 
-    The base vendor is left untouched. No ``RECORD`` rewrite happens: pip keeps
+    The new vendor replaces all prior overlay directories; the base is untouched.
+    No ``RECORD`` rewrite happens: pip keeps
     its own manifest of the wheel, so the overlay is removed with
     ``--remove-overlay`` instead of ``pip uninstall``.
     """
@@ -461,23 +476,20 @@ def install_overlay(
     vendors_root = _vendors_root()
     vendors_root.mkdir(parents=True, exist_ok=True)
     overlay_name = _validate_overlay_name(overlay_name or _default_overlay_name())
-    if overlay_name in overlay_vendor_names():
-        # Force this overlay to be searched first, ahead of other overlays.
-        os.environ[OVERLAY_VENDOR_ENV] = os.pathsep.join(
-            [overlay_name, *[n for n in overlay_vendor_names() if n != overlay_name]]
-        )
-
     vendor_dst = vendors_root / overlay_name
     with _overlay_update_lock():
         vendor_src = _resolve_overlay_source(source)
         _validate_overlay_abi(vendor_src)
         order = _replace_overlay(vendor_src, vendor_dst, force)
+    if os.environ.get(OVERLAY_VENDOR_ENV):
+        os.environ[OVERLAY_VENDOR_ENV] = overlay_name
 
     files = sum(1 for path in vendor_dst.rglob("*") if path.is_file())
     print(f"Installed overlay vendor: {vendor_dst}")
     print(f"  files copied : {files}")
     print(f"  operators    : {_vendor_ops(vendor_dst)}")
     print(f"  load_priority: {','.join(order)}")
+    print("  previous overlays replaced; restart processes to use this overlay and base only")
     print(
         "  note: pip's RECORD is intentionally not rewritten (the overlay is not a "
         "pip-managed file set). Remove it with:\n"
@@ -516,6 +528,10 @@ def print_status() -> None:
         print("  <no vendors installed>")
         return
     active = set(overlay_vendor_names())
+    active_paths = [vendors_root / name for name in sorted(active)
+                    if (vendors_root / name).is_dir()]
+    active_problems = (compare_overlays_to_base(active_paths, vendors_root / BASE_VENDOR_NAME)
+                       if active_paths else [])
     env_set = OVERLAY_VENDOR_ENV in os.environ
     for child in sorted(vendors_root.iterdir()):
         if not child.is_dir():
@@ -529,7 +545,8 @@ def print_status() -> None:
         files = sum(1 for path in child.rglob("*") if path.is_file())
         print(f"  [{kind:8s}] {child.name}: {files} files, ops={_vendor_ops(child)}")
         if _is_overlay_name(child.name):
-            problems = compare_overlay_to_base(child, vendors_root / BASE_VENDOR_NAME)
+            problems = (active_problems if child.name in active else
+                        compare_overlay_to_base(child, vendors_root / BASE_VENDOR_NAME))
             print("    ABI: " + ("INVALID: " + "; ".join(problems) if problems else "OK"))
     if not env_set:
         installed = sorted(
@@ -539,9 +556,8 @@ def print_status() -> None:
         )
         if len(installed) > 1:
             print(
-                "  hint: multiple overlays installed; the load order is taken from "
-                f"config.ini. Cite them explicitly with "
-                f'{OVERLAY_VENDOR_ENV}="{os.pathsep.join(installed)}" to pin the priority.'
+                "  hint: multiple legacy/manual overlays remain; the next overlay "
+                "installation replaces all of them. Active signatures must agree."
             )
 
 

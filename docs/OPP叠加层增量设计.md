@@ -12,7 +12,7 @@
 
 | 功能 | 必要行为 |
 | --- | --- |
-| OPP 增量安装与查找 | 多个 overlay 按序覆盖；base 不因 overlay 安装、移除而改变 |
+| OPP 增量安装与查找 | 新安装的 overlay 整体替换旧 overlay，默认只加载新 overlay → base；base 不变 |
 | ABI 门禁与恢复 | 构建、安装、加载检查契约；损坏时可独立查询和移除 |
 | Stable-only 日落 | 取消 ctypes 算子执行后端、自动回退和 legacy C++ 扩展，迁移构建、调用方与测试 |
 | 构建取消清理 | 确认本轮进程组和容器停止后才允许清理、重试 |
@@ -132,11 +132,17 @@ bash tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy
 
 类型解析保留每级指针，区分 `double`/`double*`、`aclTensor*`/`aclTensor**`，不猜测未知类型。参数名及 cv 限定不参与 C 调用 ABI 比较。仅保留两个显式例外：SolveTri 已核对源码的冻结契约；CausalConv1d 及 Bwd 的 Tensor 变体共用对应执行入口。
 
-`abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。旧 base 无清单时允许以公共头为兼容基线；新 overlay 必须携带有效清单。缺头、未覆盖导出、阶段不配对、哈希不符、base 未声明接口或签名漂移均拒绝。
+`abi_manifest.json` 记录导出契约及 host 库、公共头的哈希。旧 base 无清单时允许以公共头和真实 ELF 导出为兼容基线；新 overlay 必须携带有效清单。运行时直接读取 ELF 动态符号表，要求清单契约集合完整覆盖实际 ACLNN 导出，防止整组漏记接口被误判为新增；公共头中未实际导出的额外声明不要求写入清单。
+
+允许 overlay 新增 base 未声明的接口；与 base 中既有同名接口的签名仍须一致。安装 B 会整体替换先前的 A，包括使用不同 `--overlay-name` 的情形，最终默认顺序为 B → base，A 的目录被移除，不保留 A 作为补充。B 没有提供的算子直接回到 base；需要保留的 A 中新增算子必须一起包含在 B 中。安装只比较 B 与 base，不因即将移除的 A 与 B 签名不同而拒绝。暂存后再次验证，切换成功前保留全部旧 overlay 以便异常回退。
+
+历史环境或手工拷贝仍可能留下多个 overlay；状态查询和 import 对实际激活集合检查同名符号，异签名拒绝，防止绕过安装器后混用。该保护不改变正常安装仅保留最新 overlay 的规则。清单缺头、未覆盖导出、阶段不配对、哈希不符仍拒绝；正常生成和完整复制不会漏项，这些检查用于识别异常产物。
+
+允许新增 ACLNN 导出不会自动为旧 wheel 添加 Python wrapper 或 Stable adapter。调用新增接口仍需匹配的调用方支持。此策略随 wheel 中的 `_op_abi.py` 交付；partial CI 使用已下载 base wheel 的安装器和运行时，因此需发布并安装包含此修复的 base wheel。仅更新仓库源码或重新构建 overlay，不能改变旧 wheel 的拒绝策略。
 
 overlay ABI 校验以当前 base 与 wheel 的 Python/Stable launcher 配套为前提。构建检查验证本次源码中的 adapter 与 OPP 头文件，overlay 安装及加载检查验证 overlay 与当前 base；这些检查不构成对另一版本 base 与旧 launcher 任意混装的兼容承诺。
 
-运行校验仅依赖 Python 标准库，不运行 `nm`。清单是完整性检查，不是数字签名，也不覆盖内部 tiling ABI 或 kernel 正确性。启用 overlay 会增加启动时读取头文件、计算 host 库哈希的开销。
+运行校验仅依赖 Python 标准库，读取 ELF 的 `.dynsym` 及其字符串表，不加载 vendor 代码或运行 `nm`。构建期仍使用 `nm` 枚举导出；运行期以库中的导出集合独立核对 JSON，不能通过删除清单条目隐藏符号。清单是完整性检查，不是数字签名，也不覆盖内部 tiling ABI 或 kernel 正确性。启用 overlay 会增加启动时读取头文件、动态符号表及计算 host 库哈希的开销。
 
 能力检查针对 `_stable.load()` 实际选择的 launcher，包括 `FLA_NPU_STABLE_LIB` 覆盖路径；缺库、构建戳不匹配、缺多库能力或注册不完整均报错，不回退 ctypes。
 
@@ -157,11 +163,11 @@ python -m fla_npu_opp_manage --status
 python -m fla_npu_opp_manage --remove-overlay
 ```
 
-`--overlay-name` 必须匹配 `fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*`，不能指定 base、路径分隔符或配置注入内容。安装、卸载只管理目标 overlay 和 `config.ini`，不重写 pip `RECORD`，不改变 run 包原有全量安装语义。overlay 的生命周期由管理命令维护。
+`--overlay-name` 必须匹配 `fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*`，不能指定 base、路径分隔符或配置注入内容。安装会替换包内全部旧 overlay 并更新 `config.ini`；卸载管理指定 overlay。二者不重写 pip `RECORD`，不改变 run 包原有全量安装语义。若启动环境显式绑定了已删除的旧 overlay 名称，须清除该绑定或改为新名称后重启进程。
 
 `fla_npu_opp_manage` 是顶层模块，加载管理器时不执行 `fla_npu.__init__`、不加载 vendor 动态库。损坏 overlay 使正常 import 失败时，仍可查询 `ABI: INVALID` 或移除；旧 `python -m fla_npu.install_opp` 保留健康环境兼容，不用作损坏恢复入口。
 
-`--force` 先在 OPP root 的暂存目录复制、验证产物并生成环境脚本，再备份旧 overlay、切换目录和更新配置；复制或校验失败时旧版本不变，切换或配置更新失败时恢复旧目录与原配置。暂存及备份不进入 vendor 发现范围。若回滚本身失败，报错给出保留的恢复目录，不清除旧备份。Linux 安装与移除共用管理锁，相互冲突时明确拒绝。
+安装先在 OPP root 的暂存目录复制、验证产物并生成环境脚本，再备份全部旧 overlay、切换目录和更新配置；同名目标已存在时需要 `--force`。复制或校验失败时旧版本不变，切换或配置更新失败时恢复已移走的旧目录与原配置。暂存及备份不进入 vendor 发现范围；成功后删除备份。若回滚本身失败，报错给出保留的恢复目录，不清除旧备份。Linux 安装与移除共用管理锁，相互冲突时明确拒绝。
 
 该保护针对单次管理操作中可处理的异常，不承诺并发运行进程看到无间隙切换，也不提供断电或强制杀进程后的自动事务恢复。装卸前停止使用该安装目录的进程，完成后重新启动。外部 `--install-path` 的既有拷贝流程不在本次改造范围内。
 
@@ -177,7 +183,7 @@ python -m fla_npu_opp_manage --remove-overlay
 | 旧环境开关 | `FLA_NPU_STABLE_ABI=ctypes` 等旧模式报迁移错误；不能关闭必需 launcher |
 | 公开 wrapper | 签名取 Stable wrapper，保留参数名、默认值、关键字及返回/原地修改契约 |
 | 旧调用方 | 迁移到公开 `fla_npu` 入口；显式 `install_torch_npu_ops_compat()` 仍可提供兼容名称 |
-| 覆盖检查 | 冻结公共契约约束 wrapper、schema、adapter 及分派参数；不再以 ctypes 实现目录为清单 |
+| 覆盖检查 | 当前 wrapper/schema/adapter 必须连通；已有公开调用兼容性受保护，新增接口不受历史清单限制 |
 
 标准库 `ctypes` 仍服务 Stable 路径：
 
@@ -205,7 +211,7 @@ Docker 进程由 daemon 管理，除本地客户端进程组外，还要按本�
 | 来源顺序 | `fla_npu_opp_env.py`、`fla_npu/__init__.py`、`csrc/src/runtime.cpp` | 默认、禁用、多 overlay、缺项回落；验证 `.pth` 或手动 source 在 CANN 初始化前配置正确 |
 | ABI/恢复 | `_op_abi.py`、`install_opp.py`、`fla_npu_opp_manage.py` | 两阶段类型漂移、缺/坏清单、哈希损坏、包外软链、独立移除 |
 | 日落/构建 | `_stable.py`、`ops/ascendc/__init__.py`、`stable_build_policy.py`、两套 setup | 无回退，实际 launcher 校验，旧选项拒绝，完整 wheel 检查 |
-| 测试迁移 | `stable_public_api.json`、`stable_coverage.py`、仓内调用方 | 签名与调用参数、返回及 mutation、枚举、负例和真实 NPU 结果 |
+| 测试迁移 | `test_stable_only_runtime.py`、`stable_coverage.py`、仓内调用方 | 当前公开入口与 wrapper 一致；已有参数及分派相对顺序兼容，新增接口及可选参数放行；行为、精度仍由实际测试覆盖 |
 | ATK 增量调用 | `tests/atk/run_test_cpu.sh`、ATK executor、生成的 `set_env.bash` | worker 启动前路径顺序、公共 wrapper、overlay 命中与 base 回落、远程 worker 环境 |
 | 取消清理 | `ci/pkg/make_packages.py` | 组长退出但子进程存活、信号忽略、PID 身份变化、清理失败不重试 |
 | KDA/KKT 修复 | KDA host 返回码、ATK executor/golden | 旧库/新库负例差异、独立标杆、原用例保留、无容差放宽 |
