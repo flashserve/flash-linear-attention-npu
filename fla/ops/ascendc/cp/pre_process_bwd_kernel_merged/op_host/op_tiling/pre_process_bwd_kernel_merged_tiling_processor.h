@@ -20,8 +20,16 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <sstream>
+#include <string>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
+#if defined(__has_include)
+#if __has_include("op_common/log/log.h")
+#include "op_common/log/log.h"
+#endif
+#endif
 #include "err/ops_err.h"
 #include "tiling_base/tiling_base.h"
 #include "../../op_kernel/pre_process_bwd_kernel_merged_struct.h"
@@ -59,6 +67,125 @@ static constexpr uint64_t CDHP_HALF_DTYPE_SIZE = 2;
 static constexpr uint64_t CDHP_FP32_DTYPE_SIZE = 4;
 // 模型 dtype（BF16/FP16）统一按 2 B 规划；dhm 与链式累加固定 FP32
 static constexpr uint64_t CDHP_MODEL_DTYPE_SIZE = 2;
+
+inline std::string DfxShapeString(const gert::Shape &shape)
+{
+    std::ostringstream stream;
+    stream << "[";
+    for (size_t idx = 0; idx < static_cast<size_t>(shape.GetDimNum()); ++idx) {
+        if (idx != 0) {
+            stream << ",";
+        }
+        stream << shape.GetDim(idx);
+    }
+    stream << "]";
+    return stream.str();
+}
+
+inline std::string DfxShapeString(std::initializer_list<int64_t> dims)
+{
+    std::ostringstream stream;
+    stream << "[";
+    bool first = true;
+    for (int64_t dim : dims) {
+        if (!first) {
+            stream << ",";
+        }
+        stream << dim;
+        first = false;
+    }
+    stream << "]";
+    return stream.str();
+}
+
+inline std::string DfxDtypeString(ge::DataType dtype)
+{
+    switch (dtype) {
+        case ge::DT_FLOAT16:
+            return "FLOAT16";
+        case ge::DT_BF16:
+            return "BF16";
+        case ge::DT_FLOAT:
+            return "FLOAT";
+        default:
+            return std::to_string(static_cast<int32_t>(dtype));
+    }
+}
+
+inline void DfxReportInvalidShape(const char *nodeName, const char *paramName, const std::string &actual,
+                                  const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_SHAPE)
+    OP_LOGE_FOR_INVALID_SHAPE(nodeName, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(nodeName, "Parameter %s has incorrect shape %s. It should be %s.", paramName, actual.c_str(),
+            expected.c_str());
+#endif
+}
+
+inline void DfxReportInvalidShapeWithReason(const char *nodeName, const char *paramName, const std::string &actual,
+                                            const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON)
+    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, paramName, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(nodeName, "Parameter %s has incorrect shape %s. Reason: %s.", paramName, actual.c_str(), reason.c_str());
+#endif
+}
+
+inline void DfxReportInvalidShapesWithReason(const char *nodeName, const char *paramNames, const std::string &actual,
+                                             const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON)
+    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(nodeName, paramNames, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(nodeName, "Parameters %s have incorrect shapes %s. Reason: %s.", paramNames, actual.c_str(),
+            reason.c_str());
+#endif
+}
+
+inline void DfxReportInvalidDtype(const char *nodeName, const char *paramName, const std::string &actual,
+                                  const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_DTYPE)
+    OP_LOGE_FOR_INVALID_DTYPE(nodeName, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(nodeName, "Parameter %s has incorrect dtype %s. It should be %s.", paramName, actual.c_str(),
+            expected.c_str());
+#endif
+}
+
+inline void DfxReportInvalidValue(const char *nodeName, const char *paramName, const std::string &actual,
+                                  const std::string &expected)
+{
+#if defined(OP_LOGE_FOR_INVALID_VALUE)
+    OP_LOGE_FOR_INVALID_VALUE(nodeName, paramName, actual.c_str(), expected.c_str());
+#else
+    OP_LOGE(nodeName, "Parameter %s has incorrect value %s. It should be %s.", paramName, actual.c_str(),
+            expected.c_str());
+#endif
+}
+
+inline void DfxReportInvalidValueWithReason(const char *nodeName, const char *paramName, const std::string &actual,
+                                            const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_VALUE_WITH_REASON)
+    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(nodeName, paramName, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(nodeName, "Parameter %s has incorrect value %s. Reason: %s.", paramName, actual.c_str(), reason.c_str());
+#endif
+}
+
+inline void DfxReportInvalidValuesWithReason(const char *nodeName, const char *paramNames, const std::string &actual,
+                                             const std::string &reason)
+{
+#if defined(OP_LOGE_FOR_INVALID_VALUES_WITH_REASON)
+    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(nodeName, paramNames, actual.c_str(), reason.c_str());
+#else
+    OP_LOGE(nodeName, "Parameters %s have incorrect values %s. Reason: %s.", paramNames, actual.c_str(),
+            reason.c_str());
+#endif
+}
 
 struct PreProcessBwdKernelMergedTilingContext {
     const char *nodeName;
@@ -131,6 +258,17 @@ public:
         const gert::Shape doShape = ctx_.doShape->GetStorageShape();
         const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
 
+        const gert::Shape *rankedShapes[] = {&qShape, &kShape, &wShape, &doShape, &dvShape};
+        const char *rankedNames[] = {"q", "k", "w", "d_o", "dv"};
+        for (size_t idx = 0; idx < sizeof(rankedShapes) / sizeof(rankedShapes[0]); ++idx) {
+            if (rankedShapes[idx]->GetDimNum() != 4) {
+                DfxReportInvalidShapeWithReason(ctx_.nodeName, rankedNames[idx],
+                                                std::to_string(rankedShapes[idx]->GetDimNum()) + "D",
+                                                "rank must be 4 in [B,H,T,D] layout");
+                return ge::GRAPH_FAILED;
+            }
+        }
+
         B_ = static_cast<uint64_t>(qShape.GetDim(CDHP_DIM_0));
         Hk_ = static_cast<uint64_t>(qShape.GetDim(CDHP_DIM_1));
         T_ = static_cast<uint64_t>(qShape.GetDim(CDHP_DIM_2));
@@ -138,56 +276,63 @@ public:
         Hv_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_1));
         V_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_3));
 
-        OP_CHECK_IF(kShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                        kShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hk_) ||
-                        kShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
-                        kShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_),
-                    OP_LOGE(ctx_.nodeName, "k must match q as [B,Hk,T,K]."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(wShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                        wShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                        wShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
-                        wShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_),
-                    OP_LOGE(ctx_.nodeName,
-                            "w must be [B,Hv,T,K]; expect [%lu,%lu,%lu,%lu], got [%ld,%ld,%ld,%ld].", B_, Hv_, T_, K_,
-                            wShape.GetDim(CDHP_DIM_0), wShape.GetDim(CDHP_DIM_1), wShape.GetDim(CDHP_DIM_2),
-                            wShape.GetDim(CDHP_DIM_3)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                        doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_),
-                    OP_LOGE(ctx_.nodeName, "d_o batch/time must match q."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(dvShape.GetDim(CDHP_DIM_0) != doShape.GetDim(CDHP_DIM_0) ||
-                        dvShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                        dvShape.GetDim(CDHP_DIM_2) != doShape.GetDim(CDHP_DIM_2) ||
-                        dvShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(V_),
-                    OP_LOGE(ctx_.nodeName, "dv must have the same [B,Hv,T,V] shape as d_o."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0,
-                    OP_LOGE(ctx_.nodeName, "empty tensor is not supported; got B=%lu T=%lu Hk=%lu Hv=%lu K=%lu V=%lu.",
-                            B_, T_, Hk_, Hv_, K_, V_),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF((Hv_ % Hk_) != 0,
-                    OP_LOGE(ctx_.nodeName,
-                            "GVA: Hv (value/state heads) must be an integer multiple of Hk (q/k heads); got Hk=%lu "
-                            "Hv=%lu.",
-                            Hk_, Hv_),
-                    return ge::GRAPH_FAILED);
+        if (DfxShapeString(kShape) != DfxShapeString(qShape)) {
+            DfxReportInvalidShapesWithReason(ctx_.nodeName, "q,k",
+                                             "q=" + DfxShapeString(qShape) + ",k=" + DfxShapeString(kShape),
+                                             "k must equal q with shape [B,Hk,T,K]");
+            return ge::GRAPH_FAILED;
+        }
+        const std::string expectedW =
+            DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_),
+                            static_cast<int64_t>(K_)});
+        if (DfxShapeString(wShape) != expectedW) {
+            DfxReportInvalidShape(ctx_.nodeName, "w", DfxShapeString(wShape), expectedW);
+            return ge::GRAPH_FAILED;
+        }
+        if (doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
+            doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
+            DfxReportInvalidShapeWithReason(
+                ctx_.nodeName, "d_o", DfxShapeString(doShape),
+                "batch and time must match q: expected [B,*,T,V] with B=" + std::to_string(B_) +
+                    ",T=" + std::to_string(T_));
+            return ge::GRAPH_FAILED;
+        }
+        if (DfxShapeString(dvShape) != DfxShapeString(doShape)) {
+            DfxReportInvalidShapesWithReason(
+                ctx_.nodeName, "d_o,dv",
+                "d_o=" + DfxShapeString(doShape) + ",dv=" + DfxShapeString(dvShape),
+                "dv must have the same [B,Hv,T,V] shape as d_o");
+            return ge::GRAPH_FAILED;
+        }
+        if (B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0) {
+            DfxReportInvalidShapesWithReason(
+                ctx_.nodeName, "q,d_o",
+                "q=" + DfxShapeString(qShape) + ",d_o=" + DfxShapeString(doShape),
+                "B/T/Hk/Hv/K/V must all be greater than 0");
+            return ge::GRAPH_FAILED;
+        }
+        if ((Hv_ % Hk_) != 0) {
+            DfxReportInvalidValuesWithReason(ctx_.nodeName, "Hk,Hv",
+                                             std::to_string(Hk_) + "," + std::to_string(Hv_),
+                                             "Hv must be an integer multiple of Hk");
+            return ge::GRAPH_FAILED;
+        }
         // 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 侧逐行的
         // 向量/寄存器读写也依赖该行宽；K/V 取其他值（64/96/72/256 均已实测）会读到未对齐或未初始化
         // 区域，表现为设备报错或结果错误，所以这里只放开目标场景，其余取值直接拦截。
-        OP_CHECK_IF(K_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM ||
-                        V_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM,
-                    OP_LOGE(ctx_.nodeName,
-                            "this version only supports K=%u, V=%u, chunk_size=%u; got K=%lu V=%lu. "
-                            "Other state dims need the tiling/workspace/tile layout to be generalized.",
-                            CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM, CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM,
-                            CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE, K_, V_),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE,
-                    OP_LOGE(ctx_.nodeName, "chunk_size must be %u, but got %d.",
-                            CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE, ctx_.chunkSize),
-                    return ge::GRAPH_FAILED);
+        if (K_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM ||
+            V_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM) {
+            DfxReportInvalidValuesWithReason(
+                ctx_.nodeName, "q.shape[3],d_o.shape[3]", "K=" + std::to_string(K_) + ",V=" + std::to_string(V_),
+                "this version requires K=" + std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM) +
+                    ", V=" + std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM));
+            return ge::GRAPH_FAILED;
+        }
+        if (static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE) {
+            DfxReportInvalidValue(ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize),
+                                  std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE));
+            return ge::GRAPH_FAILED;
+        }
 
         chunkSize_ = static_cast<uint64_t>(ctx_.chunkSize);
         // 列 tile 宽度与上游一致：K <= 64 用 32，否则用 64
@@ -197,25 +342,33 @@ public:
 
     ge::graphStatus ResolveGateMode()
     {
-        OP_CHECK_IF(ctx_.hasG && ctx_.hasGk,
-                    OP_LOGE(ctx_.nodeName,
-                            "g and gk are mutually exclusive: GDN passes scalar g, KDA/GDN2 pass per-K gk. "
-                            "Both were provided."),
-                    return ge::GRAPH_FAILED);
+        if (ctx_.hasG && ctx_.hasGk) {
+            DfxReportInvalidValuesWithReason(ctx_.nodeName, "g,gk", "present,present",
+                                             "g and gk are mutually exclusive: pass scalar g for GDN or per-K gk "
+                                             "for KDA/GDN2");
+            return ge::GRAPH_FAILED;
+        }
 
         if (ctx_.hasGk) {
             const gert::Shape gkShape = ctx_.gkShape->GetStorageShape();
-            OP_CHECK_IF(gkShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                            gkShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                            gkShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
-                            gkShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_),
-                        OP_LOGE(ctx_.nodeName, "gk must be [B,Hv,T,K]."),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(ctx_.gkDtype != ctx_.qDtype,
-                        OP_LOGE(ctx_.nodeName,
-                                "gk dtype must be the same as q/k dtype; got q/k=%d, gk=%d.",
-                                static_cast<int32_t>(ctx_.qDtype), static_cast<int32_t>(ctx_.gkDtype)),
-                        return ge::GRAPH_FAILED);
+            if (gkShape.GetDimNum() != 4) {
+                DfxReportInvalidShapeWithReason(ctx_.nodeName, "gk",
+                                                std::to_string(gkShape.GetDimNum()) + "D",
+                                                "rank must be 4 in [B,Hv,T,K] layout");
+                return ge::GRAPH_FAILED;
+            }
+            const std::string expectedGk =
+                DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_),
+                                static_cast<int64_t>(T_), static_cast<int64_t>(K_)});
+            if (DfxShapeString(gkShape) != expectedGk) {
+                DfxReportInvalidShape(ctx_.nodeName, "gk", DfxShapeString(gkShape), expectedGk);
+                return ge::GRAPH_FAILED;
+            }
+            if (ctx_.gkDtype != ctx_.qDtype) {
+                DfxReportInvalidDtype(ctx_.nodeName, "gk", DfxDtypeString(ctx_.gkDtype),
+                                      "the same dtype as q/k (" + DfxDtypeString(ctx_.qDtype) + ")");
+                return ge::GRAPH_FAILED;
+            }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_PER_K;
             tiling_.useGateGk = 1;
             tiling_.useGateG = 0;
@@ -223,14 +376,22 @@ public:
         }
         if (ctx_.hasG) {
             const gert::Shape gShape = ctx_.gShape->GetStorageShape();
-            OP_CHECK_IF(gShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                            gShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                            gShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_),
-                        OP_LOGE(ctx_.nodeName, "g must be [B,Hv,T]."),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT,
-                        OP_LOGE(ctx_.nodeName, "g dtype must be FP32 or the same as q/k dtype."),
-                        return ge::GRAPH_FAILED);
+            if (gShape.GetDimNum() != 3) {
+                DfxReportInvalidShapeWithReason(ctx_.nodeName, "g", std::to_string(gShape.GetDimNum()) + "D",
+                                                "rank must be 3 in [B,Hv,T] layout");
+                return ge::GRAPH_FAILED;
+            }
+            const std::string expectedG =
+                DfxShapeString({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_)});
+            if (DfxShapeString(gShape) != expectedG) {
+                DfxReportInvalidShape(ctx_.nodeName, "g", DfxShapeString(gShape), expectedG);
+                return ge::GRAPH_FAILED;
+            }
+            if (ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT) {
+                DfxReportInvalidDtype(ctx_.nodeName, "g", DfxDtypeString(ctx_.gDtype),
+                                      "FLOAT or the same dtype as q/k (" + DfxDtypeString(ctx_.qDtype) + ")");
+                return ge::GRAPH_FAILED;
+            }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_SCALAR;
             tiling_.useGateG = 1;
             tiling_.useGateGk = 0;
@@ -247,28 +408,36 @@ public:
         isVarLen_ = ctx_.cuSeqlensShape != nullptr;
         if (isVarLen_) {
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
+            if (cuSeqlensShape.GetDimNum() != 1) {
+                DfxReportInvalidShapeWithReason(ctx_.nodeName, "cu_seqlens",
+                                                std::to_string(cuSeqlensShape.GetDimNum()) + "D",
+                                                "rank must be 1 in [N+1] layout");
+                return ge::GRAPH_FAILED;
+            }
             const int64_t seqNum = cuSeqlensShape.GetDim(CDHP_DIM_0) - 1;
-            OP_CHECK_IF(seqNum < 1,
-                        OP_LOGE(ctx_.nodeName, "cu_seqlens must contain at least 2 entries, but got shape dim0=%ld.",
-                                cuSeqlensShape.GetDim(CDHP_DIM_0)),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(B_ != 1,
-                        OP_LOGE(ctx_.nodeName,
-                                "when cu_seqlens is provided B must be 1 (one packed segment per launch), but got "
-                                "B=%lu.",
-                                B_),
-                        return ge::GRAPH_FAILED);
+            if (seqNum < 1) {
+                DfxReportInvalidValue(ctx_.nodeName, "cu_seqlens.shape[0]",
+                                      std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), ">=2");
+                return ge::GRAPH_FAILED;
+            }
+            if (B_ != 1) {
+                DfxReportInvalidValueWithReason(ctx_.nodeName, "q.shape[0]", std::to_string(B_),
+                                                "when cu_seqlens is provided B must be 1 for one packed segment per "
+                                                "launch");
+                return ge::GRAPH_FAILED;
+            }
             // 本 kernel 一次只处理一个 [bos,eos)：varlen 时由 kernel 从 GM 读取 cu_seqlens[0:2] 覆盖，
             // host 侧只给出 [0,T) 作为缺省值，不读取输入数值。
             tiling_.bos = 0;
             tiling_.eos = T_;
         } else {
-            OP_CHECK_IF(B_ != 1,
-                        OP_LOGE(ctx_.nodeName,
-                                "dense path requires B=1 because one launch handles a single [0,T) segment; got "
-                                "B=%lu. Pass cu_seqlens for packed input.",
-                                B_),
-                        return ge::GRAPH_FAILED);
+            if (B_ != 1) {
+                DfxReportInvalidValueWithReason(
+                    ctx_.nodeName, "q.shape[0]", std::to_string(B_),
+                    "dense path requires B=1 because one launch handles a single [0,T) segment; pass "
+                    "cu_seqlens for packed input");
+                return ge::GRAPH_FAILED;
+            }
             tiling_.bos = 0;
             tiling_.eos = T_;
         }
