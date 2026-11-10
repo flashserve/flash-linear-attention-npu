@@ -330,11 +330,11 @@ static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleBwdDhuParams &params,
             return dfxRetStatus;
         }
     }
-    const aclTensor *ChunkGatedDeltaRuleBwdDhuParams::*contigMembers[] = {
+    const aclTensor *ChunkGatedDeltaRuleBwdDhuParams::*optContigMembers[] = {
         &ChunkGatedDeltaRuleBwdDhuParams::gOptional, &ChunkGatedDeltaRuleBwdDhuParams::gkOptional, &ChunkGatedDeltaRuleBwdDhuParams::h0Optional,
         &ChunkGatedDeltaRuleBwdDhuParams::dhtOptional};
-    for (const auto contigMember : contigMembers) {
-        auto dfxRetStatus = OptionalDataContiguous(params.*contigMember, executorPtr);
+    for (const auto optContigMember : optContigMembers) {
+        auto dfxRetStatus = OptionalDataContiguous(params.*optContigMember, executorPtr);
         if (dfxRetStatus != ACLNN_SUCCESS) {
             return dfxRetStatus;
         }
