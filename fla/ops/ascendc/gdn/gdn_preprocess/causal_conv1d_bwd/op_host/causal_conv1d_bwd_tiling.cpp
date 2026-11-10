@@ -66,28 +66,6 @@ using Ops::Base::CeilAlign;
 using Ops::Base::CeilDiv;
 using namespace Ops::Transformer::OpTiling;
 
-static void ReportInvalidInputDtype(const char *nodeName, const char *param, ge::DataType dtype,
-                                    const std::string &expected)
-{
-    const std::string actual = ge::TypeUtils::DataTypeToSerialString(dtype);
-#ifdef OP_LOGE_FOR_INVALID_DTYPE
-    OP_LOGE_FOR_INVALID_DTYPE(nodeName, param, actual, expected);
-#else
-    OP_LOGE_WITH_INVALID_INPUT_DTYPE(nodeName, param, actual.c_str(), expected.c_str());
-#endif
-}
-
-static void ReportInvalidActivation(const char *nodeName, int64_t activation)
-{
-    const std::string actual = std::to_string(activation);
-    const char *expected = "0 (None), 1 (SiLU) or 2 (Swish)";
-#ifdef OP_LOGE_FOR_INVALID_VALUE
-    OP_LOGE_FOR_INVALID_VALUE(nodeName, "activation", actual, expected);
-#else
-    OP_LOGE_WITH_INVALID_ATTR(nodeName, "activation", actual.c_str(), expected);
-#endif
-}
-
 static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 {
     CausalConv1dBwdTilingData *tiling = context->GetTilingData<CausalConv1dBwdTilingData>();
@@ -101,27 +79,25 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     auto xDtype = xDesc->GetDataType();
-    OP_CHECK_IF(xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16,
-                ReportInvalidInputDtype(context->GetNodeName(), "x", xDtype, "DT_FLOAT, DT_FLOAT16 or DT_BF16"), return ge::GRAPH_FAILED);
-    const uint32_t requiredIndices[] = {WEIGHT_INPUT_INDEX, DY_INPUT_INDEX};
-    const char *requiredNames[] = {"weight", "dy"};
-    for (size_t i = 0; i < sizeof(requiredIndices) / sizeof(requiredIndices[0]); ++i) {
-        const auto *desc = context->GetInputDesc(requiredIndices[i]);
-        OP_CHECK_NULL_WITH_CONTEXT(context, desc);
-        OP_CHECK_IF(desc->GetDataType() != xDtype,
-                    ReportInvalidInputDtype(context->GetNodeName(), requiredNames[i], desc->GetDataType(),
-                                            "same as x (" + ge::TypeUtils::DataTypeToSerialString(xDtype) + ")"),
-                    return ge::GRAPH_FAILED);
+    if (xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16) {
+        const auto actual = ge::TypeUtils::DataTypeToSerialString(xDtype);
+        OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), "x", actual.c_str(), "DT_FLOAT, DT_FLOAT16 or DT_BF16");
+        return ge::GRAPH_FAILED;
     }
-    const uint32_t optionalIndices[] = {Y_INPUT_INDEX, INITIAL_STATE_INPUT_INDEX, DHT_INPUT_INDEX};
-    const char *optionalNames[] = {"y", "initial_state", "dht"};
-    for (size_t i = 0; i < sizeof(optionalIndices) / sizeof(optionalIndices[0]); ++i) {
-        const auto *desc = context->GetOptionalInputDesc(optionalIndices[i]);
-        if (desc != nullptr) {
-            OP_CHECK_IF(desc->GetDataType() != xDtype,
-                        ReportInvalidInputDtype(context->GetNodeName(), optionalNames[i], desc->GetDataType(),
-                                            "same as x (" + ge::TypeUtils::DataTypeToSerialString(xDtype) + ")"),
-                        return ge::GRAPH_FAILED);
+    const uint32_t indices[] = {WEIGHT_INPUT_INDEX, DY_INPUT_INDEX, Y_INPUT_INDEX, INITIAL_STATE_INPUT_INDEX,
+                                DHT_INPUT_INDEX};
+    const char *names[] = {"weight", "dy", "y", "initial_state", "dht"};
+    for (size_t i = 0; i < sizeof(indices) / sizeof(indices[0]); ++i) {
+        const bool required = indices[i] == WEIGHT_INPUT_INDEX || indices[i] == DY_INPUT_INDEX;
+        const auto *desc = required ? context->GetInputDesc(indices[i]) : context->GetOptionalInputDesc(indices[i]);
+        if (required) {
+            OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        }
+        if (desc != nullptr && desc->GetDataType() != xDtype) {
+            const auto actual = ge::TypeUtils::DataTypeToSerialString(desc->GetDataType());
+            const auto expected = "same as x (" + ge::TypeUtils::DataTypeToSerialString(xDtype) + ")";
+            OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), names[i], actual.c_str(), expected.c_str());
+            return ge::GRAPH_FAILED;
         }
     }
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
@@ -140,9 +116,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         const auto *activationAttr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context, activationAttr);
         const int64_t activationValue = *activationAttr;
-        OP_CHECK_IF(activationValue < static_cast<int64_t>(ACTIVATION_NONE) ||
-                        activationValue > static_cast<int64_t>(ACTIVATION_SWISH),
-                    ReportInvalidActivation(context->GetNodeName(), activationValue), return ge::GRAPH_FAILED);
+        if (activationValue < static_cast<int64_t>(ACTIVATION_NONE) ||
+            activationValue > static_cast<int64_t>(ACTIVATION_SWISH)) {
+            const auto actual = std::to_string(activationValue);
+            OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "activation", actual.c_str(), "0 (None), 1 (SiLU) or 2 (Swish)");
+            return ge::GRAPH_FAILED;
+        }
         activation = static_cast<uint32_t>(activationValue);
     }
     const char *inputLayoutStr = "BSND";
