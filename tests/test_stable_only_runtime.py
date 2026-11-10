@@ -3,6 +3,10 @@
 These CPU tests cover Python resolution, aliases and binding without freezing
 public signatures. NPU numerical tests remain responsible for actual kernels,
 gradients, devices and stream ordering.
+
+Chunk metadata tests use real CPU tensors when torch is installed. Set
+FLA_NPU_TEST_DEVICE=npu:0 to also exercise device-to-host metadata conversion;
+the dispatcher is still mocked, so this is not a kernel numerical test.
 """
 
 from __future__ import annotations
@@ -209,6 +213,105 @@ assert 'torch' not in sys.modules and 'torch_npu' not in sys.modules
         self.assertEqual(params.optional_float(None, -5.0), -5.0)
         self.assertEqual(params.optional_float("2.5", 0.0), 2.5)
         self.assertEqual([params.ACL_FORMAT_NCHW, params.ACL_FORMAT_ND, params.ACL_FORMAT_NCDHW, params.ACL_FORMAT_NCL], [0, 2, 30, 47])
+
+    def _metadata_torch(self):
+        try:
+            import torch
+        except ModuleNotFoundError as exc:
+            if exc.name != "torch":
+                raise
+            self.skipTest("chunk metadata conversion requires torch")
+        self.metadata_device = os.environ.get("FLA_NPU_TEST_DEVICE", "cpu")
+        if self.metadata_device.startswith("npu"):
+            import torch_npu  # noqa: F401
+        return torch
+
+    def _metadata_forms(self, torch, values):
+        # Sliced int64 input also exercises non-contiguous metadata.
+        interleaved = [item for value in values for item in (value, -1)]
+        return {
+            "list": list(values),
+            "tuple": tuple(values),
+            "int32": torch.tensor(values, dtype=torch.int32, device=self.metadata_device),
+            "int64_view": torch.tensor(
+                interleaved, dtype=torch.int64, device=self.metadata_device)[::2],
+        }
+
+    def _assert_chunk_dispatch(self, torch, cu, indices, expected_cu, expected_indices):
+        # Real public wrappers and _host_ints run; only the C++ dispatcher and
+        # stream accessor are replaced. This catches failures before _op(),
+        # unlike signature binding or a mock of _get_direct_op itself.
+        x = torch.empty((1, 128, 2, 128), dtype=torch.bfloat16)
+        beta = torch.empty((1, 128, 2), dtype=torch.float32)
+        cases = (
+            ("npu_chunk_fwd_h", (x, x, x), 9),
+            ("npu_chunk_gated_delta_rule_fwd_h", (x, x, x), 8),
+            ("npu_chunk_kda_fwd", (x, x, x, x, beta, 0.125), 8),
+            ("npu_chunk_kda_fwd_prepare", (x, x, x, x, beta, 0.125), 7),
+            ("npu_chunk_kda_fwd_finalize", (x, x, x, x), 4),
+            ("npu_chunk_gated_delta_rule_fwd_prepare", (x, x, x, x, beta), 7),
+            ("npu_chunk_gated_delta_rule_bwd", (x, x, x, x, beta, x, x, 0.125), 14),
+        )
+        for name, args, offset in cases:
+            with self.subTest(op=name):
+                dispatch = mock.Mock(return_value=(x,) * 9)
+                with mock.patch.object(self.stable, "_op", return_value=dispatch), \
+                        mock.patch.object(self.stable, "_current_stream_ptr", return_value=9):
+                    getattr(self.ascendc, name[4:])(
+                        *args, cu_seqlens=cu, chunk_indices=indices)
+                dispatch.assert_called_once()
+                actual = dispatch.call_args.args[offset:offset + 2]
+                self.assertEqual(len(actual), 2)
+                for value, expected in zip(actual, (expected_cu, expected_indices)):
+                    if expected is None:
+                        self.assertIsNone(value)
+                    else:
+                        self.assertIsInstance(value, torch.Tensor)
+                        self.assertEqual(value.device.type, "cpu")
+                        self.assertEqual(value.dtype, torch.int64)
+                        self.assertEqual(value.tolist(), expected)
+
+    def test_chunk_metadata_generates_missing_indices_for_all_input_forms(self):
+        torch = self._metadata_torch()
+        # A tail chunk and an empty middle sequence must retain sequence IDs.
+        cu_values = [0, 65, 65, 128]
+        expected = [0, 0, 0, 1, 2, 0]
+        missing = {"none": None, **self._metadata_forms(torch, [])}
+        for cu_kind, cu in self._metadata_forms(torch, cu_values).items():
+            for index_kind, indices in missing.items():
+                with self.subTest(cu=cu_kind, indices=index_kind):
+                    self._assert_chunk_dispatch(torch, cu, indices, cu_values, expected)
+
+    def test_chunk_metadata_preserves_explicit_indices_for_all_input_forms(self):
+        torch = self._metadata_torch()
+        cu_values = [0, 65, 65, 128]
+        # Deliberately distinct from the generated order: the wrapper must
+        # forward caller metadata, leaving its validity to the operator.
+        explicit = [2, 0, 0, 1, 0, 0]
+        for cu_kind, cu in self._metadata_forms(torch, cu_values).items():
+            for index_kind, indices in self._metadata_forms(torch, explicit).items():
+                with self.subTest(cu=cu_kind, indices=index_kind):
+                    self._assert_chunk_dispatch(torch, cu, indices, cu_values, explicit)
+
+    def test_chunk_metadata_preserves_none_and_empty_boundaries(self):
+        torch = self._metadata_torch()
+        boundaries = {"none": None, **self._metadata_forms(torch, [])}
+        index_forms = {"none": None, **self._metadata_forms(torch, [])}
+        index_forms.update({"explicit_" + key: value for key, value in
+                            self._metadata_forms(torch, [0, 0]).items()})
+        for cu_kind, cu in boundaries.items():
+            for index_kind, indices in index_forms.items():
+                with self.subTest(cu=cu_kind, indices=index_kind):
+                    expected = None if indices is None else (
+                        [0, 0] if index_kind.startswith("explicit_") else [])
+                    self._assert_chunk_dispatch(
+                        torch, cu, indices, None if cu is None else [], expected)
+
+    def test_chunk_metadata_zero_boundary_uses_container_not_element_truth(self):
+        torch = self._metadata_torch()
+        for kind, cu in self._metadata_forms(torch, [0]).items():
+            with self.subTest(cu=kind):
+                self._assert_chunk_dispatch(torch, cu, None, [0], [])
 
     def test_overlay_capability_checks_actual_override_library(self):
         class Probe:
