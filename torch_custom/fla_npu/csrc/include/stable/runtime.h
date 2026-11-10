@@ -14,6 +14,11 @@
 
 namespace fla_npu_stable {
 
+struct OpApi {
+  void* get_workspace;
+  void* launch;
+};
+
 class Runtime {
  public:
   static Runtime& instance();
@@ -22,9 +27,17 @@ class Runtime {
   // and CANN libopapi.so. Safe to call multiple times.
   void init(const std::string& custom_lib_path = "");
 
+  // Loader-only registration after validating the packaged base manifest.
+  // Must precede init; a repeated registration of the same path is harmless.
+  bool set_verified_base(const std::string& path);
+
   // Custom-first symbol lookup with per-name cache. Throws std::runtime_error
   // when a symbol cannot be resolved.
   void* symbol(const std::string& name);
+
+  // Resolve both phases from one provider. A partial custom definition is an
+  // error, never a reason to mix its executor with the next provider's launch.
+  OpApi op_api(const std::string& name);
 
   // Read CANN's thread-local ErrorManager immediately after a failed call.
   // Missing diagnostic symbols never replace the original aclnn status.
@@ -53,12 +66,15 @@ class Runtime {
 
   // Ordered highest-priority-first handles: overlay vendors first, base last.
   std::vector<void*> custom_handles_;
+  std::string verified_base_path_;
+  void* verified_base_handle_ = nullptr;
   void* cann_handle_ = nullptr;
   bool initialized_ = false;
   // `symbol()` is called from the queue's consumer thread as well as from the
   // operator threads, so the cache needs its own lock.
   std::mutex mutex_;
   std::unordered_map<std::string, void*> cache_;
+  std::unordered_map<std::string, OpApi> op_cache_;
 
   void* queue_enqueue_ = nullptr;
   bool queue_enqueue_looked_up_ = false;

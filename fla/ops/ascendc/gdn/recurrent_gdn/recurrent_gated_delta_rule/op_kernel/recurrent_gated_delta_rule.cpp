@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2025-2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -47,6 +48,7 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
                            GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR out,
                            GM_ADDR stateOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
 {
+    FLA_KERNEL_TRACE("recurrent_gated_delta_rule");
     (void)gk;
     REGISTER_TILING_DEFAULT(RecurrentGatedDeltaRuleTilingData);
     GET_TILING_DATA(tilingData, tilingGM);

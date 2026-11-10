@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -95,6 +96,7 @@ __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta,
                                             GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR w, GM_ADDR u,
                                             GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("recompute_w_u_fwd");
     (void)gk;
     AscendC::AscendCUtils::SetOverflow(1);
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);

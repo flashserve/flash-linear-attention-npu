@@ -2,6 +2,7 @@
 // BSD-3-Clause. 独立 Prepare 的 DAV_2201 入口，复用完整三段式 Prepare 核心。
 #ifndef GDN_ARCH22_PREPARE_STANDALONE_H
 #define GDN_ARCH22_PREPARE_STANDALONE_H
+#include "fla_kernel_trace.h"
 #define CATLASS_ARCH 2201
 #include "lib/matmul_intf.h"
 #include "chunk_gated_delta_rule_fwd_prepare.h"
@@ -25,6 +26,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_prepare(
     GM_ADDR q_hat, GM_ADDR k_hat, GM_ADDR q_rstd, GM_ADDR k_rstd, GM_ADDR beta_eff,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_gated_delta_rule_fwd_prepare");
     if (TILING_KEY_IS(22)) {
         KERNEL_TASK_TYPE(22, KERNEL_TYPE_MIX_AIC_1_2);
         const auto *t = reinterpret_cast<const __gm__ GdnUnifiedPrepare::StandaloneTiling *>(tiling);

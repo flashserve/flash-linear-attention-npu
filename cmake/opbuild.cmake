@@ -40,6 +40,9 @@ function(gen_opbuild_target)
                              ${OP_BUILD_TOOL}
                              $<TARGET_FILE:gen_op_host_${OPBUILD_PREFIX}>
                              ${OPBUILD_OUT_DIR}/${OPBUILD_OUT_SUB_DIR}
+                     COMMAND ${HI_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/util/instrument_aclnn_trace.py
+                             ${OPBUILD_OUT_SRCS}
+                     DEPENDS ${PROJECT_SOURCE_DIR}/scripts/util/instrument_aclnn_trace.py
   )
 
   add_custom_target(${OPBUILD_TARGET}

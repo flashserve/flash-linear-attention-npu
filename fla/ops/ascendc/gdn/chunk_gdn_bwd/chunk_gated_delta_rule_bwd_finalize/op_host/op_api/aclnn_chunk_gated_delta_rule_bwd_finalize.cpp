@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 #ifndef GDN_FINALIZE_ENABLE_ARCH22
 #define GDN_FINALIZE_ENABLE_ARCH22 0
 #endif
@@ -63,6 +64,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const aclTensor *dbetaOut, const aclTensor *dgOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdFinalize,
         DFX_IN(q, k, v, vNew, dO, du, g, beta, h, dh, a,
                qRstdOptional, kRstdOptional, betaRawOptional,
@@ -170,6 +172,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
     aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdFinalize);
     if (CommonOpExecutorRun(workspace, workspaceSize, executor, stream) != ACLNN_SUCCESS) {
         OP_LOGE(OP_NAME, "ChunkGatedDeltaRuleBwdFinalize launch failed.");

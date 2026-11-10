@@ -215,7 +215,14 @@ def write_manifest(vendor: Path) -> Path:
     return target
 
 
-def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tuple[str, ...]]:
+def validated_contracts(vendor: Path, *, require_manifest: bool,
+                        check_header_signatures: bool = True) -> dict[str, tuple[str, ...]]:
+    """Validate packaged evidence; base routing needs hashes and complete pairs.
+
+    Overlay compatibility also compares signatures with parsed public headers.
+    Base routing can omit that repeated parse: write_manifest checked the header
+    contracts against defined ELF exports, and the hashes bind those artifacts.
+    """
     path = vendor / MANIFEST_NAME
     if not path.is_file():
         if require_manifest:
@@ -230,7 +237,6 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
         raise RuntimeError(f"Invalid ABI manifest object: {path}")
     if data.get("schema_version") != 1 or data.get("files") != _file_hashes(vendor):
         raise RuntimeError(f"Stale or invalid ABI manifest: {path} (library/header hashes differ)")
-    actual = _contracts(vendor)
     recorded = data.get("contracts")
     if not isinstance(recorded, dict) or any(
         not isinstance(v, list) or not all(isinstance(kind, str) for kind in v)
@@ -239,8 +245,10 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
         raise RuntimeError(f"Invalid ABI contracts in {path}")
     contracts = {s: tuple(v) for s, v in recorded.items()}
     _validate_exports(set(contracts), contracts)
-    if any(actual.get(s) != sig for s, sig in contracts.items()):
-        raise RuntimeError(f"ABI manifest disagrees with public headers: {path}")
+    if check_header_signatures:
+        actual = _contracts(vendor)
+        if any(actual.get(s) != sig for s, sig in contracts.items()):
+            raise RuntimeError(f"ABI manifest disagrees with public headers: {path}")
     return contracts
 
 

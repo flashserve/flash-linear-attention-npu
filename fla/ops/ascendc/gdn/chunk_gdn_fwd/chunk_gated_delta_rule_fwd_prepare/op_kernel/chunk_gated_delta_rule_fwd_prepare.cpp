@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * BSD 3-Clause License.
@@ -24,6 +25,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_prepare(
     GM_ADDR q_hat, GM_ADDR k_hat, GM_ADDR q_rstd, GM_ADDR k_rstd, GM_ADDR beta_eff,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_gated_delta_rule_fwd_prepare");
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     GET_TILING_DATA_WITH_STRUCT(ChunkGatedDeltaRuleFwdStageTilingData, tilingData, tiling);
     ChunkGatedDeltaRuleFwdPrepare::ChunkGatedDeltaRuleFwdPrepareKernel<DTYPE_G, DTYPE_A_LOG> op;

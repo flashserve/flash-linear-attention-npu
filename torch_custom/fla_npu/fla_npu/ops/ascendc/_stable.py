@@ -399,7 +399,29 @@ def load() -> None:
             f"Original error: {exc}") from exc
     _check_build_stamp(path)
     _check_overlay_order_capability(path)
+    _configure_verified_base(path)
     _loaded_path = path
+
+
+def _configure_verified_base(path: str) -> None:
+    """Register the package loader's validated base before any native lookup."""
+
+    import fla_npu
+
+    base = getattr(fla_npu, "_VERIFIED_BASE_OPAPI", None)
+    if base is None:
+        return
+    import ctypes
+
+    library = ctypes.CDLL(path)
+    configure = library.fla_npu_stable_set_verified_base
+    configure.argtypes = [ctypes.c_char_p]
+    configure.restype = ctypes.c_int32
+    if configure(os.fsencode(base)) != 0:
+        raise RuntimeError(
+            f"fla_npu: cannot register verified base {base} with launcher {path}; "
+            "its runtime was already initialized or configured differently. "
+            "Restart the process after changing the OPP/launcher configuration.")
 
 
 def _check_overlay_order_capability(path: str) -> None:

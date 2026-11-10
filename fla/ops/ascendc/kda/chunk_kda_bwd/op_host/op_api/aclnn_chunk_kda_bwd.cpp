@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
@@ -143,6 +144,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *dAOutOptional, const aclTensor *dBiasOutOptional,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(
         aclnnChunkKdaBwd,
         DFX_IN(q, k, v, beta, gk, aqk, akk, wOptional, qgOptional,
@@ -527,6 +529,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwd(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
     aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaBwd);
     CHECK_COND(
         CommonOpExecutorRun(workspace, workspaceSize, executor, stream) ==

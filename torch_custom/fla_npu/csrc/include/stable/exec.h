@@ -462,8 +462,9 @@ inline void exec(const char* api, const TensorMeta& workspace_meta,
   using Elements = std::remove_reference_t<Tuple>;
   const std::string base(api);
   auto& runtime = Runtime::instance();
-  void* get_workspace = runtime.symbol(base + "GetWorkspaceSize");
-  auto launch = reinterpret_cast<LaunchFn>(runtime.symbol(base));
+  const auto api_pair = runtime.op_api(base);
+  void* get_workspace = api_pair.get_workspace;
+  auto launch = reinterpret_cast<LaunchFn>(api_pair.launch);
 
   note_launch_stream(stream);
   detail::check_async_failure();

@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -14,6 +15,7 @@ __global__ __aicore__ void chunk_kda_fwd_finalize(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR attn_out,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_kda_fwd_finalize");
     REGISTER_TILING_DEFAULT(KdaFinalize::ChunkKdaFwdFinalizeTilingData);
     GET_TILING_DATA_WITH_STRUCT(KdaFinalize::ChunkKdaFwdFinalizeTilingData,
                                 tilingData, tiling);

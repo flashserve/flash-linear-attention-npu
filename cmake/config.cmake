@@ -246,6 +246,7 @@ if (BUILD_OPEN_PROJECT)
                 --ascend-cmake-dir ${ASCEND_CMAKE_DIR}
                 --tiling-key ${EP_TILING_KEY}
                 --ops-compile-options ${EP_OPS_COMPILE_OPTIONS}
+                --fla-npu-op-trace ${FLA_NPU_OP_TRACE}
                 --check-compatible ${CHECK_COMPATIBLE}
                 --ascend-compute_unit ${EP_ASCEND_COMPUTE_UNIT}
                 --ascend-op_name ${EP_ASCEND_OP_NAME}

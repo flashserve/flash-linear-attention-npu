@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -43,6 +44,7 @@ __global__ __aicore__ void causal_conv1d(GM_ADDR x, GM_ADDR weight, GM_ADDR bias
                                          GM_ADDR hasInitialStateCpu, GM_ADDR numAcceptedTokensCpu, GM_ADDR y,
                                          GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("causal_conv1d");
     REGISTER_TILING_DEFAULT(CausalConv1dTilingData);
     GET_TILING_DATA(tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);

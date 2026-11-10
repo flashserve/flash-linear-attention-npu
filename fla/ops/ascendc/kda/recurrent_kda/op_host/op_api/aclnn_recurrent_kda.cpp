@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -537,6 +538,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(aclnnRecurrentKda,
                    DFX_IN(query, key, value, gate, beta, initialStateRef, cuSeqlensOptional,
                           ssmStateIndicesOptional, aLogOptional, dtBiasOptional, numAcceptedTokensOptional,
@@ -630,6 +632,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
 
 aclnnStatus aclnnRecurrentKda(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnRecurrentKda);
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }

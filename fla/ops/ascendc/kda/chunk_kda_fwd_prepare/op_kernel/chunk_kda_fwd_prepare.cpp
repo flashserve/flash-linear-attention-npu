@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -30,6 +31,7 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q_rstd, GM_ADDR k_rstd, GM_ADDR beta_eff, GM_ADDR workspace,
     GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_kda_fwd_prepare");
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     REGISTER_TILING_DEFAULT(KdaPrepare::ChunkKdaFwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KdaPrepare::ChunkKdaFwdPrepareTilingData,

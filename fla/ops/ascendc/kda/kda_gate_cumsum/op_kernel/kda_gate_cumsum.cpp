@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -13,6 +14,7 @@ extern "C" __global__ __aicore__ void kda_gate_cumsum(GM_ADDR g, GM_ADDR aLog, G
                                                        GM_ADDR cuSeqlens, GM_ADDR gk, GM_ADDR workspace,
                                                        GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("kda_gate_cumsum");
     (void)workspace;
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     GET_TILING_DATA(tilingData, tiling);

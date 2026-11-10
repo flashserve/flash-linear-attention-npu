@@ -303,6 +303,15 @@ function(add_ops_compile_options)
     endif()
 endfunction()
 
+function(fla_add_trace_compile_options)
+    # Run after variables.cmake resets the options files. Kernel compilation is
+    # separate from CMake CXX targets; add_compile_definitions alone is not enough.
+    if(FLA_NPU_OP_TRACE)
+        add_ops_compile_options(OP_NAME "ALL" OPTIONS
+            -DFLA_NPU_OP_TRACE=1 -DASCENDC_DUMP=1)
+    endif()
+endfunction()
+
 function(add_ops_tiling_keys)
     cmake_parse_arguments(OP_COMPILE "" "OP_NAME" "COMPUTE_UNIT;TILING_KEYS" ${ARGN})
 

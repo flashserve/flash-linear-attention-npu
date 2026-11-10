@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 #include "../../chunk_kda_bwd/op_kernel/kda_gate_bwd_post.h"
 
 #ifndef TORCH_MODE
@@ -8,6 +9,7 @@ extern "C" __global__ __aicore__ void kda_gate_bwd_post_varlen(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dg, GM_ADDR dA,
     GM_ADDR dbias, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("kda_gate_bwd_post_varlen");
     (void)workspace;
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     REGISTER_TILING_DEFAULT(KDA::KdaGateBwdPostTilingData);

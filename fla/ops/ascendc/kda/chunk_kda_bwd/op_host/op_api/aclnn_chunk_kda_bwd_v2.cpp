@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 // Copyright (c) 2026 Tianjin University, Ltd. BSD-3-Clause.
 #include "aclnn_chunk_kda_bwd_v2.h"
 #ifdef KDA_BWD_OPTIMIZED_A5
@@ -114,6 +115,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const aclTensor *dAOutOptional, const aclTensor *dBiasOutOptional,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(
         aclnnChunkKdaBwdV2,
         DFX_IN(q, k, v, beta, gk, aqk, akk, wOptional, qgOptional,
@@ -390,6 +392,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkKdaBwdV2(void *workspace, uint64_t workspaceSize,
     aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaBwdV2);
     return CommonOpExecutorRun(workspace,workspaceSize,executor,stream);
 }

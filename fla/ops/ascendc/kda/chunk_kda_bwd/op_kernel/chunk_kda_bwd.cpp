@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 #include "kernel_operator.h"
 #ifndef TORCH_MODE
 #include "lib/matmul_intf.h"
@@ -120,6 +121,7 @@ extern "C" __global__ __aicore__ void chunk_kda_bwd(
     GM_ADDR dg, GM_ADDR dA, GM_ADDR dbias,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_kda_bwd");
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);

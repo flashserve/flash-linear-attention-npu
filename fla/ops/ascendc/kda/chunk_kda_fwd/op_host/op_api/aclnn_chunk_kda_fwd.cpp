@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -693,6 +694,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     ChunkKdaFwdParams params{
         q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
         cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
@@ -919,6 +921,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
 aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
                              aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaFwd launch failed.");
@@ -967,6 +970,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     ChunkKdaFwdParams params{
         q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
         cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
@@ -1009,6 +1013,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 aclnnStatus aclnnChunkKdaFwdV2(void *workspace, uint64_t workspaceSize,
                                aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaFwdV2);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaFwdV2 launch failed.");

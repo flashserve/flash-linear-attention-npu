@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 #include "aclnn_chunk_kda_bwd_intra.h"
 #include "chunk_kda_bwd_intra.h"
 
@@ -281,6 +282,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
     const aclTensor *dbOut, const aclTensor *dgOut, uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(aclnnChunkKdaBwdIntra,
                    DFX_IN(q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg,
                           cuSeqlensOptional, chunkIndicesOptional, chunkSize, safeGate, layout),
@@ -374,6 +376,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkKdaBwdIntra(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaBwdIntra);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaBwdIntra launch failed.");

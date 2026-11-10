@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -38,6 +39,7 @@ __global__ __aicore__ void chunk_bwd_dqkwg(GM_ADDR q,             // [B, HK, T, 
                                            GM_ADDR tiling     // . data
 )
 {
+    FLA_KERNEL_TRACE("chunk_bwd_dqkwg");
     // 设置溢出处理
     AscendCUtils::SetOverflow(1);
 

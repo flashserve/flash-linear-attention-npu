@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * BSD 3-Clause License.
@@ -30,6 +31,7 @@ using namespace AscendC;
 __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
                                      GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("solve_tri");
     // tilingKey = chunkSize ∈ {16,32,64,128}
     // TILING_KEY_IS / KERNEL_TASK_TYPE 必须使用整型字面量，不能传 constexpr 变量
     if (TILING_KEY_IS(64)) {
@@ -62,6 +64,7 @@ __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chun
 extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
                                                 GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("solve_tri");
     GET_TILING_DATA(tilingData, tiling);
     // tilingKey = chunkSize；兼容旧 key=1
     if (TILING_KEY_IS(1) || TILING_KEY_IS(16) || TILING_KEY_IS(32) || TILING_KEY_IS(64) || TILING_KEY_IS(128)) {

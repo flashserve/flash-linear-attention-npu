@@ -465,6 +465,32 @@ class HeaderKindGateTest(unittest.TestCase):
         self.assertNotEqual(tool.header_kind("double value"), tool.header_kind("double *value"))
         self.assertNotEqual(tool.header_kind("aclTensor *x"), tool.header_kind("aclTensor **x"))
 
+    def test_hand_written_pair_adapter_remains_checked(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        calls = tool.hand_written_calls(SRC_DIR)
+        self.assertIn("aclnnRecurrentKda", calls)
+        source, kinds = calls["aclnnRecurrentKda"]
+        self.assertEqual(source.name, "stable_recurrent_kda.cpp")
+        self.assertEqual(len(kinds), 24)
+        self.assertEqual(kinds[12], "double")
+        self.assertEqual(kinds[13:20], ["bool"] * 7)
+
+    def test_hand_written_lookup_forms_reject_header_drift(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        for lookup in ('rt.op_api("aclnnDemo")',
+                       'rt.symbol("aclnnDemoGetWorkspaceSize")'):
+            with self.subTest(lookup=lookup), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "stable_demo.cpp"
+                path.write_text(
+                    "// This path does not use FLA_STABLE_EXEC.\n"
+                    "void run_demo(bool mode) {\n"
+                    f"  auto api = {lookup};\n"
+                    "  int ret = get_ws(mode, &workspace_size, &executor);\n"
+                    "}\n", encoding="utf-8")
+                calls = tool.hand_written_calls(Path(tmp))
+                self.assertEqual(calls["aclnnDemo"][1], ["bool"])
+                self.assertTrue(tool.compare(["int64"], calls["aclnnDemo"][1]))
+
     def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         with tempfile.TemporaryDirectory() as temp_dir:
