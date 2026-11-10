@@ -11,46 +11,47 @@
 
 #include <initializer_list>
 #include <sstream>
-#include <utility>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "exe_graph/runtime/storage_shape.h"
 #include "graph/types.h"
 #include "base/err_msg.h"
 
-// 上下文分流：tiling TU 已引入 op_common/log/log.h 时统一定义 FLA_NPU_HOST_TILING。
-#if defined(OP_COMMON_LOG_LOG_H)
-#ifndef FLA_NPU_HOST_TILING
-#define FLA_NPU_HOST_TILING
-#endif
-#endif
-
 // 兼容性桥接层：为 aclnn 层与 tiling 层提供统一的结构化 DFX 上报接口。
 //
-// 上下文自动分流（issue #991 / PR review：宏检查统一放本文件）：
-//   - tiling 层：本 TU 已引入 op_common/log/log.h（其保护宏 OP_COMMON_LOG_LOG_H
-//                 已定义）时，在此统一定义 FLA_NPU_HOST_TILING，
-//                 OP_LOGE 为 (opName, ...) 签名；
-//   - aclnn 层： 默认不定义 FLA_NPU_HOST_TILING，OP_LOGE 为 (errno, ...) 签名；
-//                 aclnn TU 不引入 op_common，故不会误判为 tiling。
-//  算子文件不再维护 __has_include / FLA_NPU_HOST_TILING 探测。
+// 只有两档，判据是“typed 宏是否可用”，不再按编译上下文分流：
+//   1) CANN 9.1+（op_common/log/log.h 已提供 OP_LOGE_FOR_*）且本 TU 已包含该头
+//      （tiling 侧一律包含；aclnn 侧通常不包含）→ 调 typed 宏，人类可读日志与 EZ 码由
+//      op_common 一次产出；
+//   2) 其余情况（CANN 9.0 无 typed 宏，或 aclnn TU 未包含 op_common）→ 直接
+//      REPORT_PREDEFINED_ERR_MSG 上报同族 EZ 码。
 //
-// 新版本（CANN 9.2+ / 提供 OP_LOGE_FOR_* 结构化宏的环境）走结构化宏，
-// 产生 EZ 语义码（EZ0004/EZ0024/...）；旧版本（CANN 8.5/9.0/9.1 或 opbase
-// 无 FOR_* 宏的环境）自动降级为可读文本，保证算子的旧版本兼容性承诺。
+// 为什么删掉原来的“纯文本降级档”和 FLA_NPU_HOST_TILING 上下文分流：
+//   * base/err_msg.h 在 CANN 9.0.0 / 9.1.0 / 9.2.0 都存在并定义 REPORT_PREDEFINED_ERR_MSG，
+//     而本文件无条件包含它，所以 `#else` 纯文本档在任何能编过的环境里都不会被编译；
+//   * 该纯文本档是 FLA_NPU_HOST_TILING 的唯一使用者，删除后“tiling 用 OP_LOGE(opName,…)、
+//     aclnn 用 OP_LOGE(errno,…)”的分流随之消失，也消除了“先包含 op_common 还是先包含本头”
+//     的顺序约束（此前有两个 aclnn TU 因此被误判成 tiling）。
+//
+// 维护约定（新增一类上报时）：
+//   1. 先加 typed 分支，再加 EZ 分支，两者 key 名/顺序/值必须完全一致；
+//   2. key 名与顺序照抄 op_common/log/log.h 的 OP_LOGE_FOR_*（9.2.0 的
+//      OP_LOGE_FOR_INVALID_SHAPE 为 {"param_name","op_name","incorrect_shape","correct_shape"}），
+//      不要自行调整；
+//   3. 不允许再新增纯文本分支；
+//   4. 送进 *_shape 槽位的文本先去外层方括号：EZ0008/EZ0009 模板自带一层方括号，
+//      实测报文形如 "incorrect shape [[1,2,256]]"，去括号后为 "[1,2,256]"。
+
+#if !defined(REPORT_PREDEFINED_ERR_MSG)
+#error "FLA NPU DFX: REPORT_PREDEFINED_ERR_MSG is required (base/err_msg.h, CANN >= 8.0)."
+#endif
 
 namespace fla_npu {
 namespace host_utils {
 
-// 降级上报日志：tiling 上下文的 OP_LOGE(opName, ...) 无 errno；aclnn 上下文的 OP_LOGE(errno, ...)。
-#if defined(FLA_NPU_HOST_TILING)
-#define FLA_NPU_DFX_LOGE(entity, errno, ...) OP_LOGE(entity, __VA_ARGS__)
-#else
-#define FLA_NPU_DFX_LOGE(entity, errno, ...) OP_LOGE(errno, __VA_ARGS__)
-#endif
-
-
+// EZ0008/EZ0009 的 shape 槽位自带方括号，这里去掉调用方传来的外层方括号。
 inline std::string DfxStripBrackets(const std::string &text)
 {
     if (text.size() >= 2 && text.front() == '[' && text.back() == ']') {
@@ -61,69 +62,48 @@ inline std::string DfxStripBrackets(const std::string &text)
 
 inline void DfxReportInvalidInput(const char *entity, const char *paramName)
 {
-#if defined(REPORT_PREDEFINED_ERR_MSG)
     const std::vector<const char *> msgKey = {"param_name", "op_name"};
     const std::vector<const char *> msgvalue = {paramName, entity};
     REPORT_PREDEFINED_ERR_MSG("EZ0004", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_NULLPTR, "Parameter %s of %s is required, but it is empty.",
-                     paramName, entity);
-#endif
 }
 
 inline void DfxReportInvalidShape(const char *entity, const char *paramName, const std::string &actual,
                                   const std::string &expected)
 {
+    const std::string strippedActual = DfxStripBrackets(actual);
+    const std::string strippedExpected = DfxStripBrackets(expected);
 #if defined(OP_LOGE_FOR_INVALID_SHAPE)
-    const std::string strippedActual = DfxStripBrackets(actual);
-    const std::string strippedExpected = DfxStripBrackets(expected);
     OP_LOGE_FOR_INVALID_SHAPE(entity, paramName, strippedActual.c_str(), strippedExpected.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
-    const std::string strippedActual = DfxStripBrackets(actual);
-    const std::string strippedExpected = DfxStripBrackets(expected);
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_shape", "correct_shape"};
     const std::vector<const char *> msgvalue = {paramName, entity, strippedActual.c_str(), strippedExpected.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0008", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect shape %s. It should be %s.",
-                     paramName, entity, actual.c_str(), expected.c_str());
 #endif
 }
 
 inline void DfxReportInvalidShapeWithReason(const char *entity, const char *paramName,
                                             const std::string &actual, const std::string &reason)
 {
+    const std::string strippedActual = DfxStripBrackets(actual);
 #if defined(OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON)
-    const std::string strippedActual = DfxStripBrackets(actual);
     OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(entity, paramName, strippedActual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
-    const std::string strippedActual = DfxStripBrackets(actual);
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_shape", "reason"};
     const std::vector<const char *> msgvalue = {paramName, entity, strippedActual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0009", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect shape %s. Reason: %s.",
-                     paramName, entity, actual.c_str(), reason.c_str());
 #endif
 }
 
 inline void DfxReportInvalidShapesWithReason(const char *entity, const char *paramNames,
                                              const std::string &actual, const std::string &reason)
 {
+    const std::string strippedActual = DfxStripBrackets(actual);
 #if defined(OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON)
-    const std::string strippedActual = DfxStripBrackets(actual);
     OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(entity, paramNames, strippedActual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
-    const std::string strippedActual = DfxStripBrackets(actual);
+#else
     const std::vector<const char *> msgKey = {"param_names", "op_name", "incorrect_shapes", "reason"};
     const std::vector<const char *> msgvalue = {paramNames, entity, strippedActual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0010", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameters %s of %s have incorrect shapes %s. Reason: %s.",
-                     paramNames, entity, actual.c_str(), reason.c_str());
 #endif
 }
 
@@ -132,14 +112,10 @@ inline void DfxReportInvalidDtype(const char *entity, const char *paramName, con
 {
 #if defined(OP_LOGE_FOR_INVALID_DTYPE)
     OP_LOGE_FOR_INVALID_DTYPE(entity, paramName, actual.c_str(), expected.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_dtype", "correct_dtype"};
     const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), expected.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0019", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect dtype %s. It should be %s.",
-                     paramName, entity, actual.c_str(), expected.c_str());
 #endif
 }
 
@@ -148,14 +124,10 @@ inline void DfxReportInvalidDtypes(const char *entity, const char *paramNames, c
 {
 #if defined(OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON)
     OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(entity, paramNames, actual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_names", "op_name", "incorrect_dtypes", "reason"};
     const std::vector<const char *> msgvalue = {paramNames, entity, actual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0021", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameters %s of %s have incorrect dtypes %s. Reason: %s.",
-                     paramNames, entity, actual.c_str(), reason.c_str());
 #endif
 }
 
@@ -164,14 +136,10 @@ inline void DfxReportInvalidValue(const char *entity, const char *paramName, con
 {
 #if defined(OP_LOGE_FOR_INVALID_VALUE)
     OP_LOGE_FOR_INVALID_VALUE(entity, paramName, actual.c_str(), expected.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_value", "correct_value"};
     const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), expected.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0024", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect value %s. It should be %s.",
-                     paramName, entity, actual.c_str(), expected.c_str());
 #endif
 }
 
@@ -180,14 +148,10 @@ inline void DfxReportInvalidValueWithReason(const char *entity, const char *para
 {
 #if defined(OP_LOGE_FOR_INVALID_VALUE_WITH_REASON)
     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(entity, paramName, actual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_value", "reason"};
     const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0026", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect value %s. Reason: %s.",
-                     paramName, entity, actual.c_str(), reason.c_str());
 #endif
 }
 
@@ -196,14 +160,10 @@ inline void DfxReportInvalidValuesWithReason(const char *entity, const char *par
 {
 #if defined(OP_LOGE_FOR_INVALID_VALUES_WITH_REASON)
     OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(entity, paramNames, actual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_names", "op_name", "incorrect_values", "reason"};
     const std::vector<const char *> msgvalue = {paramNames, entity, actual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0027", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameters %s of %s have incorrect values %s. Reason: %s.",
-                     paramNames, entity, actual.c_str(), reason.c_str());
 #endif
 }
 
@@ -212,30 +172,22 @@ inline void DfxReportInvalidListSize(const char *entity, const char *paramName, 
 {
 #if defined(OP_LOGE_FOR_INVALID_LISTSIZE)
     OP_LOGE_FOR_INVALID_LISTSIZE(entity, paramName, actual.c_str(), expected.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_size", "correct_size"};
     const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), expected.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0025", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect element nums %s. It should be %s.",
-                     paramName, entity, actual.c_str(), expected.c_str());
 #endif
 }
 
 inline void DfxReportInvalidFormat(const char *entity, const char *paramName, const std::string &actual,
-                                     const std::string &expected)
+                                   const std::string &expected)
 {
 #if defined(OP_LOGE_FOR_INVALID_FORMAT)
     OP_LOGE_FOR_INVALID_FORMAT(entity, paramName, actual.c_str(), expected.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_format", "correct_format"};
     const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), expected.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0017", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect format %s. It should be %s.",
-                     paramName, entity, actual.c_str(), expected.c_str());
 #endif
 }
 
@@ -244,18 +196,12 @@ inline void DfxReportInvalidFormatWithReason(const char *entity, const char *par
 {
 #if defined(OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON)
     OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(entity, paramName, actual.c_str(), reason.c_str());
-#elif defined(REPORT_PREDEFINED_ERR_MSG)
+#else
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_format", "reason"};
     const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0035", msgKey, msgvalue);
-#else
-    FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
-                     "Parameter %s of %s has incorrect format %s. Reason: %s.",
-                     paramName, entity, actual.c_str(), reason.c_str());
 #endif
 }
-
-#undef FLA_NPU_DFX_LOGE
 
 } // namespace host_utils
 } // namespace fla_npu
