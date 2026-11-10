@@ -1,4 +1,5 @@
-FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.1.0-910b-ubuntu22.04-py3.12-devel
+# Official CANN Dockerfile: Ascend/cann-container-image, 9.2.1-910b-ubuntu22.04-py3.12-devel.
+FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.2.1-910b-ubuntu22.04-py3.12-devel
 
 ARG INSTALL_TEST_REQUIREMENTS=false
 ARG PREWARM_THIRD_PARTY=true
@@ -11,10 +12,8 @@ ARG TORCH_NPU_WHL=torch_npu-2.7.1.post5-cp312-cp312-manylinux_2_28_aarch64.whl
 ARG TORCH_NPU_WHL_URL=
 ARG TRITON_ASCEND_VERSION=3.2.1
 
+# Inherit CANN paths and library paths from the official 9.2.1 image.
 ENV DEBIAN_FRONTEND=noninteractive \
-    ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest \
-    ASCEND_TOOLKIT_HOME=/usr/local/Ascend/ascend-toolkit/latest \
-    LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTORCH_VERSION=${TORCH_VERSION} \

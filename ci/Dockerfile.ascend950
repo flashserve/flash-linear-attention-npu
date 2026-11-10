@@ -1,4 +1,5 @@
-FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.1.0-950-ubuntu22.04-py3.12
+# Official CANN Dockerfile: Ascend/cann-container-image, 9.2.1-950-ubuntu22.04-py3.12.
+FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.2.1-950-ubuntu22.04-py3.12
 
 ARG PREWARM_THIRD_PARTY=true
 ARG INSTALL_TORCH_NPU=true
