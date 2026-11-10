@@ -118,14 +118,14 @@ A5 沿用原有输出处理，本次不扩展其非连续输出支持范围。
   独立调用 [Finalize](../chunk_gated_delta_rule_bwd_finalize/docs/api.md) 时，g/beta 必须同为 BF16 或同为 FP32。
   dq/dk/dv 分别跟随 q/k/v；dG/dBeta 分别转回原始 g/beta dtype，混合输入时两路标量梯度的 dtype 也可不同。
 - 支持 `K=128`、`V=128`、`chunkSize=64`。
-- 支持 `Hv/Hk in {1,2,3,4}`，覆盖 MHA 和 GVA。
+- A5 支持 `Hv/Hk` 为 1～16 的整数，A2/A3 支持 1～4，覆盖 MHA 和 GVA。
 - 支持固定长度和变长序列；变长模式要求物理 `B=1`。
 - 支持 `BNSD`、`BSND`、`NTD` 和 `TND` 四种四维公开布局。
 - 支持可选 initial state、dht、Q/K L2Norm 反向和 beta sigmoid 反向。
 - `aLogOptional`、`dtBiasOptional`、`dALog` 和 `dDtBias` 当前仅保留接口槽位。
 
-本组合的规格受 FwdH 等前序组件约束，仍为 `K=V=128`、`chunkSize=64`、
-`Hv/Hk in {1,2,3,4}`。独立 A2/A3 Finalize 的 V=256、chunkSize=128 或更大头比例支持
+本组合的规格受 FwdH 等前序组件约束，`K=V=128`、`chunkSize=64`，
+`Hv/Hk` 上限在 A5 为 16，在 A2/A3 为 4。独立 A2/A3 Finalize 的 V=256、chunkSize=128 或更大头比例支持
 不代表整个 Bwd executor 已支持这些规格。
 
 A2/A3 组件复用尚需验证两个数值边界：RecomputeWUFwd 与 A5 Intra 的 BF16 中间舍入位置不同；
@@ -146,3 +146,4 @@ ChunkBwdDvLocal 对 gate 差取 `min(delta,0)`，与非单调 gate 的直接指�
 有无 initial state、`stateVFirst=true/false`、Q/K L2Norm 开关和 beta sigmoid 开关。
 `aLogOptional/dtBiasOptional` 需要覆盖非空传入但不参与计算；`dALog/dDtBias` 必须验证为
 空输出而不是 shape 为 `[0]` 的 Tensor。
+在 A5 上还需覆盖 `Hv/Hk` 为 5～16 的定长和变长用例。

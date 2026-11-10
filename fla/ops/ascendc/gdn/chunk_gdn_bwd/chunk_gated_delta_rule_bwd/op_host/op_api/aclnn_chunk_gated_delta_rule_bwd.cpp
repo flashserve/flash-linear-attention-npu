@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+// Keep opdev's logging macros for the existing CHECK_COND and CHECK_RET calls.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_gated_delta_rule_bwd.h"
 
 #ifndef GDN_BWD_ENABLE_ARCH22
@@ -28,6 +30,7 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <string>
 
 #if GDN_BWD_ENABLE_ARCH22
 #include "../../../chunk_bwd_dv_local/op_host/op_api/chunk_bwd_dv_local.h"
@@ -383,8 +386,13 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
                ACLNN_ERR_PARAM_INVALID, "B/HK/HV/T must be positive.");
     CHECK_COND(info.keyDim == DIM_128 && info.valueDim == DIM_128,
                ACLNN_ERR_PARAM_INVALID, "K and V must both be 128.");
-    CHECK_COND(info.hv % info.hk == 0 && info.hv / info.hk <= (IsAscend950() ? kA5PublishedMaxG : 4),
-               ACLNN_ERR_PARAM_INVALID, "HV/HK must be an integer within the platform support range.");
+    const bool isA5 = IsAscend950();
+    if (info.hv % info.hk != 0 || info.hv / info.hk > (isA5 ? kA5PublishedMaxG : 4)) {
+        const std::string actual = "HK=" + std::to_string(info.hk) + ", HV=" + std::to_string(info.hv);
+        OP_LOGE_WITH_INVALID_ATTR("ChunkGatedDeltaRuleBwd", "HV/HK", actual.c_str(),
+                                 isA5 ? "integer in [1, 16] on A5" : "integer in [1, 4] on A2/A3");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_RET(CheckLayoutShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);

@@ -3,6 +3,7 @@
 #endif
 
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
+#include "../chunk_gated_delta_rule_bwd_finalize_validation.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -42,7 +43,6 @@ enum InputIndex : size_t {
     INPUT_CHUNK_INDICES_IDX,
 };
 
-constexpr int64_t kA5PublishedMaxG = 16;
 constexpr int64_t CHUNK_SIZE_64 = 64;
 constexpr int64_t K_SIZE_128 = 128;
 constexpr int64_t V_SIZE_128 = 128;
@@ -125,11 +125,13 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                 OP_LOGE(context->GetNodeName(), "K and V must both be 128."), return ge::GRAPH_FAILED);
     OP_CHECK_IF(tiling.chunkSize != CHUNK_SIZE_64,
                 OP_LOGE(context->GetNodeName(), "BT derived from A must be 64."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tiling.HV % tiling.HK != 0,
-                OP_LOGE(context->GetNodeName(), "HV must be divisible by HK."), return ge::GRAPH_FAILED);
     tiling.headRatio = tiling.HV / tiling.HK;
-    OP_CHECK_IF(tiling.headRatio < 1 || tiling.headRatio > kA5PublishedMaxG,
-                OP_LOGE(context->GetNodeName(), "G=HV/HK must be in [1, 16] on A5."), return ge::GRAPH_FAILED);
+    if (tiling.HV % tiling.HK != 0 || tiling.headRatio < 1 ||
+        tiling.headRatio > FinalizeHost::kA5PublishedMaxG) {
+        const std::string actual = "HK=" + std::to_string(tiling.HK) + ", HV=" + std::to_string(tiling.HV);
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "HV/HK", actual.c_str(), "integer in [1, 16] on A5");
+        return ge::GRAPH_FAILED;
+    }
 
     OP_CHECK_IF(k.GetDim(0) != tiling.B || k.GetDim(1) != tiling.HK ||
                     k.GetDim(2) != tiling.T || k.GetDim(3) != tiling.K,

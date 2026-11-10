@@ -6,11 +6,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "../chunk_gdn_bwd_intra_schedule.h"
 #include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
+#include "op_common/log/log.h"
 
 namespace optiling {
 namespace {
@@ -98,9 +100,6 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
                 return ge::GRAPH_FAILED);
     const int64_t headRatio = valueHeads / qkHeads;
-    OP_CHECK_IF(valueHeads % qkHeads != 0,
-                OP_LOGE(context->GetNodeName(), "HV must be divisible by HK."),
-                return ge::GRAPH_FAILED);
     OP_CHECK_IF(keyDim != 128 || valueDim != 128,
                 OP_LOGE(context->GetNodeName(), "K and V dims must be 128."),
                 return ge::GRAPH_FAILED);
@@ -147,10 +146,18 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     OP_CHECK_IF(!arch22 && arch != NpuArch::DAV_3510,
                 OP_LOGE(context->GetNodeName(), "only DAV_2201 and DAV_3510 are supported."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(headRatio > (arch22 ? 4 : kA5PublishedMaxG) ||
-                    (headRatio > 4 && mainDtype != ge::DT_BF16),
-                OP_LOGE(context->GetNodeName(), "unsupported platform/dtype for HV/HK."),
-                return ge::GRAPH_FAILED);
+    if (valueHeads % qkHeads != 0 || headRatio > (arch22 ? 4 : kA5PublishedMaxG)) {
+        const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads);
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "HV/HK", actual.c_str(),
+                                 arch22 ? "integer in [1, 4] on A2/A3" : "integer in [1, 16] on A5");
+        return ge::GRAPH_FAILED;
+    }
+    if (headRatio > 4 && mainDtype != ge::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads) +
+            ", q dtype=" + DtypeName(mainDtype);
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "q dtype", actual.c_str(), "BF16 for HV/HK > 4 on A5");
+        return ge::GRAPH_FAILED;
+    }
     const uint32_t aicCores = platform.GetCoreNumAic();
     IntraSchedule schedule;
     OP_CHECK_IF(!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,

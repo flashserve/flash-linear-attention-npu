@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+// Keep opdev's logging macros for the existing CHECK_COND and CHECK_RET calls.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_gdn_bwd_intra.h"
 #include "chunk_gdn_bwd_intra.h"
 
@@ -9,6 +11,7 @@
 #include "external/aclnn_kernels/aclnn_platform.h"
 #include "../chunk_gdn_bwd_intra_schedule.h"
 #include <set>
+#include <string>
 #include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
@@ -96,10 +99,20 @@ aclnnStatus Check(const Params &p)
     CHECK_COND(vShape.GetDim(0) == b && vShape.GetDim(2) == t,
                ACLNN_ERR_PARAM_INVALID, "q/k and value tensors must share B and T.");
     const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
-    CHECK_COND(hv % hk == 0 && hv / hk <= (isA5 ? optiling::kA5PublishedMaxG : 4),
-               ACLNN_ERR_PARAM_INVALID, "HV/HK exceeds the platform support range.");
-    CHECK_COND(hv / hk <= 4 || p.q->GetDataType() == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "HV/HK > 4 requires BF16 main tensors.");
+    const int64_t ratio = hv / hk;
+    if (hv % hk != 0 || ratio > (isA5 ? optiling::kA5PublishedMaxG : 4)) {
+        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv);
+        OP_LOGE_WITH_INVALID_ATTR("ChunkGdnBwdIntra", "HV/HK", actual.c_str(),
+                                 isA5 ? "integer in [1, 16] on A5" : "integer in [1, 4] on A2/A3");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    const auto dtype = p.q->GetDataType();
+    if (ratio > 4 && dtype != DataType::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv) +
+            ", q dtype=" + (dtype == DataType::DT_FLOAT16 ? "FP16" : std::to_string(static_cast<int>(dtype)));
+        OP_LOGE_WITH_INVALID_ATTR("ChunkGdnBwdIntra", "q dtype", actual.c_str(), "BF16 for HV/HK > 4 on A5");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_COND(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t,
                ACLNN_ERR_PARAM_INVALID, "g/beta shape must be [B, HV, T].");
     CHECK_COND(aShape.GetDim(0) == b && aShape.GetDim(1) == hv &&
