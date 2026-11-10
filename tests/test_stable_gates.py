@@ -662,6 +662,46 @@ class TranslationUnitTest(unittest.TestCase):
                       "build_stable.py stopped building the declared units")
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "launcher uses Linux ELF")
+class QueuedLaunchTest(unittest.TestCase):
+    """Compile and run the real C++ helper without torch, CANN or an NPU."""
+
+    @classmethod
+    def setUpClass(cls):
+        compiler = shutil.which("g++") or shutil.which("clang++")
+        if compiler is None:
+            raise unittest.SkipTest("queued launch regression needs a C++17 compiler")
+        temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(temp.cleanup)
+        cls.binary = Path(temp.name) / "queued_launch_test"
+        include = SETUP_DIR / "csrc" / "include"
+        result = subprocess.run(
+            # Discard unused torch header definitions; the tested helper only
+            # depends on the C++ standard library and the fake Runtime below.
+            [compiler, "-std=c++17", "-O2", "-pthread",
+             "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+             "-I", str(include), "-I", str(include / "torch_stable_abi"),
+             str(REPO_ROOT / "tests" / "stable_abi" / "queued_launch_test.cpp"),
+             "-o", str(cls.binary)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode:
+            raise RuntimeError(result.stdout + result.stderr)
+
+    def test_launch_ownership_and_errors(self):
+        for scenario in (
+            "queue_disabled", "refused", "success", "deferred",
+            "unknown_before", "sync_throws", "worker_then_throws", "callback_throws",
+            "refusal_after_callback", "accepted_then_throws", "launch_status",
+        ):
+            with self.subTest(scenario=scenario):
+                result = subprocess.run(
+                    [str(self.binary), scenario], capture_output=True,
+                    text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 class VendoredHeaderTest(unittest.TestCase):
     """The vendored torch headers are a copy, and a copy has to stay one.
 

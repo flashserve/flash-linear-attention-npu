@@ -369,6 +369,12 @@ aclnn launch 返回时，kernel 通常只完成 enqueue。runtime 必须保证�
 - workspace 和 helper tensor 的 Python 引用可在 enqueue 后释放；底层 block 的安全复用由 PyTorch NPU caching allocator 的 stream 生命周期管理。
 - descriptor 在 executor 构造和 launch 完成后销毁。
 
+队列入口抛出异常并不代表任务未提交：`RunOpApi` 可能已经调用 launch，再在
+`ASCEND_LAUNCH_BLOCKING=1` 的同步阶段报错。executor 只能执行一次；这种异常必须
+原样传播，不能转为内联重试。当前只接受 `enCurrentNPUStream` 明确的外部 stream
+入队拒绝消息作为提交前回退条件，并用原子标记排除回调已经开始的情况。未知异常
+即使发生在回调开始前，也不重试，因为任务可能已经入队。
+
 runtime 不使用固定深度的全局保活队列，也不在默认路径做全局 synchronize。固定保留近期 workspace 会使显存随连续 launch 次数线性增长，尤其会放大包含内部中间张量的大融合算子显存占用。
 
 ### 5.5 ACL 私有格式和 NZ 透传

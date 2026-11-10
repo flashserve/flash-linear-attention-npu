@@ -54,3 +54,14 @@ FLA_NPU_RUN_CHUNK_KDA_BWD_INTRA=1 python -m pytest torch_custom/fla_npu/test/tes
 `stable_ctypes_fallbacks.py`、`op_abi_validate.py`（需要 OPP 头）、
 `stable_abi_audit.py`；它们的自测在 `tests/test_stable_gates.py`，跑
 `python tests/test_stable_gates.py` 即可。
+
+其中 `QueuedLaunchTest` 编译并执行 `queued_launch_test.cpp`，直接测试产品的
+`detail::enqueue_launch`，仅替换 Runtime 的队列边界，不需要 torch、CANN 或 NPU
+动态库；需要支持 C++17 和 GNU section GC 的编译器/链接器。该测试已由
+`ci/run_checks.sh` 的既有 `test_stable_gates.py` 入口执行。
+
+覆盖队列禁用、外部 stream 明确拒绝、同步/延迟执行、未知入队异常、执行后同步
+异常、消费线程执行后异常、回调内异常、已接受但尚未执行时的异常，以及异步状态码。
+断言原始异常类型和消息保留、executor 至多执行一次、描述符在执行前存活且只释放
+一次。未修改的 runtime 在“执行后同步异常”场景会触发 double free；该离线测试
+不代替 NPU 算子精度或设备端错误定位。

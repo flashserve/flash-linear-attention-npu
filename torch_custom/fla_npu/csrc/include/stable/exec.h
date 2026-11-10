@@ -20,6 +20,7 @@
 // against both the schema and the ctypes reference.
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -31,6 +32,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -348,6 +350,7 @@ inline Held hold_args(Tuple& args, std::index_sequence<I...>) {
 template <class Held>
 struct QueuedLaunch {
   std::optional<Held> held;
+  std::atomic<bool> started{false};
 
   void release() { held.reset(); }
 };
@@ -359,7 +362,7 @@ struct QueuedLaunch {
 // descriptors until the launch has been submitted, and the ordering the caller
 // gave up by not taking the queue's barrier now comes from the queue itself.
 //
-// `held` is borrowed, not consumed: on a refusal it is handed back untouched,
+// `held` is borrowed, not consumed: on a known refusal it is handed back,
 // so the caller can still launch inline.  The workspace is not passed in at all
 // -- it stays owned by the caller's frame (see QueuedLaunch).  That refusal is
 // not hypothetical -- `enCurrentNPUStream` rejects an *external* stream
@@ -368,8 +371,10 @@ struct QueuedLaunch {
 // turn "this stream is not queueable" into a dangling one.
 //
 // Returns false when the caller has to submit inline: this host has no queue
-// entry point, or torch_npu refused the enqueue for this stream.  An inline
-// submission needs a stream read that first drains the queue -- the
+// entry point, or torch_npu explicitly rejected an external stream before
+// enqueueing. Other exceptions do not prove that submission failed and must
+// propagate without retrying the executor. An inline submission needs a stream
+// read that first drains the queue -- the
 // barrier-taking accessor -- because it would otherwise overtake whatever the
 // host enqueued before it.  The Python glue picks the non-flushing accessor
 // exactly when this function reports that it did queue (see
@@ -388,6 +393,7 @@ inline bool enqueue_launch(Runtime& runtime, const char* api, LaunchFn launch,
   // costs nothing per call.
   auto call = [state, launch, workspace_ptr, workspace_size, executor, api,
                stream]() -> int {
+    state->started.store(true, std::memory_order_release);
     const int ret = launch(workspace_ptr, workspace_size, executor,
                            reinterpret_cast<void*>(stream));
     if (ret != 0) {
@@ -401,10 +407,18 @@ inline bool enqueue_launch(Runtime& runtime, const char* api, LaunchFn launch,
   // every descriptor) lives exactly as long as the entry does.
   try {
     runtime.enqueue(api, call);
-  } catch (const std::exception&) {
-    // The enqueue was refused before it wrote to the queue, so nothing has been
-    // submitted: hand the caller back its arguments and let it take the inline
-    // path, which is how this stream was served before the queue existed.
+  } catch (const std::exception& error) {
+    // RunOpApi may execute the callback and then throw while synchronizing
+    // (e.g. ASCEND_LAUNCH_BLOCKING=1). The executor has already been consumed
+    // and `held` released; retrying it would double-free CANN's executor.
+    // An unstarted callback can also already be queued. Only this explicit
+    // enCurrentNPUStream rejection is known to precede queue submission.
+    constexpr std::string_view refused =
+        "External NPU stream is not supported by task queue enqueue.";
+    if (state->started.load(std::memory_order_acquire) ||
+        std::string_view(error.what()).find(refused) != 0) {
+      throw;
+    }
     held = std::move(*state->held);
     state->release();
     return false;
