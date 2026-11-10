@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "op": "recurrent_gated_delta_rule",
+  "note": "Per-sequence verification window accepted by the installed kernel. max_verify_len=null means the kernel consumes a sequence in windows and imposes no per-sequence cap. Keep this file in step with the arch headers: tests/test_rgdr_capabilities.py fails when it drifts.",
+  "arches": {
+    "arch22": {
+      "max_verify_len": null
+    },
+    "arch35": {
+      "max_verify_len": null
+    }
+  }
+}

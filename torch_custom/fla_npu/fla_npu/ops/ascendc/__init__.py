@@ -27,6 +27,11 @@ from typing import Callable, Optional
 
 from ..._backend_policy import validate_backend_environment
 from . import _stable
+from ._capabilities import (
+    RecurrentGdnCapability,
+    recurrent_gdn_capability,
+    recurrent_gdn_max_verify_len,
+)
 
 _ASCENDC_OPS = (
     "npu_fast_gelu_custom",
@@ -592,6 +597,9 @@ __all__ = [
     "FALLBACKS",
     "install_torch_npu_ops_compat",
     "BACKENDS",
+    "RecurrentGdnCapability",
+    "recurrent_gdn_capability",
+    "recurrent_gdn_max_verify_len",
     "BACKWARD_OPS",
     "MUTATED_ARGUMENTS",
     "MUTATION_FLAGS",

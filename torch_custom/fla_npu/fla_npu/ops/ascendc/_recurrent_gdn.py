@@ -286,6 +286,13 @@ def _validate_inputs(
             "actual_seq_lengths must sum to T, got "
             f"sum={sum(lengths)} and T={total_tokens}."
         )
+    if not _allow_cpu:
+        # The legacy single-window kernel returns without writing output or
+        # advancing state when a sequence exceeds its window.  The installed
+        # OPP publishes that window, so fail here instead of returning garbage.
+        from ._capabilities import validate_recurrent_gdn_lengths
+
+        validate_recurrent_gdn_lengths(seq_lengths, query.device.index)
 
     if ssm_state_indices.dtype != torch.int32:
         raise TypeError(
