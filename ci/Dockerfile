@@ -84,8 +84,10 @@ RUN set -e; \
     cd /opt/ATK; \
     python3 -m pip install wheel; \
     python3 setup.py bdist_wheel; \
-    python3 -m pip install dist/*.whl; \
-    python3 -m pip show ATK
+    cd dist; \
+    python3 -m pip install ./*.whl; \
+    python3 -m pip show ATK; \
+    command -v atk
 
 RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
       mkdir -p /opt/fla-ci/third_party/pkg; \
