@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -134,6 +135,7 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM
                                                          GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state,
                                                          GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_gated_delta_rule_fwd_h");
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
 
     if (TILING_KEY_IS(1)) {

@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 #include "aclnn_chunk_kda_fwd_finalize.h"
 #include "chunk_kda_fwd_finalize.h"
 
@@ -287,6 +288,7 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     CHECK_COND(workspaceSize != nullptr && executor != nullptr,
                ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize 与 executor 不能为空。");
@@ -326,6 +328,7 @@ aclnnStatus aclnnChunkKdaFwdFinalize(
     aclOpExecutor *executor,
     aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaFwdFinalize);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor,
                                    stream) == ACLNN_SUCCESS,

@@ -244,6 +244,7 @@ if (BUILD_OPEN_PROJECT)
     endif()
 endif ()
 
+fla_add_trace_compile_options()
 add_subdirectory(common)
 
 set(OP_LIST)
@@ -816,6 +817,9 @@ if (BUILD_OPEN_PROJECT)
                 ${OP_BUILD_TOOL}
                 $<TARGET_FILE:op_host_aclnn>
                 ${base_aclnn_binary_dir}
+                COMMAND ${HI_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/util/instrument_aclnn_trace.py
+                        ${generate_aclnn_srcs}
+                DEPENDS ${PROJECT_SOURCE_DIR}/scripts/util/instrument_aclnn_trace.py
         )
     endif ()
 
@@ -833,6 +837,9 @@ if (BUILD_OPEN_PROJECT)
                 ${OP_BUILD_TOOL}
                 $<TARGET_FILE:op_host_aclnnInner>
                 ${base_aclnn_binary_dir}/inner
+                COMMAND ${HI_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/util/instrument_aclnn_trace.py
+                        ${generate_aclnn_inner_srcs}
+                DEPENDS ${PROJECT_SOURCE_DIR}/scripts/util/instrument_aclnn_trace.py
         )
     endif ()
 

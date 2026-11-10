@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -190,6 +191,7 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     ChunkBwdDqkwgParams params{q, k, v, g, h, dox, dh, dv, cuSeqlensOptional, chunkIndicesOptional, w, gGamma, scale, chunkSize, dqOut, dkOut, dwOut, dgOut};
     CHECK_COND(use_exp2 == false && transpose_state_layout == false, ACLNN_ERR_INNER,
                "use_exp2 and transpose_state_layout must be false.");
@@ -241,6 +243,7 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
 
 aclnnStatus aclnnChunkBwdDqkwg(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkBwdDqkwg);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "This is an error in ChunkBwdDqkwg launch aicore.");

@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
@@ -110,6 +111,7 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     const aclTensor *h, const aclTensor *agHm, int64_t preOrPostNumRanks, int64_t rank, bool forward,
     bool stateVFirst, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     CHECK_COND(agHm != nullptr && h != nullptr, ACLNN_ERR_PARAM_NULLPTR, "agHm and h must not be nullptr.");
     CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize and executor must not be nullptr.");
@@ -138,6 +140,7 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
 aclnnStatus aclnnMergeFwdBwdKernel(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }
 

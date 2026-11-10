@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 #include "../stages/kkt/kkt_cube.h"
 #include "../stages/kkt/kkt_epilogue.h"
 #include "../stages/solve/compat/solve_tri_cube.h"
@@ -86,6 +87,7 @@ __global__ __aicore__ void chunk_cumsum_kkt_solve_tri(GM_ADDR k,
                                                        GM_ADDR workspace,
                                                        GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_cumsum_kkt_solve_tri");
     GET_TILING_DATA_WITH_STRUCT(ChunkKktSolveTriTilingData, tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     GdnRawFront::Resource resource;

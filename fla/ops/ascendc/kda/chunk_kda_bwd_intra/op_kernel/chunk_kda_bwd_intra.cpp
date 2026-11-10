@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
@@ -84,6 +85,7 @@ __global__ __aicore__ void chunk_kda_bwd_intra(
     GM_ADDR chunk_metadata, GM_ADDR dq_out, GM_ADDR dk_out, GM_ADDR db_out,
     GM_ADDR dg_out, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_kda_bwd_intra");
     (void)cu_seqlens;
     AscendC::AscendCUtils::SetOverflow(1);
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);

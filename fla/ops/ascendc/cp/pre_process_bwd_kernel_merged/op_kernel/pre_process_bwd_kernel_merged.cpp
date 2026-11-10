@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -22,6 +23,7 @@ __global__ __aicore__ void pre_process_bwd_kernel_merged(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g, GM_ADDR gk, GM_ADDR cu_seqlens,
     GM_ADDR dhm, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("pre_process_bwd_kernel_merged");
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
     if (userWS == nullptr) {
         return;

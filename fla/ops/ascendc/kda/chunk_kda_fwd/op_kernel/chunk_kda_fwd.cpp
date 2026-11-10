@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
 
@@ -190,6 +191,7 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(
     GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR v_new, GM_ADDR h,
     GM_ADDR qg_scaled, GM_ADDR u_seed, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_kda_fwd");
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
     KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);

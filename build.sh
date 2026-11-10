@@ -1609,6 +1609,13 @@ if [ -n "${OPS_COMPILE_OPTIONS}" ];then
     CUSTOM_OPTION="${CUSTOM_OPTION} -DOPS_COMPILE_OPTIONS=${OPS_COMPILE_OPTIONS}"
 fi
 
+# Explicit OFF resets a reused CMake cache after a diagnostic build.
+case "${FLA_NPU_OP_TRACE:-0}" in
+    0) CUSTOM_OPTION="${CUSTOM_OPTION} -DFLA_NPU_OP_TRACE=OFF" ;;
+    1) CUSTOM_OPTION="${CUSTOM_OPTION} -DFLA_NPU_OP_TRACE=ON" ;;
+    *) echo "FLA_NPU_OP_TRACE must be 0 or 1" >&2; exit 1 ;;
+esac
+
 if [ "${HOST_TILING}" == "true" ];then
     CUSTOM_OPTION="${CUSTOM_OPTION} -DENABLE_HOST_TILING=ON"
 fi

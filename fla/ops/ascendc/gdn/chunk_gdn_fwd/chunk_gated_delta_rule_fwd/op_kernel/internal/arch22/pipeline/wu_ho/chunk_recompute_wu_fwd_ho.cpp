@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
@@ -427,6 +428,7 @@ extern "C" __global__ __aicore__ void chunk_recompute_wu_fwd_ho(
     GM_ADDR initial_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
     GM_ADDR o, GM_ADDR final_state, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_recompute_wu_fwd_ho");
     // The host packs H/O/recompute metadata into one opaque tiling blob. Register
     // the trailer type so the AscendC compiler emits the kernel tiling metadata;
     // the entry still reads the packed sections by their explicit offsets above.

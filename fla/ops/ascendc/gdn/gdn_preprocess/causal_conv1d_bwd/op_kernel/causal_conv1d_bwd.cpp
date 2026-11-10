@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -20,6 +21,7 @@ extern "C" __global__ __aicore__ void causal_conv1d_bwd(
     GM_ADDR dx, GM_ADDR dw, GM_ADDR db, GM_ADDR dh0,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("causal_conv1d_bwd");
     REGISTER_TILING_DEFAULT(CausalConv1dBwdTilingData);
     AscendC::TPipe pipe;
     GET_TILING_DATA(tilingData, tiling);

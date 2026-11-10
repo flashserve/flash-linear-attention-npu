@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -179,6 +180,7 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     RecomputeWUFwdParams params{k, v, beta, a, g, gk,cuSeqlensOptional, chunkIndicesOptional, chunkSize, wOut, uOut};
     // Standard syntax, Check parameters.
     L2_DFX_PHASE_1(aclnnRecomputeWUFwd,
@@ -220,6 +222,7 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
 
 aclnnStatus aclnnRecomputeWUFwd(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnRecomputeWUFwd);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "This is an error in RecomputeWUFwd launch aicore.");

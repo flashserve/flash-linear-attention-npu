@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -161,6 +162,7 @@ __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
     GM_ADDR final_state, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_fwd_h");
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     GDN::FwdHKernelArgs args{};
     args.k = k;

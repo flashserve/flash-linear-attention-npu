@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * BSD 3-Clause License.
@@ -420,6 +421,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     ChunkGatedDeltaRuleFwdPrepareParams params{
         q, k, v, g, beta, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
         chunkSize, allowNegEigval, useExp2, outputA, gOut, wOut, uOut, aOut,
@@ -476,6 +478,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
 aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepare(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleFwdPrepare);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "This is an error in ChunkGatedDeltaRuleFwdPrepare launch aicore.");

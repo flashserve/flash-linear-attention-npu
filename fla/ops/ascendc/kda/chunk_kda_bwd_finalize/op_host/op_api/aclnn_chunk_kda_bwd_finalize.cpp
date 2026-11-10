@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 #include "aclnn_chunk_kda_bwd_finalize.h"
 #include "chunk_kda_bwd_finalize.h"
 
@@ -43,6 +44,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     CHECK_COND(workspaceSize != nullptr && executor != nullptr,
                ACLNN_ERR_PARAM_NULLPTR, "workspaceSize/executor must not be nullptr");
     CHECK_COND(!allowNegEigval || useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
@@ -130,6 +132,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkKdaBwdFinalize(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaBwdFinalize launch failed");
     return ACLNN_SUCCESS;

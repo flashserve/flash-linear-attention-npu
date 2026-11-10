@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -148,6 +149,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
                                                          float scaleValue, aclTensor *out, uint64_t *workspaceSize,
                                                          aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     // Validate before DFX: its phase-1 cache can return without executing
     // the function body, and its generic null guard loses the parameter name.
     if (workspaceSize == nullptr) {
@@ -219,6 +221,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 aclnnStatus aclnnRecurrentGatedDeltaRule(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
                                          aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnRecurrentGatedDeltaRule);
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }
@@ -231,6 +234,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
     bool useQkL2NormInKernel, bool useGateInKernel, bool useBetaSigmoidInKernel,
     bool allowNegEigval, aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     // Validate before DFX: its phase-1 cache can return without executing
     // the function body, and its generic null guard loses the parameter name.
     if (workspaceSize == nullptr) {
@@ -299,6 +303,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
 aclnnStatus aclnnRecurrentGatedDeltaRuleV2(void *workspace, uint64_t workspaceSize,
                                            aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnRecurrentGatedDeltaRuleV2);
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }

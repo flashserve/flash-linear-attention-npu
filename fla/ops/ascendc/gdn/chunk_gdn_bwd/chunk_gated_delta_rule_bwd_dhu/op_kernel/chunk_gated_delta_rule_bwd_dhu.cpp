@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -75,6 +76,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
     GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_gated_delta_rule_bwd_dhu");
     (void)h0;
 
     AscendC::AscendCUtils::SetOverflow(1);

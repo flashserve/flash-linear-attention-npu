@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -66,6 +67,7 @@ extern "C" __global__ __aicore__ void prepare_wy_repr_bwd_full(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("prepare_wy_repr_bwd_full");
     AscendC::AscendCUtils::SetOverflow(1);
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310

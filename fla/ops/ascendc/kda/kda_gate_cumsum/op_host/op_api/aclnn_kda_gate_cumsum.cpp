@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -146,6 +147,7 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(
         aclnnKdaGateCumsum,
         DFX_IN(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
@@ -177,6 +179,7 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
 
 aclnnStatus aclnnKdaGateCumsum(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnKdaGateCumsum);
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }

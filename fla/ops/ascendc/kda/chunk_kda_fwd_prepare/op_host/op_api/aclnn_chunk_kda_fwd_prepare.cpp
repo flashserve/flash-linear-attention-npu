@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -742,6 +743,7 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "workspaceSize 不能为 nullptr。");
     CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
@@ -811,6 +813,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
     aclOpExecutor *executor,
     aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaFwdPrepare);
     CHECK_COND(
         CommonOpExecutorRun(workspace, workspaceSize, executor, stream) ==

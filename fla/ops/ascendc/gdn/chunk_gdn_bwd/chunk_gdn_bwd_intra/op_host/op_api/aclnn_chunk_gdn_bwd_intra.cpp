@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
@@ -168,6 +169,7 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
     bool useExp2, const aclTensor *wOut, const aclTensor *uOut,
     const aclTensor *dvLocalOut, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(aclnnChunkGdnBwdIntra,
                    DFX_IN(q, k, v, g, beta, a, dO, cuSeqlensOptional,
                           chunkIndicesOptional, scale, chunkSize, useExp2),
@@ -196,6 +198,7 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkGdnBwdIntra(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkGdnBwdIntra);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkGdnBwdIntra launch failed.");

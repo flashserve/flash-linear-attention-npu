@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
@@ -62,6 +63,7 @@ template <int D_T>
 __global__ __aicore__ void merge_fwd_bwd_kernel(
     GM_ADDR ag_hm, GM_ADDR h_in, GM_ADDR h, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("merge_fwd_bwd_kernel");
     // OpDef lists h as both input and output. Both addresses are the caller's h.
     (void)h_in;
     AscendC::AscendCUtils::SetOverflow(1);

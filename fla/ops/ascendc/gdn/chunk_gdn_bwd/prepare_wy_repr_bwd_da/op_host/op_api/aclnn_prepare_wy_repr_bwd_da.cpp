@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -128,6 +129,7 @@ aclnnStatus aclnnPrepareWyReprBwdDaGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     PrepareWyReprBwdDaParams params{k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize, dAOut};
     L2_DFX_PHASE_1(aclnnPrepareWyReprBwdDa,
                    DFX_IN(k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
@@ -159,6 +161,7 @@ aclnnStatus aclnnPrepareWyReprBwdDaGetWorkspaceSize(
 
 aclnnStatus aclnnPrepareWyReprBwdDa(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnPrepareWyReprBwdDa);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "This is an error in PrepareWyReprBwdDa launch aicore.");

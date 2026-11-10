@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -181,6 +182,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     PreProcessFwdKernelMergedParams params{k,          w,   u,   gOptional, gkOptional,
                                            bgOptional, vOptional, cuSeqlensOptional, chunkSize, hmOut};
     L2_DFX_PHASE_1(aclnnPreProcessFwdKernelMerged,
@@ -214,6 +216,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
 aclnnStatus aclnnPreProcessFwdKernelMerged(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
                                            aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnPreProcessFwdKernelMerged);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                "This is an error in PreProcessFwdKernelMerged launch aicore.");

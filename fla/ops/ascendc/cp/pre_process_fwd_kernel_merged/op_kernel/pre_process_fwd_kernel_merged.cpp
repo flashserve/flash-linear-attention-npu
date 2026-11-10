@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /*!
  * \file pre_process_fwd_kernel_merged.cpp
  * \brief pre_process_fwd_kernel_merged：薄入口：tiling 注册/解析 + workspace + AIC/AIV 分派
@@ -83,6 +84,7 @@ __global__ __aicore__ void pre_process_fwd_kernel_merged(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR bg, GM_ADDR v,
     GM_ADDR cu_seqlens, GM_ADDR hm, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("pre_process_fwd_kernel_merged");
     static_assert(GATE_MODE >= PPFM_TPL_GATE_G && GATE_MODE <= PPFM_TPL_GATE_BG,
                   "非法 GATE_MODE TilingKey");
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);

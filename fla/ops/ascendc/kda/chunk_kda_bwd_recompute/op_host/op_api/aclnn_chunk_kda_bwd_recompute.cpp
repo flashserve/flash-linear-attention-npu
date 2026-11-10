@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 #include "aclnn_chunk_kda_bwd_recompute.h"
 #include "chunk_kda_bwd_recompute.h"
 #include <cstring>
@@ -77,6 +78,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     const aclTensor *wOut, const aclTensor *uOut, const aclTensor *qgOut,
     const aclTensor *kgOut, const aclTensor *gkOutOptional, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     ChunkKdaBwdRecomputeParams params{
         q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
         chunkSize, useExp2, lowerBound, inputLayout, wOut, uOut, qgOut, kgOut, gkOutOptional};
@@ -117,6 +119,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
 aclnnStatus aclnnChunkKdaBwdRecompute(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }
 

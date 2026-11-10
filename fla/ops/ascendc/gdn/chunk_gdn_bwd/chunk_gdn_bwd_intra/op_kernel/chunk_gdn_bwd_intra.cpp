@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
@@ -88,6 +89,7 @@ __global__ __aicore__ void chunk_gdn_bwd_intra(
     GM_ADDR dO, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u,
     GM_ADDR dvLocal, GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_gdn_bwd_intra");
     (void)STRATEGY_KEY;
     REGISTER_TILING_DEFAULT(GDN::ChunkGdnBwdIntraTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGdnBwdIntraTilingData, tilingData, tiling);

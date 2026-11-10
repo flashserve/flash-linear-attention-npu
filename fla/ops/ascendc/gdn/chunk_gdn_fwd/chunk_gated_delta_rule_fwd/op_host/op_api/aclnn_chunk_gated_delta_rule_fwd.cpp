@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
@@ -1332,6 +1333,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwd,
                    DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional, cuSeqlensOptional,
                           chunkIndicesOptional, layout, scale, chunkSize, useExp2, useQkL2norm,
@@ -1349,6 +1351,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdGetWorkspaceSize(
 aclnnStatus aclnnChunkGatedDeltaRuleFwd(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleFwd);
     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkGatedDeltaRuleFwd launch failed.");

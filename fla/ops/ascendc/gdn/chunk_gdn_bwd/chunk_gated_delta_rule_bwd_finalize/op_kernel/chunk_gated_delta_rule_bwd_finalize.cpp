@@ -1,3 +1,4 @@
+#include "fla_kernel_trace.h"
 #include "kernel_operator.h"
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
 #ifndef TORCH_MODE
@@ -38,6 +39,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     GM_ADDR dg,
     GM_ADDR workspace, GM_ADDR tiling)
 {
+    FLA_KERNEL_TRACE("chunk_gated_delta_rule_bwd_finalize");
     // 执行完整 Stage 0--15。非最终输出的跨核中间量按生命周期
     // 复用 workspace 区域，最终只返回 dq/dk/dv/dbeta/dg。
     AscendC::AscendCUtils::SetOverflow(1);

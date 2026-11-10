@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 /**
  * Copyright (c) 2025 Tianjin University, Ltd.
  * BSD 3-Clause License.
@@ -66,6 +67,7 @@
      uint64_t *workspaceSize,
      aclOpExecutor **executor)
  {
+    FLA_ACLNN_TRACE();
      SolveTriParams params{x, cuSeqlens, chunkIndices, layout, xOut};
  
      L2_DFX_PHASE_1(aclnnSolveTri, DFX_IN(x, cuSeqlens, chunkIndices, layout), DFX_OUT(xOut));
@@ -94,6 +96,7 @@
  
  aclnnStatus aclnnSolveTri(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
  {
+    FLA_ACLNN_TRACE();
      L2_DFX_PHASE_2(aclnnSolveTri);
      CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
                 "SolveTri launch failed.");

@@ -1,3 +1,4 @@
+#include "fla_aclnn_trace.h"
 // Load structured reporters before opdev's legacy logging macros. The opdev
 // headers must retain their logging convention for CHECK_RET and DFX helpers.
 #include "op_common/log/log.h"
@@ -226,6 +227,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     const aclTensor *dAqkOut, const aclTensor *dvOut, const aclTensor *dqRawOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    FLA_ACLNN_TRACE();
     // DFX also checks these pointers, but its generic error omits the operator
     // and parameter names. Report them before entering the DFX helper.
     if (workspaceSize == nullptr) return Missing("workspaceSize");
@@ -254,6 +256,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkKdaBwdPrepare(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
+    FLA_ACLNN_TRACE();
     L2_DFX_PHASE_2(aclnnChunkKdaBwdPrepare);
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }

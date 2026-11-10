@@ -255,7 +255,11 @@ def _is_op_type_in_opdesc(op_descs: list, op_type: str):
 
 def _set_all_options_to_opdescs(op_descs, soc_ver_compile_options):
     for op in op_descs:
-        op.custom_all_compile_options = soc_ver_compile_options
+        # ALL options are emitted by several independent CMake helpers. Keep
+        # their order instead of dropping earlier flags (including debug and
+        # NOT_DYNAMIC_COMPILE) when adding FLA's entry-trace options.
+        for soc, options in soc_ver_compile_options.items():
+            op.custom_all_compile_options.setdefault(soc, []).extend(options)
 
 
 def _set_options_to_opdesc(op_descs, op_type, soc_ver_compile_options):
