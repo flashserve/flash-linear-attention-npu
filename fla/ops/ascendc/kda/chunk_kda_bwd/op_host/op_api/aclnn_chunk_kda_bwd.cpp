@@ -146,7 +146,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *dAOutOptional, const aclTensor *dBiasOutOptional,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    const char *inputLayout = layout;
     const char *outputLayout = layout;
 
     L2_DFX_PHASE_1(

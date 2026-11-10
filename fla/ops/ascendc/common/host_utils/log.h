@@ -50,6 +50,15 @@ namespace host_utils {
 #define FLA_NPU_DFX_LOGE(entity, errno, ...) OP_LOGE(errno, __VA_ARGS__)
 #endif
 
+
+inline std::string DfxStripBrackets(const std::string &text)
+{
+    if (text.size() >= 2 && text.front() == '[' && text.back() == ']') {
+        return text.substr(1, text.size() - 2);
+    }
+    return text;
+}
+
 inline void DfxReportInvalidInput(const char *entity, const char *paramName)
 {
 #if defined(REPORT_PREDEFINED_ERR_MSG)
@@ -66,10 +75,14 @@ inline void DfxReportInvalidShape(const char *entity, const char *paramName, con
                                   const std::string &expected)
 {
 #if defined(OP_LOGE_FOR_INVALID_SHAPE)
-    OP_LOGE_FOR_INVALID_SHAPE(entity, paramName, actual.c_str(), expected.c_str());
+    const std::string strippedActual = DfxStripBrackets(actual);
+    const std::string strippedExpected = DfxStripBrackets(expected);
+    OP_LOGE_FOR_INVALID_SHAPE(entity, paramName, strippedActual.c_str(), strippedExpected.c_str());
 #elif defined(REPORT_PREDEFINED_ERR_MSG)
+    const std::string strippedActual = DfxStripBrackets(actual);
+    const std::string strippedExpected = DfxStripBrackets(expected);
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_shape", "correct_shape"};
-    const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), expected.c_str()};
+    const std::vector<const char *> msgvalue = {paramName, entity, strippedActual.c_str(), strippedExpected.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0008", msgKey, msgvalue);
 #else
     FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
@@ -82,10 +95,12 @@ inline void DfxReportInvalidShapeWithReason(const char *entity, const char *para
                                             const std::string &actual, const std::string &reason)
 {
 #if defined(OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON)
-    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(entity, paramName, actual.c_str(), reason.c_str());
+    const std::string strippedActual = DfxStripBrackets(actual);
+    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(entity, paramName, strippedActual.c_str(), reason.c_str());
 #elif defined(REPORT_PREDEFINED_ERR_MSG)
+    const std::string strippedActual = DfxStripBrackets(actual);
     const std::vector<const char *> msgKey = {"param_name", "op_name", "incorrect_shape", "reason"};
-    const std::vector<const char *> msgvalue = {paramName, entity, actual.c_str(), reason.c_str()};
+    const std::vector<const char *> msgvalue = {paramName, entity, strippedActual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0009", msgKey, msgvalue);
 #else
     FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
@@ -98,10 +113,12 @@ inline void DfxReportInvalidShapesWithReason(const char *entity, const char *par
                                              const std::string &actual, const std::string &reason)
 {
 #if defined(OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON)
-    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(entity, paramNames, actual.c_str(), reason.c_str());
+    const std::string strippedActual = DfxStripBrackets(actual);
+    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(entity, paramNames, strippedActual.c_str(), reason.c_str());
 #elif defined(REPORT_PREDEFINED_ERR_MSG)
+    const std::string strippedActual = DfxStripBrackets(actual);
     const std::vector<const char *> msgKey = {"param_names", "op_name", "incorrect_shapes", "reason"};
-    const std::vector<const char *> msgvalue = {paramNames, entity, actual.c_str(), reason.c_str()};
+    const std::vector<const char *> msgvalue = {paramNames, entity, strippedActual.c_str(), reason.c_str()};
     REPORT_PREDEFINED_ERR_MSG("EZ0010", msgKey, msgvalue);
 #else
     FLA_NPU_DFX_LOGE(entity, ACLNN_ERR_PARAM_INVALID,
