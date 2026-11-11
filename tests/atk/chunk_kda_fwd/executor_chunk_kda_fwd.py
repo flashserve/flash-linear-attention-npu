@@ -1092,8 +1092,10 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
         # `_aclnn_error` 已经把 CANN 报错文案拼进异常，且读取该文案会清空全局缓冲，
         # 因此以异常文本为主、`aclGetRecentErrMsg` 为辅，二者任一命中即可。
         observed = "\n".join(part for part in (str(exc), _recent_aclnn_error()) if part)
-        expected_message = str(spec["expected_message"])
-        if expected_message not in observed:
+        raw_expected = spec["expected_message"]
+        fragments = list(raw_expected) if isinstance(raw_expected, (tuple, list)) else [str(raw_expected)]
+        expected_message = " | ".join(fragments)
+        if not all(fragment in observed for fragment in fragments):
             raise RuntimeError(
                 f"negative interception code matched but message did not: expected {expected_message!r}, "
                 f"actual {observed!r}"

@@ -165,63 +165,63 @@ def _positive_case(local_id: int, soc: str) -> dict:
 
 
 NEGATIVE_CASES = (
-    ("null_q", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_k", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_v", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_g", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_beta", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
-    ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, "attnOut must not be nullptr"),
-    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
-    ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aLogOptional is required when useGateInKernel is true"),
-    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize must be 64 or 128"),
-    ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
-    ("layout_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
-    ("rank_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "q/k/v/g and beta ranks must match layout"),
-    ("qk_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "q and k must have identical shape"),
-    ("v_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
-    ("g_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
-    ("beta_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "expects v/g/beta"),
-    ("h_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be positive"),
-    ("hv_lt_h", "ACLNN_ERR_PARAM_INVALID", 161002, "HV must be greater than or equal to H"),
-    ("hv_not_divisible", "ACLNN_ERR_PARAM_INVALID", 161002, "HV must be divisible by H"),
-    ("h_gt_128", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be less than or equal to 128"),
-    ("k_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("k_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("k_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("v_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("v_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("v_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("q_fp32", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
-    ("k_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
-    ("v_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "q, k and v must use the same float16 or bfloat16 dtype"),
-    ("g_fp16", "ACLNN_ERR_PARAM_INVALID", 161002, "g must be float32 or bfloat16"),
-    ("beta_fp16", "ACLNN_ERR_PARAM_INVALID", 161002, "beta must be float32 or bfloat16"),
-    ("alog_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "aLogOptional must be float32"),
-    ("dtbias_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "dtBiasOptional must be float32"),
-    ("state_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be float32"),
-    ("cu_short", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional must contain at least"),
-    ("cu_start", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional[0] must be 0"),
-    ("cu_end", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional last element must equal the sequence length"),
-    ("cu_order", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional must be nondecreasing"),
-    ("varlen_b2", "ACLNN_ERR_PARAM_INVALID", 161002, "rank4 varlen input with cuSeqlensOptional requires B=1"),
-    ("seq_gt_1024", "ACLNN_ERR_PARAM_INVALID", 161002, "varlen input supports at most 1024 sequences"),
-    ("indices_without_cu", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional requires cuSeqlensOptional"),
-    ("indices_count", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional must contain exactly one"),
-    ("indices_order", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional must use canonical sequence-major chunk order"),
-    ("state_shape_kv", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be [N,HV,K,V]"),
-    ("state_shape_vk", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be [N,HV,K,V]"),
-    ("alog_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "aLogOptional must have shape [HV]"),
-    ("dtbias_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "dtBiasOptional must have shape [HV*K]"),
-    ("lower_low", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
-    ("lower_high", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
-    ("null_akk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
+    ("null_q", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('q',)),
+    ("null_k", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('k',)),
+    ("null_v", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('v',)),
+    ("null_g", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('g',)),
+    ("null_beta", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('beta',)),
+    ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('attn',)),
+    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('aqk',)),
+    ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('aLogOptional',)),
+    ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, ('chunkSize', '64')),
+    ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, ('layout', 'BSND')),
+    ("layout_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, ('layout', 'BSND')),
+    ("rank_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, ('rank',)),
+    ("qk_shape", "ACLNN_ERR_PARAM_INVALID", 161002, ('q,k',)),
+    ("v_shape", "ACLNN_ERR_PARAM_INVALID", 161002, ('v',)),
+    ("g_shape", "ACLNN_ERR_PARAM_INVALID", 161002, ('g',)),
+    ("beta_shape", "ACLNN_ERR_PARAM_INVALID", 161002, ('beta',)),
+    ("h_zero", "ACLNN_ERR_PARAM_INVALID", 161002, ('H,HV',)),
+    ("hv_lt_h", "ACLNN_ERR_PARAM_INVALID", 161002, ('H,HV',)),
+    ("hv_not_divisible", "ACLNN_ERR_PARAM_INVALID", 161002, ('H,HV',)),
+    ("h_gt_128", "ACLNN_ERR_PARAM_INVALID", 161002, ('H,HV',)),
+    ("k_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("k_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("k_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("v_lt_16", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("v_gt_256", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("v_unaligned", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("q_fp32", "ACLNN_ERR_PARAM_INVALID", 161002, ('q', 'FLOAT16,BF16')),
+    ("k_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, ('k,v',)),
+    ("v_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, ('k,v',)),
+    ("g_fp16", "ACLNN_ERR_PARAM_INVALID", 161002, ('g', 'FLOAT,BF16')),
+    ("beta_fp16", "ACLNN_ERR_PARAM_INVALID", 161002, ('beta', 'FLOAT,BF16')),
+    ("alog_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, ('aLogOptional',)),
+    ("dtbias_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, ('dtBiasOptional',)),
+    ("state_dtype", "ACLNN_ERR_PARAM_INVALID", 161002, ('initialStateOptional',)),
+    ("cu_short", "ACLNN_ERR_PARAM_INVALID", 161002, ('cuSeqlensOptional',)),
+    ("cu_start", "ACLNN_ERR_PARAM_INVALID", 161002, ('cuSeqlensOptional',)),
+    ("cu_end", "ACLNN_ERR_PARAM_INVALID", 161002, ('cuSeqlensOptional',)),
+    ("cu_order", "ACLNN_ERR_PARAM_INVALID", 161002, ('cuSeqlensOptional',)),
+    ("varlen_b2", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[0]',)),
+    ("seq_gt_1024", "ACLNN_ERR_PARAM_INVALID", 161002, ('cuSeqlensOptional.size',)),
+    ("indices_without_cu", "ACLNN_ERR_PARAM_INVALID", 161002, ('chunkIndicesOptional',)),
+    ("indices_count", "ACLNN_ERR_PARAM_INVALID", 161002, ('chunkIndicesOptional',)),
+    ("indices_order", "ACLNN_ERR_PARAM_INVALID", 161002, ('chunkIndicesOptional',)),
+    ("state_shape_kv", "ACLNN_ERR_PARAM_INVALID", 161002, ('initialStateOptional',)),
+    ("state_shape_vk", "ACLNN_ERR_PARAM_INVALID", 161002, ('initialStateOptional',)),
+    ("alog_shape", "ACLNN_ERR_PARAM_INVALID", 161002, ('aLogOptional',)),
+    ("dtbias_shape", "ACLNN_ERR_PARAM_INVALID", 161002, ('dtBiasOptional',)),
+    ("lower_low", "ACLNN_ERR_PARAM_INVALID", 161002, ('lowerBound',)),
+    ("lower_high", "ACLNN_ERR_PARAM_INVALID", 161002, ('lowerBound',)),
+    ("null_akk", "ACLNN_ERR_PARAM_NULLPTR", 161001, ('aqkOut',)),
     # 追加在末尾：既有负向用例的 id 与 dtype 奇偶分配保持不变。
-    ("k_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
-    ("v_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
+    ("k_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
+    ("v_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[K]',)),
     # 空 tensor：batch 或序列长度为 0 时无法构成可执行规模，host 侧必须给出
     # 指明逻辑维的拦截文案，而不是下沉到 tiling 后只回传无上下文的 561103。
-    ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "sequence length must be greater than 0"),
-    ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "batch dimension must be greater than 0"),
+    ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[T]',)),
+    ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, ('q.shape[B]',)),
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
@@ -229,6 +229,7 @@ NEGATIVE_COUNT = len(NEGATIVE_CASES)
 
 def _negative_case(local_id: int, soc: str) -> dict:
     mutation, code_name, code, message = NEGATIVE_CASES[local_id]
+    message_fragments = list(message) if isinstance(message, (tuple, list)) else [message]
     layout = "BSND"
     return {
         "case_key": f"{soc}_negative_{local_id:02d}_{mutation}",
@@ -263,7 +264,7 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "mutation": mutation,
         "expected_code_name": code_name,
         "expected_return_code": code,
-        "expected_message": message,
+        "expected_message": message_fragments,
     }
 
 
@@ -348,7 +349,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
     if "expected_return_code" in spec:
         expected_error_msg = (
             f"{spec['expected_code_name']}({spec['expected_return_code']}): "
-            f"{spec['expected_message']}"
+            " | ".join(spec["expected_message"])
         )
     return {
         "id": case_id,
