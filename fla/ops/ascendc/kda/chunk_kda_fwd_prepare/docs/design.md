@@ -202,7 +202,10 @@ B/X0/negX1/Akk 搬入每 head 独立 L1 后即可归还 workspace payload，V6 �
 ## 8. 模板轴
 
 TilingKey 编译期选择 gate dtype、beta dtype、norm 模式、beta 模式、gate 模式、
-`use_exp2`、`safe_gate` 和三档 `OUTPUT_MODE`。`q/k/v` 不进入 dtype 模板轴，固定为 BF16。架构通过
+`use_exp2`、`safe_gate`、四档 `OUTPUT_MODE` 和二值 `GVA_MODE`。A2/A3 共用同一套
+RuntimeKey 定义；`HK=HV` 选择普通分支，`HV>HK` 统一选择 `GVA_MODE=1` 的 GVA 分支。
+具体 `G=HV/HK` 仍从 tiling 数据运行时计算，GVA 不按
+比例 2..16 分别实例化。`q/k/v` 不进入 dtype 模板轴，固定为 BF16。架构通过
 `__CCE_AICORE__` 编译宏选择，kernel 内没有运行时 Arch22/Arch35 分支。
 
 输出搬出在模板实例中使用 `if constexpr` 消除；设备侧 tiling 不保存运行时
