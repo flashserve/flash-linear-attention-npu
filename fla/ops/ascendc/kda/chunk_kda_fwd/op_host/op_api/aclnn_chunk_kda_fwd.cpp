@@ -4,18 +4,22 @@
  * the BSD 3-Clause License (the "License").
  */
 
+#include "op_common/log/log.h"
 #include "aclnn_chunk_kda_fwd.h"
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
+#include "../../../chunk_kda_fwd_fused/op_host/op_api/chunk_kda_fwd_fused.h"
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
+#include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
@@ -23,7 +27,9 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
+#include "graph/utils/type_utils.h"
 
 using namespace op;
 
@@ -471,7 +477,8 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(params.aqkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
                "aqkOut must not be nullptr.");
     CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize only supports 64.");
+               "chunkSize only supports 64 on the three-stage path "
+               "(32 is handled by the ChunkKdaFwdFused kernel).");
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
@@ -659,6 +666,10 @@ bool IsAscend950()
     const char *socName = aclrtGetSocName();
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
+// chunk32 大融合路由实现于 chunk_kda_fwd_chunk32_route.h（body-include，仍属本匿名命名空间）。
+#include "chunk_kda_fwd_chunk32_route.h"
+
+
 } // namespace
 
 aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
@@ -709,6 +720,13 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+    if (params.chunkSize == 32) {
+        // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
+        // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "chunkSize must be 64 or 128 (chunkSize=32 is only supported via aclnnChunkKdaFwdV2).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -987,6 +1005,40 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+    if (params.chunkSize == 32) {
+        // chunk32 不导出反向保存值；与固定 kernel 语义（核内 L2norm/sigmoid、exp2）
+        // 矛盾的开关直接拒绝，不静默误算。
+        const aclTensor *savedOutputs[] = {params.qHatOut, params.kHatOut, params.qRstdOut,
+            params.kRstdOut, params.betaEffOut};
+        const char *savedNames[] = {"qHatOut", "kHatOut", "qRstdOut", "kRstdOut", "betaEffOut"};
+        for (size_t i = 0; i < 5; ++i) {
+            if (savedOutputs[i] != nullptr) {
+                OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", savedNames[i], "provided", "chunkSize=32 does not export backward saved values");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+        }
+        if (!params.useQkL2normInKernel) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useQkL2normInKernel", "false", "true for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!params.useBetaSigmoidInKernel) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useBetaSigmoidInKernel", "false", "true for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.allowNegEigval) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "allowNegEigval", "true", "false for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!params.useExp2) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useExp2", "false", "true for chunkSize=32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        aclnnStatus fusedRet = RunChunkKdaFwd32Fused(params, executorPtr);
+        CHECK_RET(fusedRet == ACLNN_SUCCESS, fusedRet);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);

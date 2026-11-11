@@ -1,6 +1,13 @@
 name: Code Owner Approval
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/CODEOWNERS
+      - .github/scripts/codeowner_approval_gate.js
+      - .github/workflows/codeowner-approval.yml
   pull_request_target:
     types:
       - opened
@@ -21,7 +28,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: codeowner-approval-${{ github.repository }}-${{ github.event.pull_request.number }}
+  group: codeowner-approval-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:

@@ -23,6 +23,8 @@ PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能
 
 required Code Owners review 保证每个 PR 至少获得一名 Code Owner approval。`Code Owner Approval / 2 designated reviewers` status check 进一步要求两名不同指定 Code Owner 在当前 PR 上保持有效 approval；其他账号的 approval 保留在 PR 中但不计入这两名，因此一个指定 Code Owner 加一个名单外 approval 不能通过门禁。
 
+该检查始终读取 PR 当前目标分支中的 `CODEOWNERS`，不使用可能过期的 `base.sha`。当 `CODEOWNERS`、检查脚本或 workflow 合入默认分支时，workflow 会自动重新计算所有面向默认分支的 open PR，因此已有 PR 无需等待新的 review 或 push 事件即可应用最新名单和检查逻辑。
+
 ## ABI 兼容性
 
 如果 PR 修改了算子 `def`、`aclnn` 接口入参类型、返回值、必选/可选属性，或修改了 `torch` 接口入参类型等可能导致 ABI 不一致的内容，仍必须由 `weinachuan` 检视确认。该要求通过 GitHub 原生 Code Owners review 生效，不再由自定义检视 workflow 自动阻塞。
@@ -86,8 +88,18 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci
 /run-npu-ci quick
 /run-npu-ci full
+/run-npu-ci quick debug
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
+/run-npu-ci quick debug ops=causal_conv1d,chunk_bwd_dv_local
 ```
+
+`debug` 是可选的日志调试参数，不改变 `quick/full` 或算子选择；省略模式时仍为 `quick`。
+不设置时保持原有日志输出与保留方式。设置后仅在清理前将本次已有的原始 CI 日志
+和 `dist/fla-npu-build.log` 保存为独立 artifact，保留 7 天；控制台输出和构建参数不变。
+Actions 手动触发入口提供同名布尔输入，默认关闭。旧目标分支尚未声明该输入时，
+显式 `debug` 请求会提示不支持，不会静默丢弃参数。
+调试请求不复用已完成的成功结果，以便生成本次日志；已有同模式、同算子范围的调试运行
+处于排队或执行中时仍避免重复启动。
 
 默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 

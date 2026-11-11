@@ -312,6 +312,38 @@ assert 'torch' not in sys.modules and 'torch_npu' not in sys.modules
                                   (x, x, x, g, beta, 0.125), 8,
                                   [0, 0, 0, 1, 1, 0])
 
+    def test_chunk_kda_fwd_chunk32_tensor_metadata(self):
+        torch = self._metadata_torch()
+        x = torch.empty((1, 128, 2, 128), dtype=torch.bfloat16)
+        g = torch.empty_like(x, dtype=torch.float32)
+        beta = torch.empty((1, 128, 2), dtype=torch.float32)
+        a_log = torch.empty((2,), dtype=torch.float32)
+        cu = torch.tensor([0, 65, 128], dtype=torch.int32,
+                          device=self.metadata_device)
+        canonical = [0, 0, 0, 1, 0, 2, 1, 0, 1, 1]
+        explicit = torch.tensor(canonical, dtype=torch.int64,
+                                device=self.metadata_device)
+        for label, indices in (("missing", None), ("explicit", explicit)):
+            with self.subTest(indices=label):
+                dispatch = mock.Mock(return_value=(x,) * 9)
+                device_api = types.SimpleNamespace(
+                    get_device_name=lambda _: "Ascend950")
+                with mock.patch.object(self.stable, "_op", return_value=dispatch), \
+                        mock.patch.object(self.stable, "_current_stream_ptr", return_value=9), \
+                        mock.patch.object(torch, "npu", device_api, create=True):
+                    self.ascendc.chunk_kda_fwd(
+                        x, x, x, g, beta, 0.125, chunk_size=32,
+                        cu_seqlens=cu, chunk_indices=indices, safe_gate=True,
+                        use_gate_in_kernel=True, A_log=a_log,
+                        use_qk_l2norm_in_kernel=True,
+                        use_beta_sigmoid_in_kernel=True)
+                dispatch.assert_called_once()
+                for value, expected in zip(dispatch.call_args.args[8:10],
+                                           ([0, 65, 128], canonical)):
+                    self.assertEqual(value.device.type, "cpu")
+                    self.assertEqual(value.dtype, torch.int64)
+                    self.assertEqual(value.tolist(), expected)
+
     def test_chunk_kda_fwd_prepare_metadata(self):
         torch = self._metadata_torch()
         x = torch.empty((1, 128, 2, 128), dtype=torch.bfloat16)

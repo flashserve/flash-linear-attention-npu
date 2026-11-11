@@ -10,7 +10,7 @@
 
 name: NPU CI
 
-run-name: 'NPU CI · PR #${{ inputs.pr_number }}'
+run-name: "NPU CI · PR #${{ inputs.pr_number }}${{ inputs.debug && ' · debug' || '' }}"
 
 on:
   workflow_dispatch:
@@ -22,6 +22,11 @@ on:
         description: "CI mode: quick or full"
         required: false
         default: quick
+      debug:
+        description: "Save existing complete build logs for this run"
+        type: boolean
+        required: false
+        default: false
       ops:
         description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
@@ -70,6 +75,7 @@ jobs:
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
+      debug: ${{ steps.prepare.outputs.debug }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
       workflow_ref: ${{ steps.prepare.outputs.workflow_ref }}
@@ -177,6 +183,8 @@ jobs:
                 if (run.head_sha !== baseSha || run.head_sha !== workflowSha || run.head_branch !== pr.base.ref ||
                     run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
                     run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
+                // An ordinary run cannot satisfy a request to collect debug logs.
+                if (debug && !run.display_title?.endsWith(' · debug')) return null;
                 return run;
               } catch (error) {
                 core.warning(`Unable to inspect NPU CI workflow run; allowing a replacement run: ${error.message}`);
@@ -187,6 +195,13 @@ jobs:
             prNumber = Number(workflowInputs.pr_number);
             ciMode = workflowInputs.ci_mode || 'quick';
             ops = workflowInputs.ops || '';
+            const debugValue = String(workflowInputs.debug ?? 'false');
+            if (!['true', 'false'].includes(debugValue)) {
+              core.setFailed('debug 参数必须为 true 或 false。');
+              return;
+            }
+            const debug = debugValue === 'true';
+            core.setOutput('debug', debugValue);
 
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
               core.setFailed(`无效的 PR 编号：${prNumber}`);
@@ -276,7 +291,8 @@ jobs:
                   latestStatus.target_url === latestExecutionCi.target_url;
               })
             );
-            if (isInitialWorkflowAttempt &&
+            // Debug requests must create fresh logs even after a successful run.
+            if (!debug && isInitialWorkflowAttempt &&
                 matchingExecutionRun && latestExecutionCi.state === 'success' &&
                 allContextsPassedInSameRun) {
               core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
@@ -358,6 +374,7 @@ jobs:
                 `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
                 '',
                 `- 模式：\`${ciMode}\``,
+                debug ? '- 调试日志：开启；完整日志作为独立 artifact 保存 7 天' : '',
                 `- 触发人：@${requestedBy}`,
                 `- CI 定义分支：\`${workflowRef}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
@@ -666,6 +683,8 @@ jobs:
           rm -f \
             "$CI_ACCURACY_REPORT_FILE" \
             "$CI_ACCURACY_REPORT_FILE.tmp" \
+            "$CI_STAGE_REPORT_FILE" \
+            dist/fla-npu-build.log \
             "$CI_RAW_LOG_FILE" \
             "$CI_DIAGNOSTIC_FILE" \
             "$CI_SUMMARY_FILE"
@@ -735,6 +754,29 @@ jobs:
             ci_status=$?
           fi
           echo "::endgroup::"
+          echo "exit_code=$ci_status" >>"$GITHUB_OUTPUT"
+          exit "$ci_status"
+
+      - name: 汇总 ${{ matrix.name }} 诊断
+        id: npu_ci_summary
+        if: always() && steps.npu_ci.outcome != 'skipped'
+        working-directory: repo
+        env:
+          NPU_CI_OUTCOME: ${{ steps.npu_ci.outcome }}
+          NPU_CI_EXIT_CODE: ${{ steps.npu_ci.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$CI_RAW_LOG_FILE")"
+          # Cancellation can interrupt the run step before it writes outputs.
+          # Never infer success from a missing exit code after interruption.
+          case "$NPU_CI_OUTCOME" in
+            success) ci_status="${NPU_CI_EXIT_CODE:-0}" ;;
+            cancelled) ci_status=130 ;;
+            *) ci_status="${NPU_CI_EXIT_CODE:-1}" ;;
+          esac
+          if [[ "$NPU_CI_OUTCOME" == cancelled ]]; then
+            echo "[CI][ERROR] NPU CI was cancelled; diagnostics may be incomplete." | tee -a "$CI_RAW_LOG_FILE"
+          fi
 
           summary_status=0
           accuracy_requirement=()
@@ -766,10 +808,19 @@ jobs:
             summary_status=1
           fi
 
-          if [[ "$ci_status" -ne 0 ]]; then
-            exit "$ci_status"
-          fi
           exit "$summary_status"
+
+      - name: 保存 ${{ matrix.name }} 完整日志
+        if: always() && needs.prepare.outputs.debug == 'true' && steps.npu_ci.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: npu-ci-logs-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            repo/${{ env.CI_RAW_LOG_FILE }}
+            repo/dist/fla-npu-build.log
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
 
       - name: 清理 ${{ matrix.name }} 临时完整日志
         if: always()

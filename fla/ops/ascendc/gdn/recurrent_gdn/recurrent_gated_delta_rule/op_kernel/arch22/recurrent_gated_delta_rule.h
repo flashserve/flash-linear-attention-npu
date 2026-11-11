@@ -28,7 +28,8 @@ struct RGDRInitParams {
 
 // Each physical region has one owner. In particular a BF16 snapshot lives in
 // the consumed source bank, never in the FP32 bank used by the next recurrence.
-template <typename State, typename Beta, typename Gate>
+template <typename State, typename Beta, typename Gate, bool USE_QK_L2NORM = false,
+          bool USE_GATE_IN_KERNEL = false, bool USE_BETA_SIGMOID = false, bool ALLOW_NEG_EIGVAL = false>
 class RGDR {
     static constexpr uint32_t kHeadDim = 128;
     static constexpr uint32_t kWindowTokens = 8;
@@ -108,6 +109,7 @@ public:
             outFree_[bank] = pipe_->AllocEventID<HardEvent::MTE3_V>();
         }
         scalarToVector_ = pipe_->AllocEventID<HardEvent::S_V>();
+        vectorToScalar_ = pipe_->AllocEventID<HardEvent::V_S>();
         taskUbFree_ = pipe_->AllocEventID<HardEvent::V_MTE2>();
         taskGmFree_ = pipe_->AllocEventID<HardEvent::MTE3_MTE2>();
     }
@@ -183,6 +185,11 @@ private:
         auto betaRaw = ub_.GetWithOffset<Beta>(kWindowTokens, kRawBaseOffset + bank * kRawBankBytes + kRawBetaOffset);
         auto gateRaw = ub_.GetWithOffset<Gate>(kWindowTokens, kRawBaseOffset + bank * kRawBankBytes + kRawGateOffset);
         const uint64_t keyHead = head / (td_.valueHeads / td_.keyHeads);
+        if (rawPending_[bank]) {
+            WaitFlag<HardEvent::V_MTE2>(rawFree_[bank]);
+            rawPending_[bank] = false;
+        }
+        CopyInput(bank, kQueryInput, start, keyHead, count);
         CopyWindowMeta(bank, batch, head, start, position, count);
         WaitFlag<HardEvent::MTE2_V>(ready_[bank][kQueryInput]);
         CopyInput(bank, kKeyInput, start, keyHead, count);
@@ -210,7 +217,8 @@ private:
         const uint32_t vectorCount = kWindowTokens;
         if constexpr (std::is_same<Beta, float>::value) DataCopy(beta, betaRaw, vectorCount);
         else Cast(beta, betaRaw, RoundMode::CAST_NONE, vectorCount);
-        if (td_.useBetaSigmoidInKernel) {
+        PipeBarrier<PIPE_V>();
+        if constexpr (USE_BETA_SIGMOID) {
             // Both exponent arguments are nonpositive. This preserves sigmoid
             // tails without a packed-mask select for the short metadata window.
             Abs(tmp0, beta, vectorCount);
@@ -220,24 +228,26 @@ private:
             Exp(tmp1, tmp1, vectorCount);
             PipeBarrier<PIPE_V>();
             Exp(tmp0, tmp0, vectorCount);
+            if constexpr (ALLOW_NEG_EIGVAL) {
+                Muls(tmp1, tmp1, 2.0f, vectorCount);
+            }
             PipeBarrier<PIPE_V>();
             Adds(tmp0, tmp0, 1.0f, vectorCount);
             PipeBarrier<PIPE_V>();
             Div(beta, tmp1, tmp0, vectorCount);
-            if (td_.allowNegEigval) {
-                PipeBarrier<PIPE_V>();
-                Muls(beta, beta, 2.0f, vectorCount);
-            }
         }
         if (td_.hasGama) {
             if constexpr (std::is_same<Gate, float>::value) DataCopy(gate, gateRaw, vectorCount);
             else Cast(gate, gateRaw, RoundMode::CAST_NONE, vectorCount);
-            if (td_.useGateInKernel) {
+            PipeBarrier<PIPE_V>();
+            if constexpr (USE_GATE_IN_KERNEL) {
                 Adds(gate, gate, bias, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Maxs(tmp0, gate, 0.0f, vectorCount);
                 Abs(tmp1, gate, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Muls(tmp1, tmp1, -1.0f, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Exp(tmp1, tmp1, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Adds(tmp2, tmp1, 1.0f, vectorCount);
@@ -256,9 +266,11 @@ private:
                 PipeBarrier<PIPE_V>();
                 Add(gate, tmp0, gate, vectorCount);
                 Duplicate(tmp1, aLog, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Exp(tmp1, tmp1, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Mul(gate, gate, tmp1, vectorCount);
+                PipeBarrier<PIPE_V>();
                 Muls(gate, gate, -1.0f, vectorCount);
                 PipeBarrier<PIPE_V>();
                 Exp(gate, gate, vectorCount);
@@ -274,12 +286,15 @@ private:
         rawPending_[bank] = true;
         auto q = ub_.GetWithOffset<float>(kWindowElements, kQueryOffset);
         auto k = ub_.GetWithOffset<float>(kWindowElements, kKeyOffset);
-        if (td_.useQkL2NormInKernel) {
+        if constexpr (USE_QK_L2NORM) {
             NormalizeWindow(q, count);
             NormalizeWindow(k, count);
         }
         Muls(q, q, td_.scale, count * kHeadDim);
         PipeBarrier<PIPE_V>();
+        // ProcessToken reads the vector-produced beta/alpha through GetValue (S pipe).
+        SetFlag<HardEvent::V_S>(vectorToScalar_);
+        WaitFlag<HardEvent::V_S>(vectorToScalar_);
     }
 
     __aicore__ inline void NormalizeWindow(LocalTensor<float> vector, uint32_t rows)
@@ -293,6 +308,7 @@ private:
         for (uint32_t row = 0; row < rows; ++row) {
             Add(product[row * kHeadDim + kFloatVectorElements], product[row * kHeadDim],
                 product[row * kHeadDim + kFloatVectorElements], kFloatVectorElements);
+            PipeBarrier<PIPE_V>();
             WholeReduceSum(sum[row], product[row * kHeadDim + kFloatVectorElements],
                            kFloatVectorElements, 1, 1, 1, kVectorBytes / kBlockBytes);
         }
@@ -300,8 +316,7 @@ private:
         const uint32_t vectorRows = kWindowTokens;
         Adds(sum, sum, kNormEpsilon, vectorRows);
         PipeBarrier<PIPE_V>();
-        Adds(inverse, sum, 0.0f, vectorRows);
-        Rsqrt(inverse, inverse, vectorRows);
+        Rsqrt(inverse, sum, vectorRows);
         PipeBarrier<PIPE_V>();
         for (uint32_t iteration = 0; iteration < kNormNewtonIterations; ++iteration) {
             Mul(correction, inverse, inverse, vectorRows);
@@ -309,6 +324,7 @@ private:
             Mul(correction, correction, sum, vectorRows);
             PipeBarrier<PIPE_V>();
             Muls(correction, correction, -0.5f, vectorRows);
+            PipeBarrier<PIPE_V>();
             Adds(correction, correction, 1.5f, vectorRows);
             PipeBarrier<PIPE_V>();
             Mul(inverse, inverse, correction, vectorRows);
@@ -372,7 +388,7 @@ private:
         PipeBarrier<PIPE_V>();
     }
 
-    __aicore__ inline void EmitState(uint32_t bank, uint64_t slot, uint64_t head)
+    __aicore__ inline void CopyOutState(uint32_t bank, uint64_t slot, uint64_t head)
     {
         SetFlag<HardEvent::V_MTE3>(stateReady_[bank]);
         WaitFlag<HardEvent::V_MTE3>(stateReady_[bank]);
@@ -389,7 +405,7 @@ private:
         statePending_[bank] = true;
     }
 
-    __aicore__ inline void Token(uint32_t token, uint64_t head,
+    __aicore__ inline void ProcessToken(uint32_t token, uint64_t head,
                                   uint64_t globalToken, uint32_t src, uint32_t dst)
     {
         auto query = ub_.GetWithOffset<float>(kHeadDim, kQueryOffset + token * kFloatRowBytes);
@@ -434,14 +450,14 @@ private:
         Cast(outputBf16, output, RoundMode::CAST_RINT, kHeadDim);
         const int32_t writeSlot = ub_.GetWithOffset<int32_t>(kWindowTokens, kWriteSlotsOffset).GetValue(token);
         if constexpr (std::is_same<State, float>::value) {
-            EmitState(dst, static_cast<uint64_t>(writeSlot), head);
+            CopyOutState(dst, static_cast<uint64_t>(writeSlot), head);
         } else {
             // Source was reclaimed on its preceding turn as a destination.
             // All V reads above must finish before its upper half is reused.
             PipeBarrier<PIPE_V>();
             Cast(ub_.GetWithOffset<State>(kStateElements, src * kStateBankBytes + kSnapshotOffset), target,
                  RoundMode::CAST_RINT, kStateElements);
-            EmitState(src, static_cast<uint64_t>(writeSlot), head);
+            CopyOutState(src, static_cast<uint64_t>(writeSlot), head);
         }
         SetFlag<HardEvent::V_MTE3>(outReady_[outBank]);
         WaitFlag<HardEvent::V_MTE3>(outReady_[outBank]);
@@ -458,29 +474,13 @@ private:
         LoadState(static_cast<uint64_t>(initial), head);
         const float aLog = td_.hasALog ? aLog_.GetValue(head) : 0.0f;
         const float bias = td_.hasDtBias ? bias_.GetValue(head) : 0.0f;
-        const uint64_t keyHead = head / (td_.valueHeads / td_.keyHeads);
         uint32_t src = 0;
-        if (rawPending_[0]) {
-            WaitFlag<HardEvent::V_MTE2>(rawFree_[0]);
-            rawPending_[0] = false;
-        }
-        CopyInput(0, kQueryInput, start, keyHead, length < kWindowTokens ? length : kWindowTokens);
         for (uint32_t position = 0; position < length; position += kWindowTokens) {
             const uint32_t bank = (position / kWindowTokens) % kBufferCount;
             const uint32_t count = length - position < kWindowTokens ? length - position : kWindowTokens;
             PrepareWindow(bank, batch, head, start + position, position, count, aLog, bias);
-            if (position + count < length) {
-                const uint32_t nextCount =
-                    length - position - count < kWindowTokens ? length - position - count : kWindowTokens;
-                const uint32_t nextBank = 1 - bank;
-                if (rawPending_[nextBank]) {
-                    WaitFlag<HardEvent::V_MTE2>(rawFree_[nextBank]);
-                    rawPending_[nextBank] = false;
-                }
-                CopyInput(nextBank, kQueryInput, start + position + count, keyHead, nextCount);
-            }
             for (uint32_t token = 0; token < count; ++token) {
-                Token(token, head, start + position + token, src, 1 - src);
+                ProcessToken(token, head, start + position + token, src, 1 - src);
                 src = 1 - src;
             }
         }
@@ -511,6 +511,7 @@ private:
             pipe_->ReleaseEventID<HardEvent::MTE3_V>(outFree_[bank]);
         }
         pipe_->ReleaseEventID<HardEvent::S_V>(scalarToVector_);
+        pipe_->ReleaseEventID<HardEvent::V_S>(vectorToScalar_);
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(taskUbFree_);
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(taskGmFree_);
     }
@@ -526,7 +527,7 @@ private:
     GlobalTensor<float> aLog_, bias_;
     TEventID ready_[kBufferCount][kQkvInputCount], rawFree_[kBufferCount];
     TEventID stateReady_[kBufferCount], stateFree_[kBufferCount], outReady_[kBufferCount], outFree_[kBufferCount];
-    TEventID scalarToVector_, taskUbFree_, taskGmFree_;
+    TEventID scalarToVector_, vectorToScalar_, taskUbFree_, taskGmFree_;
     bool rawPending_[kBufferCount] = {false, false};
     bool statePending_[kBufferCount] = {false, false};
     bool outPending_[kBufferCount] = {false, false};
