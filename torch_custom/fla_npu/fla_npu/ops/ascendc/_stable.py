@@ -1268,6 +1268,19 @@ def npu_causal_conv1d(x, weight, bias=None, conv_states=None, *,
 # ---------------------------------------------------------------------------
 
 
+def _normalize_chunk_metadata(cu_seqlens, chunk_indices):
+    """Make tensor metadata safe for Python truth tests and chunk generation.
+
+    Match the GDN prepare convention: copy device metadata to the host once,
+    then use plain integers. Keep None and list/tuple inputs unchanged.
+    """
+    if cu_seqlens is not None and hasattr(cu_seqlens, "detach"):
+        cu_seqlens = [int(x) for x in cu_seqlens.detach().cpu().reshape(-1).tolist()]
+    if chunk_indices is not None and hasattr(chunk_indices, "detach"):
+        chunk_indices = [int(x) for x in chunk_indices.detach().cpu().reshape(-1).tolist()]
+    return cu_seqlens, chunk_indices
+
+
 def _canonical_chunk_indices(cu_seqlens, chunk_size):
     """Fill in the chunk_indices a varlen caller left out.
 
@@ -1290,6 +1303,7 @@ def npu_chunk_fwd_h(k, w, u, *, g=None, gk=None, initial_state=None,
                     use_exp2=False, state_v_first=False):
     """Chunk-local states h, the recomputed v, and optionally the final state."""
 
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     return _op("npu_chunk_fwd_h")(
@@ -1308,6 +1322,7 @@ def npu_chunk_gated_delta_rule_fwd_h(k, w, u, g=None, *, gk=None,
     """chunk_fwd_h without the GDN recompute flags."""
 
     chunk_size = 64 if chunk_size is None else chunk_size
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     return _op("npu_chunk_gated_delta_rule_fwd_h")(
@@ -1465,6 +1480,7 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                 "the three-stage scenario (bfloat16 q/k/v, K=V=128, "
                 "chunk_size=64).")
 
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     # dense batch:chunk32 融合 kernel 原生支持——
     # 单次启动内按任务(task = batch*HV + value_head)循环,替代逐 batch 递归+cat。
     # (历史:python 逐 b 拆分曾用于规避 kernel 只认 B=1 与图内多 launch 的
@@ -1587,6 +1603,7 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
     反向需要的 L2 norm 保存值（q_hat/k_hat/q_rstd/k_rstd/beta_eff）按需在这里
     导出；不传输出槽时接口只做校验并返回 13 个 None，老路径不受影响。
     """
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     # L2 的档位契约要求 gk/aqk/w/u/kg/qg_scaled 六个槽
@@ -1699,6 +1716,7 @@ def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
     轴）。``cu_seqlens`` 传了就按 canonical 顺序生成 ``chunk_indices``。
     """
 
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, 64)
     return _op("npu_chunk_kda_fwd_finalize")(
@@ -1831,11 +1849,7 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd_prepare: a_log and dt_bias "
             "require use_gate_in_kernel=True.")
-    # ATK/NPU may pass cu_seqlens as a Tensor; bool(Tensor) is ambiguous.
-    if cu_seqlens is not None and hasattr(cu_seqlens, "detach"):
-        cu_seqlens = [int(x) for x in cu_seqlens.detach().cpu().reshape(-1).tolist()]
-    if chunk_indices is not None and hasattr(chunk_indices, "detach"):
-        chunk_indices = [int(x) for x in chunk_indices.detach().cpu().reshape(-1).tolist()]
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     (q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a) = _op(
@@ -1951,6 +1965,7 @@ def npu_chunk_gated_delta_rule_bwd(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd: use_gate_in_kernel=True is not "
             "supported.")
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     return _op("npu_chunk_gated_delta_rule_bwd")(
