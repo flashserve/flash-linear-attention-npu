@@ -93,6 +93,14 @@ function getTargetBranchRef(pr) {
   return ref;
 }
 
+function parsePullNumber(value) {
+  const text = String(value ?? '').trim();
+  if (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(Number(text))) {
+    throw new Error('PR 编号必须是合法的正整数。');
+  }
+  return Number(text);
+}
+
 function truncateDescription(value) {
   return String(value).replace(/\s+/g, ' ').trim().slice(0, 140);
 }
@@ -207,11 +215,12 @@ async function listOpenPullNumbers({ github, context, base }) {
   return pulls.map((pull) => pull.number);
 }
 
-async function run({ github, context, core }) {
+async function run({ github, context, core, pullNumber }) {
   const eventPr = context.payload.pull_request;
-  if (eventPr) {
+  const targetPullNumber = pullNumber ?? eventPr?.number;
+  if (targetPullNumber !== undefined) {
     try {
-      await evaluatePullRequest({ github, context, core, pullNumber: eventPr.number });
+      await evaluatePullRequest({ github, context, core, pullNumber: targetPullNumber });
     } catch (error) {
       core.setFailed(error.message);
     }
@@ -254,6 +263,7 @@ module.exports = {
   parseCodeowners,
   computeActiveApprovals,
   getTargetBranchRef,
+  parsePullNumber,
   getPushTargetBranch,
   listOpenPullNumbers,
   run,
