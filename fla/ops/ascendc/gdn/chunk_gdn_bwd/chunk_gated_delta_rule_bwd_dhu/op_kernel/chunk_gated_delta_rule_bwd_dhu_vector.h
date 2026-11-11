@@ -15,6 +15,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 
+
 #include <cstdint>
 #include <type_traits>
 
@@ -184,6 +185,9 @@ public:
             // 变长前缀增量缓存（taskIdx 递增 → seqIdx 单调不减）
             GetSeqInfoCached(cuSeqlens_, *tiling_, seqIdx, seqInfoCache_, seqInfo);
             if (!seqInfo.valid) {
+                if (isVariable_ != 0 && seqInfo.tokenStart == seqInfo.tokenEnd) {
+                    CopyEmptySequenceDh0(seqIdx, hvBase, headCnt);
+                }
                 continue;
             }
 
@@ -329,10 +333,14 @@ public:
                     for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                         const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
                         const int64_t token = chunkInfo.tokenStart + rowOffset;
-                        const uint32_t qIdx = CopyInRows(
+                        const uint32_t qIdx = CopyInRows<DT>(
                             qGm_, qInputBuf_[curQInputPingPong_],
-                            ((chunkInfo.bIdx * HK_ + hq) * T_ + token) * K_,
-                            static_cast<uint32_t>(curRows * K_));
+                            (tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND)
+                                ? ((chunkInfo.bIdx * T_ + token) * HK_ + hq) * K_
+                                : ((chunkInfo.bIdx * HK_ + hq) * T_ + token) * K_,
+                            static_cast<uint32_t>(curRows * K_),
+                            (tiling_->layout == GDN::DhuLayout::BSND || tiling_->layout == GDN::DhuLayout::TND)
+                                ? HK_ * K_ : K_);
                         AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                         CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);
                         AscendC::PipeBarrier<PIPE_V>();
@@ -570,11 +578,20 @@ private:
     template <typename CopyType>
     __aicore__ inline uint32_t CopyInRows(AscendC::GlobalTensor<CopyType> &inputTensor,
                                           AscendC::LocalTensor<CopyType> dstTensor, int64_t inputOffset,
-                                          uint32_t elements)
+                                          uint32_t elements, int64_t rowStride = 0)
     {
         const uint32_t inputIdx = curQInputPingPong_;
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
-        AscendC::DataCopy(dstTensor, inputTensor[inputOffset], elements);
+        if (rowStride > K_) {
+            const uint32_t rows = elements / static_cast<uint32_t>(K_);
+            AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(K_ * sizeof(CopyType)),
+                static_cast<uint32_t>((rowStride - K_) * sizeof(CopyType)), 0, 0};
+            AscendC::DataCopyPadExtParams<CopyType> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(dstTensor, inputTensor[inputOffset], copy, pad);
+        } else {
+            AscendC::DataCopy(dstTensor, inputTensor[inputOffset], elements);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[inputIdx]);
         curQInputPingPong_ ^= 1U;
         return inputIdx;
@@ -629,6 +646,30 @@ private:
         AscendC::DataCopy(outTensor[outOffset], outputBuf_[outputIdx], elements);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx]);
         curOutputPingPong_ ^= 1U;
+    }
+
+    __aicore__ inline void CopyEmptySequenceDh0(int64_t seqIdx, int64_t hvBase, int64_t headCnt)
+    {
+        if (!hasDh0_ || !hasDht_) {
+            return;
+        }
+        // Empty sequences have hT == h0. Copy in the shared public state
+        // layout, reusing the existing q input and output buffer events.
+        AscendC::LocalTensor<float> scratch = qFp32Buf_.template Get<float>();
+        for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
+            if (headOffset % subBlockNum_ != subBlockIdx_) {
+                continue;
+            }
+            const int64_t stateBase = (seqIdx * HV_ + hvBase + headOffset) * K_ * V_;
+            for (int64_t offset = 0; offset < K_ * V_; offset += vecRow_ * V_) {
+                const uint32_t elems = static_cast<uint32_t>(Min(vecRow_ * V_, K_ * V_ - offset));
+                const uint32_t inputIdx = curQInputPingPong_;
+                CopyInRows(dhtGm_, qInputBuf_[inputIdx], stateBase + offset, elems);
+                CastInputRows(scratch, qInputBuf_[inputIdx], elems, inputIdx);
+                AscendC::PipeBarrier<PIPE_V>();
+                CopyOutFp32Rows(dh0Gm_, scratch, stateBase + offset, elems);
+            }
+        }
     }
 
     // Load the terminal gradient into the internal fp32 [K, V] state.

@@ -7,6 +7,8 @@
 #ifndef ARCH22_CHUNK_FWD_H_CUBE_H
 #define ARCH22_CHUNK_FWD_H_CUBE_H
 
+#include "../chunk_fwd_h_struct.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 2201
 #endif
@@ -420,10 +422,13 @@ private:
         }
         AscendC::GlobalTensor<bfloat16_t> gmKg;
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) +
-            FwdHKOffset(args_.tiling, unit.sequence.physicalBatch, binding.kh, chunk.tokenBegin));
+            FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
+                                                         binding.kh, chunk.tokenBegin));
+        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND || args_.tiling.layout == GDN::FwdHLayout::TND)
+            ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         if constexpr (!STATE_V_FIRST) {
             auto tensorGm = tla::MakeTensor(gmKg,
-                tla::MakeLayout<bfloat16_t, LayoutLeftS2>(FWD_H_K, chunk.validTokens),
+                tla::MakeLayout<bfloat16_t, LayoutLeftS2>(kRowStride, chunk.validTokens),
                 Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(FWD_H_K, chunk.validTokens));
@@ -433,7 +438,7 @@ private:
             copy(tensorL1, blockGm);
         } else {
             auto tensorGm = tla::MakeTensor(gmKg,
-                tla::MakeLayout<bfloat16_t, LayoutRightS2>(chunk.validTokens, FWD_H_K),
+                tla::MakeLayout<bfloat16_t, LayoutRightS2>(chunk.validTokens, kRowStride),
                 Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(chunk.validTokens, FWD_H_K));

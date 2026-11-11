@@ -129,6 +129,7 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.useInitialState = tilingData->useInitialState;
     args.tiling.storeFinalState = tilingData->storeFinalState;
     args.tiling.isVariedLen = tilingData->isVariedLen;
+    args.tiling.layout = tilingData->layout;
     args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
     args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
     args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);

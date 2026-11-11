@@ -9,6 +9,16 @@
 
 namespace GDN {
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace IntraLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace IntraLayout
+
 struct ChunkGdnBwdIntraTilingData {
     // 输入逻辑 shape。
     int64_t batch;
@@ -28,6 +38,7 @@ struct ChunkGdnBwdIntraTilingData {
     int64_t blockDim;
 
     // 运行时路径和算子属性。
+    int64_t layout;
     int64_t isVarlen;
     int64_t useExp2;
     float scale;

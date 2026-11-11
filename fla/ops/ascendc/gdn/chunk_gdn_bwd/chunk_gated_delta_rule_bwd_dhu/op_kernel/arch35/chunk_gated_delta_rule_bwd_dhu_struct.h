@@ -59,17 +59,26 @@ ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdDhu,
     TPL_SEL_FOR_PAIR(TPL_FP16, TPL_FP16, USE_GK_VALUE, D)
 
 ASCENDC_TPL_SEL(
-    TPL_SEL_FOR_GATE(0, 0),
-    TPL_SEL_FOR_GATE(1, 0),
-    TPL_SEL_FOR_GATE(0, 1),
-    TPL_SEL_FOR_GATE(1, 1),
+    TPL_SEL_FOR_GATE(0, 0), TPL_SEL_FOR_GATE(1, 0),
+    TPL_SEL_FOR_GATE(0, 1), TPL_SEL_FOR_GATE(1, 1),
 );
 #undef TPL_SEL_FOR_GATE
 #undef TPL_SEL_FOR_PAIR
 #undef TPL_SEL_ONE
 #endif
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace DhuLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+    NTD = 2,
+    TND = 3,
+};
+} // namespace DhuLayout
+
 struct ChunkGatedDeltaRuleBwdDhuTilingData {
+    int64_t layout;
     int64_t B;
     int64_t HK;
     int64_t HV;

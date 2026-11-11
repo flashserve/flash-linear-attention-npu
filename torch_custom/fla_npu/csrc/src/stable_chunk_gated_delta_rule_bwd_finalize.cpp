@@ -79,8 +79,8 @@ run_npu_chunk_gated_delta_rule_bwd_finalize(
   Tensor out_dg = allocate_sizes(meta_of(g).sizes, meta_of(g).scalar_type,
                                  meta_of(g));
 
+  // Logical storage shape (this reference's `logical_tensor`).
   FLA_STABLE_EXEC(
-      // Logical storage shape (this reference's `logical_tensor`).
       "aclnnChunkGatedDeltaRuleBwdFinalize", q_meta, stream,
       logical_tensor(q_meta), logical_tensor(meta_of(k)),
       logical_tensor(meta_of(v)), logical_tensor(meta_of(v_new)),

@@ -1,12 +1,15 @@
 #ifndef GDN_BWD_FINALIZE_A2_H
 #define GDN_BWD_FINALIZE_A2_H
 
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_finalize_workspace.h"
 #include "chunk_gated_delta_rule_bwd_finalize_qk_tail.h"
 
 // 私有适配结构，不复用其它算子的生成 tiling ABI。
 struct ChunkBwdDqkwgTilingData {
+    int64_t layout;
     uint64_t B, HV, HK, T, K, V, BT, numChunks;
     float scale;
     uint32_t mul0RowNum, aicCoreNum, hkPartitions;
@@ -27,6 +30,7 @@ __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
     ChunkBwdDqkwgTilingData d{};
+    d.layout = t.layout;
     d.B = t.B; d.HV = t.HV; d.HK = t.HK; d.T = t.T;
     d.K = t.K; d.V = t.V; d.BT = t.chunkSize;
     d.numChunks = t.isVariable != 0 ? t.totalChunkNum : t.chunkNumForT;
@@ -68,6 +72,7 @@ __aicore__ inline PrepareWyReprBwdTilingData A2FinalizeWyTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
     PrepareWyReprBwdTilingData w{};
+    w.layout = t.layout;
     w.B = t.B; w.HV = t.HV; w.HK = t.HK; w.groupSize = t.headRatio;
     w.T = t.T; w.K = t.K; w.V = t.V; w.chunkSize = t.chunkSize;
     w.chunkNum = t.totalChunkNum;
@@ -443,7 +448,7 @@ __aicore__ inline void A2FinalizeQkTail(
     const bool reuseOutputs = A2FinalizeUseOutputReuse(t);
     const A2FinalizeQkTailArgs args{q, k, qRstd, kRstd,
         reuseOutputs ? dq : workspace + layout.dqOffset,
-        reuseOutputs ? dk : workspace + layout.dkOffset, dq, dk, USE_QK_L2NORM};
+        reuseOutputs ? dk : workspace + layout.dkOffset, dq, dk, USE_QK_L2NORM, t.HK, t.T, t.layout == GDN::FinalizeLayout::BSND};
     A2FinalizeQkTailGm<QT> gm;
     gm.Init(args, workspace + layout.dkWyOffset);
     const auto wyTiling = A2FinalizeWyTiling(t);
@@ -538,7 +543,7 @@ __aicore__ inline void A2FinalizeRun(
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
             dbeta32, workspace + layout.dgWyOffset, stageWorkspace);
         vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum), chunkDkBytes, chunkDkSlots);
-        const A2FinalizeQkTailArgs qkTailArgs{q, k, qRstd, kRstd, dq1, dk1, dq, dk, USE_QK_L2NORM};
+        const A2FinalizeQkTailArgs qkTailArgs{q, k, qRstd, kRstd, dq1, dk1, dq, dk, USE_QK_L2NORM, t.HK, t.T, t.layout == GDN::FinalizeLayout::BSND};
         vec.Process(qkTailArgs);
         AscendC::PipeBarrier<PIPE_ALL>();
         pipe.Reset();
