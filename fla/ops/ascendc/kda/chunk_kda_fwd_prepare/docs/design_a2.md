@@ -123,7 +123,8 @@ sequence-major beta的有界tile按2.4读取，不再每标量启动一行DMA。
 Identity/Precomputed叶内Gather使用Small[2944,3008)即UB[0x2ee00,0x2ef00)。
 二者与ALog缓存/临时量不重叠，均在现有Small UB内，不增加190KiB分配。
 资源头的static_assert同时检查128项beta范围、64项叶内范围与Mask边界。
-Identity/Precomputed叶内阶段复用Small[1536,1600)为两份当前行。
+Identity叶内阶段复用Small[1536,1600)为两份当前行；Precomputed直接读取work_内已完成的源行，
+不再占用该区复制当前行。
 Lower store经MTE3_V退休后，UB[UbQ,UbG)整64KiB用于最多31列的系数广播；
 work_[2048,4096)为最多1984个int32索引，[4096,6144)为对应FP32系数，
 与前8KiB叶逆及g_中FP32 Lower互不重叠。
@@ -235,8 +236,10 @@ FP32叶内结果一次CAST_RINT为BF16并填回v_对角块。
 Precomputed（key0/1）使用LeafInverse64：完整Eye在work_[0,4096)展开为FP32，
 g_[0,4096)继续保存未量化负Lower；按k=0..r-2执行完整64列行更新。
 每批至多16列系数，work_[4096,5120)存1024个Gather索引，work_[5120,6144)存1024个FP32系数。
-退休Q的32KiB UB别名保存16×64×8广播系数，Small[1536,1600)保存当前64列逆矩阵行。
-每批Gather、广播、每步行复制和MulAddDst之间均有PIPE_V依赖；复用Q前排空MTE3。
+退休Q的32KiB UB别名保存16×64×8广播系数。第k步直接以
+work_[k*64,(k+1)*64)的64元素逆矩阵行为只读源，目标从work_[(k+1)*64,...)
+开始，两段不重叠，因此不再复制当前行。每批Gather、广播后建立PIPE_V依赖，
+每步MulAddDst后保留PIPE_V屏障，以维持k顺序并保护下一步源行；复用Q前排空MTE3。
 padding负Lower为0，完整Eye保证无效行对角为1。完成后一次CAST_RINT到BF16，写Payload及完整有效Akk。
 Cube仅将此BF16完整逆载入resident X，不再加载P或执行32+32合并；W/U共用X的路径保持不变。
 该策略只由已有Norm/Gate key选择，g/beta dtype、shape、layout与标量不决定优化资格。

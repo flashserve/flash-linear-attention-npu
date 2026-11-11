@@ -209,3 +209,18 @@ A5/A2≥0.5，case1/case3 分别为 0.4884/0.4937，整体性能目标尚未全�
 均映射至实际 Akk 内，36 个输出 redzone 探针完整。synccheck 另有 6,340 条冗余等待 WARNING；
 不宣称零警告验收。逐例数据、源码/包身份及运行命令维护在
 [独立 ATK 交付件](https://gitcode.com/chen-linxin4/work_tool/pull/32)，不在本 PR 重复提交测试工程。
+
+### A2 Precomputed 行内复用优化（2026-11-12）
+
+`LeafInverse64` 的第k步源行与后续目标行不重叠，现直接从 `work_` 读取源行，
+删除每步64个FP32元素的冗余复制及复制后的PIPE_V屏障；更新顺序和每步写后屏障保持不变。
+在同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
+
+|典型case|布局与规模|优化前（us）|优化后（us）|耗时降低|
+|---|---|---:|---:|---:|
+|198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|10998.53|10037.25|8.74%|
+|199|TND变长，T=16384，16×1024，HK=16，HV=128，G=8|15863.48|14557.19|8.23%|
+
+优化后使用 `/data/yqw/requirement/prepare/kda_bwd_prepare/atk标杆` 完成精度20/20、
+确定性3/3。按本轮要求未重新采集msprof；上述NPU Event只用于同环境回归对比，
+不替代统一的msprof Task Duration性能结论。
