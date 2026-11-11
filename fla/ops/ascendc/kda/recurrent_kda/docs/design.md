@@ -15,6 +15,19 @@ A5 的输入 view 扩展、State view/别名前置校验和资源规划按实际
 
 State 输入与输出沿用远程主线已修复的公开语义：非原位模式直接读取初态，仅写入有效目标槽，不克隆或预填整个输出池。
 
+### BSND 输入寻址
+
+A5 的逻辑 token 始终按输入 shape 的原始 `[B,T]` 展开；`cu_seqlens` 只划分递推请求，不改变物理 batch 行。
+tiling 保留 Q/K/V 各自的 batch/token/head stride，包括存在 `cu_seqlens` 时。逻辑 token `t` 的物理地址为
+`(t/T)*batchStride + (t%T)*tokenStride + head*headStride`。当 `batchStride==T*tokenStride` 时仍走线性地址和整 tile DMA。
+其它 BSND view 将每个最多4行的输入 tile 按物理 batch 边界拆为连续片段，每段重新计算 GM 首地址，依次写入同一输入槽的对应行；
+Q/K/V 分别按自己的 stride 判断和拆分。gate/beta 和 out 仍按连续逻辑 token 排列。
+
+该拆分覆盖 varlen 请求横跨原始 batch 行、batch-gap 和 head-major 输入，不改变 VF 的逐 token 顺序、State bank、UB 容量或 Mutex 生命周期。
+所有 Q/K/V 片段均处于同一次 input Mutex 的 MTE2 Lock/Unlock 内，V 等待完整输入 tile 后执行。Host 用
+`(T-1)*tokenStride + (H-1)*headStride + featureCount` 检查完整物理 batch 跨度，并在加乘前检查溢出。
+公开 ACLNN 的既有连续化策略保留；上述额外寻址用于 A5 L0/直调保留原始 view 的路径。
+
 ### State 输入与输出
 
 `initial_state` 在所有输出组合下均须显式传入非 `None` 张量。非原位调用直接读取该输入，不修改其数据或版本计数；仅在 `output_final_state=true` 时分配独立 State 输出，不通过克隆输入后执行原位 kernel 实现。Python 对原位调用拒绝 `requires_grad` State，并更新输入版本计数；非原位调用对该输入使用 `detach` view。

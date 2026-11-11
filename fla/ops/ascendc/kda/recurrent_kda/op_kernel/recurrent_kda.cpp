@@ -11,7 +11,7 @@
  * \file recurrent_kda.cpp
  * \brief
  */
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/recurrent_kda.h"
 #else
 #include "recurrent_kda.h"
@@ -34,7 +34,7 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     GM_ADDR stateOutput = tilingData.inplaceFinalState == 1 ? initialStateOut : finalState;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     {
         // Static Tensor programming owns UB and synchronization without a TPipe.
         InitSocState();

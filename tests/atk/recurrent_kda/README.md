@@ -41,3 +41,27 @@ bash tests/atk/run_test_cpu.sh -op=recurrent_kda -scope=gen_cases
 ```
 
 `gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，生成器会把不支持 FP16 的算子改回合法 BF16 用例。
+
+## A5 Q/K/V stride 寻址诊断
+
+`scripts/qkv_stride_tiling.cpp` 调用当前算子的实际 host tiling processor；使用单算子构建生成的
+`ophost_transformer_tiling_obj.dir/flags.make` 中的 include 参数编译，并链接当前 CANN 的
+`error_manager/ascendalog/unified_dlog/platform/register/graph`，得到 `qkv_stride_tiling`。
+
+```bash
+python scripts/test_qkv_strides.py \
+  --tiling-probe <qkv_stride_tiling> \
+  --kernel-dir <installed_vendor>/op_impl/ai_core/tbe/kernel/ascend950/recurrent_kda \
+  --output <diagnostic_output>
+```
+
+该脚本通过 ACL runtime 直接加载当前安装的 kernel，保留 Q/K/V view 的原始 stride，避免公开
+aclnn 连续化掩盖 L0 寻址问题。80 个场景覆盖四种 A5 模式、FP32/BF16 State、V=128/256，
+以及 batch gap、head-major、Q/K/V 不同 stride、固定长度、跨 batch 的 varlen 和空请求。
+out 和有效 State 槽须与连续输入逐位相同，并使用既有 CPU 标杆及 `rtol=0.02, atol=0.01` 检查精度；
+另外检查重叠 batch 与 A2 head-major 的 tiling 拒绝行为。这是 L0 专项诊断，不替代上述 ATK 验收。
+
+2026-11-11 在 A5_1/Ascend950PR、CANN 9.2.0-beta.2 上，当前修复通过全部 80 个场景和两个负向检查；
+同一诊断加载修复前的 kernel 时，首个 batch-gap 用例即出现 stride/连续输入结果不一致。
+同次验证中，既有 ATK 小用例的精度、确定性（50 次）与内存检测各通过 1/1，公开 State mutation/None
+契约回归通过；576 组 A2 host tiling 的成功/失败和分核结果与修复前相同，未在 A2 设备执行。
