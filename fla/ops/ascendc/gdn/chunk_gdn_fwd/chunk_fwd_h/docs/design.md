@@ -1,5 +1,9 @@
 # ChunkFwdH 设计
 
+方案设计规则版本：`V2`。A6 本次按用户指定的两 head 详设与流水图实施；
+其 1:1 全 head 映射、连续 head 分核和 S1 双 VF 是本次指定方案，
+不套用 R01/R12/R20 的默认 1:2 横切/grid-stride 方案。A2/A3/A5 维持原实现。
+
 ## 1. 目标与边界
 
 `ChunkFwdH` 是独立的 Ascend C 算子，符号为 `ChunkFwdH`、`aclnnChunkFwdH` 和
@@ -183,7 +187,7 @@ sequence 内也按连续 value head 每四个一组拆分，因此每个 unit �
 
 ## 7. 变长序列
 
-变长模式要求 BNSD 容器 `B=1`。`cu_seqlens` 从 0 开始、以 T 结束且严格递增；
+变长模式要求 BNSD 容器 `B=1`。`cu_seqlens` 从 0 开始、以 T 结束且非递减（相邻项相等表示零长度序列）；
 `chunk_indices` 若存在，必须是 sequence-major canonical `(seq_id, chunk_id)`。连续 head task
 区间跨 sequence 时按边界拆为独立 work unit；同一 sequence 的不同 value head 也可分配到
 不同核。state/final_state 的首维是 sequence 数，H 的 chunk 维使用全局 chunk 前缀，各 head
@@ -241,3 +245,77 @@ state dtype 的模板选择保持运行语义优先级：存在 `initial_state` 
 代码不维护手写数值 key，也不在 kernel 内使用 `TILING_KEY_IS` 做二次分派。TilingKey 数值由
 目标 CANN 根据模板声明编码，只用于 host、binary metadata 和 runtime 之间的选择闭环，不作为
 公开接口或跨版本稳定语义。
+
+## 10. A6 arch92：两 head、chunk 双 bank
+
+目标 `Ascend960DT / __NPU_ARCH__=9201`，1 AIC:1 AIV；每个 work unit 为同一
+sequence 的连续 1–2 个 value head。保留 host 的连续 head 范围分配、blockDim 及四 record
+workspace stride。例：N=1、HV=128、64 AIC 时，每核 2 head、1 unit；GVA=2 时通常
+共用一个 kh，跨 kh 边界时按 kh 去重分配最多两份 K。GVA 无新增限制。
+
+### Stage 与布局
+
+| Stage | 执行及依赖 | 输入/输出 |
+| --- | --- | --- |
+| S0 Cube | W/H -> L1 -> L0 -> MMAD -> Fixpipe；非首块等上一 S3 的 H_READY 和 PD_FREE | P=W@H；BF16 输入、FP32 累加，P 按 StateT 输出 |
+| S1 Vector | 先所有 head 的 gate VF，再各 head 等 P_READY 做修正 VF | vNew=BF16(FP32(U)-P)，right 使用未舍入差值 |
+| S2 Cube | 下一 chunk W/K 预取排在本块 RIGHT_READY 等待之前 | D=K^T@right；转置 state 路径为 right^T@K |
+| S3 Vector | 下一 chunk scalar gate 预计算排在本块 D_READY 等待之前 | state=alpha*state+D，hNext 在已读 D 区按低地址压缩 |
+
+scalar-g/FP32 state 的 UB 字节区间（单位 KiB）：
+`PD[0/1]=[0,64)/[64,128)`；`state[0/1]=[128,192)/[192,256)`；
+`U/vNew[0/1]=[256,272)/[272,288)`；`right[0/1]=[288,304)/[304,320)`；
+`rawGate/scale[0/1]=[320,320.5)/[320.5,321)`；
+`alpha[b][r]=321 KiB+(2*b+r)*32 B`，总用量 321.125 KiB。
+按 376 KiB 可用 UB 上限留出 54.875 KiB。BF16 state 使用各 64 KiB state 槽的低半区；
+gk 模式每 head 的 512 B gate 槽完整存放 last-gk，不使用 scalar scale。
+为保留 gk 的 S3 输入，gk 路径下一 chunk 输入在当前 S3 后预取。
+
+L1 每 bank 160 KiB，bank=c%2：W 两份各 16 KiB 位于 bank+[0,32)，H 两份
+各 32 KiB 位于 bank+[32,96)，right 两份各 16 KiB 位于 bank+[96,128)，
+K 两份各 16 KiB 位于 bank+[128,160)。总量 320 KiB。
+L0A/B/C 分别使用 2×16/32/64 KiB，按 head%2 复用。
+GM right offset 为 `vUpdateWorkspaceOffset + (core*4 + bank*2 + head)*16384` 字节。
+初态只搬入一次；FP32 state 常驻，不使用 rolling-state GM 区。
+
+### 同步分配与边界
+
+跨核延用本仓 A6 的 mode=0x4，每个 ID 双向独立：P_READY/P_FREE 为 0/1，
+D_READY/PD_FREE 为 2/3，RIGHT_READY/RIGHT_FREE 为 4..7（bank*2+head），
+H_READY 为 8/9，ROUND_DONE/ACK 为 10。首个 PD 在初态 H 搬出后由 H_READY 链保护；
+无初态的首块跳过 P 及 P_FREE。right 首次使用无旧消费者，c>=2 等同 bank 的 free；
+退出回收最后两代 right free。末块无 final_state 时跳过 gate/right/S2/S3。
+
+AIC：MTE1_MTE2 的 0/1 为 L1 bank free（初始化各一次，末次 L1 消费归还，退出 drain）。
+MTE2_MTE1 的 0/1 为整 bank K ready；2..5 为 bank/head 操作数 ready，S0/S2 顺序复用。
+M_MTE1 与 MTE1_M 的 0/1、2/3 分别保护 L0A/L0B；FIX_M/M_FIX 的 0/1 保护 L0C。
+不使用静态 tensor 保留的 EventID 6/7。
+
+AIV：MTE3_MTE2 的 0/1 在 work unit 初始化时获取，在整个 unit 的最后一次 MTE3 后归还，
+保护下个 unit 的 state 初始化；2/3 保护 U/vNew；V_MTE2 的 0/1
+保护 rawGate/scale。MTE2_V 与 V_MTE3 使用对应 0..3。MTE3_V 的 0/1 保护独立 right UB，
+2/3 保护 state 写回后 Vector 复用。scalar gate free 在 S1 VF 后归还；alpha 双 bank
+由同一 Vector 顺序保证 c+2 覆盖发生在 c 的 S3 读取之后。
+
+两个 head 的 gate 计算不依赖 P；逐 head 发布 RIGHT_READY，无整组 barrier。
+末次 S2 MTE1 完成归还 L1 bank，末块仅 S0 时在末次 S0 MTE1 后归还。
+初始化的零 H0 在各 head 的 state 低半区生成，不占用首个 D 的 PD；S3 通过
+MTE3_V 等 H0 写回完成后才更新 state。BF16 初态也由 AIV 写 H0 后逐 head 发布 H_READY。
+跨 work unit 回收终端 P/PD free、right free、本地 IO，并经 DONE/ACK 后复用。
+单 head 不下发另一个 head 的操作或跨核等待。varlen 中单 chunk、无初态、无 final 的
+unit 不获取/归还 L1 bank，只参与必要的跨 unit 握手，避免无 Cube 消费时重复发布 bank free。
+tail 沿用有效行 mask 和 L1 补零。
+
+数值顺序沿用原 VF：FP32 Sub/Mul/Add 与 BF16 cast 位置不变，use_exp2 仍为
+Exp(x*ln2)；不将 right 改为乘已舍入的 vNew，不引入融合 MulAdd。
+非有限值风险和输入校准沿用既有 ATK 标杆，本次未扩大数值范围。
+
+### A6 零长度序列的 final_state
+
+`chunkCount=0` 时无 H/vNew 元素需要写出，但请求 final_state 时仍须逐 head 写满输出：
+有初态则按 StateT 和原物理布局原样拷贝，无初态则写同 dtype 的全零状态。
+AIV 单独处理该 work unit，AIC 仍跳过；不产生 P/D/right/H_READY 或 ROUND_DONE/ACK。
+复用各 head 的 state UB 槽，先等待 MTE3_MTE2 的 IoEvent(r)，再搬入初态或生成零。
+MTE2_V → V_MTE3 保证旧写回、初始化和输出之间的依赖；final_state 的 MTE3 完成后
+归还 IoEvent(r)。后继 work unit 和退出 drain 都消费该 credit，防止 state 槽提前覆盖。
+不请求 final_state 时空序列直接返回。不对空序列构造 chunk 或读取 gate。

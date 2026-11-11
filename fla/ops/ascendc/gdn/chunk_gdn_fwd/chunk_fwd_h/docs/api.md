@@ -65,7 +65,7 @@ aclnnStatus aclnnChunkFwdH(
 | `g` | BF16/FP32 | g-only `[B,HV,T]` |
 | `gk` | BF16/FP32 | gk-only `[B,HV,T,128]` |
 | `initial_state` | BF16/FP32 | 可空；`[N,HV,128,128]`，末两维物理顺序由 `state_v_first` 决定 |
-| `cu_seqlens` | host int array | 可空；变长时从 0 开始、以 T 结束且严格递增 |
+| `cu_seqlens` | host int array | 可空；变长时从 0 开始、以 T 结束且非递减；相邻项相等表示零长度序列 |
 | `chunk_indices` | host int array | 可空；必须为 canonical sequence-major pair 序列 |
 
 `g` 与 `gk` 必须且只能提供一个。g-only 要求 `HV%HK==0`；gk-only 要求 `k` 的 head 数等于
@@ -100,3 +100,12 @@ FP32。aclnn 调用者可通过 final_state 输出 dtype 选择 BF16 或 FP32。
 | `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
 | `ACLNN_ERR_INNER_NULLPTR` | Contiguous/ViewCopy 等内部算子未返回有效 tensor |
 | `ACLNN_ERR_INNER` | kernel executor 执行失败 |
+
+## 平台实现状态
+
+A6（`ascend960dt` / `__NPU_ARCH__=9201`）由 `op_kernel/arch92/` 提供独立的两 head 实现。
+公开参数、32 个模板组合及 BF16/FP32 state 数值语义沿用上述约定；当前为源码适配，
+未做 A6 编译或设备验收。
+
+零长度序列请求 `final_state` 时，有初态返回该序列的初态，无初态返回全零状态；
+该序列不占用 `h` 的 chunk，也不产生 `v_new` 元素。
