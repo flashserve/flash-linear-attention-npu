@@ -195,7 +195,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!(tensor != nullptr)) {
+    if (tensor == nullptr) {
         OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -753,7 +753,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -833,7 +833,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             executorPtr, splitStages ? gkShape4 : placeholderShape,
             DataType::DT_FLOAT);
     }
-    if (!(gkCompute != nullptr)) {
+    if (gkCompute == nullptr) {
         OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "gkCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -906,7 +906,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *initialStateCompute = params.initialStateOptional;
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        if (!(initialStateCompute != nullptr)) {
+        if (initialStateCompute == nullptr) {
             OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "initialStateCompute");
             return ACLNN_ERR_INNER_NULLPTR;
         }
@@ -915,7 +915,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *finalStateCompute = AllocTensor(
         executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
-    if (!(finalStateCompute != nullptr)) {
+    if (finalStateCompute == nullptr) {
         OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "finalStateCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -924,7 +924,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (info.isRank3) {
         attnCompute = AsRank4(
             params.attnOut, MakeShape({1, info.seqlen, info.hvNum, info.vDim}), executorPtr);
-        if (!(attnCompute != nullptr)) {
+        if (attnCompute == nullptr) {
             OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "attnCompute");
             return ACLNN_ERR_INNER_NULLPTR;
         }
@@ -936,7 +936,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *uSeedCompute = AllocTensor(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
-    if (!(qgScaledCompute != nullptr && uSeedCompute != nullptr)) {
+    if (qgScaledCompute != nullptr && uSeedCompute == nullptr) {
         OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "qgScaledCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -960,7 +960,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
              ++stage) {
             result = launchStage(stage);
             for (const aclTensor *tensor : result) {
-                if (!(tensor != nullptr)) {
+                if (tensor == nullptr) {
                     OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
                     return ACLNN_ERR_INNER_NULLPTR;
                 }
@@ -969,7 +969,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     } else {
         result = launchStage(KDA_STAGE_FULL);
         for (const aclTensor *tensor : result) {
-            if (!(tensor != nullptr)) {
+            if (tensor == nullptr) {
                 OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
                 return ACLNN_ERR_INNER_NULLPTR;
             }
@@ -980,7 +980,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *finalStateResult = result[1];
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            if (!(finalStateResult != nullptr)) {
+            if (finalStateResult == nullptr) {
                 OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "finalStateResult");
                 return ACLNN_ERR_INNER_NULLPTR;
             }
@@ -993,12 +993,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (hExport != nullptr) {
         const aclTensor *hResult = params.stateVFirst
             ? TransposeLastTwo(result[10], executorPtr) : result[10];
-        if (!(hResult != nullptr)) {
+        if (hResult == nullptr) {
             OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "hResult");
             return ACLNN_ERR_INNER_NULLPTR;
         }
         if (!(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr)) {
-            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "ViewCopy inputs");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ViewCopy returned nullptr");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1078,7 +1078,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -1100,8 +1100,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
                "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
-    if (!(kdaFwdV2Status == ACLNN_SUCCESS)) {
-        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "argument", "kdaFwdV2Status == ACLNN_SUCCESS", "documented constraint");
+    if (kdaFwdV2Status != ACLNN_SUCCESS) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "internal l0op output is null", "kdaFwdV2Status == ACLNN_SUCCESS", "documented constraint");
         return kdaFwdV2Status;
     }
 

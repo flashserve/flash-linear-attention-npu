@@ -162,7 +162,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     }
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto result = l0op::ChunkKdaBwdPrepare(
@@ -170,7 +170,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
         scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        if (!(tensor != nullptr)) {
+        if (tensor == nullptr) {
             OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
             return ACLNN_ERR_INNER_NULLPTR;
         }

@@ -36,7 +36,7 @@ aclnnStatus KdaGateDataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!(tensor != nullptr)) {
+    if (tensor == nullptr) {
         OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -161,7 +161,7 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
         DFX_OUT(gkOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -185,8 +185,8 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
 
     auto result = l0op::KdaGateCumsum(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
                                       useGateInKernel, safeGate, lowerBound, gkOut, executorPtr);
-    if (!(result[0] != nullptr)) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
+    if (result[0] == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "internal l0op output is null");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
