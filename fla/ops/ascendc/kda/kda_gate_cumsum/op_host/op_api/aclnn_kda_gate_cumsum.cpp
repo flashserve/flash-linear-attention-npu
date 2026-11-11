@@ -5,6 +5,7 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND.
  */
 
+#include "host_utils/log.h"
 #include "aclnn_kda_gate_cumsum.h"
 #include "kda_gate_cumsum.h"
 
@@ -20,6 +21,8 @@
 
 using namespace op;
 
+static constexpr const char *DFX_ENTITY = "AclnnKdaGateCumsum";
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,7 +36,10 @@ aclnnStatus KdaGateDataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -104,8 +110,10 @@ aclnnStatus KdaGateCheckParams(
                "gkOut must be float32.");
     CHECK_COND(KdaGateSameShape(gkOut, g), ACLNN_ERR_PARAM_INVALID, "gkOut shape must match g shape.");
     const int64_t seqlen = KdaGateDim(g, rank == 4 ? 2 : 1);
-    CHECK_RET(KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_COND(cuSeqlensOptional == nullptr || rank == 3 || KdaGateDim(g, 0) == 1, ACLNN_ERR_PARAM_INVALID,
                "rank4 varlen input with cuSeqlensOptional currently requires B=1.");
     int64_t hv = KdaGateDim(g, rank == 4 ? 1 : 0);
@@ -152,18 +160,35 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
                useGateInKernel, safeGate, lowerBound),
         DFX_OUT(gkOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
-    CHECK_RET(KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
-                                 safeGate, lowerBound, gkOut) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
+                                 safeGate, lowerBound, gkOut) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateI");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     auto result = l0op::KdaGateCumsum(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
                                       useGateInKernel, safeGate, lowerBound, gkOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: result[0] != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

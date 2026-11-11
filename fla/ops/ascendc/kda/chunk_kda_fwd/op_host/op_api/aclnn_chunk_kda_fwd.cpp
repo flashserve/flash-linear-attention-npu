@@ -4,6 +4,7 @@
  * the BSD 3-Clause License (the "License").
  */
 
+#include "host_utils/log.h"
 #include "aclnn_chunk_kda_fwd.h"
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
@@ -26,6 +27,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnChunkKdaFwd";
 
 #ifdef __cplusplus
 extern "C" {
@@ -192,7 +195,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -472,8 +478,14 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "aqkOut must not be nullptr.");
     CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
                "chunkSize only supports 64.");
-    CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ParseLayout(params.layout, layout) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ParseLayout(params.layout, layout) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
     CHECK_COND(info.batch > 0, ACLNN_ERR_PARAM_INVALID,
@@ -494,17 +506,24 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "K/V must both be 64 or both be 128; mixed K/V and other dims are not "
                "supported, but got Kdim=%ld, Vdim=%ld.",
                info.kDim, info.vDim);
-    CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckDtypes(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckDtypes(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
                ACLNN_ERR_PARAM_INVALID,
                "rank4 varlen input with cuSeqlensOptional requires B=1.");
     CHECK_COND(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES,
                ACLNN_ERR_PARAM_INVALID, "varlen input supports at most 1024 sequences.");
-    CHECK_RET(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
-                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
+                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional, info.totalChunks,");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
                               params.stateVFirst) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
@@ -530,21 +549,47 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                        "lowerBound must be in [-5, 0) when safeGate is true.");
         }
     }
-    CHECK_RET(CheckOutputShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckOutputShapes(params, info) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckOutputShapes(params, info) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(MakeContiguous(params.q, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.q, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.k, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.k, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.v, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.v, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.g, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.g, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.beta, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -707,12 +752,21 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                 qgOut, kgOut, vNewOut, hOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
@@ -730,9 +784,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         gHead = Transpose(params.g, {1, 0, 2}, executorPtr);
         betaHead = Transpose(params.beta, {1, 0}, executorPtr);
     }
-    CHECK_RET(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
-                  gHead != nullptr && betaHead != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
+                  gHead != nullptr && betaHead != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead !");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     if (info.isRank3) {
         qHead = AsRank4(qHead, MakeShape({1, info.hNum, info.seqlen, info.kDim}), executorPtr);
@@ -740,9 +796,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         vHead = AsRank4(vHead, MakeShape({1, info.hvNum, info.seqlen, info.vDim}), executorPtr);
         gHead = AsRank4(gHead, MakeShape({1, info.hvNum, info.seqlen, info.kDim}), executorPtr);
         betaHead = AsRank4(betaHead, MakeShape({1, info.hvNum, info.seqlen}), executorPtr);
-        CHECK_RET(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
-                      gHead != nullptr && betaHead != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
+                      gHead != nullptr && betaHead != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead !");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     const op::Shape gkShape4 = MakeShape({info.batch, info.hvNum, info.seqlen, info.kDim});
@@ -775,7 +833,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             executorPtr, splitStages ? gkShape4 : placeholderShape,
             DataType::DT_FLOAT);
     }
-    CHECK_RET(gkCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(gkCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: gkCompute != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const aclTensor *aqkCompute = params.aqkOut;
     const aclTensor *akkCompute = params.akkOut;
@@ -797,13 +858,15 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             hExport = AsRank4(hExport, hExportShape5, executorPtr);
         }
     }
-    CHECK_RET((params.wOut == nullptr || wExport != nullptr) &&
+    if (!((params.wOut == nullptr || wExport != nullptr) &&
                   (params.uOut == nullptr || uExport != nullptr) &&
                   (params.qgOut == nullptr || qgExport != nullptr) &&
                   (params.kgOut == nullptr || kgExport != nullptr) &&
                   (params.vNewOut == nullptr || vNewExport != nullptr) &&
-                  (params.hOut == nullptr || hExport != nullptr),
-              ACLNN_ERR_INNER_NULLPTR);
+                  (params.hOut == nullptr || hExport != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: (params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nu");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (aqkCompute == nullptr) {
         aqkCompute = AllocTensor(executorPtr, matrixShape4, params.q->GetDataType());
     }
@@ -833,27 +896,38 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *hCompute = AllocTensor(
         executorPtr, hExport == nullptr && !splitStages ? placeholderShape : hShape5,
         params.q->GetDataType());
-    CHECK_RET(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
+    if (!(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
                   uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr &&
-                  vNewCompute != nullptr && hCompute != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+                  vNewCompute != nullptr && hCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullp");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const aclTensor *initialStateCompute = params.initialStateOptional;
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        CHECK_RET(initialStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(initialStateCompute != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: initialStateCompute != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     const bool outputFinalState = params.finalStateOut != nullptr;
     const aclTensor *finalStateCompute = AllocTensor(
         executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
-    CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(finalStateCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: finalStateCompute != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const aclTensor *attnCompute = params.attnOut;
     if (info.isRank3) {
         attnCompute = AsRank4(
             params.attnOut, MakeShape({1, info.seqlen, info.hvNum, info.vDim}), executorPtr);
-        CHECK_RET(attnCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(attnCompute != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: attnCompute != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     const aclTensor *qgScaledCompute = AllocTensor(
@@ -862,8 +936,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *uSeedCompute = AllocTensor(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
-    CHECK_RET(qgScaledCompute != nullptr && uSeedCompute != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(qgScaledCompute != nullptr && uSeedCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: qgScaledCompute != nullptr && uSeedCompute != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto launchStage = [&](int64_t stage) {
         return l0op::KdaChunkForward(
@@ -884,13 +960,19 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
              ++stage) {
             result = launchStage(stage);
             for (const aclTensor *tensor : result) {
-                CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                if (!(tensor != nullptr)) {
+                    OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+                    return ACLNN_ERR_INNER_NULLPTR;
+                }
             }
         }
     } else {
         result = launchStage(KDA_STAGE_FULL);
         for (const aclTensor *tensor : result) {
-            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (!(tensor != nullptr)) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
         }
     }
 
@@ -898,17 +980,27 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *finalStateResult = result[1];
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            CHECK_RET(finalStateResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (!(finalStateResult != nullptr)) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: finalStateResult != nullptr");
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
         }
-        CHECK_RET(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     if (hExport != nullptr) {
         const aclTensor *hResult = params.stateVFirst
             ? TransposeLastTwo(result[10], executorPtr) : result[10];
-        CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(hResult != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: hResult != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
+        if (!(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
@@ -985,12 +1077,21 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
                 kRstdOut, betaEffOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
@@ -999,7 +1100,10 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
                "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
-    CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);
+    if (!(kdaFwdV2Status == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(kdaFwdV2Status, "check failed: kdaFwdV2Status == ACLNN_SUCCESS");
+        return kdaFwdV2Status;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

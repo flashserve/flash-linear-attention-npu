@@ -1,3 +1,4 @@
+#include "host_utils/log.h"
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
@@ -14,6 +15,8 @@
 #include "opdev/op_executor.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnChunkKdaBwd";
 
 namespace {
 
@@ -141,8 +144,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                "canonical dense q/h ranks are 4/5 and varlen ranks are 3/4.");
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr,
-              ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto *executorPtr = uniqueExecutor.get();
 
     const aclTensor *cuTensor =
@@ -188,12 +193,19 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         dqOut, dkOut, dvOut, dbOut, dgOut,
         dAForKernel, dBiasForKernel, executorPtr);
     for (size_t i = 0; i < 5; ++i) {
-        CHECK_RET(result[i] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(result[i] != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: result[i] != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
-    CHECK_RET(!useGateInKernel || result[5] != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(dtBiasOptional == nullptr || result[6] != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(!useGateInKernel || result[5] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: !useGateInKernel || result[5] != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(dtBiasOptional == nullptr || result[6] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: dtBiasOptional == nullptr || result[6] != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
 #endif
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

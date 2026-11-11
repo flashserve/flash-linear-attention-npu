@@ -11,6 +11,7 @@
  * \file aclnn_recurrent_gated_delta_rule.cpp
  * \brief
  */
+#include "host_utils/log.h"
 #include <dlfcn.h>
 #include "aclnn_recurrent_gated_delta_rule.h"
 #include "recurrent_gated_delta_rule.h"
@@ -30,6 +31,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnRecurrentGatedDeltaRule";
 
 #ifdef __cplusplus
 extern "C" {
@@ -115,7 +118,10 @@ static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
 static aclnnStatus CheckParams(RecurrentGatedDeltaRuleParams &params)
 {
     // 检查输入参数是否在支持的数据类型范围内
-    CHECK_RET(CheckDtypeVaild(params), ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckDtypeVaild(params))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckDtypeVaild(params)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     OP_LOGD("RecurrentGatedDeltaRule check params sucess.");
 
@@ -150,14 +156,26 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
                    DFX_OUT(stateRef, out));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
 
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
-    CHECK_RET(CheckNotNull(params), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckNotNull(params))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckNotNull(params)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(CheckParams(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto ret = PreProcess(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (!(ret == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ret, "check failed: ret == ACLNN_SUCCESS");
+        return ret;
+    }
 
     auto query_ = l0op::Contiguous(query, uniqueExecutor.get());
     auto key_ = l0op::Contiguous(key, uniqueExecutor.get());

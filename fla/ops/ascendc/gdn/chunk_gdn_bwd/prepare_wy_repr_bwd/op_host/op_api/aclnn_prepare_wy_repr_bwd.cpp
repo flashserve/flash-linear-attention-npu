@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include "host_utils/log.h"
 #include "aclnn_prepare_wy_repr_bwd.h"
 #include "prepare_wy_repr_bwd.h"
 
@@ -30,6 +31,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnPrepareWyReprBwd";
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,17 +91,32 @@ static aclnnStatus CheckDtype(PrepareWyReprBwdParams params)
 
 static aclnnStatus CheckParams(PrepareWyReprBwdParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckNotNull(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(CheckFormat(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckFormat(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckShape(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckDtype(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -135,29 +153,59 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
         DFX_OUT(dkOut, dvOut, dbetaOut, dgOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                "ParamsDataContiguous failed.");
 
     auto result = l0op::PrepareWyReprBwd(params.k, params.v, params.beta, params.a, params.dw, params.du, params.g,
                                          params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize,
                                          params.dkOut, params.dvOut, params.dbetaOut, params.dgOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[0] != nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(result[1] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[1] != nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(result[2] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[2] != nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(result[3] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[3] != nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dkOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     viewCopyResult = l0op::ViewCopy(result[1], params.dvOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     viewCopyResult = l0op::ViewCopy(result[2], params.dbetaOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     viewCopyResult = l0op::ViewCopy(result[3], params.dgOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

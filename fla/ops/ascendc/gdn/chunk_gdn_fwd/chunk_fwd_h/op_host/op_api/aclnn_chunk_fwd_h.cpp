@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "host_utils/log.h"
 #include "aclnn_chunk_fwd_h.h"
 #include "chunk_fwd_h.h"
 #include <dlfcn.h>
@@ -29,6 +30,8 @@
 
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnChunkFwdH";
 
 #ifdef __cplusplus
 extern "C" {
@@ -287,7 +290,10 @@ static aclnnStatus CheckDtype(ChunkFwdHParams params)
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -430,7 +436,10 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
                           saveNewValue, cuSeqlensOptional, chunkIndicesOptional, useExp2, stateVFirst),
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
     auto ret = CheckParams(params);
     if (ret != ACLNN_SUCCESS) {
@@ -445,17 +454,28 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
         params.saveNewValue, params.useExp2, params.stateVFirst,
         params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
-    CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
-                  (!outputFinalState || result[2] != nullptr),
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(result[0] != nullptr && result[1] != nullptr &&
+                  (!outputFinalState || result[2] != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: result[0] != nullptr && result[1] != nullptr && (!outputFinalState || result[2] != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
-    CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult0 != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult0 != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
-    CHECK_RET(viewCopyResult1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult1 != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult1 != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (outputFinalState && params.finalStateOut != nullptr) {
         auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
-        CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(viewCopyResult2 != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult2 != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     // Standard syntax, get the size of workspace needed during computation.

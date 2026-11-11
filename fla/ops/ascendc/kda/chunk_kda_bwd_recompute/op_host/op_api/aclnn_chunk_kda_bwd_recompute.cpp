@@ -1,3 +1,4 @@
+#include "host_utils/log.h"
 #include "aclnn_chunk_kda_bwd_recompute.h"
 #include "chunk_kda_bwd_recompute.h"
 
@@ -9,6 +10,8 @@
 #include "opdev/op_log.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnChunkKdaBwdRecompute";
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,25 +46,67 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus ParamsDataContiguous(ChunkKdaBwdRecomputeParams &params, aclOpExecutor *executor)
 {
-    CHECK_RET(DataContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.a, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.wOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.uOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(DataContiguous(params.q, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.q, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.k, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.k, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.v, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.v, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.g, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.g, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.beta, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.a, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.a, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.wOut, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.wOut, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.uOut, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.uOut, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -85,10 +130,16 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
                "workspaceSize and executor must not be nullptr.");
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const bool useGateInKernel = params.gkOutOptional != nullptr;
     auto outputs = l0op::ChunkKdaBwdRecompute(
         params.q, params.k, params.v, params.g, params.beta, params.a, params.aLogOptional,

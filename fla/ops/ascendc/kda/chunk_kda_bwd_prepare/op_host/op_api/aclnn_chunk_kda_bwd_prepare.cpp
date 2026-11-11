@@ -1,3 +1,4 @@
+#include "host_utils/log.h"
 #include "aclnn_chunk_kda_bwd_prepare.h"
 #include "chunk_kda_bwd_prepare.h"
 
@@ -12,6 +13,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnChunkKdaBwdPrepare";
 
 namespace {
 
@@ -122,8 +125,10 @@ aclnnStatus Check(
               state.GetDim(3) == 128 && state.GetDim(4) == 128;
     CHECK_COND(stateShapeValid, ACLNN_ERR_PARAM_INVALID, "h shape is invalid");
     if (variable) {
-        CHECK_RET(ValidateMetadata(cu, indices, T, chunkSize, chunkCount) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        if (!(ValidateMetadata(cu, indices, T, chunkSize, chunkCount) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ValidateMetadata(cu, indices, T, chunkSize, chunkCount) == ACLNN_SUCCESS");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     } else {
         CHECK_COND(chunkCount == (T + chunkSize - 1) / chunkSize,
                    ACLNN_ERR_PARAM_INVALID, "dense h chunk dimension is invalid");
@@ -150,17 +155,25 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
                    DFX_OUT(dAqkOut, dvOut, dqRawOut));
     CHECK_COND(workspaceSize != nullptr && executor != nullptr,
                ACLNN_ERR_PARAM_NULLPTR, "workspaceSize and executor must not be nullptr");
-    CHECK_RET(Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
-                    scale, chunkSize, dAqkOut, dvOut, dqRawOut) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
+                    scale, chunkSize, dAqkOut, dvOut, dqRawOut) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dAqkOut");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto result = l0op::ChunkKdaBwdPrepare(
         aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(tensor != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

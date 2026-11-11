@@ -1,3 +1,4 @@
+#include "host_utils/log.h"
 #include "aclnn_chunk_kda_bwd_finalize.h"
 #include "chunk_kda_bwd_finalize.h"
 
@@ -12,6 +13,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *DFX_ENTITY = "AclnnChunkKdaBwdFinalize";
 
 namespace {
 
@@ -48,8 +51,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
              {k, "k"}, {v, "v"}, {akk, "akk"},
              {vNew, "v_new"}, {h, "h"}, {dh, "dh"}, {dvScan, "dv_scan"},
              {dqOut, "dq"}, {dkOut, "dk"}, {dvOut, "dv"}}) {
-        CHECK_RET(CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        if (!(CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     CHECK_COND(beta != nullptr &&
                    (beta->GetDataType() == DataType::DT_BF16 || beta->GetDataType() == DataType::DT_FLOAT),
@@ -63,8 +68,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
              {rawG, "raw_g"}, {dtBias, "dt_bias"}, {dAqk, "d_aqk"},
              {dqRaw, "dq_raw"}, {dGOut, "d_g"}, {dALogOut, "d_a_log"},
              {dDtBiasOut, "d_dt_bias"}}) {
-        CHECK_RET(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        if (!(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     CHECK_COND(aLog != nullptr && IsContiguous(aLog), ACLNN_ERR_PARAM_INVALID,
                "a_log must be a contiguous tensor");
@@ -88,7 +95,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
                ACLNN_ERR_PARAM_INVALID, "unsupported A5 v1 attribute combination");
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get() != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto result = l0op::ChunkKdaBwdFinalize(
         q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh,
         dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
@@ -97,7 +107,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(tensor != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
