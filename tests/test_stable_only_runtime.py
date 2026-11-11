@@ -237,29 +237,47 @@ assert 'torch' not in sys.modules and 'torch_npu' not in sys.modules
                 interleaved, dtype=torch.int64, device=self.metadata_device)[::2],
         }
 
-    def _assert_chunk_dispatch(self, torch, cu, indices, expected_cu, expected_indices):
-        # Real public wrappers and _host_ints run; only the C++ dispatcher and
-        # stream accessor are replaced. This catches failures before _op(),
-        # unlike signature binding or a mock of _get_direct_op itself.
-        x = torch.empty((1, 128, 2, 128), dtype=torch.bfloat16)
-        beta = torch.empty((1, 128, 2), dtype=torch.float32)
+    def _check_chunk_wrapper(self, name, args, offset, generated_indices,
+                             **op_kwargs):
+        """Check one public wrapper's metadata at its dispatcher boundary."""
+        torch = self._metadata_torch()
+        cu_values = [0, 65, 128]
+        cu_forms = self._metadata_forms(torch, cu_values)
+        explicit = list(generated_indices)
+        index_forms = self._metadata_forms(torch, explicit)
+        empty = self._metadata_forms(torch, [])
         cases = (
-            ("npu_chunk_fwd_h", (x, x, x), 9),
-            ("npu_chunk_gated_delta_rule_fwd_h", (x, x, x), 8),
-            ("npu_chunk_kda_fwd", (x, x, x, x, beta, 0.125), 8),
-            ("npu_chunk_kda_fwd_prepare", (x, x, x, x, beta, 0.125), 7),
-            ("npu_chunk_kda_fwd_finalize", (x, x, x, x), 4),
-            ("npu_chunk_gated_delta_rule_fwd_prepare", (x, x, x, x, beta), 7),
-            ("npu_chunk_gated_delta_rule_bwd", (x, x, x, x, beta, x, x, 0.125), 14),
+            ("list_missing", cu_forms["list"], None, cu_values,
+             generated_indices, True),
+            ("tuple_missing", cu_forms["tuple"], None, cu_values,
+             generated_indices, True),
+            ("int32_missing", cu_forms["int32"], None, cu_values,
+             generated_indices, True),
+            ("int64_view_empty_indices", cu_forms["int64_view"],
+             empty["int32"], cu_values, generated_indices, True),
+            ("int32_explicit", cu_forms["int32"], index_forms["int32"],
+             cu_values, explicit, False),
+            ("int64_view_explicit", cu_forms["int64_view"],
+             index_forms["int64_view"], cu_values, explicit, False),
+            ("tuple_explicit", cu_forms["tuple"], index_forms["tuple"],
+             cu_values, explicit, False),
+            ("empty_cu", empty["int64_view"], None, [], None, False),
+            ("no_metadata", None, None, None, None, False),
         )
-        for name, args, offset in cases:
-            with self.subTest(op=name):
-                dispatch = mock.Mock(return_value=(x,) * 9)
-                with mock.patch.object(self.stable, "_op", return_value=dispatch), \
-                        mock.patch.object(self.stable, "_current_stream_ptr", return_value=9):
-                    getattr(self.ascendc, name[4:])(
-                        *args, cu_seqlens=cu, chunk_indices=indices)
+        for case, cu, indices, expected_cu, expected_indices, generated in cases:
+            with self.subTest(op=name, case=case):
+                dispatch = mock.Mock(return_value=(args[0],) * 9)
+                kwargs = {"cu_seqlens": cu, "chunk_indices": indices,
+                          **op_kwargs}
+                with mock.patch.object(self.stable, "_op", return_value=dispatch) as resolve, \
+                        mock.patch.object(self.stable, "_current_stream_ptr", return_value=9), \
+                        mock.patch.object(self.stable, "_canonical_chunk_indices",
+                                          wraps=self.stable._canonical_chunk_indices) as canonical:
+                    getattr(self.ascendc, name[4:])(*args, **kwargs)
+                resolve.assert_called_with(name)
                 dispatch.assert_called_once()
+                self.assertEqual(dispatch.call_args.args[-1], 9)
+                self.assertEqual(canonical.call_count, int(generated))
                 actual = dispatch.call_args.args[offset:offset + 2]
                 self.assertEqual(len(actual), 2)
                 for value, expected in zip(actual, (expected_cu, expected_indices)):
@@ -271,47 +289,60 @@ assert 'torch' not in sys.modules and 'torch_npu' not in sys.modules
                         self.assertEqual(value.dtype, torch.int64)
                         self.assertEqual(value.tolist(), expected)
 
-    def test_chunk_metadata_generates_missing_indices_for_all_input_forms(self):
+    def test_chunk_fwd_h_metadata(self):
         torch = self._metadata_torch()
-        # A tail chunk and an empty middle sequence must retain sequence IDs.
-        cu_values = [0, 65, 65, 128]
-        expected = [0, 0, 0, 1, 2, 0]
-        missing = {"none": None, **self._metadata_forms(torch, [])}
-        for cu_kind, cu in self._metadata_forms(torch, cu_values).items():
-            for index_kind, indices in missing.items():
-                with self.subTest(cu=cu_kind, indices=index_kind):
-                    self._assert_chunk_dispatch(torch, cu, indices, cu_values, expected)
+        x = torch.empty((1, 2, 128, 128), dtype=torch.bfloat16)
+        g = torch.empty((1, 2, 128), dtype=torch.float32)
+        self._check_chunk_wrapper("npu_chunk_fwd_h", (x, x, x), 9,
+                                  [0, 0, 0, 1, 1, 0], g=g, chunk_size=64)
 
-    def test_chunk_metadata_preserves_explicit_indices_for_all_input_forms(self):
+    def test_chunk_gated_delta_rule_fwd_h_metadata(self):
         torch = self._metadata_torch()
-        cu_values = [0, 65, 65, 128]
-        # Deliberately distinct from the generated order: the wrapper must
-        # forward caller metadata, leaving its validity to the operator.
-        explicit = [2, 0, 0, 1, 0, 0]
-        for cu_kind, cu in self._metadata_forms(torch, cu_values).items():
-            for index_kind, indices in self._metadata_forms(torch, explicit).items():
-                with self.subTest(cu=cu_kind, indices=index_kind):
-                    self._assert_chunk_dispatch(torch, cu, indices, cu_values, explicit)
+        x = torch.empty((1, 2, 128, 128), dtype=torch.bfloat16)
+        g = torch.empty((1, 2, 128), dtype=torch.float32)
+        self._check_chunk_wrapper("npu_chunk_gated_delta_rule_fwd_h",
+                                  (x, x, x, g), 8, [0, 0, 0, 1, 1, 0])
 
-    def test_chunk_metadata_preserves_none_and_empty_boundaries(self):
+    def test_chunk_kda_fwd_metadata(self):
         torch = self._metadata_torch()
-        boundaries = {"none": None, **self._metadata_forms(torch, [])}
-        index_forms = {"none": None, **self._metadata_forms(torch, [])}
-        index_forms.update({"explicit_" + key: value for key, value in
-                            self._metadata_forms(torch, [0, 0]).items()})
-        for cu_kind, cu in boundaries.items():
-            for index_kind, indices in index_forms.items():
-                with self.subTest(cu=cu_kind, indices=index_kind):
-                    expected = None if indices is None else (
-                        [0, 0] if index_kind.startswith("explicit_") else [])
-                    self._assert_chunk_dispatch(
-                        torch, cu, indices, None if cu is None else [], expected)
+        x = torch.empty((1, 128, 2, 128), dtype=torch.bfloat16)
+        g = torch.empty_like(x, dtype=torch.float32)
+        beta = torch.empty((1, 128, 2), dtype=torch.float32)
+        self._check_chunk_wrapper("npu_chunk_kda_fwd",
+                                  (x, x, x, g, beta, 0.125), 8,
+                                  [0, 0, 0, 1, 1, 0])
 
-    def test_chunk_metadata_zero_boundary_uses_container_not_element_truth(self):
+    def test_chunk_kda_fwd_prepare_metadata(self):
         torch = self._metadata_torch()
-        for kind, cu in self._metadata_forms(torch, [0]).items():
-            with self.subTest(cu=kind):
-                self._assert_chunk_dispatch(torch, cu, None, [0], [])
+        x = torch.empty((1, 128, 2, 128), dtype=torch.bfloat16)
+        g = torch.empty_like(x, dtype=torch.float32)
+        beta = torch.empty((1, 128, 2), dtype=torch.float32)
+        self._check_chunk_wrapper("npu_chunk_kda_fwd_prepare",
+                                  (x, x, x, g, beta, 0.125), 7,
+                                  [0, 0, 0, 1, 1, 0])
+
+    def test_chunk_kda_fwd_finalize_metadata(self):
+        torch = self._metadata_torch()
+        x = torch.empty((1, 2, 128, 128), dtype=torch.bfloat16)
+        self._check_chunk_wrapper("npu_chunk_kda_fwd_finalize",
+                                  (x, x, x, x), 4, [0, 0, 0, 1, 1, 0])
+
+    def test_chunk_gated_delta_rule_fwd_prepare_metadata(self):
+        torch = self._metadata_torch()
+        x = torch.empty((1, 2, 128, 128), dtype=torch.bfloat16)
+        g = torch.empty_like(x, dtype=torch.float32)
+        beta = torch.empty((1, 2, 128), dtype=torch.float32)
+        self._check_chunk_wrapper("npu_chunk_gated_delta_rule_fwd_prepare",
+                                  (x, x, x, g, beta), 7, [0, 0, 0, 1, 1, 0])
+
+    def test_chunk_gated_delta_rule_bwd_metadata(self):
+        torch = self._metadata_torch()
+        x = torch.empty((1, 2, 128, 128), dtype=torch.bfloat16)
+        g = torch.empty_like(x, dtype=torch.float32)
+        beta = torch.empty((1, 2, 128), dtype=torch.float32)
+        self._check_chunk_wrapper("npu_chunk_gated_delta_rule_bwd",
+                                  (x, x, x, g, beta, x, x, 0.125), 14,
+                                  [0, 0, 0, 1, 1, 0])
 
     def test_overlay_capability_checks_actual_override_library(self):
         class Probe:
