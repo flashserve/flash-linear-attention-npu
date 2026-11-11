@@ -6,6 +6,7 @@
 #include "../chunk_kda_bwd_recompute_tiling_processor.h"
 #include <algorithm>
 #include <register/op_impl_registry.h>
+#include "platform/soc_spec.h"
 #include "tiling_base/tiling_templates_registry.h"
 
 namespace optiling {
@@ -33,6 +34,10 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const int64_t *chunkIndicesData =
         chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
 
+    const bool isAscend950 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
+    OP_CHECK_IF(!isAscend950 && context->GetOutputShape(4) == nullptr,
+                OP_LOGE(context->GetNodeName(), "gk output buffer is required on A2/A3."),
+                return ge::GRAPH_FAILED);
     ChunkKdaBwdRecomputeTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_RECOMPUTE_Q_IDX),
@@ -55,6 +60,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         *(attrPtr->GetAttrPointer<float>(KDA_RECOMPUTE_LOWER_BOUND_ATTR)),
         ubSize,
         ascendcPlatform.GetLibApiWorkSpaceSize(),
+        isAscend950,
     };
 
     ChunkKdaBwdRecomputeTilingProcessor processor(ctx, *tiling);
@@ -64,11 +70,6 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     uint32_t aicNum = ascendcPlatform.GetCoreNumAic();
     uint32_t aivNum = ascendcPlatform.GetCoreNumAiv();
     const uint32_t coreNum = ascendcPlatform.GetCoreNum();
-    const auto *compileInfo = context->GetCompileInfo<ChunkKdaBwdRecomputeCompileInfo>();
-    if (compileInfo != nullptr) {
-        aicNum = std::max(aicNum, compileInfo->aicNum);
-        aivNum = std::max(aivNum, compileInfo->aivNum);
-    }
     // Mix 1:2 platform info sometimes reports a single AIC/AIV pair instead of
     // the chip total. Fall back to AIV/2, then GetCoreNum, then A5's 28 AIC.
     if (aicNum <= 2U) {
@@ -80,14 +81,23 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             aicNum = 28U;
         }
     }
-    if (aivNum < aicNum * 2U) {
-        aivNum = aicNum * 2U;
+    // This A2/910B SKU exposes 20 complete 1:2 Mix groups. Platform metadata can
+    // report more logical cores; scheduling group 21 leaves an unpaired waiter.
+    if (!isAscend950) {
+        aicNum = std::min(aicNum, 20U);
+    }
+    const uint32_t aivPerBlock = 2U;
+    if (aivNum < aicNum * aivPerBlock) {
+        aivNum = aicNum * aivPerBlock;
     }
     const int64_t workUnits = std::max<int64_t>(1, tiling->chunkNum * std::max<int64_t>(tiling->Hv, 1));
-    const uint32_t usedAic = static_cast<uint32_t>(
+    uint32_t usedAic = static_cast<uint32_t>(
         std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
-    tiling->vecRow = static_cast<int64_t>(usedAic);
-    uint32_t blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * 2U, aicNum, aivNum);
+    tiling->usedAic = static_cast<int64_t>(usedAic);
+    uint32_t blockDim = usedAic;
+    if (aivPerBlock == 2U) {
+        blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * aivPerBlock, aicNum, aivNum);
+    }
     if (blockDim < usedAic) {
         blockDim = usedAic;
     }

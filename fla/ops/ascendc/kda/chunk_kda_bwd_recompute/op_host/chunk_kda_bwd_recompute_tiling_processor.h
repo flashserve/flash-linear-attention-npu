@@ -58,6 +58,7 @@ struct ChunkKdaBwdRecomputeTilingContext {
     float lowerBound;
     uint64_t ubSize;
     size_t sysWorkspaceSize;
+    bool enableCompactWorkspace;
 };
 
 class ChunkKdaBwdRecomputeTilingProcessor {
@@ -190,28 +191,15 @@ private:
 
         while (rowNum >= 8) {
             uint64_t useUbSize = 0;
-            useUbSize += Align32(2 * rowNum * kDim * sizeofGate);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * sizeofBeta);
-            useUbSize += Align32(2 * rowNum * kDim * sizeof(float));
-            useUbSize += Align32(2 * rowNum * kDim * sizeof(float));
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
+            useUbSize += Align32(rowNum * kDim * sizeofGate);
+            useUbSize += 2 * Align32(rowNum * kDim * sizeofQk);
+            useUbSize += Align32(rowNum * sizeofBeta);
             useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
+            useUbSize += 3 * Align32(rowNum * kDim * sizeofQk);
+            useUbSize += 6 * Align32(rowNum * kDim * sizeof(float));
             useUbSize += Align32(rowNum * sizeof(float));
             useUbSize += Align32(rowNum * 32);
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
+            useUbSize += 3 * Align32(kDim * sizeof(float));
             useUbSize += Align32(32);
             useUbSize += 4096;
             if (useUbSize <= ubLimit) {
@@ -221,9 +209,14 @@ private:
         }
 
         tiling_.vecRow = static_cast<int64_t>(rowNum);
-        // A5 L1 path keeps kbg/vb on-chip (design §6.1). GM workspace is only the sys buffer.
-        userWorkspaceSize_ = 0;
-        workspaceSize_ = ctx_.sysWorkspaceSize;
+        if (ctx_.enableCompactWorkspace) {
+            // A5 L1 path keeps kbg/vb on-chip.
+            userWorkspaceSize_ = 0;
+        } else {
+            const uint64_t tensorBytes = Align32(static_cast<uint64_t>(tiling_.B) *
+                static_cast<uint64_t>(tiling_.Hv) * static_cast<uint64_t>(tiling_.T) * kDim * sizeofQk);
+            userWorkspaceSize_ = static_cast<size_t>(2ULL * tensorBytes);
+        }
         return ge::GRAPH_SUCCESS;
     }
 
