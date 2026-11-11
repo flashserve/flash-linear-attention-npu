@@ -224,3 +224,20 @@ A5/A2≥0.5，case1/case3 分别为 0.4884/0.4937，整体性能目标尚未全�
 优化后使用 `/data/yqw/requirement/prepare/kda_bwd_prepare/atk标杆` 完成精度20/20、
 确定性3/3。按本轮要求未重新采集msprof；上述NPU Event只用于同环境回归对比，
 不替代统一的msprof Task Duration性能结论。
+
+### A2 满块与Gather索引优化（2026-11-12）
+
+在上述行内复用提交基础上，Precomputed路径进一步复用16步Gather索引模式，后续批次只对整批
+索引增加64字节；满64行work跳过Q/K/G/beta、RHS和V输入缓冲区的冗余预清零，尾块保持补零；
+无消费者的Norm关闭rstd初始化及Precomputed Lower写回一并删除。数学分支、tiling key和输出合同不变。
+同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
+
+|典型case|布局与规模|本轮优化前（us）|本轮优化后（us）|耗时降低|
+|---|---|---:|---:|---:|
+|198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|10463.28|9862.06|5.75%|
+|199|TND变长，T=16384，16×1024，HK=16，HV=128，G=8|15158.63|14270.13|5.86%|
+
+优化后使用同一ATK标杆再次完成精度20/20、确定性3/3。精度报告位于
+`/data/yqw/validation/prepare_gva/perf_opt_round2_accuracy20_ok`，确定性报告位于
+`/data/yqw/validation/prepare_gva/perf_opt_round2_determinism`。按要求未重新采集msprof；
+NPU Event结果仅作为同窗口优化回归数据。
