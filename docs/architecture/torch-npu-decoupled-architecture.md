@@ -301,7 +301,6 @@ from fla_npu.ops.triton import chunk_local_cumsum
 
 旧 `load_legacy_torch_ops()` 及 legacy 扩展已删除；`install_torch_npu_ops_compat()` 保留为纯 Python 别名安装器，全部调用 Stable。
 调用方和仓内测试统一使用 `fla_npu.ops.ascendc`；完整迁移表见[兼容与迁移指南](../兼容与迁移指南.md)。
-KDA `implementation="legacy"` 是 Stable 内部保留的原 fused 算法选择，与旧扩展无关。
 
 ## 5. 功能正确性能力如何保证
 
@@ -663,7 +662,7 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | Triton Ascend | 面向昇腾的 Triton Python/JIT 编程和运行能力 | 只影响 `fla_npu.ops.triton`，与 Ascend C OPP 分层 |
 | capability probe | 不看版本字符串，直接检查某个 API/行为是否存在 | 用于适配 torch storage、device、stream 等差异 |
 | preflight | 真正执行任务前的一次集中环境检查 | 提前报告缺失 tensor/NPU/aclnn 能力 |
-| legacy | 为旧用户暂时保留、但不推荐新代码继续使用的兼容路径 | 旧 `load_legacy_torch_ops()` / `torch.ops.npu.*` 已删除；KDA 的同名算法选择仍保留 |
+| legacy | 为旧用户暂时保留、但不推荐新代码继续使用的兼容路径 | 旧 `load_legacy_torch_ops()` / `torch.ops.npu.*` 已删除 |
 | Python minor 版本 | Python 版本号中的次版本，例如 3.9、3.10、3.11 | CPython C extension 通常不能跨 minor 版本直接复用 |
 | CPU / aarch64 / x86_64 | CPU 是 host 处理器；aarch64 和 x86_64 是两类常见 CPU 指令集架构 | host ELF 必须按架构分别构建 |
 | gcc | Linux 常用的 C/C++ 编译器 | 旧 C++ extension 的 ABI 和 libstdc++ 版本可能受它影响 |

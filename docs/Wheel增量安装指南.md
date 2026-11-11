@@ -95,8 +95,18 @@ python -m fla_npu_opp_manage --remove-overlay
 `fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash`，再启动业务进程；不要直接 source
 私有层中从新 wheel 提取的脚本。`FLA_NPU_OVERLAY_VENDOR=''` 会同时禁用增量 Python 入口和增量 OPP。
 
-当前只有一个 wheel overlay 槽位，使用默认名称；不与旧的 run-only overlay 混装，切换类型前先移除。
-历史 `.run` / vendor 增量安装继续可用，仍要求与 base 的 ACLNN ABI 兼容。
-wheel 模式允许被覆盖算子的接口变化，检查的是**新 adapter 与实际选中 OPP**，不是要求它等于旧 adapter。
+两种增量方式的边界如下，切换类型前先移除旧 overlay：
+
+| 行为 | run-only overlay | wheel overlay |
+| --- | --- | --- |
+| 安装对象 | 从 `.run` 提取的 vendor 目录 | 骨架或带 OPP 的 `.whl`，可用 `--opp-source` 配齐 |
+| Python / Stable | 复用 base | 指定入口使用增量，未覆盖入口保持 base |
+| ABI 条件 | 与 base 同名 ACLNN 接口保持兼容 | 新 adapter 与实际选中 OPP 匹配，允许被覆盖入口接口变化 |
+| 选择方式 | vendor 配置及 `--overlay-name` | 单个 active 槽位，使用默认名称 |
+| 替换失败 | 拒绝不兼容产物并保留旧 overlay | 包损坏拒绝，依赖不匹配保持 pending；旧 active 保留 |
+| 旧版本回收 | 成功替换后删除旧 vendor | 替换时保留旧 payload，显式移除时回收 |
+
+两者均保留 base 的 Python/Stable 和 OPP 算子产物，分别维护自己的管理配置；支持显式禁用
+和移除后重启恢复，当前不支持两种 overlay 混装。
 
 机制、启动约束及验收标准见 [OPP 叠加层增量设计](OPP叠加层增量设计.md#9-wheel-携带适配层的增量安装)。
