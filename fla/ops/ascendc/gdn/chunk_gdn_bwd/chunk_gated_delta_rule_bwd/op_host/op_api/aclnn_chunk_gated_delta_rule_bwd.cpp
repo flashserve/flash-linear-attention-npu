@@ -21,6 +21,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
+#include "opdev/shape_utils.h"
 
 #include <array>
 #include <cmath>
@@ -39,6 +40,7 @@ static constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleBwd";
 
 namespace {
 
+constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleBwd";
 constexpr int64_t DIM_128 = 128;
 constexpr int64_t CHUNK_64 = 64;
 
@@ -195,9 +197,10 @@ aclnnStatus CheckRequiredInputs(const Params &params)
         params.q, params.k, params.v, params.g, params.beta, params.a,
         params.dO, params.dqOut, params.dkOut, params.dvOut,
         params.dBetaOut, params.dGOut};
-    for (const aclTensor *tensor : required) {
-        if (tensor == nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "inputs");
+    const char *names[] = {"q", "k", "v", "g", "beta", "A", "d_o", "dq", "dk", "dv", "d_beta", "d_g"};
+    for (size_t index = 0; index < required.size(); ++index) {
+        if (required[index] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, names[index]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }

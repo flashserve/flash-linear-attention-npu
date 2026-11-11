@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "op_common/log/log.h"
 #include <cstring>
 
 #include "chunk_gdn_bwd_intra.h"
@@ -37,7 +38,8 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
     if (layout == nullptr ||
         (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
          std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        OP_LOGE_WITH_INVALID_ATTR("ChunkGdnBwdIntra", "layout", layout == nullptr ? "nullptr" : layout,
+                                  "BNSD, BSND, NTD or TND");
         return {nullptr, nullptr, nullptr};
     }
     L0_DFX(ChunkGdnBwdIntra, q, k, v, g, beta, a, dO, cuSeqlensOptional,

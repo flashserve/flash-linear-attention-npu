@@ -124,10 +124,19 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     }
 
     OP_CHECK_IF(k.GetDim(0) != tiling.B ||
-                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK)
-                                       : (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
+                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ?
+                         (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK) :
+                         (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
                     k.GetDim(3) != tiling.K,
-                OP_LOGE(context->GetNodeName(), "k must have the same shape as q."),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "q/k",
+                    std::string("q=") +
+                        (std::string("[") + std::to_string(q.GetDim(0)) + "," + std::to_string(q.GetDim(1)) + "," +
+                         std::to_string(q.GetDim(2)) + "," + std::to_string(q.GetDim(3)) + "]") +
+                        ", k=" +
+                        (std::string("[") + std::to_string(k.GetDim(0)) + "," + std::to_string(k.GetDim(1)) + "," +
+                         std::to_string(k.GetDim(2)) + "," + std::to_string(k.GetDim(3)) + "]"),
+                    "k must have the same shape as q in the selected layout"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(v.GetDim(0) != tiling.B ||
                     ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
@@ -183,8 +192,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         qkvLayout = "BNSD";
     }
     OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
-        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
         std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FinalizeLayout::BNSD :

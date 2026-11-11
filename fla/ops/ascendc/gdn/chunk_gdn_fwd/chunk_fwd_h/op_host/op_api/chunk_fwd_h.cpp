@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "op_common/log/log.h"
 
 #include <cstring>
 
@@ -61,7 +62,8 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     if (layout == nullptr ||
         (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
          std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        OP_LOGE_WITH_INVALID_ATTR("ChunkFwdH", "layout", layout == nullptr ? "nullptr" : layout,
+                                  "BNSD, BSND, NTD or TND");
         return {nullptr, nullptr, nullptr};
     }
     L0_DFX(ChunkFwdH, k, w, u, g, gkOptional, initialStateOptional, cuSeqlensOptional,
