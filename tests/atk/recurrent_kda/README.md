@@ -41,32 +41,3 @@ bash tests/atk/run_test_cpu.sh -op=recurrent_kda -scope=gen_cases
 ```
 
 `gen_cases` 默认传入 `-dt 100 -en 0`。所有新增工程的 marker dtype 都保留两路生成入口，生成器会把不支持 FP16 的算子改回合法 BF16 用例。
-
-## A5 Q/K/V stride 寻址诊断
-
-`scripts/qkv_stride_tiling.cpp` 调用当前算子的实际 host tiling processor；使用单算子构建生成的
-`ophost_transformer_tiling_obj.dir/flags.make` 中的 include 参数编译，并链接当前 CANN 的
-`error_manager/ascendalog/unified_dlog/platform/register/graph`，得到 `qkv_stride_tiling`。
-
-```bash
-python scripts/test_qkv_strides.py \
-  --tiling-probe <qkv_stride_tiling> \
-  --kernel-dir <installed_vendor>/op_impl/ai_core/tbe/kernel/ascend950/recurrent_kda \
-  --output <diagnostic_output>
-```
-
-该脚本同时调用公开 Python 入口和 ACL runtime 直接加载的当前安装 kernel，检查公开连续化与
-L0 支持边界。112 个公开入口场景覆盖四种 A5 模式、FP32/BF16 State、V=128/256，以及 batch gap、
-head-major、Q/K/V 不同 stride、固定长度、跨 batch 的 varlen、空请求和融合 QKV 切片。
-融合切片另外覆盖卷积 `[B,C,1]` 输出转置后的 decode view（长度为1的 token 轴 stride 为1）。
-
-其中32个固定长度或规则融合切片场景须通过 L0 tiling，并直接对照 kernel；其余80个不支持的原始
-view 须在直接 launch 前被 tiling 拒绝，同时公开入口仍须连续化并计算正确结果。
-out 和有效 State 槽须与连续输入逐位相同，并使用既有 CPU 标杆及 `rtol=0.02, atol=0.01` 检查精度；
-另外以5个负向检查分别覆盖仅 Q/K/V 各自存在 batch gap、重叠 batch 与 A2 head-major。
-本专项回归不替代上述 ATK 验收。
-
-2026-11-11 在 A5_1/Ascend950PR、CANN 9.2.0-beta.2 上，收紧 tiling 并恢复原 kernel 后，
-112 个公开入口场景、32 个直接 view 对照、80 个直接 tiling 拒绝及5个负向检查全部通过。
-公开 State mutation/None 契约与既有 ATK 小用例精度（1/1）通过；576 组 A2 host tiling 的
-成功/失败和分核结果与原实现相同，未在 A2 设备执行。本记录不代表 #680 的完整性能和显存验收。
