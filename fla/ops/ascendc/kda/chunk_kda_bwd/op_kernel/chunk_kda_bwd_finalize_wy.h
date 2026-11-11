@@ -893,6 +893,11 @@ public:
             // emitted only after BuildKE has completed its workspace store.
             // Consume it before launching zW, whose right operand is kE.
             WaitVectorStage(s0Consumed);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+            // S3b consumes dW from GM. FIX_M only protects L0C reuse.
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(0);
+#endif
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
@@ -987,6 +992,11 @@ public:
             // operand layouts and output dtypes.  Drain only that five-event
             // lifecycle before rebinding the arenas; the shared-left event-2
             // state remains untouched.
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+            // S7 consumes Tza from GM after all S6 FIX stores complete.
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(0);
+#endif
             if (isolateOddS7) {
                 EndSharedLeftMmadPhase();
                 AscendC::SetMMLayoutTransform(false);
