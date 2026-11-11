@@ -213,6 +213,24 @@ class ContractTest(unittest.TestCase):
             self.assertFalse(overlay.exists())
             self.assertEqual(before, (base/abi.LIBRARY).read_bytes())
 
+    def test_stable_exec_call_sites_survive_a_leading_comment(self):
+        spec = importlib.util.spec_from_file_location(
+            "op_abi_validate", PACKAGE / "tools/op_abi_validate.py")
+        validate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validate)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "stable_demo.cpp").write_text(
+                "  FLA_STABLE_EXEC(\n"
+                "      // logical storage shape (this reference's `logical_tensor`)\n"
+                '      "aclnnDemo", q_meta, stream, logical_tensor(q_meta));\n',
+                encoding="utf-8")
+            self.assertEqual(set(validate.adapter_calls(Path(tmp))), {"aclnnDemo"})
+            (Path(tmp) / "stable_broken.cpp").write_text(
+                '  FLA_STABLE_EXEC(\n      "aclnnBroken", q_meta;\n',
+                encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "could not be parsed"):
+                validate.adapter_calls(Path(tmp))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -58,7 +58,13 @@ def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
     return {s: list(kinds) for s, kinds in signatures.items()}
 
 
-_EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
+# A call site may put a comment between the macro's `(` and the aclnn symbol
+# name: the GDN/KDA adapters document their descriptor convention right
+# there.  The preprocessor ignores the comment, so the parser has to ignore
+# it too -- otherwise the operator's only ABI check is dropped silently.
+_COMMENT = r"(?:(?://[^\n]*\n)|(?:/\*.*?\*/))"
+_EXEC_CALL = re.compile(
+    rf"FLA_STABLE_EXEC\(\s*(?:{_COMMENT}\s*)*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
 
 _TENSOR_HOLDERS = {
     "tensor",
@@ -167,7 +173,9 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     calls: dict[str, tuple[Path, list[str]]] = {}
     for source in sorted(src_dir.glob("stable_*.cpp")):
         text = source.read_text(encoding="utf-8", errors="replace")
+        parsed = 0
         for match in _EXEC_CALL.finditer(text):
+            parsed += 1
             symbol, arguments = match.group(1), match.group(2)
             # The api string is outside the capture, so the list starts at the
             # workspace meta and the stream.
@@ -193,6 +201,13 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
                 else:
                     kinds.append(WILDCARD)
             calls[symbol] = (source, kinds)
+        if not parsed and "FLA_STABLE_EXEC(" in strip_comments(text):
+            # Fail closed: a call site this parser cannot see would also be
+            # invisible to the full-build gate, which silently skips it.
+            raise RuntimeError(
+                f"{source}: FLA_STABLE_EXEC call site(s) could not be parsed; "
+                "keep the aclnn symbol name directly after the macro's "
+                "argument list")
     return calls
 
 
