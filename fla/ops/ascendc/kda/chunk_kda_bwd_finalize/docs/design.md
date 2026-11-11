@@ -100,29 +100,3 @@ A2/A3 总接口按原始 beta dtype 分配 db，通过现有 model_layout 调用
 输入 BetaT 与输出 DTYPE_D_BETA 分离，原 FP32 数学和 UB 生命周期保持不变，
 仅最终 pack/store 使用输出类型。独立 Finalize API 继续要求 db dtype 与其 beta 输入一致；
 新增组合只供融合 sigmoid 的总接口路径使用。
-
-## A2 Finalize 的 workspace 写入所有权（issue #988）
-
-Arch22 每个 core 保留两个 head slot，每个 head 保留两代 384 KiB bank。
-原实现把 Cube 的 `dk_state_raw`、`dv_b` 与 Vector 的 `dk_base`、`dq_base`
-分别放在相同地址；`dAkk_raw` 的后 8 KiB 也与 Vector 的 `bkPos` 重叠。
-msSanitizer memcheck 的跨核写入检查会将这些跨阶段复用报告为
-`WARNING: out of bounds`，该告警不同于未分配地址的 `ERROR: illegal`。
-
-保持 bank 大小、任务映射、两代流水和计算公式不变，将复用限定为同一类核写入：
-
-| bank 内区间（KiB，左闭右开） | 先写入/消费 | 后续复用 | 生命周期保护 |
-|---|---|---|---|
-| 256–288 | Cube Stage 0 写 `dk_state_raw`，Vector Stage 5 读 | Cube Stage 8 写 `dq_local` | Stage 5 → Stage 7 → `BAND_READY` → Stage 8 |
-| 288–320 | Cube Stage 0 写 `dv_b`，Vector Stage 3 读 | Cube Stage 8 写 `left` | Stage 3 → Stage 5 → Stage 7 → `BAND_READY` → Stage 8 |
-| 112–128 | Cube Stage 2 写 `zW`，Vector Stage 3 读 | Cube Stage 6 写 `dAkk_raw`，Vector Stage 7 读 | Stage 3 → `VECTOR_ACK` → Stage 4/6 |
-| 208–224 | Cube Stage 0 写四个 32×32 的 RH 对角块 | Vector Stage 5 读 | `S02_READY` 后才开始消费；与 `bkPos` 的 224–256 区间不重叠 |
-
-`dk_base`、`dq_base` 继续位于 0–32、32–64 KiB，仅由所属 AIV 写入。
-非 Cube RH 模板仍使用 208 KiB 开始的 128 个 FP32 值；它与 Cube RH 模板
-互斥。所有读写都通过共享常量寻址，host workspace 申请量不增加。
-bank 回绕继续由 `S5_DONE + bank` 和现有完成协议保护，不新增或删改同步。
-
-回归要求：原 issue 的 8 个 memcheck 用例严格检查原始日志；扩展 key 101/102、
-多 core、奇数 head、varlen、尾块和同 core 多 work；运行原 200 条双标杆用例。
-验证记录以实际执行结果为准，不能把 ATK 的 `sanitizer_result=True` 当作零告警证据。
