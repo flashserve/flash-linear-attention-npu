@@ -108,3 +108,14 @@ kernel 根据运行时布局值选择 Q/K/V 的 GM offset 和行跨度；内部 
 和 dO 的既有布局规则保持一致。布局不进入 `ASCENDC_TPL_ARGS_DECL`、
 `ASCENDC_TPL_SEL`、`GET_TPL_TILING_KEY` 或 kernel/helper 的模板参数。
 此前的 QKV 布尔属性、context 标记和布局模板维度全部移除。
+
+## 参数错误上报
+
+融合入口的公开参数校验、四个 L0 的 layout 校验及相应 tiling 的 layout 校验直接使用
+`op_common/log/log.h` 的预定义 Error Message 宏，不增加日志包装函数或 guard 宏。
+dtype 使用 `OP_LOGE_WITH_INVALID_INPUT_DTYPE`；rank 使用
+`OP_LOGE_WITH_INVALID_INPUT_SHAPESIZE` 或对应的具名参数宏；shape、属性及跨参数约束
+选择对应的 `OP_LOGE_FOR_*` / `OP_LOGE_WITH_INVALID_ATTR`，报告实际值和期望值或具体原因。
+`EZ0002`、`EZ0005`、`EZ0007` 等消息标识与 ACLNN 数值返回码分别验证；L0 原有
+空指针返回、tiling 的 `GRAPH_FAILED` 和公开入口的既有返回语义保持一致。
+此次只调整 host 错误诊断，不改变 kernel、TilingKey、workspace、布局寻址或计算公式。
