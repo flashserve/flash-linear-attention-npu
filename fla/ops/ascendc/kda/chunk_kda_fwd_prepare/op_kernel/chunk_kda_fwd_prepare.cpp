@@ -16,11 +16,11 @@
 #endif
 
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
-template <uint32_t NORM_MODE, uint32_t GATE_MODE>
+template <uint32_t NORM_MODE, uint32_t GATE_MODE, bool GVA_MODE>
 #else
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
-          bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE>
+          bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE, bool GVA_MODE>
 #endif
 __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
