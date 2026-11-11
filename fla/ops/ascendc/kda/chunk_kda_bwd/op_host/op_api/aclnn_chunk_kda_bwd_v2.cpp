@@ -16,6 +16,7 @@
 #include <utility>
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
+#include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include <cmath>
 #include <cstring>
@@ -131,9 +132,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
                "workspaceSize and executor must not be nullptr.");
     CHECK_COND(useGateInKernel, ACLNN_ERR_PARAM_INVALID,
                "chunk_kda_bwd: use_gate_in_kernel must be true.");
-    const char *soc = aclrtGetSocName();
-    CHECK_COND(soc && std::strstr(soc, "Ascend950"), ACLNN_ERR_PARAM_INVALID,
-               "V2 requires Ascend950/A5.");
+    CHECK_COND(GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510,
+               ACLNN_ERR_PARAM_INVALID, "V2 requires NpuArch::DAV_3510 (A5).");
     CHECK_COND(!betaEffOptional && !useBetaSigmoidInKernel && !allowNegEigval,
                ACLNN_ERR_PARAM_INVALID,
                "A5 beta sigmoid backward is reserved: beta_eff must be null and both flags false.");
