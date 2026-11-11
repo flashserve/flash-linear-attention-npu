@@ -566,15 +566,18 @@ def npu_recurrent_gated_delta_rule(
     """
     if gk is not None:
         raise ValueError("gk is reserved; only scalar gate g is supported.")
-    from ._recurrent_gdn import validate_recurrent_gdn
-
-    scale = validate_recurrent_gdn(query, key, value, state, beta=beta, scale=scale,
-        actual_seq_lengths=actual_seq_lengths, ssm_state_indices=ssm_state_indices,
-        num_accepted_tokens=num_accepted_tokens, g=g, gk=gk, A_log=A_log,
-        dt_bias=dt_bias, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-        use_gate_in_kernel=use_gate_in_kernel,
-        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-        allow_neg_eigval=allow_neg_eigval)
+    # ACLNN validates tensor descriptors. Keep device checks here because an
+    # ACL descriptor does not carry the originating torch device. Metadata
+    # values stay on device so warmup/capture do not synchronize them to Python.
+    for tensor in (query, key, value, state, beta, actual_seq_lengths,
+                   ssm_state_indices, num_accepted_tokens, g, A_log, dt_bias):
+        if tensor is None:
+            continue
+        if tensor.device.type != "npu":
+            raise ValueError("All RecurrentGDN tensors must be on NPU.")
+        if tensor.device != query.device:
+            raise ValueError("All RecurrentGDN tensors must be on the same device.")
+    scale = float(scale)
     if state.requires_grad:
         _refuse_grad_state("npu_recurrent_gated_delta_rule", state)
     result = _op("npu_recurrent_gated_delta_rule")(

@@ -43,6 +43,8 @@ bank 流水实现。A5 编译不启用 `--cce-auto-sync=on`，跨 MTE2/Vector/MT
 
 ## 校验与异常
 
-Python 层在修改 State 前校验 dtype、shape、stride、元数据值和所有权。
-host 侧校验 dtype、shape、view 边界、参数组合，tiling 再校验平台及资源。
-非法输入返回参数错误并报告参数名与原因；缺少必要指针返回空指针错误。
+Python 层检查 NPU 设备一致性与可变 State 的梯度约束，不回读设备上的 metadata。
+host 侧校验 dtype、shape、stride、view 边界、内存别名和参数组合，tiling 再校验平台及资源。
+metadata 的实际值由调用方保证符合上述约束，包括长度及其总和、索引范围、accepted 范围和
+跨请求 State 槽所有权；这些内容不在 Python 调用路径中同步校验。
+host 检出的非法输入返回参数错误并报告参数名与原因；缺少必要指针返回空指针错误。
