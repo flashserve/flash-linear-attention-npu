@@ -328,9 +328,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const auto *dh = alloc(state, DataType::DT_BF16);
     const auto *dvScan = alloc(token, DataType::DT_BF16);
     CHECK_RET(dAqk && dvLocal && dqRaw && dh && dvScan, ACLNN_ERR_INNER_NULLPTR);
-    // Public do is token-major; Prepare and Dhu share one head-major copy.
-    const auto *dOHead = SwapHeadToken(dO, packed, ex);
-    CHECK_RET(dOHead, ACLNN_ERR_INNER_NULLPTR);
     // A5 Prepare's existing varlen kernel uses rank-3 NTD. Drop only the
     // leading B=1 view dimension for 4D varlen callers; no data is moved.
     auto prepareView = [&](const aclTensor *tensor) -> const aclTensor * {
@@ -341,8 +338,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
         return l0op::Reshape(tensor, shape, ex);
     };
+    const aclTensor *dOInput = dO;
+    if (T == H) {
+        // Square shapes cannot distinguish token-major from head-major.
+        dOInput = SwapHeadToken(dO, packed, ex);
+        CHECK_RET(dOInput != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
     const auto prepare = l0op::ChunkKdaBwdPrepare(
-        prepareView(aqk), prepareView(vNew), prepareView(dOHead), prepareView(h),
+        prepareView(aqk), prepareView(vNew), prepareView(dOInput), prepareView(h),
         cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
         prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex);
     for (const auto *value : prepare) {
@@ -350,7 +353,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     }
     const auto scan = l0op::ChunkGatedDeltaRuleBwdDhu(
         BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(w, packed, ex),
-        BatchView(dOHead, packed, ex), BatchView(dvLocal, packed, ex), nullptr,
+        BatchView(dOInput, packed, ex), BatchView(dvLocal, packed, ex), nullptr,
         BatchView(gk, packed, ex), nullptr, nullptr, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
         BatchView(dvScan, packed, ex), ex);

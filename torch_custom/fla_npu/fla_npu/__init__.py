@@ -95,7 +95,7 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
     """Fail before loading code when an overlay changes the wheel's aclnn ABI."""
 
     try:
-        from ._op_abi import compare_overlay_to_base
+        from ._op_abi import compare_overlays_to_base
     except ImportError:  # run_path/direct-script diagnostics lack package context
         abi_path = _PACKAGE_DIR / "_op_abi.py"
         abi_spec = importlib.util.spec_from_file_location(
@@ -105,7 +105,7 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
             raise
         abi_module = importlib.util.module_from_spec(abi_spec)
         abi_spec.loader.exec_module(abi_module)
-        compare_overlay_to_base = abi_module.compare_overlay_to_base
+        compare_overlays_to_base = abi_module.compare_overlays_to_base
 
     base_vendor = next(
         (path for path in vendor_dirs if path.name == _DEFAULT_VENDOR_DIR), None
@@ -115,14 +115,8 @@ def _validate_overlay_abi(vendor_dirs: list[pathlib.Path]) -> None:
             "fla_npu: no base vendor is available to validate overlay aclnn ABI. "
             "Reinstall the complete wheel before using an overlay."
         )
-    failures: list[str] = []
-    for vendor_dir in vendor_dirs:
-        if vendor_dir == base_vendor:
-            continue
-        failures.extend(
-            f"{vendor_dir.name}: {problem}"
-            for problem in compare_overlay_to_base(vendor_dir, base_vendor)
-        )
+    overlays = [path for path in vendor_dirs if path != base_vendor]
+    failures = compare_overlays_to_base(overlays, base_vendor) if overlays else []
     if failures:
         detail = "\n  - ".join(failures)
         raise RuntimeError(

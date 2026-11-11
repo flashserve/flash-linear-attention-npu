@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import struct
 import subprocess
 from pathlib import Path
 
@@ -159,6 +160,80 @@ def exported_symbols(library: Path) -> set[str]:
             if line.startswith("aclnn")}
 
 
+def elf_exported_symbols(library: Path) -> set[str]:
+    """Read defined public ACLNN symbols without loading ELF or invoking nm.
+
+    The dynamic symbol table is independent of the JSON contract list, so
+    deleting a complete interface from that list cannot hide an ABI conflict.
+    Both ELF classes and byte orders are accepted; invalid tables fail closed.
+    """
+    data = library.read_bytes()
+
+    def fail():
+        raise RuntimeError(f"Invalid ELF dynamic symbol table: {library}")
+
+    def region(offset, size):
+        if offset < 0 or size < 0 or offset > len(data) or size > len(data) - offset:
+            fail()
+        return data[offset:offset + size]
+
+    if len(data) < 16 or data[:4] != b"\x7fELF" or data[4] not in (1, 2) or data[5] not in (1, 2):
+        fail()
+    order = "<" if data[5] == 1 else ">"
+    is64 = data[4] == 2
+    header_fmt = order + ("HHIQQQIHHHHHH" if is64 else "HHIIIIIHHHHHH")
+    section_fmt = order + ("IIQQQQIIQQ" if is64 else "IIIIIIIIII")
+    symbol_fmt = order + ("IBBHQQ" if is64 else "IIIBBH")
+    header = struct.unpack(header_fmt, region(16, struct.calcsize(header_fmt)))
+    section_offset, section_size, section_count = header[5], header[10], header[11]
+    if not section_offset or section_size < struct.calcsize(section_fmt):
+        fail()
+
+    def section(index):
+        return struct.unpack(section_fmt, region(
+            section_offset + index * section_size, struct.calcsize(section_fmt)))
+
+    if not section_count:  # ELF extended section numbering.
+        section_count = section(0)[5]
+    if not section_count or section_count > (len(data) - section_offset) // section_size:
+        fail()
+    exports = set()
+    found_dynamic_table = False
+    for index in range(section_count):
+        entry = section(index)
+        if entry[1] != 11:  # SHT_DYNSYM
+            continue
+        found_dynamic_table = True
+        offset, size, link, stride = entry[4], entry[5], entry[6], entry[9]
+        if stride < struct.calcsize(symbol_fmt) or size % stride or link >= section_count:
+            fail()
+        region(offset, size)
+        strings_section = section(link)
+        if strings_section[1] != 3:  # SHT_STRTAB
+            fail()
+        strings = region(strings_section[4], strings_section[5])
+        for position in range(offset, offset + size, stride):
+            symbol = struct.unpack(symbol_fmt, region(position, struct.calcsize(symbol_fmt)))
+            name_offset = symbol[0]
+            info, other, defined = symbol[1:4] if is64 else symbol[3:6]
+            if defined == 0 or info >> 4 not in (1, 2) or other & 3 not in (0, 3):
+                continue
+            if name_offset >= len(strings):
+                fail()
+            end = strings.find(b"\0", name_offset)
+            if end < 0:
+                fail()
+            name = strings[name_offset:end]
+            if name.startswith(b"aclnn"):
+                try:
+                    exports.add(name.decode("ascii").split("@", 1)[0])
+                except UnicodeDecodeError:
+                    fail()
+    if not found_dynamic_table:
+        fail()
+    return exports
+
+
 def _file_hashes(vendor: Path) -> dict[str, str]:
     paths = [vendor / LIBRARY, *sorted((vendor / INCLUDE).glob("aclnn_*.h"))]
     if len(paths) < 2:
@@ -224,7 +299,9 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
         contracts = _contracts(vendor)
         if not contracts:
             raise RuntimeError(f"No base public aclnn contracts under {vendor}")
-        return contracts
+        exports = elf_exported_symbols(vendor / LIBRARY)
+        _validate_exports(exports, contracts)
+        return {symbol: contracts[symbol] for symbol in exports}
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise RuntimeError(f"Invalid ABI manifest object: {path}")
@@ -239,30 +316,51 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
         raise RuntimeError(f"Invalid ABI contracts in {path}")
     contracts = {s: tuple(v) for s, v in recorded.items()}
     _validate_exports(set(contracts), contracts)
+    exports = elf_exported_symbols(vendor / LIBRARY)
+    if set(contracts) != exports:
+        raise RuntimeError(
+            f"Incomplete ABI manifest: {path}; "
+            f"missing exports={sorted(exports - contracts.keys())}, "
+            f"unexported contracts={sorted(contracts.keys() - exports)}"
+        )
     if any(actual.get(s) != sig for s, sig in contracts.items()):
         raise RuntimeError(f"ABI manifest disagrees with public headers: {path}")
     return contracts
 
 
 def compare_overlay_to_base(overlay_dir: Path, base_dir: Path) -> list[str]:
-    """Return public aclnn contracts that an existing wheel cannot safely call."""
+    """Validate an overlay and reject changes to contracts shared with the base.
 
+    Additional interfaces are allowed after manifest and two-phase validation.
+    They do not replace any base entry, nor add Python/Stable adapter support.
+    """
+
+    return compare_overlays_to_base([overlay_dir], base_dir)
+
+
+def compare_overlays_to_base(overlay_dirs: list[Path], base_dir: Path) -> list[str]:
+    """Allow additions, but require one ABI per symbol across the active stack."""
     try:
-        overlay = validated_contracts(overlay_dir, require_manifest=True)
         base = validated_contracts(base_dir, require_manifest=False)
     except (OSError, ValueError, RuntimeError) as exc:
         return [str(exc)]
+    seen = {symbol: (signature, base_dir.name) for symbol, signature in base.items()}
     problems: list[str] = []
-    for symbol, signature in sorted(overlay.items()):
-        base_signature = base.get(symbol)
-        if base_signature is None:
-            problems.append(
-                f"{symbol}: not declared by the base wheel (overlay={list(signature)})"
-            )
-        elif base_signature != signature:
-            problems.append(
-                f"{symbol}: overlay={list(signature)} base={list(base_signature)}"
-            )
+    for vendor in overlay_dirs:
+        try:
+            overlay = validated_contracts(vendor, require_manifest=True)
+        except (OSError, ValueError, RuntimeError) as exc:
+            problems.append(f"{vendor.name}: {exc}")
+            continue
+        for symbol, signature in sorted(overlay.items()):
+            if symbol in seen:
+                previous, owner = seen[symbol]
+                if previous != signature:
+                    problems.append(
+                        f"{symbol}: {vendor.name}={list(signature)} {owner}={list(previous)}"
+                    )
+            else:
+                seen[symbol] = (signature, vendor.name)
     return problems
 
 

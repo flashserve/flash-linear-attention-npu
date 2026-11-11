@@ -63,7 +63,11 @@ def _stable_tree(tmp: str, *, wrapper_args: int = 2):
         'STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {\n'
         'm.impl("npu_new_op", &boxed_adapter<run_npu_new_op>); }\n', encoding="utf-8")
     contract = Path(tmp) / "public.json"
-    contract.write_text(json.dumps({"operators": ["npu_new_op"]}), encoding="utf-8")
+    contract.write_text(json.dumps({
+        "operators": ["npu_new_op"],
+        "public_signatures": {"npu_new_op": {"arguments": "a", "return": None}},
+        "dispatch_arguments": {"npu_new_op": [{"op": "npu_new_op", "expressions": ["a", "_current_stream_ptr()"]}]},
+    }), encoding="utf-8")
     return ops, src, contract
 
 
@@ -124,23 +128,46 @@ class CoverageGateTest(unittest.TestCase):
     def test_current_tree_has_no_unexplained_gap(self) -> None:
         report = self.tool.evaluate()
         self.assertEqual(report["blockers"], [])
-        self.assertEqual(set(self.tool.required_public_ops()), {row["op"] for row in report["rows"]})
-        self.assertEqual(report["adapter_count"], len(self.tool.required_public_ops()))
+        self.assertEqual(set(self.tool.public_ops()), {row["op"] for row in report["rows"]})
+        self.assertEqual(report["adapter_count"], len(self.tool.public_ops()))
 
-    def test_public_signature_default_keyword_and_annotation_drift(self) -> None:
+    def test_existing_public_calling_conventions_remain_protected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ops, src, contract = _stable_tree(tmp)
-            reference = self.tool.public_signatures(ops / "_stable.py")
-            contract.write_text(json.dumps({"operators": ["npu_new_op"],
-                                           "public_signatures": reference}), encoding="utf-8")
             original = (ops / "_stable.py").read_text(encoding="utf-8")
-            for header in ("def npu_new_op(a=None):", "def npu_new_op(*, a):", "def npu_new_op(a: int):"):
+            for header in ("def npu_new_op(a=None):", "def npu_new_op(*, a):"):
                 (ops / "_stable.py").write_text(original.replace("def npu_new_op(a):", header), encoding="utf-8")
                 with mock.patch.object(self.tool, "OPS_DIR", ops), \
                         mock.patch.object(self.tool, "SRC_DIR", src), \
                         mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
                     report = self.tool.evaluate()
-                self.assertTrue(any("public Python signature" in b for b in report["blockers"]))
+                self.assertTrue(report["blockers"], header)
+
+    def test_signature_compatibility_is_additive(self) -> None:
+        def check(old, new):
+            return self.tool._signature_problems(
+                {"arguments": old, "return": None}, {"arguments": new, "return": None})
+        for new in ("a, b=1, is_out_l2norm=None", "a, b=1, *, is_out_l2norm=None", "a: int, b=1"):
+            self.assertEqual(check("a, b=1", new), [], new)
+        for new in ("*, a, b=1", "b, a=1", "a, b=2", "a, c=1", "a, b=1, *, c"):
+            self.assertTrue(check("a, b=1", new), new)
+        self.assertTrue(check("a, *args", "a, b=None, *args"))
+        self.assertEqual(check("a, *args", "a, *args, b=None"), [])
+
+    def test_new_operator_does_not_need_baseline_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, src, contract = _stable_tree(tmp)
+            # The baseline operator still exists; another fully wired API is new.
+            for path in (ops / "_stable.py", src / "stable_ops.cpp"):
+                original = path.read_text()
+                path.write_text(original + original.replace("new_op", "added_op"))
+            (src / "stable_added_op.cpp").write_text(
+                (src / "stable_new_op.cpp").read_text().replace("new_op", "added_op"))
+            (ops / "__init__.py").write_text('_ASCENDC_OPS = ("npu_new_op", "npu_added_op")\n')
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                self.assertEqual(self.tool.evaluate()["blockers"], [])
 
     def test_missing_wrapper_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -256,10 +283,12 @@ class AbiParityGateTest(unittest.TestCase):
         report = self.tool.evaluate()
         self.assertEqual(report["problems"], [])
         self.assertGreater(report["checked"], 25)
-        # The two hand-written recurrent entry points consume 13 required
-        # tensor slots between them; a drop here means a slot stopped being
-        # unboxed into an owning Tensor and is leaking again.
+        # Count both generic typed unboxing and explicit stack reads. The
+        # recurrent entry points still own seven GDN and six KDA input slots.
         self.assertGreaterEqual(report["owned_slots"], 13)
+        self.assertEqual(
+            report["owned_slots_by_op"]["npu_recurrent_gated_delta_rule"], 7)
+        self.assertEqual(report["owned_slots_by_op"]["npu_recurrent_kda"], 6)
 
     def test_parameter_reorder_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,20 +316,21 @@ class AbiParityGateTest(unittest.TestCase):
                             report["problems"])
 
     def test_unconsumed_stack_slot_is_reported(self) -> None:
+        original_owned_slots = self.tool.evaluate()["owned_slots"]
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src"
             src.mkdir()
             for path in SRC_DIR.glob("stable_*.cpp"):
                 (src / path.name).write_text(path.read_text(encoding="utf-8"),
                                              encoding="utf-8")
-            target = src / "stable_recurrent_gated_delta_rule.cpp"
+            target = src / "stable_recurrent_kda.cpp"
             text = target.read_text(encoding="utf-8")
             # The leak that OOMed the conc32 service: reading a required tensor
             # slot as a raw handle consumes nothing (library.h expects the kernel
             # to steal it).
             changed = text.replace(
-                "const Tensor t_query = to<Tensor>(stack[0]);",
-                "const AtenTensorHandle query = "
+                "const Tensor t_q = to<Tensor>(stack[0]);",
+                "const AtenTensorHandle t_q = "
                 "to<AtenTensorHandle>(stack[0]);")
             self.assertNotEqual(changed, text, "test setup did not apply")
             target.write_text(changed, encoding="utf-8")
@@ -309,7 +339,41 @@ class AbiParityGateTest(unittest.TestCase):
             self.assertTrue(
                 any("AtenTensorHandle" in item for item in report["problems"]),
                 report["problems"])
-            self.assertEqual(report["owned_slots"], 12)
+            self.assertEqual(report["owned_slots"], original_owned_slots - 1)
+            self.assertEqual(report["owned_slots_by_op"]["npu_recurrent_kda"], 5)
+
+    def test_generic_raw_tensor_parameter_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            shutil.copytree(SRC_DIR, src)
+            target = src / "stable_recurrent_gated_delta_rule.cpp"
+            text = target.read_text(encoding="utf-8")
+            changed = text.replace(
+                "    Tensor query, Tensor key, Tensor value, Tensor state, Tensor beta,",
+                "    AtenTensorHandle query, Tensor key, Tensor value, Tensor state, Tensor beta,")
+            self.assertNotEqual(changed, text, "test setup did not apply")
+            target.write_text(changed, encoding="utf-8")
+            with mock.patch.object(self.tool, "SRC_DIR", src):
+                report = self.tool.evaluate()
+            self.assertTrue(any("owning Tensor" in item and "'query'" in item
+                                for item in report["problems"]), report["problems"])
+            self.assertEqual(
+                report["owned_slots_by_op"]["npu_recurrent_gated_delta_rule"], 6)
+
+    def test_generic_unbox_must_consume_tensor_references(self) -> None:
+        original = self.tool.BOXED_HEADER.read_text(encoding="utf-8")
+        for declared, replacement in (
+                ("Tensor", "return to<AtenTensorHandle>(value);"),
+                ("std::optional<Tensor>", "return std::nullopt;")):
+            with self.subTest(declared=declared), tempfile.TemporaryDirectory() as tmp:
+                changed = original.replace(f"return to<{declared}>(value);", replacement)
+                self.assertNotEqual(changed, original, "test setup did not apply")
+                header = Path(tmp) / "boxed.h"
+                header.write_text(changed, encoding="utf-8")
+                with mock.patch.object(self.tool, "BOXED_HEADER", header):
+                    report = self.tool.evaluate()
+                self.assertTrue(any(f"unbox<{declared}>" in item
+                                    for item in report["problems"]), report["problems"])
 
 
 class FallbackGateTest(unittest.TestCase):
@@ -516,26 +580,54 @@ class StableOnlyCoverageTest(unittest.TestCase):
         report = self.check_tree(lambda ops, src: (src / "stable_new_op.cpp").unlink())
         self.assertTrue(any("included adapter source is missing" in item for item in report["blockers"]))
 
-    def test_empty_inventory_and_deleted_public_api(self):
+    def test_empty_inventory(self):
         self.assert_mutation("__init__.py", '"npu_new_op",', "", "operator inventory is empty")
         self.assert_mutation("__init__.py", '"npu_new_op",', "", "historical public API was removed")
+
+    def test_existing_same_type_argument_reorder_is_rejected(self):
+        old_call = {"op": "npu_new_op", "expressions": ["a", "b", "_current_stream_ptr()"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, _, contract = _stable_tree(tmp)
+            data = json.loads(contract.read_text())
+            data["dispatch_arguments"]["npu_new_op"] = [old_call]
+            contract.write_text(json.dumps(data))
+            calls = {"npu_new_op": [{"op": "npu_new_op", "expressions": ["b", "a", "_current_stream_ptr()"]}]}
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                self.assertTrue(any("argument order" in p for p in self.tool.public_api_problems(["npu_new_op"], calls)))
 
     def test_duplicate_registration(self):
         self.assert_mutation("stable_ops.cpp", "m.def(kSchema_npu_new_op);", "m.def(kSchema_npu_new_op); m.def(kSchema_npu_new_op);", "duplicate schema")
 
-    def test_same_type_argument_reorder_is_reported(self):
+    def test_stream_must_remain_last(self):
+        self.assert_mutation("_stable.py", '(a, _current_stream_ptr())',
+                             '(_current_stream_ptr(), a)', "stream as the last argument")
+
+    def test_optional_parameter_and_dispatch_can_evolve_together(self):
+        """Adding is_out_l2norm needs matching code, not another JSON edit."""
         with tempfile.TemporaryDirectory() as tmp:
             ops, src, contract = _stable_tree(tmp)
-            frozen = {"operators": ["npu_new_op"], "dispatch_arguments": {
-                "npu_new_op": [{"op": "npu_new_op", "expressions": ["a", "_current_stream_ptr()"]}]}}
-            contract.write_text(json.dumps(frozen), encoding="utf-8")
             path = ops / "_stable.py"
-            path.write_text(path.read_text().replace('(a, _current_stream_ptr())', '(_current_stream_ptr(), a)'), encoding="utf-8")
+            path.write_text(path.read_text(encoding="utf-8")
+                            .replace('def npu_new_op(a):', 'def npu_new_op(a, is_out_l2norm=None):')
+                            .replace('(a, _current_stream_ptr())',
+                                     '(a, bool(is_out_l2norm), _current_stream_ptr())'), encoding="utf-8")
+            # A new wrapper argument still requires the current schema to match.
             with mock.patch.object(self.tool, "OPS_DIR", ops), \
                     mock.patch.object(self.tool, "SRC_DIR", src), \
                     mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
                 report = self.tool.evaluate()
-            self.assertTrue(any("argument order/expression" in item for item in report["blockers"]), report)
+            self.assertTrue(any("wrapper passes 3 arguments" in item for item in report["blockers"]), report)
+            path = src / "stable_new_op.cpp"
+            path.write_text(path.read_text(encoding="utf-8")
+                            .replace('Tensor a, int stream', 'Tensor a, bool is_out_l2norm, int stream')
+                            .replace('Tensor a, int64_t stream',
+                                     'Tensor a, bool is_out_l2norm, int64_t stream'), encoding="utf-8")
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                report = self.tool.evaluate()
+            self.assertEqual(report["blockers"], [])
 
     def test_json_cli_fails_without_strict_for_unexplained_gap(self):
         with mock.patch.object(self.tool, "evaluate", return_value={"rows": [], "blockers": ["broken: missing wrapper"]}), \
