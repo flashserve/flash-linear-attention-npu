@@ -249,8 +249,8 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         qkvLayout = "BNSD";
     }
     OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
-        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
         std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FinalizeLayout::BNSD :

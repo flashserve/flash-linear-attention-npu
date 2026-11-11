@@ -120,21 +120,49 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                 OP_LOGE(context->GetNodeName(), "G=HV/HK must be in [1, 4]."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(k.GetDim(0) != tiling.B ||
-                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK)
-                                       : (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
+                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ?
+                         (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK) :
+                         (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
                     k.GetDim(3) != tiling.K,
-                OP_LOGE(context->GetNodeName(), "k must have the same shape as q."),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "q/k",
+                    std::string("q=") +
+                        (std::string("[") + std::to_string(q.GetDim(0)) + "," + std::to_string(q.GetDim(1)) + "," +
+                         std::to_string(q.GetDim(2)) + "," + std::to_string(q.GetDim(3)) + "]") +
+                        ", k=" +
+                        (std::string("[") + std::to_string(k.GetDim(0)) + "," + std::to_string(k.GetDim(1)) + "," +
+                         std::to_string(k.GetDim(2)) + "," + std::to_string(k.GetDim(3)) + "]"),
+                    "k must have the same shape as q in the selected layout"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(v.GetDim(0) != tiling.B ||
-                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
-                                       : (v.GetDim(1) != tiling.HV || v.GetDim(2) != tiling.T)) ||
-                    vNew.GetDim(0) != tiling.B || vNew.GetDim(1) != tiling.HV ||
-                    vNew.GetDim(2) != tiling.T || vNew.GetDim(3) != tiling.V ||
-                    dO.GetDim(0) != tiling.B || dO.GetDim(1) != tiling.HV ||
-                    dO.GetDim(2) != tiling.T || dO.GetDim(3) != tiling.V ||
-                    du.GetDim(0) != tiling.B || du.GetDim(1) != tiling.HV ||
-                    du.GetDim(2) != tiling.T || du.GetDim(3) != tiling.V,
-                OP_LOGE(context->GetNodeName(), "v, v_new, do and du must have shape [B, HV, T, V]."),
+                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ?
+                         (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV) :
+                         (v.GetDim(1) != tiling.HV || v.GetDim(2) != tiling.T)) ||
+                    vNew.GetDim(0) != tiling.B || vNew.GetDim(1) != tiling.HV || vNew.GetDim(2) != tiling.T ||
+                    vNew.GetDim(3) != tiling.V || dO.GetDim(0) != tiling.B || dO.GetDim(1) != tiling.HV ||
+                    dO.GetDim(2) != tiling.T || dO.GetDim(3) != tiling.V || du.GetDim(0) != tiling.B ||
+                    du.GetDim(1) != tiling.HV || du.GetDim(2) != tiling.T || du.GetDim(3) != tiling.V,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "v/v_new/do/du",
+                    std::string("v=") +
+                        (std::string("[") + std::to_string(v.GetDim(0)) + "," + std::to_string(v.GetDim(1)) + "," +
+                         std::to_string(v.GetDim(2)) + "," + std::to_string(v.GetDim(3)) + "]") +
+                        ", v_new=" +
+                        (std::string("[") + std::to_string(vNew.GetDim(0)) + "," + std::to_string(vNew.GetDim(1)) +
+                         "," + std::to_string(vNew.GetDim(2)) + "," + std::to_string(vNew.GetDim(3)) + "]") +
+                        ", do=" +
+                        (std::string("[") + std::to_string(dO.GetDim(0)) + "," + std::to_string(dO.GetDim(1)) + "," +
+                         std::to_string(dO.GetDim(2)) + "," + std::to_string(dO.GetDim(3)) + "]") +
+                        ", du=" +
+                        (std::string("[") + std::to_string(du.GetDim(0)) + "," + std::to_string(du.GetDim(1)) + "," +
+                         std::to_string(du.GetDim(2)) + "," + std::to_string(du.GetDim(3)) + "]"),
+                    std::string("v follows layout=") +
+                        ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ?
+                             "BSND/TND [B,T,HV,V]" :
+                             "BNSD/NTD [B,HV,T,V]") +
+                        "; v_new/do/du remain [B,HV,T,V]; B=" + std::to_string(tiling.B) +
+                        ", T=" + std::to_string(tiling.T) + ", HV=" + std::to_string(tiling.HV) +
+                        ", V=" + std::to_string(tiling.V)),
                 return ge::GRAPH_FAILED);
 
     const gert::Shape g = gShape->GetStorageShape();
@@ -177,8 +205,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         qkvLayout = "BNSD";
     }
     OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
-        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
         std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FinalizeLayout::BNSD :
