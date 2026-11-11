@@ -60,6 +60,7 @@ ge::graphStatus Tiling4ChunkKdaBwdIntra(gert::TilingContext *context)
                 chunkMetadataTensor->GetStorageShape().GetShapeSize()),
         static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
+        platform.GetCurNpuArch() == NpuArch::DAV_3510,
     };
     ChunkKdaBwdIntraTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
