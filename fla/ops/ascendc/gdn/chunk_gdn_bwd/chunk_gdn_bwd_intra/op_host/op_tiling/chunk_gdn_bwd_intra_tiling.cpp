@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "host_utils/limits.h"
 #include "chunk_gdn_bwd_intra_tiling.h"
 
 #include <algorithm>
@@ -119,7 +120,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     OP_CHECK_IF(!IntraCheckedMultiply(batch, valueHeads, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, seqlen, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, 128 * sizeof(uint16_t), tensorBytes) ||
-                    tensorBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+                    tensorBytes > static_cast<uint64_t>(FLA_NPU_MAX(int64_t)),
                 OP_LOGE(context->GetNodeName(), "tensor address range overflow."),
                 return ge::GRAPH_FAILED);
 
@@ -134,7 +135,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const int64_t chunksPerBatch = seqlen / *chunkSize + (seqlen % *chunkSize != 0);
     uint64_t fixedChunks = 0;
     OP_CHECK_IF(!IntraCheckedMultiply(batch, chunksPerBatch, fixedChunks) ||
-                    fixedChunks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+                    fixedChunks > static_cast<uint64_t>(FLA_NPU_MAX(int64_t)),
                 OP_LOGE(context->GetNodeName(), "chunk count overflow."),
                 return ge::GRAPH_FAILED);
     int64_t chunkCount = static_cast<int64_t>(fixedChunks);

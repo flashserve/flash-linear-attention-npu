@@ -6,6 +6,7 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+#include <utility>
 #include "aclnn_chunk_bwd_dv_local.h"
 #include "chunk_bwd_dv_local.h"
 #include <dlfcn.h>
@@ -53,25 +54,18 @@ struct ChunkBwdDvLocalParams {
 
 static aclnnStatus CheckNotNull(ChunkBwdDvLocalParams params)
 {
-    if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "q");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "k");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.dO == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "dO");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.out == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, "out");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const std::pair<const aclTensor *, const char *> dfxRequired[] = {
+    {params.q, "q"},
+    {params.k, "k"},
+    {params.dO, "dO"},
+    {params.g, "g"},
+    {params.out, "out"},
+    };
+    for (const auto &dfxItem : dfxRequired) {
+        if (dfxItem.first == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_BWD_DV_LOCAL_ENTITY, dfxItem.second);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }

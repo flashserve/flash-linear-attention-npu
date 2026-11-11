@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <utility>
 #include "aclnn_chunk_gated_delta_rule_fwd_h.h"
 #include "chunk_gated_delta_rule_fwd_h.h"
 #include <algorithm>
@@ -98,25 +99,18 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
 
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleFwdHParams params)
 {
-    if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "k");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.w == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "w");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.u == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "u");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.hOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "hOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.vNewOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, "vNewOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const std::pair<const aclTensor *, const char *> dfxRequired[] = {
+    {params.k, "k"},
+    {params.w, "w"},
+    {params.u, "u"},
+    {params.hOut, "hOut"},
+    {params.vNewOut, "vNewOut"},
+    };
+    for (const auto &dfxItem : dfxRequired) {
+        if (dfxItem.first == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_FWD_H_ENTITY, dfxItem.second);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }

@@ -11,6 +11,7 @@
  * \file aclnn_recurrent_kda.cpp
  * \brief
  */
+#include "host_utils/limits.h"
 #include "aclnn_recurrent_kda.h"
 #include "recurrent_kda.h"
 
@@ -174,7 +175,7 @@ bool IsSupportedQkvView(const aclTensor *tensor, RecurrentKdaLayout layout)
     if (strides[featureDim] != 1 || headStride < featureCount) {
         return false;
     }
-    const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
+    const int64_t maxInt64 = FLA_NPU_MAX(int64_t);
     if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
         return false;
     }
@@ -183,7 +184,7 @@ bool IsSupportedQkvView(const aclTensor *tensor, RecurrentKdaLayout layout)
         return false;
     }
     const uint64_t srcGapElements = static_cast<uint64_t>(tokenStride - featureCount);
-    if (srcGapElements > std::numeric_limits<uint32_t>::max() / sizeof(uint16_t)) {
+    if (srcGapElements > FLA_NPU_MAX(uint32_t) / sizeof(uint16_t)) {
         return false;
     }
 
@@ -215,7 +216,7 @@ bool CheckQkvMaterializationSafety(
         tokenStride < featureCount || headStride < featureCount) {
         return true;
     }
-    const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
+    const int64_t maxInt64 = FLA_NPU_MAX(int64_t);
     if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(RECURRENT_KDA_ENTITY, name, "head span overflow", "in int64 range");
         return false;

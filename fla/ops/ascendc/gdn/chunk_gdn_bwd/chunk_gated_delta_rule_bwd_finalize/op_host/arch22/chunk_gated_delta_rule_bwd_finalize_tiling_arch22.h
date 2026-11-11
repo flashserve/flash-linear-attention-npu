@@ -1,6 +1,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 
+#include "host_utils/limits.h"
 #include "../op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.h"
 #include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
 #include "../../op_kernel/arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h"
@@ -62,7 +63,7 @@ bool FitsProduct(std::initializer_list<int64_t> values)
 {
     int64_t product = 1;
     for (int64_t value : values) {
-        if (value <= 0 || product > std::numeric_limits<int64_t>::max() / value) {
+        if (value <= 0 || product > FLA_NPU_MAX(int64_t) / value) {
             return false;
         }
         product *= value;
@@ -325,7 +326,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     }
     OP_CHECK_IF(std::max({tiling->B, tiling->HK, tiling->HV, tiling->T,
                               tiling->totalChunkNum, tiling->seqNum}) >
-                        static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+                        static_cast<int64_t>(FLA_NPU_MAX(uint32_t)),
                 OP_LOGE(context->GetNodeName(), "A2 dimensions exceed the uint32 scheduling range."),
                 return ge::GRAPH_FAILED);
 
@@ -442,11 +443,11 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     }
     const GDN::A2FinalizeWorkspaceLayout layout(*tiling, blockDim);
     const uint64_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
-    if (layout.totalBytes > std::numeric_limits<size_t>::max() - systemWorkspace) {
+    if (layout.totalBytes > FLA_NPU_MAX(size_t) - systemWorkspace) {
         const std::string actual = "operator=" + std::to_string(layout.totalBytes) +
             ", system=" + std::to_string(systemWorkspace);
         const std::string expected =
-            "operator + system <= SIZE_MAX=" + std::to_string(std::numeric_limits<size_t>::max());
+            "operator + system <= SIZE_MAX=" + std::to_string(FLA_NPU_MAX(size_t));
         OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "workspace bytes", actual.c_str(), expected.c_str());
         return ge::GRAPH_FAILED;
     }

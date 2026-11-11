@@ -6,6 +6,7 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+#include <utility>
 #include "aclnn_prepare_wy_repr_bwd_da.h"
 #include "prepare_wy_repr_bwd_da.h"
 #include <dlfcn.h>
@@ -53,37 +54,21 @@ struct PrepareWyReprBwdDaParams {
 
 static aclnnStatus CheckNotNull(PrepareWyReprBwdDaParams params)
 {
-    if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "k");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "v");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "beta");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.a == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "a");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.dw == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "dw");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.du == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "du");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.dAOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, "dAOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const std::pair<const aclTensor *, const char *> dfxRequired[] = {
+    {params.k, "k"},
+    {params.v, "v"},
+    {params.beta, "beta"},
+    {params.a, "a"},
+    {params.dw, "dw"},
+    {params.du, "du"},
+    {params.g, "g"},
+    {params.dAOut, "dAOut"},
+    };
+    for (const auto &dfxItem : dfxRequired) {
+        if (dfxItem.first == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(PREPARE_WY_REPR_BWD_DA_ENTITY, dfxItem.second);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }

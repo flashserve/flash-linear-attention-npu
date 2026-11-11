@@ -15,6 +15,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
+#include "host_utils/limits.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -489,7 +490,7 @@ private:
         const uint32_t maxBlockDim = ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum;
         const int64_t maxHeads = std::min<int64_t>(HEADS_PER_TASK, tiling_.HV);
         int64_t bestHeads = maxHeads;
-        int64_t bestCost = std::numeric_limits<int64_t>::max();
+        int64_t bestCost = FLA_NPU_MAX(int64_t);
         for (int64_t heads = 1; heads <= maxHeads; ++heads) {
             const int64_t taskNum = tiling_.seqNum * CeilDiv(tiling_.HV, heads);
             const int64_t rounds = CeilDiv(taskNum, std::min<int64_t>(maxBlockDim, taskNum));

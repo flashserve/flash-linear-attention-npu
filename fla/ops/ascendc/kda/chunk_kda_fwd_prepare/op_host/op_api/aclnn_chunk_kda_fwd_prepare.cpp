@@ -4,6 +4,7 @@
  * CANN Open Software License Agreement Version 2.0 (the "License").
  */
 
+#include "host_utils/limits.h"
 #include "aclnn_chunk_kda_fwd_prepare.h"
 #include "chunk_kda_fwd_prepare.h"
 #include "../chunk_kda_fwd_prepare_output_mask.h"
@@ -338,14 +339,14 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
 bool FitsUint32(int64_t value)
 {
     return value > 0 &&
-        static_cast<uint64_t>(value) <= std::numeric_limits<uint32_t>::max();
+        static_cast<uint64_t>(value) <= FLA_NPU_MAX(uint32_t);
 }
 
 bool FitsDmaSourceStride(int64_t headNum, uint64_t rowBytes)
 {
     return headNum > 0 && rowBytes > 0 &&
         static_cast<uint64_t>(headNum - 1) <=
-            std::numeric_limits<uint32_t>::max() / rowBytes;
+            FLA_NPU_MAX(uint32_t) / rowBytes;
 }
 
 aclnnStatus CheckSequenceMajorDmaStride(

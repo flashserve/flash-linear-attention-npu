@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "host_utils/limits.h"
 #include "aclnn_chunk_scaled_dot_kkt.h"
 
 #include <cstddef>
@@ -65,7 +66,7 @@ aclnnStatus CheckShape(const ChunkScaledDotKktParams &p)
         return ACLNN_ERR_PARAM_INVALID;
     }
 
-    constexpr int64_t maxDim = std::numeric_limits<int32_t>::max();
+    constexpr int64_t maxDim = FLA_NPU_MAX(int32_t);
     for (size_t dim = 0; dim < 4; ++dim) {
         if (k.GetDim(dim) <= 0 || k.GetDim(dim) > maxDim) {
             OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_SCALED_DOT_KKT_ENTITY, "k.dim",

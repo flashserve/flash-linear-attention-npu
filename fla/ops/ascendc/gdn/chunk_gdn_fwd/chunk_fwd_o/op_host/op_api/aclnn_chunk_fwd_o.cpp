@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <utility>
 #include "aclnn_chunk_fwd_o.h"
 #include "chunk_fwd_o.h"
 #include <dlfcn.h>
@@ -64,29 +65,19 @@ struct ChunkFwdOParams {
 
 static aclnnStatus CheckNotNull(ChunkFwdOParams params)
 {
-    if (params.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "q");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "k");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "v");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.h == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "h");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (params.oOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, "oOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const std::pair<const aclTensor *, const char *> dfxRequired[] = {
+    {params.q, "q"},
+    {params.k, "k"},
+    {params.v, "v"},
+    {params.h, "h"},
+    {params.g, "g"},
+    {params.oOut, "oOut"},
+    };
+    for (const auto &dfxItem : dfxRequired) {
+        if (dfxItem.first == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_FWD_O_ENTITY, dfxItem.second);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }

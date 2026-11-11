@@ -15,6 +15,7 @@
 #ifndef CAUSAL_CONV1D_TILING_VALIDATION_H
 #define CAUSAL_CONV1D_TILING_VALIDATION_H
 
+#include "host_utils/limits.h"
 #include <cstring>
 #include <limits>
 
@@ -204,7 +205,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     const int64_t *maxQueryLenPtr = attrs->GetAttrPointer<int64_t>(ATTR_MAX_QUERY_LEN_INDEX);
     attrInfo.maxQueryLen = (maxQueryLenPtr == nullptr) ? -1 : *maxQueryLenPtr;
     if (attrInfo.maxQueryLen < -1 ||
-        attrInfo.maxQueryLen > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+        attrInfo.maxQueryLen > static_cast<int64_t>(FLA_NPU_MAX(int32_t))) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "maxQueryLen", std::to_string(attrInfo.maxQueryLen),
             "-1 or int32 range");
         return ge::GRAPH_FAILED;
@@ -418,7 +419,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         qslSize = batch + 1;
     }
 
-    if (cuSeqlen > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+    if (cuSeqlen > static_cast<int64_t>(FLA_NPU_MAX(int32_t))) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cuSeqlen", std::to_string(cuSeqlen), "int32 range");
         return ge::GRAPH_FAILED;
     }
@@ -548,7 +549,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                         continue;
                     }
                     if (hasConvStates) {
-                        if (v > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+                        if (v > static_cast<int64_t>(FLA_NPU_MAX(int32_t))) {
                             OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "cacheIndices[i]", std::to_string(v),
                                 "int32 range");
                             return ge::GRAPH_FAILED;

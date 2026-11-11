@@ -1,3 +1,4 @@
+#include "host_utils/limits.h"
 #include "aclnn_chunk_kda_fwd_finalize.h"
 #include "chunk_kda_fwd_finalize.h"
 
@@ -142,9 +143,9 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
         }
     }
     if (!(shape.batch > 0 && shape.heads > 0 && shape.seqLen > 0 &&
-          shape.batch <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
-          shape.heads <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
-          shape.seqLen <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))) {
+          shape.batch <= static_cast<int64_t>(FLA_NPU_MAX(uint32_t)) &&
+          shape.heads <= static_cast<int64_t>(FLA_NPU_MAX(uint32_t)) &&
+          shape.seqLen <= static_cast<int64_t>(FLA_NPU_MAX(uint32_t)))) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape[B/HV/T]",
             "B=" + std::to_string(shape.batch) + ",HV=" + std::to_string(shape.heads) + ",T=" + std::to_string(shape.seqLen),
             "positive and fit in uint32");
@@ -155,7 +156,7 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t t = static_cast<uint64_t>(shape.seqLen);
-    if (b > std::numeric_limits<uint64_t>::max() / hv / t / 128) {
+    if (b > FLA_NPU_MAX(uint64_t) / hv / t / 128) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "qgScaled.shape", "overflow", "B*HV*T*128 in uint64");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -191,12 +192,12 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
                 return ACLNN_ERR_PARAM_INVALID;
             }
             total += static_cast<uint64_t>((length - 1) / FINALIZE_CHUNK_ROWS + 1);
-            if (total > std::numeric_limits<uint32_t>::max()) {
+            if (total > FLA_NPU_MAX(uint32_t)) {
                 OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "total_chunks in uint32");
                 return ACLNN_ERR_PARAM_INVALID;
             }
         }
-        if (cu->Size() - 1 > std::numeric_limits<uint32_t>::max()) {
+        if (cu->Size() - 1 > FLA_NPU_MAX(uint32_t)) {
             OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "cuSeqlensOptional", "overflow", "sequence count in uint32");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -231,7 +232,7 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t c = static_cast<uint64_t>(shape.totalChunks);
-    if (b > std::numeric_limits<uint64_t>::max() / hv / c / 128 / 128) {
+    if (b > FLA_NPU_MAX(uint64_t) / hv / c / 128 / 128) {
         OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(CHUNK_KDA_FWD_FINALIZE_ENTITY, "h.shape", "overflow", "B*HV*C*128*128 in uint64");
         return ACLNN_ERR_PARAM_INVALID;
     }

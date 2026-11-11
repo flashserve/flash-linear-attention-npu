@@ -4,6 +4,7 @@
  * the BSD 3-Clause License (the "License").
  */
 
+#include "host_utils/limits.h"
 #include "chunk_kda_fwd_prepare_tiling.h"
 
 #include <cmath>
@@ -213,14 +214,14 @@ bool DtypeToTemplateToken(ge::DataType dtype, uint64_t &token)
 bool FitsUint32(int64_t value)
 {
     return value > 0 &&
-        static_cast<uint64_t>(value) <= std::numeric_limits<uint32_t>::max();
+        static_cast<uint64_t>(value) <= FLA_NPU_MAX(uint32_t);
 }
 
 bool FitsDmaSourceStride(int64_t headNum, uint64_t rowBytes)
 {
     return headNum > 0 && rowBytes > 0 &&
         static_cast<uint64_t>(headNum - 1) <=
-            std::numeric_limits<uint32_t>::max() / rowBytes;
+            FLA_NPU_MAX(uint32_t) / rowBytes;
 }
 
 uint64_t CeilDiv(uint64_t value, uint64_t divisor)
@@ -280,7 +281,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         }
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
         const uint64_t sequenceChunks = CeilDiv(length, PREPARE_CHUNK_SIZE);
-        if (totalChunks > std::numeric_limits<uint64_t>::max() - sequenceChunks) {
+        if (totalChunks > FLA_NPU_MAX(uint64_t) - sequenceChunks) {
             return false;
         }
         totalChunks += sequenceChunks;
@@ -523,8 +524,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     uint64_t totalChunks = 0;
     bool isVarLen = false;
     if (!ResolveSequenceInfo(context, shape, seqNum, totalChunks, isVarLen) ||
-        seqNum > std::numeric_limits<uint32_t>::max() ||
-        totalChunks > std::numeric_limits<uint32_t>::max()) {
+        seqNum > FLA_NPU_MAX(uint32_t) ||
+        totalChunks > FLA_NPU_MAX(uint32_t)) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "sequence/chunk metadata", "invalid", "valid, uint32");
         return ge::GRAPH_FAILED;
     }
@@ -602,7 +603,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     }
     size_t *workspace = context->GetWorkspaceSizes(1);
     if (workspace == nullptr ||
-        schedule.workspaceBytes > std::numeric_limits<size_t>::max()) {
+        schedule.workspaceBytes > FLA_NPU_MAX(size_t)) {
         OP_LOGE(context->GetNodeName(), "workspace 大小超过平台 size_t 范围。");
         return ge::GRAPH_FAILED;
     }

@@ -2,6 +2,7 @@
 #define GDN_FINALIZE_ENABLE_ARCH22 0
 #endif
 
+#include "host_utils/limits.h"
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
 
 #include <algorithm>
@@ -252,7 +253,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const uint32_t aicCoreNum = std::max<uint32_t>(1, platform.GetCoreNumAic());
     constexpr int64_t maxHeadsPerTask = 4;
     const int64_t maxGvaPerTask = maxHeadsPerTask / tiling->headRatio;
-    OP_CHECK_IF(tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->HK,
+    OP_CHECK_IF(tiling->totalChunkNum > FLA_NPU_MAX(int64_t) / tiling->HK,
                 OP_LOGE(context->GetNodeName(), "The chunk/GVA task count overflows."),
                 return ge::GRAPH_FAILED);
     const int64_t totalGvaTaskNum = tiling->totalChunkNum * tiling->HK;
@@ -265,7 +266,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     }
     tiling->taskGroupSize = gvaPerTask * tiling->headRatio;
     tiling->headGroupNum = tiling->HK / gvaPerTask;
-    OP_CHECK_IF(tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->headGroupNum,
+    OP_CHECK_IF(tiling->totalChunkNum > FLA_NPU_MAX(int64_t) / tiling->headGroupNum,
                 OP_LOGE(context->GetNodeName(), "The flattened chunk/head-group task count overflows."),
                 return ge::GRAPH_FAILED);
     tiling->taskNum = tiling->totalChunkNum * tiling->headGroupNum;

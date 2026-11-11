@@ -1,3 +1,4 @@
+#include "host_utils/limits.h"
 #include "chunk_kda_fwd_finalize_tiling.h"
 
 #include <cstdint>
@@ -220,7 +221,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         const uint64_t length = static_cast<uint64_t>(
             lengths[seq + 1] - lengths[seq]);
         totalChunks += (length - 1) / FINALIZE_CHUNK_ROWS + 1;
-        if (totalChunks > std::numeric_limits<uint32_t>::max()) {
+        if (totalChunks > FLA_NPU_MAX(uint32_t)) {
             return false;
         }
     }
@@ -283,9 +284,9 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     if (outputDesc == nullptr || outputDesc->GetDataType() != ge::DT_BF16 ||
         !ResolveInputs(context, info) || info.batch == 0 || info.heads == 0 ||
         info.seqLen == 0 ||
-        info.batch > std::numeric_limits<uint32_t>::max() ||
-        info.heads > std::numeric_limits<uint32_t>::max() ||
-        info.seqLen > std::numeric_limits<uint32_t>::max()) {
+        info.batch > FLA_NPU_MAX(uint32_t) ||
+        info.heads > FLA_NPU_MAX(uint32_t) ||
+        info.seqLen > FLA_NPU_MAX(uint32_t)) {
         char qgBuffer[96] = {0};
         char aqkBuffer[96] = {0};
         char vNewBuffer[96] = {0};
@@ -314,8 +315,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     uint64_t totalChunks = 0;
     bool isVarLen = false;
     if (!ResolveSequenceInfo(context, info, seqNum, totalChunks, isVarLen) ||
-        seqNum > std::numeric_limits<uint32_t>::max() ||
-        totalChunks > std::numeric_limits<uint32_t>::max()) {
+        seqNum > FLA_NPU_MAX(uint32_t) ||
+        totalChunks > FLA_NPU_MAX(uint32_t)) {
         OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "varlen metadata", "invalid", "valid");
         return ge::GRAPH_FAILED;
     }
@@ -380,7 +381,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     }
     size_t *workspace = context->GetWorkspaceSizes(1);
     if (workspace == nullptr ||
-        schedule.workspaceBytes > std::numeric_limits<size_t>::max()) {
+        schedule.workspaceBytes > FLA_NPU_MAX(size_t)) {
         return ge::GRAPH_FAILED;
     }
     workspace[0] = static_cast<size_t>(schedule.workspaceBytes);

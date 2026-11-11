@@ -60,45 +60,23 @@ aclnnStatus Check(const Params &p)
 {
     const std::array<const aclTensor *, 10> tensors = {
         p.q, p.k, p.v, p.g, p.beta, p.a, p.dO, p.wOut, p.uOut, p.dvLocalOut};
-    if (p.q == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "q");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.k == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "k");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.v == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "v");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.g == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "g");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.beta == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "beta");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.a == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "a");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.dO == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "dO");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.wOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "wOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.uOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "uOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    if (p.dvLocalOut == nullptr) {
-        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, "dvLocalOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const std::pair<const aclTensor *, const char *> dfxRequired[] = {
+    {p.q, "q"},
+    {p.k, "k"},
+    {p.v, "v"},
+    {p.g, "g"},
+    {p.beta, "beta"},
+    {p.a, "a"},
+    {p.dO, "dO"},
+    {p.wOut, "wOut"},
+    {p.uOut, "uOut"},
+    {p.dvLocalOut, "dvLocalOut"},
+    };
+    for (const auto &dfxItem : dfxRequired) {
+        if (dfxItem.first == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GDN_BWD_INTRA_ENTITY, dfxItem.second);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     const std::array<const aclTensor *, 10> contiguousTensors = {
         p.q, p.k, p.v, p.g, p.beta, p.a, p.dO, p.wOut, p.uOut, p.dvLocalOut};

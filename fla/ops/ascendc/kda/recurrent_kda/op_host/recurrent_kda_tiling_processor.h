@@ -15,6 +15,7 @@
 #ifndef RECURRENT_KDA_TILING_PROCESSOR_H
 #define RECURRENT_KDA_TILING_PROCESSOR_H
 
+#include "host_utils/limits.h"
 #include "../op_kernel/recurrent_kda_struct.h"
 #include "err/ops_err.h"
 #include "log/log.h"
@@ -232,7 +233,7 @@ private:
             return ge::GRAPH_FAILED;
         }
 
-        const uint64_t maxUint64 = std::numeric_limits<uint64_t>::max();
+        const uint64_t maxUint64 = FLA_NPU_MAX(uint64_t);
         if (headCount > 1 && headStride > (maxUint64 - featureCount) / (headCount - 1)) {
             OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "head stride overflow", "in uint64");
             return ge::GRAPH_FAILED;
@@ -244,7 +245,7 @@ private:
         }
 
         const uint64_t srcGapElements = tokenStride - featureCount;
-        if (srcGapElements > std::numeric_limits<uint32_t>::max() / sizeof(uint16_t)) {
+        if (srcGapElements > FLA_NPU_MAX(uint32_t) / sizeof(uint16_t)) {
             OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, name, "token gap overflow", "in uint32 range");
             return ge::GRAPH_FAILED;
         }
