@@ -1,19 +1,25 @@
-# 用 wheel 增量更新算子
+# 增量更新适配层和 OPP
 
 当你既修改了算子的 Python 参数或 Stable adapter，又希望保留其他算子的旧版本时，
 可以将新 wheel 安装为 overlay。普通 `pip install 新wheel` 仍然是替换整个 base，
 增量安装使用 `python -m fla_npu_opp_manage --overlay --source 新wheel`。
 
 例如 base 中有 A 和 B，overlay 只声明 A：A 的公开 Python 函数、参数默认值、
-Stable schema 和 launcher 来自 overlay；B 继续使用 base。移除 overlay 后 A 也恢复 base。
+Stable schema 和 launcher 来自增量适配层；B 继续使用 base adapter。OPP 单独选择，
+未被增量 OPP 覆盖的 B 继续使用 base OPP。移除后恢复 base。
 这里覆盖的是 `fla_npu.ops.ascendc` 公共入口，不替换顶层 `fla` 包、Triton 实现、
 安装管理器或依赖包，也不执行增量 wheel 自带的 `.pth`。
 
 ## 1. 准备 base
 
 base 和增量 wheel 都需要由支持 wheel layer 协议的源码构建，包含 `layer_manifest.json`
-和支持显式注册的 Stable launcher。历史发布包不会自动获得这项能力，须先升级 base。
+和支持显式注册的 Stable launcher。base 还须包含本指南的组件管理器；仅支持旧版整层安装的
+base 也需要升级。安装增量包不会更新 base 管理代码。
 base 可以带 OPP，也可以是等待补齐 OPP 的骨架 wheel。
+
+适配层和 OPP 分别记录：后安装的同类组件优先，未携带的组件保留。standalone wheel 只更新
+适配层，run-only 只更新 OPP，携带 OPP 的 wheel 更新两部分。不同组件的安装顺序不影响最终
+组合；重复更新同一组件时，以最后安装的为准，不比较版本号。
 
 ```bash
 # 先激活实际使用的 Python 环境，并 source 对应 CANN set_env.sh。
@@ -39,7 +45,8 @@ FLA_NPU_SOC=ascend910b FLA_NPU_OVERLAY_OPS=chunk_fwd_o \
 ```
 
 这会编译匹配的新 launcher，生成不带 OPP 的骨架 wheel。Python 参数或 dispatcher schema
-可以改变；其实际调用的 ACLNN 接口仍须与复用的 base OPP 一致。
+可以改变；安装后保留此前选择的 OPP，没有增量 OPP 才复用 base。即使暂时不匹配也可安装，
+状态为 pending；稍后独立安装匹配 OPP 即可启用，无需重装 standalone wheel。
 
 ### 携带 OPP 的 wheel overlay：配套更新
 
@@ -51,61 +58,73 @@ FLA_NPU_OVERLAY_OPS=chunk_fwd_o python scripts/build_wheel.py
 ```
 
 将 SoC 改成目标机器的 `ascend910b`、`ascend910_93` 或 `ascend950`。只编译所需算子及其依赖。
-若更新的共享 OPP 同时被 B 使用，须把 B 的匹配 adapter 也纳入 overlay；安装器会给出依赖入口。
-一个 wheel 内的 OPP 不能额外覆盖声明范围以外的算子。共享依赖不能仅靠关闭 ABI 检查绕过。
+若更新的共享 OPP 同时被 B 使用，安装器会检查 B 当前的 adapter，并在状态中列出受影响入口。
+B 的接口兼容时可以复用原 adapter；不兼容时组合保持 pending，须补齐适配层。OPP 范围可以
+大于适配层声明范围，但安装 OPP 不会自动新增 Python 入口。
 
 ## 3. 安装、查询和移除
 
-下面将 `update.whl` 替换为准确的构建产物路径。
+三种输入可连续安装，未携带的组件不会被清空。安装前停止业务进程，完成后重启。
+下面的路径须替换为准确的产物路径。
 
 ```bash
-# 骨架或带 OPP 的 wheel 使用同一入口。
-python -m fla_npu_opp_manage --overlay --source /path/to/update.whl
+# 单独更新适配层；保留已经安装的 OPP
+python -m fla_npu_opp_manage --overlay --source /path/to/standalone.whl
+
+# 单独更新 OPP；保留已经安装的适配层。可先执行这一条，再执行上一条。
+python -m fla_npu_opp_manage --overlay --source /path/to/update.run
+# --source 也可以是 vendor 目录或只含一个 vendor 的父目录。
+
+# 一次同时更新两部分
+python -m fla_npu_opp_manage --overlay --source /path/to/with-opp.whl
+# 或指定配套 OPP；该显式来源优先于同一 wheel 内的 OPP
+python -m fla_npu_opp_manage --overlay --source /path/to/standalone.whl \
+  --opp-source /path/to/matching.run
+
 python -m fla_npu_opp_manage --status
-
-# 骨架的 adapter 需要新 OPP 时，在同一次安装中配齐。
-python -m fla_npu_opp_manage --overlay --source /path/to/update.whl \
-  --opp-source /path/to/matching.run --force
-# --opp-source 也可以是 vendor 目录或只含一个 vendor 的父目录。
-
-# 恢复 base；之后重新启动业务进程。
+# 整体恢复 base；之后重新启动业务进程。
 python -m fla_npu_opp_manage --remove-overlay
 ```
 
 | 查询状态 | 含义 |
 | --- | --- |
-| `active` | 依赖已配齐，新进程启用增量入口 |
-| `pending` | wheel 已保存，但缺少匹配的 OPP 或存在覆盖冲突；命令返回 2，不启用它 |
-| `damaged` 或非空 `errors` | 状态或产物损坏；可用独立管理入口移除恢复 |
+| `active` | 当前可运行组合，新进程使用它 |
+| `pending` | 最新组件已安装，但组合缺少匹配依赖；安装命令返回 0，并提示尚未启用 |
+| `damaged` 或 active 中非空 `errors` | 状态或产物损坏；使用独立管理入口移除恢复 |
 
-已有 overlay 时用 `--force` 整体替换。新包复制、校验或状态切换失败不会破坏旧 active；
-新包进入 pending 也保留旧 active。修正产物后重新执行上述安装命令，不会自动下载依赖。
-移除会清理保存的历史层。升级、卸载 base 前也应先移除 overlay；overlay 不登记进 pip 的 RECORD。
+active 和 pending 可以同时存在：未配齐的新组合不替换旧 active；后续安装基于最新 pending
+保留另一组件，匹配后自动启用并清空 pending。没有旧 active 时继续使用 base。
+状态中的 `components.adapter` / `components.opp` 是各组件的产物 ID，null 表示 base；
+`affected_base_operators` 列出本次 OPP 选择影响的 base adapter 入口。
+
+组件安装不再要求 `--force`；旧命令带此参数仍可用，但不绕过 ABI 或完整性校验。
+损坏产物、复制或提交失败不改变已有选择。移除统一清理所有保存的组件，base 原文件保留。
+升级或卸载 base 前先移除 overlay；overlay 不登记进 pip RECORD。
+
+例如当前为 P1+O1，安装 standalone P2 得到 P2+O1；再安装 run O2 得到 P2+O2；
+安装完整 wheel P3+O3 后两部分同时更新。同一组件按完整产物替换，不合并多个历史 P 或 O 的范围。
 
 ## 4. 骨架与完整 wheel 的组合
 
 | base | 增量 wheel | 可执行条件 |
 | --- | --- | --- |
-| 带 OPP | 带 OPP | 新 adapter 与新 OPP 配套，未覆盖入口仍使用 base |
-| 带 OPP | 骨架 | 新 adapter 能复用 base OPP；否则用 `--opp-source` 配齐 |
-| 骨架 | 带 OPP | 增量范围内所需 OPP 已配齐；不承诺 base 未安装的算子突然可用 |
-| 骨架 | 骨架 | 用 `--opp-source` 配齐，否则保持 pending |
+| 带 OPP | 带 OPP | 选中的新 P/O 匹配，未覆盖部分回落 base |
+| 带 OPP | 骨架 | 新 P 与已选择的 O 匹配；无增量 O 时复用 base，否则等待补齐 |
+| 骨架 | 带 OPP | 增量依赖配齐；base 未安装的其他算子仍不可用 |
+| 骨架 | 骨架 | 先装、后装或配套提供 OPP 均可，未配齐保持 pending |
 
-默认通过 `.pth` 在 CANN 初始化前选定 OPP 路径。禁用 `.pth` 时，先 source **base** 的
-`fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash`，再启动业务进程；不要直接 source
-私有层中从新 wheel 提取的脚本。`FLA_NPU_OVERLAY_VENDOR=''` 会同时禁用增量 Python 入口和增量 OPP。
+默认 `.pth` 在 CANN 初始化前配置 active 的 OPP 路径。禁用 `.pth` 时，先 source **base** 的
+`fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash`；不直接 source 私有层脚本。
+骨架 base 没有脚本时保留默认 `.pth`。`FLA_NPU_OVERLAY_VENDOR=''` 同时禁用增量 P/O。
 
-三类增量产物的边界如下：
-
-| 产物 | 更新范围 | OPP 与 ABI 条件 |
+| 产物 | 更新范围 | 未携带组件 |
 | --- | --- | --- |
-| run-only overlay | 从 `.run` 提取 vendor，仅更新 OPP；Python/Stable 复用 base | 增量优先，未覆盖部分回落 base；同名 ACLNN ABI 须兼容 |
-| standalone wheel overlay | 不带 OPP 的骨架 wheel，更新指定 Python/Stable 入口 | 新 adapter 复用匹配的 base OPP；需要新 OPP 时用 `--opp-source` 补齐 |
-| 携带 OPP 的 wheel overlay | 配套更新指定 Python/Stable 入口及包内 OPP | 新 adapter 与实际选中 OPP 匹配，允许被覆盖入口接口变化 |
+| run-only overlay | OPP L1–L4 配套产物 | 保留当前适配层 |
+| standalone wheel overlay | 指定 Python/Stable 入口 | 保留当前 OPP |
+| 携带 OPP 的 wheel overlay | 适配层和 OPP | 两部分均按新包替换 |
 
-三类产物均保留 base 的 Python/Stable 和 OPP 算子产物，支持显式禁用和移除后重启恢复。
-run-only 按 vendor 配置选择，成功替换后删除旧 vendor；两类 wheel 共用一个 active 槽位，
-依赖不满足保持 pending，旧 payload 保留至显式移除。两类 wheel 可用 `--force` 相互替换；
-run-only 不与任一种 wheel overlay 混装，两者之间切换时先移除旧 overlay。
+上述组合要求新版 base 控制器。无 layer 协议的旧 base 继续使用原 run-only 路径：须先解包 vendor，
+同名 ABI 不兼容直接拒绝，不能混用新组件流程。新版控制器可接管单个已有 vendor overlay，以及
+旧格式的完整 wheel active/pending 状态。当前组件模式使用默认名称，不支持自定义 overlay 名。
 
-三类产物的完整对比、安装机制与验收标准见 [增量安装](OPP叠加层增量设计.md#9-增量安装)。
+设计、覆盖范围和验收准则见 [增量安装](OPP叠加层增量设计.md#9-增量安装)。

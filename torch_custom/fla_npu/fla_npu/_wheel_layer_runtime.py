@@ -11,7 +11,7 @@ def install_exports(namespace):
     import fla_npu
 
     plan = getattr(fla_npu, "_WHEEL_LAYER_PLAN", None)
-    if not plan:
+    if not plan or not plan["exports"]:
         return
     layer = Path(plan["layer"])
     name = "_fla_npu_layer_" + layer.name

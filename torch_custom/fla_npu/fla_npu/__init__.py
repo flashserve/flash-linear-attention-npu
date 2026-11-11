@@ -198,6 +198,11 @@ def _resolve_vendor_dirs() -> list[pathlib.Path]:
 
     if _WHEEL_LAYER_PLAN:
         return [pathlib.Path(p) for p in _WHEEL_LAYER_PLAN["vendors"]]
+    if (_PACKAGE_DIR / "opp/wheel_layers/state.json").is_file():
+        from fla_npu_wheel_overlay import environment_vendors
+        vendors = environment_vendors(_PACKAGE_DIR)
+        if vendors is not None:
+            return vendors
     vendor_dirs: list[pathlib.Path] = []
     for name in [*overlay_vendor_names(), _DEFAULT_VENDOR_DIR]:
         resolved_vendor_dir = _package_local_vendor_dir(name)

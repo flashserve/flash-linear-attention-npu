@@ -133,7 +133,10 @@ Python ctypes 执行后端已删除；标准库 `ctypes.CDLL` 仍可用于加载
 
 支持 wheel overlay 的 launcher 在加载和指纹检查后，通过 `fla_npu_stable_register(namespace, paths)`
 显式注册 `StableLibrary` schema/impl，并绑定选定的 OPP 库列表。base 与增量层使用不同 dispatcher
-命名空间，因此允许同名公共入口具有不同 schema；公共 wrapper 负责选择对应层。直接调用
+命名空间，因此允许同名公共入口具有不同 schema；公共 wrapper 负责选择对应层。
+适配层和 OPP 独立保存，后安装的同类组件优先；standalone 只更新适配层，run-only
+只更新 OPP，完整 wheel 更新两部分。未配齐组合保存 pending，保留旧 active，配齐后原子切换。
+各 launcher 按 active 组合绑定同一 OPP 来源顺序，不从自己的 wheel 目录推断 OPP。直接调用
 `torch.ops.load_library()` 不再等于完成注册。安装和兼容边界见 [Wheel 增量安装指南](../Wheel增量安装指南.md)。
 
 ### 2.6 wheel 中实际交付什么

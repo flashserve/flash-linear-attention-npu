@@ -68,7 +68,7 @@ def locked(package):
 def state(package):
     path = storage(package) / "state.json"
     data = _json(path) if path.is_file() else {"active": None, "pending": None}
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or data.get("version") not in (None, 2):
         raise ValueError("Invalid wheel overlay state; use --remove-overlay to recover")
     for kind in ("active", "pending"):
         if data.get(kind) is not None:
@@ -96,9 +96,57 @@ def active(package):
     if not identity:
         return None
     root = layer_path(package, identity)
-    if not (root / "fla_npu" / MANIFEST).is_file():
-        raise RuntimeError("Active wheel overlay is damaged; use --remove-overlay to recover")
+    component_paths(package, root)
     return root
+
+
+def components(package, snapshot):
+    """Read immutable component selections; accept the original whole-wheel layout."""
+    path = snapshot / "components.json"
+    if not path.is_file():
+        record = snapshot / "installation.json"
+        if record.is_file() and _json(record).get("component_protocol") == 1:
+            raise RuntimeError("Overlay component selections are missing; use --remove-overlay to recover")
+        # Previously published wheel layers kept both components in one payload.
+        if not (snapshot / "fla_npu" / MANIFEST).is_file():
+            raise RuntimeError("Overlay snapshot is damaged; use --remove-overlay to recover")
+        return {"adapter": snapshot.name,
+                "opp": snapshot.name if _vendor(snapshot / "fla_npu") else None}
+    data = _json(path)
+    if (not isinstance(data, dict) or data.get("version") != 1
+            or set(data) != {"version", "adapter", "opp"}):
+        raise RuntimeError("Invalid overlay component selections")
+    result = {kind: data[kind] for kind in ("adapter", "opp")}
+    for identity in result.values():
+        if identity is not None:
+            layer_path(package, identity)
+    return result
+
+
+def component_paths(package, snapshot):
+    selected = components(package, snapshot)
+    adapter = layer_path(package, selected["adapter"]) if selected["adapter"] else None
+    opp = layer_path(package, selected["opp"]) if selected["opp"] else None
+    if adapter and not (adapter / "fla_npu" / MANIFEST).is_file():
+        raise RuntimeError("Selected adapter is missing; use --remove-overlay to recover")
+    vendor = _vendor(opp / "fla_npu") if opp else None
+    if opp and vendor is None:
+        raise RuntimeError("Selected OPP is missing; use --remove-overlay to recover")
+    return adapter, vendor
+
+
+def environment_vendors(package):
+    """Return the active component order, or None for an unmanaged installation.
+
+    Pending selections never configure CANN. Disabling a managed composition
+    selects base, including after adopting an older vendor-directory overlay.
+    """
+    current = state(package)
+    if not (current.get("active") or current.get("pending") or current.get("version") == 2):
+        return None
+    snapshot = active(package)
+    overlay = component_paths(package, snapshot)[1] if snapshot else None
+    return [p for p in (overlay, _vendor(package)) if p is not None]
 
 
 def manifest(package):
@@ -149,25 +197,21 @@ def resolve(package, layer):
     """Return explicit adapter bindings and CANN order, or readiness errors.
 
     A custom symbol has one effective CANN implementation. Updated adapters
-    must match it; symbols used by uncovered base operators must remain on base.
+    must match it, including base adapters reached by an OPP-only update.
     """
     base = manifest(package)
-    update = manifest(layer / "fla_npu")
-    if base.get("tier") != update.get("tier"):
+    adapter, overlay_vendor = component_paths(package, layer)
+    update = manifest(adapter / "fla_npu") if adapter else {"operators": {}, "exports": []}
+    if adapter and base.get("tier") != update.get("tier"):
         raise RuntimeError("Wheel layer and base target different NPU products")
     abi = abi_module(package)
-    base_vendor, overlay_vendor = _vendor(package), _vendor(layer / "fla_npu")
+    base_vendor = _vendor(package)
     vendors = [p for p in (overlay_vendor, base_vendor) if p is not None]
     contracts = {str(p): abi.validated_contracts(p, require_manifest=p == overlay_vendor) for p in vendors}
     exports = set(update["exports"])
-    errors, binding = [], {}
+    errors, binding, affected = [], {}, set()
     if not vendors:
         errors.append("No usable OPP vendor; provide a matching --opp-source")
-    claimed = {symbol for name in exports for symbol in update["operators"][name]["requires"]}
-    if overlay_vendor:
-        unclaimed = set(contracts[str(overlay_vendor)]) - claimed
-        if unclaimed:
-            errors.append("OPP contains operators outside the overlay scope: " + ", ".join(sorted(unclaimed)))
     for owner, data, names in (("overlay", update, exports),
                                ("base", base, set(base["operators"]) - exports)):
         required = {}
@@ -178,6 +222,8 @@ def resolve(package, layer):
                     # This update does not change the existing binding. Do not
                     # turn installation into an unrelated full-base ABI audit.
                     continue
+                if owner == "base":
+                    affected.add(name)
                 if symbol in required and required[symbol] != expected:
                     errors.append(f"{owner}/{name}: conflicting requirement for {symbol}")
                 required[symbol] = expected
@@ -187,13 +233,14 @@ def resolve(package, layer):
                     continue  # A skeleton base may have unavailable, uncovered ops.
                 if tuple(expected) != contracts[str(chosen)][symbol]:
                     errors.append(f"{owner}/{name}: {symbol} mismatches {chosen.name}; include its matching adapter/OPP in the update")
-                elif owner == "base" and chosen == overlay_vendor:
-                    errors.append(f"base/{name}: shared OPP {symbol} is updated; include this dependent operator in the overlay scope")
         # All reachable adapters use the same validated CANN ownership order.
         # The binding is explicit and immutable, never read from a later env edit.
         binding[owner] = [str(p / LIBRARY) for p in vendors]
     return {"vendors": [str(p) for p in vendors], "bindings": binding,
-            "exports": sorted(exports), "errors": sorted(set(errors))}
+            "exports": sorted(exports), "errors": sorted(set(errors)),
+            "layer": str(adapter) if adapter else None,
+            "components": components(package, layer),
+            "affected_base_operators": sorted(affected)}
 
 
 def runtime_plan(package):
@@ -203,7 +250,7 @@ def runtime_plan(package):
     plan = resolve(package, layer)
     if plan["errors"]:
         raise RuntimeError("Active wheel overlay is no longer compatible:\n" + "\n".join(plan["errors"]))
-    plan["layer"] = str(layer)
+    plan["snapshot"] = str(layer)
     return plan
 
 
@@ -299,24 +346,72 @@ def _attach_opp(source, destination):
         shutil.copytree(candidates[0], target)
 
 
-def install(package, wheel, *, opp_source=None, force=False):
+def _adopt_vendor_overlay(package, previous, created):
+    """Copy a pre-component run overlay without changing its live directory."""
+    if previous.get("active") or previous.get("pending") or previous.get("version") == 2:
+        return previous
+    candidates = sorted((package / "opp/vendors").glob("fla_npu_overlay_*"))
+    if not candidates:
+        return previous
+    if len(candidates) != 1:
+        raise RuntimeError("Multiple legacy vendor overlays exist; remove extras before composing components")
+    source = candidates[0]
+    if (not re.fullmatch(r"fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*", source.name)
+            or source.is_symlink() or not source.is_dir()):
+        raise RuntimeError("Invalid legacy overlay vendor")
+    identity = uuid.uuid4().hex
+    target = layer_path(package, identity)
+    target.mkdir()
+    created.append(target)
+    _attach_opp(source, target)
+    _atomic_json(target / "installation.json", {"component_protocol": 1, "source": str(source)})
+    _atomic_json(target / "components.json", {"version": 1, "adapter": None, "opp": identity})
+    plan = resolve(package, target)
+    if plan["errors"]:
+        raise RuntimeError("Existing vendor overlay is incompatible: " + "; ".join(plan["errors"]))
+    return dict(previous, active=identity)
+
+
+def install(package, source, *, opp_source=None, force=False):
+    """Replace only components supplied by this artifact; last installation wins.
+
+    Pending is the latest requested combination and active is the last runnable
+    one. Component payloads are immutable and shared by snapshots. ``force`` is
+    accepted for existing callers; component replacement no longer requires it.
+    """
     manifest(package)  # Requires the new controller, not a complete base OPP.
+    source = Path(source)
+    is_wheel = source.suffix == ".whl"
+    if opp_source is not None and not is_wheel:
+        raise RuntimeError("--opp-source requires a wheel --source")
     with locked(package):
-        if list((package / "opp/vendors").glob("fla_npu_overlay_*")):
-            raise RuntimeError("Remove the existing run overlay before installing a wheel layer")
         previous = state(package)
-        if (previous.get("active") or previous.get("pending")) and not force:
-            raise RuntimeError("A wheel layer exists; use --force to replace it")
-        identity = uuid.uuid4().hex
-        target = layer_path(package, identity)
-        target.mkdir()
+        created = []
         try:
-            extract_wheel(wheel, target)
-            if opp_source is not None:
-                _attach_opp(opp_source, target)
+            previous = _adopt_vendor_overlay(package, previous, created)
+            latest = previous.get("pending") or previous.get("active")
+            selected = (components(package, layer_path(package, latest)) if latest
+                        else {"adapter": None, "opp": None})
+            identity = uuid.uuid4().hex
+            target = layer_path(package, identity)
+            target.mkdir()
+            created.append(target)
+            if is_wheel:
+                extract_wheel(source, target)
+                selected["adapter"] = identity
+                if opp_source is not None:
+                    _attach_opp(opp_source, target)
+                if _vendor(target / "fla_npu"):
+                    selected["opp"] = identity
+            else:
+                _attach_opp(source, target)
+                selected["opp"] = identity
+            _atomic_json(target / "components.json", {"version": 1, **selected})
             plan = resolve(package, target)
-            _atomic_json(target / "installation.json", {"source": str(wheel.resolve()), "errors": plan["errors"]})
-            current = dict(previous)
+            _atomic_json(target / "installation.json", {"component_protocol": 1, "source": str(source.resolve()),
+                         "opp_source": str(Path(opp_source).resolve()) if opp_source else None,
+                         "errors": plan["errors"]})
+            current = dict(previous, version=2)
             if plan["errors"]:
                 current["pending"] = identity
             else:
@@ -327,26 +422,36 @@ def install(package, wheel, *, opp_source=None, force=False):
             # pointer. Never remove a payload that the state already references.
             try:
                 current = state(package)
-                committed = identity in (current.get("active"), current.get("pending"))
+                committed = any(p.name in (current.get("active"), current.get("pending")) for p in created)
             except (OSError, ValueError, RuntimeError):
                 committed = True  # Preserve evidence if commit status is unknown.
             if not committed:
-                shutil.rmtree(target)
+                for path in reversed(created):
+                    shutil.rmtree(path)
             raise
         # Never delete the old active payload during installation: running
         # processes may still map it. Explicit removal reclaims retained layers.
         return {"state": "pending" if plan["errors"] else "active", "path": str(target),
-                "operators": plan["exports"], "errors": plan["errors"]}
+                "operators": plan["exports"], "components": plan["components"],
+                "affected_base_operators": plan["affected_base_operators"], "errors": plan["errors"]}
 
 
 def remove(package):
     with locked(package):
-        _atomic_json(storage(package) / "state.json", {"active": None, "pending": None})
+        _atomic_json(storage(package) / "state.json", {"version": 2, "active": None, "pending": None})
         for child in storage(package).iterdir():
             if re.fullmatch(r"[a-f0-9]{32}", child.name):
                 path = layer_path(package, child.name)
                 if path.is_dir():
                     shutil.rmtree(path)
+        # A pre-component vendor may have been adopted. Do not resurrect it on
+        # removal, including recovery from an unreadable state.json.
+        vendors = package / "opp/vendors"
+        for path in vendors.glob("fla_npu_overlay_*"):
+            if (re.fullmatch(r"fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*", path.name)
+                    and path.is_dir() and not path.is_symlink()
+                    and path.resolve().parent == vendors.resolve()):
+                shutil.rmtree(path)
 
 
 def status(package):
@@ -361,7 +466,10 @@ def status(package):
             path = layer_path(package, identity)
             try:
                 plan = resolve(package, path)
-                result.append({"state": kind, "path": str(path), "operators": plan["exports"], "errors": plan["errors"]})
+                result.append({"state": kind, "path": str(path), "operators": plan["exports"],
+                               "components": plan["components"],
+                               "affected_base_operators": plan["affected_base_operators"],
+                               "errors": plan["errors"]})
             except (OSError, ValueError, RuntimeError) as exc:
                 result.append({"state": kind, "path": str(path), "errors": [str(exc)]})
     return result
@@ -370,11 +478,9 @@ def status(package):
 def shell_environment(package):
     """The manual source path uses the same selection as the .pth hook."""
     import shlex
-    if not state(package).get("active"):
+    vendors = environment_vendors(package)
+    if vendors is None:
         return ""
-    layer = active(package)
-    vendors = ([p for p in (_vendor(layer / "fla_npu"), _vendor(package)) if p]
-               if layer else [p for p in (_vendor(package),) if p])
     root = (package / "opp").resolve()
     external = []
     for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep):

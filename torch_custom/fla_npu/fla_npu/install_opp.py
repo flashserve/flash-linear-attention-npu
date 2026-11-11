@@ -586,7 +586,7 @@ def main() -> int:
         help="Remove the overlay vendor from the package and refresh config.ini.",
     )
     parser.add_argument("--status", action="store_true", help="Show the embedded OPP overlay state.")
-    parser.add_argument("--source", type=Path, help="Delta source: a .whl, vendor dir, or parent holding one.")
+    parser.add_argument("--source", type=Path, help="Delta source: a .whl, .run, vendor dir, or parent holding one.")
     parser.add_argument("--overlay-name", help=f"Overlay vendor name (default: {DEFAULT_OVERLAY_NAME}).")
     parser.add_argument("--opp-source", type=Path, help="Matching vendor or .run for a skeleton wheel overlay")
     args = parser.parse_args()
@@ -605,13 +605,14 @@ def main() -> int:
             parser.error("--overlay requires --source")
         import fla_npu_wheel_overlay as layers
         package = PACKAGE_OPP_ROOT.parent
-        if args.source.suffix == ".whl":
+        if args.source.suffix == ".whl" or (package / layers.MANIFEST).is_file():
             if args.overlay_name and args.overlay_name != layers.NAME:
-                parser.error("wheel overlays use the default overlay name")
+                parser.error("component overlays use the default overlay name")
             result = layers.install(package, args.source, opp_source=args.opp_source, force=args.force)
             print(json.dumps(result, indent=2))
             if result["state"] == "pending":
-                return 2
+                print("Components installed; waiting for a compatible combination. "
+                      "The previous active combination is unchanged.")
         else:
             if args.opp_source:
                 parser.error("--opp-source requires a wheel --source")
@@ -627,7 +628,7 @@ def main() -> int:
                 wheel_state = {"active": True}  # Recovery must not require healthy metadata.
         else:
             wheel_state = {}
-        if wheel_state.get("active") or wheel_state.get("pending"):
+        if wheel_state.get("active") or wheel_state.get("pending") or wheel_state.get("version") == 2:
             if args.overlay_name and args.overlay_name != layers.NAME:
                 parser.error("wheel overlays use the default overlay name")
             layers.remove(PACKAGE_OPP_ROOT.parent)

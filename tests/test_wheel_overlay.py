@@ -8,6 +8,7 @@ import inspect
 import io
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -157,7 +158,7 @@ class WheelOverlayTests(unittest.TestCase):
         base = self.base()
         layers.install(base, self.update())
         old = layers.active(base)
-        layers.install(base, self.update(full=False), force=True)
+        layers.install(base, self.update(full=False, kind="int64"), force=True)
         self.assertEqual(layers.active(base), old)
 
     def test_corrupt_replacement_preserves_active_layer(self):
@@ -191,12 +192,203 @@ class WheelOverlayTests(unittest.TestCase):
         self.assertEqual(result["state"], "pending")
         self.assertTrue(any("base/npu_b" in e for e in result["errors"]))
 
-    def test_unclaimed_opp_does_not_silently_override_b(self):
+    def test_opp_component_can_update_b_while_reusing_compatible_base_adapter(self):
         base = self.base()
         src = package(self.root / "overwide", exports=["npu_a"], opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
         result = layers.install(base, wheel(self.root / "overwide.whl", src))
+        self.assertEqual(result["state"], "active")
+        self.assertEqual(result["affected_base_operators"], ["npu_b"])
+
+    def test_independent_component_install_orders_match_full_wheel(self):
+        for order in ("adapter_first", "opp_first", "full"):
+            with self.subTest(order=order):
+                base = package(self.root / order, opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
+                source = package(self.root / (order + "-opp"), kind="bool",
+                                 exports=["npu_a"], opp={"aclnnDemo": "bool"})
+                opp = source / "opp/vendors"
+                standalone = self.update(full=False)
+                if order == "full":
+                    result = layers.install(base, wheel(self.root / "full.whl", source))
+                else:
+                    first, second = ((standalone, opp) if order == "adapter_first" else (opp, standalone))
+                    waiting = layers.install(base, first)
+                    self.assertEqual(waiting["state"], "pending")
+                    self.assertIsNone(layers.active(base))
+                    self.assertEqual(layers.environment_vendors(base), [layers._vendor(base)])
+                    result = layers.install(base, second)
+                self.assertEqual(result["state"], "active")
+                plan = layers.runtime_plan(base)
+                self.assertEqual(plan["exports"], ["npu_a"])
+                self.assertEqual(plan["affected_base_operators"], [])
+                self.assertEqual(layers.manifest(Path(plan["layer"]) / "fla_npu")["operators"]["npu_a"]["requires"], contract("bool"))
+                self.assertEqual(layers.abi_module(base).validated_contracts(Path(plan["vendors"][0]), require_manifest=True),
+                                 {symbol: tuple(types) for symbol, types in contract("bool").items()})
+                self.assertEqual(Path(plan["vendors"][1]), layers._vendor(base))
+
+    def test_standalone_preserves_opp_and_last_adapter_wins(self):
+        base = self.base()
+        first = layers.install(base, self.update())
+        second = layers.install(base, self.update(full=False))
+        self.assertEqual(second["state"], "active")
+        self.assertNotEqual(first["components"]["adapter"], second["components"]["adapter"])
+        self.assertEqual(first["components"]["opp"], second["components"]["opp"])
+        self.assertEqual(len(layers.runtime_plan(base)["vendors"]), 2)
+
+    def test_run_preserves_adapter_and_last_opp_wins(self):
+        base = self.base()
+        first = layers.install(base, self.update())
+        opp = package(self.root / "new-opp", kind="bool", exports=["npu_a"], opp={"aclnnDemo": "bool"})
+        second = layers.install(base, opp / "opp/vendors")
+        self.assertEqual(second["state"], "active")
+        self.assertEqual(first["components"]["adapter"], second["components"]["adapter"])
+        self.assertNotEqual(first["components"]["opp"], second["components"]["opp"])
+
+    def test_full_wheel_replaces_both_components(self):
+        base = self.base()
+        first = layers.install(base, self.update())
+        second = layers.install(base, self.update(kind="int64"))
+        self.assertEqual(second["state"], "active")
+        for kind in ("adapter", "opp"):
+            self.assertNotEqual(first["components"][kind], second["components"][kind])
+        self.assertEqual(second["components"]["adapter"], second["components"]["opp"])
+
+    def test_pending_components_accumulate_without_falling_back_to_active_selection(self):
+        base = self.base()
+        initial = layers.install(base, self.update())
+        old = layers.active(base)
+        pending = layers.install(base, self.update(full=False, kind="int64"))
+        self.assertEqual(pending["state"], "pending")
+        self.assertEqual(layers.active(base), old)
+        self.assertIn(initial["components"]["opp"], layers.shell_environment(base))
+        opp = package(self.root / "matching-opp", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        completed = layers.install(base, opp / "opp/vendors")
+        self.assertEqual(completed["state"], "active")
+        self.assertEqual(completed["components"]["adapter"], pending["components"]["adapter"])
+        self.assertIsNone(layers.state(base)["pending"])
+
+    def test_newest_pending_adapter_replaces_earlier_request(self):
+        base = self.base(False)
+        layers.install(base, self.update(full=False))
+        newest = layers.install(base, self.update(full=False, kind="int64"))
+        opp = package(self.root / "latest-opp", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        result = layers.install(base, opp / "opp/vendors")
+        self.assertEqual(result["state"], "active")
+        self.assertEqual(result["components"]["adapter"], newest["components"]["adapter"])
+
+    def test_opp_only_update_keeps_all_base_wrappers(self):
+        base = self.base()
+        opp = package(self.root / "opp-only", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        result = layers.install(base, opp / "opp/vendors")
+        self.assertEqual(result["state"], "active")
+        self.assertIsNone(result["components"]["adapter"])
+        self.assertEqual(result["operators"], [])
+        self.assertEqual(result["affected_base_operators"], ["npu_a"])
+        self.assertIsNone(layers.runtime_plan(base)["layer"])
+
+    def test_shared_opp_with_matching_base_adapter_is_allowed(self):
+        base = self.base()
+        data = layers.manifest(base)
+        data["operators"]["npu_b"]["requires"].update(contract())
+        (base / layers.MANIFEST).write_text(json.dumps(data))
+        result = layers.install(base, self.update(kind="int64"))
+        self.assertEqual(result["state"], "active")
+        self.assertEqual(result["affected_base_operators"], ["npu_b"])
+
+    def test_legacy_run_overlay_is_adopted_then_removed(self):
+        base = self.base()
+        legacy = package(self.root / "legacy-run", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        old_vendor = base / "opp/vendors" / layers.NAME
+        shutil.copytree(layers._vendor(legacy), old_vendor)
+        result = layers.install(base, self.update(full=False, kind="int64"))
+        self.assertEqual(result["state"], "active")
+        self.assertEqual(len(layers.runtime_plan(base)["vendors"]), 2)
+        with mock.patch.dict(os.environ, {"FLA_NPU_OVERLAY_VENDOR": ""}):
+            self.assertEqual(layers.environment_vendors(base), [layers._vendor(base)])
+        layers.remove(base)
+        self.assertFalse(old_vendor.exists())
+        self.assertEqual(layers.environment_vendors(base), [layers._vendor(base)])
+
+    def test_original_whole_wheel_state_can_receive_opp_update(self):
+        base = self.base()
+        first = layers.install(base, self.update())
+        snapshot = Path(first["path"])
+        (snapshot / "components.json").unlink()
+        metadata = json.loads((snapshot / "installation.json").read_text())
+        metadata.pop("component_protocol")
+        (snapshot / "installation.json").write_text(json.dumps(metadata))
+        (layers.storage(base) / "state.json").write_text(json.dumps({"active": snapshot.name, "pending": None}))
+        opp = package(self.root / "old-state-opp", exports=["npu_a"], opp={"aclnnDemo": "bool"})
+        result = layers.install(base, opp / "opp/vendors")
+        self.assertEqual(result["state"], "active")
+        self.assertEqual(result["components"]["adapter"], snapshot.name)
+
+    def test_invalid_or_missing_component_is_reported_and_removable(self):
+        base = self.base()
+        for invalid in ("../outside", "b" * 32):
+            result = layers.install(base, self.update())
+            snapshot = Path(result["path"])
+            (snapshot / "components.json").write_text(json.dumps({"version": 1, "adapter": invalid, "opp": None}))
+            self.assertTrue(layers.status(base)[0]["errors"])
+            with self.assertRaises(RuntimeError):
+                layers.runtime_plan(base)
+            layers.remove(base)
+
+    def test_opp_missing_after_activation_is_not_silently_replaced_by_base(self):
+        base = self.base()
+        result = layers.install(base, self.update())
+        (Path(result["path"]) / "fla_npu/opp/vendors" / layers.BASE / layers.LIBRARY).unlink()
+        with self.assertRaisesRegex(RuntimeError, "OPP is missing"):
+            layers.environment_vendors(base)
+        layers.remove(base)
+
+    def test_missing_composition_does_not_drop_inherited_opp(self):
+        base = self.base()
+        layers.install(base, self.update())
+        result = layers.install(base, self.update(full=False))
+        (Path(result["path"]) / "components.json").unlink()
+        with self.assertRaisesRegex(RuntimeError, "component selections are missing"):
+            layers.environment_vendors(base)
+        self.assertTrue(layers.status(base)[0]["errors"])
+        layers.remove(base)
+
+    def test_explicit_opp_source_overrides_wheel_opp(self):
+        base = self.base()
+        opp = package(self.root / "explicit-opp", exports=["npu_a"], opp={"aclnnDemo": "bool"})
+        result = layers.install(base, self.update(kind="int64"), opp_source=opp / "opp/vendors")
         self.assertEqual(result["state"], "pending")
-        self.assertTrue(any("outside the overlay scope" in e for e in result["errors"]))
+        selected = result["components"]["opp"]
+        completed = layers.install(base, self.update(full=False))
+        self.assertEqual(completed["state"], "active")
+        self.assertEqual(completed["components"]["opp"], selected)
+
+    def test_pth_and_shell_follow_composed_opp_not_adapter_payload(self):
+        base = package(self.root / "boot-site/fla_npu", opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
+        layers.install(base, self.update())
+        layers.install(base, self.update(full=False))
+        expected = layers.environment_vendors(base)
+        self.assertEqual(len(expected), 2)
+        bootstrap = base.parent / "fla_npu_opp_env.py"
+        shutil.copyfile(SETUP / "fla_npu_opp_env.py", bootstrap)
+        env = runpy.run_path(str(bootstrap))
+        self.assertEqual(env["_vendor_dirs"](), expected)
+        self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"], os.pathsep.join(map(str, expected)))
+        self.assertIn(str(expected[0]), layers.shell_environment(base))
+        with mock.patch.dict(os.environ, {"FLA_NPU_OVERLAY_VENDOR": ""}):
+            self.assertEqual(layers.environment_vendors(base), [layers._vendor(base)])
+            self.assertNotIn(str(expected[0]), layers.shell_environment(base))
+
+    @unittest.skipUnless(os.name == "posix", "run extraction requires bash")
+    def test_run_file_can_complete_pending_adapter(self):
+        import shlex
+        base = self.base()
+        layers.install(base, self.update(full=False))
+        source = package(self.root / "run-payload", exports=["npu_a"], opp={"aclnnDemo": "bool"})
+        run = self.root / "update.run"
+        run.write_text('#!/bin/bash\nset -eu\nfor arg in "$@"; do\n'
+                       'case "$arg" in --install-path=*) destination="${arg#*=}";; esac\ndone\n'
+                       'mkdir -p "$destination/vendors"\ncp -R '
+                       + shlex.quote(str(layers._vendor(source))) + ' "$destination/vendors/"\n')
+        self.assertEqual(layers.install(base, run)["state"], "active")
 
     def test_traversal_is_rejected(self):
         update = self.update()
@@ -345,6 +537,38 @@ a = npu_a
                                     env=env, cwd=self.root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((base / "opp/vendors" / layers.NAME).exists())
+
+    def test_cli_pending_is_success_and_separate_opp_completes_it(self):
+        site = self.root / "cli-components"
+        base = package(site / "fla_npu", opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
+        (base / "__init__.py").write_text('raise RuntimeError("must not import runtime")')
+        shutil.copyfile(SETUP / "fla_npu/install_opp.py", base / "install_opp.py")
+        for name in ("fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
+            shutil.copyfile(SETUP / name, site / name)
+        env = dict(os.environ, PYTHONPATH=str(site))
+        opp = package(self.root / "cli-opp", exports=["npu_a"], opp={"aclnnDemo": "bool"})
+        for source, expected in ((self.update(full=False), "pending"), (opp / "opp/vendors", "active")):
+            result = subprocess.run([sys.executable, "-m", "fla_npu_opp_manage", "--overlay", "--source", str(source)],
+                                    env=env, cwd=self.root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('"state": "' + expected + '"', result.stdout)
+        self.assertFalse(layers.runtime_plan(base)["errors"])
+
+    def test_cli_remove_preserves_base_vendor_configuration_bytes(self):
+        site = self.root / "cli-remove"
+        base = package(site / "fla_npu", opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
+        config = base / "opp/vendors/config.ini"
+        original = b"# original package configuration\nload_priority=fla_npu_transformer\n"
+        config.write_bytes(original)
+        shutil.copyfile(SETUP / "fla_npu/install_opp.py", base / "install_opp.py")
+        for name in ("fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
+            shutil.copyfile(SETUP / name, site / name)
+        env = dict(os.environ, PYTHONPATH=str(site))
+        layers.install(base, self.update())
+        result = subprocess.run([sys.executable, "-m", "fla_npu_opp_manage", "--remove-overlay"],
+                                env=env, cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(config.read_bytes(), original)
 
 
 def uuid_name():
