@@ -3,14 +3,15 @@
 用法（221 或 241，wheel 已 pip install --target envXXX）：
     PYTHONPATH=/path/envXXX python tests/stable_abi/regression_mutation_contract.py
 
+RecurrentGDN 的 Python 入口仅转发参数并更新版本，不执行输入校验；
+下列 requires_grad 检查仅针对 RecurrentKDA。
+
 覆盖 `MUTATED_ARGUMENTS` 里的原地更新算子。重构把 `inspect.signature().bind`
 从热路径挪走（`MUTATION_FLAGS` 声明式 flag），正确性由三件事保证：
 
 1. 该 bump 的还是 bump（inplace=True / 无 flag 的算子）；
-2. 不该 bump 的不 bump（inplace=False 走 scratch state）；
-3. KDA 的 requires_grad 限制与 inplace flag 一致。
-
-RecurrentGDN 的 Python 入口仅转发参数并更新版本，不执行输入校验。
+2. 不该 bump 的不 bump（RecurrentKDA 非原位调用）；
+3. requires_grad 的拒绝行为在 position/keyword 两条调用路径上一致。
 """
 from __future__ import annotations
 
