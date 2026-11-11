@@ -29,9 +29,7 @@
 #include <cstring>
 #include <initializer_list>
 
-#if GDN_BWD_ENABLE_ARCH22
 #include "external/aclnn_kernels/aclnn_platform.h"
-#endif
 
 using namespace op;
 
@@ -131,8 +129,7 @@ bool SameShape(const aclTensor *lhs, const aclTensor *rhs)
 
 bool IsAscend950()
 {
-    const char *socName = aclrtGetSocName();
-    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
 }
 
 #if GDN_BWD_ENABLE_ARCH22
