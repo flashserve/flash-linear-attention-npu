@@ -1,5 +1,4 @@
-// Load structured reporters before opdev's legacy logging macros.
-#include "op_common/log/log.h"
+#include "base/err_msg.h"
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
@@ -167,11 +166,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         CHECK_COND(tensor, ACLNN_ERR_PARAM_NULLPTR, "KDA backward required tensor is null.");
     }
     if (!safeGate) {
-#ifdef OP_LOGE_FOR_INVALID_VALUE
-        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaBwd", "safe_gate", "false", "true on A2/A3");
-#else
-        OP_LOGE_WITH_INVALID_ATTR("aclnnChunkKdaBwd", "safe_gate", "false", "true on A2/A3");
-#endif
+        const std::vector<const char *> keys = {"param_name", "op_name", "incorrect_value", "correct_value"};
+        const std::vector<const char *> values = {"safe_gate", "aclnnChunkKdaBwd", "false", "true on A2/A3"};
+        REPORT_PREDEFINED_ERR_MSG("EZ0024", keys, values);
         return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_COND(chunkSize == 64 && useExp2 && !stateVFirst,
