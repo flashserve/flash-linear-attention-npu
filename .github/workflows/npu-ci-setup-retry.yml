@@ -1,0 +1,69 @@
+name: NPU CI 初始化重试
+
+on:
+  workflow_run:
+    workflows: [NPU CI]
+    types: [completed]
+
+permissions:
+  actions: write
+
+concurrency:
+  group: npu-ci-setup-retry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  retry-setup:
+    if: >-
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 4
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: 等待 15 秒并重试初始化失败的 NPU job（最多 3 次）
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const repo = context.repo;
+            if (run.path.split('@')[0] !== '.github/workflows/ci.yml' ||
+                run.head_repository.full_name !== `${repo.owner}/${repo.repo}`) return;
+
+            const pause = () => new Promise(resolve => setTimeout(resolve, 15000));
+            const getRun = async () => (await github.rest.actions.getWorkflowRun({
+              ...repo, run_id: run.id,
+            })).data;
+            const getNpuJobs = async attempt => (await github.paginate(
+              github.rest.actions.listJobsForWorkflowRunAttempt, {
+                ...repo, run_id: run.id, attempt_number: attempt, per_page: 100,
+              }
+            )).filter(job => job.name.startsWith('NPU CI 分项执行 ('));
+            const setupResult = job => job.steps?.find(step => step.name === 'Set up job')?.conclusion;
+
+            for (let attempt = run.run_attempt; attempt < 4; attempt++) {
+              let current = await getRun();
+              if (current.run_attempt !== attempt || current.status !== 'completed' ||
+                  current.conclusion !== 'failure') return;
+              const jobs = await getNpuJobs(attempt);
+              if (!jobs.some(job => setupResult(job) === 'failure') ||
+                  jobs.some(job => job.conclusion === 'failure' && setupResult(job) !== 'failure')) return;
+
+              core.info(`Set up job 失败，等待 15 秒后重试（${attempt}/3）。`);
+              await pause();
+              current = await getRun();
+              if (current.run_attempt !== attempt || current.status !== 'completed' ||
+                  current.conclusion !== 'failure') return;
+              await github.rest.actions.reRunFailedJobs({...repo, run_id: run.id});
+
+              // Observe retries here instead of relying on recursive workflow_run events.
+              while (true) {
+                await pause();
+                current = await getRun();
+                if (current.run_attempt > attempt + 1) return;
+                if (current.run_attempt !== attempt + 1) continue;
+                if (current.status === 'completed') break;
+                const retriedJobs = await getNpuJobs(attempt + 1);
+                if (retriedJobs.length && retriedJobs.every(job => setupResult(job) === 'success')) return;
+              }
+            }

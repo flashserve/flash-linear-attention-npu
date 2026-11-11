@@ -892,6 +892,10 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+      - name: 等待 15 秒后重试上传 ${{ matrix.name }} 结果（1/3）
+        if: always() && steps.upload_platform_result_1.outcome == 'failure'
+        run: sleep 15
+
       - name: 重试上传 ${{ matrix.name }} 结果（1/3）
         id: upload_platform_result_2
         if: always() && steps.upload_platform_result_1.outcome == 'failure'
@@ -910,9 +914,13 @@ jobs:
           retention-days: 7
           overwrite: true
 
+      - name: 等待 15 秒后重试上传 ${{ matrix.name }} 结果（2/3）
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure'
+        run: sleep 15
+
       - name: 重试上传 ${{ matrix.name }} 结果（2/3）
         id: upload_platform_result_3
-        if: always() && steps.upload_platform_result_2.outcome == 'failure'
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
@@ -928,9 +936,13 @@ jobs:
           retention-days: 7
           overwrite: true
 
+      - name: 等待 15 秒后重试上传 ${{ matrix.name }} 结果（3/3）
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure' && steps.upload_platform_result_3.outcome == 'failure'
+        run: sleep 15
+
       - name: 重试上传 ${{ matrix.name }} 结果（3/3）
         id: upload_platform_result_4
-        if: always() && steps.upload_platform_result_3.outcome == 'failure'
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure' && steps.upload_platform_result_3.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
           name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
