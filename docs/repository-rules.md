@@ -25,6 +25,8 @@ required Code Owners review 保证每个 PR 至少获得一名 Code Owner approv
 
 该检查始终读取 PR 当前目标分支中的 `CODEOWNERS`，不使用可能过期的 `base.sha`。当 `CODEOWNERS`、检查脚本或 workflow 合入默认分支时，workflow 会自动重新计算所有面向默认分支的 open PR，因此已有 PR 无需等待新的 review 或 push 事件即可应用最新名单和检查逻辑。
 
+`pull_request_review` 在 fork PR 上使用只读权限上下文，不能直接写审批状态。review 事件先由无写权限的 `codeowner-review-trigger.yml` 记录 PR 编号，再由默认分支上的受信任 `workflow_run` 读取该编号并写回状态。
+
 ## ABI 兼容性
 
 如果 PR 修改了算子 `def`、`aclnn` 接口入参类型、返回值、必选/可选属性，或修改了 `torch` 接口入参类型等可能导致 ABI 不一致的内容，仍必须由 `weinachuan` 检视确认。该要求通过 GitHub 原生 Code Owners review 生效，不再由自定义检视 workflow 自动阻塞。
