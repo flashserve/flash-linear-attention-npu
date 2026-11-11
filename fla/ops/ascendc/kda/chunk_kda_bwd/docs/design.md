@@ -65,3 +65,12 @@ Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M�
 
 Finalize 的输入输出及源码入口见
 [算子说明](../../chunk_kda_bwd_finalize/README.md)。
+
+### A2/A3 WY 的 FIX 到 MTE2 依赖
+
+S3a 将 dW 经 FIX 写入 GM，S3b 从同一 workspace 位置通过 MTE2 读取；
+S6 将 Tza 经 FIX 写入 GM，S7 同样通过 MTE2 消费。在两个消费阶段开始前，
+分别用 event 0 的 FIX_MTE2 Set/Wait 使此前的 FIX 写入完成。
+每对事件立即消费后再复用，不改变 workspace、公式、head 分组及覆盖遍数。
+FIX_M/M_FIX 的矩阵流水生命周期不能代替该 GM 生产消费依赖。
+新增同步限定于非 arch35 分支，A5 沿用原同步路径。
