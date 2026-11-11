@@ -29,6 +29,16 @@ out = recurrent_gated_delta_rule(
 )
 ```
 
+## 能力发布
+
+`op_kernel/capabilities.json` 随 OPP 安装到
+`<vendor>/op_impl/ai_core/tbe/<impl>/ascendc/recurrent_gated_delta_rule/`，
+只声明调用方需要的单序列窗口 `max_verify_len`（`null` 表示按窗口循环消费、
+没有单序列上限）。窗口大小属于 kernel 内部实现，不在能力文件中重复。
+调用方通过 `fla_npu.ops.ascendc.recurrent_gdn_max_verify_len()` 读取，不要
+自行硬编码。改动 kernel 的单序列上限时必须同步此文件，
+`tests/test_rgdr_capabilities.py` 会在两者不一致时失败。
+
 ## 测试
 
 ATK 工程位于 `tests/atk/recurrent_gated_delta_rule`。
