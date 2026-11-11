@@ -14,7 +14,7 @@
 // 只能用预处理分支选头；Arch22 无独立 AIV mover，不包含。C++ 侧差异已收敛到 platform.h。
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
 #include "arch92/chunk_kda_fwd_finalize_vec.h"
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 #include "arch35/chunk_kda_fwd_finalize_vec.h"
 #endif
 
@@ -38,7 +38,7 @@ __aicore__ inline void RunFinalize(const FinalizeArgs &args)
             inputMover.Process();
         }
     }
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
     if constexpr (UseAivInputMover) {
         if ASCEND_IS_AIV {
             Arch35::FinalizeInputMover<StateVFirst> inputMover;

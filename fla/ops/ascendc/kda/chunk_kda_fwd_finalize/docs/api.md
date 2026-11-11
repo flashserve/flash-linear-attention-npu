@@ -21,19 +21,6 @@ attn_out = chunk_kda_fwd_finalize(
 legacy `torch.ops.npu` 接口。输入、输出和变长元数据的形状与约束
 见下文及[算子 README](../README.md#输入输出)。
 
-## 参数
-
-| 参数 | 类型 | 必选 | 说明 |
-| --- | --- | --- | --- |
-| `qg_scaled` | BF16 tensor | 是 | Prepare 输出的已缩放 QG；rank-4 `[B,HV,T,128]` 或 packed rank-3 `[HV,T,128]` |
-| `aqk` | BF16 tensor | 是 | Prepare 的 Aqk（已乘 scale）；最后一维固定 64 |
-| `v_new` | BF16 tensor | 是 | FwdH 的 `v_new`；dense `[B,HV,T,128]`，packed 接受 `[1,HV,T,128]` 或 `[HV,T,128]` |
-| `h` | BF16 tensor | 是 | FwdH 的 NT-first 状态 `[B,C,HV,128,128]`，有变长元数据时为 `[1,C,HV,128,128]` |
-| `output_layout` | str | 否 | `BSND`（默认）/`BNSD`/`TND`/`NTD`，区分大小写；rank 与合法取值见下文 |
-| `state_v_first` | bool | 否 | `h` 末两维顺序；`false`（默认）为 `[K,V]`，`true` 为 `[V,K]` |
-| `cu_seqlens` | list[int] | 否 | 首 0、末 T、严格递增；传入时 rank-4 输入要求 `B=1` |
-| `chunk_indices` | list[int] | 否 | 仅在传入 `cu_seqlens` 时可用，按 sequence-major 列出 `(sequence_id, local_chunk_id)` |
-
 返回：单个 BF16 张量 `attn_out`，布局由 `output_layout` 决定，形状见
 [算子 README](../README.md#输入输出)。dtype、layout 与变长约束见 `## aclnn`
 和[算子 README](../README.md#支持范围)；平台支持范围为 A2/A3/A5/A6。

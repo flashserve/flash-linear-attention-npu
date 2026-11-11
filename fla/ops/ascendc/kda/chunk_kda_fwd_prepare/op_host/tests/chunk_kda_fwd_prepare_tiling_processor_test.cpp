@@ -132,15 +132,15 @@ bool CheckPlatformTraits()
     constexpr auto arch35 = GetPlatformTraits(PrepareKernelTier::Arch35);
     constexpr auto arch92 = GetPlatformTraits(PrepareKernelTier::Arch92);
     constexpr auto unknown = GetPlatformTraits(PrepareKernelTier::Unknown);
-    return arch22.tier == PrepareKernelTier::Arch22 && arch22.arch22TargetEligible &&
+    return arch22.tier == PrepareKernelTier::Arch22 &&
         !arch22.useLegacyTilingKey &&
         arch22.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES &&
         arch22.slotsPerWorkgroup == CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP &&
-        arch35.tier == PrepareKernelTier::Arch35 && !arch35.arch22TargetEligible &&
+        arch35.tier == PrepareKernelTier::Arch35 &&
         arch35.useLegacyTilingKey &&
         arch35.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES &&
         arch35.slotsPerWorkgroup == CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP &&
-        arch92.tier == PrepareKernelTier::Arch92 && !arch92.arch22TargetEligible &&
+        arch92.tier == PrepareKernelTier::Arch92 &&
         arch92.useLegacyTilingKey &&
         arch92.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES &&
         arch92.slotsPerWorkgroup == 3 &&

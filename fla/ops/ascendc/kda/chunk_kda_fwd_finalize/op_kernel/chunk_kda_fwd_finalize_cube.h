@@ -16,7 +16,7 @@
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 9201
 #endif
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 #define FINALIZE_CROSS_CORE 1
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
@@ -46,7 +46,7 @@ using namespace AscendC;
 // 编译失败。此处只保留类型映射，#if 之外的平台差异仍由 FinalizePlatform 提供。
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
 using FinalizeArch = Catlass::Arch::Ascend960DT;
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 using FinalizeArch = Catlass::Arch::Ascend950;
 #else
 using FinalizeArch = Catlass::Arch::AtlasA2;

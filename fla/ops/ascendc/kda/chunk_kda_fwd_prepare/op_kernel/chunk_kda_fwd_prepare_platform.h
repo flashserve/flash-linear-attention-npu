@@ -11,7 +11,7 @@
 
 namespace KdaPrepare {
 
-// 三段门控的唯一判定点：全工程散点 __NPU_ARCH__==9201 / __CCE_AICORE__==310
+// 三段门控的唯一判定点：全工程统一用 __NPU_ARCH__ 门控（9201/3510/2201），
 // 收敛到这一个编译期结构体。shared policy.h 里的 Shape/Workspace/L1/Arch35Ub
 // 一律从这里取值，不再各自 #if。
 struct PreparePlatform {
@@ -27,7 +27,7 @@ struct PreparePlatform {
     static constexpr uint32_t computeSlotBytes = 0x1C000;
     static constexpr uint32_t stateBytes = 0x03000;
     static constexpr uint32_t workspaceSlotCount = 3;
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
     // A5（Ascend950）：AIC:AIV = 1:2，双 AIV 各搬 2 个 head。
     static constexpr uint32_t headsPerGroup = 4;
     static constexpr uint32_t aivPerAic = 2;

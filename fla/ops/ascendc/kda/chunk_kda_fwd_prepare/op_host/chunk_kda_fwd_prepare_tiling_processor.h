@@ -35,7 +35,9 @@ constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES =
     CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES *
     CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
 
-// 平台 tier 与 kernel 侧的三段门控一一对应：
+// host 侧平台分派枚举：由运行期 NpuArch（GetCurNpuArch）映射而来，仅用于 host
+// tiling 查表；与 kernel 侧编译期架构宏（__NPU_ARCH__）＋独立实现目录（arch22/
+// arch35/arch92）的分派相互独立、各自维护，二者通过同名 tier 值一一对应：
 //   Arch22 = A2/A3（DAV_2201），Arch35 = A5（DAV_3510），Arch92 = A6（DAV_9201）。
 // 只增不改是扩展契约：新增平台（如 A7）只在这里加一个 tier 值 + tiling.cpp 的
 // NpuArch 映射行 + 一条 traits 表记录，共享调度逻辑不受影响。
@@ -50,8 +52,6 @@ enum class PrepareKernelTier : uint32_t {
 // 这类组合布尔值。字段与 kernel 侧布局/调度契约一一对应。
 struct PreparePlatformTraits {
     PrepareKernelTier tier = PrepareKernelTier::Unknown;
-    // 仅 Arch22 可能命中 target 快速变体；A5/A6 恒 false。
-    bool arch22TargetEligible = false;
     // Arch35/Arch92 用 legacy tiling key；Arch22 用 runtime key。
     bool useLegacyTilingKey = false;
     // 通用（非 target）workspace 单槽字节数与每 workgroup 槽数。
@@ -64,17 +64,17 @@ constexpr PreparePlatformTraits GetPlatformTraits(PrepareKernelTier tier)
 {
     switch (tier) {
     case PrepareKernelTier::Arch22:
-        return {PrepareKernelTier::Arch22, true, false,
+        return {PrepareKernelTier::Arch22, false,
                 CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES,
                 CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP};
     case PrepareKernelTier::Arch35:
-        return {PrepareKernelTier::Arch35, false, true,
+        return {PrepareKernelTier::Arch35, true,
                 CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES,
                 CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP};
     case PrepareKernelTier::Arch92:
         // A6(1:1) 每 workgroup 只 3 个在途 head，收敛为 3；必须与 kernel 侧
         // Workspace::kArch92SlotCount 保持一致（见 op_kernel policy.h）。
-        return {PrepareKernelTier::Arch92, false, true,
+        return {PrepareKernelTier::Arch92, true,
                 CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES, 3};
     default:
         return {};

@@ -207,7 +207,7 @@ B/X0/negX1/Akk 搬入每 head 独立 L1 后即可归还 workspace payload，V6 �
 
 TilingKey 编译期选择 gate dtype、beta dtype、norm 模式、beta 模式、gate 模式、
 `use_exp2`、`safe_gate` 和三档 `OUTPUT_MODE`。`q/k/v` 不进入 dtype 模板轴，固定为 BF16。架构通过
-`__NPU_ARCH__==9201` 优先、`__CCE_AICORE__==310` 次之的三段门控（Arch92/Arch35/Arch22）
+统一用 `__NPU_ARCH__` 三段门控（9201/3510/2201 → Arch92/Arch35/Arch22）
 编译期选择，kernel 内没有运行时架构分支。
 
 输出搬出在模板实例中使用 `if constexpr` 消除；设备侧 tiling 不保存运行时
