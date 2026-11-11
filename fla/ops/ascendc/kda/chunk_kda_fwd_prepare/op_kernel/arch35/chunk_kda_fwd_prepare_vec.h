@@ -812,7 +812,7 @@ constexpr uint16_t kAicToAivScoreReadyFlagId[2] = {2, 3};
 // C4→V6：payload 可原址换义（V6 在首个 workspace 写之前 wait，MTE3 味）。
 constexpr uint16_t kAicToAivPayloadRepurposeFlagId[2] = {6, 7};
 
-template <typename GateT, typename BetaT, typename CompilePolicy>
+template <typename GateT, typename BetaT, typename CompilePolicy, bool GvaMode>
 class ChunkKdaFwdPrepareVec {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args)
@@ -831,7 +831,7 @@ public:
         gateGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         // HK=HV 时 Q/K 与 value head 一一对应，同样只读取一次；GVA 下
         // 同一个 QK head 会被多个 value head 复用，继续保留默认 L2 策略。
-        if (args.tiling.qkHeadNum == args.tiling.valueHeadNum) {
+        if constexpr (!GvaMode) {
             qGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             kGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         }
@@ -879,10 +879,11 @@ public:
         const uint32_t chunkWork = static_cast<uint32_t>(
             static_cast<uint64_t>(args_.tiling.batch) *
             args_.tiling.totalChunks);
-        const uint32_t headsPerQk =
-            args_.tiling.valueHeadNum / args_.tiling.qkHeadNum;
+        const uint32_t headsPerQk = GvaMode ?
+            args_.tiling.valueHeadNum / args_.tiling.qkHeadNum : 1;
         const bool fourHeadGroupPreservesGva =
-            headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
+            !GvaMode ||
+            (headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0);
         const bool balanceDenseTail =
             !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
             fourHeadGroupPreservesGva && chunkWork >= coreCount &&
@@ -1057,7 +1058,8 @@ private:
             computeSlot + Arch35Ub::kV0Work);
         auto aLog = dtBias[Shape::kHeadDim];
 
-        const uint32_t qkHead = QkHeadForValueHead(args_.tiling, valueHead);
+        const uint32_t qkHead =
+            QkHeadForValueHead<GvaMode>(args_.tiling, valueHead);
         const uint64_t qkOffset = QkInputOffset(args_.tiling, chunk, qkHead);
         const uint64_t gateOffset =
             RawGateInputOffset(args_.tiling, chunk, valueHead);
@@ -1191,7 +1193,7 @@ private:
             AscendC::DataCopyPad(betaEffGm_[HeadScalarOffset(
                 args_.tiling, chunk, valueHead)], betaEff, scalarOutputCopy);
         }
-        if (IsQkOutputOwner(args_.tiling, valueHead)) {
+        if (IsQkOutputOwner<GvaMode>(args_.tiling, valueHead)) {
             // q/k 归一化保存量按 HK 的 head-major 布局输出。
             // GVA 中只允许 QK 头组的首个 HV 写回，避免多 AIV
             // 对同一 QK head 发生重叠写。

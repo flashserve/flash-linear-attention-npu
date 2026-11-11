@@ -3,7 +3,7 @@
 #include "chunk_kda_fwd_prepare_common.h"
 
 namespace KdaPrepare::Arch22 {
-template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
+template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class Vector {
     const PrepareKernelArgs &a_; TPipe *pipe_; uint32_t core_,lane_;
     TBuf<TPosition::VECCALC> ub_;
     LocalTensor<bfloat16_t> q_,k_,v_;
@@ -48,6 +48,12 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         LocalTensor<T> src,uint32_t count,bool drain=true) {
         VToMte3();Store(ptr,offset,src,count);if(drain)DrainStores();
     }
+    __aicore__ inline void StoreQkOutputs(const PrepareRuntimeTiling &t,uint32_t qh) {
+        Store(a_.qHat,Out(t,w_,qh,t.qkHeadNum,128),q_,w_.rows*128);
+        Store(a_.kHat,Out(t,w_,qh,t.qkHeadNum,128),k_,w_.rows*128);
+        Store(a_.qRstd,Out(t,w_,qh,t.qkHeadNum,1),qr_,w_.rows);
+        Store(a_.kRstd,Out(t,w_,qh,t.qkHeadNum,1),kr_,w_.rows);
+    }
     __aicore__ inline void RowMultiply(LocalTensor<float> dst,LocalTensor<float> src,
         LocalTensor<float> broadcast,uint32_t rows,uint32_t width) {
         BinaryRepeatParams p{1,1,0,static_cast<uint8_t>(width/8),
@@ -79,8 +85,8 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         Duplicate(q_,bfloat16_t(0),8192);Duplicate(k_,bfloat16_t(0),8192);
         Duplicate(g_,0.0F,8192);Duplicate(beta_,0.0F,64);VBarrier();
         const auto &t=a_.tiling;uint32_t h=w_.head[lane_],qh=w_.qh[lane_];
-        Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
-        Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+        Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,!GvaMode);
+        Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,!GvaMode);
         // Input types are selected by the package's existing dtype objects,
         // independently of the six Norm/Gate tiling keys.
         auto gateRaw=work_.template ReinterpretCast<GateT>();
@@ -158,11 +164,10 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         Normalize(q_,qr_);Normalize(k_,kr_);
         if(t.outputMode==1||t.outputMode==2) {
             VToMte3(); // Checkpoints remain read-only until the score batch is drained.
-            if(w_.owner[lane_]) {
-                Store(a_.qHat,Out(t,w_,qh,t.qkHeadNum,128),q_,w_.rows*128);
-                Store(a_.kHat,Out(t,w_,qh,t.qkHeadNum,128),k_,w_.rows*128);
-                Store(a_.qRstd,Out(t,w_,qh,t.qkHeadNum,1),qr_,w_.rows);
-                Store(a_.kRstd,Out(t,w_,qh,t.qkHeadNum,1),kr_,w_.rows);
+            if constexpr(!GvaMode) {
+                StoreQkOutputs(t,qh);
+            } else if(w_.owner[lane_]) {
+                StoreQkOutputs(t,qh);
             }
             Store(a_.betaEff,Out(t,w_,h,t.valueHeadNum,1),beta_,w_.rows);
         }
@@ -557,7 +562,7 @@ public:
         if(core_>=a_.tiling.usedCoreNum)return;
         uint32_t generation=0;
         for(uint64_t job=core_;job<WorkCount(a_.tiling);job+=a_.tiling.usedCoreNum,++generation) {
-            uint32_t slot=generation&1;w_=Describe(a_,job);base_=GmLane(core_,slot,lane_);
+            uint32_t slot=generation&1;w_=Describe<GvaMode>(a_,job);base_=GmLane(core_,slot,lane_);
             CrossCoreWaitFlag<0x2,PIPE_MTE3>(6+slot);
             if(w_.active[lane_]&&w_.rows) {
                 Prepare();

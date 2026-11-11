@@ -16,6 +16,7 @@ struct Work {
 __aicore__ inline uint64_t WorkCount(const PrepareRuntimeTiling &t) {
     return (t.isVarLen?uint64_t(t.totalChunks):uint64_t(t.batch)*t.totalChunks)*((t.valueHeadNum+1)/2);
 }
+template<bool GvaMode>
 __aicore__ inline Work Describe(const PrepareKernelArgs &a,uint64_t job) {
     const auto &t=a.tiling; Work w;
     uint32_t pairs=(t.valueHeadNum+1)/2, chunk=job/pairs, pair=job%pairs;
@@ -30,11 +31,15 @@ __aicore__ inline Work Describe(const PrepareKernelArgs &a,uint64_t job) {
         w.batch=chunk/t.totalChunks; w.token=(chunk%t.totalChunks)*64;
         w.rows=t.seqLen-w.token<64?t.seqLen-w.token:64;
     }
-    const uint32_t ratio=t.valueHeadNum/t.qkHeadNum;
+    const uint32_t ratio=GvaMode?t.valueHeadNum/t.qkHeadNum:1;
     for(uint32_t l=0;l<2;++l) {
         w.head[l]=2*pair+l; w.active[l]=w.head[l]<t.valueHeadNum;
-        w.qh[l]=w.active[l]?w.head[l]/ratio:0;
-        w.owner[l]=w.active[l] && w.head[l]%ratio==0;
+        if constexpr(GvaMode) {
+            w.qh[l]=w.active[l]?w.head[l]/ratio:0;
+            w.owner[l]=w.active[l] && w.head[l]%ratio==0;
+        } else {
+            w.qh[l]=w.head[l];w.owner[l]=w.active[l];
+        }
     }
     return w;
 }

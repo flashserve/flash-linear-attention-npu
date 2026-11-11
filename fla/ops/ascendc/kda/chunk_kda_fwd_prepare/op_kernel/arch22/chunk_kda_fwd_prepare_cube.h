@@ -3,7 +3,7 @@
 #include "chunk_kda_fwd_prepare_common.h"
 namespace KdaPrepare::Arch22 {
 constexpr FixpipeConfig NzOutput={CO2Layout::NZ,false};
-template<uint32_t Norm,uint32_t Gate> class Cube {
+template<uint32_t Norm,uint32_t Gate,bool GvaMode> class Cube {
     const PrepareKernelArgs &a_;TPipe *pipe_;uint32_t core_,slot_;bool identityReady_[2];Work w_;
     TBuf<TPosition::A1> l1_;TBuf<TPosition::A2> la_;
     TBuf<TPosition::B2> lb_;TBuf<TPosition::CO1> lc_;
@@ -246,7 +246,7 @@ public:
         CrossCoreSetFlag<0x2,PIPE_FIX>(6);CrossCoreSetFlag<0x2,PIPE_FIX>(7);
         uint32_t generation=0;
         for(uint64_t job=core_;job<WorkCount(a_.tiling);job+=a_.tiling.usedCoreNum,++generation) {
-            slot_=generation&1;w_=Describe(a_,job);
+            slot_=generation&1;w_=Describe<GvaMode>(a_,job);
             CrossCoreWaitFlag<0x2,PIPE_MTE2>(slot_);
             if(w_.rows) {
                 for(uint32_t lane=0;lane<2;++lane)if(w_.active[lane])Scores(lane);
@@ -275,9 +275,9 @@ public:
         pipe_->ReleaseEventID<HardEvent::MTE1_MTE2>(scoreReleased_);
     }
 };
-template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> __aicore__ inline void Run(const PrepareKernelArgs &a) {
+template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> __aicore__ inline void Run(const PrepareKernelArgs &a) {
     TPipe pipe;
-    if ASCEND_IS_AIV {Vector<Norm,Gate,GateT,BetaT> v(a);v.Init(a,&pipe);v.Process();}
-    if ASCEND_IS_AIC {Cube<Norm,Gate> c(a);c.Init(a,&pipe);c.Process();}
+    if ASCEND_IS_AIV {Vector<Norm,Gate,GvaMode,GateT,BetaT> v(a);v.Init(a,&pipe);v.Process();}
+    if ASCEND_IS_AIC {Cube<Norm,Gate,GvaMode> c(a);c.Init(a,&pipe);c.Process();}
 }
 }
