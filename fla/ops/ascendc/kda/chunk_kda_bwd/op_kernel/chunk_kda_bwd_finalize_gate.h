@@ -117,7 +117,7 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             RegTensor<float> raw;
             RegTensor<float> denominator;
             RegTensor<float> sigmoid;
-            RegTensor<float> oneMinus;
+            RegTensor<float> sigmaSq;
             RegTensor<float> upstreamReg;
             RegTensor<float> gradient;
             RegTensor<float> dAReg;
@@ -129,9 +129,8 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             Exp(denominator, denominator, mask);
             Adds(denominator, denominator, 1.0f, mask);
             Div(sigmoid, one, denominator, mask);
-            Muls(oneMinus, sigmoid, -1.0f, mask);
-            Adds(oneMinus, oneMinus, 1.0f, mask);
-            Mul(gradient, oneMinus, sigmoid, mask);
+            Mul(sigmaSq, sigmoid, sigmoid, mask);
+            Sub(gradient, sigmoid, sigmaSq, mask);
             DataCopy(upstreamReg, upstream + offset);
             if constexpr (SCAN_UPSTREAM) {
                 Add(upstreamAcc, upstreamAcc, upstreamReg, mask);
@@ -170,6 +169,11 @@ class ChunkKdaBwdCGateProcess {
 public:
     static constexpr uint32_t kChunkBytes =
         64 * 128 * sizeof(float);
+    // reduce_ plane (4 KiB) live map on the dense fast path: dbAcc[0..127],
+    // dAAcc[128..135], aScalar[136], bias[144..271].  [280..927] belongs to
+    // AccumulateScalar/Sigmoid, which are unreachable on the A5 safe-gate
+    // dense path, so the split-balanced merge stages its mailbox read-back
+    // at [880..1015].
     static_assert(5 * kChunkBytes + 4 * 1024 <= 192 * 1024,
                   "Kernel C raw-gate AIV buffers exceed UB capacity");
     __aicore__ ChunkKdaBwdCGateProcess(
@@ -268,6 +272,10 @@ private:
 
     __aicore__ inline void ProcessRawGate()
     {
+        if (SplitBalance()) {
+            ProcessRawGateSplitBalancedA5();
+            return;
+        }
         const uint32_t core =
             AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
         const uint32_t headWindows =
@@ -616,6 +624,141 @@ private:
         // MTE3-to-MTE2 reuse dependency so every row reaches GM first.
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_);
+    }
+
+    // G-A2 split-balance predicate.  Halving every head's chunk loop pays
+    // off only when the head-grain schedule itself shortens the makespan:
+    //   ceil(headNum/C) * totalChunks/2 < ceil(headWindows/C) * totalChunks.
+    // Already-balanced shapes (H=64/128: 2≮2 false) and odd-head forms the
+    // half-task grid cannot shorten (H=97: 4≮4 false) are skipped and keep
+    // the window loop bit-exact; T=64 (a single chunk per head) degenerates
+    // to the legacy path as well.
+    __aicore__ inline bool SplitBalance() const
+    {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        if constexpr (SAFE_GATE) {
+            const uint32_t headNum = static_cast<uint32_t>(tiling_.headNum);
+            const uint32_t headWindows = (headNum + 1U) / 2U;
+            const uint32_t cores = static_cast<uint32_t>(tiling_.usedCoreNum);
+            const uint32_t totalChunks =
+                static_cast<uint32_t>(tiling_.batch) *
+                static_cast<uint32_t>(tiling_.chunkNumPerBatch);
+            return tiling_.useGateInKernel != 0 && tiling_.isVarLen == 0 &&
+                   AscendC::GetSubBlockNum() == 2U &&
+                   static_cast<uint32_t>(tiling_.seqlen) %
+                           static_cast<uint32_t>(tiling_.chunkSize) == 0 &&
+                   totalChunks >= 2U &&
+                   (headNum + cores - 1U) / cores <
+                       2U * ((headWindows + cores - 1U) / cores);
+        }
+#endif
+        return false;
+    }
+
+    // Split-balanced raw-gate schedule: the 2*headNum half-tasks stride-map
+    // over the flat AIV index (job j -> block j%stride), so both halves of
+    // head h (jobs 2h and 2h+1) always land on the two sub-blocks of one
+    // core, walking the same head sequence in the same order.  The half1
+    // lane parks its fp32 partial sums in the head's own output slots (the
+    // mailbox) and the half0 lane folds them in after a per-head
+    // CrossCoreBarrier rendezvous.  Per-chunk data flow is unchanged, so
+    // dg/dq/dk/dv/db stay bit-identical; dA/dbias become one deterministic
+    // top-level fp32 reassociation (fold([0,S)) + fold([S,totalChunks))).
+    __aicore__ inline void ProcessRawGateSplitBalancedA5()
+    {
+        const uint32_t blockIdx = AscendC::GetBlockIdx();
+        const uint32_t stride = static_cast<uint32_t>(tiling_.usedCoreNum) *
+            AscendC::GetSubBlockNum();
+        const uint32_t headNum = static_cast<uint32_t>(tiling_.headNum);
+        const uint32_t totalChunks =
+            static_cast<uint32_t>(tiling_.batch) *
+            static_cast<uint32_t>(tiling_.chunkNumPerBatch);
+        const uint32_t split = totalChunks / 2U;
+        for (uint32_t job = blockIdx; job < 2U * headNum; job += stride) {
+            const uint32_t head = job >> 1U;
+            const uint32_t half = job & 1U;
+            auto dbAcc = reduce_.Get<float>();
+            auto dAAcc = dbAcc[128];
+            AscendC::Duplicate(dbAcc, 0.0f, 128);
+            AscendC::Duplicate(dAAcc, 0.0f, 8);
+            AscendC::PipeBarrier<PIPE_V>();
+
+            // Same per-head setup as the windowed path; both halves
+            // recompute the same exp(A_log) value for their head.
+            auto aScalar = reduce_.Get<float>()[136];
+            AscendC::DataCopyPad(
+                aScalar, aLogGm_[head],
+                {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
+                {false, 0, 0, 0});
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+            AscendC::Exp(aScalar, aScalar, 1);
+            AscendC::PipeBarrier<PIPE_V>();
+            const float expA = ReadScalar(aScalar);
+
+            const uint32_t taskBegin = half == 0U ? 0U : split;
+            const uint32_t taskEnd = half == 0U ? split : totalChunks;
+            for (uint32_t task = taskBegin; task < taskEnd; ++task) {
+                ProcessChunk(task, head, true, &dAAcc, &dbAcc, expA);
+            }
+            if (half != 0U) {
+                // Publish the fp32 partial sums through the head's own
+                // output slots.  The PIPE_MTE3 barrier set drains these
+                // stores before the same-core half0 lane may read them.
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+                AscendC::DataCopyPad(
+                    dAGm_[head], dAAcc,
+                    {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0});
+                if (tiling_.hasDtBias != 0) {
+                    AscendC::DataCopy(
+                        dBiasGm_[static_cast<uint64_t>(head) * 128],
+                        dbAcc, 128);
+                }
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            } else {
+                Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+                MergeSplitPartialsA5(head, dbAcc, dAAcc);
+            }
+        }
+    }
+
+    // Half0 lane: fold the sibling lane's half1 partial sums (parked in the
+    // head's output slots) into this lane's half0 accumulators and store the
+    // final dA/dbias.  Called right after the per-head CrossCoreBarrier, so
+    // the mailbox contents are visible to the MTE2 read-back.
+    __aicore__ inline void MergeSplitPartialsA5(
+        uint32_t head, AscendC::LocalTensor<float> dbAcc,
+        AscendC::LocalTensor<float> dAAcc)
+    {
+        auto staging = reduce_.Get<float>()[880];
+        AscendC::DataCopyPad(
+            staging[128], dAGm_[head],
+            {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0},
+            {false, 0, 0, 0});
+        if (tiling_.hasDtBias != 0) {
+            AscendC::DataCopy(
+                staging, dBiasGm_[static_cast<uint64_t>(head) * 128], 128);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
+        if (tiling_.hasDtBias != 0) {
+            AscendC::Add(dbAcc, dbAcc, staging, 128);
+        }
+        // Only dAAcc[0] is stored below (4B DataCopyPad); the upper staging
+        // lanes never reach GM and are reset by the next head setup.
+        AscendC::Add(dAAcc, dAAcc, staging[128], 8);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_);
+        AscendC::DataCopyPad(
+            dAGm_[head], dAAcc,
+            {1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0});
+        if (tiling_.hasDtBias != 0) {
+            AscendC::DataCopy(
+                dBiasGm_[static_cast<uint64_t>(head) * 128], dbAcc, 128);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_);
     }
 
     GM_ADDR dg_;
