@@ -10,7 +10,7 @@
 
 name: NPU CI
 
-run-name: "NPU CI · PR #${{ inputs.pr_number }}${{ inputs.debug && ' · debug' || '' }}"
+run-name: "NPU CI · PR #${{ inputs.pr_number }} · ${{ inputs.suite || 'formal' }}${{ inputs.debug && ' · debug' || '' }}"
 
 on:
   workflow_dispatch:
@@ -27,6 +27,10 @@ on:
         type: boolean
         required: false
         default: false
+      suite:
+        description: "Optional experimental suite; leave empty for formal CI"
+        required: false
+        default: ''
       ops:
         description: "Optional comma-separated operator list for compile diagnostics only"
         required: false
@@ -53,7 +57,7 @@ on:
         default: ''
 
 concurrency:
-  group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}
+  group: npu-ci-${{ github.repository }}-${{ inputs.pr_number || github.run_id }}-${{ inputs.suite || 'formal' }}
   cancel-in-progress: true
 
 jobs:
@@ -76,6 +80,7 @@ jobs:
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
       debug: ${{ steps.prepare.outputs.debug }}
+      suite: ${{ steps.prepare.outputs.suite }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
       workflow_ref: ${{ steps.prepare.outputs.workflow_ref }}
@@ -113,7 +118,18 @@ jobs:
             const workflowRef = process.env.NPU_CI_WORKFLOW_REF || '';
             await auth.authorizeCiRequest({ github, context, requestedBy });
 
-            const requiredCheckContexts = checks.prepareChecks;
+            const suite = workflowInputs.suite || 'formal';
+            if (!['', 'experimental'].includes(workflowInputs.suite || '')) {
+              core.setFailed(`不支持的 CI suite：${workflowInputs.suite}`);
+              return;
+            }
+            if (suite === 'experimental' && (workflowInputs.ops || '').trim()) {
+              core.setFailed('suite=experimental 不支持 ops= 定向诊断；请单独触发完整实验门禁。');
+              return;
+            }
+            core.setOutput('suite', suite);
+            const requiredCheckContexts = suite === 'experimental'
+              ? [[checks.experimental.context, checks.experimental.label]] : checks.prepareChecks;
             const scopedCheckContext = [checks.diagnostic.context, checks.diagnostic.label];
             let prNumber;
             let ciMode = 'quick';
@@ -123,7 +139,7 @@ jobs:
               if (!prNumber || !pr) {
                 return '';
               }
-              const marker = `<!-- npu-ci:pr=${prNumber}:sha=${pr.head.sha} -->`;
+              const marker = `<!-- npu-ci:pr=${prNumber}:sha=${pr.head.sha}${suite === 'experimental' ? ':suite=experimental' : ''} -->`;
               const fullBody = `${marker}\n${body}`;
               try {
                 const comments = await github.paginate(github.rest.issues.listComments, {
@@ -251,14 +267,14 @@ jobs:
             const normalizedOps = [...new Set(opsItems.filter(Boolean))].sort().join(',');
             ops = normalizedOps;
             const requestScope = normalizedOps ? 'scoped' : 'all';
-            const requestKey = requestScope === 'all'
+            const requestKey = suite === 'experimental' ? 'experimental' : requestScope === 'all'
               ? 'all'
               : require('crypto').createHash('sha256').update(normalizedOps).digest('hex').slice(0, 10);
             const requestedModeSuffix = `(${ciMode},${requestKey},A2+A5)`;
             const isInitialWorkflowAttempt = process.env.NPU_CI_RUN_ATTEMPT === '1';
             const checkContexts = requestScope === 'all' ? requiredCheckContexts : [scopedCheckContext];
-            const finalContextName = requestScope === 'all'
-              ? requiredCheckContexts.at(-1)[0]
+            const finalContextName = suite === 'experimental' ? checks.experimental.context : requestScope === 'all'
+              ? checks.required.at(-1).context
               : scopedCheckContext[0];
             const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, {
               owner: context.repo.owner,
@@ -302,11 +318,12 @@ jobs:
                   `本次 NPU CI 请求已经在 \`${pr.head.sha}\` 上通过，不会重复运行。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
+                  `- 验证集合：\`${suite}\``,
                   `- 触发人：@${requestedBy}`,
                   `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
-                  requestScope === 'all'
-                    ? '- 分项结果：6/6 通过'
+                  suite === 'experimental' ? '- 分项结果：实验独立门禁通过'
+                    : requestScope === 'all' ? '- 分项结果：正式 6 项均通过'
                     : '- 类型：定向编译诊断；仅执行 01-02，未改写 01-06 合入门禁状态',
                 ].join('\n')
               );
@@ -322,7 +339,7 @@ jobs:
               core.setOutput('requested_by', requestedBy);
               return;
             }
-            if (matchingExecutionRun && latestExecutionCi.state === 'pending' &&
+            if (matchingExecutionRun &&
                 ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(matchingExecutionRun.status)) {
               core.notice(`${pr.head.sha} 已经有 NPU CI 在排队或运行，跳过重复启动。`);
               commentId = await upsertComment(
@@ -331,6 +348,7 @@ jobs:
                   `NPU CI 已在验证 \`${pr.head.sha}\`，本次评论不会重复启动新任务。`,
                   '',
                   `- 请求模式：\`${ciMode}\``,
+                  `- 验证集合：\`${suite}\``,
                   `- 触发人：@${requestedBy}`,
                   `- CI 定义分支：\`${workflowRef}\``,
                   '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
@@ -375,11 +393,12 @@ jobs:
                 '',
                 `- 模式：\`${ciMode}\``,
                 debug ? '- 调试日志：开启；完整日志作为独立 artifact 保存 7 天' : '',
+                `- 验证集合：\`${suite}\``,
                 `- 触发人：@${requestedBy}`,
                 `- CI 定义分支：\`${workflowRef}\``,
                 '- 验证平台：A2 (`ascend910b`) + A5 (`ascend950`)',
-                requestScope === 'all'
-                  ? '- 分项：6 项按顺序执行'
+                suite === 'experimental' ? '- 仅执行实验独立门禁，不执行正式构建或 GDR'
+                  : requestScope === 'all' ? '- 仅执行正式 6 个分项'
                   : '- 类型：定向编译诊断；仅执行 01-02，不改写 01-06 合入门禁状态',
                 '- 失败处理：前置失败时后续项跳过；失败结果提供对应阶段的复现命令',
                 ops ? `- 算子：\`${ops}\`` : '',
@@ -401,12 +420,12 @@ jobs:
   ascend-npu:
     name: NPU CI 分项执行 (${{ matrix.name }})
     needs: prepare
-    if: needs.prepare.outputs.should_run == 'true'
+    if: needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.suite == 'formal'
     strategy:
       # A2 and A5 jointly form one aggregate gate. Once either platform fails,
       # the sibling job can no longer make the gate pass and should stop early.
       fail-fast: true
-      matrix:
+      matrix: &npu_platforms
         include:
           - platform: a2
             name: A2 / ascend910b
@@ -428,6 +447,7 @@ jobs:
     permissions:
       contents: read
     env:
+      CI_SUITE: formal
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_OPS: ${{ needs.prepare.outputs.ops }}
       CI_JOBS: '16'
@@ -459,7 +479,7 @@ jobs:
       CI_TIMING_ROOT: /home/huangjunzhe/ci/results/ci-timings
       TMPDIR: /home/huangjunzhe/ci/tmp
       CI_CONTAINER_NAME: fla-npu-ci-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-    steps:
+    steps: &npu_steps
       - name: 拉取当前目标分支代码（第 1 次）
         id: checkout_pr_1
         continue-on-error: true
@@ -778,6 +798,22 @@ jobs:
             echo "[CI][ERROR] NPU CI was cancelled; diagnostics may be incomplete." | tee -a "$CI_RAW_LOG_FILE"
           fi
 
+          if [[ "${CI_SUITE:-formal}" == experimental ]]; then
+            if [[ -f .ci-tmp/experimental/summary.json ]]; then
+              python3 - <<'PY_SUMMARY'
+          import json
+          report = json.load(open('.ci-tmp/experimental/summary.json'))
+          print('[experimental] ' + report['status'])
+          for name, phase in report['phases'].items():
+              print(name + ': ' + phase['status'])
+          PY_SUMMARY
+            else
+              echo "[experimental][ERROR] Missing experimental report" >&2
+              exit 1
+            fi
+            exit "$ci_status"
+          fi
+
           summary_status=0
           accuracy_requirement=()
           if [[ -z "$CI_OPS" ]]; then
@@ -832,7 +868,9 @@ jobs:
             "$repo_path"/*) rm -f "$raw_log_path" ;;
             *) echo "[CI][ERROR] Refusing to clean log outside the repository workspace." >&2; exit 1 ;;
           esac
-          expected_host_tmpdir="/home/huangjunzhe/ci/tmp/container-${CI_ACCURACY_PLATFORM}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          suite_suffix=""
+          [[ "${CI_SUITE:-formal}" != experimental ]] || suite_suffix="experimental-"
+          expected_host_tmpdir="/home/huangjunzhe/ci/tmp/container-${suite_suffix}${CI_ACCURACY_PLATFORM}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if [[ "$CI_HOST_TMPDIR" != "$expected_host_tmpdir" ]]; then
             echo "[CI][ERROR] Refusing to clean an unexpected temporary directory." >&2
             exit 1
@@ -879,21 +917,123 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.CI_SUITE == 'experimental' && 'experimental-' || '' }}npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
             repo/${{ env.CI_ACCURACY_REPORT_FILE }}
             repo/${{ env.CI_STAGE_REPORT_FILE }}
             repo/${{ env.CI_DIAGNOSTIC_FILE }}
             repo/${{ env.CI_SUMMARY_FILE }}
+            repo/.ci-tmp/experimental/summary.json
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
 
+  experimental-npu:
+    name: Experimental CI (${{ matrix.name }})
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.suite == 'experimental'
+    strategy:
+      fail-fast: true
+      matrix: *npu_platforms
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      CI_SUITE: experimental
+      CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
+      CI_OPS: ${{ needs.prepare.outputs.ops }}
+      CI_JOBS: '16'
+      CI_CPACK_JOBS: '16'
+      CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
+      CI_STAGE: ${{ needs.prepare.outputs.ops == '' && 'all' || 'opp-package' }}
+      CI_SOC: ${{ matrix.soc }}
+      FLA_NPU_SOC: ${{ matrix.soc }}
+      CI_RUN_EXAMPLE_ST: 'true'
+      CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
+      CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
+      CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
+      CI_STAGE_REPORT_FILE: .ci-tmp/npu-ci-stages-${{ matrix.platform }}.json
+      CI_RAW_LOG_FILE: .ci-tmp/npu-ci-${{ matrix.platform }}.log
+      CI_DIAGNOSTIC_FILE: .ci-tmp/npu-ci-diagnostics-${{ matrix.platform }}.json
+      CI_SUMMARY_FILE: .ci-tmp/npu-ci-summary-${{ matrix.platform }}.md
+      CI_ACCURACY_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+      CI_ACCURACY_RUN_ID: ${{ github.run_id }}
+      CI_ACCURACY_RUN_ATTEMPT: ${{ github.run_attempt }}
+      CI_IMAGE: ${{ matrix.image }}
+      CI_DOCKERFILE: ${{ matrix.dockerfile }}
+      CI_REQUIRE_PRELOADED_IMAGE: ${{ matrix.require_preloaded_image }}
+      # BiSheng requires a /tmp path inside the container; all backing storage
+      # belongs to the runner's writable data directories on the host.
+      CI_TMPDIR: /tmp/fla-npu-ci
+      CI_HOST_TMPDIR: /home/huangjunzhe/ci/tmp/container-experimental-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+      CI_CACHE_ROOT: /home/huangjunzhe/ci/cache_root
+      CI_NPU_LOCK_DIR: /home/huangjunzhe/ci/tmp/npu-locks
+      CI_TIMING_ROOT: /home/huangjunzhe/ci/results/ci-timings
+      TMPDIR: /home/huangjunzhe/ci/tmp
+      CI_CONTAINER_NAME: fla-npu-ci-experimental-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps: *npu_steps
+
+  experimental-finalize:
+    name: 发布 Experimental 独立门禁
+    needs: [prepare, experimental-npu]
+    if: always() && needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.suite == 'experimental'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: 检出受信任的实验状态发布脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: 下载实验结果
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          pattern: experimental-npu-ci-result-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: experimental-reports
+      - name: 发布实验门禁
+        id: publish_experimental
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          NPU_CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
+          NPU_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          NPU_MATRIX_RESULT: ${{ needs.experimental-npu.result }}
+          NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_EXPECTED_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          NPU_EXPECTED_RUN_ID: ${{ github.run_id }}
+          NPU_EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const publish = require(`${process.env.GITHUB_WORKSPACE}/ci-control/.github/scripts/publish_experimental_ci_status.js`);
+            await publish({ github, context, core });
+      - name: 实验状态发布失败时收敛门禁
+        if: always() && steps.publish_experimental.outputs.status_published != 'true'
+        uses: actions/github-script@v8
+        env:
+          NPU_EXPECTED_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        with:
+          script: |
+            const { data: file } = await github.rest.repos.getContent({ ...context.repo,
+              path: '.github/scripts/npu_ci_checks.json', ref: process.env.NPU_CI_WORKFLOW_SHA });
+            const checks = JSON.parse(Buffer.from(file.content, file.encoding || 'base64').toString('utf8'));
+            await github.rest.repos.createCommitStatus({ ...context.repo, sha: process.env.NPU_EXPECTED_HEAD_SHA,
+              state: 'failure', context: checks.experimental.context, description: '实验结果发布失败，请重新执行',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}` });
+
   finalize:
     name: 校验并发布 A2 + A5 分项状态
     needs: [prepare, ascend-npu]
-    if: always() && needs.prepare.outputs.should_run == 'true'
+    if: always() && needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.suite == 'formal'
     runs-on: ubuntu-latest
     permissions:
       actions: read

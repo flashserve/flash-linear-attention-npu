@@ -14,6 +14,11 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
+if [[ "${CI_SUITE:-formal}" == experimental && ! -f ci/run_experimental_ci.py ]]; then
+    echo "[CI][ERROR] This PR does not provide ci/run_experimental_ci.py; experimental validation cannot run." >&2
+    exit 2
+fi
+
 image="${CI_IMAGE:-fla-npu-ci:9.1.0-910b}"
 dockerfile="${CI_DOCKERFILE:-ci/Dockerfile}"
 require_preloaded_image="${CI_REQUIRE_PRELOADED_IMAGE:-false}"
@@ -37,6 +42,11 @@ if [[ -z "$cache_root" ]]; then
     else
         cache_root="$repo_dir/.ci-cache"
     fi
+fi
+
+# Independent jobs must not invalidate each other's third_party build cache.
+if [[ "${CI_SUITE:-formal}" == experimental ]]; then
+    cache_root="$cache_root/experimental"
 fi
 
 release_npu_lock() {
@@ -265,6 +275,19 @@ if [[ -n "$host_tmpdir" ]]; then
 fi
 
 container_command=(bash ci/run_checks.sh)
+if [[ "${CI_SUITE:-formal}" == experimental ]]; then
+    container_command=(bash -c '
+        set -eo pipefail
+        export FLA_NPU_DISABLE_PTH=1 TORCH_DEVICE_BACKEND_AUTOLOAD=0
+        source /usr/local/Ascend/ascend-toolkit/set_env.sh
+        export TMPDIR="${CI_TMPDIR:-/tmp}"
+        mkdir -p "$TMPDIR"
+        exec python3 ci/run_experimental_ci.py --output .ci-tmp/experimental
+    ')
+elif [[ "${CI_SUITE:-formal}" != formal ]]; then
+    echo "[CI][ERROR] Unknown CI_SUITE: $CI_SUITE" >&2
+    exit 2
+fi
 if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
     container_command=(bash -lc "$CI_CONTAINER_COMMAND")
 fi

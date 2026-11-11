@@ -52,6 +52,9 @@ function selectDispatchInputs(text, inputs) {
       if (match) declared.add(match[1]);
     }
   }
+  if (inputs.suite === 'experimental' && !declared.has('suite')) {
+    throw new Error('目标分支的 CI workflow 尚不支持 suite=experimental，请先更新目标分支的 CI 调度入口。');
+  }
   return Object.fromEntries(Object.entries(inputs).filter(([name]) => declared.has(name)));
 }
 

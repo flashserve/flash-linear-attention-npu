@@ -257,6 +257,74 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 self.assertIn("不支持", self.records(result, "failed")[0])
                 self.assertEqual(self.records(result, "dispatch"), [])
 
+    def test_suite_command_dispatches_only_the_selected_jobs_and_statuses(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8'))
+        experiment = 'NPU CI / Experimental / A2 runtime + A5 build'
+        for suffix, suite in (('', 'formal'), (' suite=experimental', 'experimental'),
+                              (' suite=experimental debug', 'experimental')):
+            with self.subTest(suite=suite):
+                dispatched = self.run_entry('dispatch', command='/run-npu-ci quick' + suffix)
+                self.assertNotIn('error', dispatched)
+                inputs = self.records(dispatched, 'dispatch')[0]['inputs']
+                self.assertEqual(inputs.get('suite', 'formal'), suite)
+                self.assertEqual(inputs.get('debug', 'false'), 'true' if suffix.endswith(' debug') else 'false')
+                prepared = self.run_entry('prepare', inputs=inputs)
+                self.assertNotIn('error', prepared)
+                self.assertFalse(self.records(prepared, 'failed'))
+                outputs = {item['name']: item['value'] for item in self.records(prepared, 'output')}
+                self.assertEqual(outputs['suite'], suite)
+                selected = []
+                for name in ('ascend-npu', 'finalize', 'experimental-npu', 'experimental-finalize'):
+                    condition = workflow['jobs'][name]['if'].replace('always()', 'True')
+                    for key, value in outputs.items():
+                        condition = condition.replace('needs.prepare.outputs.' + key, repr(value))
+                    if eval(condition.replace('&&', ' and '), {'__builtins__': {}}):
+                        selected.append(name)
+                self.assertEqual(selected, ['experimental-npu', 'experimental-finalize']
+                                 if suite == 'experimental' else ['ascend-npu', 'finalize'])
+                statuses = self.records(prepared, 'status')
+                self.assertEqual(len(statuses), 1 if suite == 'experimental' else 6)
+                self.assertTrue(all((item['context'] == experiment) == (suite == 'experimental')
+                                    for item in statuses))
+                comment = self.records(prepared, 'comment')[0]['body']
+                self.assertEqual(':suite=experimental' in comment, suite == 'experimental')
+        self.assertIn("inputs.suite || 'formal'", workflow['concurrency']['group'])
+
+    def test_suite_rejects_unknown_duplicate_and_ops_combinations(self):
+        for suffix in ('suite=all', 'suite=formal', 'suite=', 'experimental',
+                       'suite=experimental suite=experimental',
+                       'suite=experimental ops=probe', 'ops=probe suite=experimental'):
+            with self.subTest(suffix=suffix):
+                result = self.run_entry('dispatch', command='/run-npu-ci quick ' + suffix)
+                self.assertTrue(self.records(result, 'failed'))
+                self.assertEqual(self.records(result, 'dispatch'), [])
+                self.assertEqual(self.records(result, 'status'), [])
+        for inputs in ({'suite': 'all'}, {'suite': 'formal'}, {'suite': 'unknown'},
+                       {'suite': 'experimental', 'ops': 'probe'}):
+            with self.subTest(inputs=inputs):
+                result = self.run_entry('prepare', inputs=inputs)
+                self.assertTrue(self.records(result, 'failed'))
+                self.assertEqual(self.records(result, 'status'), [])
+                self.assertNotIn({'name': 'should_run', 'value': 'true'}, self.records(result, 'output'))
+
+    def test_experimental_dispatch_cannot_fall_back_to_legacy_formal_workflow(self):
+        workflow = {'on': {'workflow_dispatch': {'inputs': {
+            'pr_number': {}, 'ci_mode': {}, 'ops': {}, 'requested_by': {}}}}, 'jobs': {}}
+        result = self.run_entry('dispatch', command='/run-npu-ci quick suite=experimental',
+                                workflow_text=yaml.safe_dump(workflow, sort_keys=False))
+        self.assertIn('尚不支持 suite=experimental', result['error'])
+        self.assertEqual(self.records(result, 'dispatch'), [])
+
+    def test_experimental_author_denial_does_not_write_formal_statuses(self):
+        for entry in ('dispatch', 'prepare'):
+            with self.subTest(entry=entry):
+                result = self.run_entry(entry, command='/run-npu-ci quick suite=experimental',
+                                        inputs={'suite': 'experimental'}, files=['ci/run.sh'])
+                self.assertTrue(self.records(result, 'failed'))
+                statuses = self.records(result, 'status')
+                self.assertEqual([(item['context'], item['state']) for item in statuses],
+                                 [('NPU CI / Experimental / A2 runtime + A5 build', 'failure')])
+
     def test_unprotected_pr_base_cannot_supply_executable_workflow(self):
         for entry in ("dispatch", "prepare"):
             with self.subTest(entry=entry):

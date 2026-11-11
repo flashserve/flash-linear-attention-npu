@@ -93,6 +93,7 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci quick debug
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
 /run-npu-ci quick debug ops=causal_conv1d,chunk_bwd_dv_local
+/run-npu-ci quick suite=experimental
 ```
 
 `debug` 是可选的日志调试参数，不改变 `quick/full` 或算子选择；省略模式时仍为 `quick`。
@@ -116,6 +117,19 @@ Actions 手动触发入口提供同名布尔输入，默认关闭。旧目标分
 仓库管理员应将上述 6 个 context 和 `CI 契约测试` 都配置为 `main` 分支必需状态检查。分项 context 使用带 `A2+A5` 的独立名称，避免旧版状态或 A2-only 历史成功状态被误认为已经覆盖当前门禁。`CI 契约测试` 在普通 GitHub-hosted runner 上自动执行 Python、Node 状态发布逻辑及分阶段调度测试，用于保护 CI 代码本身。
 
 NPU CI 的 self-hosted runner、Docker 镜像、`--privileged`、触发方式和排障步骤见 [`Fla-npu仓CI部署教程.md`](Fla-npu仓CI部署教程.md)。
+
+### Experimental 显式调度
+
+`/run-npu-ci quick suite=experimental` 只调度实验 A2/A5 job；不带 `suite` 保持正式 CI。
+不支持 `suite=all`，实验请求不能与 `ops=` 混用，允许叠加已有 `debug` 日志参数。
+目标 workflow 不支持该参数时明确报错；两套请求的并发组、去重、评论和状态互相独立。
+
+实验 job 执行临时合并后的 `ci/run_experimental_ci.py`，由实验实现 PR 提供；缺少入口时
+在申请设备前失败。A2 验证构建、安装/装载隔离及精度，A5 仅验证构建与 host 装载。
+报告经受信任发布器校验后写入 `NPU CI / Experimental / A2 runtime + A5 build`。
+
+本调度接入不提前将实验状态加入所有 PR 的默认 pending 或必需检查；正式 6 项保持原样。
+实验实现与必需门禁的启用由 #1097 单独交付。先合入调度 PR，再在 #1097 评论上述命令。
 
 ## 强行合入
 

@@ -35,5 +35,9 @@
     "context": "NPU CI / A2+A5 / 定向诊断",
     "label": "定向诊断"
   },
-  "contract_test": "CI 契约测试"
+  "contract_test": "CI 契约测试",
+  "experimental": {
+    "context": "NPU CI / Experimental / A2 runtime + A5 build",
+    "label": "实验独立构建、安装隔离与 A2 精度"
+  }
 }

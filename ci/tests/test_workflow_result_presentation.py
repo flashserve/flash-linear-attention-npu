@@ -672,6 +672,7 @@ globalThis.core = {
         *,
         mode="quick",
         ops="",
+        suite="",
         workflow_run_status="completed",
         workflow_run=None,
         workflow_run_error=False,
@@ -701,6 +702,7 @@ globalThis.context = {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
     debug: process.env.PREPARE_DEBUG,
+    suite: process.env.PREPARE_SUITE,
     ops: process.env.PREPARE_OPS,
     ...JSON.parse(process.env.PREPARE_EXPECTED_SNAPSHOT),
   } },
@@ -776,6 +778,7 @@ globalThis.core = {
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
                     "PREPARE_DEBUG": str(debug).lower(),
+                    "PREPARE_SUITE": suite,
                     "PREPARE_OPS": ops,
                     "PREPARE_PR_AUTHOR": pr_author,
                     "PREPARE_AUTHOR_PERMISSION": author_permission,
@@ -812,9 +815,9 @@ globalThis.core = {
             ]
             return completed, records
 
-    def _assert_statuses(self, records, expected_states):
+    def _assert_statuses(self, records, expected_states, contexts=STATUS_CONTEXTS):
         statuses = [item["payload"] for item in records if item["kind"] == "status"]
-        self.assertEqual([item["context"] for item in statuses], list(STATUS_CONTEXTS))
+        self.assertEqual([item["context"] for item in statuses], list(contexts))
         self.assertEqual([item["state"] for item in statuses], expected_states)
         self.assertNotIn("pending", [item["state"] for item in statuses])
 
@@ -1463,7 +1466,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 }
                 self.assertEqual(outputs["should_run"], "true")
                 pending = [item for item in records if item["kind"] == "status"]
-                self.assertEqual(len(pending), 6)
+                self.assertEqual(len(pending), len(STATUS_CONTEXTS))
                 self.assertTrue(all(item["payload"]["state"] == "pending" for item in pending))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
@@ -1510,9 +1513,9 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             "missing_identity": {"workflow_run": {"status": "completed"}},
             "run_api_error": {"workflow_run_error": True},
         }
-        for ops in ("", "chunk_fwd_o"):
-            key = hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
-            contexts = [SCOPED_STATUS_CONTEXT] if ops else STATUS_CONTEXTS
+        for suite, ops in (("", ""), ("", "chunk_fwd_o"), ("experimental", "")):
+            key = "experimental" if suite else hashlib.sha256(ops.encode()).hexdigest()[:10] if ops else "all"
+            contexts = [CHECKS_CONFIG["experimental"]["context"]] if suite else [SCOPED_STATUS_CONTEXT] if ops else STATUS_CONTEXTS
             for state in ("success", "pending"):
                 statuses = [{
                     "id": index + 1, "context": status_context, "state": state,
@@ -1529,13 +1532,43 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                                 "status": "in_progress" if state == "pending" else "completed",
                             }
                         completed, records = self._run_prepare_script(
-                            statuses, ops=ops, workflow_run_status="in_progress", **run_options)
+                            statuses, ops=ops, suite=suite, workflow_run_status="in_progress", **run_options)
                         self.assertEqual(completed.returncode, 0, completed.stderr)
                         self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
                         pending = [item["payload"] for item in records if item["kind"] == "status"]
                         self.assertEqual(len(pending), len(contexts))
                         self.assertTrue(all(item["state"] == "pending" for item in pending))
                         self.assertEqual(sum(item["kind"] == "workflow_run" for item in records), 1)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_prepare_reuse_does_not_cross_suites_or_modes(self):
+        experimental_context = CHECKS_CONFIG['experimental']['context']
+        for requested, existing, mode, state in (
+            ('experimental', 'formal', 'quick', 'success'),
+            ('', 'experimental', 'quick', 'success'),
+            ('experimental', 'experimental', 'full', 'success'),
+            ('experimental', 'experimental', 'quick', 'success'),
+            ('experimental', 'experimental', 'quick', 'pending'),
+        ):
+            with self.subTest(requested=requested, existing=existing, mode=mode, state=state):
+                contexts = [experimental_context] if existing == 'experimental' else STATUS_CONTEXTS
+                key = 'experimental' if existing == 'experimental' else 'all'
+                statuses = [dict(id=i + 1, context=name, state=state,
+                                 description=f'result (quick,{key},A2+A5)',
+                                 target_url='https://github.com/example/repo/actions/runs/88',
+                                 created_at=f'2026-11-10T00:00:{i:02d}Z')
+                            for i, name in enumerate(contexts)]
+                completed, records = self._run_prepare_script(
+                    statuses, suite=requested, mode=mode,
+                    workflow_run_status='in_progress' if state == 'pending' else 'completed')
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                outputs = {item['payload']['name']: item['payload']['value']
+                           for item in records if item['kind'] == 'output'}
+                reused = requested == existing and mode == 'quick'
+                self.assertEqual(outputs['should_run'], 'false' if reused else 'true')
+                written = [item['payload']['context'] for item in records if item['kind'] == 'status']
+                self.assertEqual(written, [] if reused else
+                                 [experimental_context] if requested else list(STATUS_CONTEXTS))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_does_not_follow_other_repository_status_urls(self):
@@ -1630,7 +1663,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             author_permission="write")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertNotIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
-        self._assert_statuses(records, ["failure"] * len(STATUS_CONTEXTS))
+        self._assert_statuses(records, ["failure"] * len(STATUS_CONTEXTS), STATUS_CONTEXTS)
         failures = [item["payload"] for item in records if item["kind"] == "failed"]
         self.assertTrue(any("ci-admin-author" in message and "Admin" in message for message in failures))
         self.assertEqual([item["payload"] for item in records if item["kind"] == "permission"],
@@ -1829,7 +1862,7 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         upload = next(
             step
             for step in self.matrix_steps
-            if step.get("with", {}).get("name", "").startswith("npu-ci-result-")
+            if "npu-ci-result-" in step.get("with", {}).get("name", "")
         )
         paths = upload["with"]["path"]
         self.assertIn("CI_ACCURACY_REPORT_FILE", paths)

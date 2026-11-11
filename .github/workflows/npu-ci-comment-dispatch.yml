@@ -66,6 +66,7 @@ jobs:
             let ops = '';
             let opsProvided = false;
             let debug = false;
+            let suite = '';
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -87,12 +88,22 @@ jobs:
                 }
                 ops = part.slice('ops='.length);
                 opsProvided = true;
+              } else if (part === 'suite=experimental') {
+                if (suite) {
+                  core.setFailed('suite 参数只能指定一次。');
+                  return;
+                }
+                suite = 'experimental';
               } else {
                 core.setFailed(`不支持的 NPU CI 参数：${part}`);
                 return;
               }
             }
 
+            if (suite && opsProvided) {
+              core.setFailed('suite=experimental 不支持 ops= 定向诊断；请单独触发完整实验门禁。');
+              return;
+            }
             const opsItems = ops.split(',').map((item) => item.trim());
             if ((opsProvided && !ops.trim()) ||
                 (ops.trim() && opsItems.some((item) =>
@@ -119,7 +130,8 @@ jobs:
               try {
                 await auth.requireCiAuthorAdmin({ github, context, pr });
               } catch (error) {
-                const contexts = ops.trim() ? [checks.diagnostic.context] : checks.contexts;
+                const contexts = suite === 'experimental' ? [checks.experimental.context]
+                  : ops.trim() ? [checks.diagnostic.context] : checks.required.map((item) => item.context);
                 await Promise.all(contexts.map((statusContext) => github.rest.repos.createCommitStatus({
                   ...context.repo, sha: pr.head.sha, state: 'failure', context: statusContext,
                   description: 'CI 文件变更仅允许仓库 Admin 作者提交', target_url: pr.html_url,
@@ -157,6 +169,7 @@ jobs:
               pr_number: String(prNumber),
               ci_mode: ciMode,
               ...(debug ? { debug: 'true' } : {}),
+              ...(suite ? { suite } : {}),
               ops,
               requested_by: actor,
               expected_head_sha: pr.head.sha,
@@ -178,7 +191,7 @@ jobs:
 
             core.notice(
               `已将 PR #${prNumber} 的 NPU CI 分发到 \`${targetRef}\`，` +
-              `head=${pr.head.sha}，模式=${ciMode}${debug ? ' debug（保存完整构建日志）' : ''}。`
+              `head=${pr.head.sha}，集合=${suite || 'formal'}，模式=${ciMode}${debug ? ' debug（保存完整构建日志）' : ''}。`
             );
 
   dispatch-package:

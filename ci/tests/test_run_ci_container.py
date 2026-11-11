@@ -17,10 +17,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
     def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False,
-               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True):
+               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True,
+               suite="formal"):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
+        if suite == "experimental":
+            (repo / "ci/run_experimental_ci.py").write_text("# Provided by the PR under test.\n")
         (repo / "ci/detect_npu.sh").write_text(
             'if [[ "$1" == --candidates ]]; then echo 0; else\n'
             'echo "NPU_SELECTED_DEVICE=0 NPU_SELECTED_NAME=test '
@@ -68,6 +71,7 @@ class RunCiContainerTests(unittest.TestCase):
             CI_NPU_LOCK_DIR=str(root / "storage/locks"),
             CI_IMAGE="test-image",
             CI_CONTAINER_NAME="ci-test",
+            CI_SUITE=suite,
             CI_REQUIRE_PRELOADED_IMAGE="true",
             CI_REBUILD_IMAGE="false",
             CI_REQUIRE_HEALTHY_NPU="false",
@@ -106,6 +110,17 @@ class RunCiContainerTests(unittest.TestCase):
             result = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True, check=False)
         calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
         return result, calls, env
+
+    def test_experimental_uses_own_entry_and_dependency_cache(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result, calls, env = self.run_ci(root, suite="experimental")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            execution = next(call for call in calls if "--cidfile" in call)
+            self.assertIn("ci/run_experimental_ci.py", execution[-1])
+            self.assertNotIn("ci/run_checks.sh", execution[-1])
+            self.assertIn(str(Path(env["CI_CACHE_ROOT"]) / "experimental/third_party") + ":/workspace/repo/third_party", execution)
+            self.assertFalse((Path(env["CI_CACHE_ROOT"]) / "third_party").exists())
 
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
         with tempfile.TemporaryDirectory() as temporary:
