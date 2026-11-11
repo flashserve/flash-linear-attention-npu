@@ -11,13 +11,6 @@ namespace GDN::FinalizeHost {
 
 constexpr int64_t kA5PublishedMaxG = 16;
 
-// WY 使用 uint32 timeBos + BT；在 min(end, ...) 之前该加法也必须可表示。
-constexpr bool ChunkEndFitsUint32(uint64_t start, uint64_t chunkSize)
-{
-    return chunkSize <= std::numeric_limits<uint32_t>::max() &&
-           start <= std::numeric_limits<uint32_t>::max() - chunkSize;
-}
-
 struct MetadataError {
     std::string parameter;
     std::string actual;
@@ -31,45 +24,25 @@ inline bool InvalidMetadata(MetadataError &error, const std::string &parameter,
     return false;
 }
 
-// 只读 host 数组；先验证边界，再使用 pair 中的 seq 索引。
+// A5 调用方已校验 chunkSize。先验证边界，再使用 pair 中的 seq 索引。
 // 不强加 pair 排序；h/dh 的全局 chunk 顺序仍由调用者的 pair 顺序定义。
-template <bool Arch22, typename IntArray>
+template <typename IntArray>
 bool ValidateVarlenMetadata(const IntArray &cuSeqlens, const IntArray &chunkIndices,
                             int64_t tokens, int64_t chunkSize, MetadataError &error)
 {
     const size_t cuSize = cuSeqlens.Size();
     const size_t pairValueSize = chunkIndices.Size();
-    if constexpr (Arch22) {
-        constexpr uint64_t MAX_INDEX = std::numeric_limits<uint32_t>::max();
-        if (tokens <= 0 || static_cast<uint64_t>(tokens) > MAX_INDEX) {
-            return InvalidMetadata(error, "q.T", std::to_string(tokens), "1 <= T <= UINT32_MAX");
-        }
-        if (chunkSize != 64 && chunkSize != 128) {
-            return InvalidMetadata(error, "chunkSize", std::to_string(chunkSize), "64 or 128 on A2/A3");
-        }
-        if (cuSize < 2 || cuSize - 1 > MAX_INDEX) {
-            return InvalidMetadata(error, "cuSeqlensOptional.size", std::to_string(cuSize),
-                                   "2 <= size <= UINT32_MAX + 1");
-        }
-        // arch22 kernel 使用 uint32 计算展平的 pair 下标。
-        constexpr uint64_t MAX_PAIR_COUNT = (MAX_INDEX + 1) / 2;
-        if (pairValueSize == 0 || pairValueSize % 2 != 0 || pairValueSize / 2 > MAX_PAIR_COUNT) {
-            return InvalidMetadata(error, "chunkIndicesOptional.size", std::to_string(pairValueSize),
-                                   "a positive even size with size / 2 <= (UINT32_MAX + 1) / 2 for uint32 pair indexing");
-        }
-    } else {
-        if (tokens <= 0) {
-            return InvalidMetadata(error, "q.T", std::to_string(tokens), "T > 0");
-        }
-        if (cuSize < 2 || cuSize - 1 > std::numeric_limits<int64_t>::max()) {
-            return InvalidMetadata(error, "cuSeqlensOptional.size", std::to_string(cuSize),
-                                   "at least two entries with int64 sequence indexing");
-        }
-        if (pairValueSize == 0 || pairValueSize % 2 != 0 ||
-            pairValueSize > std::numeric_limits<int64_t>::max()) {
-            return InvalidMetadata(error, "chunkIndicesOptional.size", std::to_string(pairValueSize),
-                                   "a positive even size with int64 pair indexing");
-        }
+    if (tokens <= 0) {
+        return InvalidMetadata(error, "q.T", std::to_string(tokens), "T > 0");
+    }
+    if (cuSize < 2 || cuSize - 1 > std::numeric_limits<int64_t>::max()) {
+        return InvalidMetadata(error, "cuSeqlensOptional.size", std::to_string(cuSize),
+                               "at least two entries with int64 sequence indexing");
+    }
+    if (pairValueSize == 0 || pairValueSize % 2 != 0 ||
+        pairValueSize > std::numeric_limits<int64_t>::max()) {
+        return InvalidMetadata(error, "chunkIndicesOptional.size", std::to_string(pairValueSize),
+                               "a positive even size with int64 pair indexing");
     }
     if (cuSeqlens[0] != 0) {
         return InvalidMetadata(error, "cuSeqlensOptional[0]", std::to_string(cuSeqlens[0]), "0");
@@ -94,19 +67,6 @@ bool ValidateVarlenMetadata(const IntArray &cuSeqlens, const IntArray &chunkIndi
         const int64_t length = end - begin;
         const size_t chunks = static_cast<size_t>(length / chunkSize + (length % chunkSize != 0));
         prefix[seq + 1] = prefix[seq] + chunks;
-        if constexpr (Arch22) {
-            if (chunks == 0) {
-                continue;
-            }
-            const uint64_t lastStart = static_cast<uint64_t>(begin) +
-                static_cast<uint64_t>(chunks - 1) * static_cast<uint64_t>(chunkSize);
-            if (!ChunkEndFitsUint32(lastStart, static_cast<uint64_t>(chunkSize))) {
-                return InvalidMetadata(error, "cuSeqlensOptional sequence " + std::to_string(seq),
-                                       "last chunk start=" + std::to_string(lastStart) +
-                                       ", chunkSize=" + std::to_string(chunkSize),
-                                       "last chunk start + chunkSize <= UINT32_MAX");
-            }
-        }
     }
     const size_t pairCount = pairValueSize / 2;
     if (prefix.back() != pairCount) {

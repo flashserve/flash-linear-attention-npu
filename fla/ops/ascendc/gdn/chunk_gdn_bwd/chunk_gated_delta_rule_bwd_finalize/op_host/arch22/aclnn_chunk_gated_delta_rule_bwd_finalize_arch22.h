@@ -177,8 +177,8 @@ aclnnStatus GetWorkspaceSize(
             OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q.B", actualValue.c_str(), "1 in varlen mode");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        GDN::FinalizeHost::MetadataError error;
-        if (!GDN::FinalizeHost::ValidateVarlenMetadata<true>(
+        GDN::FinalizeHostArch22::MetadataError error;
+        if (!GDN::FinalizeHostArch22::ValidateVarlenMetadata(
                 *cuSeqlensOptional, *chunkIndicesOptional, qShape.GetDim(2), chunkSize, error)) {
             const std::string actualValue = error.actual;
             const std::string expectedValue = error.expected;

@@ -59,7 +59,7 @@ aclnnStatus CheckA5HeadsAndMetadata(const aclTensor *q, const aclTensor *v,
         return ACLNN_ERR_PARAM_INVALID;
     }
     GDN::FinalizeHost::MetadataError error;
-    if (!GDN::FinalizeHost::ValidateVarlenMetadata<false>(
+    if (!GDN::FinalizeHost::ValidateVarlenMetadata(
             *cuSeqlens, *chunkIndices, qShape.GetDim(2), chunkSize, error)) {
         OP_LOGE_WITH_INVALID_ATTR(OP_NAME, error.parameter.c_str(), error.actual.c_str(), error.expected.c_str());
         return ACLNN_ERR_PARAM_INVALID;
