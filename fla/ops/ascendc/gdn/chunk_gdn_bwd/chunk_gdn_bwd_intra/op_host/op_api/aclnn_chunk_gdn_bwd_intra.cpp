@@ -6,6 +6,8 @@
 #include "chunk_gdn_bwd_intra.h"
 
 #include <array>
+#include <set>
+#include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
@@ -119,16 +121,39 @@ aclnnStatus Check(const Params &p)
     const DataType betaType = p.beta->GetDataType();
     CHECK_COND(betaType == DataType::DT_BF16 || betaType == DataType::DT_FLOAT,
                ACLNN_ERR_PARAM_INVALID, "beta must be BF16 or FP32.");
+    CHECK_COND((p.cuSeqlens != nullptr) == (p.chunkIndices != nullptr),
+               ACLNN_ERR_PARAM_INVALID, "cu_seqlens and chunk_indices must be provided together.");
     if (p.cuSeqlens != nullptr) {
         CHECK_COND(b == 1, ACLNN_ERR_PARAM_INVALID,
                    "varlen BNSD requires B=1.");
-        CHECK_COND(p.cuSeqlens->Size() > 0, ACLNN_ERR_PARAM_INVALID,
-                   "cu_seqlens must be a non-empty 1D array.");
+        CHECK_COND(p.cuSeqlens->Size() >= 2, ACLNN_ERR_PARAM_INVALID,
+                   "cu_seqlens must contain at least two boundaries.");
         CHECK_COND(p.chunkIndices != nullptr, ACLNN_ERR_PARAM_INVALID,
                    "chunk_indices is required when cu_seqlens is provided.");
         CHECK_COND(p.chunkIndices->Size() > 0 && p.chunkIndices->Size() % 2 == 0,
                    ACLNN_ERR_PARAM_INVALID,
                    "chunk_indices flattened length must be a positive multiple of 2.");
+        const aclIntArray &cu = *p.cuSeqlens;
+        const aclIntArray &indices = *p.chunkIndices;
+        CHECK_COND(cu[0] == 0 && cu[cu.Size() - 1] == t, ACLNN_ERR_PARAM_INVALID,
+                   "cu_seqlens must span [0,T].");
+        for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
+            CHECK_COND(cu[seq] >= 0 && cu[seq + 1] >= cu[seq], ACLNN_ERR_PARAM_INVALID,
+                       "cu_seqlens must be nonnegative and nondecreasing.");
+        }
+        std::set<std::pair<int64_t, int64_t>> seen;
+        for (size_t offset = 0; offset < indices.Size(); offset += 2) {
+            const int64_t seq = indices[offset];
+            const int64_t chunk = indices[offset + 1];
+            CHECK_COND(seq >= 0 && static_cast<uint64_t>(seq) < cu.Size() - 1,
+                       ACLNN_ERR_PARAM_INVALID, "chunk sequence index is out of bounds.");
+            const int64_t length = cu[seq + 1] - cu[seq];
+            const int64_t chunks = length / p.chunkSize + (length % p.chunkSize != 0);
+            CHECK_COND(chunk >= 0 && chunk < chunks, ACLNN_ERR_PARAM_INVALID,
+                       "local chunk index is out of bounds.");
+            CHECK_COND(seen.emplace(seq, chunk).second, ACLNN_ERR_PARAM_INVALID,
+                       "duplicate chunk indices would write overlapping outputs.");
+        }
     }
     return ACLNN_SUCCESS;
 }

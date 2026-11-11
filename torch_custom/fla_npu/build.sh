@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 cd "$(dirname "$0")"
-bash gen.sh npu_custom.yaml
+PYTHONPATH="../../scripts${PYTHONPATH:+:$PYTHONPATH}" python3 -c 'from pathlib import Path; from stable_build_policy import validate_build_options, reject_legacy_artifacts; validate_build_options(); reject_legacy_artifacts(Path("fla_npu"))'
 rm -rf build dist flash_linear_attention_npu*.egg-info fla_npu.egg-info
 python3 setup.py bdist_wheel
 shopt -s nullglob
@@ -20,7 +20,7 @@ _fla_npu_site="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["pure
 _fla_npu_vendor="${_fla_npu_site}/fla_npu/opp/vendors/fla_npu_transformer"
 echo ""
 echo "[fla-npu] 若使用 fla_npu 的进程会先初始化 CANN（Python/ATK/Celery 等），请在启动前执行："
-echo "[fla-npu]   export ASCEND_CUSTOM_OPP_PATH=\"${_fla_npu_vendor}:${_fla_npu_vendor}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-}\""
+echo "[fla-npu]   export ASCEND_CUSTOM_OPP_PATH=\"${_fla_npu_vendor}:\${ASCEND_CUSTOM_OPP_PATH:-}\""
 
 # The fla_npu runtime loads libcust_opapi.so from the OPP tree embedded in the
 # installed package (fla_npu/opp/vendors/fla_npu_transformer). The standalone
@@ -45,4 +45,4 @@ chmod +x "$run_pkg"
 echo ""
 echo "[fla-npu] run 包 OPP 已安装到：${_fla_npu_vendor}"
 echo "[fla-npu]   若进程会先初始化 CANN（Python/ATK/Celery 等），请在启动前执行："
-echo "[fla-npu]   export ASCEND_CUSTOM_OPP_PATH=\"${_fla_npu_vendor}:${_fla_npu_vendor}/op_api/lib:\${ASCEND_CUSTOM_OPP_PATH:-}\""
+echo "[fla-npu]   export ASCEND_CUSTOM_OPP_PATH=\"${_fla_npu_vendor}:\${ASCEND_CUSTOM_OPP_PATH:-}\""

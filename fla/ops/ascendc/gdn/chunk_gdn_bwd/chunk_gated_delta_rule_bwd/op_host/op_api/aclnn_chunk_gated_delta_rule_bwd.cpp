@@ -4,6 +4,10 @@
  */
 #include "aclnn_chunk_gated_delta_rule_bwd.h"
 
+#ifndef GDN_BWD_ENABLE_ARCH22
+#define GDN_BWD_ENABLE_ARCH22 0
+#endif
+
 #include "../../../chunk_gdn_bwd_intra/op_host/op_api/chunk_gdn_bwd_intra.h"
 #include "../../../chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h"
 #include "../../../chunk_gated_delta_rule_bwd_finalize/op_host/op_api/chunk_gated_delta_rule_bwd_finalize.h"
@@ -24,6 +28,8 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+
+#include "external/aclnn_kernels/aclnn_platform.h"
 
 using namespace op;
 
@@ -123,9 +129,15 @@ bool SameShape(const aclTensor *lhs, const aclTensor *rhs)
 
 bool IsAscend950()
 {
-    const char *socName = aclrtGetSocName();
-    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
 }
+
+#if GDN_BWD_ENABLE_ARCH22
+bool IsDav2201Device()
+{
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+}
+#endif
 
 const aclIntArray *MakePerm(std::initializer_list<int64_t> dims, aclOpExecutor *executor)
 {
@@ -340,8 +352,14 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
 
 aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
 {
-    CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
-               "ChunkGatedDeltaRuleBwd is supported on Ascend950 only.");
+#if GDN_BWD_ENABLE_ARCH22
+    if (!IsDav2201Device()) {
+#endif
+        CHECK_COND(IsAscend950(), ACLNN_ERR_PARAM_INVALID,
+                   "ChunkGatedDeltaRuleBwd is supported on Ascend950 only.");
+#if GDN_BWD_ENABLE_ARCH22
+    }
+#endif
     CHECK_COND(!params.useGateInKernel, ACLNN_ERR_PARAM_INVALID,
                "use_gate_in_kernel=true is not supported.");
     CHECK_COND(params.dALogOut == nullptr && params.dDtBiasOut == nullptr,
@@ -422,6 +440,26 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
     }
     return ACLNN_SUCCESS;
 }
+
+#if GDN_BWD_ENABLE_ARCH22
+aclnnStatus MakeOutputContiguousArch22(const aclTensor *&tensor, aclOpExecutor *executor)
+{
+    if (tensor != nullptr && !IsContiguous(tensor)) {
+        tensor = executor->AllocTensor(tensor->GetViewShape(), tensor->GetDataType(), Format::FORMAT_ND);
+        CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR,
+                   "allocating A2/A3 contiguous output failed.");
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus CopyOutputArch22(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
+{
+    if (dst != nullptr && src != dst) {
+        return ViewCopy(src, dst, executor);
+    }
+    return ACLNN_SUCCESS;
+}
+#endif
 
 } // namespace
 
@@ -561,6 +599,21 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                    dkHead != nullptr && dvHead != nullptr && dBetaHead != nullptr && dGHead != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "allocating composite intermediate tensors failed.");
 
+#if GDN_BWD_ENABLE_ARCH22
+    if (IsDav2201Device()) {
+        CHECK_RET(MakeOutputContiguousArch22(dqHead, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(MakeOutputContiguousArch22(dkHead, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        CHECK_RET(MakeOutputContiguousArch22(dvHead, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+        // params 是本次调用的私有副本；仅 A2/A3 用连续 dh0 暂存。
+        CHECK_RET(MakeOutputContiguousArch22(params.dh0Out, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+    }
+#endif
+    // A2/A3 直接复用融合算子 ChunkGdnBwdIntra：BF16/FP32 gate、use_exp2 与
+    // varlen（空序列无 chunk 记录，天然跳过）均由内核原生处理。
     const auto intraResult = l0op::ChunkGdnBwdIntra(
         qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
         params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
@@ -608,6 +661,20 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         CHECK_RET(ViewCopy(dvSequence, params.dvOut, executorPtr) == ACLNN_SUCCESS,
                   ACLNN_ERR_INNER_NULLPTR);
     }
+#if GDN_BWD_ENABLE_ARCH22
+    if (IsDav2201Device()) {
+        if (!info.sequenceMajor) {
+            CHECK_RET(CopyOutputArch22(dqHead, params.dqOut, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(CopyOutputArch22(dkHead, params.dkOut, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+            CHECK_RET(CopyOutputArch22(dvHead, params.dvOut, executorPtr) == ACLNN_SUCCESS,
+                      ACLNN_ERR_INNER_NULLPTR);
+        }
+        CHECK_RET(CopyOutputArch22(params.dh0Out, dh0OutOptional, executorPtr) == ACLNN_SUCCESS,
+                  ACLNN_ERR_INNER_NULLPTR);
+    }
+#endif
     const aclTensor *dBetaSequence = TransposeContiguous(dBetaHead, {0, 2, 1}, executorPtr);
     const aclTensor *dGSequence = TransposeContiguous(dGHead, {0, 2, 1}, executorPtr);
     if (dBetaSequence != nullptr && dBetaSequence->GetDataType() != params.dBetaOut->GetDataType()) {

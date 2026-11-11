@@ -236,10 +236,14 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
             AscendC::Add(gbrcUpUbTensor, aUbTensor, gbrcUpUbTensor, rowsThisTile * nActual);
             AscendC::PipeBarrier<PIPE_V>();
+            // 此 wait 必须在 Muls 之前：qkmask(Vec1) 的 OUT_HALF 槽与本函数 OUT 槽
+            // 前 8K 同址，Vec1 返回时其最后一条 DataCopyPad 可能仍在读 OUT_HALF，
+            // 与本 tile 的 Muls（写 OUT）跨流水乱序并发会撕裂读。入口的
+            // SetFlag<MTE3_V> 排在 Vec1 的 DataCopyPad 之后，此 wait 保证 Muls
+            // 等它完成；wait 仍先于 Cast，原槽复用保护不变。
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
             AscendC::Muls(outUbTensor, gbrcUpUbTensor, static_cast<float>(scale), rowsThisTile * nActual);
             AscendC::PipeBarrier<PIPE_V>();
-
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
             if(std::is_same<HElementOutput, half>::value)
             {
                 AscendC::Cast(outUbFPTensor, outUbTensor, AscendC::RoundMode::CAST_NONE, rowsThisTile * nActual);

@@ -20,7 +20,7 @@ MIN_CANN_BY_TIER = {"a2": "8.5.2", "a3": "8.5.2", "a5": "9.0.0"}
 MIN_CANN = MIN_CANN_BY_TIER["a2"]
 # The Stable-ABI launcher resolves aoti_torch_* symbols that exist from 2.7.1
 # on, which is also the lower bound the wheel declares (Requires-Dist). Below
-# it the launcher cannot load and fla_npu falls back to the ctypes path; the
+# it the mandatory launcher cannot load and fla_npu reports an error; the
 # promise covers the launcher, so the documented minimum matches the metadata.
 MIN_TORCH = "2.7.1"
 MIN_TRITON_ASCEND = "3.2.0"

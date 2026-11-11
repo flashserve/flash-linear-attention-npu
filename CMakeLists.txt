@@ -39,6 +39,8 @@ option(ENABLE_OOM                 "Enable kernel oom"               OFF)
 option(UT_INFERSHAPE_FLAG         "Enable infershape ut"            OFF)
 
 set(ASCEND_COMPUTE_UNIT           "ascend910b"           CACHE   STRING   "soc that need to be compiled")
+# Direct CMake callers must be normalized before the first chip lookup too.
+list(TRANSFORM ASCEND_COMPUTE_UNIT TOLOWER)
 set(ASCEND_OP_NAME                "ALL"                           CACHE   STRING   "operators that need to be compiled")
 set(ARCH_DIRECTORY                ""                           CACHE   STRING   "arch directory that need to be compiled")
 set(VENDOR_NAME                   "custom"                     CACHE   STRING   "vendor name")

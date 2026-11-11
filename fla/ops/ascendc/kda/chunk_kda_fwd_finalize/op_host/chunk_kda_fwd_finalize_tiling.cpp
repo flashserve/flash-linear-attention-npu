@@ -19,6 +19,7 @@ namespace {
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
 constexpr uint64_t FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE = 4;
 constexpr uint64_t FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE = 8;
+constexpr uint64_t FINALIZE_A2A3_HEAD_GROUP_SIZE = 1;
 
 struct FinalizeShape {
     uint64_t batch = 0;
@@ -335,6 +336,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
+    const bool isA5 =
+        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     ChunkKdaFwdFinalizeScheduleContext scheduleContext;
     scheduleContext.batch = info.batch;
     scheduleContext.valueHeadNum = info.heads;
@@ -342,6 +345,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
+    scheduleContext.headGroupSize = isA5 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
@@ -360,8 +364,6 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     tiling.set_isVarLen(isVarLen);
     tiling.set_outputSequenceMajor(info.sequenceMajor);
     tiling.set_stateVFirst(*stateVFirst);
-    const bool isA5 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
     const uint64_t minimumChunksPerCore =
         schedule.chunkWorkItems / schedule.usedCoreNum;
     const uint64_t moverMinimumChunksPerCore = isVarLen

@@ -76,8 +76,9 @@ constexpr uint32_t KDA_FINALIZE_UB_STAGE5_WORK = 144 * 1024;
 // uses the remaining UB as one phase-wide working set.
 constexpr uint32_t KDA_FINALIZE_UB_DQ_LOCAL_RAW = 0;
 // One head per AIV per window: these inputs survive phase transitions.
-// Q: Stage2 -> Stage9.  K and the raw log-gate frame: Stage0 -> Stage9
-// (exp factors recomputed inline).  Beta: Stage2 -> Stage9.
+// Q: Stage2 -> Stage9.  K: Stage0 -> Stage10.  Raw log gates: Stage0 -> Stage7;
+// Stage7 keeps their FP32 band factors in the released qPos range for Stage9.
+// Beta: Stage2 -> Stage9.
 // Stage11 reuses their dead regions for rawG and gate scratch.
 constexpr uint32_t KDA_FINALIZE_UB_Q = 144 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_K = 160 * 1024;
@@ -198,6 +199,17 @@ __aicore__ inline int64_t FinalizeTokenOffset(
         return (head * tiling.T + chunk.tokenStart) * width;
     }
     return ((chunk.b * tiling.NV + head) * tiling.T + chunk.tokenStart) * width;
+}
+
+// Rank changes tensor descriptors, not flattened addresses. Variable inputs have B=1.
+__aicore__ inline uint64_t FinalizeOutputOffset(
+    const ChunkKdaBwdFinalizeTilingData &tiling, const FinalizeChunkInfo &chunk,
+    int64_t head, uint32_t rowBegin, uint32_t width, bool tokenMajor)
+{
+    const uint64_t batch = static_cast<uint64_t>(chunk.b);
+    const uint64_t token = static_cast<uint64_t>(chunk.tokenStart) + rowBegin;
+    if (tokenMajor) return ((batch * tiling.T + token) * tiling.NV + head) * width;
+    return ((batch * tiling.NV + head) * tiling.T + token) * width;
 }
 
 // Saved h and dhu-produced dh are both NT-first (chunk-major).

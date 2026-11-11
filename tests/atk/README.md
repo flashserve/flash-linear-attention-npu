@@ -107,6 +107,12 @@ npu-smi info
 如果环境需要仓内 Python 包路径，请在调用脚本前自行设置。`run_test_cpu.sh` 不会修改
 `PYTHONPATH`。
 
+本工程的设备执行使用 ATK `npu` 后端调用 FLA Stable wrapper，CPU 标杆使用 `cpu`。
+目录级 `atk_backend_policy.json` 对所有算子禁用 `pyaclnn`；安装包含
+[ATK 公共入口检查](https://gitcode.com/Ascend/ATK/merge_requests/57)的版本后，原生命令
+中的 `--backend pyaclnn`（包括 `aclnn` 别名）会在启动任务前报错，提示改用
+`--backend npu`。旧版 ATK 不读取此配置；仓库的 `run_test_cpu.sh` 始终使用 `npu`。
+
 脚本启动时会校验 ATK 版本不低于 `26.8.8`（由 `REQUIRED_ATK_VERSION` 控制），低于该版本
 直接退出；请确保 `atk --version` 输出的版本号满足要求。
 
@@ -195,6 +201,15 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 三路双标杆，精度入口为该算子 `README.md` 中的 `scripts/run_matrix.sh`；统一脚本仍用于其
 性能、确定性和 mssanitizer。
 
+`chunk_kda_fwd` 的 Ascend950 chunk32 融合路径使用独立子目录
+`chunk_kda_fwd/chunk32/`，精度、性能和 mssanitizer 分别由其中的
+`run_chunk32_atk.sh accuracy|performance|mssanitizer` 发起。子目录的
+`chunk_kda_fwd_chunk32.yaml` 与 `gen_chunk_kda_fwd_chunk32.py` 沿用 legacy marker 形式，
+只读校验并复用 135 条 accuracy、2 条 performance、5 条 mss 冻结 case，不重写三份 JSON；
+迁移到真实签名输入前不得在同一套件混用两种形式。公开调用入口为
+`fla_npu.ops.ascendc.chunk_kda_fwd`，底层进入 `aclnnChunkKdaFwdV2`；chunk32 实际路由到
+独立 L0 算子 `ChunkKdaFwdFused`（默认 TilingKey），既有非 fused 分支仍为 `ChunkKdaFwd` 的 `1/2`。
+
 ### 性能执行
 
 性能测试使用 ATK `performance_device`：
@@ -262,6 +277,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_bwd_dv_local`             | `fla_npu.ops.ascendc.chunk_bwd_dv_local`             | 见[`chunk_bwd_dv_local/README.md`](./chunk_bwd_dv_local/README.md)                         |
 | `chunk_fwd_o`                    | `fla_npu.ops.ascendc.chunk_fwd_o`                    | 见[`chunk_fwd_o/README.md`](./chunk_fwd_o/README.md)                                       |
 | `chunk_gated_delta_rule_fwd`     | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd`     | 见[`chunk_gated_delta_rule_fwd/README.md`](./chunk_gated_delta_rule_fwd/README.md)           |
+| `chunk_gated_delta_rule_fwd/chunk32` | `fla_npu.ops.ascendc.npu_chunk_gated_delta_rule_fwd(..., chunk_size=32)` | 见[`chunk_gated_delta_rule_fwd/chunk32/README.md`](./chunk_gated_delta_rule_fwd/chunk32/README.md)；不走 `-op=` 顶层目录，用该目录里的脚本跑 |
 | `chunk_gdn_bwd_intra`            | `fla_npu.ops.ascendc.chunk_gdn_bwd_intra`            | 见[`chunk_gdn_bwd_intra/README.md`](./chunk_gdn_bwd_intra/README.md)                       |
 | `chunk_gated_delta_rule_bwd_dhu` | `fla_npu.ops.ascendc.chunk_gated_delta_rule_bwd_dhu` | 见[`chunk_gated_delta_rule_bwd_dhu/README.md`](./chunk_gated_delta_rule_bwd_dhu/README.md) |
 | `chunk_gated_delta_rule_fwd_h`   | `fla_npu.ops.ascendc.chunk_gated_delta_rule_fwd_h`   | 见[`chunk_gated_delta_rule_fwd_h/README.md`](./chunk_gated_delta_rule_fwd_h/README.md)     |
@@ -270,7 +286,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `chunk_kda_bwd_recompute`        | `fla_npu.ops.ascendc.chunk_kda_bwd_recompute`        | 见[`chunk_kda_bwd_recompute/README.md`](./chunk_kda_bwd_recompute/README.md)               |
 | `chunk_local_cumsum`             | `fla_npu.ops.ascendc.chunk_local_cumsum`             | 见[`chunk_local_cumsum/README.md`](./chunk_local_cumsum/README.md)                         |
 | `chunk_scaled_dot_kkt`           | `fla_npu.ops.ascendc.chunk_scaled_dot_kkt`           | 见[`chunk_scaled_dot_kkt/README.md`](./chunk_scaled_dot_kkt/README.md)                     |
-| `kda_gate_cumsum`                | `fla_npu.ops.ascendc.kda_gate_cumsum`                | 见[`kda_gate_cumsum/README.md`](./kda_gate_cumsum/README.md)                               |
+| `kda_gate_cumsum`                | `fla_npu.ops.ascendc.npu_kda_gate_cumsum`                | 见[`kda_gate_cumsum/README.md`](./kda_gate_cumsum/README.md)                               |
 | `prepare_wy_repr_bwd`            | `fla_npu.ops.ascendc.prepare_wy_repr_bwd`            | 见[`prepare_wy_repr_bwd/README.md`](./prepare_wy_repr_bwd/README.md)                       |
 | `prepare_wy_repr_bwd_da`         | `fla_npu.ops.ascendc.prepare_wy_repr_bwd_da`         | 见[`prepare_wy_repr_bwd_da/README.md`](./prepare_wy_repr_bwd_da/README.md)                 |
 | `prepare_wy_repr_bwd_full`       | `fla_npu.ops.ascendc.prepare_wy_repr_bwd_full`       | 见[`prepare_wy_repr_bwd_full/README.md`](./prepare_wy_repr_bwd_full/README.md)             |
@@ -279,6 +295,26 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=gen_cases
 | `recurrent_kda`                  | `fla_npu.ops.ascendc.recurrent_kda`                  | 见[`recurrent_kda/README.md`](./recurrent_kda/README.md)                                   |
 | `solve_tri`                      | `fla_npu.ops.ascendc.solve_tri`                      | 见[`solve_tri/README.md`](./solve_tri/README.md) |
 | `pre_process_fwd_kernel_merged`   | `fla_npu.ops.ascendc.pre_process_fwd_kernel_merged`   | 见[`pre_process_fwd_kernel_merged/README.md`](./pre_process_fwd_kernel_merged/README.md)；CP 前处理（h|m 融合），`B≡1` + host `cu_seqlens`，输出 `hm[Nseq,HV,K,V+K]` |
+
+| `chunk_kda_bwd` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd` | [chunk_kda_bwd/README.md](./chunk_kda_bwd/README.md)；Phase A；legacy 零占位 |
+| `chunk_kda_bwd_prepare` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd_prepare` | [chunk_kda_bwd_prepare/README.md](./chunk_kda_bwd_prepare/README.md)；Phase A；head-major 输出零占位 |
+| `chunk_kda_bwd_intra` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd_intra` | [chunk_kda_bwd_intra/README.md](./chunk_kda_bwd_intra/README.md)；Phase A；零占位 |
+| `chunk_kda_bwd_finalize` | `fla_npu.ops.ascendc.npu_chunk_kda_bwd_finalize` | [chunk_kda_bwd_finalize/README.md](./chunk_kda_bwd_finalize/README.md)；Phase A；db/dg token-major 零占位 |
+| `kda_gate_bwd_post` | `ChunkKdaBwd` 内部 launcher | [kda_gate_bwd_post/README.md](./kda_gate_bwd_post/README.md)；Phase A；内部 launcher，无独立 ACLNN/Python 入口 |
+| `kda_gate_bwd_post_varlen` | `ChunkKdaBwd` 内部 launcher | [kda_gate_bwd_post_varlen/README.md](./kda_gate_bwd_post_varlen/README.md)；Phase A；内部 launcher，无独立 ACLNN/Python 入口 |
+| `merge_fwd_bwd_kernel` | `fla_npu.ops.ascendc.npu_merge_fwd_bwd_kernel` | [merge_fwd_bwd_kernel/README.md](./merge_fwd_bwd_kernel/README.md)；Phase A；独立 CPU 递推、inplace 输出 |
+
+2026-10-30 的 Phase A 补齐工作按 `fla/ops/ascendc/**/op_host/*_def.cpp` 的
+35 个 `OP_ADD` 注册算子逐项核对；新增 8 个对应目录（含 2 个内部 gate launcher），
+已有 `chunk_gated_delta_rule_bwd` 为额外公开组合接口。嵌入复合算子的 arch22 内部
+kernel/tiling 片段没有独立注册，不重复建立目录。
+
+新增工程中的 KDA backward / Prepare / Intra / Finalize / GatePost CPU 返回全零，
+仅验证 shape、dtype、可选输出和调用契约，**不能据此判断数值精度通过**。
+`kda_gate_cumsum` 和 `merge_fwd_bwd_kernel` 提供独立 CPU 数学实现，仍待 NPU 对齐。
+两个 GatePost 无独立公开 DUT，NPU executor 显式拒绝隔离执行；其设备计算由完整
+`chunk_kda_bwd` 组合路径承载。所有新增工程当前均为 Phase A 交付，尚非正式验收包；
+用户模型性能 case、实测 TilingKey 和相应 `_perf.json` / `_mss.json` 留待执行阶段补齐。
 
 ## 新增或维护算子
 

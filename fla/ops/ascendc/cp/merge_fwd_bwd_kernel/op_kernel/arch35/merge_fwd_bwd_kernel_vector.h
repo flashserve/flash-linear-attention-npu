@@ -87,9 +87,8 @@ public:
                 break;
             }
         }
-        if (ownsHead) {
-            VecSetCUbFree(subIdx);
-        }
+        // One fp32Buf per AIV. Pack every owned head before the first Fixpipe;
+        // an early CUbFree lets Cube overwrite a later head's He.
         for (uint64_t h = hBegin; h < hEnd; ++h) {
             if ((h & 1U) != subIdx) {
                 continue;
@@ -98,6 +97,9 @@ public:
             StoreScratchH(static_cast<int64_t>(h), true);
             StoreScratchM(SrcRank(rank_, n_, 1, forward_, s_), static_cast<int64_t>(h), 0U);
             VecSetVc(subIdx);
+        }
+        if (ownsHead) {
+            VecSetCUbFree(subIdx);
         }
         for (int64_t i = 1; i < n_; ++i) {
             for (uint64_t h = hBegin; h < hEnd; ++h) {

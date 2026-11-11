@@ -25,6 +25,7 @@ struct ChunkKdaBwdPrepareTilingData {
     uint32_t stateVFirst;
     uint32_t isVariable;
     float scale;
+    uint32_t inputLayout;
 };
 
 } // namespace KDA

@@ -22,8 +22,14 @@ container_name="${CI_CONTAINER_NAME:-fla-npu-ci-$(date +%s)}"
 cache_root="${CI_CACHE_ROOT:-}"
 container_tmpdir="${CI_TMPDIR:-}"
 host_tmpdir="${CI_HOST_TMPDIR:-}"
+timing_root="${CI_TIMING_ROOT:-}"
 npu_lock_fd=""
 npu_lock_file=""
+container_id_dir=""
+
+if [[ -n "${TMPDIR:-}" ]]; then
+    mkdir -p "$TMPDIR"
+fi
 
 if [[ -z "$cache_root" ]]; then
     if [[ -d /workspace ]]; then
@@ -41,6 +47,37 @@ release_npu_lock() {
         npu_lock_fd=""
         npu_lock_file=""
     fi
+}
+
+cleanup_ci() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ -n "$container_id_dir" ]]; then
+        if [[ -s "$container_id_dir/id" ]]; then
+            # Also handles a container stopped by the stale-commit monitor.
+            docker rm -f "$(cat "$container_id_dir/id")" >/dev/null 2>&1 || true
+            local cleanup_mounts=(-v "$repo_dir:/ci-repo")
+            local cleanup_paths=(/ci-repo)
+            if [[ -n "$host_tmpdir" ]]; then
+                cleanup_mounts+=(-v "$host_tmpdir:/ci-tmp")
+                cleanup_paths+=(/ci-tmp)
+            fi
+            # Package installation uses root inside the image; return its bind-
+            # mounted outputs to the caller without requiring host sudo.
+            if ! docker run --rm --network none --user 0:0 --entrypoint bash \
+                "${cleanup_mounts[@]}" "$image" \
+                -c 'owner="$1"; shift; chown -Rh -- "$owner" "$@"' \
+                -- "$(id -u):$(id -g)" "${cleanup_paths[@]}"; then
+                echo "[CI][ERROR] Could not return CI outputs to the invoking user." >&2
+                if (( status == 0 )); then status=1; fi
+            fi
+        fi
+        if ! { rm -f -- "$container_id_dir/id" && rmdir -- "$container_id_dir"; }; then
+            if (( status == 0 )); then status=1; fi
+        fi
+    fi
+    release_npu_lock
+    exit "$status"
 }
 
 acquire_npu_lock() {
@@ -76,9 +113,6 @@ acquire_npu_lock() {
                 npu_lock_fd="$fd"
                 npu_lock_file="$candidate_lock"
                 eval "$(bash ci/detect_npu.sh --env-for "$id")"
-                trap release_npu_lock EXIT
-                trap 'release_npu_lock; exit 130' INT
-                trap 'release_npu_lock; exit 143' TERM
                 echo "[CI] Acquired NPU lock: $npu_lock_file"
                 return
             fi
@@ -94,6 +128,30 @@ acquire_npu_lock() {
         sleep "$lock_retry_seconds"
     done
 }
+
+trap cleanup_ci EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -n "$timing_root" ]]; then
+    if [[ "$timing_root" != /* ]]; then
+        echo "[CI][ERROR] CI_TIMING_ROOT must be an absolute persistent directory." >&2
+        exit 2
+    fi
+    timing_root="$(realpath -m "$timing_root")"
+    for temporary_dir in "$repo_dir" /tmp "${TMPDIR:-/tmp}" "$host_tmpdir" "$cache_root"; do
+        [[ -n "$temporary_dir" ]] || continue
+        temporary_dir="$(realpath -m "$temporary_dir")"
+        if [[ "$timing_root" == "$temporary_dir" || "$timing_root" == "$temporary_dir/"* ]]; then
+            echo "[CI][ERROR] CI_TIMING_ROOT must be outside the workspace, tmp and cache." >&2
+            exit 2
+        fi
+    done
+    mkdir -p "$timing_root"
+    timing_probe="$(mktemp "$timing_root/.write-check.XXXXXX")"
+    rm -f "$timing_probe"
+    echo "[CI] Persistent stage timing table: $timing_root/stage-timings.csv"
+fi
 
 if [[ "$require_preloaded_image" == "true" ]]; then
     if [[ "$rebuild_image" == "true" ]]; then
@@ -114,6 +172,25 @@ elif ! docker image inspect "$image" >/dev/null 2>&1 || [[ "$rebuild_image" == "
     echo "[CI] Building Docker image: $image from $dockerfile"
     docker build -t "$image" -f "$dockerfile" .
 fi
+
+# NPU containers must use native user-space binaries on the selected runner.
+# The same image tag can be preloaded independently on x64 and ARM64 A5 hosts.
+host_arch="$(uname -m)"
+case "$host_arch" in
+    x86_64|amd64) image_arch=amd64 ;;
+    aarch64|arm64) image_arch=arm64 ;;
+    *)
+        echo "[CI][ERROR] Unsupported host architecture: $host_arch; use an x64 or ARM64 runner." >&2
+        exit 1
+        ;;
+esac
+image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")"
+if [[ "$image_platform" != "linux/$image_arch" ]]; then
+    echo "[CI][ERROR] Docker image $image uses $image_platform, but this $host_arch runner requires linux/$image_arch." >&2
+    echo "[CI][ERROR] Build or load the matching native image during runner maintenance, then retry CI." >&2
+    exit 1
+fi
+echo "[CI] Native Docker image verified: $image_platform (host: $host_arch)"
 
 acquire_npu_lock
 
@@ -147,6 +224,13 @@ if [[ -n "$host_tmpdir" ]]; then
     fi
     mkdir -p "$host_tmpdir"
     host_tmpdir="$(realpath "$host_tmpdir")"
+    for protected_dir in / /tmp /home "${HOME:-/}" "$repo_dir" "$cache_root" "${TMPDIR:-/tmp}"; do
+        protected_dir="$(realpath -m "$protected_dir")"
+        if [[ "$protected_dir" == "$host_tmpdir" || "$protected_dir" == "$host_tmpdir/"* ]]; then
+            echo "[CI][ERROR] CI_HOST_TMPDIR must be a dedicated temporary subdirectory." >&2
+            exit 2
+        fi
+    done
 fi
 
 mount_args=(
@@ -157,6 +241,9 @@ mount_args=(
 )
 if [[ -n "$host_tmpdir" ]]; then
     mount_args+=(-v "$host_tmpdir:$container_tmpdir")
+fi
+if [[ -n "$timing_root" ]]; then
+    mount_args+=(-v "$timing_root:/ci-timings")
 fi
 for path in \
     /usr/local/dcmi \
@@ -182,7 +269,9 @@ if [[ -n "${CI_CONTAINER_COMMAND:-}" ]]; then
     container_command=(bash -lc "$CI_CONTAINER_COMMAND")
 fi
 
+container_id_dir="$(mktemp -d "${TMPDIR:-/tmp}/fla-npu-container.XXXXXX")"
 docker run --rm \
+    --cidfile "$container_id_dir/id" \
     --name "$container_name" \
     --network host \
     --ipc host \
@@ -212,12 +301,11 @@ docker run --rm \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
     -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
     -e CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK="${CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK:-false}" \
-    -e CI_RUN_SCOPED_WHEEL_INSTALL_CHECK="${CI_RUN_SCOPED_WHEEL_INSTALL_CHECK:-false}" \
-    -e CI_SCOPED_WHEEL_INSTALL_OP="${CI_SCOPED_WHEEL_INSTALL_OP:-chunk_fwd_o}" \
     -e CI_EXAMPLE_CASES_FILE="${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}" \
     -e CI_EXAMPLE_CASE_FILTER="${CI_EXAMPLE_CASE_FILTER:-}" \
     -e CI_ACCURACY_REPORT_FILE="${CI_ACCURACY_REPORT_FILE:-output/gdr_accuracy_report.json}" \
     -e CI_STAGE_REPORT_FILE="${CI_STAGE_REPORT_FILE:-.ci-tmp/npu-ci-stages.json}" \
+    -e CI_STAGE_TIMING_FILE="${timing_root:+/ci-timings/stage-timings.csv}" \
     -e CI_ACCURACY_PLATFORM="${CI_ACCURACY_PLATFORM:-}" \
     -e CI_ACCURACY_HEAD_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" \
     -e CI_ACCURACY_RUN_ID="${CI_ACCURACY_RUN_ID:-${GITHUB_RUN_ID:-}}" \
@@ -235,4 +323,6 @@ docker run --rm \
     -e FLA_NPU_TORCH_VERSION="${FLA_NPU_TORCH_VERSION:-}" \
     -e FLA_NPU_CXX11_ABI="${FLA_NPU_CXX11_ABI:-}" \
     "$image" \
-    "${container_command[@]}"
+    "${container_command[@]}" &
+docker_pid=$!
+wait "$docker_pid"

@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <unordered_map>
 
 namespace fla_npu_stable {
@@ -24,6 +25,10 @@ class Runtime {
   // Custom-first symbol lookup with per-name cache. Throws std::runtime_error
   // when a symbol cannot be resolved.
   void* symbol(const std::string& name);
+
+  // Read CANN's thread-local ErrorManager immediately after a failed call.
+  // Missing diagnostic symbols never replace the original aclnn status.
+  std::string recent_error_message();
 
   // torch_npu's entry point for "run this callable on the task queue"
   // (`at_npu::native::OpCommand::RunOpApiV2`).  Null on a host whose torch_npu
@@ -46,7 +51,8 @@ class Runtime {
   Runtime() = default;
   void* open_custom_library(const std::string& path);
 
-  void* custom_handle_ = nullptr;
+  // Ordered highest-priority-first handles: overlay vendors first, base last.
+  std::vector<void*> custom_handles_;
   void* cann_handle_ = nullptr;
   bool initialized_ = false;
   // `symbol()` is called from the queue's consumer thread as well as from the

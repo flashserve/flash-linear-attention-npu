@@ -1,0 +1,3549 @@
+{
+  "schema_version": 1,
+  "repository": "flashserve/flash-linear-attention-npu",
+  "generated_at": "2026-10-26T03:07:03+00:00",
+  "completed_issue_count": 188,
+  "excluded_not_planned_count": 2,
+  "issues": [
+    {
+      "number": 2,
+      "title": "No module named 'torchnpugen'",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/2",
+      "closed_at": "2026-06-05T14:53:47Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 12,
+      "title": "aclnnCausalConv1d.md 中 initialStateMode 用法不清晰，不知道在那种应用场景下使用哪种取值",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/12",
+      "closed_at": "2026-06-01T07:41:23Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        },
+        {
+          "id": "DOC-CONSTRAINT",
+          "layer": "docs"
+        }
+      ]
+    },
+    {
+      "number": 16,
+      "title": "No module named 'ct'",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/16",
+      "closed_at": "2026-06-05T14:53:51Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 21,
+      "title": "使用ms-swift框架训练Qwen3.5-4B模型时出现了精度异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/21",
+      "closed_at": "2026-06-08T01:45:59Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 39,
+      "title": "v_new溢出",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/39",
+      "closed_at": "2026-06-17T13:03:57Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 41,
+      "title": "Triton L2Norm recompiles for dynamic sequence lengths",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/41",
+      "closed_at": "2026-07-18T06:54:37Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 43,
+      "title": "The write address of the MTE instruction is out of range",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/43",
+      "closed_at": "2026-07-04T08:01:40Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 63,
+      "title": "编译安装的依赖信息提示",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/63",
+      "closed_at": "2026-09-07T09:31:02Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 68,
+      "title": "Feature Request: Support Prefix Caching",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/68",
+      "closed_at": "2026-09-29T15:30:40Z",
+      "labels": [
+        "enhancement"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 77,
+      "title": "Docs] Clarify torch_npu and fla-linear-attention-npu version requirements in README",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/77",
+      "closed_at": "2026-07-18T07:06:35Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        }
+      ]
+    },
+    {
+      "number": 102,
+      "title": "更新 flash_gated_delta_rule 示例使用 AscendC causal_conv1d 和 solve_tri",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/102",
+      "closed_at": "2026-06-30T20:28:15Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 105,
+      "title": "v26.1.0速度提升数倍，但是训练过程梯度易爆炸",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/105",
+      "closed_at": "2026-07-10T14:14:46Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        }
+      ]
+    },
+    {
+      "number": 113,
+      "title": "新增 KDA forward-only AscendC 算子支持",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/113",
+      "closed_at": "2026-07-17T10:21:51Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 116,
+      "title": "chunk_fwd_h支持gk衰减",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/116",
+      "closed_at": "2026-07-04T07:45:38Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 123,
+      "title": "修复 wheel 打包安装后算子导出与 runtime 配置别名缺失问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/123",
+      "closed_at": "2026-07-04T06:46:45Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 126,
+      "title": "同步 v26.6.0 分支 NPU CI workflow 与主线",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/126",
+      "closed_at": "2026-07-04T07:45:35Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 128,
+      "title": "修复 NPU CI 精度检查失败时重复触发被跳过",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/128",
+      "closed_at": "2026-07-04T09:40:20Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 132,
+      "title": "CausalConv1dBwd开启算子异步下发报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/132",
+      "closed_at": "2026-09-07T09:43:49Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 134,
+      "title": "修复 NPU CI 使用过期 merge ref 和 v26.6.0 用例未同步",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/134",
+      "closed_at": "2026-09-07T07:44:39Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 141,
+      "title": "统一主线与稳定分支 wheel 命名规则",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/141",
+      "closed_at": "2026-07-04T17:00:13Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 144,
+      "title": "v26.6.0 A5 example 在 solve_tri 不可用时需要回退到 Triton",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/144",
+      "closed_at": "2026-09-07T09:57:10Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 147,
+      "title": "构建多 SoC wheel 时重复编译 torch_custom 且部分环境导入探测过慢",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/147",
+      "closed_at": "2026-09-07T09:35:02Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 149,
+      "title": "v26.6.0 A2: NPU out of memory. Tried to allocate more than 1EB memory",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/149",
+      "closed_at": "2026-07-09T11:05:45Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 155,
+      "title": "【缺陷】chunk_bwd_dv_local 在 GVA-FIX4 场景执行超时",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/155",
+      "closed_at": "2026-07-18T06:54:18Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 165,
+      "title": "修复fwd_h在A5编译失败的问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/165",
+      "closed_at": "2026-07-18T07:15:47Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 171,
+      "title": "aarch64 910b / 910_93 wheel包在cann9.0.0上安装后运行测试验证命令报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/171",
+      "closed_at": "2026-07-18T09:02:43Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 175,
+      "title": "补充长序列 bf16 Example/ST 禁用用例",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/175",
+      "closed_at": "2026-07-18T07:15:36Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 182,
+      "title": "增加 AI agent 仓库开发指南",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/182",
+      "closed_at": "2026-07-14T06:50:25Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 185,
+      "title": "RecurrentGatedDeltaRule、CausalConv1d支持state非连续",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/185",
+      "closed_at": "2026-07-18T09:02:23Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 187,
+      "title": "aarch64 910b  wheel包在cann8.5.2上安装torch_custom报No module named 'torchnpugen'",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/187",
+      "closed_at": "2026-09-07T09:33:39Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 188,
+      "title": "A5 GDN BSND 定长反向出现 non-finite",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/188",
+      "closed_at": "2026-09-07T14:08:30Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 189,
+      "title": "新增 PrepareWyReprBwd 独立算子",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/189",
+      "closed_at": "2026-08-12T03:29:16Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 203,
+      "title": "NPU CI 在维护分支 PR 上误用默认分支 CI 脚本",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/203",
+      "closed_at": "2026-07-14T11:59:17Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 205,
+      "title": "docs: 补充 fla_npu 解耦运行时架构说明",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/205",
+      "closed_at": "2026-07-16T06:54:10Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 207,
+      "title": "Ascend950 上 GDN 反向算子可能发生同步超时及重复 S/V 同步",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/207",
+      "closed_at": "2026-07-18T06:51:46Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 210,
+      "title": "fix: v26.6.0 NPU CI 精度报告缺少触发元数据",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/210",
+      "closed_at": "2026-07-15T06:34:00Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 221,
+      "title": "[文档] 建立统一的算子开发规范与模板",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/221",
+      "closed_at": "2026-09-16T09:20:18Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        }
+      ]
+    },
+    {
+      "number": 223,
+      "title": "补充 prepare_wy_repr_bwd 融合算子支持",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/223",
+      "closed_at": "2026-08-14T06:46:50Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 225,
+      "title": "测试与文档：补齐全量 Ascend C 算子三平台交付门禁",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/225",
+      "closed_at": "2026-09-07T09:56:40Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 226,
+      "title": "GDN triton_core kernel 失败：声明的最低版本 triton-ascend 3.2.1 缺失 tl.insert_slice",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/226",
+      "closed_at": "2026-07-18T08:05:01Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 227,
+      "title": "[Feature]: 完善 KDA 正向算子的多平台与标准调用能力",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/227",
+      "closed_at": "2026-07-30T19:27:57Z",
+      "labels": [
+        "enhancement",
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 230,
+      "title": "支持 KDA fused recurrent 前向 API",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/230",
+      "closed_at": "2026-09-07T09:56:04Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 234,
+      "title": "[Bug]: A3+CANN 9.0.0 算子验证失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/234",
+      "closed_at": "2026-09-07T09:29:21Z",
+      "labels": [
+        "bug",
+        "op:causal_conv1d"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 236,
+      "title": "[Bug]: A5 chunk_gated_delta_rule_fwd_h 固定输入输出不确定",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/236",
+      "closed_at": "2026-07-23T08:07:57Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-DETERMINISM",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-OPTIONAL-OUTPUT",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 238,
+      "title": "[构建] v26.6.0 方式 A 无法在受限网络环境一键编包",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/238",
+      "closed_at": "2026-08-11T08:12:19Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 242,
+      "title": "[缺陷] solve_tri TND 非 16 对齐尾块可能越界读取并产生 NaN",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/242",
+      "closed_at": "2026-09-07T09:55:25Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 248,
+      "title": "test: 增加 GDN 100 层纯异步稳定性复现脚本",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/248",
+      "closed_at": "2026-09-07T09:55:12Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 250,
+      "title": "[Bug]: prepare_wy_repr_bwd_full 检测失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/250",
+      "closed_at": "2026-09-20T01:24:39Z",
+      "labels": [
+        "bug",
+        "op:prepare_wy_repr_bwd_full"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 251,
+      "title": "[Bug]: RecomputeWUFwd 源码命名与运行时配置名不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/251",
+      "closed_at": "2026-07-31T04:22:16Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 255,
+      "title": "[Bug] 一键 wheel 的自定义 libopapi.so 遮蔽 CANN 运行库",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/255",
+      "closed_at": "2026-07-31T13:41:39Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 258,
+      "title": "[Bug]: AscendC ctypes runtime 连续调用长期持有 aclnn workspace",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/258",
+      "closed_at": "2026-07-31T10:28:14Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 261,
+      "title": "[Feature]: 建立算子原型和公开接口兼容性红线",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/261",
+      "closed_at": "2026-08-01T09:53:28Z",
+      "labels": [
+        "enhancement"
+      ],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 263,
+      "title": "[Feature]: 优化 A5 KDA chunk64 K128/V128 前向性能",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/263",
+      "closed_at": "2026-08-07T00:18:00Z",
+      "labels": [
+        "enhancement",
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 267,
+      "title": "[Bug]: 基于Q3版本的CANN编译FLA时报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/267",
+      "closed_at": "2026-08-11T08:13:00Z",
+      "labels": [
+        "bug",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 272,
+      "title": "[Bug]: 强化学习推理正常，训练失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/272",
+      "closed_at": "2026-08-07T04:30:40Z",
+      "labels": [
+        "bug",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 278,
+      "title": "[Bug]: A5安装该库后执行readme里的测试命令也会报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/278",
+      "closed_at": "2026-08-12T09:07:23Z",
+      "labels": [
+        "bug",
+        "op:chunk_fwd_o"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 281,
+      "title": "[Bug]: A5 KDA BF16 sub-16 尾块输出不确定且精度异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/281",
+      "closed_at": "2026-08-14T01:46:14Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DETERMINISM",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-OPTIONAL-OUTPUT",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 285,
+      "title": "[Bug]: 主线上AscendC算子chunk_bwd_dqkwg报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/285",
+      "closed_at": "2026-08-08T09:43:15Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dqkwg"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 289,
+      "title": "[Bug]: 主线ascendc_causal_conv1d_bwd报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/289",
+      "closed_at": "2026-08-08T10:57:03Z",
+      "labels": [
+        "bug",
+        "op:causal_conv1d_bwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 290,
+      "title": "[Feature]: 优化 chunk_gated_delta_rule_bwd_dhu 并补充 A5 实现",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/290",
+      "closed_at": "2026-09-24T03:09:50Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 293,
+      "title": "[Bug]: 安装过程中算子recompute_wu_fwd测试失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/293",
+      "closed_at": "2026-09-20T01:24:57Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 303,
+      "title": "[Bug]: A5算子调用报错RuntimeError: aclnnCausalConv1dGetWorkspaceSize failed with aclnnStatus=161001.",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/303",
+      "closed_at": "2026-09-20T01:25:13Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 304,
+      "title": "[Bug]: 安装过一遍fla后，重新进入conda环境运行报错Unable to find FLA NPU custom OPP.",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/304",
+      "closed_at": "2026-09-07T10:05:40Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 305,
+      "title": "[Bug]: chunk_bwd_dv_local算子标杆和底层实现不同",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/305",
+      "closed_at": "2026-08-23T13:59:36Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 307,
+      "title": "[Bug]: [bwd_dhu] FP16 多 chunk 用例的 dv2 因小值域 ERR_COUNT_ratio 集中失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/307",
+      "closed_at": "2026-09-20T01:26:36Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 308,
+      "title": "[Bug]: [ chunk_bwd_dv_local]精度通过率整体较低（90±3％）",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/308",
+      "closed_at": "2026-09-20T01:26:23Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 309,
+      "title": "[Bug]: [chunk_gated_delta_rule_bwd_dhu]负向边界问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/309",
+      "closed_at": "2026-09-20T01:25:41Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 310,
+      "title": "[Bug]: 客户SFT训练接入FLA_NPU，训练结束后会抛double free异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/310",
+      "closed_at": "2026-09-09T02:46:44Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 312,
+      "title": "[Bug]: ChunkGatedDeltaRuleBwdDhu 的 h0/dht shape 文档要求与 NPU Runtime 要求不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/312",
+      "closed_at": "2026-09-07T09:07:47Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        },
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        }
+      ]
+    },
+    {
+      "number": 313,
+      "title": "[Bug]: ChunkGatedDeltaRuleBwdDhu 在合法 K/V 尺寸下触发 AICore MTE 对齐异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/313",
+      "closed_at": "2026-08-25T13:25:38Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 315,
+      "title": "[Bug] 根目录一键 wheel 漏打 fla_npu Triton 算子源码",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/315",
+      "closed_at": "2026-08-15T07:52:09Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 321,
+      "title": "[Bug]: A3 + CANN9.2.0.B020 + torchnpu2.10.0.post5.dev20260815 安装成功，但测试算子失败。",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/321",
+      "closed_at": "2026-09-29T01:36:18Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 323,
+      "title": "[Bug]: 26.6.0分支编译报错--重复链接",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/323",
+      "closed_at": "2026-08-18T11:13:18Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 325,
+      "title": "[Bug]: chunk_kda_fwd 边界场景存在流水同步与尾块精度问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/325",
+      "closed_at": "2026-09-21T10:54:53Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 326,
+      "title": "[Bug]: 将 torch_npu/torchnpugen 支持判断从版本门禁拆分为能力探测",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/326",
+      "closed_at": "2026-09-22T08:04:00Z",
+      "labels": [
+        "bug",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 337,
+      "title": "[Bug]: A5 ChunkKdaFwd 多 chunk 场景可能触发设备任务超时",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/337",
+      "closed_at": "2026-08-19T15:49:34Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 343,
+      "title": "[Feature]: 为 ChunkGatedDeltaRuleBwdDhu 增加 use_exp2 门控参数",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/343",
+      "closed_at": "2026-08-20T14:29:27Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 349,
+      "title": "[Bug]: A5 ChunkKdaFwd 短尾块输出存在 bitwise determinism 不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/349",
+      "closed_at": "2026-09-07T14:08:39Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DETERMINISM",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 351,
+      "title": "[Bug]: ChunkGatedDeltaRuleBwdDhu 三头任务在 A5 上可能无法完成",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/351",
+      "closed_at": "2026-08-21T02:47:46Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 360,
+      "title": "[Bug]: A5 ChunkScaledDotKkt 重复调用存在同步事件复用风险",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/360",
+      "closed_at": "2026-09-20T06:48:47Z",
+      "labels": [
+        "bug",
+        "op:chunk_scaled_dot_kkt"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 362,
+      "title": "[Bug]: recurrent_gated_delta_rule 稳定入口、非连续 state 与尾块场景验证不完整",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/362",
+      "closed_at": "2026-08-23T18:18:52Z",
+      "labels": [
+        "bug",
+        "op:recurrent_gated_delta_rule"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        },
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 365,
+      "title": "[Bug]: ATK 公共 runner 四 scope 调用存在跨版本兼容与结果误判",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/365",
+      "closed_at": "2026-09-07T09:21:11Z",
+      "labels": [
+        "bug",
+        "op:recurrent_gated_delta_rule"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 367,
+      "title": "[Bug]: A2 变长 TND 场景 fwd_h v_new 精度回归",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/367",
+      "closed_at": "2026-08-23T18:23:15Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 369,
+      "title": "[Feature]: 按 Stage 模块化重构 FwdH 并建立逐阶段精度闭环",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/369",
+      "closed_at": "2026-09-07T07:46:17Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 371,
+      "title": "[Bug]: vllm-ascend 和fla-npu同时安装时GDN算子报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/371",
+      "closed_at": "2026-09-20T01:26:47Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 384,
+      "title": "[Bug]: examples README 与仓库实际示例不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/384",
+      "closed_at": "2026-09-07T09:04:14Z",
+      "labels": [
+        "bug",
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 385,
+      "title": "[Feature]: ATK 测试资产对齐开源混合容差单标杆",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/385",
+      "closed_at": "2026-08-26T16:40:09Z",
+      "labels": [
+        "enhancement"
+      ],
+      "rules": [
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 403,
+      "title": "[Feature]: 新增 GDN 反向 finalize Ascend 950 算子",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/403",
+      "closed_at": "2026-09-14T01:56:56Z",
+      "labels": [
+        "enhancement",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 405,
+      "title": "[Feature]: 新增独立 chunk_fwd_h Ascend C 入口并按有效 head task 动态分核",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/405",
+      "closed_at": "2026-09-01T03:16:27Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 407,
+      "title": "[Bug]: GDN Phase6 final_state 精度在尾块仅含 1–15 个有效 token 时显著下降",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/407",
+      "closed_at": "2026-08-29T06:43:22Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 408,
+      "title": "[Feature] ChunkBwdDqkwg性能优化",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/408",
+      "closed_at": "2026-09-01T01:55:28Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 410,
+      "title": "[Feature]: 精简算子开发 Agent 文档结构",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/410",
+      "closed_at": "2026-08-29T20:36:03Z",
+      "labels": [
+        "enhancement"
+      ],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 412,
+      "title": "[Feature]: 限定仓内 Agent 流程来源并隔离新算子设计",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/412",
+      "closed_at": "2026-08-29T20:57:38Z",
+      "labels": [
+        "enhancement"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 418,
+      "title": "[Feature]: 新增 ChunkGdnBwdIntra Ascend 950 融合算子",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/418",
+      "closed_at": "2026-09-07T09:04:54Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gdn_bwd_intra"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 427,
+      "title": "[Question]: A3服务器FLA_NPU_SOC=ascend910_93 python -m pip wheel --no-build-isolation --no-deps . -w dist失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/427",
+      "closed_at": "2026-09-07T07:49:04Z",
+      "labels": [
+        "question"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 428,
+      "title": "[Feature]: 补齐 chunk_kda_fwd ATK 精度、内存与确定性测试交付",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/428",
+      "closed_at": "2026-09-07T09:58:09Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 429,
+      "title": "[Bug]: CANN 先于 fla_npu 初始化时内嵌 OPP 未注册导致 RGDR 报 561103",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/429",
+      "closed_at": "2026-09-07T09:38:02Z",
+      "labels": [
+        "bug",
+        "op:recurrent_gated_delta_rule"
+      ],
+      "rules": [
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 437,
+      "title": "[Feature]: chunk_gated_delta_rule_fwd 支持 A2/A3/A5 Phase6 架构隔离实现",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/437",
+      "closed_at": "2026-09-03T01:15:23Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 440,
+      "title": "[Bug]: A3 ChunkKdaFwd varlen 路径输出 bitwise 不确定",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/440",
+      "closed_at": "2026-09-02T10:10:03Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DETERMINISM",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 445,
+      "title": "[Bug]: 4个GDN算子L2_DFX_PHASE_1宏校验缺失参数；4个L2_DFX_PHASE_1宏校验参数顺序和函数入口参数顺序不一致；",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/445",
+      "closed_at": "2026-09-04T14:40:13Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 448,
+      "title": "[Bug]: A5 chunk_kda_bwd 融合 Gate 的 shared-anchor 路径产生 NaN",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/448",
+      "closed_at": "2026-09-07T07:49:24Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_bwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 452,
+      "title": "[Bug]: ChunkBwdDqkwg不支持<<<>>>调用",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/452",
+      "closed_at": "2026-09-04T08:52:58Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dqkwg"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 456,
+      "title": "[Bug]: chunk_bwd_dv_local 精度测试在 T>1 场景全量失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/456",
+      "closed_at": "2026-09-05T03:38:22Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 459,
+      "title": "[Feature]: 实现 A2/A3/A5 chunk_kda_fwd_prepare 算子",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/459",
+      "closed_at": "2026-09-14T15:02:58Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 462,
+      "title": "[Bug]: chunk_bwd_dv_local 在特定 GQA head 配置下触发 NPU kernel hang",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/462",
+      "closed_at": "2026-09-06T09:26:41Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 471,
+      "title": "[Feature]: 新增 ChunkGatedDeltaRuleFwdPrepare Ascend 950 融合实现",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/471",
+      "closed_at": "2026-09-08T04:02:54Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gated_delta_rule_fwd_prepare"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 482,
+      "title": "[Bug]: FLA_NPU_OPS 指定不支持算子时缺少前置校验和明确报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/482",
+      "closed_at": "2026-10-09T03:45:16Z",
+      "labels": [
+        "bug",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 483,
+      "title": "[Bug]: flash-linear-attention-npu在A5环境执行精度不达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/483",
+      "closed_at": "2026-09-27T06:35:47Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 486,
+      "title": "[Bug]: A5 FwdH 缺少 #188/#349 派生场景的独立跨版本回归",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/486",
+      "closed_at": "2026-09-10T02:26:06Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 488,
+      "title": "[Feature]: 优化 A5 chunk_fwd_h 流式输入的 L2 cache 策略",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/488",
+      "closed_at": "2026-09-14T01:56:44Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 497,
+      "title": "[Bug]: chunk_bwd_dv_local 变长模式下非法 cu_seqlens 和 chunk_indices 未被拦截",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/497",
+      "closed_at": "2026-09-22T13:22:00Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        },
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        }
+      ]
+    },
+    {
+      "number": 498,
+      "title": "[Bug]: chunk_bwd_dv_local 变长模式下非法 chunk_indices 导致 AICore 异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/498",
+      "closed_at": "2026-09-22T13:21:49Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        },
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        }
+      ]
+    },
+    {
+      "number": 515,
+      "title": "[Bug] aclnnRecomputeWUFwd使用ATK验证pyaclnn，构造非法输入时，返回错误码与预期不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/515",
+      "closed_at": "2026-09-09T09:24:51Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 519,
+      "title": "[Bug]: chunk_kda_fwd A2/A3精度不达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/519",
+      "closed_at": "2026-09-27T06:36:02Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 521,
+      "title": "[Feature]: 为 ChunkGatedDeltaRuleFwd Torch 接口增加分块状态 h 输出",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/521",
+      "closed_at": "2026-09-14T01:56:34Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gated_delta_rule_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 524,
+      "title": "[Feature]: CI 新增 A5（ascend950）双平台 NPU 验证",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/524",
+      "closed_at": "2026-09-15T14:53:58Z",
+      "labels": [
+        "enhancement",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 525,
+      "title": "[Bug]: ascend950 dense backward 在 recompute_w_u_fwd 触发 AICore 超时",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/525",
+      "closed_at": "2026-09-20T01:27:07Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 526,
+      "title": "[Feature]: A2 GDN 接入分层 FP32 Solve 并完善稳定性验收",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/526",
+      "closed_at": "2026-09-11T08:59:26Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 529,
+      "title": "[Bug]: chunk_bwd_dv_local A2 A5精度测试/复检失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/529",
+      "closed_at": "2026-09-24T11:51:59Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 531,
+      "title": "[Feature]: 新增 ChunkGatedDeltaRuleBwd 融合接口",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/531",
+      "closed_at": "2026-09-12T15:23:46Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 533,
+      "title": "[Bug]: chunk_fwd_o存在一条小case性能不达标兼部分gpu性能测试未提供结果",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/533",
+      "closed_at": "2026-09-12T06:43:52Z",
+      "labels": [
+        "bug",
+        "op:chunk_fwd_o"
+      ],
+      "rules": [
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 539,
+      "title": "[Feature]: GDN A5 拼接路径支持 use_exp2=false",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/539",
+      "closed_at": "2026-09-15T12:00:33Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gated_delta_rule_fwd_prepare"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 543,
+      "title": "[Bug]: 【chunk_fwd_o】算子精度特定用例不通过（gpu双标杆）",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/543",
+      "closed_at": "2026-09-24T03:34:07Z",
+      "labels": [
+        "bug",
+        "op:chunk_fwd_o"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 544,
+      "title": "[Bug]: KDA AscendC 变长序列反向精度问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/544",
+      "closed_at": "2026-09-14T08:16:47Z",
+      "labels": [
+        "bug",
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 547,
+      "title": "[Feature]: 将 DHU 设计文档迁移到算子目录",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/547",
+      "closed_at": "2026-09-14T01:56:06Z",
+      "labels": [
+        "enhancement",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 550,
+      "title": "[Bug]: solve_tril算子问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/550",
+      "closed_at": "2026-09-17T08:47:08Z",
+      "labels": [
+        "bug",
+        "op:solve_tri"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 554,
+      "title": "[Bug]: solve_tri 在A2/A3/A5 环境执行精度不达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/554",
+      "closed_at": "2026-09-23T13:34:56Z",
+      "labels": [
+        "bug",
+        "op:solve_tri"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 555,
+      "title": "[Bug]: solve_tril A2/A3 部分用例确定性计算存在异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/555",
+      "closed_at": "2026-09-23T13:34:47Z",
+      "labels": [
+        "bug",
+        "op:solve_tri"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 557,
+      "title": "[Bug]: chunk_scaled_dot_kkt A2环境性能不达标，对比npu triton算子性能劣化",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/557",
+      "closed_at": "2026-09-24T06:28:02Z",
+      "labels": [
+        "bug",
+        "op:chunk_scaled_dot_kkt"
+      ],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 558,
+      "title": "[Bug]: chunk_scaled_dot_kkt 对于异常场景拦截缺失，报错信息无符合标准提示",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/558",
+      "closed_at": "2026-09-23T06:39:21Z",
+      "labels": [
+        "bug",
+        "op:chunk_scaled_dot_kkt"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 561,
+      "title": "[Bug]: ChunkBwdDqkwg对于异常场景拦截缺失，报错信息无符合标准提示",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/561",
+      "closed_at": "2026-10-09T06:06:11Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dqkwg",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 565,
+      "title": "[Feature]: 新增 A2/A3/A5 chunk_kda_fwd_finalize 算子与稳定 Python 入口",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/565",
+      "closed_at": "2026-09-24T02:05:45Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 573,
+      "title": "[Bug]: causal_conv1d_bwd部分异常场景未做拦截",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/573",
+      "closed_at": "2026-09-21T09:01:17Z",
+      "labels": [
+        "bug",
+        "op:causal_conv1d_bwd"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 574,
+      "title": "[Bug]: causal_conv1d_bwd资料有误,错误码,编译样例链接404",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/574",
+      "closed_at": "2026-09-21T09:01:22Z",
+      "labels": [
+        "bug",
+        "op:causal_conv1d_bwd"
+      ],
+      "rules": [
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 575,
+      "title": "[Bug]: chunk_kda_fwd内存检测失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/575",
+      "closed_at": "2026-09-22T12:46:48Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 576,
+      "title": "[Bug]: chunk_kda_fwd A3性能不达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/576",
+      "closed_at": "2026-10-12T07:16:24Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 577,
+      "title": "[Bug]: chunk_kda_fwd 空tensor异常用例，没有返回错误信息，只有错误码",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/577",
+      "closed_at": "2026-09-22T12:46:45Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        },
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 578,
+      "title": "[Bug]: chunk_kda_fwd 资料约束和实际约束不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/578",
+      "closed_at": "2026-09-20T19:01:24Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd"
+      ],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "DOC-CONSTRAINT",
+          "layer": "docs"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 579,
+      "title": "修复 GDN 正向大融合算子 RegBase 芯片路径判断",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/579",
+      "closed_at": "2026-09-16T12:38:01Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 581,
+      "title": "[Bug]: GDN 正向混合精度与六输出接口不一致",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/581",
+      "closed_at": "2026-09-16T12:38:00Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-OPTIONAL-OUTPUT",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 591,
+      "title": "[Bug]: chunk_local_cumsum A2性能不达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/591",
+      "closed_at": "2026-09-28T02:49:09Z",
+      "labels": [
+        "bug",
+        "op:chunk_local_cumsum"
+      ],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 592,
+      "title": "[Bug]: chunk_local_cumsum A2/5精度不通过",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/592",
+      "closed_at": "2026-09-23T02:09:25Z",
+      "labels": [
+        "bug",
+        "op:chunk_local_cumsum"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 594,
+      "title": "[Bug]: chunk_local_cumsum 资料中包含敏感信息",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/594",
+      "closed_at": "2026-09-21T13:07:26Z",
+      "labels": [
+        "bug",
+        "op:chunk_local_cumsum"
+      ],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 598,
+      "title": "[Bug]: 26.9.0分支安装测试recompute_wu_fwd报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/598",
+      "closed_at": "2026-09-20T01:36:09Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 599,
+      "title": "[Bug]: chunk_gated_delta_rule_bwd_dhu算子的aclnn接口校验不完整",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/599",
+      "closed_at": "2026-09-20T01:27:17Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd_dhu"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 600,
+      "title": "[Bug]: NPU CI 的 wheel OPP 安装校验不识别 .data 载荷布局，A5 源码准备会被过期 test merge 阻塞",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/600",
+      "closed_at": "2026-09-20T06:16:34Z",
+      "labels": [
+        "bug",
+        "op:chunk_fwd_o"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-DTYPE-FORMAT",
+          "layer": "functional"
+        },
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 607,
+      "title": "[Feature]: 优化 A5 GDN 私有 H/VNew 与 H 到 O 流水并泛化支持范围",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/607",
+      "closed_at": "2026-09-20T03:30:01Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DOC-CONSTRAINT",
+          "layer": "docs"
+        },
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 609,
+      "title": "[Document]: chunk_gated_delta_rule_bwd_dhu文档补充",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/609",
+      "closed_at": "2026-09-22T01:37:11Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        }
+      ]
+    },
+    {
+      "number": 612,
+      "title": "[Bug]: recompute_w_u_fwd算子资料问题",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/612",
+      "closed_at": "2026-09-21T02:00:31Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "DOC-FORMAT",
+          "layer": "docs"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 613,
+      "title": "[Bug]: recompute_w_u_fwd构造K取值非法的异常值用例，执行失败，报507015，没有校验拦截",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/613",
+      "closed_at": "2026-09-21T02:01:45Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 614,
+      "title": "[Bug]: recompute_w_u_fwd内存占用测试，有4个用例未达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/614",
+      "closed_at": "2026-09-21T08:55:24Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 615,
+      "title": "[Bug]: MindSpore 调用 ChunkKdaBwd 时 OriginalShape 展平导致 tiling rank 误判",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/615",
+      "closed_at": "2026-10-10T06:29:11Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 616,
+      "title": "[Bug]: recompute_w_u_fwd异常值用例没有返回错误信息，只有错误码",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/616",
+      "closed_at": "2026-09-21T02:00:49Z",
+      "labels": [
+        "bug",
+        "op:recompute_w_u_fwd"
+      ],
+      "rules": [
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 618,
+      "title": "[Bug]: FLA_NPU_OPS 一键编包指定单个大融合算子时，依赖算子的 kernel 产物缺失",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/618",
+      "closed_at": "2026-09-29T02:12:12Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd_prepare"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 627,
+      "title": "[Bug]: FLA_NPU编译安装过程太久",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/627",
+      "closed_at": "2026-10-10T03:29:22Z",
+      "labels": [
+        "bug",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 636,
+      "title": "[Bug]: causal_conv1d即使不调用也会导致上下文变量异常",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/636",
+      "closed_at": "2026-09-28T01:51:36Z",
+      "labels": [
+        "bug",
+        "op:causal_conv1d"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 640,
+      "title": "[Bug]: recurrent_gated_delta_rule在A3/A5有用例精度测试失败，有infnan校验不过也有复检不过",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/640",
+      "closed_at": "2026-09-23T08:19:25Z",
+      "labels": [
+        "bug",
+        "op:recurrent_gated_delta_rule"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 641,
+      "title": "[Bug]: recurrent_gated_delta_rule有异常场景未拦截",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/641",
+      "closed_at": "2026-09-27T13:53:56Z",
+      "labels": [
+        "bug",
+        "op:recurrent_gated_delta_rule"
+      ],
+      "rules": [
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 694,
+      "title": "feat(kda): 前向导出反向 L2Norm 保存值，并暴露 chunk_kda_fwd_prepare 公共入口",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/694",
+      "closed_at": "2026-09-21T01:25:06Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 695,
+      "title": "[Bug]: 过滤构建缺依赖算子配置，chunk_kda_fwd 的 V2 组合入口运行期报 EZ1013/561103",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/695",
+      "closed_at": "2026-09-21T01:25:12Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 720,
+      "title": "[Feature]: chunk_gated_delta_rule_bwd_dhu在 A5 上，性能提升20%",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/720",
+      "closed_at": "2026-09-23T08:55:54Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 723,
+      "title": "[Feature]: A2 GDN 原生TND输入与O直接写回",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/723",
+      "closed_at": "2026-09-23T08:23:58Z",
+      "labels": [
+        "enhancement",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-VARLEN",
+          "layer": "functional"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 725,
+      "title": "[Feature]: 将 GDN A2/A5 megakernel 回迁至 v26.9.0",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/725",
+      "closed_at": "2026-09-23T07:27:20Z",
+      "labels": [
+        "enhancement",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 731,
+      "title": "GDN正向大融合算子精度复检不通过",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/731",
+      "closed_at": "2026-09-24T06:49:14Z",
+      "labels": [
+        "bug",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 733,
+      "title": "移除 KDA 反向重计算模式的序列长度对齐限制",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/733",
+      "closed_at": "2026-09-23T01:06:59Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        }
+      ]
+    },
+    {
+      "number": 736,
+      "title": "[Bug]: chunk_gated_delta_rule_bwd算子泛化用例精度测试，少量用例精度不达标",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/736",
+      "closed_at": "2026-10-09T09:01:33Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_bwd",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 759,
+      "title": "[Bug]: GDN正向大融合算子对空tensor处理不符合预期",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/759",
+      "closed_at": "2026-09-24T08:11:55Z",
+      "labels": [
+        "bug",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 760,
+      "title": "[Bug]: KDA算子支持反向megakernel在A3上精度、确定性、特殊值精度、内存占用不通过，性能采集结果不正确",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/760",
+      "closed_at": "2026-10-10T03:47:29Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_bwd",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        }
+      ]
+    },
+    {
+      "number": 764,
+      "title": "[Feature]: 新增 CP 反向状态预处理算子pre_process_bwd_kernel_merged",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/764",
+      "closed_at": "2026-10-13T07:25:08Z",
+      "labels": [
+        "enhancement",
+        "op:pre_process_bwd_kernel_merged"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-STATE",
+          "layer": "functional"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 766,
+      "title": "[Bug]: 【GDN main】【算子】【功能】支持 npu_chunk_gated_delta_rule_fwd 融合算子异常值测试时只有错误码看不到具体的信息",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/766",
+      "closed_at": "2026-10-10T07:06:40Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 771,
+      "title": "【GDN main】【算子】【功能】支持 npu_chunk_gated_delta_rule_bwd 融合算子异常值测试时只有错误码看不到具体的信息",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/771",
+      "closed_at": "2026-10-12T08:34:54Z",
+      "labels": [
+        "bug",
+        "op:gdn",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "DFX-MESSAGE",
+          "layer": "dfx"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 772,
+      "title": "[Bug]: FLA_NPU_BUILD_LEGACY_EXTENSION=1 构建 legacy 扩展链接失败：npu_fast_gelu_custom 已声明并注册但无定义",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/772",
+      "closed_at": "2026-09-27T04:26:24Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 773,
+      "title": "[Bug]: FLA_NPU_BUILD_LEGACY_EXTENSION=1 构建 legacy 扩展链接失败：npu_fast_gelu_custom 已声明并注册但无定义",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/773",
+      "closed_at": "2026-10-10T03:28:41Z",
+      "labels": [
+        "bug",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 774,
+      "title": "[Bug]: 【GDN main】【算子】【功能】支持 npu_chunk_gated_delta_rule_bwd 融合算子测试传空tensor不符合预期",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/774",
+      "closed_at": "2026-10-12T03:33:38Z",
+      "labels": [
+        "bug",
+        "op:gdn",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        }
+      ]
+    },
+    {
+      "number": 782,
+      "title": "[Bug]: ChunkGatedDeltaRuleBwd 不支持空 Tensor 输入",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/782",
+      "closed_at": "2026-10-09T06:47:32Z",
+      "labels": [],
+      "rules": [
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        },
+        {
+          "id": "DFX-VALIDATION",
+          "layer": "dfx"
+        }
+      ]
+    },
+    {
+      "number": 783,
+      "title": "fix: 一键编包安装提示可能误选 dist 中的历史 wheel",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/783",
+      "closed_at": "2026-10-12T02:33:07Z",
+      "labels": [
+        "bug",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 793,
+      "title": "[Bug]:【GDN main】【算子】【功能】支持 npu_chunk_gated_delta_rule_bwd 融合算子 内存检测有不符合预期ERROR",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/793",
+      "closed_at": "2026-10-12T02:40:15Z",
+      "labels": [
+        "bug",
+        "op:gdn",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 820,
+      "title": "[Bug]: A5上KDA算子支持反向megakernel泛化精度不通过，内存占用不通过",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/820",
+      "closed_at": "2026-10-10T06:26:12Z",
+      "labels": [
+        "bug",
+        "op:kda",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 821,
+      "title": "[Feature]: 增加版本标签同步与置顶需求汇总 workflow",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/821",
+      "closed_at": "2026-09-29T15:32:41Z",
+      "labels": [
+        "enhancement",
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 839,
+      "title": "[Feature]: CP 家族算子命名统一（反向预处理算子改名为 pre_process_bwd_kernel_merged）",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/839",
+      "closed_at": "2026-10-13T07:25:01Z",
+      "labels": [
+        "enhancement",
+        "op:pre_process_bwd_kernel_merged"
+      ],
+      "rules": [
+        {
+          "id": "ENG-STRUCTURE",
+          "layer": "engineering"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 859,
+      "title": "[Bug]: KDA V2 fwd 在多 stream 并发场景下存在 race（fwd vs recompute 输出不一致）",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/859",
+      "closed_at": "2026-10-12T12:44:41Z",
+      "labels": [
+        "bug",
+        "needs-version",
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 867,
+      "title": "[Bug]: 需求汇总工作流 requirements-index.yml 无法加载，置顶 issue 一直未自动刷新",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/867",
+      "closed_at": "2026-10-11T03:21:45Z",
+      "labels": [
+        "bug"
+      ],
+      "rules": [
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 870,
+      "title": "[Bug]: Arch22 chunk_kda_fwd_prepare 在并发下偶发 fwd/recompute 输出不一致（多 Stage 地址复用）",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/870",
+      "closed_at": "2026-10-12T06:35:02Z",
+      "labels": [
+        "bug",
+        "op:chunk_kda_fwd_prepare",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-SYNC",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-DETERMINISM",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 874,
+      "title": "[Bug] npu_chunk_kda_bwd: stale dAkk workspace read corrupts dk/db/dg for odd head counts on 910_93 devices",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/874",
+      "closed_at": "2026-10-19T07:30:37Z",
+      "labels": [
+        "op:chunk_kda_bwd",
+        "v26.9.1"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-MEMORY",
+          "layer": "functional"
+        },
+        {
+          "id": "FUNC-SHAPE",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 891,
+      "title": "[Bug]: v26.9.1 wheel 在 A3 上，CI Example/ST 的两个 ChunkKDA 用例 cosine 判据不达标（绝对误差判据全过）",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/891",
+      "closed_at": "2026-10-14T07:12:10Z",
+      "labels": [
+        "op:kda"
+      ],
+      "rules": [
+        {
+          "id": "FUNC-PRECISION",
+          "layer": "functional"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "TEST-COVERAGE",
+          "layer": "test"
+        },
+        {
+          "id": "CI-WORKFLOW",
+          "layer": "ci"
+        }
+      ]
+    },
+    {
+      "number": 903,
+      "title": "[Bug]: v26.9.0 GDN forward 按 SoC 名称选择路径，导致 A3 未启用 DAV_2201 优化",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/903",
+      "closed_at": "2026-10-15T01:53:21Z",
+      "labels": [
+        "bug",
+        "op:chunk_gated_delta_rule_fwd",
+        "v26.9.0"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "PERF-REGRESSION",
+          "layer": "performance"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    },
+    {
+      "number": 904,
+      "title": "[Feature]: v26.9.1 移植 A2/A3 DAV_2201 GDN megakernel",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/904",
+      "closed_at": "2026-10-15T03:44:45Z",
+      "labels": [
+        "enhancement",
+        "op:gdn"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "FEATURE-DELIVERY",
+          "layer": "feature"
+        }
+      ]
+    },
+    {
+      "number": 952,
+      "title": "[Bug]: ascend950 CANN9.1.0安装fla_npu v26.6.0失败",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/952",
+      "closed_at": "2026-10-22T08:44:42Z",
+      "labels": [
+        "bug",
+        "needs-version",
+        "op:chunk_gated_delta_rule_fwd_h"
+      ],
+      "rules": [
+        {
+          "id": "ENG-COMPATIBILITY",
+          "layer": "engineering"
+        },
+        {
+          "id": "ENG-BUILD",
+          "layer": "engineering"
+        },
+        {
+          "id": "FUNC-REGRESSION",
+          "layer": "functional"
+        }
+      ]
+    }
+  ],
+  "excluded_not_planned": [
+    {
+      "number": 56,
+      "title": "CausalConv1d算子在解码阶段报错",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/56",
+      "closed_at": "2026-06-16T09:33:58Z",
+      "labels": [],
+      "state_reason": "NOT_PLANNED"
+    },
+    {
+      "number": 451,
+      "title": "[Bug]: chunk_bwd_dv_local 在特定 GQA head 配置下触发 NPU kernel 卡死",
+      "url": "https://github.com/flashserve/flash-linear-attention-npu/issues/451",
+      "closed_at": "2026-09-04T07:14:27Z",
+      "labels": [
+        "bug",
+        "op:chunk_bwd_dv_local"
+      ],
+      "state_reason": "NOT_PLANNED"
+    }
+  ]
+}

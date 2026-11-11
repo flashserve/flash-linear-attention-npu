@@ -289,18 +289,25 @@ struct BlockSchedulerGdnFwdH {
     CATLASS_DEVICE
     void AssignNextStream(uint32_t streamId) {
         auto& stream = runningQ.streams[streamId];
-        taskIdx = stream.nextTaskIdx;
-        if (taskIdx >= taskNum) {
-            stream.active = false;
-            stream.batchChunks = 0;
-            return;
-        }
+        while (true) {
+            taskIdx = stream.nextTaskIdx;
+            if (taskIdx >= taskNum) {
+                stream.active = false;
+                stream.batchChunks = 0;
+                return;
+            }
 
-        stream.nextTaskIdx += taskStride;
-        InitNewStream(stream);
-        stream.active = stream.batchChunks > 0;
-        if (stream.active) {
-            UpdateTask(streamId);
+            stream.nextTaskIdx += taskStride;
+            InitNewStream(stream);
+            stream.active = stream.batchChunks > 0;
+            if (stream.active) {
+                UpdateTask(streamId);
+                return;
+            }
+            // 零长度序列没有 chunk，也没有对应的 h/v_new 槽位：跳过它的任务槽后必须
+            // 继续推进当前流。若在这里直接返回，该流的 isRunning 会计为 false，
+            // 本核后续任务会被一起丢掉，表现为这些 (序列, head) 的 v_new 未写、
+            // attn_out 缺项。
         }
     }
 

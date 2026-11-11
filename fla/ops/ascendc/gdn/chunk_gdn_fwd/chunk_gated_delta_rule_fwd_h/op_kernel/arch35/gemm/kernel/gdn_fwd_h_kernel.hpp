@@ -582,6 +582,12 @@ public:
 
                             const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                            if (cube1Offsets.blockTokens < 16) {
+                                // Vector side owns short chunks; only signal.
+                                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                                    cubeBlockScheduler.cube1Done[streamId]);
+                                continue;
+                            }
                             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
                                 cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
                             auto tensorW = tla::MakeTensor(
@@ -988,8 +994,9 @@ public:
                         }
                         const GDNFwdHOffsets& vec1Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
                         AscendC::LocalTensor<ElementV> l1VUpdate = (i == 0) ? l1VUpdatePing : l1VUpdatePong;
-                        bool tailVectorPath =
-                            vec1Offsets.blockTokens < 16 && !useBoundedMmad;
+                        // Short chunks are computed by the vector side;
+                        // the cube-side tail mmad object is not reusable.
+                        bool tailVectorPath = vec1Offsets.blockTokens < 16;
                         if (tailVectorPath) {
                             Arch::CrossCoreWaitFlag(
                                 vecBlockScheduler.cube1Done[streamId]);

@@ -7,9 +7,12 @@
 extern "C" {
 #endif
 
-// Single-launch KDA backward megakernel. Inputs use the canonical internal
-// head-major token layout consumed by the fused forward exports:
-// dense [B,H,T,D], varlen [H,T,D]. Saved h remains chunk-major.
+// A2/A3 single-layout contract: q/k/v and dq/dk/dv follow layout.
+// A supplied rstd pair identifies saved head-major q_hat/k_hat.
+// dO/rawG and dg/db are token-major; saved caches remain head-major.
+// beta is always original token-major input; fused sigmoid additionally requires
+// saved FP32 head-major betaEffOptional. db follows original beta dtype.
+// Gate gradients follow input dtype; A_log/dt_bias and their gradients are FP32.
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *q,
@@ -40,6 +43,12 @@ aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     bool disableRecompute,
     bool useExp2,
     bool stateVFirst,
+    const aclTensor *qRstdOptional,
+    const aclTensor *kRstdOptional,
+    const aclTensor *betaEffOptional,
+    const char *layout,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
     const aclTensor *dqOut,
     const aclTensor *dkOut,
     const aclTensor *dvOut,

@@ -1,13 +1,22 @@
-"""ChunkKdaFwdFinalize 的 ATK executor 和独立 CPU 参考。"""
+"""ChunkKdaFwdFinalize 的 ATK executor 和独立 CPU 参考。
+
+支持三种 ATK 节点角色：NPU DUT（aclnn 直调）、CPU 双标杆（golden=FP64 真值 /
+cpu_benchmark 节点普通任务=FP32+BF16 舍入的同精度标杆，行为保持不变）、
+GPU 双标杆（golden=FP64 真值 / 普通任务=scripts/gpu.py 所选 GPU control，
+按 is_benchmark_task 区分角色；支持全矩阵契约标杆和真实上游严格模式）。
+"""
 
 from __future__ import annotations
 
-import ctypes
+import importlib.util
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import torch
 
+from atk.configs.base_config import TaskTypesSelect
 from atk.configs.dataset_config import InputDataset
 from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
@@ -17,6 +26,24 @@ from atk.tasks.api_execute.base_api import BaseApi
 OP_NAME = "chunk_kda_fwd_finalize"
 CHUNK_SIZE = 64
 HEAD_DIM = 128
+
+# GPU 标杆和 FP64 真值位于本算子 ATK scripts/。
+_GPU_REFERENCE_PY = Path(__file__).resolve().parent / "scripts" / "gpu.py"
+_GPU_REFERENCE_MODULE = None
+
+
+def _load_gpu_reference():
+    """加载 scripts/gpu.py；upstream_strict 额外依赖原版 fla。"""
+    global _GPU_REFERENCE_MODULE
+    if _GPU_REFERENCE_MODULE is None:
+        if not _GPU_REFERENCE_PY.is_file():
+            raise FileNotFoundError(f"找不到 GPU 标杆：{_GPU_REFERENCE_PY}")
+        spec = importlib.util.spec_from_file_location("_chunk_kda_fwd_finalize_gpu", _GPU_REFERENCE_PY)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_chunk_kda_fwd_finalize_gpu"] = module
+        spec.loader.exec_module(module)
+        _GPU_REFERENCE_MODULE = module
+    return _GPU_REFERENCE_MODULE
 
 
 def _as_bool(value: Any) -> bool:
@@ -113,6 +140,25 @@ def _prepare(values: dict[str, Any]) -> Inputs:
                   _as_bool(values["state_v_first"]), batch, heads, tokens)
 
 
+def _clear_aqk_upper_(inputs: Inputs) -> None:
+    """ATK input preparation: retain each sequence/chunk's lower triangle."""
+    local_rows = torch.empty(inputs.tokens, dtype=torch.int64, device="cpu")
+    segments = ([(0, inputs.tokens)] if inputs.cu_seqlens is None
+                else zip(inputs.cu_seqlens, inputs.cu_seqlens[1:]))
+    for begin, end in segments:
+        local_rows[begin:end] = torch.arange(
+            end - begin, dtype=torch.int64, device="cpu").remainder_(CHUNK_SIZE)
+    columns = torch.arange(CHUNK_SIZE, dtype=torch.int64, device="cpu")
+    upper = columns.unsqueeze(0) > local_rows.unsqueeze(1)
+    with torch.no_grad():
+        inputs.aqk.masked_fill_(upper.to(device=inputs.aqk.device), 0)
+    # Finish input preparation before any timed forward call.
+    if inputs.aqk.device.type == "cuda":
+        torch.cuda.synchronize(inputs.aqk.device)
+    elif inputs.aqk.device.type == "npu":
+        torch.npu.synchronize(inputs.aqk.device)
+
+
 def _head_major(value: torch.Tensor) -> torch.Tensor:
     return value.unsqueeze(0) if value.ndim == 3 else value
 
@@ -160,40 +206,12 @@ def run_cpu(inputs: Inputs, high_precision: bool = True) -> torch.Tensor:
 
 
 def run_npu(inputs: Inputs) -> torch.Tensor:
-    # 局限于 ATK 交付目录的 aclnn 直调，不向共享 Python 注册表添加临时入口。
-    from fla_npu.ops.ascendc._runtime import ACL_FORMAT_ND, call_aclnn
+    from fla_npu.ops.ascendc import chunk_kda_fwd_finalize
 
-    output = torch.empty(_output_shape(inputs), dtype=torch.bfloat16,
-                         device=inputs.qg_scaled.device)
-    layout_bytes = ctypes.create_string_buffer(inputs.output_layout.encode("ascii"))
-
-    def nd_tensor(ctx, tensor, name):
-        tensor = tensor.contiguous()
-        if tensor.storage_offset():
-            tensor = tensor.clone()
-        return ctx.tensor(tensor, name, acl_format_override=ACL_FORMAT_ND,
-                          storage_shape_override=tuple(tensor.shape))
-
-    argtypes = [
-        *([ctypes.c_void_p] * 6), ctypes.c_char_p, ctypes.c_bool,
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
-    ]
-    return call_aclnn(
-        "aclnnChunkKdaFwdFinalize",
-        lambda ctx: [
-            nd_tensor(ctx, inputs.qg_scaled, "qg_scaled"),
-            nd_tensor(ctx, inputs.aqk, "aqk"),
-            nd_tensor(ctx, inputs.v_new, "v_new"),
-            nd_tensor(ctx, inputs.h, "h"),
-            ctx.int_array(inputs.cu_seqlens),
-            ctx.int_array(inputs.chunk_indices),
-            ctypes.cast(layout_bytes, ctypes.c_char_p),
-            ctypes.c_bool(inputs.state_v_first),
-            nd_tensor(ctx, output, "attn_out"),
-        ],
-        output,
-        get_workspace_argtypes=argtypes,
+    return chunk_kda_fwd_finalize(
+        inputs.qg_scaled, inputs.aqk, inputs.v_new, inputs.h,
+        cu_seqlens=inputs.cu_seqlens, chunk_indices=inputs.chunk_indices,
+        output_layout=inputs.output_layout, state_v_first=inputs.state_v_first,
     )
 
 
@@ -202,13 +220,34 @@ class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
         self.inputs: Optional[Inputs] = None
+        self.gpu_control = None
         self.low_precision_benchmark = (
             self.device == "cpu" and task_result.name == "cpu_benchmark"
             and not task_result.is_benchmark_task
         )
+        # GPU 双标杆：远端 GPU 参考节点被调用两次 —— golden 任务（is_benchmark_task=True）
+        # 跑 FP64 真值，普通任务跑显式选择的 GPU control。
+        tasks = set(task_result.task_type or ())
+        accuracy_golden = bool(task_result.is_benchmark_task) and bool(
+            tasks & set(TaskTypesSelect.ACCURACY_TASKS)
+        )
+        self.gpu_performance = self.device == "gpu" and not accuracy_golden and bool(
+            tasks & set(TaskTypesSelect.PERFORMANCE_TASKS)
+        )
+        self.gpu_high_precision = (
+            self.device == "gpu" and bool(task_result.is_benchmark_task)
+            and not self.gpu_performance
+        )
 
     def init_by_input_data(self, input_data: InputDataset):
         self.inputs = _prepare(input_data.kwargs)
+        _clear_aqk_upper_(self.inputs)
+        if self.device == "gpu" and not self.gpu_high_precision:
+            # Performance always measures the real upstream operator.  Mixed
+            # accuracy/performance tasks retain their separate FP64 golden pass.
+            self.gpu_control = _load_gpu_reference().prepare_gpu_reference(
+                self.inputs, reference="upstream_strict" if self.gpu_performance else None
+            )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         if self.inputs is None:
@@ -217,22 +256,32 @@ class FunctionApi(BaseApi):
             raise RuntimeError("ATK inputs were not initialized")
         if self.device == "cpu":
             output = run_cpu(self.inputs, high_precision=not self.low_precision_benchmark)
+        elif self.device == "gpu":
+            output = (_load_gpu_reference().run_gpu(self.inputs, high_precision=True)
+                      if self.gpu_high_precision else self.gpu_control())
         elif self.device in ("npu", "pyaclnn"):
             output = run_npu(self.inputs)
         else:
             raise RuntimeError("unsupported ATK backend %r" % self.device)
-        expected_dtype = (torch.float32 if self.low_precision_benchmark else torch.float64)
+        if self.device == "gpu":
+            expected_dtype = torch.float64 if self.gpu_high_precision else torch.bfloat16
+        elif self.device == "cpu":
+            expected_dtype = torch.float32 if self.low_precision_benchmark else torch.float64
+        else:
+            expected_dtype = torch.bfloat16
         if (tuple(output.shape) != _output_shape(self.inputs)
-                or output.dtype != (expected_dtype if self.device == "cpu" else torch.bfloat16)):
+                or output.dtype != expected_dtype):
             raise RuntimeError("unexpected attn_out dtype or shape")
         if not with_output:
             return None
-        if self.device != "cpu":
+        if self.device == "gpu":
+            torch.cuda.synchronize()
+        elif self.device != "cpu":
             torch.npu.synchronize()
         if not torch.isfinite(output.float()).all().item():
             raise RuntimeError("attn_out contains NaN or Inf")
-        # FP64 累加，仅将比较结果转为 FP32。
-        if self.device == "cpu":
+        # FP64 累加，仅将比较结果转为 FP32（CPU/GPU golden 的 payload）。
+        if self.device == "cpu" or (self.device == "gpu" and self.gpu_high_precision):
             output = output.float()
         return (output,)
 
@@ -240,8 +289,19 @@ class FunctionApi(BaseApi):
         del input_data
         if self.inputs is None:
             raise RuntimeError("ATK inputs were not initialized")
-        return {"output_layout": self.inputs.output_layout,
+        if self.low_precision_benchmark:
+            reference = "cpu_fp32_bf16"
+        elif self.device == "cpu":
+            reference = "cpu_fp64"
+        elif self.device == "gpu":
+            reference = "gpu_fp64" if self.gpu_high_precision else "gpu_control"
+        else:
+            reference = "aclnn_dut"
+        data = {"output_layout": self.inputs.output_layout,
                 "state_v_first": self.inputs.state_v_first,
-                "reference": "cpu_fp32_bf16" if self.low_precision_benchmark else (
-                    "cpu_fp64" if self.device == "cpu" else "aclnn_dut"),
+                "reference": reference,
+                "aqk_structure": "chunk_lower_triangular",
                 "chunks": int(self.inputs.h.shape[1])}
+        if self.gpu_control is not None:
+            data.update(self.gpu_control.export_custom_data())
+        return data

@@ -10,7 +10,10 @@ Usage:  python -m unittest tests.test_stable_gates
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -43,61 +46,29 @@ def _load_module(name: str, path: Path):
     return module
 
 
-def _launcher_only_tree(tmp: str, *, hand_written_list: bool = False,
-                        ctypes_defines: bool = False,
-                        wrapper_args: int = 2):
-    """A minimal tree holding one operator that has no ctypes wrapper.
-
-    Everything the two gates read is synthesised: the published list, the
-    launcher wrapper, the adapter and its registration.  Returning the paths
-    lets a test point OPS_DIR/SRC_DIR (or REFERENCE/BACKENDS) at it.
-    """
-
-    ops = Path(tmp) / "ops"
-    src = Path(tmp) / "src"
-    ops.mkdir()
-    src.mkdir()
-    declaration = (
-        '_LAUNCHER_ONLY_OPS: tuple[str, ...] = ("npu_new_op",)\n'
-        if hand_written_list else
-        "_LAUNCHER_ONLY_OPS: tuple[str, ...] = tuple(\n"
-        "    name for name in _ASCENDC_OPS if name not in ASCENDC_CTYPES_OPS\n"
-        ")\n")
-    (ops / "__init__.py").write_text(
-        '_ASCENDC_OPS = (\n    "npu_new_op",\n)\n\n' + declaration,
-        encoding="utf-8")
-    dispatch = ('    return _op("npu_new_op")(a, _current_stream_ptr())\n'
-                if wrapper_args == 2 else '    return _op("npu_new_op")(a)\n')
+def _stable_tree(tmp: str, *, wrapper_args: int = 2):
+    """Small isolated Stable-only tree; tests mutate one link at a time."""
+    ops, src = Path(tmp) / "ops", Path(tmp) / "src"
+    ops.mkdir(); src.mkdir()
+    (ops / "__init__.py").write_text('_ASCENDC_OPS = ("npu_new_op",)\n', encoding="utf-8")
+    dispatch = 'a, _current_stream_ptr()' if wrapper_args == 2 else 'a'
     (ops / "_stable.py").write_text(
-        "_ENUM = {}\n\n\n"
-        "def _op(name):\n"
-        "    return globals()[name]\n\n\n"
-        "def _current_stream_ptr():\n"
-        "    return 0\n\n\n"
-        "def npu_new_op(a):\n" + dispatch,
-        encoding="utf-8")
-    (ops / "_aclnn_ctypes.py").write_text(
-        "def npu_new_op(a):\n    pass\n" if ctypes_defines
-        else "# no ctypes reference for this operator\n",
-        encoding="utf-8")
+        '_ENUM = {}\ndef npu_new_op(a):\n    return _op("npu_new_op")(' + dispatch + ')\n', encoding="utf-8")
     (src / "stable_new_op.cpp").write_text(
-        "constexpr const char* kSchema_npu_new_op =\n"
-        '    "npu_new_op(Tensor a, int stream) -> Tensor";\n\n'
-        "Tensor run_npu_new_op(Tensor a, int64_t stream) {\n"
-        "  return a;\n"
-        "}\n",
-        encoding="utf-8")
+        'constexpr const char* kSchema_npu_new_op = "npu_new_op(Tensor a, int stream) -> Tensor";\n'
+        'Tensor run_npu_new_op(Tensor a, int64_t stream) { return a; }\n', encoding="utf-8")
     (src / "stable_ops.cpp").write_text(
-        '#include "stable_new_op.cpp"\n\n'
-        "STABLE_TORCH_LIBRARY(fla_npu_stable, m) {\n"
-        "  m.def(kSchema_npu_new_op);\n"
-        "}\n\n"
-        "STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, "
-        "CompositeExplicitAutograd, m) {\n"
-        '  m.impl("npu_new_op", &boxed_adapter<run_npu_new_op>);\n'
-        "}\n",
-        encoding="utf-8")
-    return ops, src
+        '#include "stable_new_op.cpp"\n'
+        'STABLE_TORCH_LIBRARY(fla_npu_stable, m) { m.def(kSchema_npu_new_op); }\n'
+        'STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {\n'
+        'm.impl("npu_new_op", &boxed_adapter<run_npu_new_op>); }\n', encoding="utf-8")
+    contract = Path(tmp) / "public.json"
+    contract.write_text(json.dumps({
+        "operators": ["npu_new_op"],
+        "public_signatures": {"npu_new_op": {"arguments": "a", "return": None}},
+        "dispatch_arguments": {"npu_new_op": [{"op": "npu_new_op", "expressions": ["a", "_current_stream_ptr()"]}]},
+    }), encoding="utf-8")
+    return ops, src, contract
 
 
 class BuildStampTest(unittest.TestCase):
@@ -116,15 +87,16 @@ class BuildStampTest(unittest.TestCase):
         sources = sorted((SETUP_DIR / "csrc" / "src").glob("*.cpp"))
         self.assertTrue(sources, "no adapter sources found")
         with tempfile.TemporaryDirectory() as tmp:
-            target = sources[0]
-            original = target.read_text(encoding="utf-8")
-            try:
+            copied = Path(tmp) / "src"
+            shutil.copytree(SRC_DIR, copied)
+            target = copied / sources[0].name
+            with mock.patch.object(module, "CSRC", copied):
+                self.assertEqual(module.source_hash(), first)
+                original = target.read_text(encoding="utf-8")
                 target.write_text(original + "\n// changed\n", encoding="utf-8")
                 self.assertNotEqual(
                     module.source_hash(), first,
                     "editing one adapter must change the stamp")
-            finally:
-                target.write_text(original, encoding="utf-8")
         self.assertEqual(module.source_hash(), first)
 
     def test_checked_in_hash_module_matches_the_sources(self) -> None:
@@ -156,7 +128,46 @@ class CoverageGateTest(unittest.TestCase):
     def test_current_tree_has_no_unexplained_gap(self) -> None:
         report = self.tool.evaluate()
         self.assertEqual(report["blockers"], [])
-        self.assertGreater(report["adapter_count"], 25)
+        self.assertEqual(set(self.tool.public_ops()), {row["op"] for row in report["rows"]})
+        self.assertEqual(report["adapter_count"], len(self.tool.public_ops()))
+
+    def test_existing_public_calling_conventions_remain_protected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, src, contract = _stable_tree(tmp)
+            original = (ops / "_stable.py").read_text(encoding="utf-8")
+            for header in ("def npu_new_op(a=None):", "def npu_new_op(*, a):"):
+                (ops / "_stable.py").write_text(original.replace("def npu_new_op(a):", header), encoding="utf-8")
+                with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                        mock.patch.object(self.tool, "SRC_DIR", src), \
+                        mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                    report = self.tool.evaluate()
+                self.assertTrue(report["blockers"], header)
+
+    def test_signature_compatibility_is_additive(self) -> None:
+        def check(old, new):
+            return self.tool._signature_problems(
+                {"arguments": old, "return": None}, {"arguments": new, "return": None})
+        for new in ("a, b=1, is_out_l2norm=None", "a, b=1, *, is_out_l2norm=None", "a: int, b=1"):
+            self.assertEqual(check("a, b=1", new), [], new)
+        for new in ("*, a, b=1", "b, a=1", "a, b=2", "a, c=1", "a, b=1, *, c"):
+            self.assertTrue(check("a, b=1", new), new)
+        self.assertTrue(check("a, *args", "a, b=None, *args"))
+        self.assertEqual(check("a, *args", "a, *args, b=None"), [])
+
+    def test_new_operator_does_not_need_baseline_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, src, contract = _stable_tree(tmp)
+            # The baseline operator still exists; another fully wired API is new.
+            for path in (ops / "_stable.py", src / "stable_ops.cpp"):
+                original = path.read_text()
+                path.write_text(original + original.replace("new_op", "added_op"))
+            (src / "stable_added_op.cpp").write_text(
+                (src / "stable_new_op.cpp").read_text().replace("new_op", "added_op"))
+            (ops / "__init__.py").write_text('_ASCENDC_OPS = ("npu_new_op", "npu_added_op")\n')
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                self.assertEqual(self.tool.evaluate()["blockers"], [])
 
     def test_missing_wrapper_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,9 +182,6 @@ class CoverageGateTest(unittest.TestCase):
             (ops / "_stable.py").write_text(stripped, encoding="utf-8")
             (ops / "__init__.py").write_text(
                 (OPS_DIR / "__init__.py").read_text(encoding="utf-8"),
-                encoding="utf-8")
-            (ops / "_aclnn_ctypes.py").write_text(
-                (OPS_DIR / "_aclnn_ctypes.py").read_text(encoding="utf-8"),
                 encoding="utf-8")
             with mock.patch.object(self.tool, "OPS_DIR", ops):
                 report = self.tool.evaluate()
@@ -221,6 +229,25 @@ class CoverageGateTest(unittest.TestCase):
                                 for item in report["blockers"]),
                             report["blockers"])
 
+    def test_enum_numeric_drift_without_key_order_change_is_reported(self) -> None:
+        original = (OPS_DIR / "_stable.py").read_text(encoding="utf-8")
+        before = '_LAYOUT_CODES = {"BSND": 0, "BNSD": 1, "TND": 2, "NTD": 3}'
+        self.assertIn(before, original)
+        # All retain the identical string key order: only numeric semantics
+        # change. Bool/float also compare equal to integers in Python and must
+        # not slip through a plain list equality check.
+        for values in ((1, 0, 2, 3), (0, 0, 2, 3), (0, 1, 2, 4),
+                       (False, 1, 2, 3), (0.0, 1, 2, 3)):
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as tmp:
+                ops = Path(tmp)
+                (ops / "__init__.py").write_text(
+                    (OPS_DIR / "__init__.py").read_text(encoding="utf-8"), encoding="utf-8")
+                after = "_LAYOUT_CODES = " + repr(dict(zip(("BSND", "BNSD", "TND", "NTD"), values)))
+                (ops / "_stable.py").write_text(original.replace(before, after), encoding="utf-8")
+                with mock.patch.object(self.tool, "OPS_DIR", ops):
+                    report = self.tool.evaluate()
+                self.assertTrue(any("enum numeric codes" in item for item in report["blockers"]), report)
+
     def test_adapter_in_a_shared_file_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src"
@@ -256,10 +283,12 @@ class AbiParityGateTest(unittest.TestCase):
         report = self.tool.evaluate()
         self.assertEqual(report["problems"], [])
         self.assertGreater(report["checked"], 25)
-        # The two hand-written recurrent entry points consume 13 required
-        # tensor slots between them; a drop here means a slot stopped being
-        # unboxed into an owning Tensor and is leaking again.
+        # Count both generic typed unboxing and explicit stack reads. The
+        # recurrent entry points still own seven GDN and six KDA input slots.
         self.assertGreaterEqual(report["owned_slots"], 13)
+        self.assertEqual(
+            report["owned_slots_by_op"]["npu_recurrent_gated_delta_rule"], 7)
+        self.assertEqual(report["owned_slots_by_op"]["npu_recurrent_kda"], 6)
 
     def test_parameter_reorder_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,20 +316,21 @@ class AbiParityGateTest(unittest.TestCase):
                             report["problems"])
 
     def test_unconsumed_stack_slot_is_reported(self) -> None:
+        original_owned_slots = self.tool.evaluate()["owned_slots"]
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src"
             src.mkdir()
             for path in SRC_DIR.glob("stable_*.cpp"):
                 (src / path.name).write_text(path.read_text(encoding="utf-8"),
                                              encoding="utf-8")
-            target = src / "stable_recurrent_gated_delta_rule.cpp"
+            target = src / "stable_recurrent_kda.cpp"
             text = target.read_text(encoding="utf-8")
             # The leak that OOMed the conc32 service: reading a required tensor
             # slot as a raw handle consumes nothing (library.h expects the kernel
             # to steal it).
             changed = text.replace(
-                "const Tensor t_query = to<Tensor>(stack[0]);",
-                "const AtenTensorHandle query = "
+                "const Tensor t_q = to<Tensor>(stack[0]);",
+                "const AtenTensorHandle t_q = "
                 "to<AtenTensorHandle>(stack[0]);")
             self.assertNotEqual(changed, text, "test setup did not apply")
             target.write_text(changed, encoding="utf-8")
@@ -309,7 +339,41 @@ class AbiParityGateTest(unittest.TestCase):
             self.assertTrue(
                 any("AtenTensorHandle" in item for item in report["problems"]),
                 report["problems"])
-            self.assertEqual(report["owned_slots"], 12)
+            self.assertEqual(report["owned_slots"], original_owned_slots - 1)
+            self.assertEqual(report["owned_slots_by_op"]["npu_recurrent_kda"], 5)
+
+    def test_generic_raw_tensor_parameter_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            shutil.copytree(SRC_DIR, src)
+            target = src / "stable_recurrent_gated_delta_rule.cpp"
+            text = target.read_text(encoding="utf-8")
+            changed = text.replace(
+                "    Tensor query, Tensor key, Tensor value, Tensor state, Tensor beta,",
+                "    AtenTensorHandle query, Tensor key, Tensor value, Tensor state, Tensor beta,")
+            self.assertNotEqual(changed, text, "test setup did not apply")
+            target.write_text(changed, encoding="utf-8")
+            with mock.patch.object(self.tool, "SRC_DIR", src):
+                report = self.tool.evaluate()
+            self.assertTrue(any("owning Tensor" in item and "'query'" in item
+                                for item in report["problems"]), report["problems"])
+            self.assertEqual(
+                report["owned_slots_by_op"]["npu_recurrent_gated_delta_rule"], 6)
+
+    def test_generic_unbox_must_consume_tensor_references(self) -> None:
+        original = self.tool.BOXED_HEADER.read_text(encoding="utf-8")
+        for declared, replacement in (
+                ("Tensor", "return to<AtenTensorHandle>(value);"),
+                ("std::optional<Tensor>", "return std::nullopt;")):
+            with self.subTest(declared=declared), tempfile.TemporaryDirectory() as tmp:
+                changed = original.replace(f"return to<{declared}>(value);", replacement)
+                self.assertNotEqual(changed, original, "test setup did not apply")
+                header = Path(tmp) / "boxed.h"
+                header.write_text(changed, encoding="utf-8")
+                with mock.patch.object(self.tool, "BOXED_HEADER", header):
+                    report = self.tool.evaluate()
+                self.assertTrue(any(f"unbox<{declared}>" in item
+                                    for item in report["problems"]), report["problems"])
 
 
 class FallbackGateTest(unittest.TestCase):
@@ -327,13 +391,48 @@ class FallbackGateTest(unittest.TestCase):
         self.assertEqual(tool.delegating_ops(sample), ["npu_x"])
 
 
+class RemovedBackendGateTest(unittest.TestCase):
+    def test_repository_consumers_do_not_import_removed_backends(self):
+        tool = _load_tool("stable_ctypes_fallbacks.py")
+        root = OPS_DIR.parents[4]
+        consumers = (root / "fla", root / "tests/atk", root / "tests/stable_abi",
+                     root / "torch_custom/fla_npu/test")
+        problems = []
+        for directory in consumers:
+            self.assertTrue(directory.is_dir(), str(directory))
+            for path in directory.rglob("*.py"):
+                for line, reason in tool.violations(path.read_text(encoding="utf-8")):
+                    problems.append(f"{path.relative_to(root)}:{line}: {reason}")
+        self.assertEqual(problems, [])
+
+    def test_forbidden_imports_and_calls(self):
+        tool = _load_tool("stable_ctypes_fallbacks.py")
+        for code in ("from . import _runtime", "from ._aclnn_ctypes import npu_x",
+                     "import fla_npu.ops.ascendc._runtime", "fla_npu.load_legacy_torch_ops()",
+                     "torch.ops.npu.npu_x(a)", "call_aclnn(a)",
+                     "def load_legacy_torch_ops(): pass",
+                     "importlib.import_module('fla_npu.ops.ascendc._runtime')",
+                     "torch.ops.load_library('custom_aclnn_extension_lib.so')"):
+            with self.subTest(code=code):
+                self.assertTrue(tool.violations(code))
+        self.assertEqual(tool.violations('import ctypes; ctypes.CDLL("lib.so")'), [])
+
+    def test_empty_package_and_removed_files_fail(self):
+        tool = _load_tool("stable_ctypes_fallbacks.py")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(tool, "PACKAGE_DIR", Path(tmp)):
+            self.assertTrue(tool.evaluate()["problems"])
+            (Path(tmp) / "_runtime.py").write_text("# old execution backend")
+            self.assertTrue(any("removed backend file" in item for item in tool.evaluate()["problems"]))
+
+
 class HeaderKindGateTest(unittest.TestCase):
     """`op_abi_validate` reads the OPP header, the only source of truth left."""
 
     def test_header_kinds_are_recognised(self) -> None:
         tool = _load_tool("op_abi_validate.py")
-        self.assertEqual(tool.header_kind("const aclTensor *q"), tool.WILDCARD)
-        self.assertEqual(tool.header_kind("const aclIntArray *cu"), tool.WILDCARD)
+        self.assertEqual(tool.header_kind("const aclTensor *q"), tool.TENSOR)
+        self.assertEqual(tool.header_kind("const aclIntArray *cu"), tool.INT_ARRAY)
+        self.assertEqual(tool.header_kind("const aclScalar *scale"), tool.ACL_SCALAR)
         self.assertEqual(tool.header_kind("int64_t chunkSize"), "int64")
         self.assertEqual(tool.header_kind("bool useExp2"), "bool")
         self.assertEqual(tool.header_kind("double scale"), "double")
@@ -357,50 +456,185 @@ class HeaderKindGateTest(unittest.TestCase):
         self.assertEqual(tool.split_params('cstr("a//b"), scalar(c)'),
                          ['cstr("a//b")', 'scalar(c)'])
 
+    def test_descriptor_kind_replacement_is_reported(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        self.assertEqual(tool.compare([tool.TENSOR], [tool.INT_ARRAY]), [
+            "param 0: header tensor != call site int_array"
+        ])
 
-class LauncherOnlyCoverageTest(unittest.TestCase):
-    """An operator with no ctypes fallback has to be a declared state.
+    def test_scoped_filter_checks_only_selected_adapter_sources(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = {
+            "aclnnChunkFwdO": (Path("stable_chunk_fwd_o.cpp"), [tool.TENSOR]),
+            "aclnnSolveTri": (Path("stable_solve_tri.cpp"), [tool.TENSOR]),
+        }
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "chunk_fwd_o")),
+            {"aclnnChunkFwdO"},
+        )
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "npu_solve_tri")),
+            {"aclnnSolveTri"},
+        )
+        self.assertEqual(tool.filter_adapters(adapters, ""), adapters)
 
-    The point is that a new operator can ship without a ctypes adaptation at
-    all -- that is the expected shape now -- and nothing else in the tree may
-    assume it exists.  These tests build a one-operator tree so the behaviour
-    does not depend on how many real operators happen to be launcher-only today.
-    """
+    def test_shared_adapter_is_selected_by_aclnn_symbol(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = tool.adapter_calls(SRC_DIR)
+        selected = tool.filter_adapters(adapters, "causal_conv1d")
+        self.assertIn("aclnnCausalConv1d", selected)
+        self.assertEqual(selected["aclnnCausalConv1d"][0].name, "stable_causal_conv1d_common.cpp")
+        with self.assertRaisesRegex(RuntimeError, "No ABI call sites"):
+            tool.filter_adapters(adapters, "unknown_operator")
 
-    def setUp(self) -> None:
+    def test_pointer_changes_are_not_scalar_matches(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        self.assertNotEqual(tool.header_kind("double value"), tool.header_kind("double *value"))
+        self.assertNotEqual(tool.header_kind("aclTensor *x"), tool.header_kind("aclTensor **x"))
+
+    def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_dir = root / "src"
+            include_dir = root / "include"
+            source_dir.mkdir()
+            include_dir.mkdir()
+            (source_dir / "stable_demo.cpp").write_text(
+                "void run_demo(Tensor x, int64_t mode) {\n"
+                '  FLA_STABLE_EXEC("aclnnDemo", meta, stream, '
+                "tensor(x), scalar(mode));\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (include_dir / "aclnn_demo.h").write_text(
+                "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+                "    const aclTensor *x, bool mode, uint64_t *workspaceSize,\n"
+                "    aclOpExecutor **executor);\n",
+                encoding="utf-8",
+            )
+            argv = [
+                "op_abi_validate.py",
+                "--src-dir",
+                str(source_dir),
+                "--opp-include",
+                str(include_dir),
+                "--ops",
+                "demo",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(tool.main(), 1)
+
+
+class StableOnlyCoverageTest(unittest.TestCase):
+    def setUp(self):
         self.tool = _load_tool("stable_coverage.py")
 
-    def _evaluate(self, tmp: str, **kwargs) -> dict:
-        ops, src = _launcher_only_tree(tmp, **kwargs)
-        with mock.patch.object(self.tool, "OPS_DIR", ops), \
-                mock.patch.object(self.tool, "SRC_DIR", src):
-            return self.tool.evaluate()
-
-    def test_operator_without_a_reference_needs_no_declaration(self) -> None:
+    def check_tree(self, mutation=None, **kwargs):
         with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp)
+            ops, src, contract = _stable_tree(tmp, **kwargs)
+            if mutation:
+                mutation(ops, src)
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                return self.tool.evaluate()
+
+    def assert_mutation(self, file, before, after, expected):
+        def mutate(ops, src):
+            path = (ops if file.endswith(".py") else src) / file
+            original = path.read_text(encoding="utf-8")
+            self.assertIn(before, original)
+            path.write_text(original.replace(before, after), encoding="utf-8")
+        report = self.check_tree(mutate)
+        self.assertTrue(any(expected in item for item in report["blockers"]), report)
+
+    def test_stable_only_operator_needs_no_fallback(self):
+        report = self.check_tree()
         self.assertEqual(report["blockers"], [])
-        self.assertEqual(report["rows"][0]["fallback"], "none")
-        self.assertEqual(report["launcher_only"], ["npu_new_op"])
+        self.assertEqual(report["rows"][0]["backend"], "stable")
 
-    def test_operator_ctypes_still_defines_is_not_launcher_only(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, ctypes_defines=True)
-        self.assertEqual(report["blockers"], [])
-        self.assertEqual(report["rows"][0]["fallback"], "ctypes")
-        self.assertEqual(report["launcher_only"], [])
-
-    def test_hand_written_list_is_reported(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, hand_written_list=True)
-        self.assertTrue(any("_LAUNCHER_ONLY_OPS" in item
-                            for item in report["blockers"]), report["blockers"])
-
-    def test_wrapper_argument_count_drift_is_reported(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            report = self._evaluate(tmp, wrapper_args=1)
+    def test_wrapper_argument_count_drift(self):
         self.assertTrue(any("wrapper passes 1 arguments" in item
-                            for item in report["blockers"]), report["blockers"])
+                            for item in self.check_tree(wrapper_args=1)["blockers"]))
+
+    def test_missing_run(self):
+        self.assert_mutation("stable_new_op.cpp", "run_npu_new_op(", "missing_run(", "missing its run")
+
+    def test_missing_definition(self):
+        self.assert_mutation("stable_ops.cpp", "m.def(kSchema_npu_new_op);", "", "missing its schema")
+
+    def test_missing_implementation(self):
+        self.assert_mutation("stable_ops.cpp", 'm.impl("npu_new_op", &boxed_adapter<run_npu_new_op>);', "", "missing its impl")
+
+    def test_wrong_implementation_name(self):
+        self.assert_mutation("stable_ops.cpp", 'm.impl("npu_new_op"', 'm.impl("npu_wrong_op"', "implementation has no registered schema")
+
+    def test_missing_schema(self):
+        self.assert_mutation("stable_new_op.cpp", "kSchema_npu_new_op", "kSchema_removed", "registered schema is not defined")
+
+    def test_missing_include(self):
+        self.assert_mutation("stable_ops.cpp", '#include "stable_new_op.cpp"', "", "never compiled")
+
+    def test_missing_source(self):
+        report = self.check_tree(lambda ops, src: (src / "stable_new_op.cpp").unlink())
+        self.assertTrue(any("included adapter source is missing" in item for item in report["blockers"]))
+
+    def test_empty_inventory(self):
+        self.assert_mutation("__init__.py", '"npu_new_op",', "", "operator inventory is empty")
+        self.assert_mutation("__init__.py", '"npu_new_op",', "", "historical public API was removed")
+
+    def test_existing_same_type_argument_reorder_is_rejected(self):
+        old_call = {"op": "npu_new_op", "expressions": ["a", "b", "_current_stream_ptr()"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, _, contract = _stable_tree(tmp)
+            data = json.loads(contract.read_text())
+            data["dispatch_arguments"]["npu_new_op"] = [old_call]
+            contract.write_text(json.dumps(data))
+            calls = {"npu_new_op": [{"op": "npu_new_op", "expressions": ["b", "a", "_current_stream_ptr()"]}]}
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                self.assertTrue(any("argument order" in p for p in self.tool.public_api_problems(["npu_new_op"], calls)))
+
+    def test_duplicate_registration(self):
+        self.assert_mutation("stable_ops.cpp", "m.def(kSchema_npu_new_op);", "m.def(kSchema_npu_new_op); m.def(kSchema_npu_new_op);", "duplicate schema")
+
+    def test_stream_must_remain_last(self):
+        self.assert_mutation("_stable.py", '(a, _current_stream_ptr())',
+                             '(_current_stream_ptr(), a)', "stream as the last argument")
+
+    def test_optional_parameter_and_dispatch_can_evolve_together(self):
+        """Adding is_out_l2norm needs matching code, not another JSON edit."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, src, contract = _stable_tree(tmp)
+            path = ops / "_stable.py"
+            path.write_text(path.read_text(encoding="utf-8")
+                            .replace('def npu_new_op(a):', 'def npu_new_op(a, is_out_l2norm=None):')
+                            .replace('(a, _current_stream_ptr())',
+                                     '(a, bool(is_out_l2norm), _current_stream_ptr())'), encoding="utf-8")
+            # A new wrapper argument still requires the current schema to match.
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                report = self.tool.evaluate()
+            self.assertTrue(any("wrapper passes 3 arguments" in item for item in report["blockers"]), report)
+            path = src / "stable_new_op.cpp"
+            path.write_text(path.read_text(encoding="utf-8")
+                            .replace('Tensor a, int stream', 'Tensor a, bool is_out_l2norm, int stream')
+                            .replace('Tensor a, int64_t stream',
+                                     'Tensor a, bool is_out_l2norm, int64_t stream'), encoding="utf-8")
+            with mock.patch.object(self.tool, "OPS_DIR", ops), \
+                    mock.patch.object(self.tool, "SRC_DIR", src), \
+                    mock.patch.object(self.tool, "PUBLIC_CONTRACT", contract):
+                report = self.tool.evaluate()
+            self.assertEqual(report["blockers"], [])
+
+    def test_json_cli_fails_without_strict_for_unexplained_gap(self):
+        with mock.patch.object(self.tool, "evaluate", return_value={"rows": [], "blockers": ["broken: missing wrapper"]}), \
+                mock.patch.object(self.tool, "load_baseline", return_value={}), \
+                mock.patch.object(sys, "argv", ["coverage", "--json"]), \
+                mock.patch("builtins.print"):
+            self.assertEqual(self.tool.main(), 1)
 
 
 class TranslationUnitTest(unittest.TestCase):

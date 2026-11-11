@@ -88,6 +88,25 @@ public:
     }
 
 private:
+    template <typename T>
+    __aicore__ inline void LoadModelRows(
+        LocalTensor<T> dst, const GlobalTensor<T> &src, uint64_t headOffset,
+        uint32_t elems, uint64_t heads, uint64_t width, bool tokenMajor)
+    {
+        if (!tokenMajor) {
+            DataCopy(dst, src[headOffset], elems);
+            return;
+        }
+        const uint64_t flat = headOffset / width;
+        const uint64_t batch = flat / (heads * T_);
+        const uint64_t head = (flat / T_) % heads;
+        const uint64_t offset = ((batch * T_ + flat % T_) * heads + head) * width;
+        DataCopyPad(dst, src[offset], DataCopyExtParams{
+            static_cast<uint16_t>(elems / width), static_cast<uint32_t>(width * sizeof(T)),
+            static_cast<uint32_t>((heads - 1) * width * sizeof(T)), 0, 0},
+            DataCopyPadExtParams<T>{false, 0, 0, static_cast<T>(0)});
+    }
+
     __aicore__ inline void CopyALogOnce(TEventID mte2Event)
     {
         if (!hasALog_) {
@@ -132,13 +151,13 @@ private:
             DataCopy(dtBias, dtBiasTensor_[h * K_], K_);
         }
         if constexpr (std::is_same<GateType, float>::value) {
-            DataCopy(gFp32, gTensor_[gBase], rowElems);
+            LoadModelRows(gFp32, gTensor_, gBase, rowElems, Hv_, K_, (tiling_->reserved & 1U) != 0U);
         } else {
-            DataCopy(outLocal, gTensor_[gBase], rowElems);
+            LoadModelRows(outLocal, gTensor_, gBase, rowElems, Hv_, K_, (tiling_->reserved & 1U) != 0U);
         }
-        DataCopy(qLocal, qTensor_[qkBase], rowElems);
-        DataCopy(kLocal, kTensor_[qkBase], rowElems);
-        DataCopy(vLocal, vTensor_[vBase], vElems);
+        LoadModelRows(qLocal, qTensor_, qkBase, rowElems, Hk_, K_, (tiling_->reserved & 2U) != 0U);
+        LoadModelRows(kLocal, kTensor_, qkBase, rowElems, Hk_, K_, (tiling_->reserved & 2U) != 0U);
+        LoadModelRows(vLocal, vTensor_, vBase, vElems, Hv_, V_, (tiling_->reserved & 4U) != 0U);
         if constexpr (std::is_same<BetaType, float>::value) {
             DataCopyPad(betaFp32, betaTensor_[betaBase],
                         {1, static_cast<uint32_t>(curChunkSize * sizeof(float)), 0, 0, 0},
@@ -299,8 +318,8 @@ private:
         CopyALogOnce(mte2ToVEvent_[0]);
 
         const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        const uint32_t coreNumAic = tiling_->vecRow > 0 ? static_cast<uint32_t>(tiling_->vecRow)
-                                                        : GetBlockNum();
+        const uint32_t coreNumAic = tiling_->usedAic > 0 ? static_cast<uint32_t>(tiling_->usedAic)
+                                                         : GetBlockNum();
         const uint32_t subIdx = GetSubBlockIdx();
         const uint64_t hv = (Hv_ == 0) ? 1 : Hv_;
         const uint64_t totalTasks = chunkNum_ * hv;
@@ -419,8 +438,8 @@ private:
         CopyALogOnce(mte2ToVEvent_[0]);
 
         const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        const uint32_t coreNumAic = tiling_->vecRow > 0 ? static_cast<uint32_t>(tiling_->vecRow)
-                                                        : GetBlockNum();
+        const uint32_t coreNumAic = tiling_->usedAic > 0 ? static_cast<uint32_t>(tiling_->usedAic)
+                                                         : GetBlockNum();
         const uint32_t subIdx = GetSubBlockIdx();
         const uint64_t hv = (Hv_ == 0) ? 1 : Hv_;
         const uint64_t totalTasks = chunkNum_ * hv;
@@ -516,13 +535,13 @@ private:
             DataCopy(dtBias, dtBiasTensor_[h * K_], K_);
         }
         if constexpr (std::is_same<GateType, float>::value) {
-            DataCopy(gFp32, gTensor_[gBase], rowElems);
+            LoadModelRows(gFp32, gTensor_, gBase, rowElems, Hv_, K_, (tiling_->reserved & 1U) != 0U);
         } else {
-            DataCopy(outLocal, gTensor_[gBase], rowElems);
+            LoadModelRows(outLocal, gTensor_, gBase, rowElems, Hv_, K_, (tiling_->reserved & 1U) != 0U);
         }
-        DataCopy(qLocal, qTensor_[qkBase], rowElems);
-        DataCopy(kLocal, kTensor_[qkBase], rowElems);
-        DataCopy(vLocal, vTensor_[vBase], vElems);
+        LoadModelRows(qLocal, qTensor_, qkBase, rowElems, Hk_, K_, (tiling_->reserved & 2U) != 0U);
+        LoadModelRows(kLocal, kTensor_, qkBase, rowElems, Hk_, K_, (tiling_->reserved & 2U) != 0U);
+        LoadModelRows(vLocal, vTensor_, vBase, vElems, Hv_, V_, (tiling_->reserved & 4U) != 0U);
         if constexpr (std::is_same<BetaType, float>::value) {
             DataCopyPad(betaFp32, betaTensor_[betaBase],
                         {1, static_cast<uint32_t>(curChunkSize * sizeof(float)), 0, 0, 0},

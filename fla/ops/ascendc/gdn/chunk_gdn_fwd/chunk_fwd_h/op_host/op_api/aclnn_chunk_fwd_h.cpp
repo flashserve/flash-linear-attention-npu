@@ -7,12 +7,18 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_fwd_h.h"
 #include "chunk_fwd_h.h"
 #include <dlfcn.h>
 #include <new>
+#include <vector>
+#include <algorithm>
 
 #include "aclnn_kernels/contiguous.h"
+#include "aclnn_kernels/transpose.h"
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
 #include "aclnn_kernels/common/op_error_check.h"
@@ -150,9 +156,9 @@ static aclnnStatus CheckVariableLengthInputs(const ChunkFwdHParams &params)
                ACLNN_ERR_PARAM_INVALID,
                "cuSeqlensOptional last element must equal T=%ld.", kShape.GetDim(2));
     for (size_t seq = 0; seq + 1 < params.cuSeqlensOptional->Size(); ++seq) {
-        CHECK_COND((*params.cuSeqlensOptional)[seq] < (*params.cuSeqlensOptional)[seq + 1],
+        CHECK_COND((*params.cuSeqlensOptional)[seq] <= (*params.cuSeqlensOptional)[seq + 1],
                    ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional must be strictly increasing; empty sequences are not supported.");
+                   "cuSeqlensOptional must be non-decreasing; equal neighbours denote empty sequences.");
     }
 
     if (params.chunkIndicesOptional == nullptr) {
@@ -291,6 +297,49 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     return ACLNN_SUCCESS;
 }
 
+// state_v_first=true 的末两维转置辅助（gated kernel 恒 [K,V] 产出，aclnn 层做
+// [K,V]<->[V,K] 适配）。翻译原语失败时 typed 上报参数名/实际值/期望值，返回码不变。
+static constexpr const char *OP_NAME = "aclnnChunkFwdH";
+
+// gated 引擎与配套翻译仅 DAV_2201（A2/A3）生效，其余芯片保持基线行为。
+static bool SocSupportsGatedPath()
+{
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+}
+
+static aclnnStatus TranslationNullptr(const char *name, const char *expected)
+{
+    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "nullptr", expected);
+    return ACLNN_ERR_INNER_NULLPTR;
+}
+
+static op::Shape SwapLastTwo(const op::Shape &input)
+{
+    op::Shape output = input;
+    const int64_t dimA = input.GetDim(input.GetDimNum() - 2);
+    const int64_t dimB = input.GetDim(input.GetDimNum() - 1);
+    output.SetDim(input.GetDimNum() - 2, dimB);
+    output.SetDim(input.GetDimNum() - 1, dimA);
+    return output;
+}
+
+static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *executor)
+{
+    const size_t rank = input->GetViewShape().GetDimNum();
+    std::vector<int64_t> perm(rank);
+    for (size_t idx = 0; idx < rank; ++idx) {
+        perm[idx] = static_cast<int64_t>(idx);
+    }
+    std::swap(perm[rank - 2], perm[rank - 1]);
+    const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
+    if (permArray == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "perm", "nullptr perm array",
+                                  "int64 perm swapping the last two dims");
+        return nullptr;
+    }
+    return l0op::Transpose(input, permArray, executor);
+}
+
 static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *executorPtr)
 {
     auto status = DataContiguous(params.k, executorPtr);
@@ -310,6 +359,7 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
         if (status != ACLNN_SUCCESS) {
             return status;
         }
+        // bf16 g 不在入口 cast，由 kernel 内 Cast 转 fp32（数值等价）。
     }
     if (params.gkOptional != nullptr) {
         status = DataContiguous(params.gkOptional, executorPtr);
@@ -440,21 +490,63 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
+    // vfirst=1 dense 翻译（转 [K,V] 进 kernel + 传 false 进 gated）；varlen 不
+    // 翻译（vfirst 原样直达，由 kernel 谓词送老路径）。
+    const bool translateVFirst = params.stateVFirst && params.cuSeqlensOptional == nullptr &&
+        SocSupportsGatedPath();
+    const aclTensor *initialStateCompute = params.initialStateOptional;
+    const aclTensor *hCompute = params.hOut;
+    const aclTensor *finalStateCompute = params.finalStateOut;
+    if (translateVFirst && initialStateCompute != nullptr) {
+        initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
+        if (initialStateCompute == nullptr) {
+            return TranslationNullptr("initial_state", "transposed [K,V] tensor from TransposeLastTwo");
+        }
+    }
+    if (translateVFirst) {
+        hCompute = executorPtr->AllocTensor(
+            SwapLastTwo(params.hOut->GetViewShape()), params.hOut->GetDataType(), Format::FORMAT_ND);
+        if (hCompute == nullptr) {
+            return TranslationNullptr("h", "swapped-layout staging tensor from AllocTensor");
+        }
+        if (params.finalStateOut != nullptr) {
+            finalStateCompute = executorPtr->AllocTensor(
+                SwapLastTwo(params.finalStateOut->GetViewShape()), params.finalStateOut->GetDataType(),
+                Format::FORMAT_ND);
+            if (finalStateCompute == nullptr) {
+                return TranslationNullptr("final_state", "swapped-layout staging tensor from AllocTensor");
+            }
+        }
+    }
     auto result = l0op::ChunkFwdH(
-        params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initialStateOptional,
+        params.k, params.w, params.u, params.gOptional, params.gkOptional, initialStateCompute,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
-        params.saveNewValue, params.useExp2, params.stateVFirst,
-        params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
+        params.saveNewValue, params.useExp2, params.stateVFirst && !translateVFirst,
+        hCompute, params.vNewOut, finalStateCompute, executorPtr);
     CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr),
               ACLNN_ERR_INNER_NULLPTR);
 
-    auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
+    const aclTensor *hResult = result[0];
+    if (translateVFirst) {
+        hResult = TransposeLastTwo(hResult, executorPtr);
+        if (hResult == nullptr) {
+            return TranslationNullptr("h", "transposed output tensor from TransposeLastTwo");
+        }
+    }
+    auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
     CHECK_RET(viewCopyResult1 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     if (outputFinalState && params.finalStateOut != nullptr) {
-        auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
+        const aclTensor *finalStateResult = result[2];
+        if (translateVFirst) {
+            finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
+            if (finalStateResult == nullptr) {
+                return TranslationNullptr("final_state", "transposed output tensor from TransposeLastTwo");
+            }
+        }
+        auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
         CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
 

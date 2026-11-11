@@ -2,10 +2,12 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  *
- * Ascend950 Mix Cube (dav-3510 / arch35), host-split.
+ * Ascend950 Mix Cube (dav-3510 / arch35).
  *
- * One rank-step GEMM per launch: C = M @ H on the shared FP32 scratch tensor.
- * No CrossCore. Vector packed M/H in the previous launch on this stream.
+ * Fused Mix with Vector: Mode-4 CV/VC/CUbFree. C = M @ H from FP32 scratch;
+ * Fixpipe each 64-row tile into the owning AIV fp32Buf.
+ * Dual L1 stages: M1 overlaps C0 MMAD; next H+M0 prefetches during C1.
+ * Wait M1 before Fixpipe so MTE2 and FIX do not race (mssanitizer AIC 271).
  */
 #ifndef MERGE_FWD_BWD_KERNEL_ARCH35_CUBE_H
 #define MERGE_FWD_BWD_KERNEL_ARCH35_CUBE_H
@@ -174,10 +176,10 @@ public:
                             copyL1ToL0A, copyL1ToL0B, tileMmad, l0A, l0B, tensorL1A01, tensorL1B1,
                             tensorL0C0, false, kEventL0C0, curEv);
                     }
-                    // Drain/SetCv0 can run while trailing M1 MTE2 completes.
+                    // M1 must be resident before Fixpipe; do not overlap MTE2 with FIX.
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(curM1Ev);
                     DrainCopyC(tensorL0C0, h, 0, kEventL0C0);
                     CubeSetCv0(h);
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(curM1Ev);
 
                     uint64_t nextH = 0;
                     uint32_t nextBank = mBank;
