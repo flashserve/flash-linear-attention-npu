@@ -19,7 +19,6 @@
 #ifndef RECOMPUTE_W_U_FWD_VECTOR_REGBASE_H
 #define RECOMPUTE_W_U_FWD_VECTOR_REGBASE_H
 
-
 #include "../recompute_w_u_fwd_struct.h"
 #include "../recompute_w_u_fwd_common.h"
 #include "catlass/arch/cross_core_sync.hpp"
@@ -49,7 +48,6 @@ public:
     __aicore__ inline void Init(const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_);
 
 private:
-    int64_t layout_ = GDN::RecomputeWULayout::BNSD;
     uint64_t B = 0;
     uint64_t T = 0;
     uint64_t Hv = 1;
@@ -130,7 +128,6 @@ __aicore__ void inline RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim>
     betaTensor.SetGlobalBuffer((__gm__ betaType *)beta);
     gTensor.SetGlobalBuffer((__gm__ betaType *)g);
 
-    layout_ = tiling.layout;
     B = tiling.B;
     T = tiling.T;
     Hv = tiling.Hv;
@@ -325,24 +322,12 @@ __aicore__ void inline RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim>
             const uint64_t vbDstBase = ringTask * chunkSize * V;
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                const uint64_t bIdx = cu_seqlens ? 0 : loopIdx / ((T + chunkSize - 1) / chunkSize);
-                const uint64_t tokenBase = cu_seqlens ? bos : bos - bIdx * Hv * T;
-                auto vOffset = (layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)
-                    ? ((bIdx * T + tokenBase + rowOffset) * Hv + h) * V
-                    : (h * T + bos + rowOffset) * V;
+                auto vOffset = (h * T + bos + rowOffset) * V;
                 auto betaOffset = h * T + bos + rowOffset;
                 {
                     auto tensorVin = dataInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
-                    if ((layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)) {
-                        DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
-                            static_cast<uint32_t>(V * sizeof(kType)),
-                            static_cast<uint32_t>((Hv - 1) * V * sizeof(kType)), 0, 0};
-                        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
-                        DataCopyPad(tensorVin, vTensor[vOffset], params, pad);
-                    } else {
-                        DataCopy(tensorVin, vTensor[vOffset], V * curRowNum);
-                    }
+                    DataCopy(tensorVin, vTensor[vOffset], V * curRowNum);
                     DataCopyPad(tensorBetain, betaTensor[betaOffset],
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
                                 {false, 0, 0, 0});
@@ -378,10 +363,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim>
                 uint64_t coreLoopsInB = (T + chunkSize - 1) / chunkSize;
                 uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / coreLoopsInB);
                 uint64_t bosK = cu_seqlens ? bos : (bos - bIdx * (Hv - Hk) * T);
-                const uint64_t tokenBase = cu_seqlens ? bos : bos - bIdx * Hv * T;
-                auto kSrcOffset = (layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)
-                    ? ((bIdx * T + tokenBase + rowOffset) * Hk + hk) * K
-                    : (hk * T + bosK + rowOffset) * K;
+                auto kSrcOffset = (hk * T + bosK + rowOffset) * K;
                 const uint64_t kbgRingBase = static_cast<uint64_t>(coreNumAic) *
                     GM_RING_DEPTH * chunkSize * V;
                 const uint64_t kbgDstBase = kbgRingBase + ringTask * chunkSize * K;
@@ -390,15 +372,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim>
                     auto tensorKin = dataInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
                     auto tensorGin = gInQue.AllocTensor<betaType>();
-                    if ((layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)) {
-                        DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
-                            static_cast<uint32_t>(K * sizeof(kType)),
-                            static_cast<uint32_t>((Hk - 1) * K * sizeof(kType)), 0, 0};
-                        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
-                        DataCopyPad(tensorKin, kTensor[kSrcOffset], params, pad);
-                    } else {
-                        DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
-                    }
+                    DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
                     DataCopyPad(tensorBetain, betaTensor[betaOffset],
                                 {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},
                                 {false, 0, 0, 0});

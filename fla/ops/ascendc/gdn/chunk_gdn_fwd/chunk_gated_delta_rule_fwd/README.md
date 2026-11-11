@@ -59,13 +59,13 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 
 Python 稳定入口固定返回
 `(o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)` 十元组。
-启用 `use_qk_l2norm_in_kernel` 时，q_hat/k_hat 为归一化结果，shape/layout/dtype 与输入一致，
-q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变；关闭时 q_hat/k_hat 分别为原始 q/k
-对象的别名（不分配、不复制），q_rstd/k_rstd 为 None。新增四项不受 disable_recompute 控制。
+`disable_recompute` 同时决定 g_cumsum、A 和 q_hat、k_hat、两个 rstd。为 `false` 时这六项为 None。
+为 `true` 且核内做了 L2 时，q_hat/k_hat 是新分配的归一化结果，shape/layout/dtype 与输入一致，
+q_rstd/k_rstd 为 FP32 `[B,Hk,T]`，不随 layout 改变。`chunkSize=64/128` 且 `true`、关闭核内 L2 时，
+q_hat/k_hat 是原始 q/k 的别名，两个 rstd 为 None。`chunkSize=32` 不能关闭核内 L2。
 旧六项解包调用需要迁移。rstd 的头数为 Hk，不扩展到 Hv；变长模式使用物理 batch/token 维度。
-`disable_recompute=True` 时导出 g_cumsum/A，否则这两项为 None。
 `output_final_state`、`use_beta_sigmoid_in_kernel` 和 `return_intermediate_states`
-分别控制 final_state、beta_eff 和 h 是否为 None。
+分别控制 final_state、beta_eff 和 h 是否为 None，这三项不看 `disable_recompute`。
 h 的 shape 为 dense `[B,NT,Hv,K,V]`，带 cu_seqlens 的 packed 为 `[1,total_NT,Hv,K,V]`；
 `state_v_first=True` 时末两维为 `[V,K]`。A5 prepare 路径导出遵循此契约，旧融合路径仍不导出 h。
 
@@ -80,9 +80,10 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 | --- | --- | --- |
 | `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
-| `chunkSize` | `64`、`128` | 分块大小 |
+| `chunkSize` | `32`、`64`、`128` | 分块大小 |
 | `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
-| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K |
+| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K。`chunkSize=32` 必须为 true |
+| `isOutL2norm` | 算子定义缺省 `false`；公开入口不单独暴露 | `chunkSize=32` 是否把 L2 结果写出，由 `disable_recompute` 决定。`true` 时写出 q_hat、k_hat 和两个 rstd |
 | `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |
 | `stateVFirst` | A5 新路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
 
@@ -92,9 +93,17 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
-- A5 新路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- A5 三算子路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in {1,2,3,4}`。
+- `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。aLog/dtBias 必须为空。稳定入口仍返回十元组。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
+
+### `disable_recompute`
+
+`disable_recompute` 决定是否交出 g_cumsum、A 和 q_hat、k_hat。
+
+- `chunkSize=32` 不能关闭核内 L2。`false` 时 g_cumsum、A、q_hat、k_hat 和两个 rstd 为 None；`true` 时这些都是新分配的张量。
+- `chunkSize=64/128`：`false` 时同样为 None。`true` 时交出 g_cumsum 和 A；`useQkL2norm=true` 时 q_hat、k_hat 和两个 rstd 新分配，`useQkL2norm=false` 时 q_hat、k_hat 是输入 q、k 的别名，两个 rstd 为 None。
 
 ## 验证
 
@@ -111,7 +120,7 @@ python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
 ## 归一化结果导出与反向复用
 
 归一化沿用 prepare 的公式：`rstd = rsqrt(sum(x**2, dim=-1) + 1e-6)`，
-`hat = cast(x * rstd, input_dtype)`。关闭归一化时 hats 与原始输入共享对象及存储，修改任一对象会影响另一个。
+`hat = cast(x * rstd, input_dtype)`。`chunkSize=64/128` 且 `disable_recompute=true`、关闭 `useQkL2norm` 时，hats 与原始输入共享对象及存储。`disable_recompute=false` 时 q_hat、k_hat 和两个 rstd 是 None，不是输入别名。`chunkSize=32` 不能关闭核内归一化，公开 hats 只在 `disable_recompute=true` 时分配。
 反向传入返回的 hats/rstd 和与前向一致的归一化开关，返回的 dq/dk 对应归一化前的原始输入。
 
 ACLNN 参数数量和顺序不变；关闭归一化时四个可选输出 descriptor 仍为空。
@@ -122,7 +131,7 @@ BSND/TND 的旧 `[B,T,Hk]` rstd 输出 descriptor 不再接受。
 ### 直接串联示例
 
 以下代码使用调用方准备的 BSND Q/K/V、BSN g/beta 及上游梯度 d_o，K=V=128、chunk_size=64。
-`use_qk_l2norm` 可取 True 或 False；关闭时返回的 q_hat/k_hat 就是原始输入。
+示例保持 `disable_recompute=True`。`use_qk_l2norm` 可取 True 或 False；此时关闭核内 L2，返回的 q_hat/k_hat 就是原始输入。`disable_recompute=False` 时这四项为 None。
 
 ```python
 from fla_npu.ops.ascendc import (

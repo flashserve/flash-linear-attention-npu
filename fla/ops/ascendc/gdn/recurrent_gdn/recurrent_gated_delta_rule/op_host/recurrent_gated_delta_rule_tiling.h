@@ -65,7 +65,6 @@ protected:
     void InitCompileInfo();
     void PrintTilingData();
     ge::graphStatus CheckContext();
-    ge::graphStatus GetVersion();
     ge::graphStatus AnalyzeDtype();
     ge::graphStatus AnalyzeShapes();
     ge::graphStatus CalUbSize();

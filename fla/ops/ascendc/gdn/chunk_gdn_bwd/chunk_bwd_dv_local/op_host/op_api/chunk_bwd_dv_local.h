@@ -24,8 +24,7 @@ const aclTensor * ChunkBwdDvLocal(
     double scale,
     int64_t chunkSize,
     const aclTensor *out,
-    aclOpExecutor *executor,
-    const char *layout = "BNSD");
+    aclOpExecutor *executor);
 }
 
 #endif

@@ -1212,14 +1212,6 @@
     "recurrent_kda": "(q, k, v, g, beta, initial_state=None, *, cu_seqlens=None, ssm_state_indices=None, A_log=None, dt_bias=None, num_accepted_tokens=None, layout='BSND', scale=None, output_final_state=False, inplace_final_state=True, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, safe_gate=False, lower_bound=None, state_v_first=False)"
   },
   "internal_l0_signatures": {
-    "RecomputeWUFwd": {
-      "header": "fla/ops/ascendc/gdn/chunk_gdn_fwd/recompute_w_u_fwd/op_host/op_api/recompute_w_u_fwd.h",
-      "declaration": "const std::array<const aclTensor *, 2> RecomputeWUFwd( const aclTensor *k, const aclTensor *v, const aclTensor *beta, const aclTensor *a, const aclTensor *g, const aclTensor *gk, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, int64_t chunkSize, const aclTensor *wOut, const aclTensor *uOut, aclOpExecutor *executor, const char *layout = \"BNSD\");"
-    },
-    "ChunkBwdDvLocal": {
-      "header": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_bwd_dv_local/op_host/op_api/chunk_bwd_dv_local.h",
-      "declaration": "const aclTensor * ChunkBwdDvLocal( const aclTensor *q, const aclTensor *k, const aclTensor *dO, const aclTensor *g, const aclTensor *gGammaOptional, const aclTensor *aOptional, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize, const aclTensor *out, aclOpExecutor *executor, const char *layout = \"BNSD\");"
-    },
     "ChunkGdnBwdIntra": {
       "header": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_intra/op_host/op_api/chunk_gdn_bwd_intra.h",
       "declaration": "const std::array<const aclTensor *, 3> ChunkGdnBwdIntra( const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta, const aclTensor *a, const aclTensor *dO, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize, bool useExp2, const aclTensor *wOut, const aclTensor *uOut, const aclTensor *dvLocalOut, aclOpExecutor *executor, const char *layout = \"BNSD\");"

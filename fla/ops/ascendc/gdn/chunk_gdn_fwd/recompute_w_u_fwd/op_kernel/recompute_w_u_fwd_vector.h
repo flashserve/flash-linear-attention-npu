@@ -16,7 +16,6 @@
 #ifndef RECOMPUTE_W_U_FWD_VECTOR_H
 #define RECOMPUTE_W_U_FWD_VECTOR_H
 
-
 #include "recompute_w_u_fwd_struct.h"
 #include "catlass/arch/cross_core_sync.hpp"
 using namespace AscendC;
@@ -37,7 +36,6 @@ public:
     __aicore__ inline void Init(const RecomputeWUFwdTilingData &tiling, AscendC::TPipe *pipe_);
 
 private:
-    int64_t layout_ = GDN::RecomputeWULayout::BNSD;
     uint64_t B = 0;
     uint64_t T = 0;
     uint64_t Hv = 1;
@@ -105,7 +103,6 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::Init(
     betaTensor.SetGlobalBuffer((__gm__ betaType *)beta);
     gTensor.SetGlobalBuffer((__gm__ betaType *)g);
 
-    layout_ = tiling.layout;
     B = tiling.B;
     T = tiling.T;
     Hv = tiling.Hv;
@@ -170,27 +167,14 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
             }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum) {
                 curRowNum = (rowOffset + rowNum) > curChunkSize ? curChunkSize - rowOffset : rowNum;
-                uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / ((T + chunkSize - 1) / chunkSize));
-                uint64_t tokenBase = cu_seqlens ? bos : (bos - bIdx * Hv * T);
-                auto vOffset = (layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)
-                                   ? ((bIdx * T + tokenBase + rowOffset) * Hv + h) * V
-                                   : (h * T + bos + rowOffset) * V;
-                auto vDstOffset = (h * T + bos + rowOffset) * V;
+                auto vOffset = (h * T + bos + rowOffset) * V;
                 auto betaOffset = h * T + bos + rowOffset;
                 // copyin
                 {
                     auto tensorVin = vInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
 
-                    if ((layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)) {
-                        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
-                        DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
-                                                 static_cast<uint32_t>(V * sizeof(kType)),
-                                                 static_cast<uint32_t>((Hv - 1) * V * sizeof(kType)), 0, 0};
-                        DataCopyPad(tensorVin, vTensor[vOffset], params, pad);
-                    } else {
-                        DataCopy(tensorVin, vTensor[vOffset], V * curRowNum);
-                    }
+                    DataCopy(tensorVin, vTensor[vOffset], V * curRowNum);
                     DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
 
                     vInQue.EnQue(tensorVin);
@@ -232,7 +216,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessVb()
                 // copyout
                 {
                     auto tensorVbOut = vbOutQue.DeQue<kType>();
-                    DataCopy(workSpaceTensor[vDstOffset], tensorVbOut, V * curRowNum);
+                    DataCopy(workSpaceTensor[vOffset], tensorVbOut, V * curRowNum);
                     vbOutQue.FreeTensor(tensorVbOut);
                 }
             }
@@ -290,11 +274,8 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                 // coreLoopsInB 必须与 GetChunkOffset 内保持一致的算法。
                 uint64_t coreLoopsInB = (T + chunkSize - 1) / chunkSize;
                 uint64_t bIdx = cu_seqlens ? 0 : (loopIdx / coreLoopsInB);
-                uint64_t tokenBase = cu_seqlens ? bos : (bos - bIdx * Hv * T);
                 uint64_t bosK = cu_seqlens ? bos : (bos - bIdx * (Hv - Hk) * T);
-                auto kSrcOffset = (layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)
-                                      ? ((bIdx * T + tokenBase + rowOffset) * Hk + hk) * K
-                                      : (hk * T + bosK + rowOffset) * K;
+                auto kSrcOffset = (hk * T + bosK + rowOffset) * K;
                 auto kDstOffset = (h * T + bos + rowOffset) * K;
                 auto betaOffset = h * T + bos + rowOffset;
                 // copyin
@@ -302,15 +283,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType>::ProcessKbgE
                     auto tensorKin = kInQue.AllocTensor<kType>();
                     auto tensorBetain = betaInQue.AllocTensor<betaType>();
                     auto tensorGin = gInQue.AllocTensor<betaType>();
-                    if ((layout_ == GDN::RecomputeWULayout::BSND || layout_ == GDN::RecomputeWULayout::TND)) {
-                        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
-                        DataCopyExtParams params{static_cast<uint16_t>(curRowNum),
-                                                 static_cast<uint32_t>(K * sizeof(kType)),
-                                                 static_cast<uint32_t>((Hk - 1) * K * sizeof(kType)), 0, 0};
-                        DataCopyPad(tensorKin, kTensor[kSrcOffset], params, pad);
-                    } else {
-                        DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
-                    }
+                    DataCopy(tensorKin, kTensor[kSrcOffset], K * curRowNum);
                     DataCopyPad(tensorBetain, betaTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
                     DataCopyPad(tensorGin, gTensor[betaOffset], {1, curRowNum * static_cast<uint32_t>(sizeof(betaType)), 0, 0, 0},{false, 0, 0, 0});
                     kInQue.EnQue(tensorKin);

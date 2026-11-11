@@ -7,8 +7,6 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#include <cstring>
-
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -31,17 +29,9 @@ const aclTensor * ChunkBwdDvLocal(
     double scale,
     int64_t chunkSize,
     const aclTensor *out,
-    aclOpExecutor *executor,
-    const char *layout)
+    aclOpExecutor *executor)
 {
-    if (layout == nullptr ||
-        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
-        return nullptr;
-    }
-    L0_DFX(ChunkBwdDvLocal, q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional,
-           chunkIndicesOptional, scale, chunkSize, layout, out);
+    L0_DFX(ChunkBwdDvLocal, q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, out);
     
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -66,7 +56,7 @@ const aclTensor * ChunkBwdDvLocal(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkBwdDvLocal,
         OP_INPUT(q, k, dO, g, gGammaOptional, aOptional, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(out),
-        OP_ATTR(scale, chunkSize, layout));
+        OP_ATTR(scale, chunkSize));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;

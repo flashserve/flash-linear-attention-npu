@@ -91,7 +91,6 @@ __aicore__ inline void RecomputeWUFwdKernelImpl(
 #ifndef TORCH_MODE
 using namespace AscendC;
 
-template <int V>
 __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR gk,
                                             GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR w, GM_ADDR u,
                                             GM_ADDR workspace, GM_ADDR tiling)
@@ -105,8 +104,14 @@ __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta,
     REGISTER_TILING_DEFAULT(GDN::RecomputeWUFwdTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::RecomputeWUFwdTilingData, tilingData, tiling);
 
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-    GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, V>(
-        k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
+    if (TILING_KEY_IS(1)) {
+        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, 128>(
+            k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
+    } else if (TILING_KEY_IS(2)) {
+        KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_2);
+        GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, 256>(
+            k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
+    }
 }
 #endif

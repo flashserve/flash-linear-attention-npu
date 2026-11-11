@@ -12,9 +12,6 @@
  * \brief
  */
 
-#include "../../op_kernel/recompute_w_u_fwd_struct.h"
-#include <cstring>
-
 #include "recompute_w_u_fwd_tiling.h"
 #include "recompute_w_u_fwd_tiling_processor.h"
 #include <register/op_impl_registry.h>
@@ -69,19 +66,6 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     const int64_t *chunkIndicesData =
         chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
 
-    const char *qkvLayout = attrPtr->GetStr(1);
-    if (qkvLayout == nullptr) {
-        qkvLayout = "BNSD";
-    }
-    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
-        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
-                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
-                return ge::GRAPH_FAILED);
-    const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::RecomputeWULayout::BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::RecomputeWULayout::BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::RecomputeWULayout::NTD : GDN::RecomputeWULayout::TND;
-
     RecomputeWUFwdTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(RECOMPUTE_W_U_FWD_INPUT_K_IDX),
@@ -94,7 +78,6 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
         cuSeqlensData,
         chunkIndicesData,
         *(attrPtr->GetAttrPointer<int32_t>(0)),
-        layoutValue,
         kDesc->GetDataType(),
         betaDesc->GetDataType(),
         ubSize,
@@ -106,11 +89,11 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     RecomputeWUFwdTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
-    using GDN::g_tilingDeclareParams;
-#ifdef ASCENDC_DEBUG
-    using GDN::g_tilingSelectParams;
-#endif
-    context->SetTilingKey(GET_TPL_TILING_KEY(static_cast<int>(tiling->V)));
+    if (tiling->V == RECOMPUTE_W_U_FWD_V_DIM_256) {
+        context->SetTilingKey(2);
+    } else {
+        context->SetTilingKey(1);
+    }
     OP_LOGD(context->GetNodeName(), "tilingKey: %d (V=%ld)", context->GetTilingKey(), tiling->V);
     RecomputeWUFwdTilingDataPrint(context, *tiling);
 

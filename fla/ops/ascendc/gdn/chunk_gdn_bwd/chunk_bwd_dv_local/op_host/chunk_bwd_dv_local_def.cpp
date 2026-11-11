@@ -85,7 +85,6 @@ public:
 
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
-        this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig aicore_config;
         aicore_config.DynamicCompileStaticFlag(true)

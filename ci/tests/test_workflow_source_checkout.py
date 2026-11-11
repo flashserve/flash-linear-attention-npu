@@ -29,7 +29,7 @@ class WorkflowSourceCheckoutTest(unittest.TestCase):
         cls.monitor_script = container_script[
             container_script.index("get_pr_head_sha() {"):container_script.index("mark_stale() {")
         ] + "\nget_pr_head_sha\n"
-        cls.container_prefix = container_script[:container_script.index("summary_status=0")]
+        cls.container_prefix = container_script
         cls.real_git = shutil.which("git")
         cls.seed_directory = tempfile.TemporaryDirectory(prefix="npu-ci-source-seed-")
         cls.addClassCleanup(cls.seed_directory.cleanup)
@@ -290,6 +290,7 @@ class WorkflowSourceCheckoutTest(unittest.TestCase):
             script + '\nexit "$ci_status"\n',
             TEST_DENY_NETWORK="1", CI_ACCURACY_REPORT_FILE=".ci-tmp/accuracy.json",
             CI_RAW_LOG_FILE=".ci-tmp/raw.log", CI_DIAGNOSTIC_FILE=".ci-tmp/diagnostic.json",
+            CI_STAGE_REPORT_FILE=".ci-tmp/stages.json", GITHUB_OUTPUT=str(self.root / "github-output"),
             CI_SUMMARY_FILE=".ci-tmp/summary.md", CI_CONTAINER_NAME="unused-container",
             NPU_CI_HEAD_POLL_SECONDS="0",
         )

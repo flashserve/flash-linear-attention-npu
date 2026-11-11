@@ -7,8 +7,6 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#include <cstring>
-
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -31,17 +29,9 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     int64_t chunkSize,
     const aclTensor *wOut,
     const aclTensor *uOut,
-    aclOpExecutor *executor,
-    const char *layout)
+    aclOpExecutor *executor)
 {
-    if (layout == nullptr ||
-        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
-         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
-        return {nullptr, nullptr};
-    }
-    L0_DFX(RecomputeWUFwd, k, v, beta, a, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize,
-           layout, wOut, uOut);
+    L0_DFX(RecomputeWUFwd, k, v, beta, a, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize, wOut, uOut);
     
     const aclTensor *actualCuSeqQLen = nullptr;
     if (cuSeqlensOptional) {
@@ -66,7 +56,7 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RecomputeWUFwd,
         OP_INPUT(k, v, beta, a, g, gk, actualCuSeqQLen, actualChunkIndices),
         OP_OUTPUT(wOut, uOut),
-        OP_ATTR(chunkSize, layout));
+        OP_ATTR(chunkSize));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr};

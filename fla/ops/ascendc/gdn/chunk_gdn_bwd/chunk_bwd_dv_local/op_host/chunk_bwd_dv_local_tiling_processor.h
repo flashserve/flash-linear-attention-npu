@@ -74,7 +74,6 @@ struct ChunkBwdDvLocalTilingContext {
     const gert::StorageShape *chunkIndicesShape;
     double scale;
     int32_t chunkSize;
-    int64_t layout;
 };
 
 class ChunkBwdDvLocalTilingProcessor {
@@ -159,21 +158,6 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
-    ge::graphStatus CompareDimPair(const gert::Shape &shape1, const gert::Shape &shape2,
-                                   const char *inputName1, const char *inputName2,
-                                   size_t dimIndex1, size_t dimIndex2)
-    {
-        size_t shapeDim1 = shape1.GetDim(dimIndex1);
-        size_t shapeDim2 = shape2.GetDim(dimIndex2);
-        OP_CHECK_IF(shapeDim1 != shapeDim2,
-                    OP_LOGE(ctx_.nodeName,
-                            "Compare input shape of %s dim %zu and %s dim %zu failed, "
-                            "the lengths should be same, but got %zu and %zu.",
-                            inputName1, dimIndex1, inputName2, dimIndex2, shapeDim1, shapeDim2),
-                    return ge::GRAPH_FAILED);
-        return ge::GRAPH_SUCCESS;
-    }
-
     ge::graphStatus CommonTiling()
     {
         const gert::Shape qStorageShape = ctx_.qShape->GetStorageShape();
@@ -186,16 +170,14 @@ public:
         OP_CHECK_IF(CompareDim(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME, DIM_0) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CompareDimPair(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME,
-                                   (ctx_.layout == GDN::DvLocalLayout::BSND || ctx_.layout == GDN::DvLocalLayout::TND) ? DIM_1 : DIM_2, DIM_2) !=
+        OP_CHECK_IF(CompareDim(qStorageShape, dOStorageShape, INPUT_Q_NAME, INPUT_DO_NAME, DIM_2) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         OP_CHECK_IF(CompareShape(dOStorageShape, gStorageShape, INPUT_DO_NAME, INPUT_G_NAME, G_DIM_NUM) !=
                         ge::GRAPH_SUCCESS,
                     , return ge::GRAPH_FAILED);
         tiling_.b = static_cast<int64_t>(qStorageShape.GetDim(DIM_0));
-        tiling_.hQk = static_cast<int64_t>((ctx_.layout == GDN::DvLocalLayout::BSND || ctx_.layout == GDN::DvLocalLayout::TND) ? qStorageShape.GetDim(DIM_2)
-                                                                  : qStorageShape.GetDim(DIM_1));
+        tiling_.hQk = static_cast<int64_t>(qStorageShape.GetDim(DIM_1));
         tiling_.hDo = static_cast<int64_t>(dOStorageShape.GetDim(DIM_1));
         OP_CHECK_IF(tiling_.hDo % tiling_.hQk != 0,
                     OP_LOGE(ctx_.nodeName,
@@ -204,8 +186,7 @@ public:
                     return ge::GRAPH_FAILED);
         tiling_.hRatio = tiling_.hDo / tiling_.hQk;
         tiling_.headBufNum = P1_SLOT_NUM * (1 + tiling_.hRatio);
-        tiling_.t = static_cast<int64_t>((ctx_.layout == GDN::DvLocalLayout::BSND || ctx_.layout == GDN::DvLocalLayout::TND) ? qStorageShape.GetDim(DIM_1)
-                                                               : qStorageShape.GetDim(DIM_2));
+        tiling_.t = static_cast<int64_t>(qStorageShape.GetDim(DIM_2));
         tiling_.k = static_cast<int64_t>(qStorageShape.GetDim(DIM_3));
         tiling_.v = static_cast<int64_t>(dOStorageShape.GetDim(DIM_3));
 
@@ -227,7 +208,6 @@ public:
                             "Check attr chunkSize failed, the chunkSize should be 64 or 128, but get %ld.", chunkSize),
                     return ge::GRAPH_FAILED);
         tiling_.chunkSize = chunkSize;
-        tiling_.layout = ctx_.layout;
         return ge::GRAPH_SUCCESS;
     }
 

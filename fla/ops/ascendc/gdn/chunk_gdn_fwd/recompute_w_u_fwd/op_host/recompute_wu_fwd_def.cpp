@@ -75,7 +75,6 @@ public:
             .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
-        this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig op_file_config;
         op_file_config.ExtendCfgInfo("opFile.value", "recompute_w_u_fwd")

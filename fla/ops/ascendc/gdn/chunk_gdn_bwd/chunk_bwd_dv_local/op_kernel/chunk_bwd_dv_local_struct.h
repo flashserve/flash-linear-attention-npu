@@ -15,8 +15,6 @@
 #ifndef CHUNK_BWD_DV_LOCAL_STRUCT_H
 #define CHUNK_BWD_DV_LOCAL_STRUCT_H
 
-#include <cstdint>
-
 #ifndef TORCH_MODE
 #include "ascendc/host_api/tiling/template_argument.h"
 #endif
@@ -138,16 +136,6 @@ ASCENDC_TPL_SEL(
 );
 #endif
 
-// Runtime layout codes shared by this operator's host and kernels.
-namespace DvLocalLayout {
-enum Layout : int64_t {
-    BNSD = 0,
-    BSND = 1,
-    NTD = 2,
-    TND = 3,
-};
-} // namespace DvLocalLayout
-
 struct ChunkBwdDvLocalTilingData {
     int64_t b;
     int64_t hQk;
@@ -160,7 +148,6 @@ struct ChunkBwdDvLocalTilingData {
     int64_t chunkSize;
     int64_t chunkNumForT;
     float scale;
-    int64_t layout;
 };
 
 } // namespace GDN

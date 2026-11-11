@@ -26,8 +26,12 @@ on:
         description: "Comma-separated arch list (empty = all: arm,x86)"
         required: false
         default: ''
+      jobs:
+        description: "Compilation parallelism per package task (positive integer, default 16)"
+        required: false
+        default: '16'
       requested_by:
-        description: "Original Admin requester; set by the PR comment dispatcher"
+        description: "Original allowlisted CI requester; set by the PR comment dispatcher"
         required: false
         default: ''
       build_sha:
@@ -56,21 +60,34 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: 门禁校验 (请求者 admin / 出包来源白名单 / commit 归属)
+      - name: 检出 CI 权限检查脚本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: ci-control
+          sparse-checkout: .github/scripts/npu_ci_authorization.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: 门禁校验 (CI 用户名单 / 出包来源白名单 / commit 归属)
         uses: actions/github-script@v8
+        env:
+          NPU_CI_AUTH_SCRIPT: ${{ github.workspace }}/ci-control/.github/scripts/npu_ci_authorization.js
+          NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const auth = require(process.env.NPU_CI_AUTH_SCRIPT || './.github/scripts/npu_ci_authorization.js');
             const inputs = context.payload.inputs || {};
             const actor = context.actor || '';
             const requestedBy = String(inputs.requested_by || '').trim();
 
             // 请求者身份分流: 评论分发路径 (GITHUB_TOKEN 触发) 的
             // github.actor 是 github-actions[bot]，真正请求者在
-            // requested_by (由分发器在 admin 校验通过后写入，bot 路径
+            // requested_by (由分发器在名单校验通过后写入，bot 路径
             // 下不可伪造)；手工 UI/API 直接触发时 requested_by 不可信，
             // 只校验触发者本人。workflow_dispatch 只要求 write 权限，
-            // 该门禁防止 write 权限账号绕过评论分发器直接出包
+            // 该门禁防止名单外账号绕过评论分发器直接出包
             let subject = '';
             if (actor === 'github-actions[bot]') {
               subject = requestedBy;
@@ -81,21 +98,7 @@ jobs:
             } else {
               subject = actor;
             }
-            let permission = 'none';
-            try {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: subject,
-              });
-              permission = data.permission || 'none';
-            } catch (error) {
-              core.warning(`无法查询 ${subject} 的仓库权限: ${error.message}`);
-            }
-            if (permission !== 'admin') {
-              core.setFailed(`${subject} 无权触发 Package 编译：需要仓库 Admin 权限，当前权限为 ${permission}。`);
-              return;
-            }
+            await auth.authorizeCiRequest({ github, context, requestedBy: subject });
 
             // build_repo 白名单: 仅本仓库，或 PR 在 GitHub 登记的 head
             // 仓库 (branch=head 编译 fork PR 时的合法来源)，防止
@@ -103,16 +106,21 @@ jobs:
             const buildRepo = String(inputs.build_repo || '').trim();
             const selfRepo = `${context.repo.owner}/${context.repo.repo}`;
             let headRepoFull = '';
+            let pr;
             try {
-              const { data: pr } = await github.rest.pulls.get({
+              ({ data: pr } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: Number(inputs.pr_number),
-              });
+              }));
               headRepoFull = pr.head.repo ? pr.head.repo.full_name : '';
             } catch (error) {
               core.setFailed(`无法读取 PR #${inputs.pr_number}: ${error.message}`);
               return;
+            }
+            auth.requireOpenPullRequest(pr);
+            if (await auth.hasCiChanges({ github, context, pr })) {
+              await auth.requireCiAuthorAdmin({ github, context, pr });
             }
             if (buildRepo !== selfRepo && buildRepo !== headRepoFull) {
               core.setFailed(
@@ -140,7 +148,7 @@ jobs:
               core.setFailed(`build_sha \`${buildSha}\` 不存在于 ${buildRepo}: ${error.message}`);
               return;
             }
-            core.info(`门禁通过: 请求者 ${subject} (admin)，出包来源 ${buildRepo}@${buildSha.slice(0, 7)}。`);
+            core.info(`门禁通过: 请求者 ${subject} (CI 名单)，出包来源 ${buildRepo}@${buildSha.slice(0, 7)}。`);
 
   prepare:
     name: 准备编译矩阵
@@ -149,6 +157,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       socs: ${{ steps.matrix.outputs.socs }}
       arches: ${{ steps.matrix.outputs.arches }}
+      jobs: ${{ steps.matrix.outputs.jobs }}
     steps:
       - name: 解析 SOC / 架构组合
         id: matrix
@@ -158,8 +167,21 @@ jobs:
           script: |
             const SOCS = ['ascend910b', 'ascend910_93', 'ascend950'];
             const ARCHES = ['arm', 'x86'];
+            const RUNNER_LABELS = {
+              arm: ['self-hosted', 'Linux', 'ARM64', 'npu', 'flash-linear-attention-npu'],
+              x86: ['self-hosted', 'Linux', 'npu', 'X64', 'ascend950', 'flash-linear-attention-npu-a5'],
+            };
+            const DOCKER_IMAGES = {
+              arm: 'fla-npu-ci:9.1.0-910b',
+              x86: 'fla-npu-ci:9.1.0-950',
+            };
             const inputs = context.payload.inputs || {};
 
+            const jobs = String(inputs.jobs || '16').trim();
+            if (!/^[1-9][0-9]*$/.test(jobs) || !Number.isSafeInteger(Number(jobs))) {
+              core.setFailed('jobs 参数必须是正整数，例如 16。');
+              return;
+            }
             let socs = (inputs.socs || '').split(',')
               .map((item) => item.trim()).filter(Boolean);
             let arches = (inputs.arches || '').split(',')
@@ -191,12 +213,15 @@ jobs:
                   soc,
                   arch,
                   name: `Release-${ref}-${datetime}-PR${pr}-${soc}-${arch}-${commit}`,
+                  runner_labels: JSON.stringify(RUNNER_LABELS[arch]),
+                  docker_image: DOCKER_IMAGES[arch],
                 });
               }
             }
             core.setOutput('matrix', JSON.stringify({ include }));
             core.setOutput('socs', socs.join(','));
             core.setOutput('arches', arches.join(','));
+            core.setOutput('jobs', jobs);
             core.info(`编译矩阵: ${include.map((item) => `${item.soc}/${item.arch}`).join(', ')}`);
 
   build:
@@ -205,11 +230,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    # 同一架构的多个 SOC 按顺序执行 (SOC 之间串行)，arm 与 x86 之间并行
+    # 每个 SOC 使用独立并发组，避免 GitHub 只保留一个 pending；runner 容量负责实际排队，arm/x86 使用各自标签
     concurrency:
-      group: pkg-${{ github.repository }}-PR${{ inputs.pr_number }}-${{ matrix.arch }}-${{ inputs.build_sha }}
+      group: pkg-${{ github.repository }}-PR${{ inputs.pr_number }}-${{ matrix.arch }}-${{ matrix.soc }}-${{ inputs.build_sha }}
       cancel-in-progress: false
-    runs-on: ["self-hosted", "linux", "arm64", "npu", "flash-linear-attention-npu"]
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
     permissions:
       contents: read
     env:
@@ -218,9 +243,66 @@ jobs:
       FLA_PKG_COMMIT_ID: ${{ inputs.build_sha }}
       FLA_PKG_DATETIME: ${{ inputs.datetime }}
       FLA_PKG_THIRD_PARTY_CACHE: /workspace/flash-linear-attention-npu-ci/cache/third_party
-      FLA_PKG_DOCKER_IMAGE: fla-npu-ci:9.1.0-910b
+      FLA_PKG_DOCKER_IMAGE: ${{ matrix.docker_image }}
+      FLA_PKG_JOBS: ${{ needs.prepare.outputs.jobs }}
+      CI_PROXY_SCRIPT: /home/huangjunzhe/ci/vpn-proxy.sh
     steps:
       - name: Checkout build source (${{ inputs.build_repo }} @ ${{ inputs.build_sha }})
+        id: checkout_source
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/checkout@v4
+        env:
+          http_proxy: ''
+          https_proxy: ''
+          all_proxy: ''
+          GIT_HTTP_PROXY: ''
+          GIT_HTTPS_PROXY: ''
+          no_proxy: '*'
+        with:
+          repository: ${{ inputs.build_repo }}
+          ref: ${{ inputs.build_sha }}
+          fetch-depth: 1
+
+      - name: 启动代理后重试源码拉取
+        if: steps.checkout_source.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          unset GIT_HTTP_PROXY GIT_HTTPS_PROXY
+          source "$CI_PROXY_SCRIPT"
+          proxyon
+          for variable in http_proxy https_proxy all_proxy no_proxy \
+            GIT_HTTP_PROXY GIT_HTTPS_PROXY PROXY_HTTP_PORT PROXY_SOCKS_PORT PROXY_MIXED_PORT; do
+            uppercase="${variable^^}"
+            value="${!variable-}"
+            value="${value:-${!uppercase-}}"
+            if [[ -z "$value" && "$variable" != no_proxy ]]; then continue; fi
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "[pkg][ERROR] Proxy variable $variable contains a newline." >&2
+              exit 1
+            fi
+            printf '%s=%s\n' "$variable" "$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Checkout build source through proxy (attempt 1)
+        id: checkout_source_proxy_1
+        if: steps.checkout_source.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.build_repo }}
+          ref: ${{ inputs.build_sha }}
+          fetch-depth: 1
+
+      - name: 等待后再次通过代理拉取源码
+        if: steps.checkout_source.outcome == 'failure' && steps.checkout_source_proxy_1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Checkout build source through proxy (attempt 2)
+        if: steps.checkout_source.outcome == 'failure' && steps.checkout_source_proxy_1.outcome == 'failure'
+        timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.build_repo }}
@@ -233,7 +315,8 @@ jobs:
           python3 ci/pkg/make_packages.py \
             --soc "${{ matrix.soc }}" \
             --arch "${{ matrix.arch }}" \
-            --head-sha "${{ inputs.build_sha }}"
+            --head-sha "${{ inputs.build_sha }}" \
+            --jobs "$FLA_PKG_JOBS"
 
       - name: 上传 wheel 产物 (${{ matrix.name }})
         if: steps.build.outcome == 'success'
@@ -337,6 +420,7 @@ jobs:
             const requestedBy = inputs.requested_by || context.actor;
             const socs = inputs.socs || 'ascend910b,ascend910_93,ascend950';
             const arches = inputs.arches || 'arm,x86';
+            const jobsPerPackage = inputs.jobs || '16';
             const commit = String(inputs.build_sha || '').slice(0, 7);
             const buildRef = inputs.build_ref || 'unknown';
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
@@ -348,7 +432,7 @@ jobs:
                 '',
                 '编译矩阵未能启动（准备阶段失败或被跳过）。',
                 '',
-                `请求: \`/package soc=${socs} arch=${arches}\` · 触发者: @${requestedBy}`,
+                `请求: \`/package soc=${socs} arch=${arches} jobs=${jobsPerPackage}\` · 触发者: @${requestedBy}`,
                 `编译分支: \`${buildRef}\` · commit: \`${commit}\``,
                 '',
                 `完整运行记录: ${runUrl}`,
@@ -359,7 +443,7 @@ jobs:
               body = [
                 '## Package 编译结果',
                 '',
-                `请求: \`/package soc=${socs} arch=${arches}\` · 触发者: @${requestedBy} · 编译分支: \`${buildRef}\` · commit: \`${commit}\``,
+                `请求: \`/package soc=${socs} arch=${arches} jobs=${jobsPerPackage}\` · 触发者: @${requestedBy} · 编译分支: \`${buildRef}\` · commit: \`${commit}\``,
                 '',
                 '| SOC | 架构 | 状态 | 产物 / 日志 |',
                 '| --- | --- | --- | --- |',

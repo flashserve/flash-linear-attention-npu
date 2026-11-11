@@ -51,7 +51,7 @@ class WorkflowPackageDispatchTest(unittest.TestCase):
         self.assertTrue(inputs["build_sha"]["required"])
         self.assertTrue(inputs["build_repo"]["required"])
 
-    def _run_dispatch(self, comment, permission="admin", draft=False,
+    def _run_dispatch(self, comment, listed=True, draft=False,
                       merge_conflict=False):
         wrapper = f"""
 const fs = require('fs');
@@ -61,17 +61,25 @@ globalThis.context = {{
   actor: 'ci-admin',
   ref: 'refs/heads/main',
   payload: {{
+    repository: {{ default_branch: 'main' }},
     issue: {{ number: 527 }},
     comment: {{ body: process.env.PR_COMMENT }},
   }},
   repo: {{ owner: 'example', repo: 'repo' }},
 }};
 globalThis.github = {{
+  paginate: async () => [],
   rest: {{
     repos: {{
-      getCollaboratorPermissionLevel: async () => ({{
-        data: {{ permission: process.env.PR_PERMISSION || 'admin' }},
-      }}),
+      getCollaboratorPermissionLevel: async () => {{ throw new Error('requester permission must not be queried'); }},
+      getContent: async (payload) => {{
+        if (payload.path !== '.github/npu-ci-users.json' || payload.ref !== 'main') {{
+          throw new Error('must read the default-branch CI allowlist');
+        }}
+        return {{ data: {{ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify({{
+          users: process.env.CI_LISTED === '1' ? ['ci-admin'] : ['someone-else'],
+        }})).toString('base64') }} }};
+      }},
       getBranch: async (payload) => {{
         if (payload.branch === 'no-such-branch') {{
           throw new Error('Not Found');
@@ -82,6 +90,7 @@ globalThis.github = {{
     pulls: {{
       get: async () => ({{
         data: {{
+          number: 527, state: 'open', changed_files: 0,
           draft: process.env.PR_DRAFT === '1',
           base: {{ ref: 'main' }},
           head: {{
@@ -120,7 +129,9 @@ globalThis.core = {{
             record_file = Path(temp_dir) / "records.json"
             env = os.environ.copy()
             env["PR_COMMENT"] = comment
-            env["PR_PERMISSION"] = permission
+            env["CI_LISTED"] = "1" if listed else "0"
+            env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js")
+            env["NPU_CI_RUN_ATTEMPT"] = "1"
             env["PR_DRAFT"] = "1" if draft else "0"
             env["PR_MERGE_CONFLICT"] = "1" if merge_conflict else "0"
             env["RECORD_FILE"] = str(record_file)
@@ -158,7 +169,57 @@ globalThis.core = {{
         self.assertEqual(dispatch["inputs"]["socs"],
                          "ascend910b,ascend910_93,ascend950")
         self.assertEqual(dispatch["inputs"]["arches"], "arm,x86")
+        self.assertEqual(dispatch["inputs"]["jobs"], "16")
         self.assertEqual(dispatch["inputs"]["requested_by"], "ci-admin")
+
+    def test_comment_can_set_build_parallelism(self):
+        completed, records = self._run_dispatch(
+            "/package jobs=8 soc=ascend950 arch=x86")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        dispatch = self._assert_single_dispatch(records)
+        self.assertEqual(dispatch["inputs"]["jobs"], "8")
+        self.assertEqual(dispatch["inputs"]["socs"], "ascend950")
+        self.assertEqual(dispatch["inputs"]["arches"], "x86")
+
+    def test_invalid_or_duplicate_jobs_never_dispatch(self):
+        for value in ("", "0", "-1", "1.5", "abc", "1;id", "9007199254740992"):
+            with self.subTest(value=value):
+                completed, records = self._run_dispatch(f"/package jobs={value}")
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertFalse([r for r in records if r["kind"] == "dispatch"])
+                self.assertTrue(any("jobs 参数必须是正整数" in r["payload"]
+                                    for r in records if r["kind"] == "failed"))
+        completed, records = self._run_dispatch("/package jobs=8 jobs=16")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertFalse([r for r in records if r["kind"] == "dispatch"])
+        self.assertTrue(any("jobs 参数只能指定一次" in r["payload"]
+                            for r in records if r["kind"] == "failed"))
+
+    def test_matrix_validates_parallelism_before_device_jobs(self):
+        script = self.package_workflow["jobs"]["prepare"]["steps"][0]["with"]["script"]
+        wrapper = """
+const inputs = JSON.parse(process.argv[1]);
+const outputs = {}, failures = [];
+const context = { payload: { inputs } };
+const core = { setOutput: (key, value) => outputs[key] = value,
+  setFailed: message => failures.push(message), info: () => {} };
+""" + "try {\n" + script + "\n} finally { console.log(JSON.stringify({outputs, failures})); }"
+        for value, expected in ((None, "16"), ("8", "8"), ("32", "32"),
+                                ("0", None), ("-1", None), ("1;id", None)):
+            with self.subTest(value=value):
+                inputs = {} if value is None else {"jobs": value}
+                completed = subprocess.run(
+                    ["node", "-e", "(function() {" + wrapper + "})()",
+                     json.dumps(inputs)], capture_output=True, text=True,
+                    encoding="utf-8", check=True)
+                result = json.loads(completed.stdout)
+                if expected is None:
+                    self.assertTrue(result["failures"])
+                    self.assertNotIn("matrix", result["outputs"])
+                else:
+                    self.assertFalse(result["failures"])
+                    self.assertEqual(result["outputs"]["jobs"], expected)
+                    self.assertEqual(len(json.loads(result["outputs"]["matrix"])["include"]), 6)
 
     def test_build_and_report_require_guard(self):
         # guard 是 write 权限绕过评论分发器直接 dispatch 时的唯一门禁，
@@ -176,7 +237,7 @@ globalThis.core = {{
         )
 
     def _run_guard(self, actor="github-actions[bot]", requested_by="ci-admin",
-                   permission="admin", build_repo="example/repo",
+                   listed=True, build_repo="example/repo",
                    build_sha=None, head_repo="someone/fork-repo",
                    commit_missing=False):
         if build_sha is None:
@@ -189,6 +250,7 @@ const record = (kind, payload) => records.push({{ kind, payload }});
 globalThis.context = {{
   actor: process.env.GUARD_ACTOR,
   payload: {{
+    repository: {{ default_branch: 'main' }},
     inputs: {{
       pr_number: '527',
       socs: '',
@@ -203,11 +265,18 @@ globalThis.context = {{
   repo: {{ owner: 'example', repo: 'repo' }},
 }};
 globalThis.github = {{
+  paginate: async () => [],
   rest: {{
     repos: {{
-      getCollaboratorPermissionLevel: async () => ({{
-        data: {{ permission: process.env.GUARD_PERMISSION }},
-      }}),
+      getCollaboratorPermissionLevel: async () => {{ throw new Error('requester permission must not be queried'); }},
+      getContent: async (payload) => {{
+        if (payload.path !== '.github/npu-ci-users.json' || payload.ref !== 'main') {{
+          throw new Error('must read the default-branch CI allowlist');
+        }}
+        return {{ data: {{ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify({{
+          users: process.env.CI_LISTED === '1' ? ['ci-admin', 'listed-user'] : ['someone-else'],
+        }})).toString('base64') }} }};
+      }},
       getCommit: async () => {{
         if (process.env.GUARD_COMMIT_MISSING === '1') {{
           throw new Error('Not Found');
@@ -217,7 +286,9 @@ globalThis.github = {{
     }},
     pulls: {{
       get: async () => ({{
-        data: {{ head: {{ repo: {{ full_name: process.env.GUARD_HEAD_REPO }} }} }},
+        data: {{ number: 527, state: 'open', draft: false, changed_files: 0,
+          base: {{ ref: 'main' }},
+          head: {{ sha: 'a'.repeat(40), repo: {{ full_name: process.env.GUARD_HEAD_REPO }} }} }},
       }}),
     }},
   }},
@@ -243,7 +314,9 @@ globalThis.core = {{
             env = os.environ.copy()
             env["GUARD_ACTOR"] = actor
             env["GUARD_REQUESTED_BY"] = requested_by
-            env["GUARD_PERMISSION"] = permission
+            env["CI_LISTED"] = "1" if listed else "0"
+            env["NPU_CI_AUTH_SCRIPT"] = str(REPO_ROOT / ".github/scripts/npu_ci_authorization.js")
+            env["NPU_CI_RUN_ATTEMPT"] = "1"
             env["GUARD_BUILD_REPO"] = build_repo
             env["GUARD_BUILD_SHA"] = build_sha
             env["GUARD_HEAD_REPO"] = head_repo
@@ -262,12 +335,10 @@ globalThis.core = {{
             records = json.loads(record_file.read_text(encoding="utf8"))
         return completed, records
 
-    def test_guard_accepts_dispatcher_and_direct_admin_paths(self):
-        # 评论分发路径 (bot 触发 + requested_by=admin) 与手工 admin 直接触
-        # 发均放行
+    def test_guard_accepts_listed_comment_and_manual_requesters(self):
         for kwargs in (
             dict(actor="github-actions[bot]", requested_by="ci-admin"),
-            dict(actor="boss-admin", requested_by=""),
+            dict(actor="listed-user", requested_by=""),
         ):
             with self.subTest(**kwargs):
                 completed, records = self._run_guard(**kwargs)
@@ -280,22 +351,24 @@ globalThis.core = {{
                         for item in records if item["kind"] == "info"))
 
     def test_guard_rejects_unauthorized_requesters(self):
-        # bot 触发但缺 requested_by / requested_by 非 admin / write 权限
-        # 账号伪造 requested_by 直接 dispatch，均必须拦截
+        # 评论路径不能遗漏请求人；手动触发不能冒用名单内 requested_by。
         cases = [
             (dict(actor="github-actions[bot]", requested_by="",
-                  permission="admin"), "无法确定请求者"),
+                  listed=True), "无法确定请求者", 0),
             (dict(actor="github-actions[bot]", requested_by="mallory",
-                  permission="write"), "无权触发 Package 编译"),
-            # 真人直接触发时 requested_by 不可信: 即便伪造 admin 用户名，
+                  listed=True), "mallory 无权触发", 1),
+            # 真人直接触发时 requested_by 不可信: 即便伪造名单内用户名，
             # 也必须校验触发者本人 (失败信息点名 mallory 而非 ci-admin)
             (dict(actor="mallory", requested_by="ci-admin",
-                  permission="write"), "mallory 无权触发"),
+                  listed=True), "mallory 无权触发", 1),
         ]
-        for kwargs, expected in cases:
+        for kwargs, expected, returncode in cases:
             with self.subTest(**kwargs):
                 completed, records = self._run_guard(**kwargs)
-                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(completed.returncode, returncode, completed.stderr)
+                if returncode:
+                    self.assertIn(expected, completed.stderr)
+                    continue
                 failures = [
                     item["payload"] for item in records
                     if item["kind"] == "failed"
@@ -395,13 +468,12 @@ globalThis.core = {{
         self.assertEqual(len(failures), 1)
         self.assertIn("soc 参数不合法", failures[0])
 
-    def test_non_admin_requester_is_rejected(self):
-        completed, records = self._run_dispatch("/package", permission="write")
+    def test_unlisted_requester_is_rejected(self):
+        completed, records = self._run_dispatch("/package", listed=False)
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        failures = [item["payload"] for item in records if item["kind"] == "failed"]
-        self.assertEqual(len(failures), 1)
-        self.assertIn("无权触发 Package 编译", failures[0])
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("ci-admin 无权触发", completed.stderr)
+        self.assertIn("npu-ci-users.json", completed.stderr)
         self.assertFalse([item for item in records if item["kind"] == "dispatch"])
 
     def test_draft_pull_request_is_rejected(self):

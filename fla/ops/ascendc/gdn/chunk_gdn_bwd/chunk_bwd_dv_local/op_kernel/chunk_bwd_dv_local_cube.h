@@ -15,7 +15,6 @@
 #ifndef CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 #define CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 
-
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #define CATLASS_ARCH 3510
 #include "catlass/arch/arch.hpp"
@@ -75,7 +74,6 @@ public:
     AscendC::GlobalTensor<QKVT> dVGm;
     AscendC::GlobalTensor<QKVT> workspaceGm;
 
-    int64_t layout_;
     int64_t H_qk;
     int64_t H_do;
     int64_t hRatio;
@@ -99,7 +97,6 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d
     dVGm.SetGlobalBuffer((__gm__ QKVT *)d_v);
     workspaceGm.SetGlobalBuffer((__gm__ QKVT *)workspace);
 
-    layout_ = tilingData->layout;
     H_qk = tilingData->hQk;
     H_do = tilingData->hDo;
     hRatio = tilingData->hRatio;
@@ -144,10 +141,8 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
     using BlockMmadV = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShapeV, L0TileShapeV, ElementA,
                                                            ElementB, ElementC, void, TileCopyV>;
 
-    auto layoutA_QK = tla::MakeLayoutFromTag(Catlass::layout::RowMajor(
-        strategy.chunkSize, K, (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND) ? H_qk * K : K));
-    auto layoutB_QK = tla::MakeLayoutFromTag(Catlass::layout::ColumnMajor(
-        K, strategy.chunkSize, (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND) ? H_qk * K : K));
+    auto layoutA_QK = tla::MakeLayout<ElementA, Catlass::layout::RowMajor>(strategy.chunkSize, K);
+    auto layoutB_QK = tla::MakeLayout<ElementB, Catlass::layout::ColumnMajor>(K, strategy.chunkSize);
     auto layoutC_QK = tla::MakeLayout<ElementC, Catlass::layout::RowMajor>(strategy.chunkSize, strategy.chunkSize);
     auto layoutA_V = tla::MakeLayout<ElementA, LayoutTagA_V>(strategy.chunkSize, strategy.chunkSize);
     auto layoutB_V = tla::MakeLayout<ElementB, LayoutTagB_V>(strategy.chunkSize, V);
@@ -205,14 +200,12 @@ __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
                 int64_t qkHead = scheduleIdx;
                 int64_t p1Slot = qkHead % p1SlotNum;
                 BlockMmadQK blockMmadQK(resource);
-                const int64_t kOffset = (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND)
-                                             ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
-                                             : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
-                const int64_t qOffset = (layout_ == GDN::DvLocalLayout::BSND || layout_ == GDN::DvLocalLayout::TND)
-                                             ? ((curBatchId * T + indexResult.curTokenId) * H_qk + qkHead) * K
-                                             : curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K;
-                auto tensorA = tla::MakeTensor(kGm[kOffset], layoutA_QK, Catlass::Arch::PositionGM{});
-                auto tensorB = tla::MakeTensor(qGm[qOffset], layoutB_QK, Catlass::Arch::PositionGM{});
+                auto tensorA =
+                    tla::MakeTensor(kGm[curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K], layoutA_QK,
+                                    Catlass::Arch::PositionGM{});
+                auto tensorB =
+                    tla::MakeTensor(qGm[curBatchId * H_qk * T * K + qkHead * T * K + indexResult.curTokenId * K], layoutB_QK,
+                                    Catlass::Arch::PositionGM{});
                 auto tensorC = tla::MakeTensor(
                     workspaceGm[coreBaseOffset + p1Slot * strategy.chunkSize * strategy.chunkSize],
                     layoutC_QK, Catlass::Arch::PositionGM{});

@@ -1,7 +1,7 @@
 # BSND/TND 转置消除
 
 规则版本：V2。本设计优化已有融合 Bwd 的数据搬运，公开接口和数学公式沿用
-[算子说明](../README.md)。主线基线为 `fb8651651b1bfbe4d58a005d3e3b62c5d86f4e0f`。
+[算子说明](../README.md)。主线基线为 `56a21dc3c5d12d17e8045e26dfcd8dcf226b7ae8`。
 
 ## 布局边界
 
@@ -26,9 +26,7 @@ dO、g、beta、betaRaw、dBeta/dG、rstd、state 和中间 workspace 各自沿�
 
 | 执行链 | 外部张量搬运 | 内部布局 |
 | --- | --- | --- |
-| arch22 RecomputeWUFwd | Vector 按布局读取 k/v | W/U 及 Cube 输入保持 head-major |
-| arch22 ChunkBwdDvLocal | Cube 按布局读取 q/k | dO/g/dvLocal 保持 head-major |
-| arch35 Intra | Cube 读取 q/k，Vector 读取 v | W/U/dvLocal 保持 head-major |
+| arch22/arch35 Intra | Cube 读取 q/k，Vector 读取 v | W/U/dvLocal 保持 head-major |
 | FwdH | Cube 按布局读取 k，含 arch22 gated reuse 分支 | W/U/h/vNew 保持原布局 |
 | DHU | Cube/Vector 按布局读取 q/k | dO/g/W/dvLocal/dh/dv2 保持原布局 |
 | arch35 Finalize | 按布局读取 q/k/v，S6 写 dv，S15 写 dq/dk | 标量梯度与归约 workspace 保持原布局 |
@@ -42,15 +40,16 @@ arch35 通过输出 buffer 0 直接搬运同 dtype 的状态，不经过 FP32 �
 输出槽位的 V→MTE3 事件交接；搬出后归还 MTE3→V 信用，退出前恢复借用的 q 信用。
 不增加 workspace、EventID 或跨核同步。旧实现会将该区域留为零，此处按已有接口契约修正。
 
-保留原 GVA 归约顺序、BF16 阶段落盘、指数换算和状态编号。仅 W/U 的空序列 metadata
-继续压缩，其它阶段仍使用原序列编号。公开八个返回槽位不变。
+A2/A3 与 A5 统一使用 Intra → FwdH → DHU → Finalize。Intra 原生处理 BF16/FP32 gate、
+useExp2 和空序列，不增加自然指数转换或重编号桥接。保留各平台原 GVA 归约顺序、BF16 阶段
+落盘、指数计算和状态编号，公开八个返回槽位不变。WU/DvLocal 独立算子的接口和实现沿用 main。
 
 arch22 FwdH 的 gated preload 内部使用压缩后的非空序列调度。初态和最终状态的
 序列轴仍保留空序列：发生压缩时，用非空序列起始 token 在原 cu_seqlens 中二分查找
 原序列编号；状态搬入和最终状态写回使用该编号，h 的 chunk 轴继续使用压缩编号。
 编号在 stream 初始化时保存，不在逐 chunk 更新中重复搜索，不增加 GM workspace 或同步。
 
-六个小算子的原 L0 接口末尾追加 `const char *layout = "BNSD"`，OpDef 追加同名
+四个小算子的原 L0 接口末尾追加 `const char *layout = "BNSD"`，OpDef 追加同名
 默认 `BNSD` 的可选字符串属性。主算子显式传入自身 layout；省略参数的原调用继续
 使用 head-major。每个 L0 只保留一个声明和定义，不增加 v2 或重载。NTD/TND 使用
 现有 B=1 的四维物理描述；host 将四种布局解析为枚举值并写入 tiling data。
@@ -79,6 +78,7 @@ T=1/63/64/65、G=1/2/3/4、多 batch、packed 空序列、状态布局、归一�
 公开 C ABI 另验证非法参数和 arch22 非连续输出的 storage offset。
 
 独立精度使用 CPU FP64 golden、CPU FP32 benchmark 和 ATK 原生 L1 双标杆；保留原值域。
+A2 的 FP32 benchmark 对齐融合 Intra 的中间落盘，不再调用旧 WU/DvLocal 拼接标杆。
 失败保存输出，并从最早偏离的 Stage 定位。测试入口见
 [ATK 说明](../../../../../../../tests/atk/chunk_gated_delta_rule_bwd/README.md)。
 
@@ -88,7 +88,7 @@ BNSD/NTD 检查回归。逐平台测试结果以实际验收记录为准，不�
 
 ### 小算子 layout 的运行时传递
 
-六个 L0 原型只保留一个声明，在末尾追加 `const char *layout = "BNSD"`；
+四个 L0 原型只保留一个声明，在末尾追加 `const char *layout = "BNSD"`；
 原有省略参数的源码调用继续选择 BNSD。公开 ACLNN C 接口和 Python 签名沿用既有契约。
 内部 L0 的返回类型、参数顺序及默认值单独记录在 `tests/stable_public_api.json`
 的 `internal_l0_signatures`，由现有 Stable coverage 门禁一并校验。
