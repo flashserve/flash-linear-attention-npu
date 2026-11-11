@@ -74,8 +74,9 @@ private:
         int64_t hv, int64_t part, bool loadK)
     {
         const uint32_t begin = part * VECTOR_PART_TOKENS;
-        const uint32_t rows = m.validTokens > begin ? m.validTokens - begin : 0;
-        const uint32_t count = (rows < VECTOR_PART_TOKENS ? rows : VECTOR_PART_TOKENS) * HEAD_DIM;
+        const uint32_t remaining = m.validTokens > begin ? m.validTokens - begin : 0;
+        const uint32_t rows = remaining < VECTOR_PART_TOKENS ? remaining : VECTOR_PART_TOKENS;
+        const uint32_t count = rows * HEAD_DIM;
         if (count == 0) return;
         const uint64_t vv = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
             ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
