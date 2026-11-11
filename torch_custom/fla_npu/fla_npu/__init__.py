@@ -23,6 +23,20 @@ _OVERLAY_VENDOR_NAME_RE = re.compile(
     rf"{re.escape(_OVERLAY_VENDOR_PREFIX)}[A-Za-z0-9][A-Za-z0-9_.-]*\Z"
 )
 _ASCENDC_OPAPI_LIBRARIES: Optional[list[ctypes.CDLL]] = None
+_WHEEL_LAYER_PLAN = None
+_WHEEL_LAYER_CONTEXT = None
+
+
+def _load_wheel_layer_plan():
+    global _WHEEL_LAYER_PLAN, _WHEEL_LAYER_CONTEXT
+    if not (_PACKAGE_DIR / "opp/wheel_layers/state.json").is_file():
+        return
+    from fla_npu_wheel_overlay import runtime_plan
+    _WHEEL_LAYER_PLAN = runtime_plan(_PACKAGE_DIR)
+    if _WHEEL_LAYER_PLAN:
+        _WHEEL_LAYER_CONTEXT = {"namespace": "fla_npu_stable",
+                               "libraries": _WHEEL_LAYER_PLAN["bindings"]["base"]}
+
 
 
 def _prepend_env_path(name: str, value: pathlib.Path) -> None:
@@ -182,6 +196,8 @@ def _package_local_vendor_dir(name: str) -> Optional[pathlib.Path]:
 def _resolve_vendor_dirs() -> list[pathlib.Path]:
     """Ordered vendor overlay list: overlay vendors first, base last."""
 
+    if _WHEEL_LAYER_PLAN:
+        return [pathlib.Path(p) for p in _WHEEL_LAYER_PLAN["vendors"]]
     vendor_dirs: list[pathlib.Path] = []
     for name in [*overlay_vendor_names(), _DEFAULT_VENDOR_DIR]:
         resolved_vendor_dir = _package_local_vendor_dir(name)
@@ -260,7 +276,8 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
         )
 
     vendor_dirs = _resolve_vendor_dirs()
-    _validate_overlay_abi(vendor_dirs)
+    if not _WHEEL_LAYER_PLAN:
+        _validate_overlay_abi(vendor_dirs)
     op_api_libs: list[pathlib.Path] = []
     for vendor_dir in vendor_dirs:
         op_api_libs.append(_resolve_packaged_opapi(vendor_dir))
@@ -276,7 +293,8 @@ def _prepare_embedded_opp() -> list[pathlib.Path]:
     # Retain the complete base path for single-vendor integrations. Stable
     # execution uses the ordered plural list whenever overlays are enabled.
     base_vendor = next(
-        (vendor_dir for vendor_dir in vendor_dirs if vendor_dir.name == _DEFAULT_VENDOR_DIR),
+        (vendor_dir for vendor_dir in vendor_dirs
+         if vendor_dir == _PACKAGE_DIR / "opp/vendors" / _DEFAULT_VENDOR_DIR),
         vendor_dirs[0],
     )
     os.environ["FLA_NPU_OP_API_LIB"] = str(_resolve_packaged_opapi(base_vendor))
@@ -391,5 +409,6 @@ from ._backend_policy import validate_backend_environment as _validate_backend_e
 
 _validate_backend_environment()
 _run_import_guards()
+_load_wheel_layer_plan()
 _warn_if_embedded_opp_not_preconfigured()
 load_ascendc_opapi_libraries()

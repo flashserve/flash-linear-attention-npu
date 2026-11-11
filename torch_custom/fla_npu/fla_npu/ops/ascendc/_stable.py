@@ -1,7 +1,7 @@
 """Stable-ABI backend (Phase 1).
 
 Loads ``libfla_npu_stable.so`` (a plain shared object registered through
-``STABLE_TORCH_LIBRARY``) and exposes the public Python operator contract.  This module contains no ABI-sensitive code: the only tensor objects
+explicit Stable dispatcher registration) and exposes the public Python operator contract. This module contains no ABI-sensitive code: the only tensor objects
 crossing the boundary are handled by torch's own dispatcher.
 
 The mutation contract (version bump / requires_grad rejection) is *not*
@@ -18,6 +18,18 @@ import warnings
 
 
 _LIB_ENV = "FLA_NPU_STABLE_LIB"
+
+
+def _layer_context():
+    root = sys.modules.get(__name__.split(".")[0])
+    return getattr(root, "_WHEEL_LAYER_CONTEXT", None)
+
+
+def _dispatcher():
+    import torch
+    context = _layer_context()
+    return getattr(torch.ops, context["namespace"] if context else "fla_npu_stable")
+
 # Lowest torch whose stable runtime symbols the launcher was verified against.
 # Keep in sync with MIN_TORCH in scripts/npu_compat.py.
 _MIN_TORCH = "2.7.1"
@@ -87,7 +99,7 @@ _ENUM = {
 
 
 def _lib_path() -> str:
-    path = os.environ.get(_LIB_ENV)
+    path = os.environ.get(_LIB_ENV) if not _layer_context() else None
     if path:
         return path
     # Wheels that ship the ABI-free launcher place it next to this module.
@@ -399,7 +411,30 @@ def load() -> None:
             f"Original error: {exc}") from exc
     _check_build_stamp(path)
     _check_overlay_order_capability(path)
+    _register_launcher(path)
     _loaded_path = path
+
+
+def _register_launcher(path):
+    import ctypes
+    from . import _stable_hash
+    context = _layer_context()
+    if getattr(_stable_hash, "LAYER_PROTOCOL", 0) != 1:
+        if context:
+            raise RuntimeError("Wheel layers require a launcher with explicit registration support")
+        return
+    library = ctypes.CDLL(path)
+    register = getattr(library, "fla_npu_stable_register", None)
+    if register is None:
+        raise RuntimeError("Launcher declares layer protocol but has no registration entry")
+    register.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    register.restype = ctypes.c_char_p
+    namespace = context["namespace"] if context else "fla_npu_stable"
+    paths = (os.pathsep.join(context["libraries"]) if context else
+             os.environ.get("FLA_NPU_OP_API_LIBS") or os.environ.get("FLA_NPU_OP_API_LIB", ""))
+    error = register(namespace.encode(), paths.encode())
+    if error:
+        raise RuntimeError("Stable registration failed: " + error.decode("utf-8", "replace"))
 
 
 def _check_overlay_order_capability(path: str) -> None:
@@ -499,7 +534,7 @@ def available() -> bool:
         load()
         import torch
 
-        return hasattr(torch.ops.fla_npu_stable, "npu_recurrent_gated_delta_rule")
+        return hasattr(_dispatcher(), "npu_recurrent_gated_delta_rule")
     except Exception:
         return False
 
@@ -513,7 +548,7 @@ def _op(name: str):
         import torch
 
         try:
-            op = getattr(torch.ops.fla_npu_stable, name)
+            op = getattr(_dispatcher(), name)
         except AttributeError as exc:
             raise RuntimeError(
                 f"The loaded Stable-ABI launcher {_loaded_path} does not register "

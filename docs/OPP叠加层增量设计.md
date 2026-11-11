@@ -1,6 +1,7 @@
 # FLA NPU OPP 增量叠加层设计
 
-作者：zzy1205。适用对象：带完整内嵌 OPP 和 Stable launcher 的 FLA wheel。
+作者：zzy1205。run-only overlay 适用于带完整内嵌 OPP 的 FLA wheel；wheel overlay
+同时支持骨架与带 OPP 的 wheel，要求双方具备第 9 节的 layer 协议。
 
 本文维护最终架构、接口、兼容边界和验收要求。逐轮实验、机器信息、日志和历史图示已本地归档；提交对应的实测结果、失败项和未完成门禁见 [PR878](https://github.com/flashserve/flash-linear-attention-npu/pull/878)。实现了某项机制不等于全部验收完成。
 
@@ -19,7 +20,10 @@
 
 KDA host 错误码及 KDA/KKT 测试修正是单独的回归修复，不是 overlay 的运行依赖。它们没有改算子 kernel、tiling 或 Stable adapter 的计算实现。
 
-本设计不提供进程内热更新，不实现通用对象文件增量缓存，不以 overlay 发布新 Python 算子入口或修改公共 schema。KDA `implementation="legacy"` 是算法实现选项，保留为遗留事项，不属于本次删除的 legacy 扩展。
+本设计不提供进程内热更新，不实现通用对象文件增量缓存。run-only overlay 不发布新 Python
+入口或改变 schema；需要适配层变化时使用第 9 节的 wheel overlay。下文第 2–5 节描述原有
+run-only 路径，第 9 节说明 wheel 模式的扩展和差异。KDA `implementation="legacy"` 是算法实现选项，
+保留为遗留事项，不属于删除的 legacy 扩展。
 
 **base 与 launcher 的兼容边界**：不支持保留已安装 wheel 的 Python/Stable launcher，仅通过 `.run --install`、`--full` 或手工覆盖，将 base 替换为 ACLNN ABI 已发生不兼容变化的产物。此类接口变更须配套更新 Python wrapper、Stable adapter 和 OPP，重新构建并安装完整 wheel。不承诺自动检测、拒绝或恢复这种不兼容混装，也不将拦截该组合列为 overlay 的验收要求。standalone wheel 的 OPP 骨架由配套完整 run 包补齐，仍属于支持的安装流程。
 
@@ -69,7 +73,8 @@ site-packages/
         └── fla_npu_transformer/         # 原有完整 base，名称不变
 ```
 
-overlay 不携带另一份 launcher。接口不变的 host/tiling/kernel 更新复用 wheel 的 launcher；aclnn、schema、adapter 参数编组或公共返回契约发生变化时，须更新并重建完整 wheel。
+run-only overlay 不携带另一份 launcher。接口不变的 host/tiling/kernel 更新复用 base launcher；
+接口变化须更新配套 wheel，可整体替换 base，也可按第 9 节将其安装为独立 wheel 层。
 
 ## 3. 来源选择和启动契约
 
@@ -228,3 +233,69 @@ python -m pytest -q tests/test_opp_overlay.py tests/test_opp_abi_contract.py \
 ```
 
 静态覆盖、mock 单测和局部 A5 回归各有边界，不相互替代。算子数、导出数或退出码为零都不能单独证明全量数值正确。数值、性能、确定性、MSS、A2/A3/A5 支持矩阵、发布工具链与正式 CI/审批要求按[仓库规则](repository-rules.md)、[开发者指南](开发者指南.md)和[迁移指南](兼容与迁移指南.md)执行。PR 应按当前提交分别列出通过、已有失败、未执行与阻塞，禁止累计历史轮次充当当前结果。
+
+## 9. wheel 携带适配层的增量安装
+
+操作命令见 [Wheel 增量安装指南](Wheel增量安装指南.md)。此模式解决仅替换 OPP 无法改变
+Python 参数、Stable schema 和 adapter 的限制，不改变原有 run-only 安装语义。
+
+### 9.1 产物与覆盖范围
+
+两套 wheel 构建入口均生成 `fla_npu/layer_manifest.json`：记录协议版本、产品档位、
+launcher 源码指纹、公共算子到 ACLNN 契约的依赖，以及本层导出范围。
+`FLA_NPU_OVERLAY_OPS` 指定导出范围，未设置时为全部公共 Ascend C 入口；它不决定 OPP 编译范围。
+manifest 从 Python 调用链、Stable adapter 和公共头生成，不要求 wheel 有完整 OPP snapshot。
+
+```text
+site-packages/
+├── fla_npu_wheel_overlay.py         # 不导入 torch 的安装、状态与路径解析器
+└── fla_npu/
+    ├── layer_manifest.json
+    ├── libfla_npu_stable.so         # base launcher
+    └── opp/
+        ├── vendors/fla_npu_transformer/
+        └── wheel_layers/
+            ├── state.json         # active / pending 的不可变目录身份
+            └── <id>/fla_npu/      # 增量 Python、launcher、可选 OPP
+```
+
+wheel 解包支持根目录以及 `.data/purelib` / `platlib`，校验平台 tag、Python/依赖版本和
+payload 的 RECORD；拒绝路径穿越、重复映射及 zip 软链。只提取 `fla_npu`，不执行输入 wheel 的
+顶层初始化、`.pth` 或安装钩子，不覆盖 base 文件，也不自动安装第三方依赖。
+
+### 9.2 安装与启动链
+
+1. 管理器取得与 run overlay 共用的安装锁，将 wheel 提取到独立目录。可用 `--opp-source`
+   将配套 vendor 或 `.run` 补入该目录。
+2. 按实际 `libcust_opapi.so` 判断是否携带 OPP。新 adapter 的每个依赖按 overlay → base
+   解析并比较 ACLNN 契约，缺少或不兼容则进入 pending。不会因 A 的新契约不同于旧 A 而拒绝。
+3. overlay OPP 若覆盖了未选入范围的入口或 base B 所用的共享符号，则要求补齐相关 adapter。
+   base 中未被本层触及的旧接口不增加全量 ABI 验收门禁。
+4. 就绪后原子切换 active 指针；pending 或失败保留旧 active。旧目录保留至显式移除，避免安装
+   过程中删除旧映射文件；这不代表支持进程内热切换。
+5. 新进程的 `.pth` 或 base `set_env.bash` 先配置 CANN 的 OPP 顺序。`import fla_npu`
+   解析并复核 active 层，然后为 base 与增量 launcher 确定不再改变的库列表。
+6. 增量 Python 以独立包命名空间导入，公共模块只替换指定入口、别名及副作用元数据。
+   `_stable.load()` 调用 launcher 的 `fla_npu_stable_register(namespace, paths)`，base 使用
+   `fla_npu_stable`，增量使用独立 dispatcher 命名空间。因此两个版本可以注册不同 schema，
+   不共享 Runtime 句柄和符号缓存。未覆盖的 B 保持 base wrapper 与 launcher。
+
+新 launcher 不在 `dlopen` 时自动注册固定 schema；调用公共 wrapper 时显式注册。
+仅直接 `torch.ops.load_library()` 不是 wheel overlay 的公开加载入口。原有不声明 layer 协议的
+launcher 保留普通 Stable 加载兼容，但不能作为 wheel 层使用。
+
+### 9.3 边界与验收
+
+骨架不是损坏的完整 wheel：能复用匹配 base OPP 时可直接 active，无法复用时等待
+`--opp-source`；骨架 base 也可接受带 OPP 的增量 wheel。未安装的算子仍不可执行。
+当前支持单个 wheel 层，与 run-only overlay 互斥；支持查询、显式禁用、替换失败保留旧层、
+损坏状态独立移除。不提供 ABI bypass，不替换 base 顶层框架、Triton 或 Python 依赖。
+
+验收按本次修改范围执行：
+
+- base 有 A+B、overlay 仅 A：修改 A 的 Python 参数及 C++ schema，证明新调用实际进入新 adapter，
+  B 的入口与结果不变；remove 后 A 的签名、默认值和结果恢复。
+- 骨架 / 带 OPP 的组合：依赖配齐才 active；缺失或不匹配进入 pending，旧 active 保持可用。
+- 带 OPP 层的 L1–L4 顺序与 Python provider 一致；共享依赖不能让 B 静默切换来源。
+- RECORD 损坏、路径穿越、跨产品、替换失败、状态损坏、手动 source 与显式禁用均有回归。
+- 构建、原有 run overlay、公共签名和 Stable 契约测试保持通过；真机报告单独标明覆盖的组合及未测范围。

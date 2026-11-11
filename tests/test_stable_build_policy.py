@@ -156,11 +156,23 @@ class StableBuildPolicyTest(unittest.TestCase):
             shutil.copy2(ROOT / "fla/__init__.py", root / "fla/__init__.py")
             for name in ("stable_build_policy.py", "fla_npu_artifacts.py", "npu_compat.py"):
                 shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
+            # This test isolates setuptools staging from both compilation and
+            # source contract analysis; test_wheel_overlay covers real manifests.
+            (root / "scripts/build_layer_manifest.py").write_text(
+                "def write_layer_manifest(package):\n"
+                "    (package / 'layer_manifest.json').write_text('{\"protocol\": 1}')\n",
+                encoding="utf-8",
+            )
+            finalizer = root / "scripts/package/ops_transformer/scripts/finalize_wheel_opp.py"
+            finalizer.parent.mkdir(parents=True)
+            shutil.copy2(ROOT / finalizer.relative_to(root), finalizer)
             for relative in ("", "ops", "ops/ascendc"):
                 directory = package / relative
                 directory.mkdir(parents=True, exist_ok=True)
                 (directory / "__init__.py").write_text("", encoding="utf-8")
             shutil.copy2(ROOT / "torch_custom/fla_npu/setup.py", standalone / "setup.py")
+            shutil.copy2(ROOT / "torch_custom/fla_npu/fla_npu_wheel_overlay.py",
+                         standalone / "fla_npu_wheel_overlay.py")
             (standalone / "csrc").mkdir()
             (standalone / "csrc/build_stable.py").write_text(
                 "import sys\nfrom pathlib import Path\n"
@@ -179,8 +191,9 @@ class StableBuildPolicyTest(unittest.TestCase):
             self.assertIn("-py3-none-manylinux_2_34_x86_64.whl", wheels[0].name)
             with zipfile.ZipFile(wheels[0]) as archive:
                 names = archive.namelist()
-                for required in (*policy.LAUNCHER_FILES, "_build_meta.py", "_compat.py"):
+                for required in (*policy.LAUNCHER_FILES, "_build_meta.py", "_compat.py", "layer_manifest.json"):
                     self.assertTrue(any(name.endswith("fla_npu/" + required) for name in names), required)
+                self.assertTrue(any(name.endswith("/fla_npu_wheel_overlay.py") for name in names))
                 metadata = archive.read(next(name for name in names if name.endswith("/METADATA"))).decode()
                 for requirement in policy.RUNTIME_REQUIREMENTS:
                     self.assertIn("Requires-Dist: " + requirement, metadata)
