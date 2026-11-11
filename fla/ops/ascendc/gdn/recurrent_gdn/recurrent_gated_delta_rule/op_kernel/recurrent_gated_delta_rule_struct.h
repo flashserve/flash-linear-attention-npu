@@ -27,29 +27,51 @@ namespace RecurrentGatedDeltaRule {
 #define RGDR_TPL_FP32 30
 
 #ifndef TORCH_MODE
-ASCENDC_TPL_ARGS_DECL(RecurrentGatedDeltaRule,
-    ASCENDC_TPL_DTYPE_DECL(D_T_STATE, RGDR_TPL_BF16, RGDR_TPL_FP32),
-    ASCENDC_TPL_DTYPE_DECL(D_T_BETA, RGDR_TPL_BF16, RGDR_TPL_FP32),
-    ASCENDC_TPL_DTYPE_DECL(D_T_G, RGDR_TPL_BF16, RGDR_TPL_FP32),
-);
+ASCENDC_TPL_ARGS_DECL(RecurrentGatedDeltaRule, ASCENDC_TPL_DTYPE_DECL(D_T_STATE, RGDR_TPL_BF16, RGDR_TPL_FP32),
+                      ASCENDC_TPL_DTYPE_DECL(D_T_G, RGDR_TPL_BF16, RGDR_TPL_FP32),
+                      ASCENDC_TPL_DTYPE_DECL(D_T_BETA, RGDR_TPL_BF16, RGDR_TPL_FP32),
+                      ASCENDC_TPL_BOOL_DECL(USE_QK_L2NORM, 0, 1), ASCENDC_TPL_BOOL_DECL(USE_GATE_IN_KERNEL, 0, 1),
+                      ASCENDC_TPL_BOOL_DECL(USE_BETA_SIGMOID, 0, 1), ASCENDC_TPL_BOOL_DECL(ALLOW_NEG_EIGVAL, 0, 1), );
 
-#define RGDR_DTYPE_SELECTION(STATE_TYPE, BETA_TYPE, G_TYPE) \
-    ASCENDC_TPL_ARGS_SEL( \
-        ASCENDC_TPL_DTYPE_SEL(D_T_STATE, STATE_TYPE), \
-        ASCENDC_TPL_DTYPE_SEL(D_T_BETA, BETA_TYPE), \
-        ASCENDC_TPL_DTYPE_SEL(D_T_G, G_TYPE))
+#define RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, USE_QK_L2NORM_VALUE, USE_GATE_IN_KERNEL_VALUE,              \
+                            USE_BETA_SIGMOID_VALUE, ALLOW_NEG_EIGVAL_VALUE)                                            \
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_DTYPE_SEL(D_T_STATE, STATE_TYPE), ASCENDC_TPL_DTYPE_SEL(D_T_G, G_TYPE),           \
+                         ASCENDC_TPL_DTYPE_SEL(D_T_BETA, BETA_TYPE),                                                   \
+                         ASCENDC_TPL_BOOL_SEL(USE_QK_L2NORM, USE_QK_L2NORM_VALUE),                                     \
+                         ASCENDC_TPL_BOOL_SEL(USE_GATE_IN_KERNEL, USE_GATE_IN_KERNEL_VALUE),                           \
+                         ASCENDC_TPL_BOOL_SEL(USE_BETA_SIGMOID, USE_BETA_SIGMOID_VALUE),                               \
+                         ASCENDC_TPL_BOOL_SEL(ALLOW_NEG_EIGVAL, ALLOW_NEG_EIGVAL_VALUE), )
 
-ASCENDC_TPL_SEL(
-    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_BF16, RGDR_TPL_BF16),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_BF16, RGDR_TPL_FP32),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_FP32, RGDR_TPL_BF16),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_FP32, RGDR_TPL_FP32),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_BF16, RGDR_TPL_BF16),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_BF16, RGDR_TPL_FP32),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_FP32, RGDR_TPL_BF16),
-    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_FP32, RGDR_TPL_FP32),
-);
-#undef RGDR_DTYPE_SELECTION
+#define RGDR_TPL_SEL_FLAGS(STATE_TYPE, G_TYPE, BETA_TYPE)                                                           \
+    RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 0, 0, 0),                                                    \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 0, 0, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 0, 1, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 0, 1, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 1, 0, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 1, 0, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 1, 1, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 0, 1, 1, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 0, 0, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 0, 0, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 0, 1, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 0, 1, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 1, 0, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 1, 0, 1),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 1, 1, 0),                                                \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, G_TYPE, BETA_TYPE, 1, 1, 1, 1)
+
+#define RGDR_TPL_SEL_SCALARS(STATE_TYPE)                                                                            \
+    RGDR_TPL_SEL_FLAGS(STATE_TYPE, RGDR_TPL_BF16, RGDR_TPL_BF16),                                             \
+        RGDR_TPL_SEL_FLAGS(STATE_TYPE, RGDR_TPL_BF16, RGDR_TPL_FP32),                                         \
+        RGDR_TPL_SEL_FLAGS(STATE_TYPE, RGDR_TPL_FP32, RGDR_TPL_BF16),                                         \
+        RGDR_TPL_SEL_FLAGS(STATE_TYPE, RGDR_TPL_FP32, RGDR_TPL_FP32)
+
+ASCENDC_TPL_SEL(RGDR_TPL_SEL_SCALARS(RGDR_TPL_BF16), RGDR_TPL_SEL_SCALARS(RGDR_TPL_FP32), );
+
+#undef RGDR_TPL_SEL_SCALARS
+#undef RGDR_TPL_SEL_FLAGS
+#undef RGDR_TPL_SEL_ONE
+
 #endif
 
 #pragma pack(push, 8)
@@ -82,8 +104,6 @@ struct alignas(8) RecurrentGatedDeltaRuleTilingData {
     uint32_t useGateInKernel = 0;
     uint32_t useBetaSigmoidInKernel = 0;
     uint32_t allowNegEigval = 0;
-    // Host ABI contract selector only. Both A2/A3 interfaces use arch22.
-    uint32_t useV2 = 0;
     uint32_t hasDtBias = 0;
     uint32_t hasALog = 0;
     uint32_t betaDtype = RGDR_TPL_BF16;

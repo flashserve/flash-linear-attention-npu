@@ -27,6 +27,9 @@
 
 CI 初次触发权由默认分支 `.github/npu-ci-users.json` 名单管理。仅接受 open、未合并且非草稿的 PR。非 Markdown 的 `ci/` 或 `.github/` 变更只允许仓库 Admin 创建的 PR；作者无需在名单中，初次触发人仍须在名单中。名单内只读用户可触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行。重跑保留 PR 状态和版本一致性检查。A2/A5 直接验证当前 PR 的 `ci/`，不覆盖可信 CI 目录。
 
+日志排障可使用 `/run-npu-ci quick debug`（也支持 `full debug` 和 `ops=...`），
+仅该次运行保存完整构建日志 artifact；不设置 `debug` 时保持原有日志行为。
+
 ## 关联 Issue / 背景
 
 - 关联 Issue:

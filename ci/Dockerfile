@@ -1,4 +1,5 @@
-FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.1.0-910b-ubuntu22.04-py3.12-devel
+# Official CANN Dockerfile: Ascend/cann-container-image, 9.2.1-910b-ubuntu22.04-py3.12-devel.
+FROM swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:9.2.1-910b-ubuntu22.04-py3.12-devel
 
 ARG INSTALL_TEST_REQUIREMENTS=false
 ARG PREWARM_THIRD_PARTY=true
@@ -11,10 +12,8 @@ ARG TORCH_NPU_WHL=torch_npu-2.7.1.post5-cp312-cp312-manylinux_2_28_aarch64.whl
 ARG TORCH_NPU_WHL_URL=
 ARG TRITON_ASCEND_VERSION=3.2.1
 
+# Inherit CANN paths and library paths from the official 9.2.1 image.
 ENV DEBIAN_FRONTEND=noninteractive \
-    ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest \
-    ASCEND_TOOLKIT_HOME=/usr/local/Ascend/ascend-toolkit/latest \
-    LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTORCH_VERSION=${TORCH_VERSION} \
@@ -74,6 +73,22 @@ RUN set -e; \
     rm -rf /tmp/pybind11-target; \
     python3 -c "import pybind11; print(pybind11.__file__)"; \
     python3 -c "from triton import Config; print('triton Config OK')"
+
+# Build and install ATK from source using the upstream README procedure.
+# ATK 26.9.8 filesystem exchange names are incompatible with Kombu 5.7.
+ARG ATK_COMMIT=0683181571486a6654571d7a433f43a4fe7a66c0
+RUN set -e; \
+    git init /opt/ATK; \
+    git -C /opt/ATK remote add origin https://gitcode.com/Ascend/ATK.git; \
+    git -C /opt/ATK -c http.version=HTTP/1.1 fetch --depth 1 origin "$ATK_COMMIT"; \
+    git -C /opt/ATK checkout --detach FETCH_HEAD; \
+    cd /opt/ATK; \
+    python3 -m pip install wheel; \
+    python3 setup.py bdist_wheel; \
+    cd dist; \
+    python3 -m pip install ./*.whl 'kombu==5.6.2'; \
+    python3 -m pip show ATK; \
+    command -v atk
 
 RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
       mkdir -p /opt/fla-ci/third_party/pkg; \

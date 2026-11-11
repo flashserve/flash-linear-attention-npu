@@ -25,7 +25,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `v` | 必选 | `BSND=[B,T,H_v,V]` 或 `TND=[T,H_v,V]` | BF16 | BSND/TND | value |
 | `g` | 必选 | `BSND=[B,T,H_v,K]` 或 `TND=[T,H_v,K]` | FP32/BF16/FP16 | BSND/TND | 预计算 step log gate 或 raw gate |
 | `beta` | 必选 | `BSND=[B,T,H_v]` 或 `TND=[T,H_v]` | FP32/BF16/FP16 | BSND/TND | delta 更新系数 |
-| `initial_state` | Python 可选，aclnn 必选 | V-first `[state_capacity,H_v,V,K]` 或 K-first `[state_capacity,H_v,K,V]` | FP32/BF16 | ND | 可变 state pool；Python 仅在非原位模式下允许为空，并创建 `[seq_num,...]` 全零 FP32 状态 |
+| `initial_state` | 必选 | V-first `[state_capacity,H_v,V,K]` 或 K-first `[state_capacity,H_v,K,V]` | FP32/BF16 | ND | 初始状态池；原位和非原位模式均须显式传入非 `None` 张量 |
 | `cu_seqlens` | 可选 | `[seq_num+1]` | INT32/INT64 | ND | 提供时使用 fla-org 累积 offset；为空时 BSND 按 batch 行划分，TND 视为一条序列 |
 | `ssm_state_indices` | 可选 | packed `[>=T]` 或 speculative `[seq_num,max_step]` | INT32/INT64 | ND | 每个 token 对应的 state pool 槽索引 |
 | `A_log` | 条件必选 | `[H_v]` | FP32 | ND | `use_gate_in_kernel=True` 时必选 |
@@ -135,9 +135,12 @@ recurrent_kda(q, k, v, g, beta, initial_state=None, *,
               safe_gate=False, lower_bound=None, state_v_first=False)
 ```
 
-稳定入口经 Stable-ABI 适配层调用 aclnn（纯 Python `ctypes` 直调保留为参考实现与回退），不依赖 legacy `torch.ops.npu` 注册。`initial_state=None` 仅在
-`inplace_final_state=False` 时有效，此时 wrapper 创建与 `state_v_first` 对应布局的全零 FP32 状态；原位模式必须
-显式传入 state。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
+稳定入口经 Stable-ABI 适配层调用 aclnn（纯 Python `ctypes` 直调保留为参考实现与回退），不依赖 legacy `torch.ops.npu` 注册。`initial_state` 必须显式传入非 `None` 张量。
+签名保留 `initial_state=None` 默认值以保持调用形状兼容；省略该参数或显式传入 `None` 时，
+原位和非原位模式均在 Python 层抛出 `RuntimeError`，消息为
+`npu_recurrent_kda: initial_state must not be None`。
+使用零初态时，由调用方创建与 `q` 同设备、符合 `state_v_first` 布局的零状态池，
+容量须满足序列数和索引约束。显式传入的非连续 state view 由 kernel 按真实 stride 直接访问；满足第 7 节约束的 Q/K/V view
 同样保留 storage offset 并直接读取，不满足时自动连续化。原位模式返回与输入相同 storage/stride
 的 state，非原位模式保持输入不变并返回独立 state。
 
