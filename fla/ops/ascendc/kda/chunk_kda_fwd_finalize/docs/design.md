@@ -9,6 +9,12 @@ Prepare 已生成按 HV 展开的 `qg_scaled` 和 `Aqk`，FwdH 已生成
 `attn_out`，不读取原始 `q/k/v/g/beta`，不输出反向检查点或
 `h/final_state`。公开约束见[算子 README](../README.md#输入输出)。
 
+Finalize 接口不含 HK 或 ratio，因此不执行 GVA 头映射。上游必须把
+`qg_scaled/Aqk/v_new/h` 全部按 HV 展开，并在最早同时持有 HK/HV 的入口
+校验 `HV % HK == 0` 且 `HV/HK in [1,16]`。本算子只保证任意合法 HV 下
+各 Value Head 独立计算。当前 FwdH/Finalize 的公开 `h` ABI 继续使用
+chunk-major `[B,C,HV,128,128]`；本轮不迁移该公开轴顺序。
+
 ## 数学与精度
 
 对每个 batch、value head、序列及其第 `c` 个 chunk，设有效长度为
@@ -30,31 +36,38 @@ sequence-major 顺序映射，不按 tensor 的 T 维简单除以 64。
 
 ## 调度与存储
 
-本节保留已有 A5 调度、搬运和同步描述。A2/A3 的 chunk × head group
-调度与单 Stage 0 详设见后文；它替代 A2/A3 原先的 chunk 优先分核，
-继续使用本节定义的 BF16 操作数、L0C 原位累加与 Fixpipe 输出路径。
+canonical chunk 数记为 `Nbase`：dense 为 `B*ceil(T/64)`，varlen 为
+`sum_i ceil(seq_len_i/64)`。外部 work 使用统一映射：
 
-各 chunk 不存在跨 chunk 数据依赖，先按 chunk 分核；仅当 chunk
-任务少于可用核时增加完整 value head 的分区。输出写回地址按
-`(batch,chunk,head)` 分区，不与其他 AIC 重叠。
+```text
+partitionCount = ceil(HV / headsPerPartition)
+Nwork          = Nbase * partitionCount
+chunkId        = workId / partitionCount
+headBegin      = (workId % partitionCount) * headsPerPartition
+headCount      = min(headsPerPartition, HV-headBegin)
+```
 
-A5 dense 的主体按完整 chunk 均分；最后不足一轮核数的 chunk，再按
-4 个完整 head 的组均摊。AIC/AIV 使用相同映射和组内消费顺序。例如
-128 个 chunk、96 个 head、28 核时，先每核分 4 个完整 chunk，余下
-16 个 chunk 的 384 个 head 组按每核 13/14 组分配，避免原来每核
-4/5 个 chunk 的负载差。每个 `(chunk,head)` 只由一个核组处理，
-不增加计算、workspace 或同步 flag。变长路径保持原有任务划分。
+A2/A3 在 `Nbase<aicCoreNum` 时选择 `headsPerPartition=1`，用 head 展开补足
+并行度；否则选择 `headsPerPartition=HV`，一个 work 完整拥有一个 chunk，
+kernel 内逐 head 使用既有双槽 L1 流水。两种模式单次只驻留一个 head 的
+72 KiB 输入，不随 HV 扩大 L1 占用。
+
+A5 高负载使用 `A5_FULL_HEAD_MOVER`：`headsPerPartition=HV`、`Nwork=Nbase`，
+AIC/AIV workgroup 完整拥有一个 chunk，内部按 4-head group 流水。低负载
+使用 `A5_GROUP4_AIC_ONLY`：`headsPerPartition=min(4,HV)`，不启动 AIV。
+full-HV mover 的阈值为 dense 每核至少 4 个完整 chunk、varlen 每核至少
+8 个完整 chunk。mover work 不再把尾部 chunk 二次拆为 head group。
 
 Host 根据平台和每核工作量选择 `USE_AIV_INPUT_MOVER` 编译期模板参数：
 
-- `false`：A2/A3 始终使用，A5 在 Host 已划分 head 分区，或每核完整
-  chunk 数不足阈值时使用（dense 为 4、变长为 8）。模板组合指定为
-  AIC-only，四个输入由 AIC MTE2 直接从 GM
-  搬到 L1。
-- `true`：仅 A5 使用，要求 Host 未划分 head 分区，且每核至少有
-  4 个 dense chunk 或 8 个变长 chunk。dense 尾部负载均衡由 Kernel
-  进一步划分完整 head 组。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
-  UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
+- `false`：A2/A3 的自适应 `G=1/G=HV`，以及 A5 低负载 `G=4`
+  AIC-only。四个输入由 AIC MTE2 直接从 GM 搬到 L1。
+- `true`：仅 A5 `A5_FULL_HEAD_MOVER` 使用。模板组合指定为 MIX AIC 1:2，
+  两个 AIV 负责 GM 到 UB 再到 L1 的格式转换，AIC 只消费已经就绪的
+  L1 操作数。
+
+TilingData 显式携带 `scheduleMode/headsPerPartition/groupSize/Nwork`。
+Host、AIC、AIV 均按相同字段解码；ratio 不进入 TilingKey 或 kernel 分支。
 
 TilingKey 由 `GET_TPL_TILING_KEY(USE_AIV_INPUT_MOVER)` 生成；Kernel 全局
 入口直接以同名模板参数实例化，不做数值 key 的运行时
@@ -122,7 +135,14 @@ workspace。Fixpipe 将 L0C FP32 结果直接转换为 BF16：BNSD/NTD
 四种 layout 都不需要额外 AIV scatter。两个 L0C slot 的复用由 AIC
 内 M/FIX 生命周期保护。
 
-## A2/A3 优化目标与任务域
+## 历史基线：A2/A3 固定 CG1
+
+> 本节记录本次方案之前的固定 CG1 profiling、两槽预取实现和性能分析，
+> 仅用于回溯，不再描述当前 Host/Kernel 调度。当前实现以本文前述
+> “统一工作项与连续分核”“A2/A3 自适应分组”和“A5 双路径调度”为准：
+> A2/A3 在 `Nbase < availableAIC` 时取 `G=1`，否则取 `G=HV`；A5 按负载
+> 选择 full-HV MIX mover 或 `G=min(4,HV)` AIC-only。下文出现的
+> “最终固定 CG1”“Host 只产生 CG1”等表述均属于历史基线结论。
 
 本次只优化 A2/A3 的内部调度及两槽 L1 输入预取，输入、输出、数学边界和 Stable ABI 均沿用
 [api.md](api.md)。目标是在现有 `atk_chunk_kda_fwd_finalize_perf.json`

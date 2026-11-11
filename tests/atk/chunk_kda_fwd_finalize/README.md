@@ -17,13 +17,13 @@ rank-4/rank-5 BF16 形状，h 为 NT-first `[B,C,HV,128,128]`，packed 时首维
 
 | 文件 | 用例 | 覆盖 |
 | --- | ---: | --- |
-| `atk_chunk_kda_fwd_finalize.json` | 200 | 保留 main 的 25 个边界/shape/变长结构 × 4 个输出 layout × 2 种 state 轴顺序，仅更新 h shape |
-| `atk_chunk_kda_fwd_finalize_perf.json` | 10 | 模型大 shape、dense/varlen，供单算 profiling |
+| `atk_chunk_kda_fwd_finalize.json` | 216 | 原 200 条不变，新增 HV=128 的 dense/varlen profile × 4 个输出 layout × 2 种 state 轴顺序 |
+| `atk_chunk_kda_fwd_finalize_perf.json` | 12 | 原 10 条不变，新增 `B1,HV128,T11264` dense 和 `HV128,T16384` varlen 两个典型 shape |
 | `atk_chunk_kda_fwd_finalize_mss.json` | 12 | 4 个输出 layout × 2 种 state 轴顺序的尾块输入，以及 AIV 搬运模板的 dense/packed、KV/VK 确定性输入 |
 
 精度包括 T 为 `1/15/16/17/31/32/33/63/64/65` 的边界、
 多 chunk、严格递增变长序列、显式/自动 canonical chunk indices、
-不同 HV、`B=2` dense，以及 `B=384,HV=5,T=17` 和由 382 个单
+不同 HV（含 HV=128）、`B=2` dense，以及 `B=384,HV=5,T=17` 和由 382 个单
 token 序列加 33/64 行序列组成的 AIV 搬运模板 dense/varlen 边界。这些
 用例同时覆盖不足 4 个 head 的尾组、显式 `chunk_indices` 及
 `Aqk` 的 1/2/3/4 个 16-row 数据块。
@@ -35,8 +35,8 @@ packed 组中 `qg_scaled/Aqk` 是 rank-3，
 
 | `USE_AIV_INPUT_MOVER` | 选择条件 | 精度普通用例 | 精度边界用例 | `_mss.json` 用例 | 适用 SoC | 预期核类型 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `false` | A2/A3；或 A5 的 head 被拆分；或最小单核负载不足 8 个 chunk | 64-71 | 0-63、72-87、92-191 | 0-7 | A2/A3/A5 | AIC-only |
-| `true` | A5、每个 work item 包含完整 value head，且最小单核负载至少 8 个 chunk | 192-199 | 88-91、192-199 | 8-11 | A5 | MIX AIC 1:2 |
+| `false` | A2/A3 自适应 `G=1/G=HV`；A5 低负载 `G=4` AIC-only | 0-215 | 覆盖 HV 非 4 倍数和 HV=128 | 0-7 | A2/A3/A5 | AIC-only |
+| `true` | A5 full-HV work，dense 每核至少 4 chunk 或 varlen 每核至少 8 chunk | A5 环境筛选 | 覆盖尾 head group | 8-11 | A5 | MIX AIC 1:2 |
 
 case 88-91 是 dense 的 17 行尾块；case 192-199 在同一变长输入中
 包含 1/33/64 行序列并覆盖四种 layout。两组均使用非 4 倍数 HV，
@@ -49,7 +49,8 @@ case 2 命中 `_0`/cube 实例，耗时 908.545 us；性能 case 3 命中
 
 CPU golden 把四个直接输入恢复为 BF16 后，使用 FP64 两项矩阵乘与求和，
 不提前舍入为 BF16；executor 最后将 FP64 结果转为 FP32 比较载荷，
-匹配 ATK 原生 `mixed_tolerance_bm` 支持的 BF16 DUT / FP32 golden 类型对。
+作为 ATK 原生 `cv_fused_double_benchmark` 的高精度 golden。DUT 和同精度
+标杆分别相对该 golden 计算误差，再比较最大、平均和均方根相对误差比例。
 `run_cpu` 自身仍返回 FP64，供独立高精度检查。
 NPU 节点用本 executor 的窄 aclnn
 直调适配器验证设备实现。公开
@@ -67,8 +68,8 @@ atk case -f ./chunk_kda_fwd_finalize.yaml \
   -p ./gen_chunk_kda_fwd_finalize.py -en 0 -s 20260914
 ```
 
-`dtype_numbers: 200` 与 `shape_distributions: [[0,1.0]]` 在目标 ATK
-生成 200 条；生成器覆盖 YAML 临时形状，并在导出前检查八个输入
+`dtype_numbers` 应与冻结 accuracy JSON 的 216 条保持一致；生成器覆盖
+YAML 临时形状，并在导出前检查八个输入
 顺序。冻结 JSON 不因 `atk case` 的物理 case ID 重新排序而覆盖。
 
 ```bash
@@ -77,21 +78,23 @@ python3 -m py_compile \
   tests/atk/chunk_kda_fwd_finalize/executor_chunk_kda_fwd_finalize.py
 ```
 
-## 精度
+## 运行检查与精度
 
-加载与待测算子配套的 custom OPP、ATK 和 Python runtime 后：
+加载与待测算子配套的 custom OPP、ATK 和 Python runtime 后，可先做
+NPU 单节点执行检查；该命令只验证设备执行和 executor 的 shape/dtype/有限值合同，
+不产生双标杆精度结论：
 
 ```bash
 cd tests/atk/chunk_kda_fwd_finalize
-atk node --backend npu --devices 0 -o ./atk_output/accuracy \
-  node --backend cpu task \
+atk node --backend npu --devices 0 task \
   -c ./atk_chunk_kda_fwd_finalize.json \
-  --task accuracy -p ./executor_chunk_kda_fwd_finalize.py \
+  --task run -p ./executor_chunk_kda_fwd_finalize.py \
   -sp -to 60
 ```
 
-单条超过 60 秒判定超时。只有最终报告确认总任务 200、执行失败
-0、精度结论通过，才能声称全量通过；不能仅依据 shell 退出码。
+正式精度使用下节的 GPU 三路双标杆。单条超过 60 秒判定超时。只有最终
+报告确认总任务 216、执行失败 0、`cv_fused_double_benchmark` 精度结论通过，
+才能声称全量通过；不能仅依据 shell 退出码或单节点 `run` 成功。
 任意 case 未通过时先使用 `--save_data output` 保留实值，再定位
 shape/索引/尾块问题或执行精度复检，不能改输入 range 或阈值掩盖失败。
 
@@ -104,7 +107,7 @@ executor 除 NPU DUT 与 CPU 双标杆外，还支持把参考节点放到远端
 | 角色 | 触发条件 | 执行内容 |
 | --- | --- | --- |
 | DUT | `device ∈ {npu, pyaclnn}` | 本 executor 的窄 aclnn 直调适配器（不变） |
-| 高精度 golden | `device = gpu` 且 `is_benchmark_task=True` | `scripts/gpu.py` 的 FP64 torch 真值（镜像 `run_cpu` 数学，设备跟随输入；输出转 FP32 载荷进 `gpu_benchmark` 目录，供 `mixed_tolerance_bm` 的 BF16 DUT / FP32 golden 对比较） |
+| 高精度 golden | `device = gpu` 且 `is_benchmark_task=True` | `scripts/gpu.py` 的 FP64 torch 真值（镜像 `run_cpu` 数学，设备跟随输入；输出转 FP32 载荷，供 `cv_fused_double_benchmark` 比较 DUT 与同精度标杆的误差比例） |
 | 同精度标杆 | `device = gpu` 且 `is_benchmark_task=False` | `scripts/gpu.py` 的真实上游 `chunk_gla_fwd_o_gk`（默认）；BF16 输入 / FP32 累加 / BF16 输出；任何执行失败直接报错，不自动切换实现 |
 
 GPU control 默认 `upstream_strict`。GPU **性能任务强制使用真实上游 `chunk_gla_fwd_o_gk`**，覆盖服务进程中残留的 `contract` 配置；不会用 FP64 golden 或改写 kernel 替代性能标杆。混合 accuracy/performance 的独立 golden pass 仍按 ATK 调度执行 FP64 精度参考。纯精度/调试任务可在 GPU ATK 服务进程启动前设置 `KDA_FINALIZE_GPU_REFERENCE`（仅在 NPU 客户端设置不保证传给远端服务）：
@@ -136,7 +139,7 @@ control 的 head-major→token-major、h 连续化、metadata 和零 g 在 `init
 python scripts/gpu.py --reference upstream_strict --causal-aqk
 ```
 
-该自测只打印误差，正式精度仍以 ATK 双标杆及原混合容差为准。`TRITON_INTERPRET=1 python scripts/gpu.py` 仅用 FP32 验证 contract 的寻址/mask/varlen/布局，不能作为 CUDA BF16 验收。
+该自测只打印误差，正式精度仍以 ATK `cv_fused_double_benchmark` 双标杆为准。`TRITON_INTERPRET=1 python scripts/gpu.py` 仅用 FP32 验证 contract 的寻址/mask/varlen/布局，不能作为 CUDA BF16 验收。
 
 ### GPU / NPU 性能比较口径
 

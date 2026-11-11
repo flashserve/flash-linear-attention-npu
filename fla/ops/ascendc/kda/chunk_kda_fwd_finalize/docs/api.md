@@ -21,6 +21,10 @@ attn_out = chunk_kda_fwd_finalize(
 legacy `torch.ops.npu` 接口。输入、输出和变长元数据的形状与约束
 见下文及[算子 README](../README.md#输入输出)。
 
+本接口不接收 HK 或 ratio。支持 GVA ratio 1~16 时，HK 到 HV 的映射以及
+`HV % HK == 0`、ratio 范围校验由最早同时持有 HK/HV 的上游入口负责；
+Finalize 对已经展开的任意合法 HV 逐 head 独立计算，不新增 ratio 参数或特化。
+
 ## aclnn
 
 ```cpp

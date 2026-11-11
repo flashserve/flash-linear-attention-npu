@@ -9,6 +9,10 @@
 chunk 间状态，也不产生 `h/final_state`。四个输入均已按 value head 展开，
 Finalize 本身不执行 query/value head 映射。
 
+支持 `HV=HK*ratio`、`ratio in [1,16]` 的链路时，HK→HV 映射和 ratio
+合法性校验由上游 Prepare/FwdH 负责；Finalize 接口没有 HK，只按已展开的
+任意 HV 独立处理各 Value Head。
+
 稳定 Python 入口为：
 
 ```python
@@ -83,3 +87,7 @@ ATK 用例位于 [`tests/atk/chunk_kda_fwd_finalize`](../../../../../tests/atk/c
 以直接输入格式覆盖四种输出 layout、dense/packed、变长、尾 chunk 和
 `state_v_first`。独立 Finalize 没有 HK 输入，因此这些用例不能单独证明
 `HK<HV` 的 GVA 映射；需在 Prepare/FwdH/Finalize 组合链路验证。
+
+A2/A3 根据 canonical chunk 数自适应选择 `G=1` 或 `G=HV`；A5 高负载
+使用 full-HV MIX mover，低负载使用 `G=4` AIC-only。A5 仅完成编译与
+静态分支检查时，不应把结果表述为 A5 设备验证通过。

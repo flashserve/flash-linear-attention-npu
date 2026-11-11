@@ -89,36 +89,13 @@ public:
         const uint32_t total = TotalWorkItems(args_);
         const uint32_t begin = WorkBegin(total, core_, args_.tiling.usedCoreNum);
         const uint32_t end = WorkEnd(total, core_, args_.tiling.usedCoreNum);
-        // 主体只分 chunk；余下不足一轮核数的 chunk 才按 4-head 组均摊。
-        const uint32_t cores = args_.tiling.usedCoreNum;
-        const bool balanceTail = kFinalizeA5 && !args_.tiling.isVarLen &&
-            partitions == 1 && total >= cores && total % cores != 0;
-        const uint32_t fullChunksPerCore = total / cores;
-        const uint32_t headGroups = CeilDiv(args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
-        const uint32_t tailGroups = (total % cores) * headGroups;
-        const uint32_t tailBegin = WorkBegin(tailGroups, core_, cores);
-        const uint32_t tailEnd = WorkEnd(tailGroups, core_, cores);
-        const uint32_t workCount = balanceTail
-            ? fullChunksPerCore + tailEnd - tailBegin : end - begin;
         uint32_t outputSlot = 0;
         bool outputSlotUsed[2] = {false, false};
-        for (uint32_t index = 0; index < workCount; ++index) {
-            const uint32_t work = begin + index;
-            uint32_t chunkId = work / partitions;
-            uint32_t headBegin = (work % partitions) * args_.tiling.headsPerPartition;
+        for (uint32_t work = begin; work < end; ++work) {
+            const uint32_t chunkId = work / partitions;
+            const uint32_t headBegin =
+                (work % partitions) * args_.tiling.headsPerPartition;
             uint32_t headEnd = headBegin + args_.tiling.headsPerPartition;
-            if (balanceTail) {
-                if (index < fullChunksPerCore) {
-                    chunkId = core_ * fullChunksPerCore + index;
-                    headBegin = 0;
-                    headEnd = args_.tiling.valueHeadNum;
-                } else {
-                    const uint32_t tail = tailBegin + index - fullChunksPerCore;
-                    chunkId = fullChunksPerCore * cores + tail / headGroups;
-                    headBegin = (tail % headGroups) * Shape::kHeadsPerGroup;
-                    headEnd = headBegin + Shape::kHeadsPerGroup;
-                }
-            }
             FinalizeChunk chunk{};
             if (!ResolveChunk(args_, chunkId, chunk)) {
                 continue;
@@ -164,15 +141,38 @@ public:
 
 private:
 #if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
-    __aicore__ inline bool NextHead(uint64_t &work, uint64_t total,
+    struct A2A3HeadCursor {
+        uint32_t work = 0;
+        uint32_t end = 0;
+        uint32_t head = 0;
+        uint32_t headEnd = 0;
+        FinalizeChunk chunk{};
+    };
+
+    __aicore__ inline bool NextHead(A2A3HeadCursor &cursor,
                                     FinalizeChunk &chunk, uint32_t &head)
     {
-        // Host fixes CG=1. Advance only the work cursor when an invalid chunk is skipped.
-        while (work < total) {
-            const uint64_t current = work;
-            work += args_.tiling.usedCoreNum;
-            if (ResolveChunk(args_, static_cast<uint32_t>(current / args_.tiling.valueHeadNum), chunk)) {
-                head = static_cast<uint32_t>(current % args_.tiling.valueHeadNum);
+        if (cursor.head < cursor.headEnd) {
+            chunk = cursor.chunk;
+            head = cursor.head++;
+            return true;
+        }
+        const uint32_t partitions = CeilDiv(
+            args_.tiling.valueHeadNum, args_.tiling.headsPerPartition);
+        while (cursor.work < cursor.end) {
+            const uint32_t current = cursor.work++;
+            const uint32_t chunkId = current / partitions;
+            const uint32_t headBegin =
+                (current % partitions) * args_.tiling.headsPerPartition;
+            uint32_t headEnd = headBegin + args_.tiling.headsPerPartition;
+            if (headEnd > args_.tiling.valueHeadNum) {
+                headEnd = args_.tiling.valueHeadNum;
+            }
+            if (ResolveChunk(args_, chunkId, cursor.chunk)) {
+                cursor.head = headBegin + 1;
+                cursor.headEnd = headEnd;
+                chunk = cursor.chunk;
+                head = headBegin;
                 return true;
             }
         }
@@ -228,21 +228,20 @@ private:
             return;
         }
         static_assert(2 * kL1HeadBytes <= 512 * 1024, "L1 input slots exceed A2/A3 capacity");
-        const uint64_t chunks = args_.tiling.isVarLen
-            ? args_.tiling.totalChunks
-            : static_cast<uint64_t>(args_.tiling.batch) * args_.tiling.totalChunks;
-        const uint64_t total = chunks * args_.tiling.valueHeadNum;
-        uint64_t work = core_;
+        const uint32_t total = TotalWorkItems(args_);
+        A2A3HeadCursor cursor{};
+        cursor.work = WorkBegin(total, core_, cores);
+        cursor.end = WorkEnd(total, core_, cores);
         FinalizeChunk current{};
         uint32_t currentHead = 0;
         uint32_t inputSlot = 0;
         uint32_t outputSlot = 0;
-        if (NextHead(work, total, current, currentHead)) {
+        if (NextHead(cursor, current, currentHead)) {
             PrefetchHead(current, currentHead, inputSlot);
             while (true) {
                 FinalizeChunk next{};
                 uint32_t nextHead = 0;
-                const bool hasNext = NextHead(work, total, next, nextHead);
+                const bool hasNext = NextHead(cursor, next, nextHead);
                 // Queue the other slot before consuming this one, without waiting for Cube/Fixpipe.
                 if (hasNext) {
                     PrefetchHead(next, nextHead, inputSlot ^ 1);

@@ -17,10 +17,6 @@ namespace optiling {
 namespace {
 
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
-constexpr uint64_t FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE = 4;
-constexpr uint64_t FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE = 8;
-constexpr uint64_t FINALIZE_A2A3_HEAD_GROUP_SIZE = 1;
-
 struct FinalizeShape {
     uint64_t batch = 0;
     uint64_t heads = 0;
@@ -345,8 +341,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
-    scheduleContext.headGroupSize = isA5 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
     scheduleContext.isVarLen = isVarLen;
+    scheduleContext.isA5 = isA5;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(), "chunk-first/head 分核或 workspace 规划失败。");
@@ -361,23 +357,25 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     tiling.set_totalChunks(static_cast<uint32_t>(totalChunks));
     tiling.set_usedCoreNum(schedule.usedCoreNum);
     tiling.set_headsPerPartition(schedule.headsPerPartition);
+    tiling.set_totalWorkItems(static_cast<uint32_t>(schedule.totalWorkItems));
+    tiling.set_scheduleMode(static_cast<uint32_t>(schedule.scheduleMode));
+    tiling.set_groupSize(schedule.groupSize);
     tiling.set_isVarLen(isVarLen);
     tiling.set_outputSequenceMajor(info.sequenceMajor);
     tiling.set_stateVFirst(*stateVFirst);
-    const uint64_t minimumChunksPerCore =
-        schedule.chunkWorkItems / schedule.usedCoreNum;
-    const uint64_t moverMinimumChunksPerCore = isVarLen
-        ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
-        : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
-    const bool useAivInputMover =
-        isA5 && schedule.headsPerPartition == info.heads &&
-        minimumChunksPerCore >= moverMinimumChunksPerCore;
+    const bool useAivInputMover = schedule.useAivInputMover;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(useAivInputMover ? 1 : 0));
     context->SetTilingKey(tilingKey);
-    OP_LOGD(context->GetNodeName(), "tilingKey: %lu, useAivInputMover: %d",
-            static_cast<unsigned long>(tilingKey), useAivInputMover);
+    OP_LOGD(context->GetNodeName(),
+            "tilingKey=%lu, scheduleMode=%u, headsPerPartition=%u, "
+            "groupSize=%u, totalWorkItems=%lu, useAivInputMover=%d",
+            static_cast<unsigned long>(tilingKey),
+            static_cast<uint32_t>(schedule.scheduleMode),
+            schedule.headsPerPartition, schedule.groupSize,
+            static_cast<unsigned long>(schedule.totalWorkItems),
+            useAivInputMover);
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {

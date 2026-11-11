@@ -34,6 +34,9 @@ __global__ __aicore__ void chunk_kda_fwd_finalize(
     args.tiling.totalChunks = static_cast<uint32_t>(tilingData.totalChunks);
     args.tiling.usedCoreNum = static_cast<uint32_t>(tilingData.usedCoreNum);
     args.tiling.headsPerPartition = static_cast<uint32_t>(tilingData.headsPerPartition);
+    args.tiling.totalWorkItems = static_cast<uint32_t>(tilingData.totalWorkItems);
+    args.tiling.scheduleMode = static_cast<uint32_t>(tilingData.scheduleMode);
+    args.tiling.groupSize = static_cast<uint32_t>(tilingData.groupSize);
     args.tiling.isVarLen = tilingData.isVarLen;
     args.tiling.outputSequenceMajor = tilingData.outputSequenceMajor;
     args.tiling.stateVFirst = tilingData.stateVFirst;

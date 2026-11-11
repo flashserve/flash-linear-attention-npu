@@ -9,6 +9,7 @@ GPU 双标杆（golden=FP64 真值 / 普通任务=scripts/gpu.py 所选 GPU cont
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,7 +191,11 @@ def run_cpu(inputs: Inputs, high_precision: bool = True) -> torch.Tensor:
     aqk = _head_major(inputs.aqk.to(torch.bfloat16)).to(dtype)
     v_new = _head_major(inputs.v_new.to(torch.bfloat16)).to(dtype)
     h = inputs.h.to(torch.bfloat16).to(dtype)
-    result = torch.zeros((inputs.batch, inputs.heads, inputs.tokens, 128), dtype=dtype)
+    result = torch.zeros(
+        (inputs.batch, inputs.heads, inputs.tokens, 128),
+        dtype=dtype,
+        device=qg.device,
+    )
     for batch_id, chunks in enumerate(_chunk_map(inputs.batch, inputs.tokens, inputs.cu_seqlens)):
         for begin, end, chunk_id in chunks:
             rows = end - begin
@@ -221,13 +226,20 @@ class FunctionApi(BaseApi):
         super().__init__(task_result)
         self.inputs: Optional[Inputs] = None
         self.gpu_control = None
+        task_name = str(task_result.name)
+        self.task_name = task_name
+        tasks = set(task_result.task_type or ())
         self.low_precision_benchmark = (
-            self.device == "cpu" and task_result.name == "cpu_benchmark"
+            self.device == "cpu"
             and not task_result.is_benchmark_task
+            and bool(tasks & set(TaskTypesSelect.ACCURACY_TASKS))
         )
         # GPU 双标杆：远端 GPU 参考节点被调用两次 —— golden 任务（is_benchmark_task=True）
         # 跑 FP64 真值，普通任务跑显式选择的 GPU control。
-        tasks = set(task_result.task_type or ())
+        self.accuracy_requires_output = (
+            bool(tasks & set(TaskTypesSelect.ACCURACY_TASKS))
+            or task_name.endswith("phase6")
+        )
         accuracy_golden = bool(task_result.is_benchmark_task) and bool(
             tasks & set(TaskTypesSelect.ACCURACY_TASKS)
         )
@@ -250,11 +262,22 @@ class FunctionApi(BaseApi):
             )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
+        if os.environ.get("KDA_FINALIZE_ATK_TRACE_OUTPUT") == "1":
+            print(
+                "KDA_FINALIZE_ATK_CALL",
+                f"node={self.task_name}",
+                f"device={self.device}",
+                f"with_output={with_output}",
+                f"accuracy_requires_output={self.accuracy_requires_output}",
+                flush=True,
+            )
         if self.inputs is None:
             self.init_by_input_data(input_data)
         if self.inputs is None:
             raise RuntimeError("ATK inputs were not initialized")
-        if self.device == "cpu":
+        if self.low_precision_benchmark:
+            output = run_cpu(self.inputs, high_precision=False)
+        elif self.device == "cpu":
             output = run_cpu(self.inputs, high_precision=not self.low_precision_benchmark)
         elif self.device == "gpu":
             output = (_load_gpu_reference().run_gpu(self.inputs, high_precision=True)
@@ -263,7 +286,9 @@ class FunctionApi(BaseApi):
             output = run_npu(self.inputs)
         else:
             raise RuntimeError("unsupported ATK backend %r" % self.device)
-        if self.device == "gpu":
+        if self.low_precision_benchmark:
+            expected_dtype = torch.float32
+        elif self.device == "gpu":
             expected_dtype = torch.float64 if self.gpu_high_precision else torch.bfloat16
         elif self.device == "cpu":
             expected_dtype = torch.float32 if self.low_precision_benchmark else torch.float64
@@ -272,7 +297,19 @@ class FunctionApi(BaseApi):
         if (tuple(output.shape) != _output_shape(self.inputs)
                 or output.dtype != expected_dtype):
             raise RuntimeError("unexpected attn_out dtype or shape")
-        if not with_output:
+        if os.environ.get("KDA_FINALIZE_ATK_TRACE_OUTPUT") == "1":
+            print(
+                "KDA_FINALIZE_ATK_RETURN_CHECK",
+                f"node={self.task_name}",
+                f"device={self.device}",
+                f"with_output={with_output}",
+                f"accuracy_requires_output={self.accuracy_requires_output}",
+                flush=True,
+            )
+        # ATK 26.9.24 may invoke the actual node with with_output=False during
+        # double-benchmark accuracy.  Accuracy still needs the actual payload;
+        # retain the no-output fast path only for non-accuracy tasks.
+        if not with_output and not self.accuracy_requires_output:
             return None
         if self.device == "gpu":
             torch.cuda.synchronize()
@@ -280,9 +317,21 @@ class FunctionApi(BaseApi):
             torch.npu.synchronize()
         if not torch.isfinite(output.float()).all().item():
             raise RuntimeError("attn_out contains NaN or Inf")
-        # FP64 累加，仅将比较结果转为 FP32（CPU/GPU golden 的 payload）。
-        if self.device == "cpu" or (self.device == "gpu" and self.gpu_high_precision):
-            output = output.float()
+        # 双标杆比较要求 DUT、同精度标杆和高精度真值的 payload dtype 一致。
+        # NPU/GPU 的低精度结果仅转换保存载体，不改变其已经产生的数值。
+        output = output.float()
+        output = output.detach().cpu().contiguous()
+        if os.environ.get("KDA_FINALIZE_ATK_TRACE_OUTPUT") == "1":
+            print(
+                "KDA_FINALIZE_ATK_OUTPUT",
+                f"node={self.task_name}",
+                f"device={self.device}",
+                f"with_output={with_output}",
+                f"accuracy_requires_output={self.accuracy_requires_output}",
+                f"shape={tuple(output.shape)}",
+                f"dtype={output.dtype}",
+                flush=True,
+            )
         return (output,)
 
     def export_custom_data(self, input_data: InputDataset):
@@ -290,7 +339,7 @@ class FunctionApi(BaseApi):
         if self.inputs is None:
             raise RuntimeError("ATK inputs were not initialized")
         if self.low_precision_benchmark:
-            reference = "cpu_fp32_bf16"
+            reference = f"{self.device}_fp32_bf16"
         elif self.device == "cpu":
             reference = "cpu_fp64"
         elif self.device == "gpu":

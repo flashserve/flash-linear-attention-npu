@@ -10,7 +10,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -211,7 +217,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -412,7 +424,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -613,7 +631,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -814,7 +838,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1013,7 +1043,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1212,7 +1248,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1411,7 +1453,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1610,7 +1658,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1756,7 +1810,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1902,7 +1962,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14707,7 +14773,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },

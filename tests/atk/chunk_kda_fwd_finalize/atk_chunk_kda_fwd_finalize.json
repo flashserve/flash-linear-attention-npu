@@ -10,7 +10,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -156,7 +162,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -302,7 +314,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -448,7 +466,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -594,7 +618,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -738,7 +768,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -882,7 +918,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1026,7 +1068,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1170,7 +1218,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1316,7 +1370,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1462,7 +1522,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1608,7 +1674,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1754,7 +1826,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1898,7 +1976,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2042,7 +2126,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2186,7 +2276,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2330,7 +2426,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2476,7 +2578,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2622,7 +2730,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2768,7 +2882,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -2914,7 +3034,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3058,7 +3184,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3202,7 +3334,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3346,7 +3484,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3490,7 +3634,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3636,7 +3786,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3782,7 +3938,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -3928,7 +4090,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4074,7 +4242,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4218,7 +4392,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4362,7 +4542,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4506,7 +4692,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4650,7 +4842,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4796,7 +4994,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -4942,7 +5146,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5088,7 +5298,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5234,7 +5450,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5378,7 +5600,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5522,7 +5750,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5666,7 +5900,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5810,7 +6050,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -5956,7 +6202,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6102,7 +6354,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6248,7 +6506,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6394,7 +6658,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6538,7 +6808,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6682,7 +6958,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6826,7 +7108,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -6970,7 +7258,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7116,7 +7410,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7262,7 +7562,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7408,7 +7714,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7554,7 +7866,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7698,7 +8016,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7842,7 +8166,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -7986,7 +8316,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8130,7 +8466,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8276,7 +8618,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8422,7 +8770,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8568,7 +8922,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8714,7 +9074,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -8858,7 +9224,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9002,7 +9374,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9146,7 +9524,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9290,7 +9674,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9436,7 +9826,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9582,7 +9978,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9728,7 +10130,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -9874,7 +10282,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10018,7 +10432,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10162,7 +10582,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10306,7 +10732,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10450,7 +10882,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10596,7 +11034,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10742,7 +11186,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -10888,7 +11338,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11034,7 +11490,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11178,7 +11640,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11322,7 +11790,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11466,7 +11940,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11610,7 +12090,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11756,7 +12242,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -11902,7 +12394,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12048,7 +12546,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12194,7 +12698,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12338,7 +12848,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12482,7 +12998,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12626,7 +13148,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12770,7 +13298,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -12916,7 +13450,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13062,7 +13602,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13208,7 +13754,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13354,7 +13906,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13498,7 +14056,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13642,7 +14206,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13786,7 +14356,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -13930,7 +14506,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14076,7 +14658,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14222,7 +14810,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14368,7 +14962,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14514,7 +15114,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14658,7 +15264,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14802,7 +15414,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14946,7 +15564,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15090,7 +15714,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15236,7 +15866,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15382,7 +16018,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15528,7 +16170,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15674,7 +16322,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15818,7 +16472,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -15962,7 +16622,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16106,7 +16772,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16250,7 +16922,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16396,7 +17074,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16542,7 +17226,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16688,7 +17378,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16834,7 +17530,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -16978,7 +17680,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17122,7 +17830,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17266,7 +17980,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17410,7 +18130,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17556,7 +18282,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17702,7 +18434,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17848,7 +18586,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -17994,7 +18738,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -18138,7 +18888,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -18282,7 +19038,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -18426,7 +19188,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -18570,7 +19338,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -18738,7 +19512,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -18906,7 +19686,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -19074,7 +19860,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -19242,7 +20034,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -19408,7 +20206,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -19574,7 +20378,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -19740,7 +20550,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -19906,7 +20722,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -20140,7 +20962,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -20374,7 +21202,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -20608,7 +21442,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -20842,7 +21682,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -21074,7 +21920,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -21306,7 +22158,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -21538,7 +22396,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -21770,7 +22634,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -21949,7 +22819,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -22128,7 +23004,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -22307,7 +23189,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -22486,7 +23374,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -22663,7 +23557,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -22840,7 +23740,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -23017,7 +23923,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -23194,7 +24106,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -23450,7 +24368,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -23706,7 +24630,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -23962,7 +24892,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -24218,7 +25154,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -24472,7 +25414,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -24726,7 +25674,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -24980,7 +25934,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -25234,7 +26194,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -25413,7 +26379,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -25592,7 +26564,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -25771,7 +26749,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -25950,7 +26934,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -26127,7 +27117,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -26304,7 +27300,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -26481,7 +27483,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -26658,7 +27666,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -26892,7 +27906,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -27126,7 +28146,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -27360,7 +28386,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -27594,7 +28626,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -27826,7 +28864,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -28058,7 +29102,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -28290,7 +29340,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -28522,7 +29578,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -28701,7 +29763,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -28880,7 +29948,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -29059,7 +30133,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -29238,7 +30318,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -29415,7 +30501,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -29592,7 +30684,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -29769,7 +30867,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -29946,7 +31050,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -30433,7 +31543,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -30920,7 +32036,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -31407,7 +32529,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -31894,7 +33022,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -32379,7 +33513,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -32864,7 +34004,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -33349,7 +34495,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -33834,7 +34986,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -46641,7 +47799,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -59448,7 +60612,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -72255,7 +73425,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -85062,7 +86238,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -97867,7 +99049,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -110672,7 +111860,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -123477,7 +124671,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -136269,6 +137469,3214 @@
       }
     ],
     "save_name": "chunk_kda_fwd_finalize_0199_varlen_key2_h5_a1_a3_a4_tnd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 200,
+    "default_seed": 20261114,
+    "name": "chunk_kda_fwd_finalize_0200_dense_h128_t130_bnsd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0200_dense_h128_t130_bnsd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 201,
+    "default_seed": 20261115,
+    "name": "chunk_kda_fwd_finalize_0201_dense_h128_t130_bnsd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0201_dense_h128_t130_bnsd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 202,
+    "default_seed": 20261116,
+    "name": "chunk_kda_fwd_finalize_0202_dense_h128_t130_bsnd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0202_dense_h128_t130_bsnd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 203,
+    "default_seed": 20261117,
+    "name": "chunk_kda_fwd_finalize_0203_dense_h128_t130_bsnd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0203_dense_h128_t130_bsnd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 204,
+    "default_seed": 20261118,
+    "name": "chunk_kda_fwd_finalize_0204_dense_h128_t130_ntd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0204_dense_h128_t130_ntd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 205,
+    "default_seed": 20261119,
+    "name": "chunk_kda_fwd_finalize_0205_dense_h128_t130_ntd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0205_dense_h128_t130_ntd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 206,
+    "default_seed": 20261120,
+    "name": "chunk_kda_fwd_finalize_0206_dense_h128_t130_tnd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0206_dense_h128_t130_tnd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 207,
+    "default_seed": 20261121,
+    "name": "chunk_kda_fwd_finalize_0207_dense_h128_t130_tnd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          3,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "string",
+          "shape": null,
+          "range_values": "null",
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0207_dense_h128_t130_tnd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 208,
+    "default_seed": 20261122,
+    "name": "chunk_kda_fwd_finalize_0208_varlen_h128_65_65_bnsd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0208_varlen_h128_65_65_bnsd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 209,
+    "default_seed": 20261123,
+    "name": "chunk_kda_fwd_finalize_0209_varlen_h128_65_65_bnsd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0209_varlen_h128_65_65_bnsd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 210,
+    "default_seed": 20261124,
+    "name": "chunk_kda_fwd_finalize_0210_varlen_h128_65_65_bsnd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0210_varlen_h128_65_65_bsnd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 211,
+    "default_seed": 20261125,
+    "name": "chunk_kda_fwd_finalize_0211_varlen_h128_65_65_bsnd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0211_varlen_h128_65_65_bsnd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 212,
+    "default_seed": 20261126,
+    "name": "chunk_kda_fwd_finalize_0212_varlen_h128_65_65_ntd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0212_varlen_h128_65_65_ntd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 213,
+    "default_seed": 20261127,
+    "name": "chunk_kda_fwd_finalize_0213_varlen_h128_65_65_ntd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0213_varlen_h128_65_65_ntd_vk",
+    "is_boundary": false
+  },
+  {
+    "id": 214,
+    "default_seed": 20261128,
+    "name": "chunk_kda_fwd_finalize_0214_varlen_h128_65_65_tnd_kv",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0214_varlen_h128_65_65_tnd_kv",
+    "is_boundary": false
+  },
+  {
+    "id": 215,
+    "default_seed": 20261129,
+    "name": "chunk_kda_fwd_finalize_0215_varlen_h128_65_65_tnd_vk",
+    "aclnn_name": "ChunkKdaFwdFinalize",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_fwd_finalize",
+    "expected_error_msg": "",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "qg_scaled",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "aqk",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          130,
+          64
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "v_new",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          128,
+          130,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "h",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1,
+          4,
+          128,
+          128,
+          128
+        ],
+        "range_values": [
+          -1.0,
+          1.0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      [
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 65,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "cu_seqlens",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 130,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      [
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 0,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        },
+        {
+          "name": "chunk_indices",
+          "type": "attrs",
+          "required": false,
+          "dtype": "int",
+          "shape": null,
+          "range_values": 1,
+          "backward": false,
+          "align_32B": null,
+          "outlier_values": null
+        }
+      ],
+      {
+        "name": "output_layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "attr_bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "save_name": "chunk_kda_fwd_finalize_0215_varlen_h128_65_65_tnd_vk",
     "is_boundary": false
   }
 ]
