@@ -196,7 +196,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -479,11 +479,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
                "chunkSize only supports 64.");
     if (!(ParseLayout(params.layout, layout) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ParseLayout(params.layout, layout) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "layout", "ParseLayout(params.layout, layout) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(DFX_ENTITY, "layout,q,k,v,g,beta", "ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS", "shape must match the documented layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
@@ -507,11 +507,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                "supported, but got Kdim=%ld, Vdim=%ld.",
                info.kDim, info.vDim);
     if (!(CheckDtypes(params) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckDtypes(params) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(DFX_ENTITY, "q,k,v,g,beta", "CheckDtypes(params) == ACLNN_SUCCESS", "supported dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "cuSeqlensOptional", "CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
@@ -521,7 +521,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
                ACLNN_ERR_PARAM_INVALID, "varlen input supports at most 1024 sequences.");
     if (!(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
                                 info.totalChunks, params.chunkSize) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional, info.totalChunks,");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "chunkIndicesOptional", "chunkIndices must be canonical sequence-major", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
@@ -550,7 +550,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         }
     }
     if (!(CheckOutputShapes(params, info) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckOutputShapes(params, info) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(DFX_ENTITY, "output shapes", "CheckOutputShapes(params, info) == ACLNN_SUCCESS", "shape must match the documented layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -559,35 +559,35 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
     if (!(MakeContiguous(params.q, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.q, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "q", "MakeContiguous(params.q, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.k, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.k, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "k", "MakeContiguous(params.k, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.v, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.v, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "v", "MakeContiguous(params.v, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.g, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.g, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "g", "MakeContiguous(params.g, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.beta, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "beta", "MakeContiguous(params.beta, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "aLogOptional", "MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "dtBiasOptional", "MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "initialStateOptional", "MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -753,18 +753,18 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "CheckParams inputs", "CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "ContiguousInputs inputs", "ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -786,7 +786,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
                   gHead != nullptr && betaHead != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead !");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "qHead");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -798,7 +798,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         betaHead = AsRank4(betaHead, MakeShape({1, info.hvNum, info.seqlen}), executorPtr);
         if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
                       gHead != nullptr && betaHead != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead !");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "qHead");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -834,7 +834,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             DataType::DT_FLOAT);
     }
     if (!(gkCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: gkCompute != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "gkCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -864,7 +864,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                   (params.kgOut == nullptr || kgExport != nullptr) &&
                   (params.vNewOut == nullptr || vNewExport != nullptr) &&
                   (params.hOut == nullptr || hExport != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: (params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nu");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "wOut");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (aqkCompute == nullptr) {
@@ -899,7 +899,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (!(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
                   uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr &&
                   vNewCompute != nullptr && hCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullp");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "aqkCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -907,7 +907,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
         if (!(initialStateCompute != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: initialStateCompute != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "initialStateCompute");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -916,7 +916,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
     if (!(finalStateCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: finalStateCompute != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "finalStateCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -925,7 +925,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         attnCompute = AsRank4(
             params.attnOut, MakeShape({1, info.seqlen, info.hvNum, info.vDim}), executorPtr);
         if (!(attnCompute != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: attnCompute != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "attnCompute");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -937,7 +937,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
     if (!(qgScaledCompute != nullptr && uSeedCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: qgScaledCompute != nullptr && uSeedCompute != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "qgScaledCompute");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -961,7 +961,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             result = launchStage(stage);
             for (const aclTensor *tensor : result) {
                 if (!(tensor != nullptr)) {
-                    OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+                    OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
                     return ACLNN_ERR_INNER_NULLPTR;
                 }
             }
@@ -970,7 +970,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         result = launchStage(KDA_STAGE_FULL);
         for (const aclTensor *tensor : result) {
             if (!(tensor != nullptr)) {
-                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+                OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -981,12 +981,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
             if (!(finalStateResult != nullptr)) {
-                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: finalStateResult != nullptr");
+                OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "finalStateResult");
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (!(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "finalStateOut");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -994,11 +994,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *hResult = params.stateVFirst
             ? TransposeLastTwo(result[10], executorPtr) : result[10];
         if (!(hResult != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: hResult != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "hResult");
             return ACLNN_ERR_INNER_NULLPTR;
         }
         if (!(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "ViewCopy inputs");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1078,18 +1078,18 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "CheckParams inputs", "CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "ContiguousInputs inputs", "ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -1101,7 +1101,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
     if (!(kdaFwdV2Status == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(kdaFwdV2Status, "check failed: kdaFwdV2Status == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "argument", "kdaFwdV2Status == ACLNN_SUCCESS", "documented constraint");
         return kdaFwdV2Status;
     }
 

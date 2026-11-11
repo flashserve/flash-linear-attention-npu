@@ -130,7 +130,7 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 {
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -166,19 +166,19 @@ static aclnnStatus CheckDtype(ChunkBwdDqkwgParams params)
 static aclnnStatus CheckParams(ChunkBwdDqkwgParams params)
 {
     if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckNotNull(params) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "CheckNotNull inputs", "CheckNotNull(params) == ACLNN_SUCCESS", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(CheckFormat(params) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckFormat(params) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "CheckFormat inputs", "CheckFormat(params) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(CheckShape(params) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckShape(params) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(DFX_ENTITY, "CheckShape inputs", "CheckShape(params) == ACLNN_SUCCESS", "shape must match the documented layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckDtype(params) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(DFX_ENTITY, "CheckDtype inputs", "CheckDtype(params) == ACLNN_SUCCESS", "supported dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -221,14 +221,14 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
 
     auto ret = CheckParams(params);
     if (!(ret == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ret == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "argument", "ret == ACLNN_SUCCESS", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
@@ -236,43 +236,43 @@ aclnnStatus aclnnChunkBwdDqkwgGetWorkspaceSize(
     auto result = l0op::ChunkBwdDqkwg(params.q, params.k, params.v, params.g, params.h, params.dox, params.dh, params.dv, params.cuSeqlensOptional, params.chunkIndicesOptional, params.w, params.gGamma, params.scale, params.chunkSize, executorPtr);
 
     if (!(result[0] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[0] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(result[1] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[1] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(result[2] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[2] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(result[3] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR, "check failed: result[3] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dqOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     viewCopyResult = l0op::ViewCopy(result[1], params.dkOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     viewCopyResult = l0op::ViewCopy(result[2], params.dwOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     viewCopyResult = l0op::ViewCopy(result[3], params.dgOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

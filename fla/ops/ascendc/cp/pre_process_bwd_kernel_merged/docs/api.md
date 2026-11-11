@@ -100,6 +100,9 @@ kernel 侧不使用 `TILING_KEY_IS` 分支，由 key 直接选中模板实例。
 | `ACLNN_ERR_PARAM_INVALID` (`161002`) | 非指针类非法参数：shape/正维度/rank 错误、dtype 不符、属性/长度/segment 边界/组合关系非法 |
 | `ACLNN_ERR_INNER` (`561000`) / `ACLNN_ERR_INNER_NULLPTR` | tiling/launcher 失败、L0 结果为空或二阶段执行器运行失败；保持原接口映射，下层真实 rc 记录在 PLOG，原生首错消息不被外层覆盖 |
 
+本分支的 EZ 码覆盖范围：必选指针为空统一上报 EZ0004；dtype/shape/format/value 类上报使用
+EZ0019/EZ0008·EZ0009/EZ0017/EZ0024·EZ0027，并以检查项文本作为实际值；其余复杂组合校验仍以返回码为主。
+
 ## 6. 典型 shape
 
 shape 与取值范围的唯一维护处是 [README](../README.md) 的「支持的场景」「不支持（本版显式拦截）」「已知限制」三节；

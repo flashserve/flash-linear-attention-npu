@@ -119,7 +119,7 @@ static aclnnStatus CheckParams(RecurrentGatedDeltaRuleParams &params)
 {
     // 检查输入参数是否在支持的数据类型范围内
     if (!(CheckDtypeVaild(params))) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckDtypeVaild(params)");
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(DFX_ENTITY, "CheckDtypeVaild inputs", "CheckDtypeVaild(params)", "supported dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -157,23 +157,23 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
 
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
     if (!(CheckNotNull(params))) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckNotNull(params)");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "CheckNotNull inputs", "CheckNotNull(params)", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(CheckParams(params) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckParams(params) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "CheckParams inputs", "CheckParams(params) == ACLNN_SUCCESS", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     auto ret = PreProcess(params);
     if (!(ret == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ret, "check failed: ret == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "argument", "ret == ACLNN_SUCCESS", "documented constraint");
         return ret;
     }
 

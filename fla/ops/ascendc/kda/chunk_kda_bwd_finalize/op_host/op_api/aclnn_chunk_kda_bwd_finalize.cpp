@@ -52,7 +52,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
              {vNew, "v_new"}, {h, "h"}, {dh, "dh"}, {dvScan, "dv_scan"},
              {dqOut, "dq"}, {dkOut, "dk"}, {dvOut, "dv"}}) {
         if (!(CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "CheckRequired inputs", "CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS", "documented constraint");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -69,7 +69,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
              {dqRaw, "dq_raw"}, {dGOut, "d_g"}, {dALogOut, "d_a_log"},
              {dDtBiasOut, "d_dt_bias"}}) {
         if (!(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "CheckRequired inputs", "CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS", "documented constraint");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -96,7 +96,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto result = l0op::ChunkKdaBwdFinalize(
@@ -108,7 +108,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
         if (!(tensor != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

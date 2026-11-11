@@ -47,7 +47,7 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -56,55 +56,55 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(ChunkKdaBwdRecomputeParams &params, aclOpExecutor *executor)
 {
     if (!(DataContiguous(params.q, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.q, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "q", "DataContiguous(params.q, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.k, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.k, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "k", "DataContiguous(params.k, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.v, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.v, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "v", "DataContiguous(params.v, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.g, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.g, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "g", "DataContiguous(params.g, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.beta, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "beta", "DataContiguous(params.beta, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.a, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.a, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "a", "DataContiguous(params.a, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "aLogOptional", "DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "dtBiasOptional", "DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.wOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.wOut, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "wOut", "DataContiguous(params.wOut, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.uOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.uOut, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "uOut", "DataContiguous(params.uOut, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "qgOut", "DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "kgOut", "DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "gkOutOptional", "DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -131,13 +131,13 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
 
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "ParamsDataContiguous inputs", "ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const bool useGateInKernel = params.gkOutOptional != nullptr;

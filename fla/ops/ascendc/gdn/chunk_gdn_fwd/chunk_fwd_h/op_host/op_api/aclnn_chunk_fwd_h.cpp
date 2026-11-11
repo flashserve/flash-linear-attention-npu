@@ -291,7 +291,7 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 {
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -437,7 +437,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -456,24 +456,24 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     if (!(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: result[0] != nullptr && result[1] != nullptr && (!outputFinalState || result[2] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
     if (!(viewCopyResult0 != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult0 != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult0");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
     if (!(viewCopyResult1 != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult1 != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult1");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (outputFinalState && params.finalStateOut != nullptr) {
         auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
         if (!(viewCopyResult2 != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: viewCopyResult2 != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "viewCopyResult2");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

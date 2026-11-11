@@ -126,7 +126,7 @@ aclnnStatus Check(
     CHECK_COND(stateShapeValid, ACLNN_ERR_PARAM_INVALID, "h shape is invalid");
     if (variable) {
         if (!(ValidateMetadata(cu, indices, T, chunkSize, chunkCount) == ACLNN_SUCCESS)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: ValidateMetadata(cu, indices, T, chunkSize, chunkCount) == ACLNN_SUCCESS");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "ValidateMetadata inputs", "ValidateMetadata(cu, indices, T, chunkSize, chunkCount) == ACLNN_SUCCESS", "documented constraint");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
@@ -157,12 +157,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
                ACLNN_ERR_PARAM_NULLPTR, "workspaceSize and executor must not be nullptr");
     if (!(Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
                     scale, chunkSize, dAqkOut, dvOut, dqRawOut) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dAqkOut");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "Check inputs", "Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, dAqkOut", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto result = l0op::ChunkKdaBwdPrepare(
@@ -171,7 +171,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
         if (!(tensor != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

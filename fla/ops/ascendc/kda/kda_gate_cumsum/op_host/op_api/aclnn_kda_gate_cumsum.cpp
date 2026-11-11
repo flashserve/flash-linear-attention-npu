@@ -37,7 +37,7 @@ aclnnStatus KdaGateDataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: tensor != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "tensor");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -111,7 +111,7 @@ aclnnStatus KdaGateCheckParams(
     CHECK_COND(KdaGateSameShape(gkOut, g), ACLNN_ERR_PARAM_INVALID, "gkOut shape must match g shape.");
     const int64_t seqlen = KdaGateDim(g, rank == 4 ? 2 : 1);
     if (!(KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "KdaGateCheckCuSeqlens inputs", "KdaGateCheckCuSeqlens(cuSeqlensOptional, seqlen) == ACLNN_SUCCESS", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_COND(cuSeqlensOptional == nullptr || rank == 3 || KdaGateDim(g, 0) == 1, ACLNN_ERR_PARAM_INVALID,
@@ -161,32 +161,32 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
         DFX_OUT(gkOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
     if (!(KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
                                  safeGate, lowerBound, gkOut) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateI");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(DFX_ENTITY, "KdaGateCheckParams inputs", "KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateI", "documented constraint");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "KdaGateDataContiguous inputs", "KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "KdaGateDataContiguous inputs", "KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "check failed: KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS");
+        OP_LOGE_LIBOPAPI_REPORT_FORMAT_COMPAT(DFX_ENTITY, "KdaGateDataContiguous inputs", "KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS", "documented format");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     auto result = l0op::KdaGateCumsum(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
                                       useGateInKernel, safeGate, lowerBound, gkOut, executorPtr);
     if (!(result[0] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: result[0] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

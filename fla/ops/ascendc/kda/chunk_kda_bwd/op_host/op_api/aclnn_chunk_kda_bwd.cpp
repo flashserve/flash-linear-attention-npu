@@ -145,7 +145,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (!(uniqueExecutor.get() != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "check failed: uniqueExecutor.get() != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "get inputs");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto *executorPtr = uniqueExecutor.get();
@@ -194,16 +194,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         dAForKernel, dBiasForKernel, executorPtr);
     for (size_t i = 0; i < 5; ++i) {
         if (!(result[i] != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: result[i] != nullptr");
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (!(!useGateInKernel || result[5] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: !useGateInKernel || result[5] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "argument");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(dtBiasOptional == nullptr || result[6] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "check failed: dtBiasOptional == nullptr || result[6] != nullptr");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(DFX_ENTITY, "dtBiasOptional");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
