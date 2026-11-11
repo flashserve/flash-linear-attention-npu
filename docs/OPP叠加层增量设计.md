@@ -30,7 +30,7 @@ KDA host 错误码及 KDA/KKT 测试修正是单独的回归修复，不是 over
 
 本设计不提供进程内热更新，不实现通用对象文件增量缓存。run-only overlay 保持 Python/schema
 不变；wheel overlay 可发布新入口及接口变化。两种模式当前互斥，切换前须移除已安装的 overlay。
-下文按同一主题并列说明两种模式，第 9 节补充 wheel layer 协议和内部实现。
+下文按同一主题并列说明两种模式，第 9 节按三类实际产物说明增量安装及各自的覆盖范围。
 
 **base 与 launcher 的兼容边界**：不支持保留旧 Python/Stable launcher，仅通过 `.run --install`、
 `--full` 或手工覆盖将 base 换成 ACLNN ABI 不兼容的产物，也不承诺自动拦截这种混装。
@@ -330,17 +330,58 @@ python -m pytest -q tests/test_opp_overlay.py tests/test_opp_abi_contract.py \
 
 静态覆盖、mock 单测和局部 A5 回归各有边界，不相互替代。算子数、导出数或退出码为零都不能单独证明全量数值正确。数值、性能、确定性、MSS、A2/A3/A5 支持矩阵、发布工具链与正式 CI/审批要求按[仓库规则](repository-rules.md)、[开发者指南](开发者指南.md)和[迁移指南](兼容与迁移指南.md)执行。PR 应按当前提交分别列出通过、已有失败、未执行与阻塞，禁止累计历史轮次充当当前结果。
 
-## 9. wheel 携带适配层的增量安装
+## 9. 增量安装
 
-操作命令见 [Wheel 增量安装指南](Wheel增量安装指南.md)。此模式解决仅替换 OPP 无法改变
-Python 参数、Stable schema 和 adapter 的限制，不改变原有 run-only 安装语义。
+增量安装保留已安装的 base，根据需要更新 OPP、Python/Stable 适配层，或同时更新两者。
+按交付内容分为三类产物：**run-only overlay**、**standalone wheel overlay**、
+**携带 OPP 的 wheel overlay**。先按下表选择产物，再遵循共同规则和对应安装流程。
 
 ### 9.1 产物与覆盖范围
 
-两套 wheel 构建入口均生成 `fla_npu/layer_manifest.json`：记录协议版本、产品档位、
-launcher 源码指纹、公共算子到 ACLNN 契约的依赖，以及本层导出范围。
-`FLA_NPU_OVERLAY_OPS` 指定导出范围，未设置时为全部公共 Ascend C 入口；它不决定 OPP 编译范围。
-manifest 从 Python 调用链、Stable adapter 和公共头生成，不要求 wheel 有完整 OPP snapshot。
+| 产物 | 交付内容 | 覆盖范围 | OPP 来源及接口要求 | base 要求 |
+| --- | --- | --- | --- | --- |
+| run-only overlay | `.run` 中的 OPP vendor，安装前提取为目录 | 仅 OPP 的 L1–L4；Python wrapper、Stable schema 和 launcher 保持 base | 增量 OPP 优先、未覆盖部分回落 base；与 base 同名 ACLNN ABI 须兼容 | 已具备配套 launcher 和完整 OPP |
+| standalone wheel overlay | Python wrapper、Stable launcher、layer manifest；不带 OPP 二进制的骨架 `.whl` | 指定公共入口的 Python/Stable 适配层；单独安装时不更新 OPP 的 L1–L4 | 复用匹配的 base OPP；需要新 OPP 时通过 `--opp-source` 配套补入 | 支持 layer 协议；直接复用时须已有匹配 OPP，骨架 base 须另配 OPP |
+| 携带 OPP 的 wheel overlay | Python wrapper、Stable launcher、layer manifest 及内嵌 OPP | 指定公共入口的 Python/Stable 适配层，以及包内 OPP 的 L1–L4 | 新 adapter 与实际选中 OPP 匹配；可与旧版本接口不同，缺失依赖可复用兼容的 base OPP | 支持 layer 协议；可以带 OPP，也可以是骨架 |
+
+这里的 standalone wheel overlay 指**实际不带 OPP 二进制**的产物。安装器按包内
+`libcust_opapi.so` 是否存在判断，不按构建命令名称判断；standalone 构建目录若带入了 OPP，
+其产物应归入“携带 OPP 的 wheel overlay”。
+
+run-only 的增量 OPP 范围由编译时的 `--ops` 决定。两类 wheel 的公共入口覆盖范围由
+`FLA_NPU_OVERLAY_OPS` 声明，未设置时为全部公共 Ascend C 入口；OPP 编译范围仍由
+`FLA_NPU_OPS` / `--ops` 决定。声明只覆盖 A 不会自动裁掉 wheel 中额外携带的 OPP。
+
+### 9.2 共同规则
+
+三类产物均通过 `python -m fla_npu_opp_manage --overlay --source ...` 安装，保留 base 的
+Python/Stable 和 OPP 算子产物；普通 `pip install` 仍是安装或更新 base。管理操作共用安装锁，
+各自维护增量状态，不把增量文件写进 base wheel 的 pip RECORD。
+
+装卸和启用选择须在 CANN 初始化前完成。新进程先准备实际存在的增量 OPP → base 路径，
+再调用公共入口；没有增量 OPP 时使用匹配的 base OPP。三类产物都支持显式禁用、独立状态查询、
+移除后重启恢复，不提供进程内热切换或 ABI bypass。手动 source 规则见第 3 节。
+
+正常替换就绪后只启用新 overlay 与 base，不把旧 overlay 继续当作补充层。
+run-only 不能与任一种 wheel overlay 混装，切换前须移除旧 overlay；两类 wheel 共用一个
+active 槽位，可以用 `--force` 相互替换。具体失败恢复和旧产物回收差异见第 5 节。
+
+两类 wheel 还共用以下机制，run-only 不需要这些适配层交付步骤：
+
+- base 和增量 wheel 均须有 layer 协议及显式注册能力。构建生成的 `layer_manifest.json`
+  记录协议版本、产品档位、launcher 指纹、入口范围和 ACLNN 依赖；依赖从 Python 调用链、
+  Stable adapter 和公共头生成，不要求完整 OPP snapshot。
+- 将 wheel 中的 `fla_npu` 提取到 `opp/wheel_layers/<id>/fla_npu`，支持根目录及
+  `.data/purelib` / `platlib` 布局，校验 tag、Python/依赖、RECORD 和安全路径。
+  拒绝路径穿越、重复映射和 zip 软链；不执行输入 wheel 的顶层初始化、`.pth` 或安装钩子，
+  不替换顶层框架、Triton 或依赖包，也不自动安装依赖。
+- 对新 adapter 的依赖按实际 OPP 来源核验；缺失、不匹配或覆盖冲突保存为 pending，
+  保留旧 active。包格式或清单损坏则拒绝安装；就绪后原子切换 `state.json` 的 active 指针。
+- 公共模块只替换声明入口、别名及副作用元数据。增量 Python 和 dispatcher 使用独立命名空间，
+  `_stable.load()` 显式调用 `fla_npu_stable_register(namespace, paths)`；base 与增量层
+  可有不同 schema，不共享 Runtime 句柄和符号缓存。仅 `torch.ops.load_library()` 不完成注册。
+
+两类 wheel 使用相同的安装布局：
 
 ```text
 site-packages/
@@ -351,47 +392,76 @@ site-packages/
     └── opp/
         ├── vendors/fla_npu_transformer/
         └── wheel_layers/
-            ├── state.json         # active / pending 的不可变目录身份
+            ├── state.json         # active / pending 层的目录身份
             └── <id>/fla_npu/      # 增量 Python、launcher、可选 OPP
 ```
 
-wheel 解包支持根目录以及 `.data/purelib` / `platlib`，校验平台 tag、Python/依赖版本和
-payload 的 RECORD；拒绝路径穿越、重复映射及 zip 软链。只提取 `fla_npu`，不执行输入 wheel 的
-顶层初始化、`.pth` 或安装钩子，不覆盖 base 文件，也不自动安装第三方依赖。
+新进程先由 `.pth` 或 base `set_env.bash` 配置 OPP 路径，`import fla_npu` 再复核 active 层，
+固定 base 与增量 launcher 的库列表；调用公共 wrapper 时显式注册各自的 dispatcher schema。
+原有不声明 layer 协议的 launcher 保留普通 Stable 加载兼容，但不能作为 wheel 层使用。
 
-### 9.2 安装与启动链
+### 9.3 run-only overlay
 
-1. 管理器取得与 run overlay 共用的安装锁，将 wheel 提取到独立目录。可用 `--opp-source`
-   将配套 vendor 或 `.run` 补入该目录。
-2. 按实际 `libcust_opapi.so` 判断是否携带 OPP。新 adapter 的每个依赖按 overlay → base
-   解析并比较 ACLNN 契约，缺少或不兼容则进入 pending。不会因 A 的新契约不同于旧 A 而拒绝。
-3. overlay OPP 若覆盖了未选入范围的入口或 base B 所用的共享符号，则要求补齐相关 adapter。
-   base 中未被本层触及的旧接口不增加全量 ABI 验收门禁。
-4. 就绪后原子切换 active 指针；pending 或失败保留旧 active。旧目录保留至显式移除，避免安装
-   过程中删除旧映射文件；这不代表支持进程内热切换。
-5. 新进程的 `.pth` 或 base `set_env.bash` 先配置 CANN 的 OPP 顺序。`import fla_npu`
-   解析并复核 active 层，然后为 base 与增量 launcher 确定不再改变的库列表。
-6. 增量 Python 以独立包命名空间导入，公共模块只替换指定入口、别名及副作用元数据。
-   `_stable.load()` 调用 launcher 的 `fla_npu_stable_register(namespace, paths)`，base 使用
-   `fla_npu_stable`，增量使用独立 dispatcher 命名空间。因此两个版本可以注册不同 schema，
-   不共享 Runtime 句柄和符号缓存。未覆盖的 B 保持 base wrapper 与 launcher。
+适用于只修改 host、tiling、kernel 等 OPP 实现，继续使用已安装 Python/Stable 接口的场景。
+先将 run 包解到独立目录，再安装其中的 vendor：
 
-新 launcher 不在 `dlopen` 时自动注册固定 schema；调用公共 wrapper 时显式注册。
-仅直接 `torch.ops.load_library()` 不是 wheel overlay 的公开加载入口。原有不声明 layer 协议的
-launcher 保留普通 Stable 加载兼容，但不能作为 wheel 层使用。
+```bash
+<update.run> --install-path=<staging-dir> --quiet
+python -m fla_npu_opp_manage --overlay --source <staging-dir>/vendors
+```
 
-### 9.3 边界与验收
+安装器比较增量与 base 的同名 ACLNN 契约，成功后以增量 vendor → base 的顺序查找 L1–L4。
+不兼容时拒绝安装；不能通过只换 OPP 来改变已有 Python/Stable 接口，也不会自动增加新 wrapper。
+可用 `--overlay-name` 指定 vendor 名；同名目标已存在时需加 `--force`。
+成功替换后删除旧 vendor，配置由 `config.ini` 管理。两类 wheel 使用默认名称，不支持自定义 vendor 名。
 
-骨架不是损坏的完整 wheel：能复用匹配 base OPP 时可直接 active，无法复用时等待
-`--opp-source`；骨架 base 也可接受带 OPP 的增量 wheel。未安装的算子仍不可执行。
-当前支持单个 wheel 层，与 run-only overlay 互斥；支持查询、显式禁用、替换失败保留旧层、
-损坏状态独立移除。不提供 ABI bypass，不替换 base 顶层框架、Triton 或 Python 依赖。
+### 9.4 standalone wheel overlay
 
-验收按本次修改范围执行：
+适用于修改 Python 参数、默认值或 Stable schema/adapter，且新 adapter 仍可调用 base OPP 的场景。
+两类 wheel 的构建步骤见 [Wheel 增量安装指南](Wheel增量安装指南.md)。
 
-- base 有 A+B、overlay 仅 A：修改 A 的 Python 参数及 C++ schema，证明新调用实际进入新 adapter，
-  B 的入口与结果不变；remove 后 A 的签名、默认值和结果恢复。
-- 骨架 / 带 OPP 的组合：依赖配齐才 active；缺失或不匹配进入 pending，旧 active 保持可用。
-- 带 OPP 层的 L1–L4 顺序与 Python provider 一致；共享依赖不能让 B 静默切换来源。
-- RECORD 损坏、路径穿越、跨产品、替换失败、状态损坏、手动 source 与显式禁用均有回归。
-- 构建、原有 run overlay、公共签名和 Stable 契约测试保持通过；真机报告单独标明覆盖的组合及未测范围。
+```bash
+python -m fla_npu_opp_manage --overlay --source <standalone-update.whl>
+```
+
+依赖匹配时，指定入口使用新 wrapper/launcher，L1–L4 继续来自 base。缺少匹配 OPP 时保存为
+pending，不将骨架当作损坏包，也不启用不完整组合。新 adapter 需要新 OPP 时重新配套安装：
+
+```bash
+python -m fla_npu_opp_manage --overlay --source <standalone-update.whl> \
+  --opp-source <matching.run或vendor目录> --force
+```
+
+补入 OPP 后，同一个增量层同时提供适配层与 OPP，按下一类产物的来源顺序和共享依赖规则检查。
+骨架 base 加骨架增量、且没有配套 OPP 时不能执行算子。
+
+### 9.5 携带 OPP 的 wheel overlay
+
+适用于将 Python/Stable 与 OPP 配套交付，包括被覆盖算子的 ACLNN 接口变化：
+
+```bash
+python -m fla_npu_opp_manage --overlay --source <opp-update.whl>
+```
+
+指定入口使用增量 wrapper/launcher，实际 OPP 顺序为增量 → 存在的 base。
+新 adapter 的契约须与选中 OPP 一致，不要求等于旧 adapter 的契约。包内 OPP 若覆盖了声明
+范围外的入口，或改变了未覆盖入口 B 使用的共享符号，须调整产物范围并补齐相关 adapter，
+不能让 B 静默切换来源；未触及的 base 接口不增加全量 ABI 门禁。
+
+base 为骨架时，只要本层所需依赖配齐即可启用；没有配齐的其他算子仍不可执行。
+携带 OPP 不等于依赖必然完整，缺失、不兼容或覆盖冲突同样进入 pending。
+与 standalone wheel 相同，替换时使用 `--force`，旧 payload 保留至显式移除，且不再参与新进程选择。
+
+### 9.6 验收范围
+
+共同验收以 base 有 A+B、增量仅 A 为基本场景：A 命中预期实现，B 的来源与结果不变，
+显式禁用和 remove 后恢复 base。启动环境、坏产物拒绝、替换失败及独立恢复也须覆盖。
+
+| 产物 | 专项验证 |
+| --- | --- |
+| run-only overlay | 保持原 Python/Stable 签名；分别修改 OPP L1–L4，验证 A 生效、B 回落；同名 ABI 不兼容拒绝 |
+| standalone wheel overlay | 修改 A 的 Python 参数和 C++ schema，证明新 adapter 实际执行且复用 base OPP；缺依赖保持 pending，配套补入后可用 |
+| 携带 OPP 的 wheel overlay | 验证 A 的 Python/Stable 与 OPP 配套生效；接口变化按新契约核验，共享依赖不误覆盖 B；覆盖带 OPP base 和骨架 base |
+
+两类 wheel 还须验证 RECORD、路径、产品档位、状态文件及显式注册隔离。验收报告分别标明
+三类产物的实测结果与未测范围，不能沿用 run-only 的历史通过结果作为两类 wheel 的验收结论。

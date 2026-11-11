@@ -28,7 +28,7 @@ python -m pip install --force-reinstall --no-deps /path/to/base.whl
 它与 `FLA_NPU_OPS` 不同：后者决定编译哪些 OPP 算子，前者决定运行时替换哪些 Python 入口。
 未设置 `FLA_NPU_OVERLAY_OPS` 时，wheel 声明全部公共 Ascend C 入口；仅更新 A 时务必显式指定。
 
-### 只改 Python / Stable adapter，复用 base OPP
+### standalone wheel overlay：只更新适配层
 
 在干净的源码目录构建 standalone wheel；确保源码包下 `fla_npu/opp` 没有以前遗留的 OPP 二进制。
 
@@ -41,7 +41,7 @@ FLA_NPU_SOC=ascend910b FLA_NPU_OVERLAY_OPS=chunk_fwd_o \
 这会编译匹配的新 launcher，生成不带 OPP 的骨架 wheel。Python 参数或 dispatcher schema
 可以改变；其实际调用的 ACLNN 接口仍须与复用的 base OPP 一致。
 
-### 连同 OPP 一起更新
+### 携带 OPP 的 wheel overlay：配套更新
 
 从仓库根目录编译对应算子的 wheel：
 
@@ -95,18 +95,17 @@ python -m fla_npu_opp_manage --remove-overlay
 `fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash`，再启动业务进程；不要直接 source
 私有层中从新 wheel 提取的脚本。`FLA_NPU_OVERLAY_VENDOR=''` 会同时禁用增量 Python 入口和增量 OPP。
 
-两种增量方式的边界如下，切换类型前先移除旧 overlay：
+三类增量产物的边界如下：
 
-| 行为 | run-only overlay | wheel overlay |
+| 产物 | 更新范围 | OPP 与 ABI 条件 |
 | --- | --- | --- |
-| 安装对象 | 从 `.run` 提取的 vendor 目录 | 骨架或带 OPP 的 `.whl`，可用 `--opp-source` 配齐 |
-| Python / Stable | 复用 base | 指定入口使用增量，未覆盖入口保持 base |
-| ABI 条件 | 与 base 同名 ACLNN 接口保持兼容 | 新 adapter 与实际选中 OPP 匹配，允许被覆盖入口接口变化 |
-| 选择方式 | vendor 配置及 `--overlay-name` | 单个 active 槽位，使用默认名称 |
-| 替换失败 | 拒绝不兼容产物并保留旧 overlay | 包损坏拒绝，依赖不匹配保持 pending；旧 active 保留 |
-| 旧版本回收 | 成功替换后删除旧 vendor | 替换时保留旧 payload，显式移除时回收 |
+| run-only overlay | 从 `.run` 提取 vendor，仅更新 OPP；Python/Stable 复用 base | 增量优先，未覆盖部分回落 base；同名 ACLNN ABI 须兼容 |
+| standalone wheel overlay | 不带 OPP 的骨架 wheel，更新指定 Python/Stable 入口 | 新 adapter 复用匹配的 base OPP；需要新 OPP 时用 `--opp-source` 补齐 |
+| 携带 OPP 的 wheel overlay | 配套更新指定 Python/Stable 入口及包内 OPP | 新 adapter 与实际选中 OPP 匹配，允许被覆盖入口接口变化 |
 
-两者均保留 base 的 Python/Stable 和 OPP 算子产物，分别维护自己的管理配置；支持显式禁用
-和移除后重启恢复，当前不支持两种 overlay 混装。
+三类产物均保留 base 的 Python/Stable 和 OPP 算子产物，支持显式禁用和移除后重启恢复。
+run-only 按 vendor 配置选择，成功替换后删除旧 vendor；两类 wheel 共用一个 active 槽位，
+依赖不满足保持 pending，旧 payload 保留至显式移除。两类 wheel 可用 `--force` 相互替换；
+run-only 不与任一种 wheel overlay 混装，两者之间切换时先移除旧 overlay。
 
-机制、启动约束及验收标准见 [OPP 叠加层增量设计](OPP叠加层增量设计.md#9-wheel-携带适配层的增量安装)。
+三类产物的完整对比、安装机制与验收标准见 [增量安装](OPP叠加层增量设计.md#9-增量安装)。
