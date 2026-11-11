@@ -1,5 +1,6 @@
 # ATK 单算子验证工程
 
+
 本目录保存 `flash-linear-attention-npu` 仓内 Ascend C 算子的 ATK 单算子验证工程。
 所有精度、性能、确定性、内存检测和用例生成动作都通过 ATK 发起；公共脚本只负责拼装
 ATK 命令，不在脚本内导出 `PYTHONPATH`。本文件维护 ATK 资产、执行和结果记录，不负责值域校准
