@@ -20,6 +20,8 @@
 #include "tiling_base/tiling_util.h"
 #include "platform/soc_spec.h"
 #include "log/log.h"
+#include "op_common/log/log.h"
+#include "host_utils/log.h"
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"
@@ -108,130 +110,145 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else if (std::strcmp(inputLayoutStr, "BSND") == 0 || std::strcmp(inputLayoutStr, "BSH") == 0) {
         inputLayout = INPUT_LAYOUT_BSND;
     } else {
-        OP_LOGE(context, "unsupported inputLayout %s, expect BSND/TND/BNSD/NTD", inputLayoutStr);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "inputLayout", inputLayoutStr, "BSND/TND/BNSD/NTD");
         return ge::GRAPH_FAILED;
     }
 
     if (inputLayout == INPUT_LAYOUT_BNSD) {
-        OP_CHECK_IF(xShape.GetDimNum() != 3,
-                    OP_LOGE(context, "x must be logical 3D [B, T, D] when inputLayout is BNSD"),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(dyShape.GetDimNum() != 4,
-                    OP_LOGE(context, "dy must be 4D [B, N, T, Dh] when inputLayout is BNSD"),
-                    return ge::GRAPH_FAILED);
+        if (xShape.GetDimNum() != 3) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "rank mismatch", "3D [B, T, D]");
+            return ge::GRAPH_FAILED;
+        }
+        if (dyShape.GetDimNum() != 4) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dy", "rank mismatch", "4D [B, N, T, Dh]");
+            return ge::GRAPH_FAILED;
+        }
         inputMode = 1;
         B = xShape.GetDim(DIM_INDEX0);
         T = xShape.GetDim(DIM_INDEX1);
         D = xShape.GetDim(DIM_INDEX2);
         inputN = dyShape.GetDim(DIM_INDEX1);
         inputHeadDim = dyShape.GetDim(DIM_INDEX3);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
-                static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != T ||
-                inputN * inputHeadDim != D,
-            OP_LOGE(context, "dy must be [B, N, T, Dh] with D=N*Dh for logical x [B, T, D]"),
-            return ge::GRAPH_FAILED);
+        if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
+            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != T || inputN * inputHeadDim != D) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dy", "mismatch", "[B, N, T, Dh] with D=N*Dh");
+            return ge::GRAPH_FAILED;
+        }
         totalTokens = B * T;
     } else if (inputLayout == INPUT_LAYOUT_NTD) {
-        OP_CHECK_IF(xShape.GetDimNum() != 2,
-                    OP_LOGE(context, "x must be logical 2D [total_tokens, D] when inputLayout is NTD"),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(dyShape.GetDimNum() != 3,
-                    OP_LOGE(context, "dy must be 3D [N, total_tokens, Dh] when inputLayout is NTD"),
-                    return ge::GRAPH_FAILED);
+        if (xShape.GetDimNum() != 2) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "rank mismatch", "2D [total_tokens, D]");
+            return ge::GRAPH_FAILED;
+        }
+        if (dyShape.GetDimNum() != 3) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dy", "rank mismatch", "3D [N, total_tokens, Dh]");
+            return ge::GRAPH_FAILED;
+        }
         inputMode = 0;
         totalTokens = xShape.GetDim(DIM_INDEX0);
         D = xShape.GetDim(DIM_INDEX1);
         inputN = dyShape.GetDim(DIM_INDEX0);
         inputHeadDim = dyShape.GetDim(DIM_INDEX2);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != totalTokens ||
-                inputN * inputHeadDim != D,
-            OP_LOGE(context, "dy must be [N, total_tokens, Dh] with D=N*Dh for logical x [total_tokens, D]"),
-            return ge::GRAPH_FAILED);
+        if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != totalTokens || inputN * inputHeadDim != D) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dy", "mismatch", "[N, total_tokens, Dh] with D=N*Dh");
+            return ge::GRAPH_FAILED;
+        }
     } else if (inputLayout == INPUT_LAYOUT_TND) {
-        OP_CHECK_IF(xShape.GetDimNum() != 2 || dyShape.GetDimNum() != 2,
-                    OP_LOGE(context, "x and dy must be [total_tokens, D] when inputLayout is TND"),
-                    return ge::GRAPH_FAILED);
+        if (xShape.GetDimNum() != 2 || dyShape.GetDimNum() != 2) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x,dy", "rank mismatch", "[total_tokens, D]");
+            return ge::GRAPH_FAILED;
+        }
         inputMode = 0;
         totalTokens = xShape.GetDim(DIM_INDEX0);
         D = xShape.GetDim(DIM_INDEX1);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != totalTokens ||
-                static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != D,
-            OP_LOGE(context, "dy shape must match x shape when inputLayout is TND"),
-            return ge::GRAPH_FAILED);
+        if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != totalTokens ||
+            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != D) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dy", "mismatch", "match x");
+            return ge::GRAPH_FAILED;
+        }
         inputN = 1;
         inputHeadDim = D;
     } else if (inputLayout == INPUT_LAYOUT_BSND) {
-        OP_CHECK_IF(xShape.GetDimNum() != 3 || dyShape.GetDimNum() != 3,
-                    OP_LOGE(context, "x and dy must be [B, T, D] when inputLayout is BSND/BSH"),
-                    return ge::GRAPH_FAILED);
+        if (xShape.GetDimNum() != 3 || dyShape.GetDimNum() != 3) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x,dy", "rank mismatch", "[B, T, D]");
+            return ge::GRAPH_FAILED;
+        }
         inputMode = 1;
         B = xShape.GetDim(DIM_INDEX0);
         T = xShape.GetDim(DIM_INDEX1);
         D = xShape.GetDim(DIM_INDEX2);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
-                static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != T ||
-                static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != D,
-            OP_LOGE(context, "dy shape must match x shape when inputLayout is BSND/BSH"),
-            return ge::GRAPH_FAILED);
+        if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
+            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != T ||
+            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != D) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dy", "mismatch", "match x");
+            return ge::GRAPH_FAILED;
+        }
         totalTokens = B * T;
         inputN = 1;
         inputHeadDim = D;
     } else {
-        OP_LOGE(context, "x shape does not match inputLayout %s", inputLayoutStr);
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "x", "mismatch", "match inputLayout");
         return ge::GRAPH_FAILED;
     }
 
     auto yShapePtr = context->GetOptionalInputShape(Y_INPUT_INDEX);
     if (yShapePtr != nullptr && yShapePtr->GetStorageShape().GetDimNum() > 0) {
         auto yShape = yShapePtr->GetStorageShape();
-        OP_CHECK_IF(yShape.GetDimNum() != dyShape.GetDimNum(),
-                    OP_LOGE(context, "y and dy must have the same shape"),
-                    return ge::GRAPH_FAILED);
+        if (yShape.GetDimNum() != dyShape.GetDimNum()) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "y,dy", "rank mismatch", "same shape");
+            return ge::GRAPH_FAILED;
+        }
         for (size_t i = 0; i < dyShape.GetDimNum(); i++) {
-            OP_CHECK_IF(yShape.GetDim(i) != dyShape.GetDim(i),
-                        OP_LOGE(context, "y and dy must have the same shape"),
-                        return ge::GRAPH_FAILED);
+            if (yShape.GetDim(i) != dyShape.GetDim(i)) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "y,dy", "dim mismatch", "same shape");
+                return ge::GRAPH_FAILED;
+            }
         }
     } else {
-        OP_CHECK_IF(activation != ACTIVATION_NONE,
-                    OP_LOGE(context, "y is required when activation is enabled"),
-                    return ge::GRAPH_FAILED);
+        if (activation != ACTIVATION_NONE) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "y");
+            return ge::GRAPH_FAILED;
+        }
     }
     uint32_t W = wShape.GetDim(DIM_INDEX0);
-    OP_CHECK_IF(wShape.GetDimNum() != 2 || static_cast<uint32_t>(wShape.GetDim(DIM_INDEX1)) != D,
-                OP_LOGE(context, "weight must be [W, D_total], got dim1 %ld expect %u",
-                        wShape.GetDimNum() > DIM_INDEX1 ? wShape.GetDim(DIM_INDEX1) : 0, D),
-                return ge::GRAPH_FAILED);
+    if (wShape.GetDimNum() != 2 || static_cast<uint32_t>(wShape.GetDim(DIM_INDEX1)) != D) {
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "weight", "mismatch", "[W, D_total]");
+        return ge::GRAPH_FAILED;
+    }
 
     uint32_t numChunks = 0;
     if (inputMode == 0) {
         auto qslShapePtr = context->GetOptionalInputShape(QUERY_START_LOC_INPUT_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context, qslShapePtr);
         auto qslShape = qslShapePtr->GetStorageShape();
-        OP_CHECK_IF(qslShape.GetDimNum() != 1 || qslShape.GetDim(0) < 1,
-                    OP_LOGE(context, "queryStartLoc must be 1D and non-empty in varlen mode"),
-                    return ge::GRAPH_FAILED);
+        if (qslShape.GetDimNum() != 1 || qslShape.GetDim(0) < 1) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "queryStartLoc", "mismatch", "1D, non-empty");
+            return ge::GRAPH_FAILED;
+        }
         B = qslShape.GetDim(0) - 1;
         const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INPUT_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context, qslDesc);
-        OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64,
-                    OP_LOGE(context, "queryStartLoc dtype must be int64"),
-                    return ge::GRAPH_FAILED);
+        if (qslDesc->GetDataType() != ge::DT_INT64) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "queryStartLoc",
+                FLA_NPU_DFX_DTYPE_STRING(qslDesc->GetDataType()), "INT64");
+            return ge::GRAPH_FAILED;
+        }
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
         const int64_t *qslData = (qslTensor != nullptr) ? qslTensor->GetData<int64_t>() : nullptr;
         OP_CHECK_NULL_WITH_CONTEXT(context, qslData);
-        OP_CHECK_IF(qslData[0] != 0 || qslData[B] != static_cast<int64_t>(totalTokens),
-                    OP_LOGE(context, "queryStartLoc must start with 0 and end with total_tokens"),
-                    return ge::GRAPH_FAILED);
+        if (qslData[0] != 0 || qslData[B] != static_cast<int64_t>(totalTokens)) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc", "invalid bounds",
+                "start 0, end total_tokens");
+            return ge::GRAPH_FAILED;
+        }
         uint32_t maxSeqLen = 0;
         for (uint32_t i = 0; i < B; i++) {
-            OP_CHECK_IF(qslData[i + 1] < qslData[i],
-                        OP_LOGE(context, "queryStartLoc must be non-decreasing"),
-                        return ge::GRAPH_FAILED);
+            if (qslData[i + 1] < qslData[i]) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "queryStartLoc",
+                    "[" + std::to_string(i + 1) + "]=" + std::to_string(qslData[i + 1]),
+                    "non-decreasing, >= queryStartLoc[" + std::to_string(i) + "]=" + std::to_string(qslData[i]));
+                return ge::GRAPH_FAILED;
+            }
             uint32_t seqLen = static_cast<uint32_t>(qslData[i + 1] - qslData[i]);
             maxSeqLen = std::max(maxSeqLen, seqLen);
             numChunks += CeilDiv(seqLen, static_cast<uint32_t>(64));
@@ -245,25 +262,21 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         auto initStateShape = context->GetInputShape(INITIAL_STATE_INPUT_INDEX);
         if (initStateShape != nullptr && initStateShape->GetStorageShape().GetDimNum() > 0) {
             auto shape = initStateShape->GetStorageShape();
-            OP_CHECK_IF(
-                shape.GetDimNum() != 3 ||
-                    static_cast<uint32_t>(shape.GetDim(0)) != B ||
-                    static_cast<uint32_t>(shape.GetDim(1)) != W ||
-                    static_cast<uint32_t>(shape.GetDim(2)) != D,
-                OP_LOGE(context, "initial_state must be [B, W, D]=[%u, %u, %u]", B, W, D),
-                return ge::GRAPH_FAILED);
+            if (shape.GetDimNum() != 3 || static_cast<uint32_t>(shape.GetDim(0)) != B ||
+                static_cast<uint32_t>(shape.GetDim(1)) != W || static_cast<uint32_t>(shape.GetDim(2)) != D) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "initial_state", "mismatch", "[B, W, D]");
+                return ge::GRAPH_FAILED;
+            }
             useInitialState = true;
         }
         auto dhtShape = context->GetInputShape(DHT_INPUT_INDEX);
         if (dhtShape != nullptr && dhtShape->GetStorageShape().GetDimNum() > 0) {
             auto shape = dhtShape->GetStorageShape();
-            OP_CHECK_IF(
-                shape.GetDimNum() != 3 ||
-                    static_cast<uint32_t>(shape.GetDim(0)) != B ||
-                    static_cast<uint32_t>(shape.GetDim(1)) != W ||
-                    static_cast<uint32_t>(shape.GetDim(2)) != D,
-                OP_LOGE(context, "dht must be [B, W, D]=[%u, %u, %u]", B, W, D),
-                return ge::GRAPH_FAILED);
+            if (shape.GetDimNum() != 3 || static_cast<uint32_t>(shape.GetDim(0)) != B ||
+                static_cast<uint32_t>(shape.GetDim(1)) != W || static_cast<uint32_t>(shape.GetDim(2)) != D) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "dht", "mismatch", "[B, W, D]");
+                return ge::GRAPH_FAILED;
+            }
             useFinalState = true;
         }
     }
@@ -289,9 +302,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     ubSize = (ubSize - RESERVED_UB) / BYTE_BLOCK * BYTE_BLOCK;
 
     uint32_t alignDim = (inputLayout == INPUT_LAYOUT_BNSD || inputLayout == INPUT_LAYOUT_NTD) ? inputHeadDim : D;
-    OP_CHECK_IF(alignDim % 16 != 0,
-                OP_LOGE(context, "%s D %u must be divisible by 16", inputLayoutStr, alignDim),
-                return ge::GRAPH_FAILED);
+    if (alignDim % 16 != 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "D", std::to_string(alignDim), "divisible by 16");
+        return ge::GRAPH_FAILED;
+    }
     uint32_t BD = (D % 64 == 0) ? 64 : 16;
     bool wideBlockLayoutSupported =
         (inputLayout != INPUT_LAYOUT_BNSD && inputLayout != INPUT_LAYOUT_NTD) ||
@@ -349,9 +363,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else if (T < BT) {
         BT = T;
     }
-    OP_CHECK_IF(BT == 0 || totalTokens == 0,
-                OP_LOGE(context, "empty sequence is not supported: T %u totalTokens %u", T, totalTokens),
-                return ge::GRAPH_FAILED);
+    if (BT == 0 || totalTokens == 0) {
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "T,totalTokens", "empty", "non-empty sequence");
+        return ge::GRAPH_FAILED;
+    }
     if (inputMode == 0) {
         numChunks = 0;
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);

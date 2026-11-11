@@ -8,6 +8,8 @@
 #include <cmath>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
+#include "op_common/log/log.h"
+#include "host_utils/log.h"
 
 namespace optiling {
 
@@ -32,7 +34,7 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     if (!std::isfinite(*scale)) {
-        OP_LOGE(context->GetNodeName(), "scale must be finite");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "scale", "non-finite", "finite");
         return ge::GRAPH_FAILED;
     }
 

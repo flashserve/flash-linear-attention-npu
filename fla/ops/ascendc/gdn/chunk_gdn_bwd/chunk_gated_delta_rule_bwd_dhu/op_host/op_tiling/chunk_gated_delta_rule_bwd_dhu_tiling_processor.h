@@ -25,6 +25,8 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
+#include "op_common/log/log.h"
+#include "host_utils/log.h"
 
 using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
 
@@ -155,19 +157,19 @@ private:
                                              const char *inputName)
     {
         if (curShape == nullptr) {
-            OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName);
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, inputName);
             return ge::GRAPH_FAILED;
         }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         if (dimNum != validDimNum) {
-            OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim num should be %zu, but got %zu.",
-                    inputName, validDimNum, dimNum);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName,
+                "rank=" + std::to_string(dimNum), "rank=" + std::to_string(validDimNum));
             return ge::GRAPH_FAILED;
         }
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
             if (storageShape.GetDim(dimIndex) == 0) {
-                OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim %zu is 0.", inputName, dimIndex);
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, inputName, "zero dim", "non-zero dim");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -180,9 +182,8 @@ private:
         const size_t dim1 = shape1.GetDim(dimIndex);
         const size_t dim2 = shape2.GetDim(dimIndex);
         if (dim1 != dim2) {
-            OP_LOGE(ctx_.nodeName,
-                    "Compare input shape of %s and %s failed, dim %zu should be same, but got %zu and %zu.",
-                    inputName1, inputName2, dimIndex, dim1, dim2);
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_COMPAT(ctx_.nodeName,
+                (std::string(inputName1) + "," + inputName2).c_str(), "dim mismatch", "same shape");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -332,12 +333,12 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG == ctx_.hasGk) {
-            OP_LOGE(ctx_.nodeName, "Exactly one of g and gk must be provided, but hasG=%d hasGk=%d.",
-                    static_cast<int>(ctx_.hasG), static_cast<int>(ctx_.hasGk));
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(ctx_.nodeName, "g,gk");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
-            OP_LOGE(ctx_.nodeName, "The dtype of g or gk must be float32 or match q and k.");
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g,gk",
+                FLA_NPU_DFX_DTYPE_STRING(ctx_.gDataType), "FLOAT or match q/k");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG) {
@@ -427,7 +428,7 @@ private:
         tiling_.hasDh0 = ctx_.hasDh0 ? 1 : 0;
         tiling_.hasGk = ctx_.hasGk ? 1 : 0;
         if (ctx_.hasGk && !ctx_.useExp2) {
-            OP_LOGE(ctx_.nodeName, "use_exp2 must be true when gk is provided.");
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "useExp2", "false", "true when gk is provided");
             return ge::GRAPH_FAILED;
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;

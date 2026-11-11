@@ -12,6 +12,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(cann_ops-transformer)
+# Shared host-side DFX utils (fla/ops/ascendc/common/host_utils).
+include_directories(${PROJECT_SOURCE_DIR}/fla/ops/ascendc/common)
 
 set(CMAKE_C_FLAGS_RELEASE "")
 set(CMAKE_CXX_FLAGS_RELEASE "")

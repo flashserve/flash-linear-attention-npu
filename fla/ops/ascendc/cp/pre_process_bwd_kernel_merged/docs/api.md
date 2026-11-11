@@ -96,10 +96,9 @@ kernel 侧不使用 `TILING_KEY_IS` 分支，由 key 直接选中模板实例。
 
 | 返回码 | 触发条件 |
 | --- | --- |
-| `ACLNN_ERR_PARAM_NULLPTR` | `q`/`k`/`w`/`d_o`/`dv`/`dhm` 为空 |
-| `ACLNN_ERR_PARAM_INVALID` | tiling 校验失败：`k` 与 `q` shape 不一致；`w` 不是 `[B,Hv,T,K]`；`dv` 与 `d_o` shape 不一致；`Hv % Hk != 0`；`K != 128` 或 `V != 128`（本版只支持 `K = V = 128`：状态行按 64 行分组、列按 16 元素成组、Vector 逐行读写依赖该行宽）；`chunk_size != 64`；`g`/`gk` 同时非空；`g`/`gk` shape 与 dtype 不匹配；`cu_seqlens` 少于 2 项；`B > 1`（无论 dense 还是 varlen） |
-
-报错文本会给出实际 shape、`Hk`/`Hv` 与触发的约束，便于定位；`g`/`gk` 同时非空的报错会明确指出二者互斥。
+| `ACLNN_ERR_PARAM_NULLPTR` (`161001`) | 指针为空：必选 `q`/`k`/`w`/`d_o`/`dv`/`dhm` 为空，或 `workspaceSize`/`executor` 输出指针为空 |
+| `ACLNN_ERR_PARAM_INVALID` (`161002`) | 非指针类非法参数：shape/正维度/rank 错误、dtype 不符、属性/长度/segment 边界/组合关系非法 |
+| `ACLNN_ERR_INNER` (`561000`) / `ACLNN_ERR_INNER_NULLPTR` | tiling/launcher 失败、L0 结果为空或二阶段执行器运行失败；保持原接口映射，下层真实 rc 记录在 PLOG，原生首错消息不被外层覆盖 |
 
 ## 6. 典型 shape
 

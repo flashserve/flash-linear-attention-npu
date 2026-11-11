@@ -17,6 +17,8 @@
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "chunk_gated_delta_rule_fwd_h_tiling_processor.h"
+#include "op_common/log/log.h"
+#include "host_utils/log.h"
 
 namespace optiling {
 
@@ -88,9 +90,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
-    OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
-                OP_LOGE(context->GetNodeName(), "Either g or gk must be provided."),
-                return ge::GRAPH_FAILED);
+    if (gTensor == nullptr && gkTensor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "g,gk");
+        return ge::GRAPH_FAILED;
+    }
     auto gateTensor = useGk ? gkTensor : gTensor;
 
     auto attrPtr = context->GetAttrs();
@@ -130,16 +133,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 ||
         logicalVHeads <= 0 || logicalKDim <= 0 || logicalVDim <= 0 ||
         tilingCtx.vNumHead % tilingCtx.kNumHead != 0) {
-        OP_LOGE(context->GetNodeName(),
-                "Check logical shape failed: batch=%ld, seqlen=%ld, kDim=%ld, vDim=%ld; "
-                "vNumHead (%ld) must be divisible by kNumHead (%ld).",
-                logicalBatch, logicalSeqlen, logicalKDim, logicalVDim,
-                tilingCtx.vNumHead, tilingCtx.kNumHead);
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "q", "invalid logical shape",
+                                                   "positive batch/seqlen/K/V, HV % HK == 0");
         return ge::GRAPH_FAILED;
     }
     if (tilingCtx.vHeadDim > V_DIM_256) {
-        OP_LOGE(context->GetNodeName(), "Check u shape failed, vHeadDim should be <= %ld, but get %ld.",
-                V_DIM_256, tilingCtx.vHeadDim);
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "u", "vHeadDim too large",
+            "vHeadDim <= " + std::to_string(V_DIM_256));
         return ge::GRAPH_FAILED;
     }
 

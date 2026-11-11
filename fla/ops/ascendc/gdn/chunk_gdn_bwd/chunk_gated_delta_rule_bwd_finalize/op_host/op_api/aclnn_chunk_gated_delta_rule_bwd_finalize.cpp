@@ -15,6 +15,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
+#include "host_utils/log.h"
 
 #if GDN_FINALIZE_ENABLE_ARCH22
 #include <cstring>
@@ -24,6 +25,8 @@
 #include "op_common/log/log.h"
 
 using namespace op;
+
+static constexpr const char *CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY = "aclnnChunkGatedDeltaRuleBwdFinalize";
 
 namespace {
 
@@ -69,21 +72,32 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
                cuSeqlensOptional, chunkIndicesOptional),
         DFX_OUT(dqOut, dkOut, dvOut, dbetaOut, dgOut));
 
-    const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
-    const char *requiredInputNames[] = {"q", "k", "v", "vNew", "dO", "du", "g", "beta", "h", "dh", "a"};
-    for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
-        if (requiredInputs[index] == nullptr) {
-            const char *param_name = requiredInputNames[index];
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+
+    const std::array<const char *, 11> required = {
+        "q", "k", "v", "vNew", "dO", "du", "g", "beta", "h", "dh", "a"};
+    const std::array<const aclTensor *, 11> requiredTensors = {
+        q, k, v, vNew, dO, du, g, beta, h, dh, a};
+    for (size_t idx = 0; idx < required.size(); ++idx) {
+        if (requiredTensors[idx] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, required[idx]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
-    if (dqOut == nullptr || dkOut == nullptr || dvOut == nullptr || dbetaOut == nullptr ||
-        dgOut == nullptr || workspaceSize == nullptr || executor == nullptr) {
-        const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
-            dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
-            workspaceSize == nullptr ? "workspaceSize" : "executor";
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+    const std::array<const char *, 5> gradNames = {"dqOut", "dkOut", "dvOut", "dbetaOut", "dgOut"};
+    const std::array<const aclTensor *, 5> gradTensors = {dqOut, dkOut, dvOut, dbetaOut, dgOut};
+    for (size_t idx = 0; idx < gradNames.size(); ++idx) {
+        if (gradTensors[idx] == nullptr) {
+            OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, gradNames[idx]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
+    if (workspaceSize == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_OUTPUT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_ENTITY, "executor");
+
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 #if GDN_FINALIZE_ENABLE_ARCH22

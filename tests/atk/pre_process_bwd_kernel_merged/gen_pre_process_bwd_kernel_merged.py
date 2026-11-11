@@ -36,8 +36,8 @@ CHUNK_SIZE = 64
 
 # ACLNN 返回码名 → 数字码：反向用例的 expected_error_msg 与 executor 的判定共用同一份口径。
 _ACLNN_CODES = {
-    "ACLNN_ERR_PARAM_INVALID": 161001,
-    "ACLNN_ERR_PARAM_NULLPTR": 161002,
+    "ACLNN_ERR_PARAM_INVALID": 161002,
+    "ACLNN_ERR_PARAM_NULLPTR": 161001,
 }
 
 # 输入由 executor 按 case_spec 里的 seed 确定性地构造（ATK 只传 marker + 用例元数据）。

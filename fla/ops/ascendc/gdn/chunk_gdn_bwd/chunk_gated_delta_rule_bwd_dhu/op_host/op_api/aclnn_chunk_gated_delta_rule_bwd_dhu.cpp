@@ -23,8 +23,11 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "host_utils/log.h"
 
 using namespace op;
+
+static constexpr const char *CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY = "aclnnChunkGatedDeltaRuleBwdDhu";
 
 static constexpr size_t CHUNK_BWD_DHU_QKV_DIM_NUM = 4;
 static constexpr size_t CHUNK_BWD_DHU_G_DIM_NUM = 3;
@@ -67,20 +70,41 @@ struct ChunkGatedDeltaRuleBwdDhuParams {
 
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
-    CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dO must not be nullptr.");
-    CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv must not be nullptr.");
+    if (params.q == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.w == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dO == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dO");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dv == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     CHECK_COND((params.gOptional != nullptr) != (params.gkOptional != nullptr), ACLNN_ERR_PARAM_NULLPTR,
                "Exactly one of g and gk must be provided.");
     CHECK_COND(params.gkOptional == nullptr || params.useExp2, ACLNN_ERR_PARAM_INVALID,
                "use_exp2 must be true when gk is provided.");
-    CHECK_COND(params.dhOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhOut must not be nullptr.");
+    if (params.dhOut == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dhOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (params.h0Optional != nullptr) {
         CHECK_COND(params.dh0Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dh0Out must not be nullptr when h0Optional is not nullptr.");
     }
-    CHECK_COND(params.dv2Out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv2Out must not be nullptr.");
+    if (params.dv2Out == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(CHUNK_GATED_DELTA_RULE_BWD_DHU_ENTITY, "dv2Out");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -297,24 +321,24 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleBwdDhuParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dO failed.");
-    CHECK_COND(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dv failed.");
-    CHECK_COND(OptionalDataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
-    CHECK_COND(OptionalDataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous gk failed.");
-    CHECK_COND(OptionalDataContiguous(params.h0Optional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous h0 failed.");
-    CHECK_COND(OptionalDataContiguous(params.dhtOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dht failed.");
+    const aclTensor *ChunkGatedDeltaRuleBwdDhuParams::*contigMembers[] = {
+        &ChunkGatedDeltaRuleBwdDhuParams::q, &ChunkGatedDeltaRuleBwdDhuParams::k, &ChunkGatedDeltaRuleBwdDhuParams::w,
+        &ChunkGatedDeltaRuleBwdDhuParams::dO, &ChunkGatedDeltaRuleBwdDhuParams::dv};
+    for (const auto contigMember : contigMembers) {
+        auto dfxRetStatus = DataContiguous(params.*contigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
+    }
+    const aclTensor *ChunkGatedDeltaRuleBwdDhuParams::*optContigMembers[] = {
+        &ChunkGatedDeltaRuleBwdDhuParams::gOptional, &ChunkGatedDeltaRuleBwdDhuParams::gkOptional, &ChunkGatedDeltaRuleBwdDhuParams::h0Optional,
+        &ChunkGatedDeltaRuleBwdDhuParams::dhtOptional};
+    for (const auto optContigMember : optContigMembers) {
+        auto dfxRetStatus = OptionalDataContiguous(params.*optContigMember, executorPtr);
+        if (dfxRetStatus != ACLNN_SUCCESS) {
+            return dfxRetStatus;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -324,9 +348,18 @@ static aclnnStatus CheckParams(ChunkGatedDeltaRuleBwdDhuParams params)
     // 不可经 CHECK_RET 统一改写为 161002，否则丢失 NULLPTR 语义
     aclnnStatus ret = CheckNotNull(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    auto dfxRetStatus10 = CheckFormat(params);
+    if (dfxRetStatus10 != ACLNN_SUCCESS) {
+        return dfxRetStatus10;
+    }
+    auto dfxRetStatus11 = CheckDtype(params);
+    if (dfxRetStatus11 != ACLNN_SUCCESS) {
+        return dfxRetStatus11;
+    }
+    auto dfxRetStatus12 = CheckShape(params);
+    if (dfxRetStatus12 != ACLNN_SUCCESS) {
+        return dfxRetStatus12;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -368,8 +401,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     // 固定写法，参数检查
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto dfxRetStatus13 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus13 != ACLNN_SUCCESS) {
+        return dfxRetStatus13;
+    }
 
     auto result = l0op::ChunkGatedDeltaRuleBwdDhu(
         params.q, params.k, params.w, params.dO, params.dv, params.gOptional, params.gkOptional,

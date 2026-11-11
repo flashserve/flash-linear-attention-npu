@@ -15,8 +15,11 @@
  #include "opdev/op_dfx.h"
  #include "opdev/make_op_executor.h"
  #include "opdev/tensor_view_utils.h"
+#include "host_utils/log.h"
  
  using namespace op;
+
+static constexpr const char *SOLVE_TRI_ENTITY = "aclnnSolveTri";
  
  #ifdef __cplusplus
  extern "C" {
@@ -32,14 +35,23 @@
  
  static aclnnStatus CheckNotNull(SolveTriParams params)
  {
-     CHECK_COND(params.x != nullptr, ACLNN_ERR_PARAM_NULLPTR, "x must not be nullptr.");
-     CHECK_COND(params.xOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "xOut must not be nullptr.");
+     if (params.x == nullptr) {
+         OP_LOGE_LIBOPAPI_REPORT_COMPAT(SOLVE_TRI_ENTITY, "x");
+         return ACLNN_ERR_PARAM_NULLPTR;
+     }
+     if (params.xOut == nullptr) {
+         OP_LOGE_LIBOPAPI_REPORT_COMPAT(SOLVE_TRI_ENTITY, "xOut");
+         return ACLNN_ERR_PARAM_NULLPTR;
+     }
      return ACLNN_SUCCESS;
  }
  
  static aclnnStatus CheckParams(SolveTriParams params)
  {
-     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+     auto status = CheckNotNull(params);
+     if (status != ACLNN_SUCCESS) {
+         return status;
+     }
      return ACLNN_SUCCESS;
  }
  
@@ -52,8 +64,10 @@
  
  static aclnnStatus ParamsDataContiguous(SolveTriParams &params, aclOpExecutor *executorPtr)
  {
-     CHECK_COND(DataContiguous(params.x, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                "Contiguous x failed.");
+     auto dfxRetStatus1 = DataContiguous(params.x, executorPtr);
+    if (dfxRetStatus1 != ACLNN_SUCCESS) {
+        return dfxRetStatus1;
+    }
      return ACLNN_SUCCESS;
  }
  
@@ -72,13 +86,17 @@
  
      auto uniqueExecutor = CREATE_EXECUTOR();
      CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
-     auto executorPtr = uniqueExecutor.get();
+      auto executorPtr = uniqueExecutor.get();
  
      auto ret = CheckParams(params);
-     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+     if (ret != ACLNN_SUCCESS) {
+         return ret;
+     }
  
-     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                "ParamsDataContiguous failed.");
+     auto dfxRetStatus2 = ParamsDataContiguous(params, executorPtr);
+    if (dfxRetStatus2 != ACLNN_SUCCESS) {
+        return dfxRetStatus2;
+    }
  
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);

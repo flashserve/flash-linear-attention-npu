@@ -10,6 +10,10 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "arch22/chunk_gated_delta_rule_fwd_prepare_tiling_arch22.h"
 
+#include "op_common/log/log.h"
+#include "host_utils/log.h"
+
+
 namespace optiling {
 
 namespace {
@@ -49,15 +53,15 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const gert::StorageShape *gShape = context->GetRequiredInputShape(PREPARE_INPUT_G);
     const gert::StorageShape *betaShape = context->GetRequiredInputShape(PREPARE_INPUT_BETA);
     if (qShape == nullptr || kShape == nullptr || vShape == nullptr || gShape == nullptr || betaShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "required input shape is null");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "q,k,v,g,beta");
         return ge::GRAPH_FAILED;
     }
 
     const auto &q = LogicalShape(qShape);
     const auto &v = LogicalShape(vShape);
     if (q.GetDimNum() != 4 || v.GetDimNum() != 4) {
-        OP_LOGE(context->GetNodeName(), "q/v rank must be 4, got q=%zu v=%zu",
-                q.GetDimNum(), v.GetDimNum());
+        OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(context->GetNodeName(), "q,v",
+            "q=" + std::to_string(q.GetDimNum()) + "D v=" + std::to_string(v.GetDimNum()) + "D", "4D");
         return ge::GRAPH_FAILED;
     }
 
@@ -143,7 +147,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const auto *gDesc = context->GetInputDesc(PREPARE_INPUT_G);
     const auto *betaDesc = context->GetInputDesc(PREPARE_INPUT_BETA);
     if (qDesc == nullptr || gDesc == nullptr || betaDesc == nullptr) {
-        OP_LOGE(context->GetNodeName(), "required input desc is null");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "q,g,beta desc");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType qDtype = qDesc->GetDataType();
@@ -151,42 +155,43 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const ge::DataType betaDtype = betaDesc->GetDataType();
 
     if (K != 128 || (V != 128 && V != 256) || chunkSize != 64) {
-        OP_LOGE(context->GetNodeName(),
-                "unsupported K=%ld V=%ld chunkSize=%ld (need K=128 V=128/256 chunkSize=64)",
-                K, V, chunkSize);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "K,V,chunkSize",
+            "K=" + std::to_string(K) + " V=" + std::to_string(V) + " chunk=" + std::to_string(chunkSize),
+            "K=128 V=128/256 chunkSize=64");
         return ge::GRAPH_FAILED;
     }
     if (HK <= 0 || HV % HK != 0) {
-        OP_LOGE(context->GetNodeName(), "Hv must be divisible by Hk, Hk=%ld Hv=%ld", HK, HV);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "HK,HV", "invalid", "HV % HK == 0, HK > 0");
         return ge::GRAPH_FAILED;
     }
     const int64_t hRatio = HV / HK;
     if (hRatio < 1 || hRatio > 4) {
-        OP_LOGE(context->GetNodeName(), "Hv/Hk=%ld not in {1,2,3,4}", hRatio);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "Hv/Hk", std::to_string(hRatio), "{1,2,3,4}");
         return ge::GRAPH_FAILED;
     }
     if (qDtype != ge::DT_BF16) {
-        OP_LOGE(context->GetNodeName(), "q/k/v must be bf16, got dtype=%d", static_cast<int>(qDtype));
+        OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), "q,k,v",
+            FLA_NPU_DFX_DTYPE_STRING(qDtype), "BF16");
         return ge::GRAPH_FAILED;
     }
     if (useGateInKernel && !hasALog) {
-        OP_LOGE(context->GetNodeName(), "use_gate_in_kernel requires a_log");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "a_log");
         return ge::GRAPH_FAILED;
     }
     if (hasDtBias && !hasALog) {
-        OP_LOGE(context->GetNodeName(), "dt_bias requires a_log (use_gate_in_kernel)");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "a_log");
         return ge::GRAPH_FAILED;
     }
     if (hasCuSeqlens && B != 1) {
-        OP_LOGE(context->GetNodeName(), "varlen requires B=1, got B=%ld", B);
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "B", std::to_string(B), "1 (varlen)");
         return ge::GRAPH_FAILED;
     }
     if (hasCuSeqlens && !hasChunkIndices) {
-        OP_LOGE(context->GetNodeName(), "varlen requires chunk_indices with cu_seqlens");
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(context->GetNodeName(), "chunk_indices");
         return ge::GRAPH_FAILED;
     }
     if (allowNegEigval && !useBetaSigmoid) {
-        OP_LOGE(context->GetNodeName(), "allow_neg_eigval requires use_beta_sigmoid");
+        OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(context->GetNodeName(), "allowNegEigval", "true", "requires useBetaSigmoid");
         return ge::GRAPH_FAILED;
     }
 

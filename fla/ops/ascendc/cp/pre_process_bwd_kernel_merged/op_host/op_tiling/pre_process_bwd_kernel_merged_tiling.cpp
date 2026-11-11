@@ -20,6 +20,30 @@ using namespace CP;
 
 namespace optiling {
 namespace {
+// 本地元数据/资源检查：使用公共 DFX 宏（不再依赖已移除的 CP_DFX_*）。
+inline ge::graphStatus CheckTilingResource(const char *nodeName, const void *resource, const char *name)
+{
+    if (resource != nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    OP_LOGE(nodeName, "Tiling4PreProcessBwdKernelMerged: %s is nullptr; check graph registration and tiling context construction.", name);
+    return ge::GRAPH_FAILED;
+}
+
+inline ge::graphStatus CheckRequiredInputMetadata(const char *nodeName, const gert::StorageShape *shape,
+                                                  const void *descriptor, const char *name)
+{
+    if (shape == nullptr) {
+        OP_LOGE_LIBOPAPI_REPORT_COMPAT(nodeName, name);
+        return ge::GRAPH_FAILED;
+    }
+    if (descriptor == nullptr) {
+        OP_LOGE(nodeName, "CheckContext: %s input descriptor is nullptr although its shape is present; check TilingContext metadata construction.", name);
+        return ge::GRAPH_FAILED;
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static void PreProcessBwdKernelMergedTilingDataPrint(gert::TilingContext *context,
                                                     const PreProcessBwdKernelMergedTilingData &tiling)
 {
@@ -48,19 +72,26 @@ static void PreProcessBwdKernelMergedTilingDataPrint(gert::TilingContext *contex
 
 ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingContext *context)
 {
+    if (CheckTilingResource("PreProcessBwdKernelMerged", context, "context") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context->GetNodeName(), "Tiling4PreProcessBwdKernelMerged start.");
     PreProcessBwdKernelMergedTilingData *tiling = context->GetTilingData<PreProcessBwdKernelMergedTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    if (CheckTilingResource(context->GetNodeName(), tiling, "tilingData") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "attrs is nullptr."), return ge::GRAPH_FAILED);
+    if (CheckTilingResource(context->GetNodeName(), attrs, "attrs") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     const double *scalePtr = attrs->GetAttrPointer<double>(CDHP_ATTR_SCALE_IDX);
     const uint32_t *chunkSizePtr = attrs->GetAttrPointer<uint32_t>(CDHP_ATTR_CHUNK_SIZE_IDX);
 
     auto platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "platformInfoPtr is null!"),
-                return ge::GRAPH_FAILED);
+    if (CheckTilingResource(context->GetNodeName(), platformInfoPtr, "platformInfo") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     // 1 AIC : 2 AIV（A5 专用）：一个 block 的两个 AIV 各承包一个 head 的整条逆序链，AIV 侧墙时间
     // 近似减半（实测 gva_cp2 34.6 → 17.5 ms）。A5 用 0x4 peer 寻址。
@@ -73,9 +104,29 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     const auto gInputDesc = context->GetOptionalInputDesc(CDHP_INPUT_G_IDX);
     const auto gkInputDesc = context->GetOptionalInputDesc(CDHP_INPUT_GK_IDX);
     const auto qInputDesc = context->GetInputDesc(CDHP_INPUT_Q_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
+    const char *inputNames[] = {"q", "k", "w", "d_o", "dv"};
+    for (size_t i = 0; i < 5; ++i) {
+        const auto desc = context->GetInputDesc(i);
+        if (CheckRequiredInputMetadata(context->GetNodeName(), context->GetInputShape(i), desc,
+                                       inputNames[i]) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
+        if (desc->GetDataType() != qInputDesc->GetDataType()) {
+            OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(context->GetNodeName(), inputNames[i],
+                std::to_string(desc->GetDataType()),
+                "dtype must match q=" + std::to_string(qInputDesc->GetDataType()));
+            return ge::GRAPH_FAILED;
+        }
+    }
 
     const gert::StorageShape *gShapePtr = context->GetOptionalInputShape(CDHP_INPUT_G_IDX);
+    const gert::StorageShape *gkShapePtr = context->GetOptionalInputShape(CDHP_INPUT_GK_IDX);
+    if ((gShapePtr != nullptr || gInputDesc != nullptr) &&
+        CheckRequiredInputMetadata(context->GetNodeName(), gShapePtr, gInputDesc, "g") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    if ((gkShapePtr != nullptr || gkInputDesc != nullptr) &&
+        CheckRequiredInputMetadata(context->GetNodeName(), gkShapePtr, gkInputDesc, "gk") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     const gert::StorageShape *cuSeqlensShapePtr = context->GetOptionalInputShape(CDHP_INPUT_CU_SEQLENS_IDX);
 
     PreProcessBwdKernelMergedTilingContext ctx{
@@ -86,13 +137,13 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
         context->GetInputShape(CDHP_INPUT_DO_IDX),
         context->GetInputShape(CDHP_INPUT_DV_IDX),
         gShapePtr,
-        context->GetOptionalInputShape(CDHP_INPUT_GK_IDX),
+        gkShapePtr,
         cuSeqlensShapePtr,
         qInputDesc->GetDataType(),
         gInputDesc != nullptr ? gInputDesc->GetDataType() : ge::DT_FLOAT,
         gkInputDesc != nullptr ? gkInputDesc->GetDataType() : ge::DT_FLOAT,
         gShapePtr != nullptr,
-        context->GetOptionalInputShape(CDHP_INPUT_GK_IDX) != nullptr,
+        gkShapePtr != nullptr,
         scalePtr != nullptr,
         scalePtr != nullptr ? *scalePtr : 1.0,
         chunkSizePtr != nullptr ? static_cast<int32_t>(*chunkSizePtr)
@@ -103,9 +154,7 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     };
 
     PreProcessBwdKernelMergedTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed"),
-                return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
 
     // TPL tilingKey = 模板参数组合（dtype + gate 模式）：kernel 侧由该 key 选中模板实例，不走 TILING_KEY_IS 分支
     const int dTQ = (qInputDesc->GetDataType() == ge::DT_BF16) ? PRE_PROCESS_BWD_KERNEL_MERGED_TPL_BF16
@@ -123,6 +172,9 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
             processor.GetGateMode());
     context->SetBlockDim(processor.GetBlockDim());
     size_t *workspace = context->GetWorkspaceSizes(1);
+    if (CheckTilingResource(context->GetNodeName(), workspace, "workspaceSizes") != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     workspace[0] = processor.GetWorkspaceSize();
 
     PreProcessBwdKernelMergedTilingDataPrint(context, *tiling);

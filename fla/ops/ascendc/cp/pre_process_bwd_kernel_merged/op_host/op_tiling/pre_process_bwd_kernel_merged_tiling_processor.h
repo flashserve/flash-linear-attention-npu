@@ -20,8 +20,13 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <sstream>
+#include <string>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
+#include "op_common/log/log.h"
+#include "host_utils/log.h"
 #include "err/ops_err.h"
 #include "tiling_base/tiling_base.h"
 #include "../../op_kernel/pre_process_bwd_kernel_merged_struct.h"
@@ -131,6 +136,17 @@ public:
         const gert::Shape doShape = ctx_.doShape->GetStorageShape();
         const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
 
+        const gert::Shape *rankedShapes[] = {&qShape, &kShape, &wShape, &doShape, &dvShape};
+        const char *rankedNames[] = {"q", "k", "w", "d_o", "dv"};
+        for (size_t idx = 0; idx < sizeof(rankedShapes) / sizeof(rankedShapes[0]); ++idx) {
+            if (rankedShapes[idx]->GetDimNum() != 4) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, rankedNames[idx],
+                                                std::to_string(rankedShapes[idx]->GetDimNum()) + "D",
+                                                "rank must be 4 in [B,H,T,D] layout");
+                return ge::GRAPH_FAILED;
+            }
+        }
+
         B_ = static_cast<uint64_t>(qShape.GetDim(CDHP_DIM_0));
         Hk_ = static_cast<uint64_t>(qShape.GetDim(CDHP_DIM_1));
         T_ = static_cast<uint64_t>(qShape.GetDim(CDHP_DIM_2));
@@ -138,56 +154,63 @@ public:
         Hv_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_1));
         V_ = static_cast<uint64_t>(doShape.GetDim(CDHP_DIM_3));
 
-        OP_CHECK_IF(kShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                        kShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hk_) ||
-                        kShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
-                        kShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_),
-                    OP_LOGE(ctx_.nodeName, "k must match q as [B,Hk,T,K]."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(wShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                        wShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                        wShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
-                        wShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_),
-                    OP_LOGE(ctx_.nodeName,
-                            "w must be [B,Hv,T,K]; expect [%lu,%lu,%lu,%lu], got [%ld,%ld,%ld,%ld].", B_, Hv_, T_, K_,
-                            wShape.GetDim(CDHP_DIM_0), wShape.GetDim(CDHP_DIM_1), wShape.GetDim(CDHP_DIM_2),
-                            wShape.GetDim(CDHP_DIM_3)),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                        doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_),
-                    OP_LOGE(ctx_.nodeName, "d_o batch/time must match q."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(dvShape.GetDim(CDHP_DIM_0) != doShape.GetDim(CDHP_DIM_0) ||
-                        dvShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                        dvShape.GetDim(CDHP_DIM_2) != doShape.GetDim(CDHP_DIM_2) ||
-                        dvShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(V_),
-                    OP_LOGE(ctx_.nodeName, "dv must have the same [B,Hv,T,V] shape as d_o."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0,
-                    OP_LOGE(ctx_.nodeName, "empty tensor is not supported; got B=%lu T=%lu Hk=%lu Hv=%lu K=%lu V=%lu.",
-                            B_, T_, Hk_, Hv_, K_, V_),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF((Hv_ % Hk_) != 0,
-                    OP_LOGE(ctx_.nodeName,
-                            "GVA: Hv (value/state heads) must be an integer multiple of Hk (q/k heads); got Hk=%lu "
-                            "Hv=%lu.",
-                            Hk_, Hv_),
-                    return ge::GRAPH_FAILED);
+        if (FLA_NPU_DFX_SHAPE_STRING(kShape) != FLA_NPU_DFX_SHAPE_STRING(qShape)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(ctx_.nodeName, "q,k",
+                                             "q=" + FLA_NPU_DFX_SHAPE_STRING(qShape) + ",k=" + FLA_NPU_DFX_SHAPE_STRING(kShape),
+                                             "k must equal q with shape [B,Hk,T,K]");
+            return ge::GRAPH_FAILED;
+        }
+        const std::string expectedW =
+            FLA_NPU_DFX_MAKE_SHAPE_STRING({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_),
+                            static_cast<int64_t>(K_)});
+        if (FLA_NPU_DFX_SHAPE_STRING(wShape) != expectedW) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "w", FLA_NPU_DFX_SHAPE_STRING(wShape), expectedW);
+            return ge::GRAPH_FAILED;
+        }
+        if (doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
+            doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(
+                ctx_.nodeName, "d_o", FLA_NPU_DFX_SHAPE_STRING(doShape),
+                "batch and time must match q: expected [B,*,T,V] with B=" + std::to_string(B_) +
+                    ",T=" + std::to_string(T_));
+            return ge::GRAPH_FAILED;
+        }
+        if (FLA_NPU_DFX_SHAPE_STRING(dvShape) != FLA_NPU_DFX_SHAPE_STRING(doShape)) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(
+                ctx_.nodeName, "d_o,dv",
+                "d_o=" + FLA_NPU_DFX_SHAPE_STRING(doShape) + ",dv=" + FLA_NPU_DFX_SHAPE_STRING(dvShape),
+                "dv must have the same [B,Hv,T,V] shape as d_o");
+            return ge::GRAPH_FAILED;
+        }
+        if (B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0) {
+            OP_LOGE_LIBOPAPI_REPORT_SHAPES_WITH_REASON_COMPAT(
+                ctx_.nodeName, "q,d_o",
+                "q=" + FLA_NPU_DFX_SHAPE_STRING(qShape) + ",d_o=" + FLA_NPU_DFX_SHAPE_STRING(doShape),
+                "B/T/Hk/Hv/K/V must all be greater than 0");
+            return ge::GRAPH_FAILED;
+        }
+        if ((Hv_ % Hk_) != 0) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(ctx_.nodeName, "Hk,Hv",
+                                             std::to_string(Hk_) + "," + std::to_string(Hv_),
+                                             "Hv must be an integer multiple of Hk");
+            return ge::GRAPH_FAILED;
+        }
         // 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 侧逐行的
         // 向量/寄存器读写也依赖该行宽；K/V 取其他值（64/96/72/256 均已实测）会读到未对齐或未初始化
         // 区域，表现为设备报错或结果错误，所以这里只放开目标场景，其余取值直接拦截。
-        OP_CHECK_IF(K_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM ||
-                        V_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM,
-                    OP_LOGE(ctx_.nodeName,
-                            "this version only supports K=%u, V=%u, chunk_size=%u; got K=%lu V=%lu. "
-                            "Other state dims need the tiling/workspace/tile layout to be generalized.",
-                            CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM, CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM,
-                            CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE, K_, V_),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE,
-                    OP_LOGE(ctx_.nodeName, "chunk_size must be %u, but got %d.",
-                            CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE, ctx_.chunkSize),
-                    return ge::GRAPH_FAILED);
+        if (K_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM ||
+            V_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(
+                ctx_.nodeName, "q.shape[3],d_o.shape[3]", "K=" + std::to_string(K_) + ",V=" + std::to_string(V_),
+                "this version requires K=" + std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM) +
+                    ", V=" + std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM));
+            return ge::GRAPH_FAILED;
+        }
+        if (static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize),
+                                  std::to_string(CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE));
+            return ge::GRAPH_FAILED;
+        }
 
         chunkSize_ = static_cast<uint64_t>(ctx_.chunkSize);
         // 列 tile 宽度与上游一致：K <= 64 用 32，否则用 64
@@ -197,25 +220,33 @@ public:
 
     ge::graphStatus ResolveGateMode()
     {
-        OP_CHECK_IF(ctx_.hasG && ctx_.hasGk,
-                    OP_LOGE(ctx_.nodeName,
-                            "g and gk are mutually exclusive: GDN passes scalar g, KDA/GDN2 pass per-K gk. "
-                            "Both were provided."),
-                    return ge::GRAPH_FAILED);
+        if (ctx_.hasG && ctx_.hasGk) {
+            OP_LOGE_LIBOPAPI_REPORT_VALUES_WITH_REASON_COMPAT(ctx_.nodeName, "g,gk", "present,present",
+                                             "g and gk are mutually exclusive: pass scalar g for GDN or per-K gk "
+                                             "for KDA/GDN2");
+            return ge::GRAPH_FAILED;
+        }
 
         if (ctx_.hasGk) {
             const gert::Shape gkShape = ctx_.gkShape->GetStorageShape();
-            OP_CHECK_IF(gkShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                            gkShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                            gkShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
-                            gkShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_),
-                        OP_LOGE(ctx_.nodeName, "gk must be [B,Hv,T,K]."),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(ctx_.gkDtype != ctx_.qDtype,
-                        OP_LOGE(ctx_.nodeName,
-                                "gk dtype must be the same as q/k dtype; got q/k=%d, gk=%d.",
-                                static_cast<int32_t>(ctx_.qDtype), static_cast<int32_t>(ctx_.gkDtype)),
-                        return ge::GRAPH_FAILED);
+            if (gkShape.GetDimNum() != 4) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, "gk",
+                                                std::to_string(gkShape.GetDimNum()) + "D",
+                                                "rank must be 4 in [B,Hv,T,K] layout");
+                return ge::GRAPH_FAILED;
+            }
+            const std::string expectedGk =
+                FLA_NPU_DFX_MAKE_SHAPE_STRING({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_),
+                                static_cast<int64_t>(T_), static_cast<int64_t>(K_)});
+            if (FLA_NPU_DFX_SHAPE_STRING(gkShape) != expectedGk) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "gk", FLA_NPU_DFX_SHAPE_STRING(gkShape), expectedGk);
+                return ge::GRAPH_FAILED;
+            }
+            if (ctx_.gkDtype != ctx_.qDtype) {
+                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "gk", FLA_NPU_DFX_DTYPE_STRING(ctx_.gkDtype),
+                                      "the same dtype as q/k (" + FLA_NPU_DFX_DTYPE_STRING(ctx_.qDtype) + ")");
+                return ge::GRAPH_FAILED;
+            }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_PER_K;
             tiling_.useGateGk = 1;
             tiling_.useGateG = 0;
@@ -223,14 +254,22 @@ public:
         }
         if (ctx_.hasG) {
             const gert::Shape gShape = ctx_.gShape->GetStorageShape();
-            OP_CHECK_IF(gShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
-                            gShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
-                            gShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_),
-                        OP_LOGE(ctx_.nodeName, "g must be [B,Hv,T]."),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT,
-                        OP_LOGE(ctx_.nodeName, "g dtype must be FP32 or the same as q/k dtype."),
-                        return ge::GRAPH_FAILED);
+            if (gShape.GetDimNum() != 3) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, "g", std::to_string(gShape.GetDimNum()) + "D",
+                                                "rank must be 3 in [B,Hv,T] layout");
+                return ge::GRAPH_FAILED;
+            }
+            const std::string expectedG =
+                FLA_NPU_DFX_MAKE_SHAPE_STRING({static_cast<int64_t>(B_), static_cast<int64_t>(Hv_), static_cast<int64_t>(T_)});
+            if (FLA_NPU_DFX_SHAPE_STRING(gShape) != expectedG) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_COMPAT(ctx_.nodeName, "g", FLA_NPU_DFX_SHAPE_STRING(gShape), expectedG);
+                return ge::GRAPH_FAILED;
+            }
+            if (ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT) {
+                OP_LOGE_LIBOPAPI_REPORT_DTYPE_COMPAT(ctx_.nodeName, "g", FLA_NPU_DFX_DTYPE_STRING(ctx_.gDtype),
+                                      "FLOAT or the same dtype as q/k (" + FLA_NPU_DFX_DTYPE_STRING(ctx_.qDtype) + ")");
+                return ge::GRAPH_FAILED;
+            }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_SCALAR;
             tiling_.useGateG = 1;
             tiling_.useGateGk = 0;
@@ -247,28 +286,36 @@ public:
         isVarLen_ = ctx_.cuSeqlensShape != nullptr;
         if (isVarLen_) {
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
+            if (cuSeqlensShape.GetDimNum() != 1) {
+                OP_LOGE_LIBOPAPI_REPORT_SHAPE_WITH_REASON_COMPAT(ctx_.nodeName, "cu_seqlens",
+                                                std::to_string(cuSeqlensShape.GetDimNum()) + "D",
+                                                "rank must be 1 in [N+1] layout");
+                return ge::GRAPH_FAILED;
+            }
             const int64_t seqNum = cuSeqlensShape.GetDim(CDHP_DIM_0) - 1;
-            OP_CHECK_IF(seqNum < 1,
-                        OP_LOGE(ctx_.nodeName, "cu_seqlens must contain at least 2 entries, but got shape dim0=%ld.",
-                                cuSeqlensShape.GetDim(CDHP_DIM_0)),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(B_ != 1,
-                        OP_LOGE(ctx_.nodeName,
-                                "when cu_seqlens is provided B must be 1 (one packed segment per launch), but got "
-                                "B=%lu.",
-                                B_),
-                        return ge::GRAPH_FAILED);
+            if (seqNum < 1) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_COMPAT(ctx_.nodeName, "cu_seqlens.shape[0]",
+                                      std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), ">=2");
+                return ge::GRAPH_FAILED;
+            }
+            if (B_ != 1) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(ctx_.nodeName, "q.shape[0]", std::to_string(B_),
+                                                "when cu_seqlens is provided B must be 1 for one packed segment per "
+                                                "launch");
+                return ge::GRAPH_FAILED;
+            }
             // 本 kernel 一次只处理一个 [bos,eos)：varlen 时由 kernel 从 GM 读取 cu_seqlens[0:2] 覆盖，
             // host 侧只给出 [0,T) 作为缺省值，不读取输入数值。
             tiling_.bos = 0;
             tiling_.eos = T_;
         } else {
-            OP_CHECK_IF(B_ != 1,
-                        OP_LOGE(ctx_.nodeName,
-                                "dense path requires B=1 because one launch handles a single [0,T) segment; got "
-                                "B=%lu. Pass cu_seqlens for packed input.",
-                                B_),
-                        return ge::GRAPH_FAILED);
+            if (B_ != 1) {
+                OP_LOGE_LIBOPAPI_REPORT_VALUE_WITH_REASON_COMPAT(
+                    ctx_.nodeName, "q.shape[0]", std::to_string(B_),
+                    "dense path requires B=1 because one launch handles a single [0,T) segment; pass "
+                    "cu_seqlens for packed input");
+                return ge::GRAPH_FAILED;
+            }
             tiling_.bos = 0;
             tiling_.eos = T_;
         }
