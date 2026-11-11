@@ -81,8 +81,8 @@ o_t = S @ (q_t * scale)
   与 batch-gap view 自动回退连续化；A5 上 TND 和 BSND `B=1` 也支持不重叠的 head-major view，
   A5 上 BSND `B>1` 的 head-major view 回退连续化。A2/A3 保留原 token-major 约束。
   正 stride 的 token/head 地址区间重叠时明确拒绝。
-- A5 L0 直调支持通过 tiling 校验的 BSND batch-gap/head-major view，包括带 `cu_seqlens` 的请求跨物理 batch 行；
-  Q/K/V 按各自的 batch stride 寻址，跨 batch 的 tile 分段搬运。公开 Python/aclnn 通路仍按上述规则连续化。
+- A5 L0 直调在 BSND `B>1` 且提供 `cu_seqlens` 时，对 Q/K/V 分别要求 `batchStride == T * tokenStride`，
+  不满足时由 tiling 拒绝。公开 Python/aclnn 仍先按上述规则连续化，保留非连续 QKV 输入支持。
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，ACLNN 按需连续化；A5 保留输入 dtype，在 VF 中转换为 `FP32` 计算。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分、TND 为一条序列；传入时为与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入

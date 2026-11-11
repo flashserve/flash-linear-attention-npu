@@ -55,13 +55,18 @@ python scripts/test_qkv_strides.py \
   --output <diagnostic_output>
 ```
 
-该脚本通过 ACL runtime 直接加载当前安装的 kernel，保留 Q/K/V view 的原始 stride，避免公开
-aclnn 连续化掩盖 L0 寻址问题。80 个场景覆盖四种 A5 模式、FP32/BF16 State、V=128/256，
-以及 batch gap、head-major、Q/K/V 不同 stride、固定长度、跨 batch 的 varlen 和空请求。
-out 和有效 State 槽须与连续输入逐位相同，并使用既有 CPU 标杆及 `rtol=0.02, atol=0.01` 检查精度；
-另外检查重叠 batch 与 A2 head-major 的 tiling 拒绝行为。这是 L0 专项诊断，不替代上述 ATK 验收。
+该脚本同时调用公开 Python 入口和 ACL runtime 直接加载的当前安装 kernel，检查公开连续化与
+L0 支持边界。112 个公开入口场景覆盖四种 A5 模式、FP32/BF16 State、V=128/256，以及 batch gap、
+head-major、Q/K/V 不同 stride、固定长度、跨 batch 的 varlen、空请求和融合 QKV 切片。
+融合切片另外覆盖卷积 `[B,C,1]` 输出转置后的 decode view（长度为1的 token 轴 stride 为1）。
 
-2026-11-11 在 A5_1/Ascend950PR、CANN 9.2.0-beta.2 上，当前修复通过全部 80 个场景和两个负向检查；
-同一诊断加载修复前的 kernel 时，首个 batch-gap 用例即出现 stride/连续输入结果不一致。
-同次验证中，既有 ATK 小用例的精度、确定性（50 次）与内存检测各通过 1/1，公开 State mutation/None
-契约回归通过；576 组 A2 host tiling 的成功/失败和分核结果与修复前相同，未在 A2 设备执行。
+其中32个固定长度或规则融合切片场景须通过 L0 tiling，并直接对照 kernel；其余80个不支持的原始
+view 须在直接 launch 前被 tiling 拒绝，同时公开入口仍须连续化并计算正确结果。
+out 和有效 State 槽须与连续输入逐位相同，并使用既有 CPU 标杆及 `rtol=0.02, atol=0.01` 检查精度；
+另外以5个负向检查分别覆盖仅 Q/K/V 各自存在 batch gap、重叠 batch 与 A2 head-major。
+本专项回归不替代上述 ATK 验收。
+
+2026-11-11 在 A5_1/Ascend950PR、CANN 9.2.0-beta.2 上，收紧 tiling 并恢复原 kernel 后，
+112 个公开入口场景、32 个直接 view 对照、80 个直接 tiling 拒绝及5个负向检查全部通过。
+公开 State mutation/None 契约与既有 ATK 小用例精度（1/1）通过；576 组 A2 host tiling 的
+成功/失败和分核结果与原实现相同，未在 A2 设备执行。本记录不代表 #680 的完整性能和显存验收。

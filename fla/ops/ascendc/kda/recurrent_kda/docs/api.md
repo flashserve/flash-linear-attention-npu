@@ -197,9 +197,10 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 
 直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理地址或 tiling data 中的 Q/K/V/state stride 解释 GM 地址；非连续直调必须使用
 与实际 view shape、stride 和首地址匹配的 host tiling 结果。
-A5 直调保留 BSND Q/K/V 各自的 batch stride；即使提供 `cu_seqlens`，逻辑 token 仍按原始 `[B,T]` 映射到物理 batch 行。
-通过 host stride 校验的 batch-gap/head-major view 可按该映射读取，跨物理 batch 边界的输入 tile 分段搬运。
-此寻址补齐不改变公开 Python/aclnn 对上述 view 的连续化策略；A2/A3 仍使用原 token-major 和严格 batch stride 约束。
+A5 直调沿用整 tile 搬运；BSND `B>1` 且提供 `cu_seqlens` 时，Q/K/V 各自必须满足
+`batchStride == T * tokenStride`，否则 host tiling 返回参数错误，避免 varlen 请求跨物理 batch 时错误寻址。
+没有 `cu_seqlens` 时保留原按 batch 寻址。公开 Python/aclnn 仍先连续化 batch-gap 和 BSND `B>1` 的
+head-major view；A2/A3 仍使用原 token-major 和严格 batch stride 约束。
 
 ## 6. legacy `torch.ops.npu` 通路
 

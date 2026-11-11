@@ -1,8 +1,10 @@
-"""Direct A5 kernel regression: retain QKV views instead of using L2 copies.
+"""A5 QKV stride regression: public fallback and direct tiling boundaries.
 
 Requires a qkv_stride_tiling executable built against the current CANN headers
 and the current operator's kernel directory. Uses the existing CPU reference,
 input ranges and tolerances, plus bitwise comparison with a dense direct call.
+Unsupported varlen batch strides must be rejected before a direct launch;
+the public Python entry must still accept them through L2 materialization.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from executor_recurrent_kda_longseq import make_inputs, specifications
 from executor_recurrent_kda import recurrent_kda_reference
 from test_l2norm_epsilon import compare
+from fla_npu.ops.ascendc import recurrent_kda
 
 
 class Kernels:
@@ -124,6 +127,21 @@ def describe(x, kw, fused):
                 v_first=kw["state_v_first"], fused=fused)
 
 
+def packed_qkv_views(x, conv_decode=False):
+    names = ["q", "k", "v"]
+    widths = [x[name].shape[-2] * x[name].shape[-1] for name in names]
+    packed = torch.cat([x[name].flatten(-2) for name in names], dim=-1)
+    result, start = {}, 0
+    for name, width in zip(names, widths):
+        view = packed[..., start:start + width].view(x[name].shape)
+        if conv_decode:
+            # [B, C, 1] convolution output transposed to [B, 1, C].
+            view = view.as_strided(view.shape, (view.stride(0), 1, view.stride(2), 1))
+        result[name] = view
+        start += width
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tiling-probe", type=Path, required=True)
@@ -144,7 +162,7 @@ def main():
 
     try:
         for number, (vf, bf16, fused, vdim, scenario) in enumerate(itertools.product(
-                [False, True], [False, True], [False, True], [128, 256], range(5))):
+                [False, True], [False, True], [False, True], [128, 256], range(7))):
             spec = dict(specifications()[0], B=3, T=5, H=2, HV=4, V=vdim,
                         layout="BSND", state_v_first=vf, state_dtype="bf16" if bf16 else "fp32",
                         raw_gate=fused, norm=fused, beta_sigmoid=fused, negative=False, safe_gate=False,
@@ -152,8 +170,10 @@ def main():
                         cu=scenario != 3, output=True, inplace=False)
             if scenario == 4:
                 spec.update(B=7, T=1)
+            elif scenario == 6:
+                spec.update(T=1)
             cpu, kw, _ = make_inputs(spec, torch.device("cpu"))
-            if scenario in [0, 1, 2]:
+            if scenario in [0, 1, 2, 5]:
                 cpu["cu_seqlens"] = torch.tensor([0, 1, 13, 15], dtype=torch.int32)
             elif scenario == 4:
                 cpu["cu_seqlens"] = torch.tensor([0, 5, 5, 7], dtype=torch.int32)
@@ -162,28 +182,43 @@ def main():
             before = x["initial_state"].clone()
             orders = [("gap", "gap", "gap"), ("head", "head", "head"),
                       ("dense", "head", "gap"), ("head", "gap", "head"),
-                      ("head", "gap", "head")][scenario]
-            strided = dict(x, **{name: view_like(x[name], order) for name, order in zip(["q", "k", "v"], orders)})
+                      ("head", "gap", "head"), ("dense", "dense", "dense"),
+                      ("dense", "dense", "dense")][scenario]
+            views = packed_qkv_views(x, conv_decode=scenario == 6) if scenario in [5, 6] else {
+                name: view_like(x[name], order) for name, order in zip(["q", "k", "v"], orders)}
+            strided = dict(x, **views)
             mode = (1 if vf else 2) + (2 if fused else 0)
             print(f"CASE {number}: mode={mode} BF16={bf16} V={vdim} scenario={scenario}", flush=True)
             dense_info, dense_tiling = tile(describe(x, kw, fused), f"{number}-dense")
             info, tiling = tile(describe(strided, kw, fused), f"{number}-view")
-            assert info["success"] and dense_info["success"]
-            assert info["batch_strides"] == [strided[name].stride(0) for name in ["q", "k", "v"]]
+            assert dense_info["success"]
+            direct = scenario in [3, 5]
+            assert info["success"] == direct, "unexpected direct tiling acceptance"
+            if direct:
+                assert info["batch_strides"] == ([0, 0, 0] if spec["cu"] else
+                    [strided[name].stride(0) for name in ["q", "k", "v"]])
             expected = kernels.run(x, dense_tiling, dense_info["blocks"], mode)
-            actual = kernels.run(strided, tiling, info["blocks"], mode)
-            assert torch.equal(before, x["initial_state"]), "direct non-inplace call modified its input"
+            outputs = [recurrent_kda(**x, **kw), recurrent_kda(**strided, **kw)]
+            if direct:
+                outputs.append(kernels.run(strided, tiling, info["blocks"], mode))
+            assert torch.equal(before, x["initial_state"]), "non-inplace call modified its input"
             # The empty request's independent output slot has unspecified contents.
             slots = [0, 2] if scenario == 4 else list(range(3))
-            for a, e in zip((actual[0], actual[1][slots]), (expected[0], expected[1][slots])):
-                assert torch.equal(a, e), "strided/dense direct calls differ"
             reference = recurrent_kda_reference(**cpu, **kw)
-            compare((actual[0].cpu(), actual[1][slots].cpu()), (reference[0], reference[1][slots]))
-            results.append(dict(case=number, mode=mode, bf16=bf16, V=vdim, scenario=scenario, passed=True))
+            for actual in outputs:
+                for a, e in zip((actual[0], actual[1][slots]), (expected[0], expected[1][slots])):
+                    assert torch.equal(a, e), "public/direct strided and dense calls differ"
+                compare((actual[0].cpu(), actual[1][slots].cpu()), (reference[0], reference[1][slots]))
+            results.append(dict(case=number, mode=mode, bf16=bf16, V=vdim, scenario=scenario,
+                                direct=direct, passed=True))
+
+        for name in ["q", "k", "v"]:
+            only_one_gap = dict(x, **{name: view_like(x[name], "gap")})
+            assert not tile(describe(only_one_gap, kw, fused), f"only-{name}-batch-gap")[0]["success"]
 
         negative = describe(strided, kw, fused)
         negative.update(q_shape=[2, 2, 2, 128], v_shape=[2, 2, 4, 128],
-                        state_shape=[2, 4, 128, 128], sequences=2,
+                        state_shape=[2, 4, 128, 128], sequences=2, has_cu=False,
                         q_stride=[384, 128, 256, 1], k_stride=[512, 256, 128, 1],
                         v_stride=[1024, 512, 128, 1])
         assert not tile(negative, "overlapping-batches")[0]["success"]
@@ -193,7 +228,10 @@ def main():
     finally:
         kernels.close()
         (args.output / "results.json").write_text(json.dumps(results, indent=2))
-    print(f"PASS {len(results)} direct stride cases and 2 negative tiling cases", flush=True)
+    print(f"PASS {len(results)} public stride cases, "
+          f"{sum(r['direct'] for r in results)} direct views, "
+          f"{sum(not r['direct'] for r in results)} direct tiling rejections, "
+          "and 5 negative tiling cases", flush=True)
 
 
 if __name__ == "__main__":

@@ -301,8 +301,13 @@ private:
                         ReportInvalid("query/key/value/gate/beta", "%s batch stride calculation overflows.", name),
                         return ge::GRAPH_FAILED);
             const uint64_t expectedBatchStride = seqLen * tokenStride;
-            OP_CHECK_IF(!ctx_.isA5 && static_cast<uint64_t>(strides[RKDA_DIM_0]) != expectedBatchStride,
-                        ReportInvalid("query/key/value", "%s batch stride must equal seqLen * tokenStride on A2/A3.", name),
+            OP_CHECK_IF((!ctx_.isA5 || ctx_.hasCuSeqlens) &&
+                            static_cast<uint64_t>(strides[RKDA_DIM_0]) != expectedBatchStride,
+                        ReportInvalid("query/key/value",
+                            "%s BSND batch stride must equal seqLen * tokenStride on A2/A3 or with cu_seqlens; "
+                            "actual=%llu, expected=%llu.", name,
+                            static_cast<unsigned long long>(strides[RKDA_DIM_0]),
+                            static_cast<unsigned long long>(expectedBatchStride)),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(tokenCount > 1 && tokenStride > (maxUint64 - tokenMajorSpan) / (tokenCount - 1),
                         ReportInvalid("query/key/value/gate/beta", "%s full batch span calculation overflows.", name),
@@ -609,9 +614,9 @@ private:
         tiling.keyHeadStride = static_cast<uint64_t>(keyStrides[headDim]);
         tiling.valueTokenStride = static_cast<uint64_t>(valueStrides[tokenDim]);
         tiling.valueHeadStride = static_cast<uint64_t>(valueStrides[headDim]);
-        tiling.queryBatchStride = static_cast<uint64_t>(queryStrides[0]);
-        tiling.keyBatchStride = static_cast<uint64_t>(keyStrides[0]);
-        tiling.valueBatchStride = static_cast<uint64_t>(valueStrides[0]);
+        tiling.queryBatchStride = ctx_.hasCuSeqlens ? 0 : static_cast<uint64_t>(queryStrides[0]);
+        tiling.keyBatchStride = ctx_.hasCuSeqlens ? 0 : static_cast<uint64_t>(keyStrides[0]);
+        tiling.valueBatchStride = ctx_.hasCuSeqlens ? 0 : static_cast<uint64_t>(valueStrides[0]);
         const auto stateInStrides = ResolveStateStrides(false);
         const auto stateOutStrides = ResolveStateStrides(true);
         tiling.stateInStride0 = static_cast<uint64_t>(stateInStrides[RKDA_DIM_0]);

@@ -17,16 +17,16 @@ State 输入与输出沿用远程主线已修复的公开语义：非原位模�
 
 ### BSND 输入寻址
 
-A5 的逻辑 token 始终按输入 shape 的原始 `[B,T]` 展开；`cu_seqlens` 只划分递推请求，不改变物理 batch 行。
-tiling 保留 Q/K/V 各自的 batch/token/head stride，包括存在 `cu_seqlens` 时。逻辑 token `t` 的物理地址为
-`(t/T)*batchStride + (t%T)*tokenStride + head*headStride`。当 `batchStride==T*tokenStride` 时仍走线性地址和整 tile DMA。
-其它 BSND view 将每个最多4行的输入 tile 按物理 batch 边界拆为连续片段，每段重新计算 GM 首地址，依次写入同一输入槽的对应行；
-Q/K/V 分别按自己的 stride 判断和拆分。gate/beta 和 out 仍按连续逻辑 token 排列。
+A5 沿用原有整 tile DMA：没有 `cu_seqlens` 时，每个递推请求对应一行物理 batch，首地址按
+`(t/T)*batchStride + (t%T)*tokenStride + head*headStride` 计算，tile 不跨物理 batch。
+提供 `cu_seqlens` 时，kernel 按 `t*tokenStride + head*headStride` 读取逻辑 token；因此 host 对
+BSND `B>1` 的 Q/K/V 分别要求 `batchStride == T*tokenStride`，确保请求跨 batch 时整 tile DMA 仍正确。
+不满足该条件的 L0 输入明确拒绝，不读取 `cu_seqlens` 的设备值来推断是否可能跨 batch。
 
-该拆分覆盖 varlen 请求横跨原始 batch 行、batch-gap 和 head-major 输入，不改变 VF 的逐 token 顺序、State bank、UB 容量或 Mutex 生命周期。
-所有 Q/K/V 片段均处于同一次 input Mutex 的 MTE2 Lock/Unlock 内，V 等待完整输入 tile 后执行。Host 用
-`(T-1)*tokenStride + (H-1)*headStride + featureCount` 检查完整物理 batch 跨度，并在加乘前检查溢出。
-公开 ACLNN 的既有连续化策略保留；上述额外寻址用于 A5 L0/直调保留原始 view 的路径。
+公开 Python/aclnn 仍先将 batch-gap 和 BSND `B>1` 的 head-major view 连续化，再进入 L0；
+融合 QKV 切片中满足上述批间距的规则非连续 view 继续直接读取。TND、BSND `B=1` 和无
+`cu_seqlens` 的 A5 L0 view 保留原支持范围。Host 继续用完整物理 batch 跨度检查重叠并保护溢出。
+VF、State bank、UB 容量、Mutex 生命周期与原 kernel 一致。
 
 ### State 输入与输出
 
