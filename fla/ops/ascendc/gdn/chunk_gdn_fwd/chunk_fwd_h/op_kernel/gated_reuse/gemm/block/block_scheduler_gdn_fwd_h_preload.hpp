@@ -50,6 +50,7 @@ struct GDNFwdHStreamPreload {
     uint32_t kHeadIdx{0};
     uint32_t shapeBatchIdx{0};
     uint32_t tokenBatchIdx{0};
+    uint32_t stateBatchIdx{0};
      
     uint32_t chunkOffset{0};
     uint32_t tokenOffset{0};
@@ -76,6 +77,7 @@ struct BlockSchedulerGdnFwdHPreload {
     uint32_t isVariedLen{0};
     uint32_t shapeBatch{0};
     uint32_t tokenBatch{0};
+    uint32_t originalTokenBatch{0};
     bool useInitialState{false};
     bool storeFinalState{false};
     uint64_t numSeqWorkspaceOffset{0};
@@ -113,41 +115,67 @@ struct BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreload() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
 
-        batch = gdnFwdHTilingData->batch;
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        shapeBatch = gdnFwdHTilingData->shapeBatch;
-        tokenBatch = gdnFwdHTilingData->tokenBatch;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        batch = tiling.batch;
+        seqlen = tiling.seqlen;
+        kNumHead = tiling.kNumHead;
+        vNumHead = tiling.vNumHead;
+        kHeadDim = tiling.kHeadDim;
+        vHeadDim = tiling.vHeadDim;
+        chunkSize = tiling.chunkSize;
+        isVariedLen = tiling.isVariedLen;
+        shapeBatch = tiling.shapeBatch;
+        tokenBatch = tiling.tokenBatch;
+        originalTokenBatch = tokenBatch;
+        useInitialState = tiling.useInitialState;
+        storeFinalState = tiling.storeFinalState;
+        numSeqWorkspaceOffset = tiling.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         if (isVariedLen) {
-            gmNumChunks.SetValue(0, 0);
-            gmNumSeq.SetValue(0, 0);
+            // The prefix tables are shared by every AIC/AIV block.  Building
+            // them independently lets one block read an entry while another
+            // block is still writing it, which can produce an invalid
+            // chunkOffset and subsequently out-of-range epilogue transfers.
+            if ASCEND_IS_AIC {
+                if (AscendC::GetBlockIdx() == 0) {
+                    gmNumChunks.SetValue(0, 0);
+                    gmNumSeq.SetValue(0, 0);
+                    uint32_t actualBatch = 0;
+                    int64_t prevSeq = 0, currSeq;
+                    int64_t chunkPrefix = 0;
+                    for (uint32_t b = 1; b <= tokenBatch; b++) {
+                        currSeq = gmSeqlen.GetValue(b);
+                        int64_t batchSeqLen = currSeq - prevSeq;
+                        if (batchSeqLen > 0) {
+                            actualBatch++;
+                            gmNumSeq.SetValue(actualBatch, currSeq);
+                            int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
+                            chunkPrefix += batchChunk;
+                            gmNumChunks.SetValue(actualBatch, chunkPrefix);
+                        }
+                        prevSeq = currSeq;
+                    }
+                    // SetValue writes through the scalar data cache. SyncAll
+                    // orders the cores but does not write back that cache.
+                    AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
+                }
+            }
+            // Publish both prefix tables before any scheduler computes offsets.
+            AscendC::SyncAll<false>();
+            AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
+
             uint32_t actualBatch = 0;
             int64_t prevSeq = 0, currSeq;
             for (uint32_t b = 1; b <= tokenBatch; b++) {
                 currSeq = gmSeqlen.GetValue(b);
-                int64_t batchSeqLen = currSeq - prevSeq;
-                if (batchSeqLen > 0) {
+                if (currSeq > prevSeq) {
                     actualBatch++;
-                    gmNumSeq.SetValue(actualBatch, currSeq);
-                    int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
-                    gmNumChunks.SetValue(actualBatch, gmNumChunks.GetValue(actualBatch - 1) + batchChunk);
                 }
                 prevSeq = currSeq;
             }
@@ -187,6 +215,28 @@ struct BlockSchedulerGdnFwdHPreload {
     }
 
 
+    // Token/chunk metadata omits empty sequences, while state tensors retain
+    // their original sequence axis. Recover that axis only when compaction
+    // actually removed a sequence; dense and nonempty packed calls are direct.
+    CATLASS_DEVICE
+    uint32_t StateSequence(uint32_t compactSequence) const {
+        if (!isVariedLen || tokenBatch == originalTokenBatch) {
+            return compactSequence;
+        }
+        const int64_t tokenBegin = gmNumSeq.GetValue(compactSequence);
+        uint32_t begin = 0;
+        uint32_t end = originalTokenBatch;
+        while (begin < end) {
+            const uint32_t middle = begin + (end - begin) / 2;
+            if (gmSeqlen.GetValue(middle + 1) <= tokenBegin) {
+                begin = middle + 1;
+            } else {
+                end = middle;
+            }
+        }
+        return begin;
+    }
+
     CATLASS_DEVICE
     void InitNewStream(GDNFwdHStreamPreload& newStream) {
         newStream.vIdx = taskIdx / (batch * vNumHead);
@@ -195,6 +245,7 @@ struct BlockSchedulerGdnFwdHPreload {
         newStream.kHeadIdx = newStream.vHeadIdx / headGroups;
         newStream.shapeBatchIdx = isVariedLen ? 0 : newStream.batchIdx;
         newStream.tokenBatchIdx = isVariedLen ? newStream.batchIdx : 0;
+        newStream.stateBatchIdx = StateSequence(newStream.batchIdx);
         newStream.chunkOffset = isVariedLen ? gmNumChunks.GetValue(newStream.tokenBatchIdx) : 0;
         newStream.batchChunks = isVariedLen ? (gmNumChunks.GetValue(newStream.tokenBatchIdx + 1) - newStream.chunkOffset) : totalChunks;
         newStream.tokenOffset = isVariedLen ? gmNumSeq.GetValue(newStream.tokenBatchIdx) : 0;
@@ -209,8 +260,9 @@ struct BlockSchedulerGdnFwdHPreload {
      
         offset.isInitialState = stream.chunkIdx == 0; 
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1); 
-        offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim; 
-        offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim; 
+        offset.initialStateOffset = (static_cast<uint64_t>(stream.stateBatchIdx) * vNumHead +
+                                     stream.vHeadIdx) * kHeadDim * vHeadDim;
+        offset.finalStateOffset = offset.initialStateOffset;
         offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
         offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
         offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
@@ -306,7 +358,7 @@ struct BlockSchedulerGdnFwdHPreloadCube : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
     }
 
@@ -317,7 +369,7 @@ struct BlockSchedulerGdnFwdHPreloadVec : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, GM_ADDR chunk_indices, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, chunk_indices, tiling, user, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
     }
 

@@ -3,7 +3,10 @@ import torch
 from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 from typing import Optional, Tuple, List
-import ct
+try:
+    import ct
+except ModuleNotFoundError:  # CPU reference users do not need CT visualization.
+    ct = None
 import fla_npu
 
 # fp16/bf16：在尽量无 NaN 的前提下抬高输出数量级（dv2 中位 ~1e-3；dh 非零元 |x| 最大可至 ~1e-3 量级）

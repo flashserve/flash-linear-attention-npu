@@ -17,6 +17,8 @@
 #ifndef PREPARE_WY_REPR_BWD_VECTOR_H
 #define PREPARE_WY_REPR_BWD_VECTOR_H
 
+#include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #include <type_traits>
 
 #include "prepare_wy_repr_bwd_common.h"
@@ -199,6 +201,9 @@ private:
     __aicore__ inline uint32_t CopyInRows(AscendC::GlobalTensor<copyType> &inputTensor,
                                           AscendC::LocalTensor<copyType> dstTensor, uint64_t inputOffset,
                                           uint32_t elements);
+    __aicore__ inline uint32_t CopyPublicRowsIn(AscendC::GlobalTensor<kType> &inputTensor,
+                                                AscendC::LocalTensor<kType> dstTensor, uint64_t base,
+                                                uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows);
     template <typename copyType>
     __aicore__ inline uint32_t CopyInBetaGRows(AscendC::GlobalTensor<copyType> &inputTensor,
                                                AscendC::LocalTensor<copyType> dstTensor, uint64_t inputOffset,
@@ -217,6 +222,9 @@ private:
     __aicore__ inline void CastOutputRows(AscendC::LocalTensor<float32_t> srcTensor, uint32_t elements);
     __aicore__ inline void CopyOutRows(AscendC::GlobalTensor<kType> &outTensor,
                                        AscendC::LocalTensor<kType> srcTensor, uint64_t outOffset, uint32_t elements);
+    __aicore__ inline void CopyPublicRowsOut(AscendC::GlobalTensor<kType> &outTensor,
+                                             AscendC::LocalTensor<kType> srcTensor, uint64_t base,
+                                             uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows);
     __aicore__ inline void CopyOutBetaGRows(AscendC::GlobalTensor<gType> &outTensor,
                                             AscendC::LocalTensor<float32_t> srcTensor, uint64_t outOffset,
                                             uint32_t elements);
@@ -520,6 +528,32 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool ENABLE_MHA_OWNER>
+__aicore__ inline uint32_t
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyPublicRowsIn(
+    AscendC::GlobalTensor<kType> &inputTensor, AscendC::LocalTensor<kType> dstTensor,
+    uint64_t base, uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows)
+{
+    inputIdx_ = curInputPingPong_;
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vToMte2Event_[inputIdx_]);
+    if (!(tiling_.layout == GDN::FinalizeLayout::BSND || tiling_.layout == GDN::FinalizeLayout::TND)) {
+        DataCopy(dstTensor, inputTensor[(head * tiling_.T + base) * dim], rows * dim);
+    } else {
+        const uint64_t headTokens = heads * tiling_.T;
+        const uint64_t batch = (cuSeqlens_ == nullptr) ? base / headTokens : 0;
+        const uint64_t token = (cuSeqlens_ == nullptr) ? base % headTokens : base;
+        const uint64_t offset = ((batch * tiling_.T + token) * heads + head) * dim;
+        DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)),
+                             static_cast<uint32_t>((heads - 1) * dim * sizeof(kType)), 0, 0};
+        DataCopyPadExtParams<kType> pad{false, 0, 0, 0};
+        DataCopyPad(dstTensor, inputTensor[offset], cp, pad);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToVEvent_[inputIdx_]);
+    curInputPingPong_ ^= 1U;
+    return inputIdx_;
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
+          bool ENABLE_MHA_OWNER>
 __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CastInputRows(
     AscendC::LocalTensor<float32_t> dstTensor, AscendC::LocalTensor<kType> srcTensor, uint32_t elements,
     uint32_t inputIdx)
@@ -614,6 +648,30 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool ENABLE_MHA_OWNER>
+__aicore__ inline void
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyPublicRowsOut(
+    AscendC::GlobalTensor<kType> &outTensor, AscendC::LocalTensor<kType> srcTensor,
+    uint64_t base, uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows)
+{
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
+    if (!(tiling_.layout == GDN::FinalizeLayout::BSND || tiling_.layout == GDN::FinalizeLayout::TND)) {
+        DataCopy(outTensor[(head * tiling_.T + base) * dim], srcTensor, rows * dim);
+    } else {
+        const uint64_t headTokens = heads * tiling_.T;
+        const uint64_t batch = (cuSeqlens_ == nullptr) ? base / headTokens : 0;
+        const uint64_t token = (cuSeqlens_ == nullptr) ? base % headTokens : base;
+        const uint64_t offset = ((batch * tiling_.T + token) * heads + head) * dim;
+        DataCopyExtParams cp{static_cast<uint16_t>(rows), static_cast<uint32_t>(dim * sizeof(kType)),
+                             0, static_cast<uint32_t>((heads - 1) * dim * sizeof(kType)), 0};
+        DataCopyPad(outTensor[offset], srcTensor, cp);
+    }
+    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx_]);
+    curOutputPingPong_ ^= 1U;
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
+          bool ENABLE_MHA_OWNER>
 __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyOutBetaGRows(
     AscendC::GlobalTensor<gType> &outTensor, AscendC::LocalTensor<float32_t> srcTensor, uint64_t outOffset,
     uint32_t elements)
@@ -673,8 +731,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.kVecRow);
 
-        inputIdx_ = CopyInRows<kType>(kTensor_, matrixInputBuf_[curInputPingPong_],
-                                             (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        inputIdx_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
+                                     task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * K_DIM, inputIdx_);
         PipeBarrier<PIPE_V>();
         Mul(scaleFp32Tensor_, betaAllFp32Tensor_[rowOffset_], gExpAllFp32Tensor_[rowOffset_], curRow_);
@@ -713,8 +771,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.vVecRow);
 
-        inputIdx_ = CopyInRows<kType>(vTensor_, matrixInputBuf_[curInputPingPong_],
-                                             (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+        inputIdx_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
+                                     task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * V_DIM, inputIdx_);
         PipeBarrier<PIPE_V>();
         Brcb(brcbFp32Tensor_, betaAllFp32Tensor_[rowOffset_],
@@ -888,8 +946,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         curRow_ = rowOffset_ + rowOwned > task.curChunkSize ? task.curChunkSize - rowOffset_ : rowOwned;
         repeatStride_ = K_DIM * sizeof(float32_t) / PRONE_BLOCK_BYTES_32;
 
-        inputIdxA_ = CopyInRows<kType>(kTensor_, matrixInputBuf_[curInputPingPong_],
-                                              (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        inputIdxA_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
+                                      task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
         inputIdxB_ =
             CopyInRows<kType>(gmDkb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxA_], curRow_ * K_DIM, inputIdxA_);
@@ -996,7 +1054,10 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             PipeBarrier<PIPE_V>();
         }
         CastOutputRows(calcFp32ATensor_, curRow_ * K_DIM);
-        CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        // dkTensor_ is the internal head-major workspace consumed by the
+        // A2 Q/K tail; only the public dv output uses sequence-major scatter.
+        CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (keyBase_ + rowOffset_) * K_DIM,
+                    curRow_ * K_DIM);
     }
     if constexpr (HEAD_OWNER) {
         if (subBlockIdx_ == 0) {
@@ -1015,8 +1076,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
         inputIdxA_ =
             CopyInRows<kType>(gmDvb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * V_DIM, curRow_ * V_DIM);
-        inputIdxB_ = CopyInRows<kType>(vTensor_, matrixInputBuf_[curInputPingPong_],
-                                              (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+        inputIdxB_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
+                                      task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
         CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curRow_ * V_DIM, inputIdxA_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curRow_ * V_DIM, inputIdxB_);
         PipeBarrier<PIPE_V>();
@@ -1049,7 +1110,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
         CastOutputRows(calcFp32BTensor_, curRow_ * V_DIM);
-        CopyOutRows(dvTensor_, outputBuf_[outputIdx_], (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+        CopyPublicRowsOut(dvTensor_, outputBuf_[outputIdx_], task.valueBos + rowOffset_, hv,
+                          tiling_.HV, V_DIM, curRow_);
     }
 
     if constexpr (CHUNK_SIZE == 64) {

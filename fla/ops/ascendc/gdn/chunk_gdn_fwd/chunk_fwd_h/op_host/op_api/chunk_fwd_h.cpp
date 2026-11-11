@@ -8,6 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <cstring>
+
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -53,11 +55,18 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor,
+    const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        return {nullptr, nullptr, nullptr};
+    }
     L0_DFX(ChunkFwdH, k, w, u, g, gkOptional, initialStateOptional, cuSeqlensOptional,
            chunkIndicesOptional, outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
-           hOut, vNewOut, finalStateOut);
+           hOut, vNewOut, finalStateOut, layout);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
@@ -89,10 +98,14 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
 
     const auto &kShape = k->GetViewShape();
     const auto &uShape = u->GetViewShape();
+    const size_t headDim = (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0) ? 2 : 1;
+    const size_t sequenceDim = (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0) ? 1 : 2;
     const int64_t logicalBatch = kShape.GetDim(0);
-    const int64_t logicalKHeads = kShape.GetDim(1);
-    const int64_t logicalSeqlen = kShape.GetDim(2);
+    const int64_t logicalKHeads = kShape.GetDim(headDim);
+    const int64_t logicalSeqlen = kShape.GetDim(sequenceDim);
     const int64_t logicalKDim = kShape.GetDim(3);
+    // u is an internal head-major [B,HV,T,V] tensor even when the public
+    // q/k/v tensors are sequence-major; only k follows layout here.
     const int64_t logicalVHeads = uShape.GetDim(1);
     const int64_t logicalVDim = uShape.GetDim(3);
     const aclTensor *finalStateOutKernel = finalStateOut;
@@ -129,7 +142,8 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         OP_OUTPUT(hOut, vNewOut, finalStateOutKernel),
         OP_ATTR(outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
                 logicalBatch, logicalSeqlen,
-                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr));
+                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr,
+                layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};

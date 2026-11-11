@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include "../../../chunk_fwd_h_struct.h"
 #define CATLASS_ARCH 2201
 
 #include "catlass/arch/arch.hpp"
@@ -99,6 +100,7 @@ public:
     using LayoutK = Catlass::layout::ColumnMajor;
 
     
+    int64_t layout_;
     uint32_t batch{0};
     uint32_t seqlen{0};
     uint32_t kNumHead{0};
@@ -142,27 +144,27 @@ public:
     __aicore__ inline GDNFwdHKernelPreload() {}
 
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, 
-        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
+        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
-        batch = gdnFwdHTilingData->batch;
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        shapeBatch = gdnFwdHTilingData->shapeBatch;
-        tokenBatch = gdnFwdHTilingData->tokenBatch;
-        vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
-        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
-        hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        layout_ = tiling.layout;
+        batch = tiling.batch;
+        seqlen = tiling.seqlen;
+        kNumHead = tiling.kNumHead;
+        vNumHead = tiling.vNumHead;
+        kHeadDim = tiling.kHeadDim;
+        vHeadDim = tiling.vHeadDim;
+        chunkSize = tiling.chunkSize;
+        useInitialState = tiling.useInitialState;
+        storeFinalState = tiling.storeFinalState;
+        isVariedLen = tiling.isVariedLen;
+        shapeBatch = tiling.shapeBatch;
+        tokenBatch = tiling.tokenBatch;
+        vWorkspaceOffset = tiling.vWorkspaceOffset;
+        vUpdateWorkspaceOffset = tiling.vUpdateWorkspaceOffset;
+        hWorkspaceOffset = tiling.hWorkspaceOffset;
+        numSeqWorkspaceOffset = tiling.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
         
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
@@ -202,7 +204,9 @@ public:
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
+            auto kLayout = tla::MakeLayoutFromTag(LayoutK(
+                kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens,
+                (layout_ == GDN::FwdHLayout::BSND || layout_ == GDN::FwdHLayout::TND) ? kNumHead * kHeadDim : kHeadDim));
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
             AscendC::SyncAll<false>();    
@@ -244,6 +248,12 @@ public:
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            if ((layout_ == GDN::FwdHLayout::BSND || layout_ == GDN::FwdHLayout::TND)) {
+                                const uint64_t token = static_cast<uint64_t>(stream.shapeBatchIdx) *
+                                    cubeBlockScheduler.totalTokens + stream.tokenOffset +
+                                    static_cast<uint64_t>(stream.chunkIdx) * chunkSize;
+                                cube2OffsetK = (token * kNumHead + stream.kHeadIdx) * kHeadDim;
+                            }
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
                             auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
@@ -301,7 +311,9 @@ public:
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
                 uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
-                uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
+                const uint32_t stateBatchIdx = vecBlockScheduler.StateSequence(batchIdx);
+                uint64_t initialStateOffset =
+                    (static_cast<uint64_t>(stateBatchIdx) * vNumHead + vHeadIdx) * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                 uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
                 if (useInitialState) {

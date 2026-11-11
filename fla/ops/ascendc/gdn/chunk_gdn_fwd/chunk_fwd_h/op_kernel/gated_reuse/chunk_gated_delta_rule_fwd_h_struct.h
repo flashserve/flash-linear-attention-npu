@@ -11,13 +11,9 @@
  * \file chunk_gated_delta_rule_fwd_h_struct.h
  * \brief Plain tiling data struct for chunk_gated_delta_rule_fwd_h.
  *
- * The aclnn/ascendc framework auto-generates a kernel-side tiling struct named
- * ChunkGatedDeltaRuleFwdHTilingData (global scope) from the BEGIN_TILING_DATA_DEF
- * macro in chunk_gated_delta_rule_fwd_h_tiling.h. The fast kernel launch extension
- * compiles the kernel standalone (without that auto-generated header), so it provides
- * the same plain struct here. The field order/types mirror the macro definition so the
- * kernel/scheduler can read it the same way, and so the struct can be passed by value
- * to the kernel via the <<<>>> launch (its address is a valid GM_ADDR on Atlas A2).
+ * Private runtime view for ChunkFwdH's gated reuse path. Each block constructs
+ * this view from its kernel arguments and passes it by const reference. It is
+ * independent of the standalone forward operator's generated GM tiling ABI.
  */
 
 #ifndef CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
@@ -26,6 +22,7 @@
 #include <cstdint>
 
 struct ChunkGatedDeltaRuleFwdHTilingData {
+    int64_t layout;
     int64_t batch;
     int64_t seqlen;
     int64_t kNumHead;

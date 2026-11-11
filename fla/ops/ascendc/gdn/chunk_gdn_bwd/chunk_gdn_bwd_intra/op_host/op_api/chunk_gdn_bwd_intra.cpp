@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include <cstring>
+
 #include "chunk_gdn_bwd_intra.h"
 
 #include "opdev/make_op_executor.h"
@@ -29,10 +31,18 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
     const aclTensor *dO, const aclIntArray *cuSeqlensOptional,
     const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize,
     bool useExp2, const aclTensor *wOut, const aclTensor *uOut,
-    const aclTensor *dvLocalOut, aclOpExecutor *executor)
+    const aclTensor *dvLocalOut, aclOpExecutor *executor,
+    const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "layout must be BNSD, BSND, NTD or TND.");
+        return {nullptr, nullptr, nullptr};
+    }
     L0_DFX(ChunkGdnBwdIntra, q, k, v, g, beta, a, dO, cuSeqlensOptional,
-           chunkIndicesOptional, scale, chunkSize, useExp2, wOut, uOut, dvLocalOut);
+           chunkIndicesOptional, scale, chunkSize, useExp2, layout,
+           wOut, uOut, dvLocalOut);
 
     const aclTensor *actualCuSeqlens = nullptr;
     const aclTensor *actualChunkIndices = nullptr;
@@ -51,7 +61,7 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
         ChunkGdnBwdIntra,
         OP_INPUT(q, k, v, g, beta, a, dO, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(wOut, uOut, dvLocalOut),
-        OP_ATTR(scale, chunkSize, useExp2));
+        OP_ATTR(scale, chunkSize, useExp2, layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGdnBwdIntra failed.");
         return {nullptr, nullptr, nullptr};

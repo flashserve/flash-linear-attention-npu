@@ -17,6 +17,8 @@
 #ifndef PREPARE_WY_REPR_BWD_CUBE_H
 #define PREPARE_WY_REPR_BWD_CUBE_H
 
+#include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #define CATLASS_ARCH 2201
 #include "prepare_wy_repr_bwd_common.h"
 #include "catlass/arch/arch.hpp"
@@ -420,7 +422,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     LayoutTagAT tagAT = LayoutTagAT::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDw tagDw = LayoutTagDw::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
     LayoutTagDu tagDu = LayoutTagDu::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
-    LayoutTagK tagK = LayoutTagK::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
+    LayoutTagK tagK = LayoutTagK::MakeLayout<kType>(CHUNK_SIZE,
+        (tiling_.layout == GDN::FinalizeLayout::BSND || tiling_.layout == GDN::FinalizeLayout::TND) ? static_cast<uint64_t>(tiling_.HK) * K_DIM : K_DIM);
     LayoutTagKbgT tagKbgT = LayoutTagKbgT::MakeLayout<kType>(K_DIM, CHUNK_SIZE);
     LayoutTagVbT tagVbT = LayoutTagVbT::MakeLayout<kType>(V_DIM, CHUNK_SIZE);
     LayoutTagDkbg tagDkbg = LayoutTagDkbg::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
@@ -595,7 +598,14 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 gmAT.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
                 gmDw.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
                 gmDu.SetGlobalBuffer((__gm__ kType *)du_ + valueBase * V_DIM);
-                gmK.SetGlobalBuffer((__gm__ kType *)k_ + keyBase * K_DIM);
+                uint64_t keyOffset = keyBase * K_DIM;
+                if ((tiling_.layout == GDN::FinalizeLayout::BSND || tiling_.layout == GDN::FinalizeLayout::TND)) {
+                    const uint64_t headTokens = static_cast<uint64_t>(tiling_.HK) * tiling_.T;
+                    const uint64_t batch = (cuSeqlens_ == nullptr) ? task.keyBos / headTokens : 0;
+                    const uint64_t token = (cuSeqlens_ == nullptr) ? task.keyBos % headTokens : task.keyBos;
+                    keyOffset = ((batch * tiling_.T + token) * tiling_.HK + hk) * K_DIM;
+                }
+                gmK.SetGlobalBuffer((__gm__ kType *)k_ + keyOffset);
                 gmDkbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbgOffset));
                 gmDvb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dvbOffset));
                 gmKkt.SetGlobalBuffer((__gm__ kType *)kktBase);

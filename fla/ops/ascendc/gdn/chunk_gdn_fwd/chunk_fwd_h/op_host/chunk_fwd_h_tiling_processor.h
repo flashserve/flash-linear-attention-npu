@@ -53,6 +53,7 @@ struct ChunkFwdHTilingContext {
     bool useInitialState;
     // attrs
     bool storeFinalState;
+    int64_t layout = GDN::FwdHLayout::BNSD;
     int64_t chunkSize;
     // P1: per-sequence chunk counts read from cu_seqlens on host (aclnn/l0op layer);
     // nullptr / zero count means dense path — kernel keeps uniform head partition.
@@ -76,6 +77,7 @@ public:
     void Process(::ChunkFwdHPlainTilingData &tiling,
                  uint32_t &blockDim, size_t &workspaceSize) const
     {
+        tiling.layout = ctx_.layout;
         int64_t isVariedLen;
         int64_t shapeBatch;
         int64_t tokenBatch;
@@ -145,8 +147,8 @@ public:
         workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
 
-        // gated 复用 workspace 追加段：tiling 镜像（256B 上界）+
-        // numSeq/numChunks 前缀表（int64 × (tokenBatch+2)）。
+        // gated 复用 workspace 追加段：保留原 tiling 区域（256B）以稳定 offset，
+        // 再分配 numSeq/numChunks 前缀表（int64 × (tokenBatch+2)）。
         tiling.gatedTilingOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += 256;
         tiling.gatedNumSeqOffset = static_cast<int64_t>(workspaceOffset);

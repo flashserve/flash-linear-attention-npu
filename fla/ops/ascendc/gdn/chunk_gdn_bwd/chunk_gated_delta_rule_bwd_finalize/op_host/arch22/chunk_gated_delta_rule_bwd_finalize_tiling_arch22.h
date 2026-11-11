@@ -1,5 +1,8 @@
+#include "../../op_kernel/arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_TILING_ARCH22_H
+
+#include <cstring>
 
 #include "../op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.h"
 #include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
@@ -22,6 +25,10 @@ namespace {
 namespace gdn_finalize_arch22 {
 
 using namespace GDN;
+using GDN::FinalizeArch22::g_tilingDeclareParams;
+#ifdef ASCENDC_DEBUG
+using GDN::FinalizeArch22::g_tilingSelectParams;
+#endif
 using GDN::FinalizeHostArch22::ShapeString;
 
 constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdFinalize";
@@ -117,7 +124,7 @@ ge::graphStatus ValidateShape(gert::TilingContext *, const char *parameter,
 
 ge::graphStatus ValidateShapes(gert::TilingContext *context,
                                GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData &tiling,
-                               bool stateVFirst)
+                               bool stateVFirst, int64_t inputLayout)
 {
     // 先检查真实输入 rank，再提取 shape；错误报告保留具体参数和 actual/expected。
     const gert::StorageShape *shapes[] = {
@@ -143,10 +150,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape &a = shapes[INPUT_A_IDX]->GetStorageShape();
     const gert::Shape &h = shapes[INPUT_H_IDX]->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = q.GetDim(1);
-    tiling.T = q.GetDim(2);
+    tiling.HK = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = v.GetDim(1);
+    tiling.HV = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -183,14 +190,21 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "k.shape", shapes[INPUT_K_IDX]->GetStorageShape(),
-                      {tiling.B, tiling.HK, tiling.T, tiling.K}, INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
+                      (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HK, tiling.K}
+                                        : std::initializer_list<int64_t>{tiling.B, tiling.HK, tiling.T, tiling.K},
+                      INPUT_K_IDX) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-    const size_t valueIndices[] = {INPUT_V_IDX, INPUT_V_NEW_IDX, INPUT_DO_IDX, INPUT_DU_IDX};
-    for (const size_t index : valueIndices) {
+    if (ValidateShape(context, "v.shape", shapes[INPUT_V_IDX]->GetStorageShape(),
+                      (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? std::initializer_list<int64_t>{tiling.B, tiling.T, tiling.HV, tiling.V}
+                                        : std::initializer_list<int64_t>{tiling.B, tiling.HV, tiling.T, tiling.V},
+                      INPUT_V_IDX) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    for (const size_t index : {INPUT_V_NEW_IDX, INPUT_DO_IDX, INPUT_DU_IDX}) {
         if (ValidateShape(context, (std::string(names[index]) + ".shape").c_str(),
                           shapes[index]->GetStorageShape(), {tiling.B, tiling.HV, tiling.T, tiling.V}, index) !=
-                ge::GRAPH_SUCCESS) {
+            ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
     }
@@ -230,7 +244,20 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
+    const char *qkvLayout = attrs->GetStr(7);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+        std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE(context->GetNodeName(), "qkvLayout must be BNSD, BSND, NTD or TND."),
+                return ge::GRAPH_FAILED);
+    const int64_t layoutValue =
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FinalizeLayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::FinalizeLayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::FinalizeLayout::NTD : GDN::FinalizeLayout::TND;
+    tiling->layout = layoutValue;
+    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue, layoutValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
 
     const double *scale = attrs->GetAttrPointer<double>(0);
@@ -452,17 +479,12 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
     context->GetWorkspaceSizes(1)[0] = systemWorkspace + layout.totalBytes;
-    const uint64_t baseTilingKey = GET_TPL_TILING_KEY(
-        static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
-        static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
-        static_cast<uint64_t>(useExp2Value));
-    OP_CHECK_IF(baseTilingKey >= GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK,
-                OP_LOGE(context->GetNodeName(), "A2 Finalize base TilingKey overlaps the private MHA-owner bit."),
-                return ge::GRAPH_FAILED);
     const bool enableMhaOwner = qKey == TPL_BF16 && tiling->K == K_SIZE_128 &&
         tiling->chunkSize == CHUNK_SIZE_64 && tiling->V == V_SIZE_128 && tiling->HK == tiling->HV;
-    const uint64_t actualTilingKey = baseTilingKey |
-        (enableMhaOwner ? GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK : uint64_t{0});
+    const uint64_t actualTilingKey = GET_TPL_TILING_KEY(
+        static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
+        static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
+        static_cast<uint64_t>(useExp2Value), static_cast<uint64_t>(enableMhaOwner));
     context->SetTilingKey(actualTilingKey);
     OP_LOGD(context->GetNodeName(),
             "GDN_FINALIZE_ARCH22_TILING actualKey=%" PRIu64 " owner=%u gKey=%d norm=%u sigmoid=%u exp2=%u",
