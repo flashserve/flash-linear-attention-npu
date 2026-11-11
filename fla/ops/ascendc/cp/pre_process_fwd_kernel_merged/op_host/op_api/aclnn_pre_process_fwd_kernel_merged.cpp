@@ -108,8 +108,26 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     CHECK_COND(HK > 0 && HV > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID, "GVA requires HV % HK == 0.");
     CHECK_COND(wShape.GetDim(0) == 1 && wShape.GetDim(2) == T && wShape.GetDim(3) == K,
                ACLNN_ERR_PARAM_INVALID, "w must be [1, HV, T, K] matching k.");
+    CHECK_COND(wShape.GetDim(1) == HV, ACLNN_ERR_PARAM_INVALID,
+               "w head dim must equal HV (u dim 1).");
     CHECK_COND(uShape.GetDim(0) == 1 && uShape.GetDim(2) == T,
                ACLNN_ERR_PARAM_INVALID, "u must be [1, HV, T, V] matching k.");
+    // 可选输入 g / gk 的 shape 必须与 docs/api.md §2.1 的契约一致：
+    //   g  [1, HV, T]      gk [1, HV, T, K]     （gate 按 value head HV，不是 HK）
+    // 两者的存在性与互斥已由 CheckDtype 负责，这里只补 shape 拦截。
+    if (params.g != nullptr) {
+        const auto gShape = params.g->GetViewShape();
+        CHECK_COND(gShape.GetDimNum() == 3, ACLNN_ERR_PARAM_INVALID, "g must be [1, HV, T].");
+        CHECK_COND(gShape.GetDim(0) == 1 && gShape.GetDim(1) == HV && gShape.GetDim(2) == T,
+                   ACLNN_ERR_PARAM_INVALID, "g must be [1, HV, T] matching u's HV and k's T.");
+    }
+    if (params.gk != nullptr) {
+        const auto gkShape = params.gk->GetViewShape();
+        CHECK_COND(gkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "gk must be [1, HV, T, K].");
+        CHECK_COND(gkShape.GetDim(0) == 1 && gkShape.GetDim(1) == HV && gkShape.GetDim(2) == T &&
+                   gkShape.GetDim(3) == K,
+                   ACLNN_ERR_PARAM_INVALID, "gk must be [1, HV, T, K] matching u's HV and k's T/K.");
+    }
 
     const int64_t cuNumel = params.cuSeqlensOptional->Size();
     CHECK_COND(cuNumel >= 2, ACLNN_ERR_PARAM_INVALID, "cu_seqlens must have >= 2 elements.");
