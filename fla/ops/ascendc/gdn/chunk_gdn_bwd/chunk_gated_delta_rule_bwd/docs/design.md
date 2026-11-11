@@ -62,6 +62,8 @@ Q/K 写回使用 tiling data 中的运行时 layout 计算 GM offset 和行跨�
 
 ## 资源与同步
 
+arch22 Intra row-gate broadcast reserves one 32-byte block per AIV row: `32 * 32 = 1024` bytes. The final row-gate region therefore ends at 97 KiB, rather than reserving only the 256-byte source gate vector. The Brcb/Sub addresses, arithmetic and event protocol are unchanged.
+
 arch22 Intra 的每个 AIV 只持有 32 行 K/V 原始缓冲。连续和跨步搬运均将有效行数
 限制为 `max(0, min(validTokens - part*32, 32))`，无有效行时不发起 DMA，避免首个半片
 将完整 64 行 chunk 读入 32 行 UB。
