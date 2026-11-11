@@ -71,14 +71,6 @@ class StableAbiContractTest(unittest.TestCase):
                 STABLE.npu_chunk_gated_delta_rule_fwd(*(object() for _ in range(5)), **options)
         self.launch.assert_not_called()
 
-    def test_recurrent_rejects_gk_before_launch(self):
-        for gate in (None, object()):
-            with self.subTest(g=gate), self.assertRaisesRegex(ValueError, "gk is reserved"):
-                STABLE.npu_recurrent_gated_delta_rule(
-                    None, None, None, None, beta=None, actual_seq_lengths=None,
-                    ssm_state_indices=None, g=gate, gk=object())
-        self.launch.assert_not_called()
-
     def test_recurrent_tensor_order_and_one_state_version_bump(self):
         values = [FakeTensor((1,)) for _ in range(11)]
         with mock.patch.object(STABLE, "_INC_VERSION") as bump:
@@ -101,29 +93,21 @@ class StableAbiContractTest(unittest.TestCase):
                             norm, fused_gate, sigmoid, negative, 123)
                         bump.assert_called_once_with((values[3],))
 
-    def test_recurrent_device_mismatch_prevents_launch_and_version_bump(self):
-        for device in (types.SimpleNamespace(type="cpu", index=None),
-                       types.SimpleNamespace(type="npu", index=1)):
-            values = [FakeTensor((1,)) for _ in range(7)]
-            values[6].device = device
-            with self.subTest(device=device), mock.patch.object(STABLE, "_INC_VERSION") as bump:
-                with self.assertRaisesRegex(ValueError, "All RecurrentGDN tensors"):
-                    STABLE.npu_recurrent_gated_delta_rule(
-                        *values[:4], beta=values[4], actual_seq_lengths=values[5],
-                        ssm_state_indices=values[6])
-                bump.assert_not_called()
-                self.launch.assert_not_called()
-
-    def test_recurrent_grad_state_rejected_before_launch(self):
+    def test_recurrent_backend_error_propagates_without_state_version_bump(self):
         values = [FakeTensor((1,)) for _ in range(7)]
+        for tensor in values:
+            tensor.device = types.SimpleNamespace(type="cpu", index=None)
         values[3].requires_grad = True
+        error = RuntimeError("backend rejected input")
+        self.launch.side_effect = error
         with mock.patch.object(STABLE, "_INC_VERSION") as bump:
-            with self.assertRaisesRegex(RuntimeError, "must not require gradients"):
+            with self.assertRaises(RuntimeError) as raised:
                 STABLE.npu_recurrent_gated_delta_rule(
                     *values[:4], beta=values[4], actual_seq_lengths=values[5],
-                    ssm_state_indices=values[6])
+                    ssm_state_indices=values[6], gk=values[0])
+            self.assertIs(raised.exception, error)
             bump.assert_not_called()
-        self.launch.assert_not_called()
+        self.launch.assert_called_once()
 
     def test_gdn_intra_signature_has_no_debug_stage(self):
         self.assertNotIn("debug_stage", inspect.signature(STABLE.npu_chunk_gdn_bwd_intra).parameters)

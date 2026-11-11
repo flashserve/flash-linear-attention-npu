@@ -8,6 +8,8 @@ The mutation contract (version bump / requires_grad rejection) is *not*
 provided by the dispatcher for these ops -- measured in Phase 1 -- so the
 dispatch layer applies ``_wrap_mutable_direct_op`` unless a hot wrapper
 already enforces the contract in its own frame.
+RecurrentGDN delegates validation to the native operator and only bumps the
+State version after a successful call.
 """
 
 from __future__ import annotations
@@ -564,22 +566,6 @@ def npu_recurrent_gated_delta_rule(
     Fusion flags select arithmetic only; disabling them never selects the
     historical kernel. The two ACLNN host ABIs share arch22 on A2/A3.
     """
-    if gk is not None:
-        raise ValueError("gk is reserved; only scalar gate g is supported.")
-    # ACLNN validates tensor descriptors. Keep device checks here because an
-    # ACL descriptor does not carry the originating torch device. Metadata
-    # values stay on device so warmup/capture do not synchronize them to Python.
-    for tensor in (query, key, value, state, beta, actual_seq_lengths,
-                   ssm_state_indices, num_accepted_tokens, g, A_log, dt_bias):
-        if tensor is None:
-            continue
-        if tensor.device.type != "npu":
-            raise ValueError("All RecurrentGDN tensors must be on NPU.")
-        if tensor.device != query.device:
-            raise ValueError("All RecurrentGDN tensors must be on the same device.")
-    scale = float(scale)
-    if state.requires_grad:
-        _refuse_grad_state("npu_recurrent_gated_delta_rule", state)
     result = _op("npu_recurrent_gated_delta_rule")(
         query, key, value, state, beta, actual_seq_lengths, ssm_state_indices,
         num_accepted_tokens, g, gk, A_log, dt_bias, scale,
