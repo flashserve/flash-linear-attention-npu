@@ -1,6 +1,4 @@
-​
-
-/**
+​/**
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * the BSD 3-Clause License (the "License").
@@ -185,8 +183,6 @@ __simd_vf__ inline void StageV0Vf(
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
-        Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
-        Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
         if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
             Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
             Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
@@ -424,7 +420,6 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
     RegTensor<float> refHigh;
     LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
     LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
-    
     for (uint16_t row = 0; row < computeRows; ++row) {
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
@@ -1492,5 +1487,3 @@ private:
 } // namespace KdaPrepare::Arch35
 
 #endif // ARCH35_CHUNK_KDA_FWD_PREPARE_VEC_H
-
-​
