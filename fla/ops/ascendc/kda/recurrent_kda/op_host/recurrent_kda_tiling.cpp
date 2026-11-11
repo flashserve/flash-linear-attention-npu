@@ -384,7 +384,7 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeFormat()
         {ACC_TOKEN_INDEX, "num_accepted_tokens"},
     }};
     for (const auto &item : optionalInputs) {
-        if (item.first == DT_BIAS_INDEX && !tilingData_.hasALog) continue;
+        if (compileInfo_.isA5 && item.first == DT_BIAS_INDEX && !tilingData_.hasALog) continue;
         auto desc = context_->GetOptionalInputDesc(item.first);
         if (desc != nullptr && !CheckFormat(desc->GetStorageFormat(), item.second)) {
             return ge::GRAPH_FAILED;

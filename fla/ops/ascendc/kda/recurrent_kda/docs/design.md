@@ -9,6 +9,12 @@
 
 保留 KDA 原接口，包括向量 gate、128 维 dt_bias、K-first、空请求、非连续输入及各输出组合。host 依次完成形状检查、维度与 stride 填充、属性检查、分核和 UB 规划，复用既有公开接口校验。
 
+### A2/A3 平台边界
+
+A5 的输入 view 扩展、State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用 kernel 恢复为 PR 基线，保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径；A5 的 head-major 输入支持不扩展到 A2/A3。公共结构化错误码继续保留，auto-sync 配置不在本次修改范围。
+
+State 输入与输出沿用远程主线已修复的公开语义：非原位模式直接读取初态，仅写入有效目标槽，不克隆或预填整个输出池。
+
 ### State 输入与输出
 
 `initial_state` 在所有输出组合下均须显式传入非 `None` 张量。非原位调用直接读取该输入，不修改其数据或版本计数；仅在 `output_final_state=true` 时分配独立 State 输出，不通过克隆输入后执行原位 kernel 实现。Python 对原位调用拒绝 `requires_grad` State，并更新输入版本计数；非原位调用对该输入使用 `detach` view。
@@ -26,7 +32,7 @@ aclnn 保留输入与 State 输出 view 的 stride/offset，kernel 直接读输�
 
 ## Stage 与分核
 
-每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做 grid-stride 分配，hk=hv/(HV/H)。blockDim=min(AIV 数,任务数)，不使用 AIC。B=32、HV=48 时共有 1536 个任务，56 个 AIV 每核 27 或 28 个任务。
+每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做 grid-stride 分配，hk=hv/(HV/H)。A5 的 blockDim=min(AIV 数,任务数)，不使用 AIC；A2/A3 保留基线先计算每核任务数、再确定 blockDim 的公式。B=32、HV=48 时共有 1536 个任务，56 个 AIV 每核 27 或 28 个任务。
 
 V=128 每任务处理一个128列 V 分块；V=256 沿 V 分成 `[0,128)`、`[128,256)`，同一 AIV 依次完成两个分块的全部 token。每个分块复用原128×128 VF、三个 State bank 和输入/out 槽。K-first 从 GM 的 `[K,256]` 中逐 K 行搬入对应128列，UB 保持 `[K,128]`，输出按原 stride 写回，无转置。V-first 对应128个 V 行。请求元数据、A_log 和 bias 每任务解析或搬入一次；q/k/g/beta 每分块读入。两种 V 维度均按四 token 的 tile 顺序递推，支持跨任意多个 tile，末 tile 仅处理有效 token；UB 占用不随序列长度增加。保留 cu_seqlens 和 State 索引容量校验。
 

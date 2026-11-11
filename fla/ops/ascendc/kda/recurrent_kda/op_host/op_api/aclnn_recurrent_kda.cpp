@@ -193,8 +193,57 @@ static bool SameTensorStorage(const aclTensor *lhs, const aclTensor *rhs)
 
 
 
+// A2/A3 keep the direct-view contract of the PR baseline.
+bool IsSupportedQkvView(const aclTensor *tensor, RecurrentKdaLayout layout)
+{
+    if (tensor == nullptr) {
+        return false;
+    }
+    const size_t expectedRank = layout == RecurrentKdaLayout::TND ? 3 : 4;
+    const auto &strides = tensor->GetViewStrides();
+    if (Rank(tensor) != expectedRank || strides.size() != expectedRank) {
+        return false;
+    }
+    for (size_t i = 0; i < expectedRank; ++i) {
+        if (strides[i] <= 0) {
+            return false;
+        }
+    }
+
+    const size_t tokenDim = layout == RecurrentKdaLayout::TND ? DIM0 : DIM1;
+    const size_t headDim = layout == RecurrentKdaLayout::TND ? DIM1 : DIM2;
+    const size_t featureDim = layout == RecurrentKdaLayout::TND ? DIM2 : DIM3;
+    const int64_t headCount = Dim(tensor, headDim);
+    const int64_t featureCount = Dim(tensor, featureDim);
+    const int64_t tokenStride = strides[tokenDim];
+    const int64_t headStride = strides[headDim];
+    if (strides[featureDim] != 1 || headStride < featureCount) {
+        return false;
+    }
+    const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
+    if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
+        return false;
+    }
+    const int64_t minTokenStride = (headCount - 1) * headStride + featureCount;
+    if (tokenStride < minTokenStride) {
+        return false;
+    }
+    const uint64_t srcGapElements = static_cast<uint64_t>(tokenStride - featureCount);
+    if (srcGapElements > std::numeric_limits<uint32_t>::max() / sizeof(uint16_t)) {
+        return false;
+    }
+
+    if (layout == RecurrentKdaLayout::BSND && Dim(tensor, DIM0) > 1) {
+        const int64_t seqLen = Dim(tensor, DIM1);
+        if (tokenStride > maxInt64 / seqLen || strides[DIM0] != seqLen * tokenStride) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool CheckQkvMaterializationSafety(
-    const aclTensor *tensor, RecurrentKdaLayout layout, const char *name, bool &supportsDirect)
+    const aclTensor *tensor, RecurrentKdaLayout layout, const char *name, bool isA5, bool &supportsDirect)
 {
     supportsDirect = false;
     const size_t expectedRank = layout == RecurrentKdaLayout::TND ? 3 : 4;
@@ -214,6 +263,17 @@ bool CheckQkvMaterializationSafety(
         return true;
     }
     const int64_t tokenCount = Dim(tensor, tokenDim);
+    if (!isA5) {
+        const int64_t limit = std::numeric_limits<int64_t>::max();
+        if ((headCount > 1 && headStride > (limit - featureCount) / (headCount - 1)) ||
+            tokenStride < (headCount - 1) * headStride + featureCount) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
+                "expected representable token-major head span on A2/A3; actual " + TensorDescription(tensor));
+            return false;
+        }
+        supportsDirect = IsSupportedQkvView(tensor, layout);
+        return true;
+    }
     const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
     if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
@@ -274,7 +334,7 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
     return true;
 }
 
-bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
+bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, bool isA5)
 {
     if (!SameShape(params.query, params.key)) {
         ReportInvalid(params, "query/key/value/gate/beta", "npu_recurrent_kda: query and key must have identical shape.");
@@ -373,26 +433,28 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         ReportInvalid(params, "finalState", "npu_recurrent_kda: finalState shape must match initialStateRef.");
         return false;
     }
-    // Reject invalid public State views before enqueueing a copy or reaching
-    // tiling. A bad stride is a parameter error, not an internal L0 failure.
-    const aclTensor *stateViews[] = {params.initialStateRef, params.finalState};
-    for (const auto *tensor : stateViews) {
-        const auto &strides = tensor->GetViewStrides();
-        const int64_t plane = kDim * vDim;
-        bool valid = strides.size() == 4;
-        if (valid) {
-            valid = strides[0] > 0 && strides[1] >= plane &&
-                    strides[2] == Dim(tensor, 3) && strides[3] == 1;
-        }
-        if (valid && hv > 1) {
-            const int64_t limit = std::numeric_limits<int64_t>::max();
-            valid = strides[1] <= (limit - plane) / (hv - 1);
-        }
-        if (valid) valid = strides[0] >= (hv - 1) * strides[1] + plane;
-        if (!valid) {
-            ReportInvalid(params, tensor == params.initialStateRef ? "initialStateRef" : "finalState",
-                "State must keep its inner state matrix dense, with positive non-overlapping outer strides.");
-            return false;
+    if (isA5) {
+        // Reject invalid public State views before enqueueing a copy or reaching
+        // tiling. A bad stride is a parameter error, not an internal L0 failure.
+        const aclTensor *stateViews[] = {params.initialStateRef, params.finalState};
+        for (const auto *tensor : stateViews) {
+            const auto &strides = tensor->GetViewStrides();
+            const int64_t plane = kDim * vDim;
+            bool valid = strides.size() == 4;
+            if (valid) {
+                valid = strides[0] > 0 && strides[1] >= plane &&
+                        strides[2] == Dim(tensor, 3) && strides[3] == 1;
+            }
+            if (valid && hv > 1) {
+                const int64_t limit = std::numeric_limits<int64_t>::max();
+                valid = strides[1] <= (limit - plane) / (hv - 1);
+            }
+            if (valid) valid = strides[0] >= (hv - 1) * strides[1] + plane;
+            if (!valid) {
+                ReportInvalid(params, tensor == params.initialStateRef ? "initialStateRef" : "finalState",
+                    "State must keep its inner state matrix dense, with positive non-overlapping outer strides.");
+                return false;
+            }
         }
     }
     if (params.ssmStateIndicesOptional != nullptr) {
@@ -406,12 +468,12 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
             return false;
         }
     }
-    if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
+    if (isA5 && params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
         ReportInvalid(params, "num_accepted_tokens",
                 "npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.");
         return false;
     }
-    if (!params.inplaceFinalState && params.outputFinalState &&
+    if (isA5 && !params.inplaceFinalState && params.outputFinalState &&
         SameTensorStorage(params.initialStateRef, params.finalState)) {
         ReportInvalid(params, "finalState",
                 "non-inplace output must use storage independent from initialStateRef");
@@ -445,7 +507,8 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
             return false;
         }
     }
-    if (params.safeGate && !(params.lowerBound >= -5.0 && params.lowerBound < 0.0)) {
+    if (params.safeGate && (isA5 ? !(params.lowerBound >= -5.0 && params.lowerBound < 0.0) :
+                                      (params.lowerBound < -5.0 || params.lowerBound >= 0.0))) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRecurrentKda", "lower_bound",
             std::to_string(params.lowerBound), "must be in [-5, 0) when safe_gate=True");
         return false;
@@ -620,6 +683,10 @@ aclnnStatus PreProcess(
     if (DataContiguous(params.numAcceptedTokensOptional, executor) != ACLNN_SUCCESS) {
         return ACLNN_ERR_INNER_NULLPTR;
     }
+    if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
+        ReportInvalid(params, "num_accepted_tokens", "num_accepted_tokens requires ssm_state_indices.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 } // namespace
@@ -688,11 +755,12 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         }
         parsedLayout = RecurrentKdaLayout::TND;
     }
-    if (!CheckShape(params, parsedLayout)) return ACLNN_ERR_PARAM_INVALID;
+    const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
+    if (!CheckShape(params, parsedLayout, isA5)) return ACLNN_ERR_PARAM_INVALID;
     bool querySupportsDirect = false, keySupportsDirect = false, valueSupportsDirect = false;
-    if (!CheckQkvMaterializationSafety(params.query, parsedLayout, "query", querySupportsDirect) ||
-        !CheckQkvMaterializationSafety(params.key, parsedLayout, "key", keySupportsDirect) ||
-        !CheckQkvMaterializationSafety(params.value, parsedLayout, "value", valueSupportsDirect))
+    if (!CheckQkvMaterializationSafety(params.query, parsedLayout, "query", isA5, querySupportsDirect) ||
+        !CheckQkvMaterializationSafety(params.key, parsedLayout, "key", isA5, keySupportsDirect) ||
+        !CheckQkvMaterializationSafety(params.value, parsedLayout, "value", isA5, valueSupportsDirect))
         return ACLNN_ERR_PARAM_INVALID;
     const bool queryUsesDirectView = !IsContiguous(params.query) && querySupportsDirect;
     const bool keyUsesDirectView = !IsContiguous(params.key) && keySupportsDirect;
@@ -703,7 +771,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const aclnnStatus preprocessStatus =
         PreProcess(params, queryNeedsContiguous, keyNeedsContiguous, valueNeedsContiguous, executorPtr);
     if (preprocessStatus != ACLNN_SUCCESS) {
-        return preprocessStatus;
+        return isA5 ? preprocessStatus : ACLNN_ERR_PARAM_INVALID;
     }
     if (queryUsesDirectView) {
         if (CreateViewIfNonContiguous(params.query, executorPtr) != ACLNN_SUCCESS) {
@@ -753,7 +821,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         params.query, params.key, params.value, params.gate, params.beta, initialStateForKernel,
         params.cuSeqlensOptional, params.ssmStateIndicesOptional, params.aLogOptional,
         params.dtBiasOptional, params.numAcceptedTokensOptional,
-        params.layout == nullptr ? "BSND" : params.layout, params.scale,
+        isA5 && params.layout == nullptr ? "BSND" : params.layout, params.scale,
         params.outputFinalState, params.inplaceFinalState, params.useQkL2normInKernel,
         params.useGateInKernel, params.useBetaSigmoidInKernel, params.allowNegEigval,
         params.safeGate, params.lowerBound, params.stateVFirst, params.attnOut,
@@ -765,7 +833,10 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     }
     if (params.inplaceFinalState && params.outputFinalState &&
         !SameTensorView(params.finalState, params.initialStateRef)) {
-        if (CopyStateView(result[1], finalStateForKernel, executorPtr) != ACLNN_SUCCESS) {
+        const bool copyFailed = isA5 ?
+            CopyStateView(result[1], finalStateForKernel, executorPtr) != ACLNN_SUCCESS :
+            l0op::ViewCopy(result[1], params.finalState, executorPtr) == nullptr;
+        if (copyFailed) {
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
