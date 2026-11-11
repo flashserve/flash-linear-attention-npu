@@ -94,6 +94,20 @@ python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/check_gate_precisio
 检查 `dg == 0`、全部输出有限，以及重复执行逐位一致。
 该回归不依赖 ATK，不替代上述完整验收矩阵。
 
+完整前后向的最简复现（无需准备中间量，FP32 gate、内部 Q/K norm）：
+
+```bash
+python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/repro_gate_zero_state.py
+```
+
+脚本检查单 token、零初始状态且无末状态梯度时 `dg == 0`。
+该条件不要求一般输入的门控梯度为零，也不以两组不同输入的梯度相等作为判据。
+
+2026-11-11 在 Ascend 950DT/CANN 9.2.1 上，64 个独立 finalize 回归和上述完整链最简复现通过。
+完整链最简复现的 `max(abs(dg))` 从 `4.9896724522e-4` 降为 `0`。
+长序列对照、性能开销和未完成的正式验收项见
+[开发验证记录](../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/docs/validation.md)。
+
 ## A2/A3 新增回归（原 A5 路径保留）
 
 上方 200/64/8 条为原 A5 资产，ID、seed 和 payload 未改动；A5 CPU 标杆更新了 Stage 13/14 门控点积的 FP32 精度边界。
