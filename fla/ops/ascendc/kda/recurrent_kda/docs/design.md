@@ -156,6 +156,7 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 - 末项小于 capacity 时，仅 `[0,cu_seqlens[-1])` 的有效输出和 state side effect 有定义；padding tail 输出不作保证。
 - 一维 `ssm_state_indices` 按 packed token 偏移读取；二维索引按 `[seq_idx,step]` 读取，第二维必须覆盖对应序列长度。
 - `num_accepted_tokens` 只在提供 `ssm_state_indices` 时有效，用于定位 MTP decode 的初始状态槽。
+- 二维 speculative 索引按行宽校验上一步接受数，再独立校验本步写入槽；当前查询窗口缩短不改变初态列位置。packed 索引仍按当前序列长度限制初态偏移。
 
 ## 8. 平台设计
 
