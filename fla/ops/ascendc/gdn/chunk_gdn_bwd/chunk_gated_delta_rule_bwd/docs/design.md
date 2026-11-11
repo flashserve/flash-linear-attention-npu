@@ -26,7 +26,7 @@ dO、g、beta、betaRaw、dBeta/dG、rstd、state 和中间 workspace 各自沿�
 
 | 执行链 | 外部张量搬运 | 内部布局 |
 | --- | --- | --- |
-| arch22/arch35 Intra | Cube 读取 q/k，Vector 读取 v | W/U/dvLocal 保持 head-major |
+| arch22/arch35 Intra | Cube 读取 q/k，Vector 在 arch22 读取 k/v、arch35 读取 v | W/U/dvLocal 保持 head-major |
 | FwdH | Cube 按布局读取 k，含 arch22 gated reuse 分支 | W/U/h/vNew 保持原布局 |
 | DHU | Cube/Vector 按布局读取 q/k | dO/g/W/dvLocal/dh/dv2 保持原布局 |
 | arch35 Finalize | 按布局读取 q/k/v，S6 写 dv，S15 写 dq/dk | 标量梯度与归约 workspace 保持原布局 |
@@ -62,6 +62,10 @@ Q/K 写回使用 tiling data 中的运行时 layout 计算 GM offset 和行跨�
 
 ## 资源与同步
 
+arch22 Intra 的每个 AIV 只持有 32 行 K/V 原始缓冲。连续和跨步搬运均将有效行数
+限制为 `max(0, min(validTokens - part*32, 32))`，无有效行时不发起 DMA，避免首个半片
+将完整 64 行 chunk 读入 32 行 UB。
+
 继续使用已有 L1/L0/UB tile、buffer slot 和 ready/free 生命周期。跨步输入直接进入原 tile，
 输出直接消费原 tile，不新增全张量 GM 中转、不新增跨核同步、不改变 EventID 或 Fixpipe 次数。
 原 buffer 释放和发布位置在对应跨步搬运完成后执行。
@@ -77,10 +81,14 @@ T=1/63/64/65、G=1/2/3/4、多 batch、packed 空序列、状态布局、归一�
 混合标量 dtype、两种指数模式、非连续输入及可追踪数值。
 公开 C ABI 另验证非法参数和 arch22 非连续输出的 storage offset。
 
-独立精度使用 CPU FP64 golden、CPU FP32 benchmark 和 ATK 原生 L1 双标杆；保留原值域。
-A2 的 FP32 benchmark 对齐融合 Intra 的中间落盘，不再调用旧 WU/DvLocal 拼接标杆。
-失败保存输出，并从最早偏离的 Stage 定位。测试入口见
-[ATK 说明](../../../../../../../tests/atk/chunk_gated_delta_rule_bwd/README.md)。
+本次独立测试快照使用 CPU FP64 golden、CPU FP32 benchmark 和 ATK 原生 L1 双标杆；
+保留原值域和阈值。CPU 链依次计算 Intra 的 W/U/dvLocal、FwdH 的 h/vNew、
+DHU 的 dh/dh0/dv2，再将 dv2 作为 Finalize 的 du 输入。
+A2 的 Intra 先将缩放后的 K/V 及 KQ score 落盘 BF16；A5 先将列缩放后的 A
+和带 gate 的 score 落盘 BF16，FP32 benchmark 分别保持对应边界。FP64 golden
+不增加这些量化，DHU 的 gate 指数计算也保持 FP64。失败保存输出，并从最早
+偏离的 Stage 定位。分支中的 ATK 文件保留既有基线；验证快照及其校验值随
+测试记录单独归档。
 
 性能用同一环境下的旧主线包和新包分别采集 msprof。完整 executor 时间取其计算与转换
 task 的 `Task Duration(us)` 之和，排除输入构造；BSND/TND 核对六次转置消失，

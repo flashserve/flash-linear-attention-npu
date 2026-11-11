@@ -129,9 +129,11 @@ A5 沿用原有输出处理，本次不扩展其非连续输出支持范围。
 `Hv/Hk in {1,2,3,4}`。独立 A2/A3 Finalize 的 V=256、chunkSize=128 或更大头比例支持
 不代表整个 Bwd executor 已支持这些规格。
 
-A2/A3 与 A5 复用同一条 `ChunkGdnBwdIntra` 组合链，原先 RecomputeWUFwd/ChunkBwdDvLocal
-组合引入的两个数值边界（BF16 中间舍入位置不同、gate 差取 `min(delta,0)`）随组合移除
-而消失。ATK 使用独立 CPU FP64 golden 和 CPU FP32 benchmark；非单调 gate 值域的覆盖结论仍以对应设备、版本的 ATK 记录为准，不能据前向有效
+A2/A3 与 A5 复用同一条 `ChunkGdnBwdIntra` 组合链。两个平台的 Intra 仍有不同的
+BF16 存储边界：arch22 先量化缩放后的 K/V 和 KQ score，arch35 先量化列缩放后的 A
+和带 gate 的 score。因此本次独立测试快照的 CPU FP32 benchmark 按平台对齐中间
+存储，CPU FP64 golden 保持高精度数学语义；分支中的 ATK 文件保留既有基线。
+非单调 gate 值域的覆盖结论仍以对应设备、版本的 ATK 记录为准，不能据前向有效
 gate 的通过结果宣称已覆盖任意 gate 值域。
 
 ## 测试
@@ -140,7 +142,7 @@ gate 的通过结果宣称已覆盖任意 gate 值域。
 
 1. 组合一致性测试：分别调用四个公开 NPU 算子，对比 `dq/dk/dv/dBeta/dG/dh0`，验证
    L2 组合顺序、可选参数传导、公开布局转换和 `stateVFirst` 状态转换。
-2. ATK 独立精度测试：组合 `ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、
+2. 本次独立快照的 ATK 精度测试：组合 `ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、
    `ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize` 已有的 CPU reference，
    使用 ATK 原生 `cv_fused_double_benchmark` 的 L1 双标杆对比全部有效梯度，不使用混合容差。
 
