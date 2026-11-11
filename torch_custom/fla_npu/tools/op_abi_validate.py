@@ -166,7 +166,7 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
     calls: dict[str, tuple[Path, list[str]]] = {}
     for source in sorted(src_dir.glob("stable_*.cpp")):
-        text = source.read_text(encoding="utf-8", errors="replace")
+        text = strip_comments(source.read_text(encoding="utf-8", errors="replace"))
         for match in _EXEC_CALL.finditer(text):
             symbol, arguments = match.group(1), match.group(2)
             # The api string is outside the capture, so the list starts at the
@@ -205,7 +205,8 @@ def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
     calls: dict[str, tuple[Path, list[str]]] = {}
     for source in sorted(src_dir.glob("stable_*.cpp")):
-        text = source.read_text(encoding="utf-8")
+        # A comment mentioning FLA_STABLE_EXEC must not hide a legacy call.
+        text = strip_comments(source.read_text(encoding="utf-8"))
         if "FLA_STABLE_EXEC" in text:
             continue
         symbol = _SYMBOL_RE.search(text)
