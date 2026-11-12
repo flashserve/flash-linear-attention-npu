@@ -1208,7 +1208,9 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
             return ACLNN_ERR_PARAM_INVALID;
         }
         aclnnStatus fusedRet = RunChunkKdaFwd32Fused(params, executorPtr);
-        CHECK_RET(fusedRet == ACLNN_SUCCESS, fusedRet);
+        if (!(fusedRet == ACLNN_SUCCESS)) {
+        return fusedRet;
+    }
         *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
@@ -1229,7 +1231,9 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
-    CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);
+    if (!(kdaFwdV2Status == ACLNN_SUCCESS)) {
+        return kdaFwdV2Status;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

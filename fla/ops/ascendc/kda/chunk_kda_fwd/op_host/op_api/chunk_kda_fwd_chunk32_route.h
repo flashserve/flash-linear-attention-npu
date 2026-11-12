@@ -366,9 +366,13 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
     // 参数校验状态原样返回(PARAM_NULLPTR/PARAM_INVALID);ContiguousInputs 属于
     // 执行阶段,内部失败不映射为参数错误。
     aclnnStatus checkRet = CheckChunkKdaFwd32Params(params, layout, info);
-    CHECK_RET(checkRet == ACLNN_SUCCESS, checkRet);
+    if (!(checkRet == ACLNN_SUCCESS)) {
+        return checkRet;
+    }
     aclnnStatus contRet = ContiguousInputs(params, executor);
-    CHECK_RET(contRet == ACLNN_SUCCESS, contRet);
+    if (!(contRet == ACLNN_SUCCESS)) {
+        return contRet;
+    }
 
     // dense BSND:等长 batch 可表示为整齐 varlen,合成
     // cu=[0,T,2T,...],[B,S,H,*] 连续视图零成本压成 packed [B*S,H,*],走 varlen
@@ -575,7 +579,9 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
     const int64_t nSeq = static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
 
     aclnnStatus contRet = ContiguousInputs(params, executor);
-    CHECK_RET(contRet == ACLNN_SUCCESS, contRet);
+    if (!(contRet == ACLNN_SUCCESS)) {
+        return contRet;
+    }
 
     // token-major 视图:BSND [1,T,*] 去 B 维;TND 直通
     const aclTensor *qTok = params.q;
@@ -699,7 +705,9 @@ aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *exec
     KdaFwdLayout layout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     aclnnStatus checkRet = CheckChunkKdaFwd32Params(params, layout, info);
-    CHECK_RET(checkRet == ACLNN_SUCCESS, checkRet);
+    if (!(checkRet == ACLNN_SUCCESS)) {
+        return checkRet;
+    }
     // varlen 支持 BSND/TND 的 token-major 布局和 NTD 的 head-major 布局;BNSD 使用 chunk64 路径
     if (layout == KdaFwdLayout::BNSD) {
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout", "BNSD with cuSeqlensOptional", "BSND, TND or NTD for chunkSize=32 varlen");

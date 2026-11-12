@@ -356,7 +356,9 @@ static aclnnStatus CheckParams(ChunkFwdOParams params)
     // 空指针码透传：CheckNotNull 返回 161001（ACLNN_ERR_PARAM_NULLPTR），
     // 不可经 CHECK_RET 统一改写为 161002，否则丢失 NULLPTR 语义
     aclnnStatus ret = CheckNotNull(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -397,7 +399,9 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
     // 固定写法，参数检查（透传 CheckParams 的错误码，保留 NULLPTR 161001 语义）
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
         return ACLNN_ERR_PARAM_INVALID;

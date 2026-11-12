@@ -131,7 +131,9 @@ static aclnnStatus ParamsDataContiguous(PreProcessBwdKernelMergedParams &params,
 static aclnnStatus CheckParams(PreProcessBwdKernelMergedParams params)
 {
     auto ret = CheckNotNull(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
     return ACLNN_SUCCESS;
 }
 

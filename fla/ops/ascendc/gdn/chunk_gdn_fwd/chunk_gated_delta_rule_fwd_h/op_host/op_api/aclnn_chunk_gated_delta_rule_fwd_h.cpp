@@ -93,7 +93,9 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
     }
     std::swap(perm[rank - 2], perm[rank - 1]);
     const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
-    CHECK_RET(permArray != nullptr, nullptr);
+    if (!(permArray != nullptr)) {
+        return nullptr;
+    }
     return l0op::Transpose(input, permArray, executor);
 }
 
