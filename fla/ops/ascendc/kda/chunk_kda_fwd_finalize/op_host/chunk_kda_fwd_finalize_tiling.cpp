@@ -194,7 +194,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
     if (info.batch != 1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            context->GetNodeName(), "B", std::to_string(info.batch), "变长输入要求 B=1")
+            context->GetNodeName(), "B", std::to_string(info.batch), "变长输入要求 B=1");
         return false;
     }
     const gert::Shape &cuStorageShape = cu->GetStorageShape();
@@ -216,7 +216,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
             lengths[seq + 1] > static_cast<int64_t>(info.seqLen)) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             context->GetNodeName(), "cu_seqlens", std::to_string(seq),
-            "cu_seqlens 必须从 0 到 T 严格递增")
+            "cu_seqlens 必须从 0 到 T 严格递增");
             return false;
         }
         const uint64_t length = static_cast<uint64_t>(
@@ -330,7 +330,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
                       static_cast<int64_t>(info.heads), 128, 128})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             context->GetNodeName(), "h", "C=" + std::to_string(totalChunks),
-            "h 必须为 [B,C,HV,128,128]")
+            "h 必须为 [B,C,HV,128,128]");
         return ge::GRAPH_FAILED;
     }
 

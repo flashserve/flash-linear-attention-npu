@@ -291,7 +291,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
         queryView, keyView, valueView, betaContiguous, stateView, lengthsContiguous, indicesContiguous,
         gContiguous, nullptr, acceptedContiguous, aLogContiguous, biasContiguous, scaleValue,
         useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, uniqueExecutor.get());
-    if (!(outRet != nullptr)) { return ACLNN_ERR_INNER_NULLPTR; };
+    if (outRet == nullptr) { return ACLNN_ERR_INNER_NULLPTR; }
     if (l0op::ViewCopy(outRet, out, uniqueExecutor.get()) == nullptr) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRuleV2: output ViewCopy failed"); return ACLNN_ERR_INNER_NULLPTR; }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

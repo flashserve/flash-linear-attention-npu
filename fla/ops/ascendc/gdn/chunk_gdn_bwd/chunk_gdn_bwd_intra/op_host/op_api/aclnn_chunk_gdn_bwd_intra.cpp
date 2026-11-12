@@ -259,9 +259,7 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntra(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGdnBwdIntra);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "launch", "invalid", "ChunkGdnBwdIntra launch failed.");
-        return ACLNN_ERR_INNER;
-    }
+    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+               ACLNN_ERR_INNER, "ChunkGdnBwdIntra launch failed.");
     return ACLNN_SUCCESS;
 }

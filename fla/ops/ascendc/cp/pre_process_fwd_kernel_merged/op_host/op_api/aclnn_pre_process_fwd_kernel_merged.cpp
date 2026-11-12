@@ -317,10 +317,8 @@ aclnnStatus aclnnPreProcessFwdKernelMerged(void *workspace, uint64_t workspaceSi
                                            aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnPreProcessFwdKernelMerged);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "This", "invalid", "This is an error in PreProcessFwdKernelMerged launch aicore.");
-        return ACLNN_ERR_INNER;
-    }
+    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+               ACLNN_ERR_INNER, "This is an error in PreProcessFwdKernelMerged launch aicore.");
     return ACLNN_SUCCESS;
 }
 

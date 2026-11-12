@@ -849,8 +849,9 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (params.chunkSize == 32) {
         // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
         // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ACLNN_ERR_PARAM_INVALID, "chunkSize", "invalid", "chunkSize must be 64 or 128 (chunkSize=32 is only supported via aclnnChunkKdaFwdV2).");
-
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "chunkSize", std::to_string(params.chunkSize),
+            "chunkSize must be 64 or 128 (chunkSize=32 is only supported via aclnnChunkKdaFwdV2)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
@@ -1064,7 +1065,7 @@ aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
                              aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaFwd launch failed.");
     return ACLNN_SUCCESS;
 }
@@ -1176,8 +1177,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
-    CHECK_COND(CanUseKdaFwdV2Path(params, info))) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "chunk_size", "invalid", "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、");
+    if (!CanUseKdaFwdV2Path(params, info)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "q,k,v,chunk_size", "combination unsupported",
+            "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
+            "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclnnStatus kdaFwdV2Status =

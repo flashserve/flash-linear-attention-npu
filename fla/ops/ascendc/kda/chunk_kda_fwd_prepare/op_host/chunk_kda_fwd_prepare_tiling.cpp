@@ -281,7 +281,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
             cu[seq + 1] > shape.seqLen) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             context->GetNodeName(), "cu_seqlens", std::to_string(seq),
-            "cu_seqlens 必须非递减且元素范围为 [0, T]")
+            "cu_seqlens 必须非递减且元素范围为 [0, T]");
             return false;
         }
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
@@ -305,7 +305,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         static_cast<uint64_t>(chunkShape.GetDim(0)) != totalChunks * 2) {
         OP_LOGE_FOR_INVALID_LISTSIZE(
             context->GetNodeName(), "chunk_indices", std::to_string(totalChunks * 2),
-            std::to_string(totalChunks * 2))
+            std::to_string(totalChunks * 2));
         return false;
     }
     const int64_t *indices = chunkTensor->GetData<int64_t>();
@@ -477,8 +477,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
 
     PrepareShapeInfo shape;
     if (!ResolveShape(context, parsedLayout, shape)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", std::to_string(layout), "q/k/v/g/beta shape 与 layout=%s 不匹配。");
-
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+            context->GetNodeName(), "layout", layout, "q/k/v/g/beta shape 与 layout 不匹配");
         return ge::GRAPH_FAILED;
     }
     const auto *outputModePtr =
@@ -507,7 +507,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         !IsGateDtype(betaDesc->GetDataType())) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             context->GetNodeName(), "q,k,v,g,beta", "dtype mismatch",
-            "q/k/v 只支持 BF16，g/beta 分别支持 BF16 或 FP32")
+            "q/k/v 只支持 BF16，g/beta 分别支持 BF16 或 FP32");
         return ge::GRAPH_FAILED;
     }
     if (shape.sequenceMajor) {
