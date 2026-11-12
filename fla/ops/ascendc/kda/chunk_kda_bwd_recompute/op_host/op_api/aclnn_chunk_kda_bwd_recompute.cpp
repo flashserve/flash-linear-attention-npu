@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "aclnn_chunk_kda_bwd_recompute.h"
 #include "chunk_kda_bwd_recompute.h"
 #include <cstring>
@@ -16,6 +17,8 @@ extern "C" {
 #endif
 
 namespace {
+
+static constexpr const char *OP_NAME = "aclnnChunkKdaBwdRecompute";
 
 struct ChunkKdaBwdRecomputeParams {
     const aclTensor *q = nullptr;
@@ -80,15 +83,27 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     ChunkKdaBwdRecomputeParams params{
         q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
         chunkSize, useExp2, lowerBound, inputLayout, wOut, uOut, qgOut, kgOut, gkOutOptional};
-    CHECK_COND(inputLayout && (std::strcmp(inputLayout, "BNSD") == 0 ||
-                              std::strcmp(inputLayout, "NTD") == 0),
-               ACLNN_ERR_PARAM_INVALID, "Recompute input_layout must be BNSD or NTD.");
-    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr && params.g != nullptr &&
-                   params.beta != nullptr && params.a != nullptr && params.wOut != nullptr &&
-                   params.uOut != nullptr && params.qgOut != nullptr && params.kgOut != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "Required tensors must not be nullptr.");
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize and executor must not be nullptr.");
+    if (!(inputLayout && (std::strcmp(inputLayout, "BNSD") == 0 ||
+                          std::strcmp(inputLayout, "NTD") == 0))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "inputLayout", inputLayout == nullptr ? "nullptr" : inputLayout,
+            "inputLayout must be BNSD or NTD");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
+          params.g != nullptr && params.beta != nullptr && params.a != nullptr &&
+          params.wOut != nullptr && params.uOut != nullptr && params.qgOut != nullptr &&
+          params.kgOut != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "q,k,v,g,beta,a,wOut,uOut,qgOut,kgOut",
+            "required tensors must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (workspaceSize == nullptr || executor == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);

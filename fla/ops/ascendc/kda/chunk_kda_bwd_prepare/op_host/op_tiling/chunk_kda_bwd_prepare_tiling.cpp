@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "op_common/log/log.h"
 #include "chunk_kda_bwd_prepare_tiling.h"
 
 #include <cmath>
@@ -9,6 +10,8 @@
 #include "platform/platform_ascendc.h"
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkKdaBwdPrepare";
 
 ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
 {
@@ -32,7 +35,8 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     if (!std::isfinite(*scale)) {
-        OP_LOGE(context->GetNodeName(), "scale must be finite");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "scale", std::to_string(*scale), "scale must be finite");
         return ge::GRAPH_FAILED;
     }
 
