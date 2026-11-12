@@ -22,6 +22,7 @@
 
 #include <cmath>
 #include <limits>
+#include "op_common/log/log.h"
 
 namespace optiling {
 
@@ -157,7 +158,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CheckContext()
         {STATE_INDEX,"state"},{CUSEQLENS_INDEX,"actual_seq_lengths"},{SSM_STATE_INDICES_INDEX,"ssm_state_indices"}};
     for (const auto &input : inputs) {
         if (!context_->GetInputShape(input.first) || !context_->GetInputDesc(input.first)) {
-            OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(),input.second);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), input.second, "input argument must not be nullptr");
             return ge::GRAPH_FAILED;
         }
     }

@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #pragma once
 
 // aclnnChunkKdaFwdV2 chunk_size=32 分支的路由实现（issue #829），由独立 L0 算子
@@ -15,7 +16,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
 aclnnStatus CheckChunkKdaFwd32Layout(const ChunkKdaFwdParams &params, KdaFwdLayout &layout)
 {
     if (params.layout == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("aclnnChunkKdaFwd", "layout");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnChunkKdaFwd", "layout", "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(params.layout, "BSND") == 0) layout = KdaFwdLayout::BSND;
@@ -274,7 +275,7 @@ aclnnStatus CheckChunkKdaFwd32Params(const ChunkKdaFwdParams &params, KdaFwdLayo
     const char *names[] = {"q", "k", "v", "g", "beta", "attnOut"};
     for (size_t i = 0; i < 6; ++i) {
         if (required[i] == nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT("aclnnChunkKdaFwd", names[i]);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnChunkKdaFwd", names[i], "input argument must not be nullptr");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }

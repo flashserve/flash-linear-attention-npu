@@ -78,14 +78,14 @@ static const std::initializer_list<op::DataType> OUT_TYPE_SUPPORT_LIST = {op::Da
 static inline bool CheckNotNull(const RecurrentGatedDeltaRuleParams &params)
 {
     // 必选参数
-    if (params.query == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "query"); return false; };
-    if (params.key == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "key"); return false; };
-    if (params.value == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "value"); return false; };
-    if (params.state == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "state"); return false; };
-    if (params.beta == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "beta"); return false; };
-    if (params.actual_seq_lengths == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "actual_seq_lengths"); return false; };
-    if (params.ssm_state_indices == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "ssm_state_indices"); return false; };
-    if (params.out == nullptr) { OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "out"); return false; };
+    if (params.query == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "query", "input argument must not be nullptr"); return false; };
+    if (params.key == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "key", "input argument must not be nullptr"); return false; };
+    if (params.value == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "value", "input argument must not be nullptr"); return false; };
+    if (params.state == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "state", "input argument must not be nullptr"); return false; };
+    if (params.beta == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "beta", "input argument must not be nullptr"); return false; };
+    if (params.actual_seq_lengths == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "actual_seq_lengths", "input argument must not be nullptr"); return false; };
+    if (params.ssm_state_indices == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "ssm_state_indices", "input argument must not be nullptr"); return false; };
+    if (params.out == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "out", "input argument must not be nullptr"); return false; };
 
     return true;
 }
@@ -153,11 +153,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     // Validate before DFX: its phase-1 cache can return without executing
     // the function body, and its generic null guard loses the parameter name.
     if (workspaceSize == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "workspaceSize");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "workspaceSize", "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRule", "executor");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRule", "executor", "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(aclnnRecurrentGatedDeltaRule,
@@ -236,11 +236,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
     // Validate before DFX: its phase-1 cache can return without executing
     // the function body, and its generic null guard loses the parameter name.
     if (workspaceSize == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRuleV2", "workspaceSize");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRuleV2", "workspaceSize", "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentGatedDeltaRuleV2", "executor");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentGatedDeltaRuleV2", "executor", "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const rgdn_check::Params params{query, key, value, beta, stateRef, actualSeqLengths,

@@ -279,9 +279,9 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
         if (cu[seq] < 0 || cu[seq + 1] < cu[seq] ||
             cu[seq + 1] > shape.seqLen) {
-            OP_LOGE(context->GetNodeName(),
-                    "cu_seqlens 必须非递减且元素范围为 [0, T]，错误位置=%lu。",
-                    static_cast<unsigned long>(seq));
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "cu_seqlens", std::to_string(seq),
+            "cu_seqlens 必须非递减且元素范围为 [0, T]")
             return false;
         }
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
@@ -303,9 +303,9 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     const auto &chunkShape = chunkTensor->GetStorageShape();
     if (chunkShape.GetDimNum() != 1 ||
         static_cast<uint64_t>(chunkShape.GetDim(0)) != totalChunks * 2) {
-        OP_LOGE(context->GetNodeName(),
-                "chunk_indices 必须是一维 [2 * total_chunks]，total_chunks=%lu。",
-                static_cast<unsigned long>(totalChunks));
+        OP_LOGE_FOR_INVALID_LISTSIZE(
+            context->GetNodeName(), "chunk_indices", std::to_string(totalChunks * 2),
+            std::to_string(totalChunks * 2))
         return false;
     }
     const int64_t *indices = chunkTensor->GetData<int64_t>();
@@ -505,13 +505,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         vDesc->GetDataType() != ge::DT_BF16 ||
         !IsGateDtype(gDesc->GetDataType()) ||
         !IsGateDtype(betaDesc->GetDataType())) {
-        OP_LOGE(context->GetNodeName(),
-                "q/k/v 只支持 BF16，g/beta 分别支持 BF16 或 FP32。当前 dtype=%d/%d/%d/%d/%d。",
-                static_cast<int>(qDesc->GetDataType()),
-                static_cast<int>(kDesc->GetDataType()),
-                static_cast<int>(vDesc->GetDataType()),
-                static_cast<int>(gDesc->GetDataType()),
-                static_cast<int>(betaDesc->GetDataType()));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "q,k,v,g,beta", "dtype mismatch",
+            "q/k/v 只支持 BF16，g/beta 分别支持 BF16 或 FP32")
         return ge::GRAPH_FAILED;
     }
     if (shape.sequenceMajor) {

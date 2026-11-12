@@ -22,6 +22,7 @@
 #include "register/op_impl_registry.h"
 #include "recurrent_gated_delta_rule_error.h"
 #include "err/ops_err.h"
+#include "op_common/log/log.h"
 
 using namespace gert;
 namespace ops {
@@ -39,7 +40,7 @@ const size_t DIM_3 = 3;
 static ge::graphStatus InferShapeRecurrentGatedDeltaRule(InferShapeContext *context)
 {
     if (context == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT("RecurrentGatedDeltaRule", "InferShapeContext");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentGatedDeltaRule", "InferShapeContext", "input argument must not be nullptr");
         return ge::GRAPH_FAILED;
     }
 
@@ -52,7 +53,7 @@ static ge::graphStatus InferShapeRecurrentGatedDeltaRule(InferShapeContext *cont
         {shapeValue,"value"},{shapeInitialState,"state"},{shapeOut,"out"},{shapeFinalState,"stateOut"}};
     for (const auto &shape : shapes) {
         if (!shape.first) {
-            OP_LOGE_WITH_INVALID_INPUT(opName,shape.second);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, shape.second, "input argument must not be nullptr");
             return ge::GRAPH_FAILED;
         }
     }
@@ -88,7 +89,7 @@ static ge::graphStatus InferShapeRecurrentGatedDeltaRule(InferShapeContext *cont
 static ge::graphStatus InferDataTypeRecurrentGatedDeltaRule(gert::InferDataTypeContext *context)
 {
     if (!context) {
-        OP_LOGE_WITH_INVALID_INPUT("RecurrentGatedDeltaRule", "InferDataTypeContext");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentGatedDeltaRule", "InferDataTypeContext", "input argument must not be nullptr");
         return ge::GRAPH_FAILED;
     }
     context->SetOutputDataType(0, ge::DT_BF16);

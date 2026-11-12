@@ -75,7 +75,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
         if (requiredInputs[index] == nullptr) {
             const char *param_name = requiredInputNames[index];
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -84,7 +84,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
             dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
             workspaceSize == nullptr ? "workspaceSize" : "executor";
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 #if GDN_FINALIZE_ENABLE_ARCH22
