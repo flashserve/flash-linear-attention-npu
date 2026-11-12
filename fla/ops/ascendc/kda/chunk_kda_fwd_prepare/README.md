@@ -261,4 +261,16 @@ NPU Event结果仅作为同窗口优化回归数据。
 精度报告位于 `/data/yqw/validation/prepare_gva/pr1168_aqk_zero_accuracy20_retry`，全量报告位于
 `/data/yqw/validation/prepare_gva/pr1168_aqk_zero_full_npu_200`，确定性报告位于
 `/data/yqw/validation/prepare_gva/pr1168_aqk_zero_determinism`。本轮没有扩大任何GM或UB访问范围，
-未重新运行MSS；按要求未重新采集msprof，Event结果仅用于同窗口优化回归。
+未重新运行MSS。随后按warmup5/repeat1重新采集msprof，取第6个目标task作为正式结果；
+相对开发前 `msprof_final` 的同口径数据，以下是本PR全部性能优化的累计收益，不单独归因于
+Aqk清零缩减：
+
+|典型case|开发前Task Duration（us）|当前Task Duration（us）|累计降低|
+|---|---:|---:|---:|
+|198|17403.108|10312.166|40.75%|
+|199|25114.682|14345.727|42.88%|
+
+当前op_summary位于
+`/data/yqw/validation/prepare_gva/msprof_aqk_zero_20261112/case0/PROF_000001_20261112143101422_00143479EGNRAHRM/mindstudio_profiler_output/op_summary_20261112143529.csv`
+和
+`/data/yqw/validation/prepare_gva/msprof_aqk_zero_20261112/case1/PROF_000001_20261112144052226_00191559QQBCJHGK/mindstudio_profiler_output/op_summary_20261112145720.csv`。
