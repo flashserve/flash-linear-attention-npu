@@ -276,16 +276,12 @@ private:
                     ReportInvalid("query/key/value/gate/beta", "%s head stride calculation overflows.", name),
                     return ge::GRAPH_FAILED);
         const uint64_t tokenCount = static_cast<uint64_t>(shape.GetDim(tokenDim));
-        OP_CHECK_IF(ctx_.isA5 && tokenCount > 1 &&
-                        tokenStride > (maxUint64 - featureCount) / (tokenCount - 1),
-                    ReportInvalid("query/key/value/gate/beta", "%s token span calculation overflows.", name),
-                    return ge::GRAPH_FAILED);
         const uint64_t tokenMajorSpan = (headCount - 1) * headStride + featureCount;
-        const uint64_t headMajorSpan = (tokenCount - 1) * tokenStride + featureCount;
-        const bool tokenMajor = tokenStride >= tokenMajorSpan;
-        const bool headMajor = headStride >= headMajorSpan;
-        OP_CHECK_IF(!tokenMajor && (!ctx_.isA5 || !headMajor),
-                    ReportInvalid("query/key/value/gate/beta", "%s token/head axes overlap.", name),
+        OP_CHECK_IF(tokenStride < tokenMajorSpan,
+                    ReportInvalid("query/key/value/gate/beta",
+                            "%s must use token-major strides: token stride=%llu, minimum=%llu.", name,
+                            static_cast<unsigned long long>(tokenStride),
+                            static_cast<unsigned long long>(tokenMajorSpan)),
                     return ge::GRAPH_FAILED);
 
         const uint64_t srcGapElements = tokenStride - featureCount;
@@ -301,10 +297,9 @@ private:
                         ReportInvalid("query/key/value/gate/beta", "%s batch stride calculation overflows.", name),
                         return ge::GRAPH_FAILED);
             const uint64_t expectedBatchStride = seqLen * tokenStride;
-            OP_CHECK_IF((!ctx_.isA5 || ctx_.hasCuSeqlens) &&
-                            static_cast<uint64_t>(strides[RKDA_DIM_0]) != expectedBatchStride,
+            OP_CHECK_IF(static_cast<uint64_t>(strides[RKDA_DIM_0]) != expectedBatchStride,
                         ReportInvalid("query/key/value",
-                            "%s BSND batch stride must equal seqLen * tokenStride on A2/A3 or with cu_seqlens; "
+                            "%s BSND batch stride must equal seqLen * tokenStride; "
                             "actual=%llu, expected=%llu.", name,
                             static_cast<unsigned long long>(strides[RKDA_DIM_0]),
                             static_cast<unsigned long long>(expectedBatchStride)),
