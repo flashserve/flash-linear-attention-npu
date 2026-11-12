@@ -2,12 +2,82 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * the BSD 3-Clause License (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * Please refer to the License for details. You should not use this file except in compliance with the License.
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+/*!
+ * \file arch22/chunk_fwd_h_utils.h
+ * \brief gated 复用引擎（仅 A2/arch22，由 chunk_fwd_h.cpp 非 arch35 分支引入）：
+ * 复用 chunk_gated_delta_rule_fwd_h 的 preload kernel 链。原六个文件
+ * （chunk_fwd_h_gated_struct.h、epilogue/gdn_fwd_h_epilogue_policies.hpp、
+ * epilogue/block/block_epilogue_gdn_fwdh_{update,vnew}_preload.hpp、
+ * gemm/block/block_scheduler_gdn_fwd_h_preload.hpp、gemm/kernel/gdn_fwd_h_kernel_preload.hpp）
+ * 按原 include 展开顺序内联为单文件，芯片目录回归 cube.h/vec.h + 本文件布局；
+ * gated 复用谓词/入口已归位回 chunk_fwd_h.cpp（优化前入口位置）；
+ * 内核类已拆分为双引擎：ChunkFwdHGatedCubeArch22（arch22/chunk_fwd_h_cube.h）
+ * 与 ChunkFwdHGatedVecArch22（arch22/chunk_fwd_h_vec.h），本文件保留
+ * 镜像/调度器基座（V1/V2 epilogue 已解体入 vec 引擎）。纯搬移，无代码语义变化。
+ */
+
+#ifndef ARCH22_CHUNK_FWD_H_UTILS_H
+#define ARCH22_CHUNK_FWD_H_UTILS_H
+
+#include <cstdint>
+#include <type_traits>
+
+#include "kernel_operator.h"
+
+#ifndef CATLASS_ARCH
+#define CATLASS_ARCH 2201
+#endif
+
+// ---- 内联自原 chunk_fwd_h_gated_struct.h：本尊算子 kernel 侧 tiling 结构体镜像
+// （字段序/类型对齐框架 BEGIN_TILING_DATA_DEF 宏生成的同名结构；fast kernel launch
+// 扩展独立编译 kernel 时无该自动生成头，故提供同构 plain struct，可按值经 <<<>>> 传入）
+struct ChunkGatedDeltaRuleFwdHTilingData {
+    int64_t batch;
+    int64_t seqlen;
+    int64_t kNumHead;
+    int64_t vNumHead;
+    int64_t kHeadDim;
+    int64_t vHeadDim;
+    int64_t chunkSize;
+    bool useInitialState;
+    bool storeFinalState;
+    int64_t dataType;
+    int64_t gDataType;
+    int64_t stateDataType;
+    int64_t isVariedLen;
+    int64_t shapeBatch;
+    int64_t tokenBatch;
+    bool useG;
+    bool useGk;
+    int64_t vWorkspaceOffset;
+    int64_t vUpdateWorkspaceOffset;
+    int64_t kDecayWorkspaceOffset;
+    int64_t hWorkspaceOffset;
+    int64_t numSeqWorkspaceOffset;
+    int64_t numChunksWorkspaceOffset;
+};
+
+// ---- 原 gemm/kernel/gdn_fwd_h_kernel_preload.hpp 的 catlass 头（补齐主模板声明等前置）
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
+#include "catlass/arch/resource.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/debug.hpp"
+
 #include "catlass/gemm_coord.hpp"
+#include "catlass/matrix_coord.hpp"
+#include "catlass/epilogue/tile/tile_copy.hpp"
+
+#include "catlass/gemm/block/block_mmad.hpp"
+#include "kernel_utils/block/block_mmad_pingpong_tla_preload.hpp"
+#include "catlass/gemm/block/block_swizzle.hpp"
+
+// ---- 内联自原 gemm/block/block_scheduler_gdn_fwd_h_preload.hpp
 using namespace Catlass;
 
 // gated 复用拷贝仅引入 preload 链：原版经非 preload scheduler（本拷贝未引入）
@@ -15,9 +85,6 @@ using namespace Catlass;
 #ifndef PING_PONG_STAGES
 constexpr uint32_t PING_PONG_STAGES = 2;
 #endif
-
-#ifndef CATLASS_GEMM_SCHEDULER_GDN_FWD_H_PRELOAD_HPP
-#define CATLASS_GEMM_SCHEDULER_GDN_FWD_H_PRELOAD_HPP
 
 namespace Catlass::Gemm::Block {
 
@@ -325,4 +392,10 @@ struct BlockSchedulerGdnFwdHPreloadVec : public BlockSchedulerGdnFwdHPreload {
 
 }  // namespace Catlass::Gemm::Block
 
-#endif  // CATLASS_GEMM_SCHEDULER_GDN_FWD_H_PRELOAD_HPP
+#include "catlass/gemm/dispatch_policy.hpp"
+#include "catlass/gemm/gemm_type.hpp"
+#include "catlass/layout/layout.hpp"
+#include "tla/tensor.hpp"
+#include "tla/layout.hpp"
+
+#endif // ARCH22_CHUNK_FWD_H_UTILS_H

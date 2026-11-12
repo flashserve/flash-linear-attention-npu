@@ -11,6 +11,7 @@
 
 #include "../chunk_fwd_h_policy.h"
 #include "../chunk_fwd_h_utils.h"
+#include "chunk_fwd_h_utils.h"
 
 namespace GDN {
 
@@ -965,5 +966,699 @@ private:
 };
 
 } // namespace GDN
+
+// ---- gated 复用引擎（AIV 侧）：自 arch22/chunk_fwd_h_utils.h 的
+// GDNFwdHKernelPreload 拆出（Init 保留 AIV 调度器分支，Process = 原
+// ProcessVec 体；纯搬移，指令序列不变）。V1/V2 epilogue 已解体为本类
+// RunVnewStage/RunUpdateStage 方法（缓冲成员，获取点不变）。
+namespace Catlass::Gemm::Kernel {
+
+using namespace Catlass;
+using namespace tla;
+
+template<
+    typename INPUT_TYPE,
+    typename G_TYPE,
+    typename STATE_TYPE,
+    typename WORKSPACE_TYPE,
+    bool USE_EXP2_
+>
+class ChunkFwdHGatedVecArch22 {
+public:
+    
+    using ArchTag = Arch::AtlasA2;
+    using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdHPreloadVec;
+
+
+
+
+
+    // V1/V2 epilogue 已解体为本类 RunVnewStage/RunUpdateStage 方法（缓冲成员，
+    // 获取点在散射段之后的 Init*EpilogueBuffers，UB 相位复用边界不变）。
+
+    using GDNFwdHOffsets = Catlass::Gemm::Block::GDNFwdHOffsetsPreload;
+
+    using ElementK = INPUT_TYPE;
+    using ElementW = INPUT_TYPE;
+    using ElementU = INPUT_TYPE;
+    using ElementG = G_TYPE;
+    using ElementH = INPUT_TYPE;
+    using ElementV = INPUT_TYPE;
+    using ElementVWork = WORKSPACE_TYPE;
+    using ElementHWork = WORKSPACE_TYPE;
+    using ElementInitialState = STATE_TYPE;
+    using ElementFinalState = STATE_TYPE;
+    
+
+    
+    uint32_t batch{0};
+    uint32_t seqlen{0};
+    uint32_t kNumHead{0};
+    uint32_t vNumHead{0};
+    uint32_t kHeadDim{0};
+    uint32_t vHeadDim{0};
+    uint32_t chunkSize{0};
+    bool useInitialState{false};
+    bool storeFinalState{false};
+    uint32_t isVariedLen{0};
+    uint32_t shapeBatch{0};
+    uint32_t tokenBatch{0};
+    uint64_t vWorkspaceOffset{0};
+    uint64_t vUpdateWorkspaceOffset{0};
+    uint64_t hWorkspaceOffset{0};
+    uint64_t numSeqWorkspaceOffset{0};
+    uint64_t numChunksWorkspaceOffset{0};
+    
+    AscendC::GlobalTensor<ElementK> gmK;
+    AscendC::GlobalTensor<ElementW> gmW;
+    AscendC::GlobalTensor<ElementU> gmU;
+    AscendC::GlobalTensor<ElementG> gmG;
+    AscendC::GlobalTensor<ElementInitialState> gmInitialState;
+    AscendC::GlobalTensor<ElementH> gmH;
+    AscendC::GlobalTensor<ElementV> gmV;
+    AscendC::GlobalTensor<ElementFinalState> gmFinalState;
+    AscendC::GlobalTensor<ElementVWork> gmVWorkspace;
+    AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
+    AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
+    
+    AscendC::GlobalTensor<int64_t> gmSeqlen;
+    AscendC::GlobalTensor<int64_t> gmNumSeq;
+    AscendC::GlobalTensor<int64_t> gmNumChunks;
+
+    VecScheduler vecBlockScheduler;
+
+    Arch::Resource<ArchTag> resource;
+
+
+    __aicore__ inline ChunkFwdHGatedVecArch22() {}
+
+    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, 
+        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
+        
+        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+
+        batch = gdnFwdHTilingData->batch;
+        seqlen = gdnFwdHTilingData->seqlen;
+        kNumHead = gdnFwdHTilingData->kNumHead;
+        vNumHead = gdnFwdHTilingData->vNumHead;
+        kHeadDim = gdnFwdHTilingData->kHeadDim;
+        vHeadDim = gdnFwdHTilingData->vHeadDim;
+        chunkSize = gdnFwdHTilingData->chunkSize;
+        useInitialState = gdnFwdHTilingData->useInitialState;
+        storeFinalState = gdnFwdHTilingData->storeFinalState;
+        isVariedLen = gdnFwdHTilingData->isVariedLen;
+        shapeBatch = gdnFwdHTilingData->shapeBatch;
+        tokenBatch = gdnFwdHTilingData->tokenBatch;
+        vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
+        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
+        hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
+        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        
+        gmK.SetGlobalBuffer((__gm__ ElementK *)k);
+        gmW.SetGlobalBuffer((__gm__ ElementW *)w);
+        gmU.SetGlobalBuffer((__gm__ ElementU *)u);
+        gmG.SetGlobalBuffer((__gm__ ElementG *)g);
+        gmInitialState.SetGlobalBuffer((__gm__ ElementInitialState *)inital_state);
+        gmH.SetGlobalBuffer((__gm__ ElementH *)h);
+        gmV.SetGlobalBuffer((__gm__ ElementV *)v_new);
+        gmFinalState.SetGlobalBuffer((__gm__ ElementFinalState *)final_state);
+        gmVWorkspace.SetGlobalBuffer((__gm__ ElementVWork *)(user + vWorkspaceOffset));
+        gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
+        gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
+
+        gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
+        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
+        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
+
+        if ASCEND_IS_AIV {
+            vecBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
+        }
+    }
+
+
+    // ---- V1/V2 epilogue（自 utils.h 的 BlockEpilogue 两特化解体为方法；
+    // 缓冲成员化，获取点保持在散射段之后的 Init*EpilogueBuffers——与散射段
+    // 的 UB 相位复用边界、ping/pong 别名（vNewOutput 与 vNewDecay 同址）
+    // 均逐字保留；gBrcb 死缓冲已删）----
+    static constexpr float LN2 = 0.6931471805599453f;
+    uint32_t pongBaseEvent = 4;
+
+    AscendC::LocalTensor<float> calcUbTensor;
+
+    AscendC::LocalTensor<float> hUpdateUbTensor_ping;
+    AscendC::LocalTensor<ElementH> hUbTensor_ping;
+    AscendC::LocalTensor<float> glastUbTensor_ping;
+
+    AscendC::LocalTensor<float> hUpdateUbTensor_pong;
+    AscendC::LocalTensor<ElementH> hUbTensor_pong;
+    AscendC::LocalTensor<float> glastUbTensor_pong;
+
+        AscendC::LocalTensor<ElementU> uUbTensor_ping;
+    AscendC::LocalTensor<float> wsUbTensor_ping;
+    AscendC::LocalTensor<float> gUbTensor_ping;
+    AscendC::LocalTensor<float> gLastUbTensor_ping;
+    AscendC::LocalTensor<ElementG> gInputUbTensor_ping;
+    AscendC::LocalTensor<ElementV> vNewOutputUbTensor_ping;
+    AscendC::LocalTensor<ElementV> vNewDecayUbTensor_ping;
+
+    AscendC::LocalTensor<ElementU> uUbTensor_pong;
+    AscendC::LocalTensor<float> wsUbTensor_pong;
+    AscendC::LocalTensor<float> gUbTensor_pong;
+    AscendC::LocalTensor<float> gLastUbTensor_pong;
+    AscendC::LocalTensor<ElementG> gInputUbTensor_pong;
+    AscendC::LocalTensor<ElementV> vNewOutputUbTensor_pong;
+    AscendC::LocalTensor<ElementV> vNewDecayUbTensor_pong;
+
+    AscendC::LocalTensor<uint8_t> shareBuffer_;
+
+    __aicore__ inline void InitVnewEpilogueBuffers()
+    {
+        constexpr uint32_t CALC_BUF_OFFSET = 0;
+        constexpr uint32_t PING_BUF_0_OFFSET = 32 * 1024;
+        constexpr uint32_t PING_BUF_1_OFFSET = 48 * 1024;
+        constexpr uint32_t PING_BUF_2_OFFSET = 64 * 1024;
+        constexpr uint32_t PING_BUF_3_OFFSET = 80 * 1024;
+        constexpr uint32_t PONG_BUF_0_OFFSET = 96 * 1024;
+        constexpr uint32_t PONG_BUF_1_OFFSET = 112 * 1024;
+        constexpr uint32_t PONG_BUF_2_OFFSET = 128 * 1024;
+        constexpr uint32_t PONG_BUF_3_OFFSET = 144 * 1024;
+        constexpr uint32_t PING_G_BUF_OFFSET = 160 * 1024;
+        constexpr uint32_t PONG_G_BUF_OFFSET = 161 * 1024;
+        constexpr uint32_t PING_G_SUB_BUF_OFFSET = 162 * 1024;
+        constexpr uint32_t PONG_G_SUB_BUF_OFFSET = 163 * 1024;
+        constexpr uint32_t PING_G_INPUT_BUF_OFFSET = 164 * 1024;
+        constexpr uint32_t PONG_G_INPUT_BUF_OFFSET = 165 * 1024;
+        constexpr uint32_t SHARE_BUF_OFFSET = 166 * 1024;
+
+        calcUbTensor = resource.ubBuf.template GetBufferByByte<float>(CALC_BUF_OFFSET);
+
+        uUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementU>(PING_BUF_2_OFFSET);
+        wsUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_BUF_0_OFFSET);
+        gUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_BUF_OFFSET);
+        gLastUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_SUB_BUF_OFFSET);
+        gInputUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementG>(PING_G_SUB_BUF_OFFSET);
+        vNewOutputUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementV>(PING_BUF_2_OFFSET);
+        vNewDecayUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementV>(PING_BUF_2_OFFSET);
+
+        uUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementU>(PONG_BUF_2_OFFSET);
+        wsUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_BUF_0_OFFSET);
+        gUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_BUF_OFFSET);
+        gLastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_SUB_BUF_OFFSET);
+        gInputUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementG>(PONG_G_SUB_BUF_OFFSET);
+        vNewOutputUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementV>(PONG_BUF_2_OFFSET);
+        vNewDecayUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementV>(PONG_BUF_2_OFFSET);
+
+        shareBuffer_ = resource.ubBuf.template GetBufferByByte<uint8_t>(SHARE_BUF_OFFSET);
+    }
+
+    __aicore__ inline void InitUpdateEpilogueBuffers()
+    {
+        constexpr uint32_t CALC_BUF_OFFSET = 0;
+        constexpr uint32_t PING_BUF_0_OFFSET = 32 * 1024;
+        constexpr uint32_t PING_BUF_1_OFFSET = 48 * 1024;
+        constexpr uint32_t PING_BUF_2_OFFSET = 64 * 1024;
+        constexpr uint32_t PING_BUF_3_OFFSET = 80 * 1024;
+        constexpr uint32_t PONG_BUF_0_OFFSET = 96 * 1024;
+        constexpr uint32_t PONG_BUF_1_OFFSET = 112 * 1024;
+        constexpr uint32_t PONG_BUF_2_OFFSET = 128 * 1024;
+        constexpr uint32_t PONG_BUF_3_OFFSET = 144 * 1024;
+        constexpr uint32_t PING_G_BUF_OFFSET = 160 * 1024;
+        constexpr uint32_t PONG_G_BUF_OFFSET = 161 * 1024;
+        constexpr uint32_t PING_G_SUB_BUF_OFFSET = 162 * 1024;
+        constexpr uint32_t PONG_G_SUB_BUF_OFFSET = 163 * 1024;
+        constexpr uint32_t PING_G_INPUT_BUF_OFFSET = 164 * 1024;
+        constexpr uint32_t PONG_G_INPUT_BUF_OFFSET = 165 * 1024;
+        constexpr uint32_t SHARE_BUF_OFFSET = 166 * 1024;
+
+
+        calcUbTensor = resource.ubBuf.template GetBufferByByte<float>(CALC_BUF_OFFSET);
+
+        hUpdateUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_BUF_0_OFFSET);
+        hUbTensor_ping = resource.ubBuf.template GetBufferByByte<ElementH>(PING_BUF_3_OFFSET);
+        glastUbTensor_ping = resource.ubBuf.template GetBufferByByte<float>(PING_G_INPUT_BUF_OFFSET);
+
+        hUpdateUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_BUF_0_OFFSET);
+        hUbTensor_pong = resource.ubBuf.template GetBufferByByte<ElementH>(PONG_BUF_3_OFFSET);
+        glastUbTensor_pong = resource.ubBuf.template GetBufferByByte<float>(PONG_G_INPUT_BUF_OFFSET);
+    }
+
+    __aicore__ inline void RunVnewStage(
+        AscendC::GlobalTensor<ElementV> vnewOutput,
+        AscendC::GlobalTensor<ElementV> vnewdecayOutput,
+        AscendC::GlobalTensor<ElementG> gInput,
+        AscendC::GlobalTensor<ElementU> uInput,
+        AscendC::GlobalTensor<float> wsInput,
+        uint32_t chunkSize,
+        uint32_t kHeadDim,
+        uint32_t vHeadDim,
+        Arch::CrossCoreFlag cube1Done,
+        Arch::CrossCoreFlag vec1Done,
+        bool isInitialState,
+        bool isFinalState,
+        bool storeFinalState,
+        bool isPing
+    )
+    {
+        uint32_t mActual = chunkSize;
+        uint32_t nkActual = kHeadDim;
+        uint32_t nvActual = vHeadDim;
+
+        uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+        uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
+        uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
+        uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
+        uint32_t nOffset = 0;
+        // 当前场景内部一定连续
+        // k [B, H, T, D]
+        // g [B, H, T]
+        // 在外部offset的基础上进一步offset
+        // 当前asset kdim == vHeadDim
+        int64_t offsetK = mOffset * nvActual + nOffset;
+        int64_t offsetD = 0; // 因为要用最后一个数减去之前所有，所以全部读入
+
+        uint32_t gbrcStart, gbrcRealStart, gbrcReptime, gbrcEffStart, gbrcEffEnd;
+        if(subBlockIdx==0)
+        {
+            gbrcStart = 0;
+            gbrcRealStart = 0;
+            gbrcReptime = (mActualThisSubBlock + 8 - 1) / 8;
+
+        }
+        else
+        {
+            gbrcStart = mActualPerSubBlock;
+            gbrcRealStart = gbrcStart & ~15;
+            gbrcReptime = (mActual - gbrcRealStart + 8 - 1) / 8;
+        }
+        gbrcEffStart = gbrcStart-gbrcRealStart;
+        gbrcEffEnd = gbrcEffStart + mActualThisSubBlock;
+        uint32_t dstShape_[2] = {gbrcReptime*8, nvActual};
+        uint32_t srcShape_[2] = {gbrcReptime*8, 1};
+
+        AscendC::ResetMask();
+
+        AscendC::GlobalTensor<ElementV> vnewOutputThisSubBlock = vnewOutput[offsetK];
+        AscendC::GlobalTensor<ElementV> vnewdecayOutputThisSubBlock = vnewdecayOutput[offsetK];
+        AscendC::GlobalTensor<ElementG> gInputThisSubBlock = gInput;
+        AscendC::GlobalTensor<ElementU> uInputThisSubBlock = uInput[offsetK];
+        AscendC::GlobalTensor<float> wsInputThisSubBlock = wsInput[offsetK];
+
+        uint32_t pingpongFlag = isPing ? 0 : pongBaseEvent;
+        AscendC::LocalTensor<ElementU> uUbTensor = isPing ? uUbTensor_ping : uUbTensor_pong;
+        AscendC::LocalTensor<float> wsUbTensor = isPing ? wsUbTensor_ping : wsUbTensor_pong;
+        AscendC::LocalTensor<float> gUbTensor = isPing ? gUbTensor_ping : gUbTensor_pong;
+        AscendC::LocalTensor<float> gLastUbTensor = isPing ? gLastUbTensor_ping : gLastUbTensor_pong;
+        AscendC::LocalTensor<ElementG> gInputUbTensor = isPing ? gInputUbTensor_ping : gInputUbTensor_pong;
+        AscendC::LocalTensor<ElementV> vNewOutputUbTensor = isPing ? vNewOutputUbTensor_ping : vNewOutputUbTensor_pong;
+        AscendC::LocalTensor<ElementV> vNewDecayUbTensor = isPing ? vNewDecayUbTensor_ping : vNewDecayUbTensor_pong;
+
+    
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag); // wait v_c2
+        // 尾块 mActual=1 时 sub1 计数为 0：零长度 DataCopy 会在 GM 张量末边界发出退化访问
+        if (mActualThisSubBlock > 0) {
+            AscendC::DataCopy(uUbTensor, uInputThisSubBlock, mActualThisSubBlock * nvActual); // mte2 u
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag); // set u
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag); // wait u
+        AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nvActual); // cast u
+
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag); // wait last g
+        if constexpr(std::is_same<ElementG, float>::value) {
+            AscendC::DataCopyParams gUbParams{1, (uint16_t)(mActual * sizeof(float)), 0, 0};
+            AscendC::DataCopyPadParams gUbPadParams{false, 0, 0, 0};
+            AscendC::DataCopyPad(gUbTensor, gInputThisSubBlock, gUbParams, gUbPadParams); // copy g
+        } else {
+            AscendC::DataCopyParams gUbParams{1, (uint16_t)(mActual * sizeof(half)), 0, 0};
+            AscendC::DataCopyPadParams gUbPadParams{false, 0, 0, 0};
+            AscendC::DataCopyPad(gInputUbTensor, gInputThisSubBlock, gUbParams, gUbPadParams);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID3 + pingpongFlag);
+        if constexpr(!std::is_same<ElementG, float>::value) {
+            AscendC::Cast(gUbTensor, gInputUbTensor, AscendC::RoundMode::CAST_NONE, mActual);
+        }
+
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+        float inputVal = gUbTensor.GetValue(mActual-1);
+        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Duplicate<float>(gLastUbTensor, inputVal, mActual);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        AscendC::Sub<float>(gUbTensor, gLastUbTensor, gUbTensor, mActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        // 域换算（同 update epilogue）：log2 域 ×LN2；ln 域 e^g 直取免换算。
+        if constexpr (USE_EXP2_) {
+            AscendC::Muls(gUbTensor, gUbTensor, LN2, mActual);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
+
+        AscendC::Exp(gUbTensor, gUbTensor, mActual);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        Arch::CrossCoreWaitFlag(cube1Done);
+
+        if (storeFinalState && isInitialState && std::is_same<ElementFinalState, float>::value) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+        }
+        if (mActualThisSubBlock > 0) {
+            AscendC::DataCopy(wsUbTensor, wsInputThisSubBlock, mActualThisSubBlock * nvActual);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+        
+        AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        
+        AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareBuffer_);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+
+        AscendC::Mul(calcUbTensor[gbrcEffStart*nvActual], wsUbTensor, calcUbTensor[gbrcEffStart*nvActual], mActualThisSubBlock * nvActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        
+        AscendC::Cast(vNewDecayUbTensor, calcUbTensor[gbrcEffStart*nvActual], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
+        if (mActualThisSubBlock > 0) {
+            AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
+        }
+        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
+        AscendC::Cast(vNewOutputUbTensor, wsUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
+        if (mActualThisSubBlock > 0) {
+            AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
+    }
+
+    __aicore__ inline void RunUpdateStage(
+        AscendC::GlobalTensor<ElementH> hOutput,
+        AscendC::GlobalTensor<ElementFinalState> finalState,
+        AscendC::GlobalTensor<ElementG> gInput,
+        AscendC::GlobalTensor<ElementH> hInput,
+        AscendC::GlobalTensor<float> hUpdateInput,
+        uint32_t chunkSize,
+        uint32_t kHeadDim,
+        uint32_t vHeadDim,
+        Arch::CrossCoreFlag cube2Done,
+        bool isInitialState,
+        bool isFinalState,
+        bool storeFinalState,
+        bool isPing
+    )
+    {
+        uint32_t mActual = kHeadDim;
+        uint32_t nActual = vHeadDim;
+        uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+        uint32_t subBlockNum = AscendC::GetSubBlockNum();
+        uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
+        uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
+        uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
+        uint32_t nOffset = 0;
+        int64_t offsetH = mOffset * nActual + nOffset;
+
+        AscendC::ResetMask();
+
+        AscendC::GlobalTensor<ElementH> hOutputThisSubBlock = hOutput[offsetH];
+        AscendC::GlobalTensor<ElementG> gInputThisSubBlock = gInput;
+        AscendC::GlobalTensor<ElementH> hInputThisSubBlock = hInput[offsetH];
+        AscendC::GlobalTensor<float> hUpdateInputThisSubBlock = hUpdateInput[offsetH];
+        AscendC::GlobalTensor<ElementFinalState> finalStateThisSubBlock = finalState[offsetH];
+
+        uint32_t pingpongFlag = isPing ? 0 : pongBaseEvent;
+        AscendC::LocalTensor<float> hUpdateUbTensor = isPing ? hUpdateUbTensor_ping : hUpdateUbTensor_pong;
+        AscendC::LocalTensor<ElementH> hUbTensor = isPing ? hUbTensor_ping : hUbTensor_pong;
+        AscendC::LocalTensor<float> glastUbTensor = isPing ? glastUbTensor_ping : glastUbTensor_pong;
+
+        if (storeFinalState && isInitialState && std::is_same<ElementFinalState, float>::value) {
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+        }
+        AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+
+        AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
+        AscendC::PipeBarrier<PIPE_V>();
+        if (storeFinalState && isFinalState && std::is_same<ElementFinalState, float>::value) {
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+        }
+        
+        ElementG gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
+        float gLastFloat = 0.0f;
+        if constexpr(std::is_same<ElementG, float>::value) {
+            gLastFloat = gLastVal;
+        } else if constexpr(std::is_same<ElementG, half>::value) {
+            gLastFloat = (float)gLastVal;
+        } else if constexpr(std::is_same<ElementG, bfloat16_t>::value) {
+            gLastFloat = AscendC::ToFloat(gLastVal);
+        }
+        glastUbTensor.SetValue(0, gLastFloat);
+
+        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        // 域换算（对齐主线 vec 的 CompilePolicy::USE_EXP2 分支写法）：log2 域
+        // （USE_EXP2_=true）×LN2 换算到 ln 域（2^x = e^(LN2·x)）；ln 域（false）
+        // e^g 直取免换算。
+        if constexpr (USE_EXP2_) {
+            AscendC::Muls(glastUbTensor, glastUbTensor, LN2, 1);
+        }
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Exp(glastUbTensor, glastUbTensor, 1);
+        AscendC::SetFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::V_S>(EVENT_ID3 + pingpongFlag);
+        float muls = glastUbTensor.GetValue(0);
+        AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        Arch::CrossCoreWaitFlag(cube2Done);
+
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+        AscendC::DataCopy(hUpdateUbTensor, hUpdateInputThisSubBlock, mActualThisSubBlock * nActual);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
+        AscendC::Add<float>(hUpdateUbTensor, calcUbTensor, hUpdateUbTensor, mActualThisSubBlock * nActual);
+        AscendC::PipeBarrier<PIPE_V>();
+
+        if constexpr(std::is_same<ElementFinalState, float>::value) {
+            if (storeFinalState && isFinalState) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+            } else {
+                AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                AscendC::DataCopy(hOutputThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+            }
+        } else {
+            AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+            if (isFinalState) {
+                AscendC::DataCopy(finalStateThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+            } else {
+                AscendC::DataCopy(hOutputThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+        }
+        
+    }
+
+    __aicore__ inline void Process()
+    {
+            uint32_t coreIdx = AscendC::GetBlockIdx();
+            uint32_t coreNum = AscendC::GetBlockNum();
+            uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
+            uint32_t subBlockNum = AscendC::GetSubBlockNum();
+
+            AscendC::LocalTensor<ElementInitialState> stateUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementInitialState>(0);
+            AscendC::LocalTensor<ElementInitialState> stateUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementInitialState>(96 * 1024);
+            AscendC::LocalTensor<ElementH> hUbTensorPing = resource.ubBuf.template GetBufferByByte<ElementH>(64 * 1024);
+            AscendC::LocalTensor<ElementH> hUbTensorPong = resource.ubBuf.template GetBufferByByte<ElementH>(160 * 1024);
+            uint32_t totalChunks = isVariedLen ? vecBlockScheduler.totalChunks : ((seqlen + chunkSize - 1) / chunkSize);
+            uint32_t transferCount = isVariedLen ? (vecBlockScheduler.tokenBatch * vNumHead / coreNum) : (shapeBatch * vNumHead / coreNum);
+            uint32_t remainderFlag = isVariedLen ? (((vecBlockScheduler.tokenBatch * vNumHead) % coreNum) != 0): (((shapeBatch * vNumHead) % coreNum) != 0);
+            uint32_t step = transferCount + remainderFlag;
+            uint32_t stateBlockSize = kHeadDim * vHeadDim;
+            uint32_t pingpongFlag = 1;
+            uint32_t start = coreIdx * step;
+            uint32_t end = start + step;
+            uint32_t maxLimit = isVariedLen ? vecBlockScheduler.tokenBatch * vNumHead : shapeBatch * vNumHead;
+            uint32_t realEnd = min(end, maxLimit);
+            if (useInitialState) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+            } else {
+                AscendC::Duplicate(hUbTensorPing, static_cast<ElementH>(0), stateBlockSize);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+            }
+            for(uint32_t initialStateBlockOffset = start ;initialStateBlockOffset >= start && initialStateBlockOffset < realEnd;initialStateBlockOffset++)
+            {   
+                uint32_t batchIdx = initialStateBlockOffset / vNumHead;
+                uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
+                uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
+                uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
+                uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
+                uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
+                if (useInitialState) {
+                    AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
+                    AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
+                    auto event_id = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
+                    if constexpr(!std::is_same<ElementInitialState, ElementH>::value) {
+                        AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateOffset], stateBlockSize);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(event_id);
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(event_id);
+                        AscendC::Cast(hUbTensor, stateUbTensor, AscendC::RoundMode::CAST_RINT, stateBlockSize);
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(event_id);
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(event_id);
+                        AscendC::DataCopy(gmH[hOffset], hUbTensor, stateBlockSize);
+                    } else {
+                        AscendC::DataCopy(stateUbTensor, gmInitialState[initialStateOffset], stateBlockSize);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(event_id);
+                        AscendC::DataCopy(gmH[hOffset], stateUbTensor, stateBlockSize);
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(event_id);
+                    pingpongFlag = 1 - pingpongFlag;
+                } else {
+                    AscendC::DataCopy(gmH[hOffset], hUbTensorPing, stateBlockSize);
+                }
+
+
+            }
+                
+            if (useInitialState) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1);
+            } else {
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            }
+            
+            AscendC::SyncAll<false>();
+
+            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[0]);
+            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[1]);
+
+            // 原 V1/V2 epilogue 构造点：缓冲获取保持在此（散射段之后）。
+            InitVnewEpilogueBuffers();
+            InitUpdateEpilogueBuffers();
+
+            if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0); // preset v
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pongBaseEvent);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2); // preset h
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pongBaseEvent);
+            } else {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0); // preset v
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pongBaseEvent);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2); // preset h
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pongBaseEvent);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1); // preset u
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pongBaseEvent);
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3); // preset g
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pongBaseEvent);
+
+            uint32_t currStage = 0; // 0: V1, 1: V2
+            while (vecBlockScheduler.isRunning) {
+                if (currStage == 0) {
+                    /* V1:
+                     * gmV = gmU - gmVWorkspace
+                     * g_buf = gmG[-1] - gmG
+                     * g_buf = exp(g_buf)
+                     * gmVWorkspace = g_buf * gmV
+                     */
+                    vecBlockScheduler.InitTasks();
+                    for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        const auto& stream = vecBlockScheduler.GetStream(i);
+                        if (vecBlockScheduler.StreamIsDone(stream)) {
+                            continue;
+                        }
+                        const GDNFwdHOffsets& vec1Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
+                        RunVnewStage(
+                            gmV[vec1Offsets.uvOffset], gmVUpdateWorkspace[vec1Offsets.vWorkOffset], 
+                            gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset], 
+                            vec1Offsets.blockTokens, kHeadDim, vHeadDim, 
+                            vecBlockScheduler.cube1Done, vecBlockScheduler.vec1Done,
+                            vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, (i == 0)
+                        );
+                    }
+                } else {
+                    /* V2: h[i+1] += h_work if i < num_chunks - 1 else None */
+                    for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        const auto& stream = vecBlockScheduler.GetStream(i);
+                        if (vecBlockScheduler.StreamIsDone(stream)) {
+                            continue;
+                        }
+                        const GDNFwdHOffsets& vec2Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
+
+                        if (vecBlockScheduler.NeedProcessStage2(stream)) {
+                            // step 4:  h[i+1] += h_work if i < num_chunks - 1 else None
+                            RunUpdateStage(
+                                gmH[vec2Offsets.hDstOffset], gmFinalState[vec2Offsets.finalStateOffset],
+                                gmG[vec2Offsets.gOffset],
+                                gmH[vec2Offsets.hSrcOffset],
+                                gmHWorkspace[vec2Offsets.hWorkOffset],
+                                vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (i == 0)
+                            );
+                        } else {
+                            Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done);
+                        }
+                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[i]);
+                    }
+                }
+                currStage ^= 0x01;
+            }
+
+            if (storeFinalState && std::is_same<ElementFinalState, float>::value) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0); // preset v
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pongBaseEvent);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2); // preset h
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pongBaseEvent);
+            } else {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0); // preset v
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pongBaseEvent);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2); // preset h
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pongBaseEvent);
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1); // preset u
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pongBaseEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3); // preset g
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pongBaseEvent);
+    }
+
+};
+
+} // namespace Catlass::Gemm::Kernel
 
 #endif // ARCH22_CHUNK_FWD_H_VEC_H

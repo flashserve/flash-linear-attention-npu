@@ -154,7 +154,9 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
     // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
-    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
+    // 域不限（2026-11-10 exp 域复用释放）：useExp2 true/false 均可（域随 tiling
+    // key 的 USE_EXP2 维选实例，epilogue 内 LN2 换算按域取舍）。
+    tilingCtx.gatedEligible = useG && !stateVFirst &&
         (gateDtypeToken == CHUNK_FWD_H_TPL_FP32 || gateDtypeToken == CHUNK_FWD_H_TPL_BF16) &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();

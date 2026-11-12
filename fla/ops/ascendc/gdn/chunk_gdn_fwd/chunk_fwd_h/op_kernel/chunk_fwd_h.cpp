@@ -11,11 +11,12 @@
 #include "arch35/chunk_fwd_h_cube.h"
 #include "arch35/chunk_fwd_h_vec.h"
 #else
+// gated 复用（仅 A2/arch22）：复用 chunk_gated_delta_rule_fwd_h 的 preload kernel。
+// 基座/调度器/epilogue 特化在 arch22/chunk_fwd_h_utils.h，gated 双引擎类分别在
+// arch22/chunk_fwd_h_cube.h 与 arch22/chunk_fwd_h_vec.h；复用谓词/入口在本文件。
+#include "arch22/chunk_fwd_h_utils.h"
 #include "arch22/chunk_fwd_h_cube.h"
 #include "arch22/chunk_fwd_h_vec.h"
-// gated 复用（仅 A2/arch22）：复用 chunk_gated_delta_rule_fwd_h 的 preload kernel。
-#include "gated_reuse/chunk_gated_delta_rule_fwd_h_struct.h"
-#include "gated_reuse/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
 #endif
 
 #include "kernel_operator.h"
@@ -47,25 +48,28 @@ struct FwdHKernelTraits {
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
 };
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-// gated 复用谓词：g 模式 + use_exp2 + vfirst=0（gated 恒按 [K,V] 产出 state，
+// gated 复用谓词与入口（RunFwdHTyped 分流调用）——自 arch22/chunk_fwd_h_utils.h 文末归位回本文件（优化前入口位置）。
+
+// gated 复用谓词：g 模式 + vfirst=0（gated 恒按 [K,V] 产出 state，
 // vfirst=1 须经 aclnn 层转置翻译）；storeFinal 与 gate/state 的 fp32/bf16 均支持。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
-    // USE_EXP2 须 true（gated 按 log2 域 gate 计算）；与 host 侧 gatedEligible 两处同条件。
+    // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
+    // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
+    // 与 host 侧 gatedEligible 两处同条件。
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
-           CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
+           !STATE_V_FIRST &&
            (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
 }
 
 // gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
-// 各 AIC 幂等同值写）后调用 gated preload kernel；g 须为 log2 域输入。
-template <typename GateT, typename StateT>
+// 各 AIC 幂等同值写）后调用 gated preload kernel；USE_EXP2 携带 g 输入域
+// （true=log2，false=ln），gated epilogue 的 LN2 换算按此模板维取舍。
+template <typename GateT, typename StateT, bool USE_EXP2>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float>;
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
@@ -94,21 +98,33 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
         gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
         gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
     }
-    GatedKernel gatedKernel;
-    gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
-                     args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
-                     args.finalState,
-                     reinterpret_cast<GM_ADDR>(gtiling),
-                     user);
-    gatedKernel.Process();
+    if ASCEND_IS_AIC {
+        Catlass::Gemm::Kernel::ChunkFwdHGatedCubeArch22<DataT, GateT, StateT, float, USE_EXP2> gatedCube;
+        gatedCube.Init(args.k, args.w, args.u, args.g, args.initialState,
+                       args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
+                       args.finalState,
+                       reinterpret_cast<GM_ADDR>(gtiling),
+                       user);
+        gatedCube.Process();
+    }
+    if ASCEND_IS_AIV {
+        Catlass::Gemm::Kernel::ChunkFwdHGatedVecArch22<DataT, GateT, StateT, float, USE_EXP2> gatedVec;
+        gatedVec.Init(args.k, args.w, args.u, args.g, args.initialState,
+                      args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
+                      args.finalState,
+                      reinterpret_cast<GM_ADDR>(gtiling),
+                      user);
+        gatedVec.Process();
+    }
 }
-#endif
 
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
 #if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-    // gated 复用分流：eligible 走 gated preload kernel，其余（gk/vfirst=1）回落原路径。
+    // gated 复用分流：eligible 走 gated preload kernel，其余（gk/vfirst=1）回落
+    // 原路径；log2/ln 两域均可进 gated（域随 CompilePolicy::USE_EXP2 作模板维
+    // 传入，epilogue 内 LN2 换算按域取舍）。
     if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
         using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
         // varlen 且 head 组数为奇（kNumHead>1）时 gated kernel 会死锁，回落老路径。
@@ -118,7 +134,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
             (group % 2) != 0 && args.tiling.kNumHead > 1;
         if (!gatedDeadlockShape) {
-            RunFwdHGatedReuse<GateT, GatedStateT>(args);
+            RunFwdHGatedReuse<GateT, GatedStateT, CompilePolicy::USE_EXP2>(args);
             return;
         }
     }
