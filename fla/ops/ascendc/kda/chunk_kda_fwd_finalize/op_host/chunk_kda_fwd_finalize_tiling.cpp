@@ -336,8 +336,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
-    const bool isA5 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    const bool isArch35 = platform.GetCurNpuArch() == NpuArch::DAV_3510;
     ChunkKdaFwdFinalizeScheduleContext scheduleContext;
     scheduleContext.batch = info.batch;
     scheduleContext.valueHeadNum = info.heads;
@@ -345,7 +344,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
-    scheduleContext.headGroupSize = isA5 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
+    scheduleContext.headGroupSize = isArch35 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
@@ -370,7 +369,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
         : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
     const bool useAivInputMover =
-        isA5 && schedule.headsPerPartition == info.heads &&
+        isArch35 && schedule.headsPerPartition == info.heads &&
         minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(

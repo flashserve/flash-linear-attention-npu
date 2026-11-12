@@ -234,7 +234,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const auto *initialStateDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
     const bool useB30 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 &&
+        platform.GetCurNpuArch() == NpuArch::DAV_3510 &&
         isBf16 && initialStateDesc != nullptr &&
         (initialStateDesc->GetDataType() == ge::DT_FLOAT ||
          initialStateDesc->GetDataType() == ge::DT_BF16) &&

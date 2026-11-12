@@ -661,10 +661,9 @@ l0op::KdaFwdV2Args MakeKdaFwdV2Args(const ChunkKdaFwdParams &params,
     return args;
 }
 
-bool IsAscend950()
+bool IsArch35()
 {
-    const char *socName = aclrtGetSocName();
-    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
 }
 // chunk32 大融合路由实现于 chunk_kda_fwd_chunk32_route.h（body-include，仍属本匿名命名空间）。
 #include "chunk_kda_fwd_chunk32_route.h"
@@ -782,7 +781,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         params.chunkSize == 64 && info.kDim == 128 && info.vDim == 128 &&
         info.seqlen % params.chunkSize == 0;
     const bool splitStages =
-        IsAscend950() && info.totalChunks > 1 && !useDenseA5FastPath;
+        IsArch35() && info.totalChunks > 1 && !useDenseA5FastPath;
 
     const aclTensor *gkCompute = params.gkOut;
     if (gkCompute != nullptr && info.isRank3) {

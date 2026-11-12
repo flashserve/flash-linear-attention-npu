@@ -21,7 +21,7 @@
 
 using GDN::GdnMegaArch22RecomputeWUTilingData;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -304,7 +304,7 @@ template <typename kType, typename betaType, typename L1TileShape, typename L0Ti
           int kStaticV = 0, int kStaticBT = 0>
 class RecomputeWUFwdProcess {
 public:
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using Resource = Arch::Resource<Arch::Ascend950>;
 #else
     using Resource = Arch::Resource<Arch::AtlasA2>;
@@ -412,7 +412,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     LayoutTagW tagW = LayoutTagW::MakeLayout<kType>(ChunkSize(), K);
     LayoutTagU tagU = LayoutTagU::MakeLayout<kType>(ChunkSize(), ValueDim());
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
     // 950: UnitFlag=true 时 L0C_STAGES 必须为 1（见 block_mmad_pingpong_tla.hpp static_assert）
     using DispatchPolicy = Gemm::MmadPingpongTlaMulti<ArchTag, true, false, 1, true>;

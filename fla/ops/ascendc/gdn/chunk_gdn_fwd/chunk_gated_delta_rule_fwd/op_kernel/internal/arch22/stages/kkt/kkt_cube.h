@@ -2,7 +2,7 @@
 #define CHUNK_KKT_CUBE_H
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -29,7 +29,7 @@ using namespace AscendC;
 
 template <typename T, int kStaticBT = 0, int kQkvLayout = -1>
 class ChunkKktCube {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Catlass::Arch::Ascend950;
 #else
     using ArchTag = Catlass::Arch::AtlasA2;
@@ -74,7 +74,7 @@ class ChunkKktCube {
     static constexpr bool SINGLE_K_L1 = false;
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using MatmulAType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, T>;
     using MatmulBType = matmul::MatmulType<
         TPosition::GM, CubeFormat::ND, T, true, LayoutMode::NONE, false>;
@@ -113,7 +113,7 @@ public:
         }
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // The Phase6 AIC half performs the matmul directly.  Do not use the
     // matmul::Matmul alias here: in a MIX build it can resolve to MatmulClient,
     // which requires KFC registration and is not a direct AIC implementation.
@@ -126,7 +126,7 @@ public:
                                    GM_ADDR k, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                    GM_ADDR score, const TilingData *tiling)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ProcessAscend950(k, cuSeqlens, chunkIndices, score, tiling);
 #else
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(0);
@@ -203,7 +203,7 @@ public:
     }
 
 private:
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     template <typename TilingData>
     __aicore__ inline void ProcessAscend950(GM_ADDR k, GM_ADDR cuSeqlens,
                                             GM_ADDR chunkIndices, GM_ADDR score,
@@ -388,7 +388,7 @@ private:
         auto blockScore = tla::GetTile(tensorScore, tla::MakeCoord(0, 0), tla::MakeShape(valid, valid));
         using CopyGmToL1A = typename TileCopy::template CopyGmToL1A<decltype(blockK)>;
         using CopyGmToL1B = typename TileCopy::template CopyGmToL1B<decltype(blockKt)>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using CopyL0CToGm = typename TileCopy::template CopyL0CToDst<decltype(blockScore)>;
 #else
         using CopyL0CToGm = typename TileCopy::template CopyL0CToGm<decltype(blockScore)>;

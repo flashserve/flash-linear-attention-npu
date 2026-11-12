@@ -23,7 +23,7 @@ namespace {
 
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
 #endif
 
@@ -849,7 +849,7 @@ __aicore__ inline void RunPhase6(
                              hoIdleConfigPtr, hoIdleReadyAddr, Config::InputSequenceMajor(abc), gLastExp, gDecay);
 
     if (!hoIdleEnabled) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
         // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
         AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();

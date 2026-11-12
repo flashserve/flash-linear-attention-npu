@@ -10,14 +10,14 @@ struct ChunkKdaFwdArch35Options {
 };
 
 inline ChunkKdaFwdArch35Options ConfigureChunkKdaFwdArch35(
-    bool isAscend950, bool qIsBf16, bool rawGIsFp32, bool hasALog,
+    bool isArch35, bool qIsBf16, bool rawGIsFp32, bool hasALog,
     bool useGateInKernel, bool safeGate, bool isVarLen, int64_t seqlen,
     int64_t vHeads, int64_t chunkSize, int64_t kDim, int64_t vDim,
     bool storeQG, bool storeVNew, bool storeH)
 {
     ChunkKdaFwdArch35Options options;
     const bool shapeSupported =
-        isAscend950 && chunkSize == 64 && kDim == 128 && vDim == 128;
+        isArch35 && chunkSize == 64 && kDim == 128 && vDim == 128;
     if (!shapeSupported) {
         return options;
     }

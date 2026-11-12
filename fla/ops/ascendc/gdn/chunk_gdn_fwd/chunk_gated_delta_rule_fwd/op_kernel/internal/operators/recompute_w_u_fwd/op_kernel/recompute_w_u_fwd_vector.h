@@ -18,11 +18,11 @@
 
 #include "recompute_w_u_fwd_struct.h"
 #include "catlass/arch/cross_core_sync.hpp"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "kernel_utils/vector/regbase.hpp"
 #endif
 using namespace AscendC;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using namespace AscendC::MicroAPI;
 #endif
 
@@ -38,7 +38,7 @@ public:
                                                         GM_ADDR workspace_);
 
     __aicore__ inline void Process();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void ProcessVbAndKbgExpInterleaved();
 #else
     __aicore__ inline void ProcessVb();
@@ -72,7 +72,7 @@ private:
     AscendC::TPipe *pipe = nullptr;
 
 private:
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     static constexpr uint32_t GM_RING_DEPTH = 8;
     static_assert(GM_RING_DEPTH <= Arch::MAX_REVERSE_DEPTH,
                   "Ring window must keep every cross-core flag below the hardware credit limit.");
@@ -102,7 +102,7 @@ private:
     TBuf<AscendC::TPosition::VECCALC> gFp32Buf;
     // TBuf<AscendC::TPosition::VECCALC> gFp32BrcbBuf;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     constexpr static CastTrait ctFp322KTypeRintZero = {
         RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::MERGING, AscendC::RoundMode::CAST_RINT};
     constexpr static CastTrait ctFp322KTypeRintOne = {
@@ -163,7 +163,7 @@ template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoeff
 __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, kFlattenHeadTasks,
                                                    kCoefficientGenerationTaskOrder>::Process()
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     ProcessVbAndKbgExpInterleaved();
 #else
     //计算K * Beta[:None]
@@ -175,7 +175,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType, kFlattenHead
     return;
 }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
 __aicore__ inline void RecomputeWUFwdVectorProcess<
     kType, betaType, kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::NotifyVbReady()
@@ -477,7 +477,7 @@ __aicore__ void inline RecomputeWUFwdVectorProcess<
 }
 #endif
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 template <typename kType, typename betaType, bool kFlattenHeadTasks, bool kCoefficientGenerationTaskOrder>
 __aicore__ void inline RecomputeWUFwdVectorProcess<kType, betaType,
                                                     kFlattenHeadTasks, kCoefficientGenerationTaskOrder>::ProcessVb()
