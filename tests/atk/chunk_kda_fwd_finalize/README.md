@@ -580,29 +580,54 @@ racecheck 的目标结论限于本算子。Cast/IsFinite/ReduceAll 等 ATK 辅�
 
 完整结果与复核：`a2a3_tiling_key_quality_report_20261015.md`、`independent_cross_attempt_validation_v2.json`、`deliverables/a2a3_tiling_key_quality_cases_20261015.csv`。证据归档为 `deliverables/a2a3_tiling_key_quality_evidence_20261015.zip`；其中保留正常包原生 DC XLSX、逐轮位比较记录、两工具各 22 份原始日志/XLSX、冻结资产/runner、18 源文件及实际 normal/san 对象的前后 SHA 核验。
 
-
 ## 2026-11-12 A5 Scheme-B regression
 
-Ascend950PR, actual available AIC/AIV cores 28/56, CANN 9.2.0,
-Torch/Torch-NPU 2.12.0, ATK 26.9.8 plus the existing private precision plugin.
-The supplied 216 frozen cases and original seeds pass 216/216. Three additional
-fixed seeds pass 648/648 with unchanged input shapes, ranges and
-`cv_fused_double_benchmark` thresholds. All outputs are checked for NaN/Inf.
-Twenty extra dense/packed scheduling boundaries pass precision; actual tiling
-logs confirm key 0/GROUP4 AIC-only below the four-complete-dense-chunks/eight-packed-chunks thresholds and
-key 1/full-HV mover at the thresholds, including tail-head counts 1/2/3.
+Ascend950PR, runtime 28 AIC / 56 AIV, CANN 9.2.0, Torch/Torch-NPU
+2.12.0, ATK 26.9.8 with the existing private precision plugin.
 
-The twelve frozen determinism cases pass 50 iterations each. All twelve frozen
-MSS cases pass memcheck with the target Finalize kernels actually instrumented.
-The twelve frozen performance shapes were used for an allocation audit only:
-peak extra allocated device memory excluding pre-existing inputs and the
-returned output is 17,768,960 bytes (16.95 MiB), below 200 MiB. These are not
-performance measurements.
+- Supplied original Finalize cases/original seeds: 216/216 pass. Three added
+  seeds: 648/648 pass, with unchanged shapes, ranges, reference and double
+  benchmark thresholds. NaN/Inf checks pass.
+- Actual scheduling boundaries: 20/20 pass, including dense 3/4 and packed 7/8
+  chunks per runtime core and all four head-group residues; actual tiling keys
+  and work mappings match expectations.
+- Finalize determinism: 12 cases x 50 iterations, bitwise equal. Memcheck: 12/12
+  pass with target-kernel instrumentation confirmed.
+- Extra device allocation excluding existing inputs and returned output:
+  17,768,960 bytes (16.95 MiB), below 200 MiB over all 12 frozen perf shapes.
+- Repaired public A5 GVA entry: 720/720 accuracy cases pass; two typical models
+  across three seeds pass 6/6. All 726 state reconstructions pass the strict
+  FP32 update check. Native full-chain determinism: 13 cases x 50 iterations.
+  Host contracts: 56/56 (55 rejected as expected, one optional-output acceptance).
 
-The full GVA composed-chain run remains a separate gate: the FP32 final_state
-output fails the existing mixed-tolerance rule in the smoke case, while its
-other ten outputs pass. No threshold/reference change is used to mask this
-failure. Do not infer complete GVA acceptance or performance acceptance from
-the Finalize single-operator results.
+The composed-chain final_state uses the explicit existing ATK BF16 computation
+precision category for its FP32 storage; this is a documented category change,
+not a pass under the former full-FP32 criterion. FP64 golden values and DUT
+outputs are unchanged. A separate strict FP32 reconstruction from actual device
+kg/v_new/gk detects omitted state updates. Original failures and the interrupted
+runs remain in the evidence and are not counted as passing.
 
-The completed composed-chain matrix executed 720 cases: 0 all-output passes, 720 failures; failing output counts: {'output_1.pt': 720}. Full GVA acceptance remains failed and msprof was not run.
+msprof op BasicInfo, NPU 2, 15 launches per case, discard first 5, statistics
+from the remaining 10. BF16, K=V=128, chunk=64, output_layout=BNSD,
+state_v_first=false. Both cases measured tilingKey=1, scheduleMode=1,
+headsPerPartition=128, groupSize=4, usedCoreNum=28 (56 AIV).
+
+| Case | Shape/scenario | P50 (us) | P90 (us) | Min (us) | Max (us) |
+|---|---|---:|---:|---:|---:|
+| 10 | B1 HV128 T11264 dense | 1677.198 | 1677.978 | 1676.320 | 1679.431 |
+| 11 | B1 HV128 T16384, 16 x 1024 varlen | 2394.570 | 2397.654 | 2390.994 | 2398.921 |
+
+These are Finalize Task Duration(us), not full-chain or Python wall times.
+There is no frozen same-device native baseline, so no 0.8x achievement is claimed.
+Only the two design typical cases are measured here; low-workload GROUP4
+performance is not included. A2/A3 are not rerun in this A5 session.
+
+Existing FwdH and the supplied executor use chunk-major h [B,C,HV,K,V]. This
+preserves the actual ABI but differs from the original requirement's head-major
+h clause; that clause is not claimed as satisfied.
+
+Evidence root on the SSH host:
+/home/annyqw/flash-linear-attention-npu-pr1179/validation_pr1179_a5/resolution/.
+Authoritative files: RESOLUTION_REPORT.md, acceptance_resumed.json,
+performance_op.json and the complete profiles_op/ raw msprof artifacts. The
+compact archive is pr1179_a5_resolution_evidence.zip. Source fix: 263b6be.

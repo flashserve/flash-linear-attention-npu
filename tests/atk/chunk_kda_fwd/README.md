@@ -89,3 +89,22 @@ backend for eligible A5 calls; it does not claim a repair of its internal
 pipeline for other devices or unsupported shapes. Validation keeps the original
 FP64 golden and inputs and separately reconstructs FP32 state from device
 kg/v_new/gk to detect missing updates independently of BF16 accuracy tolerance.
+
+
+## 2026-11-12 A5 resolution validation
+
+After the A5 public-entry route correction, the 720-case GVA matrix (ratios 1-16,
+dense/packed layouts, gate/beta dtype combinations, state orientation and three
+fixed seeds) passes 720/720. Two model shapes, B1 HK16 HV128 T11264 dense and
+T16384 varlen (16 x 1024), pass across three seeds, 6/6. All 726 strict FP32 state
+reconstructions pass; maximum absolute discrepancy is 2.23517418e-8 for the matrix
+and 4.47034836e-8 for models. Full-chain bitwise determinism passes 13 x 50.
+The 56 host contract checks pass (55 expected errors, one optional akkOut
+acceptance). The precision-category qualification described above applies;
+this does not claim passage under the former FP32 mathematical criterion.
+
+Source fix: 263b6be. Raw reports, preserved original failures, frozen-input
+integrity record and strict state audit are under validation_pr1179_a5/resolution
+on the validation host. Finalize performance and memory results are recorded in
+../chunk_kda_fwd_finalize/README.md. The broader A2/A3 and native performance-ratio
+acceptance items are not completed by this A5 run.
