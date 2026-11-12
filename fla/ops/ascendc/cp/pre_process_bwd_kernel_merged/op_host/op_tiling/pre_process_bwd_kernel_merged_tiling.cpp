@@ -15,6 +15,7 @@
 #include "pre_process_bwd_kernel_merged_tiling_processor.h"
 #include "pre_process_bwd_kernel_merged_tiling.h"
 #include "err/ops_err.h"
+#include "op_common/log/log.h"
 
 using namespace CP;
 
@@ -53,7 +54,10 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "attrs is nullptr."), return ge::GRAPH_FAILED);
+    if (attrs == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "attrs", "attrs is nullptr.");
+        return ge::GRAPH_FAILED;
+    }
     const double *scalePtr = attrs->GetAttrPointer<double>(CDHP_ATTR_SCALE_IDX);
     const uint32_t *chunkSizePtr = attrs->GetAttrPointer<uint32_t>(CDHP_ATTR_CHUNK_SIZE_IDX);
 

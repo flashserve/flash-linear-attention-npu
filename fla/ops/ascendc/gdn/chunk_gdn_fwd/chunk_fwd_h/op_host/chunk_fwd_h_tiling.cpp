@@ -18,6 +18,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../op_kernel/chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_tiling_processor.h"
+#include "op_common/log/log.h"
 
 namespace optiling {
 
@@ -93,17 +94,17 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
-    OP_CHECK_IF(useG == useGk,
-                OP_LOGE(context->GetNodeName(), "Exactly one of g and gk must be provided."),
-                return ge::GRAPH_FAILED);
+    if (useG == useGk) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "g", "Exactly one of g and gk must be provided.");
+        return ge::GRAPH_FAILED;
+    }
     auto gateTensor = useGk ? gkTensor : gTensor;
 
     uint64_t gateDtypeToken = 0;
-    OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken),
-                OP_LOGE(context->GetNodeName(),
-                        "g/gk dtype must be BF16 or FP32, but got dtype=%d.",
-                        static_cast<int>(gateTensor->GetDataType())),
-                return ge::GRAPH_FAILED);
+    if (!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "g/gk dtype must be BF16 or FP32, but got dtype=%d.");
+        return ge::GRAPH_FAILED;
+    }
 
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
@@ -123,18 +124,17 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         resolvedStateDataType = initialStateTensor->GetDataType();
     } else if (storeFinalState) {
         auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
-        OP_CHECK_IF(finalStateDesc == nullptr,
-                    OP_LOGE(context->GetNodeName(),
-                            "final_state output descriptor must exist when storeFinalState is true."),
-                    return ge::GRAPH_FAILED);
+        if (finalStateDesc == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "final_state", "invalid", "final_state output descriptor must exist when storeFinalState is true.");
+        return ge::GRAPH_FAILED;
+    }
         resolvedStateDataType = finalStateDesc->GetDataType();
     }
     uint64_t stateDtypeToken = 0;
-    OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken),
-                OP_LOGE(context->GetNodeName(),
-                        "Resolved state dtype must be BF16 or FP32, but got dtype=%d.",
-                        static_cast<int>(resolvedStateDataType)),
-                return ge::GRAPH_FAILED);
+    if (!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "Resolved state dtype must be BF16 or FP32, but got dtype=%d.");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
 
