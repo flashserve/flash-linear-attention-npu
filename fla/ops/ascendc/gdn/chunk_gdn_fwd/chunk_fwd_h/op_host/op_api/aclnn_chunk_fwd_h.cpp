@@ -297,22 +297,14 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     return ACLNN_SUCCESS;
 }
 
-// state_v_first=true 的末两维转置辅助（gated kernel 恒 [K,V] 产出，aclnn 层做
-// [K,V]<->[V,K] 适配）。翻译原语失败时 typed 上报参数名/实际值/期望值，返回码不变。
-static constexpr const char *OP_NAME = "aclnnChunkFwdH";
-
 // gated 引擎与配套翻译仅 DAV_2201（A2/A3）生效，其余芯片保持基线行为。
 static bool SocSupportsGatedPath()
 {
     return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
 }
 
-static aclnnStatus TranslationNullptr(const char *name, const char *expected)
-{
-    OP_LOGE_FOR_INVALID_VALUE(OP_NAME, name, "nullptr", expected);
-    return ACLNN_ERR_INNER_NULLPTR;
-}
-
+// state_v_first=true 的末两维转置辅助（gated kernel 恒 [K,V] 产出，aclnn 层做
+// [K,V]<->[V,K] 适配）。
 static op::Shape SwapLastTwo(const op::Shape &input)
 {
     op::Shape output = input;
@@ -332,11 +324,7 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
     }
     std::swap(perm[rank - 2], perm[rank - 1]);
     const aclIntArray *permArray = executor->AllocIntArray(perm.data(), perm.size());
-    if (permArray == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "perm", "nullptr perm array",
-                                  "int64 perm swapping the last two dims");
-        return nullptr;
-    }
+    CHECK_RET(permArray != nullptr, nullptr);
     return l0op::Transpose(input, permArray, executor);
 }
 
@@ -499,23 +487,17 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     const aclTensor *finalStateCompute = params.finalStateOut;
     if (translateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        if (initialStateCompute == nullptr) {
-            return TranslationNullptr("initial_state", "transposed [K,V] tensor from TransposeLastTwo");
-        }
+        CHECK_RET(initialStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
     if (translateVFirst) {
         hCompute = executorPtr->AllocTensor(
             SwapLastTwo(params.hOut->GetViewShape()), params.hOut->GetDataType(), Format::FORMAT_ND);
-        if (hCompute == nullptr) {
-            return TranslationNullptr("h", "swapped-layout staging tensor from AllocTensor");
-        }
+        CHECK_RET(hCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
         if (params.finalStateOut != nullptr) {
             finalStateCompute = executorPtr->AllocTensor(
                 SwapLastTwo(params.finalStateOut->GetViewShape()), params.finalStateOut->GetDataType(),
                 Format::FORMAT_ND);
-            if (finalStateCompute == nullptr) {
-                return TranslationNullptr("final_state", "swapped-layout staging tensor from AllocTensor");
-            }
+            CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
         }
     }
     auto result = l0op::ChunkFwdH(
@@ -530,9 +512,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     const aclTensor *hResult = result[0];
     if (translateVFirst) {
         hResult = TransposeLastTwo(hResult, executorPtr);
-        if (hResult == nullptr) {
-            return TranslationNullptr("h", "transposed output tensor from TransposeLastTwo");
-        }
+        CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
     auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -542,9 +522,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         const aclTensor *finalStateResult = result[2];
         if (translateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            if (finalStateResult == nullptr) {
-                return TranslationNullptr("final_state", "transposed output tensor from TransposeLastTwo");
-            }
+            CHECK_RET(finalStateResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
         }
         auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
         CHECK_RET(viewCopyResult2 != nullptr, ACLNN_ERR_INNER_NULLPTR);
