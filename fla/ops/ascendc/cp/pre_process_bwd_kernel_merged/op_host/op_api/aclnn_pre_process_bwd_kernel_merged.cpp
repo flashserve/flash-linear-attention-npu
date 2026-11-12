@@ -158,7 +158,7 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional), DFX_OUT(dhmOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -183,7 +183,7 @@ aclnnStatus aclnnPreProcessBwdKernelMerged(void *workspace, uint64_t workspaceSi
 {
     L2_DFX_PHASE_2(aclnnPreProcessBwdKernelMerged);
     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "This is an error in aclnnPreProcessBwdKernelMerged launch aicore.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in aclnnPreProcessBwdKernelMerged launch aicore.", __func__);
         return ACLNN_ERR_INNER;
     }
     return ACLNN_SUCCESS;

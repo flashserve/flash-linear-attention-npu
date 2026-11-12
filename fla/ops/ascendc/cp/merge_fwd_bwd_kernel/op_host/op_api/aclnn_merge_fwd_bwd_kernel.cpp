@@ -158,7 +158,7 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -167,7 +167,7 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     // ag_hm is read-only, so a contiguous copy is safe. h is not copied.
     const aclTensor *agContig = l0op::Contiguous(agHm, executorPtr);
     if (!(agContig != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

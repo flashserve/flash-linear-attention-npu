@@ -212,7 +212,7 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -257,14 +257,14 @@ static aclnnStatus ParamsGateToFp32(PreProcessFwdKernelMergedParams &params, acl
     if (params.g != nullptr && params.g->GetDataType() != DataType::DT_FLOAT) {
         params.g = l0op::Cast(params.g, DataType::DT_FLOAT, executor);
         if (!(params.g != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
     if (params.gk != nullptr && params.gk->GetDataType() != DataType::DT_FLOAT) {
         params.gk = l0op::Cast(params.gk, DataType::DT_FLOAT, executor);
         if (!(params.gk != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -293,7 +293,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
                    DFX_OUT(hmOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -318,7 +318,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.hmOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -332,7 +332,7 @@ aclnnStatus aclnnPreProcessFwdKernelMerged(void *workspace, uint64_t workspaceSi
 {
     L2_DFX_PHASE_2(aclnnPreProcessFwdKernelMerged);
     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "This is an error in PreProcessFwdKernelMerged launch aicore.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in PreProcessFwdKernelMerged launch aicore.", __func__);
         return ACLNN_ERR_INNER;
     }
     return ACLNN_SUCCESS;
