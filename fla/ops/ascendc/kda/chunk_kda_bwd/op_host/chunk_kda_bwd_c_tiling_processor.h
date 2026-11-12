@@ -1,6 +1,8 @@
 #ifndef CHUNK_KDA_BWD_C_TILING_PROCESSOR_H
 #define CHUNK_KDA_BWD_C_TILING_PROCESSOR_H
 
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -68,18 +70,24 @@ public:
     {
         for (size_t i = 0; i < KDA_C_REQUIRED_INPUT_COUNT; ++i) {
             OP_CHECK_IF(ctx_.shapes[i] == nullptr,
-                        OP_LOGE(ctx_.nodeName,
-                                "all non-metadata Kernel C inputs are required"),
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            ctx_.nodeName, "kernel_c_inputs",
+                            "all non-metadata Kernel C inputs are required"),
                         return ge::GRAPH_FAILED);
         }
         OP_CHECK_IF(ctx_.chunkSize != 64,
-                    OP_LOGE(ctx_.nodeName, "Kernel C requires chunk_size=64"),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize),
+                        "Kernel C requires chunk_size=64"),
                     return ge::GRAPH_FAILED);
         const bool hasCu = ctx_.shapes[KDA_C_CU_SEQLENS] != nullptr;
         const bool hasChunks = ctx_.shapes[KDA_C_CHUNK_INDICES] != nullptr;
         OP_CHECK_IF(hasCu != hasChunks,
-                    OP_LOGE(ctx_.nodeName,
-                            "cu_seqlens and chunk_indices must be both present or absent"),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        ctx_.nodeName, "cu_seqlens,chunk_indices",
+                        std::string("cu_seqlens=") + (hasCu ? "present" : "absent") +
+                            ",chunk_indices=" + (hasChunks ? "present" : "absent"),
+                        "cu_seqlens and chunk_indices must be both present or absent"),
                     return ge::GRAPH_FAILED);
         tiling_.isVarLen = hasCu ? 1 : 0;
         tiling_.useGateInKernel = ctx_.useGateInKernel ? 1 : 0;
@@ -94,39 +102,51 @@ public:
 
         const ge::DataType dataType = ctx_.types[KDA_C_Q];
         OP_CHECK_IF(dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16,
-                    OP_LOGE(ctx_.nodeName,
-                            "Kernel C data inputs must be FP16 or BF16"),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        ctx_.nodeName, "q", ge::TypeUtils::DataTypeToSerialString(dataType),
+                        "Kernel C data inputs must be FP16 or BF16"),
                     return ge::GRAPH_FAILED);
         for (size_t i : {KDA_C_K, KDA_C_V, KDA_C_V_NEW,
                          KDA_C_AKK, KDA_C_H, KDA_C_DH, KDA_C_DV_SCAN}) {
             OP_CHECK_IF(ctx_.types[i] != dataType,
-                        OP_LOGE(ctx_.nodeName,
-                                "Kernel C matrix inputs must share q dtype"),
+                        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                            ctx_.nodeName, "k,v,v_new,akk,h,dh,dv_scan",
+                            ge::TypeUtils::DataTypeToSerialString(ctx_.types[i]),
+                            "Kernel C matrix inputs must share q dtype " +
+                                ge::TypeUtils::DataTypeToSerialString(dataType)),
                         return ge::GRAPH_FAILED);
         }
         for (size_t i : {KDA_C_GK, KDA_C_DQ_RAW, KDA_C_DAQK}) {
             OP_CHECK_IF(ctx_.types[i] != ge::DT_FLOAT,
-                        OP_LOGE(ctx_.nodeName,
-                                "gk/dq_raw/dAqk must be FP32"),
+                        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                            ctx_.nodeName, "gk,dq_raw,dAqk",
+                            ge::TypeUtils::DataTypeToSerialString(ctx_.types[i]),
+                            "gk/dq_raw/dAqk must be FP32"),
                         return ge::GRAPH_FAILED);
         }
         OP_CHECK_IF(ctx_.types[KDA_C_BETA] != ge::DT_BF16 &&
                         ctx_.types[KDA_C_BETA] != ge::DT_FLOAT,
-                    OP_LOGE(ctx_.nodeName, "beta must be BF16 or FP32"),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        ctx_.nodeName, "beta", ge::TypeUtils::DataTypeToSerialString(ctx_.types[KDA_C_BETA]),
+                        "beta must be BF16 or FP32"),
                     return ge::GRAPH_FAILED);
         if (ctx_.useGateInKernel) {
             OP_CHECK_IF(ctx_.shapes[KDA_C_RAW_G] == nullptr ||
                             ctx_.shapes[KDA_C_A_LOG] == nullptr,
-                        OP_LOGE(ctx_.nodeName,
-                                "raw_g and a_log are required when use_gate_in_kernel=true"),
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            ctx_.nodeName, "raw_g,a_log",
+                            "raw_g and a_log are required when use_gate_in_kernel=true"),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF((ctx_.types[KDA_C_RAW_G] != ge::DT_FLOAT &&
                          ctx_.types[KDA_C_RAW_G] != ge::DT_BF16) ||
                             ctx_.types[KDA_C_A_LOG] != ge::DT_FLOAT ||
                             (tiling_.hasDtBias != 0 &&
                              ctx_.types[KDA_C_DT_BIAS] != ge::DT_FLOAT),
-                        OP_LOGE(ctx_.nodeName,
-                                "raw_g must be BF16/FP32; a_log/dt_bias must be FP32"),
+                        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                            ctx_.nodeName, "raw_g,a_log,dt_bias",
+                            std::string("raw_g=") + ge::TypeUtils::DataTypeToSerialString(ctx_.types[KDA_C_RAW_G]) +
+                                ",a_log=" + ge::TypeUtils::DataTypeToSerialString(ctx_.types[KDA_C_A_LOG]),
+                            "raw_g must be BF16/FP32; a_log/dt_bias must be FP32"),
                         return ge::GRAPH_FAILED);
         }
 
@@ -155,8 +175,10 @@ public:
                         dqRaw.GetDimNum() != tokenRank ||
                         dAqk.GetDimNum() != tokenRank ||
                         h.GetDimNum() != stateRank,
-                    OP_LOGE(ctx_.nodeName,
-                            "Kernel C expects dense head-major rank-4/5 or varlen rank-3/4"),
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        ctx_.nodeName, "q,k,v,v_new,gk,akk,dv_scan,dq_raw,dAqk,h",
+                        "q_rank=" + std::to_string(q.GetDimNum()) + ",h_rank=" + std::to_string(h.GetDimNum()),
+                        "dense head-major expects rank 4/5, varlen expects rank 3/4"),
                     return ge::GRAPH_FAILED);
 
         const size_t headAxis = hasCu ? 0 : 1;
@@ -170,8 +192,10 @@ public:
         tiling_.chunkSize = ctx_.chunkSize;
         tiling_.scale = ctx_.scale;
         OP_CHECK_IF(tiling_.keyDim != 128 || tiling_.valueDim != 128,
-                    OP_LOGE(ctx_.nodeName,
-                            "Kernel C P0 requires K=128 and V=128"),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        ctx_.nodeName, "K,V",
+                        std::to_string(tiling_.keyDim) + "," + std::to_string(tiling_.valueDim),
+                        "Kernel C P0 requires K=128 and V=128"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(k.GetDim(dimAxis) != 128 ||
                         gk.GetDim(dimAxis) != 128 ||
@@ -182,8 +206,15 @@ public:
                             static_cast<size_t>(tiling_.valueDim) ||
                         akk.GetDim(dimAxis) != 64 ||
                         dAqk.GetDim(dimAxis) != 64,
-                    OP_LOGE(ctx_.nodeName,
-                            "K/gk/dq_raw and V tensors or C matrices have invalid width"),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        ctx_.nodeName, "K,gk,dq_raw,V,C",
+                        "k=" + std::to_string(k.GetDim(dimAxis)) + ",gk=" + std::to_string(gk.GetDim(dimAxis)) +
+                            ",dq_raw=" + std::to_string(dqRaw.GetDim(dimAxis)) +
+                            ",v_new=" + std::to_string(vNew.GetDim(dimAxis)) +
+                            ",dv_scan=" + std::to_string(dvScan.GetDim(dimAxis)) +
+                            ",akk=" + std::to_string(akk.GetDim(dimAxis)) +
+                            ",dAqk=" + std::to_string(dAqk.GetDim(dimAxis)),
+                        "K/gk/dq_raw and V tensors or C matrices have invalid width"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(!SameLeading(q, k, dimAxis) ||
                         !SameLeading(q, gk, dimAxis) ||
@@ -193,8 +224,10 @@ public:
                         !SameLeading(q, v, dimAxis) ||
                         !SameLeading(q, vNew, dimAxis) ||
                         !SameLeading(q, dvScan, dimAxis),
-                    OP_LOGE(ctx_.nodeName,
-                            "all token tensors must share B/H/T or H/T"),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        ctx_.nodeName, "q,k,v,v_new,gk,dv_scan,dq_raw,akk,dAqk",
+                        "leading dims of k/v/v_new/gk/dv_scan/dq_raw/akk/dAqk must match q",
+                        "all token tensors must share B/H/T or H/T"),
                     return ge::GRAPH_FAILED);
         if (ctx_.useGateInKernel) {
             const gert::Shape rawG = Shape(KDA_C_RAW_G);
@@ -204,8 +237,11 @@ public:
                             aLog.GetDimNum() != 1 ||
                             aLog.GetDim(0) !=
                                 static_cast<size_t>(tiling_.headNum),
-                        OP_LOGE(ctx_.nodeName,
-                                "raw_g must match q and a_log must be [H]"),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            ctx_.nodeName, "raw_g,a_log",
+                            "raw_g=" + std::to_string(rawG.GetDim(dimAxis)) +
+                                ",a_log=[" + std::to_string(aLog.GetDimNum() == 1 ? aLog.GetDim(0) : 0) + "]",
+                            "raw_g must match q and a_log must be [H]"),
                         return ge::GRAPH_FAILED);
             if (tiling_.hasDtBias != 0) {
                 const gert::Shape bias = Shape(KDA_C_DT_BIAS);
@@ -213,8 +249,10 @@ public:
                                 bias.GetDim(0) !=
                                     static_cast<size_t>(tiling_.headNum) ||
                                 bias.GetDim(1) != 128,
-                            OP_LOGE(ctx_.nodeName,
-                                    "dt_bias must be [H,K]"),
+                            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                                ctx_.nodeName, "dt_bias",
+                                "[" + std::to_string(bias.GetDim(0)) + "," + std::to_string(bias.GetDim(1)) + "]",
+                                "dt_bias must be [H,K]"),
                             return ge::GRAPH_FAILED);
             }
         }
@@ -227,8 +265,9 @@ public:
                             static_cast<size_t>(tiling_.headNum) ||
                         beta.GetDim(hasCu ? 1 : 2) !=
                             static_cast<size_t>(tiling_.seqlen),
-                    OP_LOGE(ctx_.nodeName,
-                            "beta must be dense [B,H,T] or varlen [H,T]"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        ctx_.nodeName, "beta", "rank=" + std::to_string(beta.GetDimNum()),
+                        "beta must be dense [B,H,T] or varlen [H,T]"),
                     return ge::GRAPH_FAILED);
 
         if (!hasCu) {
@@ -236,14 +275,16 @@ public:
                 (tiling_.seqlen + tiling_.chunkSize - 1) / tiling_.chunkSize;
             tiling_.chunkNum = tiling_.batch * tiling_.chunkNumPerBatch;
             OP_CHECK_IF(!CheckDenseState(h),
-                        OP_LOGE(ctx_.nodeName,
-                                "h must be [B,chunkNum,H,K,V]"),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            ctx_.nodeName, "h", "rank=" + std::to_string(h.GetDimNum()),
+                            "h must be [B,chunkNum,H,K,V]"),
                         return ge::GRAPH_FAILED);
             const bool validDh = !ctx_.validateIntermediateShapes ||
                 (dh.GetDimNum() == 5 && CheckDenseState(dh));
             if (!validDh) {
-                OP_LOGE(ctx_.nodeName,
-                        "dh must be [B,chunkNum,H,K,V]");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ctx_.nodeName, "dh", "rank=" + std::to_string(dh.GetDimNum()),
+                    "dh must be [B,chunkNum,H,K,V]");
                 return ge::GRAPH_FAILED;
             }
         } else {
@@ -253,20 +294,25 @@ public:
                             chunks.GetDimNum() != 1 ||
                             chunks.GetDim(0) == 0 ||
                             (chunks.GetDim(0) & 1U) != 0,
-                        OP_LOGE(ctx_.nodeName,
-                                "varlen metadata requires cu_seqlens[N+1] and chunk_indices[2*Nc]"),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            ctx_.nodeName, "cu_seqlens,chunk_indices",
+                            "cu_rank=" + std::to_string(cu.GetDimNum()) + ",cu_size=" + std::to_string(cu.GetDim(0)) +
+                                ",chunks_size=" + std::to_string(chunks.GetDim(0)),
+                            "varlen metadata requires cu_seqlens[N+1] and chunk_indices[2*Nc]"),
                         return ge::GRAPH_FAILED);
             tiling_.chunkNumPerBatch = 0;
             tiling_.chunkNum = static_cast<int64_t>(chunks.GetDim(0) / 2);
             OP_CHECK_IF(!CheckVarlenState(h),
-                        OP_LOGE(ctx_.nodeName,
-                                "varlen h must be [totalChunks,H,K,V]"),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            ctx_.nodeName, "h", "rank=" + std::to_string(h.GetDimNum()),
+                            "varlen h must be [totalChunks,H,K,V]"),
                         return ge::GRAPH_FAILED);
             const bool validDh = !ctx_.validateIntermediateShapes ||
                 (dh.GetDimNum() == 4 && CheckVarlenState(dh));
             if (!validDh) {
-                OP_LOGE(ctx_.nodeName,
-                        "varlen dh must be [totalChunks,H,K,V]");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    ctx_.nodeName, "dh", "rank=" + std::to_string(dh.GetDimNum()),
+                    "varlen dh must be [totalChunks,H,K,V]");
                 return ge::GRAPH_FAILED;
             }
         }
