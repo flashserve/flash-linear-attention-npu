@@ -841,7 +841,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -963,10 +966,12 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
         params.qgOut, params.kgOut, params.qgScaledOut, params.qHatOut,
         params.kHatOut, params.qRstdOut, params.kRstdOut, params.betaEffOut,
         GetOutputMode(params), executorPtr);
-    CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
+    if (!(result[0] != nullptr && result[1] != nullptr &&
                   result[3] != nullptr && result[4] != nullptr &&
-                  result[6] != nullptr && result[7] != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+                  result[6] != nullptr && result[7] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -980,10 +985,11 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwdPrepare);
-    CHECK_COND(
-        CommonOpExecutorRun(workspace, workspaceSize, executor, stream) ==
-            ACLNN_SUCCESS,
-        ACLNN_ERR_INNER, "ChunkKdaFwdPrepare AI Core 启动失败。");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) ==
+            ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "ChunkKdaFwdPrepare AI Core 启动失败。", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 

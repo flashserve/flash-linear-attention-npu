@@ -501,7 +501,10 @@ aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -522,7 +525,10 @@ aclnnStatus CreateViewIfNonContiguous(const aclTensor *&tensor, aclOpExecutor *e
     const aclTensor *view = executor->CreateView(
         tensor, tensor->GetViewShape(), tensor->GetStorageShape(),
         tensor->GetViewStrides(), tensor->GetViewOffset());
-    CHECK_RET(view != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(view != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     tensor = view;
     return ACLNN_SUCCESS;
 }
@@ -557,19 +563,46 @@ aclnnStatus PreProcess(
     aclOpExecutor *executor)
 {
     SetInputOriginalShape(params);
-    CHECK_RET(DataContiguousIfNeeded(params.query, queryNeedsContiguous, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguousIfNeeded(params.key, keyNeedsContiguous, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguousIfNeeded(params.value, valueNeedsContiguous, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.gate, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.cuSeqlensOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.ssmStateIndicesOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(DataContiguous(params.numAcceptedTokensOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    if (!(DataContiguousIfNeeded(params.query, queryNeedsContiguous, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguousIfNeeded(params.key, keyNeedsContiguous, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguousIfNeeded(params.value, valueNeedsContiguous, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.gate, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.cuSeqlensOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.ssmStateIndicesOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.numAcceptedTokensOptional, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "numAcceptedTokens", "num_accepted_tokens requires ssm_state_indices");
@@ -651,13 +684,22 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
                   ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     if (queryUsesDirectView) {
-        CHECK_RET(CreateViewIfNonContiguous(params.query, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+        if (!(CreateViewIfNonContiguous(params.query, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     if (keyUsesDirectView) {
-        CHECK_RET(CreateViewIfNonContiguous(params.key, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+        if (!(CreateViewIfNonContiguous(params.key, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     if (valueUsesDirectView) {
-        CHECK_RET(CreateViewIfNonContiguous(params.value, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+        if (!(CreateViewIfNonContiguous(params.value, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     aclTensor *initialStateForKernel = params.initialStateRef;
@@ -668,7 +710,10 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
             initialStateForKernel->GetStorageShape(),
             initialStateForKernel->GetViewStrides(),
             initialStateForKernel->GetViewOffset());
-        CHECK_RET(initialStateForKernel != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(initialStateForKernel != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     const aclTensor *finalStateForKernel = params.finalState;
     if (!IsContiguous(finalStateForKernel)) {
@@ -678,7 +723,10 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
             finalStateForKernel->GetStorageShape(),
             finalStateForKernel->GetViewStrides(),
             finalStateForKernel->GetViewOffset());
-        CHECK_RET(finalStateForKernel != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(finalStateForKernel != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     auto result = l0op::RecurrentKda(
@@ -689,12 +737,16 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         params.useGateInKernel, params.useBetaSigmoidInKernel, params.allowNegEigval,
         params.safeGate, params.lowerBound, params.stateVFirst, params.attnOut,
         finalStateForKernel, executorPtr);
-    CHECK_RET(result[0] != nullptr && result[1] != nullptr && result[2] != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(result[0] != nullptr && result[1] != nullptr && result[2] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (params.inplaceFinalState && params.outputFinalState &&
         !SameTensorView(params.finalState, params.initialStateRef)) {
-        CHECK_RET(l0op::ViewCopy(result[1], params.finalState, executorPtr) != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(l0op::ViewCopy(result[1], params.finalState, executorPtr) != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

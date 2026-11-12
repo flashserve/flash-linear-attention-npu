@@ -536,7 +536,10 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -619,12 +622,15 @@ static aclnnStatus MakeA2PrepareCompute(const ChunkGatedDeltaRuleFwdPrepareParam
     compute.qHatOptional = shadow(params.qHatOptional); compute.kHatOptional = shadow(params.kHatOptional);
     compute.qRstdOptional = shadow(params.qRstdOptional); compute.kRstdOptional = shadow(params.kRstdOptional);
     compute.betaEffOptional = shadow(params.betaEffOptional);
-    CHECK_RET(compute.q && compute.k && compute.v && compute.g && compute.beta &&
+    if (!(compute.q && compute.k && compute.v && compute.g && compute.beta &&
                   compute.gOut && compute.wOut && compute.uOut && compute.aOut &&
                   (!params.aLogOptional || compute.aLogOptional) && (!params.dtBiasOptional || compute.dtBiasOptional) &&
                   (!params.qHatOptional || (compute.qHatOptional && compute.kHatOptional &&
                                             compute.qRstdOptional && compute.kRstdOptional)) &&
-                  (!params.betaEffOptional || compute.betaEffOptional), ACLNN_ERR_INNER_NULLPTR);
+                  (!params.betaEffOptional || compute.betaEffOptional))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -634,7 +640,10 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
         return ACLNN_SUCCESS;
     }
     auto copied = l0op::ViewCopy(src, dst, executor);
-    CHECK_RET(copied != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(copied != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -700,7 +709,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     const bool a2 = IsA2PrepareSoc();
     auto compute = params;
     if (a2) {
-        CHECK_RET(MakeA2PrepareCompute(params, compute, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+        if (!(MakeA2PrepareCompute(params, compute, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     auto result = l0op::ChunkGatedDeltaRuleFwdPrepare(
         compute.q, compute.k, compute.v, compute.g, compute.beta, compute.aLogOptional, compute.dtBiasOptional,
@@ -714,17 +726,44 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
 
-    CHECK_RET(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[1], params.wOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[2], params.uOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    if (!a2 || params.outputA) {
-        CHECK_RET(ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    if (!(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
-    CHECK_RET(ViewCopyIfPresent(result[4], params.qHatOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[5], params.kHatOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[6], params.qRstdOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[7], params.kRstdOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopyIfPresent(result[8], params.betaEffOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+    if (!(ViewCopyIfPresent(result[1], params.wOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ViewCopyIfPresent(result[2], params.uOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!a2 || params.outputA) {
+        if (!(ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    }
+    if (!(ViewCopyIfPresent(result[4], params.qHatOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ViewCopyIfPresent(result[5], params.kHatOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ViewCopyIfPresent(result[6], params.qRstdOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ViewCopyIfPresent(result[7], params.kRstdOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ViewCopyIfPresent(result[8], params.betaEffOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -735,8 +774,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepare(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleFwdPrepare);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in ChunkGatedDeltaRuleFwdPrepare launch aicore.");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "This is an error in ChunkGatedDeltaRuleFwdPrepare launch aicore.", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 

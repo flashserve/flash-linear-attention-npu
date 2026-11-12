@@ -56,7 +56,10 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
  {
      tensor = l0op::Contiguous(tensor, executor);
-     CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+     if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
      return ACLNN_SUCCESS;
  }
  
@@ -103,7 +106,10 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
      CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
-     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+     if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
  
      *workspaceSize = uniqueExecutor->GetWorkspaceSize();
      uniqueExecutor.ReleaseTo(executor);
@@ -113,8 +119,10 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  aclnnStatus aclnnSolveTri(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
  {
      L2_DFX_PHASE_2(aclnnSolveTri);
-     CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-                "SolveTri launch failed.");
+     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "SolveTri launch failed.", __func__);
+        return ACLNN_ERR_INNER;
+    }
      return ACLNN_SUCCESS;
  }
  

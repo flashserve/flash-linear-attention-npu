@@ -437,7 +437,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
     }
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get(), ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (!(uniqueExecutor.get())) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto *ex = uniqueExecutor.get();
     NormalizeOriginalShapes({q, k, v, beta, betaEffOptional, gk, aqk, akk, wOptional, qgOptional,
         kgOptional, vNewOptional, hOptional, dO, rawGOptional, aLogOptional,
@@ -448,18 +451,27 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     };
     // Recompute and Finalize share one head-major beta input.
     const auto *betaHead = useBetaSigmoidInKernel ? betaEffOptional : SwapHeadToken(beta, packed, ex);
-    CHECK_RET(betaHead, ACLNN_ERR_INNER_NULLPTR);
+    if (!(betaHead)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     const aclTensor *aLog = aLogOptional;
     const aclTensor *dtBias = dtBiasOptional;
     if (!dtBias) {
         const std::vector<float> zeros(static_cast<size_t>(H * 128), 0.0f);
         const auto *flat = ex->ConvertToTensor(zeros.data(), zeros.size(), DataType::DT_FLOAT);
-        CHECK_RET(flat, ACLNN_ERR_INNER_NULLPTR);
+        if (!(flat)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         dtBias = l0op::Reshape(flat, MakeShape({H,128}), ex);
     } else {
         dtBias = l0op::Reshape(dtBias, MakeShape({H,128}), ex);
     }
-    CHECK_RET(dtBias, ACLNN_ERR_INNER_NULLPTR);
+    if (!(dtBias)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     const aclTensor *w = wOptional, *qg = qgOptional, *kg = kgOptional;
     const aclTensor *vNew = vNewOptional, *h = hOptional;
     if (!disableRecompute) {
@@ -467,7 +479,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         const auto *rawRecompute = rawGOptional;
         const auto *logRecompute = aLog;
         const auto *biasRecompute = dtBias;
-        CHECK_RET(rawRecompute && logRecompute && biasRecompute, ACLNN_ERR_INNER_NULLPTR);
+        if (!(rawRecompute && logRecompute && biasRecompute)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         w = alloc(token, DataType::DT_BF16);
         qg = alloc(token, DataType::DT_BF16);
         kg = alloc(token, DataType::DT_BF16);
@@ -475,7 +490,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         h = alloc(state, DataType::DT_BF16);
         gk = alloc(token, DataType::DT_FLOAT);
         const auto *u = alloc(token, DataType::DT_BF16);
-        CHECK_RET(w && qg && kg && vNew && h && gk && u, ACLNN_ERR_INNER_NULLPTR);
+        if (!(w && qg && kg && vNew && h && gk && u)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         const auto result = l0op::ChunkKdaBwdRecompute(
             BatchView(q, packed, ex), BatchView(k, packed, ex), BatchView(v, packed, ex),
             BatchView(rawRecompute, packed, ex), BatchView(betaHead, packed, ex), BatchView(akk, packed, ex),
@@ -483,21 +501,30 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             useExp2, lowerBound, packed ? "NTD" : "BNSD", BatchView(w, packed, ex), BatchView(u, packed, ex),
             BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(gk, packed, ex), ex, layout, qRstdOptional != nullptr);
         for (const auto *value : result) {
-            CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
+            if (!(value)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         }
         const auto forward = l0op::ChunkFwdH(
             BatchView(kg, packed, ex), BatchView(w, packed, ex), BatchView(u, packed, ex),
             nullptr, BatchView(gk, packed, ex), nullptr, cuSeqlensOptional, chunkIndicesOptional,
             false, chunkSize, true, useExp2, stateVFirst,
             BatchView(h, packed, ex), BatchView(vNew, packed, ex), nullptr, ex);
-        CHECK_RET(forward[0] && forward[1], ACLNN_ERR_INNER_NULLPTR);
+        if (!(forward[0] && forward[1])) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     const auto *dAqk = alloc(matrix, DataType::DT_FLOAT);
     const auto *dvLocal = alloc(token, DataType::DT_BF16);
     const auto *dqRaw = alloc(token, DataType::DT_FLOAT);
     const auto *dh = alloc(state, DataType::DT_BF16);
     const auto *dvScan = alloc(token, DataType::DT_BF16);
-    CHECK_RET(dAqk && dvLocal && dqRaw && dh && dvScan, ACLNN_ERR_INNER_NULLPTR);
+    if (!(dAqk && dvLocal && dqRaw && dh && dvScan)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     // A5 Prepare's existing varlen kernel uses rank-3 NTD. Drop only the
     // leading B=1 view dimension for 4D varlen callers; no data is moved.
     auto prepareView = [&](const aclTensor *tensor) -> const aclTensor * {
@@ -512,14 +539,20 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     if (T == H) {
         // Square shapes cannot distinguish token-major from head-major.
         dOInput = SwapHeadToken(dO, packed, ex);
-        CHECK_RET(dOInput != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(dOInput != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     const auto prepare = l0op::ChunkKdaBwdPrepare(
         prepareView(aqk), prepareView(vNew), prepareView(dOInput), prepareView(h),
         cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
         prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex);
     for (const auto *value : prepare) {
-        CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
+        if (!(value)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     const auto scan = l0op::ChunkGatedDeltaRuleBwdDhu(
         BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(w, packed, ex),
@@ -527,16 +560,24 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         BatchView(gk, packed, ex), nullptr, nullptr, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
         BatchView(dvScan, packed, ex), ex);
-    CHECK_RET(scan[0] && scan[2], ACLNN_ERR_INNER_NULLPTR);
+    if (!(scan[0] && scan[2])) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     // Finalize converts original gate parameters on-chip.
     const auto *betaFinal = betaHead;
-    CHECK_RET(betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog),
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     // Finalize writes q/k/v gradients in layout and gate gradients token-major.
     const auto *dbFinal = dbOut;
     const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);
     const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
-    CHECK_RET(dbFinal && dA && dBias, ACLNN_ERR_INNER_NULLPTR);
+    if (!(dbFinal && dA && dBias)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     NormalizeOriginalShapes({q, k, v, gk, rawGOptional, betaFinal, aLog, dtBias,
         akk, vNew, h, dh, dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
         dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias});
@@ -548,10 +589,15 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         useBetaSigmoidInKernel, allowNegEigval, layout,
         dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias, ex, layout);
     for (const auto *value : finalize) {
-        CHECK_RET(value, ACLNN_ERR_INNER_NULLPTR);
+        if (!(value)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
-    CHECK_COND(!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex),
-               ACLNN_ERR_INNER_NULLPTR, "Unable to adapt KDA backward outputs.");
+    }
+    if (!(!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "Unable to adapt KDA backward outputs.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;

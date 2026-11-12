@@ -200,7 +200,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -875,9 +878,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         gHead = Transpose(params.g, {1, 0, 2}, executorPtr);
         betaHead = Transpose(params.beta, {1, 0}, executorPtr);
     }
-    CHECK_RET(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
-                  gHead != nullptr && betaHead != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
+                  gHead != nullptr && betaHead != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     if (info.isRank3) {
         qHead = AsRank4(qHead, MakeShape({1, info.hNum, info.seqlen, info.kDim}), executorPtr);
@@ -885,9 +890,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         vHead = AsRank4(vHead, MakeShape({1, info.hvNum, info.seqlen, info.vDim}), executorPtr);
         gHead = AsRank4(gHead, MakeShape({1, info.hvNum, info.seqlen, info.kDim}), executorPtr);
         betaHead = AsRank4(betaHead, MakeShape({1, info.hvNum, info.seqlen}), executorPtr);
-        CHECK_RET(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
-                      gHead != nullptr && betaHead != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
+                      gHead != nullptr && betaHead != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     const op::Shape gkShape4 = MakeShape({info.batch, info.hvNum, info.seqlen, info.kDim});
@@ -920,7 +927,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             executorPtr, splitStages ? gkShape4 : placeholderShape,
             DataType::DT_FLOAT);
     }
-    CHECK_RET(gkCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(gkCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const aclTensor *aqkCompute = params.aqkOut;
     const aclTensor *akkCompute = params.akkOut;
@@ -942,13 +952,15 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             hExport = AsRank4(hExport, hExportShape5, executorPtr);
         }
     }
-    CHECK_RET((params.wOut == nullptr || wExport != nullptr) &&
+    if (!((params.wOut == nullptr || wExport != nullptr) &&
                   (params.uOut == nullptr || uExport != nullptr) &&
                   (params.qgOut == nullptr || qgExport != nullptr) &&
                   (params.kgOut == nullptr || kgExport != nullptr) &&
                   (params.vNewOut == nullptr || vNewExport != nullptr) &&
-                  (params.hOut == nullptr || hExport != nullptr),
-              ACLNN_ERR_INNER_NULLPTR);
+                  (params.hOut == nullptr || hExport != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (aqkCompute == nullptr) {
         aqkCompute = AllocTensor(executorPtr, matrixShape4, params.q->GetDataType());
     }
@@ -978,27 +990,38 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *hCompute = AllocTensor(
         executorPtr, hExport == nullptr && !splitStages ? placeholderShape : hShape5,
         params.q->GetDataType());
-    CHECK_RET(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
+    if (!(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr &&
                   uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr &&
-                  vNewCompute != nullptr && hCompute != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+                  vNewCompute != nullptr && hCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const aclTensor *initialStateCompute = params.initialStateOptional;
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        CHECK_RET(initialStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(initialStateCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     const bool outputFinalState = params.finalStateOut != nullptr;
     const aclTensor *finalStateCompute = AllocTensor(
         executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
-    CHECK_RET(finalStateCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(finalStateCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const aclTensor *attnCompute = params.attnOut;
     if (info.isRank3) {
         attnCompute = AsRank4(
             params.attnOut, MakeShape({1, info.seqlen, info.hvNum, info.vDim}), executorPtr);
-        CHECK_RET(attnCompute != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(attnCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     const aclTensor *qgScaledCompute = AllocTensor(
@@ -1007,8 +1030,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *uSeedCompute = AllocTensor(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
-    CHECK_RET(qgScaledCompute != nullptr && uSeedCompute != nullptr,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(qgScaledCompute != nullptr && uSeedCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto launchStage = [&](int64_t stage) {
         return l0op::KdaChunkForward(
@@ -1029,13 +1054,19 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
              ++stage) {
             result = launchStage(stage);
             for (const aclTensor *tensor : result) {
-                CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+                if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
             }
         }
     } else {
         result = launchStage(KDA_STAGE_FULL);
         for (const aclTensor *tensor : result) {
-            CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         }
     }
 
@@ -1043,17 +1074,27 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *finalStateResult = result[1];
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            CHECK_RET(finalStateResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            if (!(finalStateResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         }
-        CHECK_RET(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     if (hExport != nullptr) {
         const aclTensor *hResult = params.stateVFirst
             ? TransposeLastTwo(result[10], executorPtr) : result[10];
-        CHECK_RET(hResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(hResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+        if (!(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
@@ -1065,8 +1106,10 @@ aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
                              aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkKdaFwd launch failed.");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "ChunkKdaFwd launch failed.", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -1197,8 +1240,10 @@ aclnnStatus aclnnChunkKdaFwdV2(void *workspace, uint64_t workspaceSize,
                                aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwdV2);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkKdaFwdV2 launch failed.");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "ChunkKdaFwdV2 launch failed.", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 

@@ -188,7 +188,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR, "Contiguous failed.");
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -219,10 +222,14 @@ aclnnStatus CheckZeroShape(const Params &params, uint64_t *workspaceSize)
 
 aclnnStatus ViewCopy(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
-    CHECK_COND(src != nullptr && dst != nullptr, ACLNN_ERR_INNER_NULLPTR,
-               "ViewCopy source and destination must not be nullptr.");
-    CHECK_COND(l0op::ViewCopy(src, dst, executor) != nullptr, ACLNN_ERR_INNER_NULLPTR,
-               "ViewCopy failed.");
+    if (!(src != nullptr && dst != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ViewCopy source and destination must not be nullptr.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(l0op::ViewCopy(src, dst, executor) != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ViewCopy failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -611,8 +618,10 @@ aclnnStatus MakeOutputContiguousArch22(const aclTensor *&tensor, aclOpExecutor *
 {
     if (tensor != nullptr && !IsContiguous(tensor)) {
         tensor = executor->AllocTensor(tensor->GetViewShape(), tensor->GetDataType(), Format::FORMAT_ND);
-        CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR,
-                   "allocating A2/A3 contiguous output failed.");
+        if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "allocating A2/A3 contiguous output failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     return ACLNN_SUCCESS;
 }
@@ -728,14 +737,18 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const aclTensor *betaHead = TransposeContiguous(betaCompute, {0, 2, 1}, executorPtr);
     const aclTensor *betaRawHead = TransposeContiguous(betaRawCompute, {0, 2, 1}, executorPtr);
 
-    CHECK_COND(qHead != nullptr && kHead != nullptr && vHead != nullptr && dOHead != nullptr &&
+    if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && dOHead != nullptr &&
                    gHead != nullptr && betaHead != nullptr &&
-                   (!params.useBetaSigmoidInKernel || betaRawHead != nullptr),
-               ACLNN_ERR_INNER_NULLPTR, "input layout conversion failed.");
+                   (!params.useBetaSigmoidInKernel || betaRawHead != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "input layout conversion failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (params.stateVFirst) {
         initialStateKv = TransposeContiguous(params.initialState, {0, 1, 3, 2}, executorPtr);
-        CHECK_COND(params.initialState == nullptr || initialStateKv != nullptr,
-                   ACLNN_ERR_INNER_NULLPTR, "state layout conversion failed.");
+        if (!(params.initialState == nullptr || initialStateKv != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "state layout conversion failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     const int64_t chunks = ChunkCount(params, info.tokens);
     const DataType dtype = qHead->GetDataType();
@@ -765,22 +778,32 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                                   : params.dvOut;
     const aclTensor *dBetaHead = executorPtr->AllocTensor(gateShape, gateType, Format::FORMAT_ND);
     const aclTensor *dGHead = executorPtr->AllocTensor(gateShape, gateType, Format::FORMAT_ND);
-    CHECK_COND(w != nullptr && u != nullptr && dvLocal != nullptr && h != nullptr &&
+    if (!(w != nullptr && u != nullptr && dvLocal != nullptr && h != nullptr &&
                    vNew != nullptr && dh != nullptr && dv2 != nullptr && dqHead != nullptr &&
-                   dkHead != nullptr && dvHead != nullptr && dBetaHead != nullptr && dGHead != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "allocating composite intermediate tensors failed.");
+                   dkHead != nullptr && dvHead != nullptr && dBetaHead != nullptr && dGHead != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "allocating composite intermediate tensors failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
 #if GDN_BWD_ENABLE_ARCH22
     if (IsDav2201Device()) {
-        CHECK_RET(MakeOutputContiguousArch22(dqHead, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(MakeOutputContiguousArch22(dkHead, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(MakeOutputContiguousArch22(dvHead, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(MakeOutputContiguousArch22(dqHead, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+        if (!(MakeOutputContiguousArch22(dkHead, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+        if (!(MakeOutputContiguousArch22(dvHead, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         // params 是本次调用的私有副本；仅 A2/A3 用连续 dh0 暂存。
-        CHECK_RET(MakeOutputContiguousArch22(params.dh0Out, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(MakeOutputContiguousArch22(params.dh0Out, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 #endif
     // A2/A3 直接复用融合算子 ChunkGdnBwdIntra：BF16/FP32 gate、use_exp2 与
@@ -789,25 +812,31 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
         params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
         params.useExp2, w, u, dvLocal, executorPtr);
-    CHECK_COND(intraResult[0] != nullptr && intraResult[1] != nullptr &&
-                   intraResult[2] != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "ChunkGdnBwdIntra composition failed.");
+    if (!(intraResult[0] != nullptr && intraResult[1] != nullptr &&
+                   intraResult[2] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ChunkGdnBwdIntra composition failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const auto fwdHResult = l0op::ChunkFwdH(
         kHead, w, u, gHead, nullptr, initialStateKv,
         params.cuSeqlens, params.chunkIndices, false, params.chunkSize, true,
         params.useExp2, false, h, vNew, nullptr, executorPtr);
-    CHECK_COND(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "ChunkFwdH composition failed.");
+    if (!(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ChunkFwdH composition failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const auto dhuResult = l0op::ChunkGatedDeltaRuleBwdDhu(
         qHead, kHead, w, dOHead, dvLocal, gHead, nullptr,
         params.initialState, params.dht, params.cuSeqlens, params.chunkIndices,
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst, dh, params.dh0Out,
         dv2, executorPtr);
-    CHECK_COND(dhuResult[0] != nullptr && dhuResult[1] != nullptr &&
-                   dhuResult[2] != nullptr,
-               ACLNN_ERR_INNER_NULLPTR, "ChunkGatedDeltaRuleBwdDhu composition failed.");
+    if (!(dhuResult[0] != nullptr && dhuResult[1] != nullptr &&
+                   dhuResult[2] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ChunkGatedDeltaRuleBwdDhu composition failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     const auto finalizeResult = l0op::ChunkGatedDeltaRuleBwdFinalize(
         qHead, kHead, vHead, vNew, dOHead, dv2, gHead, betaHead, h, dh,
@@ -817,33 +846,49 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         params.useGateInKernel, false, params.useExp2,
         dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr);
     for (const aclTensor *tensor : finalizeResult) {
-        CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR,
-                   "ChunkGatedDeltaRuleBwdFinalize composition failed.");
+        if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ChunkGatedDeltaRuleBwdFinalize composition failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 
     if (info.sequenceMajor) {
         const aclTensor *dqSequence = TransposeContiguous(dqHead, {0, 2, 1, 3}, executorPtr);
         const aclTensor *dkSequence = TransposeContiguous(dkHead, {0, 2, 1, 3}, executorPtr);
         const aclTensor *dvSequence = TransposeContiguous(dvHead, {0, 2, 1, 3}, executorPtr);
-        CHECK_RET(ViewCopy(dqSequence, params.dqOut, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(ViewCopy(dkSequence, params.dkOut, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
-        CHECK_RET(ViewCopy(dvSequence, params.dvOut, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(ViewCopy(dqSequence, params.dqOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+        if (!(ViewCopy(dkSequence, params.dkOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+        if (!(ViewCopy(dvSequence, params.dvOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 #if GDN_BWD_ENABLE_ARCH22
     if (IsDav2201Device()) {
         if (!info.sequenceMajor) {
-            CHECK_RET(CopyOutputArch22(dqHead, params.dqOut, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(CopyOutputArch22(dkHead, params.dkOut, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
-            CHECK_RET(CopyOutputArch22(dvHead, params.dvOut, executorPtr) == ACLNN_SUCCESS,
-                      ACLNN_ERR_INNER_NULLPTR);
+            if (!(CopyOutputArch22(dqHead, params.dqOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+            if (!(CopyOutputArch22(dkHead, params.dkOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+            if (!(CopyOutputArch22(dvHead, params.dvOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
         }
-        CHECK_RET(CopyOutputArch22(params.dh0Out, dh0OutOptional, executorPtr) == ACLNN_SUCCESS,
-                  ACLNN_ERR_INNER_NULLPTR);
+        if (!(CopyOutputArch22(params.dh0Out, dh0OutOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
 #endif
     const aclTensor *dBetaSequence = TransposeContiguous(dBetaHead, {0, 2, 1}, executorPtr);
@@ -854,10 +899,14 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     if (dGSequence != nullptr && dGSequence->GetDataType() != params.dGOut->GetDataType()) {
         dGSequence = l0op::Cast(dGSequence, params.dGOut->GetDataType(), executorPtr);
     }
-    CHECK_RET(ViewCopy(dBetaSequence, params.dBetaOut, executorPtr) == ACLNN_SUCCESS,
-              ACLNN_ERR_INNER_NULLPTR);
-    CHECK_RET(ViewCopy(dGSequence, params.dGOut, executorPtr) == ACLNN_SUCCESS,
-              ACLNN_ERR_INNER_NULLPTR);
+    if (!(ViewCopy(dBetaSequence, params.dBetaOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ViewCopy(dGSequence, params.dGOut, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
@@ -868,7 +917,9 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwd(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwd);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkGatedDeltaRuleBwd launch failed.");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "ChunkGatedDeltaRuleBwd launch failed.", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }

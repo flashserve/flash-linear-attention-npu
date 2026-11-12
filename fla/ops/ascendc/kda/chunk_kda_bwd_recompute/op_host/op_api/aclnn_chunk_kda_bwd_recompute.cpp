@@ -48,7 +48,10 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -118,7 +121,10 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     const aclTensor *gkBuffer = params.gkOutOptional;
     if (gkBuffer == nullptr) {
         gkBuffer = executorPtr->AllocTensor(params.g->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
-        CHECK_COND(gkBuffer != nullptr, ACLNN_ERR_INNER_NULLPTR, "Unable to allocate internal gk output.");
+        if (!(gkBuffer != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "Unable to allocate internal gk output.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     auto outputs = l0op::ChunkKdaBwdRecompute(
         params.q, params.k, params.v, params.g, params.beta, params.a, params.aLogOptional,
@@ -126,7 +132,10 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         useGateInKernel, params.useExp2, params.lowerBound, params.inputLayout,
         params.wOut, params.uOut, params.qgOut,
         params.kgOut, gkBuffer, executorPtr);
-    CHECK_COND(outputs[0] != nullptr, ACLNN_ERR_INNER_NULLPTR, "ChunkKdaBwdRecompute launch failed.");
+    if (!(outputs[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ChunkKdaBwdRecompute launch failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
