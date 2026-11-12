@@ -12,6 +12,7 @@
  * \brief
  */
 
+#include "op_common/log/log.h"
 #include "chunk_fwd_o_tiling.h"
 #include "chunk_fwd_o_tiling_processor.h"
 #include "../op_kernel/chunk_fwd_o_tiling_key.h"
@@ -20,6 +21,8 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkFwdO";
 
 static void ChunkFwdOTilingDataPrint(gert::TilingContext *context, const ChunkFwdOTilingData &tiling)
 {
@@ -78,7 +81,8 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     const bool stateVFirst = stateVFirstPtr != nullptr ? *stateVFirstPtr : false;
     const char *outputLayout = attrPtr->GetStr(CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX);
     OP_CHECK_IF(useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(), "use_exp2=true is supported only on A5."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "use_exp2", "true", "use_exp2=true is supported only on A5"),
                 return ge::GRAPH_FAILED);
 
     ChunkFwdOTilingContext ctx{
