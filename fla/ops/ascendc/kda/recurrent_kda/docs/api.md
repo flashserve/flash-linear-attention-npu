@@ -200,9 +200,9 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 
 对于 BSND 输入，当 `B>1` 时，Q/K/V 各自的 stride 要求如下：
 
-- **A5，传入 `cu_seqlens`**：按 batch 顺序把 `B*T` 个 token 看成一个 token 轴，再按 `cu_seqlens` 划分序列，序列可以跨过batch边界。为了防止跨 batch 时访问错误的位置，要求 `batchStride == T * tokenStride`。
-- **A5，未传入 `cu_seqlens`**：每个 batch 单独作为一条序列，不要求 `batchStride == T * tokenStride`。
-- **A2/A3**：无论是否传入 `cu_seqlens`，均要求 `batchStride == T * tokenStride`。
+- A5，传入 `cu_seqlens`：按 batch 顺序把 `B*T` 个 token 看成一个 token 轴，再按 `cu_seqlens` 划分序列，序列可以跨过batch边界。为了防止跨 batch 时访问错误的位置，要求 `batchStride == T * tokenStride`。
+- A5，未传入 `cu_seqlens`：每个 batch 单独作为一条序列，不要求 `batchStride == T * tokenStride`。
+- A2/A3：无论是否传入 `cu_seqlens`，均要求 `batchStride == T * tokenStride`。
 
 ## 6. legacy `torch.ops.npu` 通路
 
