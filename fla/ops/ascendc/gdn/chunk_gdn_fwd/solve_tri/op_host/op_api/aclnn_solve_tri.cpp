@@ -2,7 +2,9 @@
  * Copyright (c) 2025 Tianjin University, Ltd.
  * BSD 3-Clause License.
  */
- #include "aclnn_solve_tri.h"
+ #include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
+#include "aclnn_solve_tri.h"
  #include <new>
  
  #include "aclnn_kernels/contiguous.h"
@@ -17,6 +19,8 @@
  #include "opdev/tensor_view_utils.h"
  
  using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnSolveTri";
  
  #ifdef __cplusplus
  extern "C" {
@@ -32,8 +36,14 @@
  
  static aclnnStatus CheckNotNull(SolveTriParams params)
  {
-     CHECK_COND(params.x != nullptr, ACLNN_ERR_PARAM_NULLPTR, "x must not be nullptr.");
-     CHECK_COND(params.xOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "xOut must not be nullptr.");
+     if (params.x == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "x", "x must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+     if (params.xOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "xOut", "xOut must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
      return ACLNN_SUCCESS;
  }
  
