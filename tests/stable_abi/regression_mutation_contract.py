@@ -3,6 +3,9 @@
 用法（221 或 241，wheel 已 pip install --target envXXX）：
     PYTHONPATH=/path/envXXX python tests/stable_abi/regression_mutation_contract.py
 
+RecurrentGDN 的 Python 入口仅转发参数并更新版本，不执行输入校验；
+下列 requires_grad 检查仅针对 RecurrentKDA。
+
 覆盖 `MUTATED_ARGUMENTS` 里的原地更新算子。重构把 `inspect.signature().bind`
 从热路径挪走（`MUTATION_FLAGS` 声明式 flag），正确性由三件事保证：
 
@@ -71,22 +74,6 @@ def scenario_recurrent_gdr():
     gdr_public(query, key, value, state=state, **kw)
     torch.npu.synchronize()
     check_bump("recurrent_gdr(state keyword)", state, before, 1)
-    # 3) requires_grad 的 state 必须被拒（两条路径都拒）。
-    grad_state = state.clone().detach().requires_grad_(True)
-    for label, call in (
-        ("positional", lambda: gdr_public(query, key, value, grad_state, **kw)),
-        ("keyword", lambda: gdr_public(query, key, value, state=grad_state,
-                                       **kw)),
-    ):
-        try:
-            call()
-        except RuntimeError as exc:
-            assert "must not require gradients" in str(exc), str(exc)
-            print(f"PASS recurrent_gdr(requires_grad rejected, {label})")
-        else:
-            raise AssertionError(
-                f"recurrent_gdr({label}): requires_grad state was accepted")
-
 
 def kda_inputs():
     B, T, H, HV, K, V = 2, 2, 2, 4, 128, 128

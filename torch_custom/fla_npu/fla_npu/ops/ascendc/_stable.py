@@ -8,6 +8,8 @@ The mutation contract (version bump / requires_grad rejection) is *not*
 provided by the dispatcher for these ops -- measured in Phase 1 -- so the
 dispatch layer applies ``_wrap_mutable_direct_op`` unless a hot wrapper
 already enforces the contract in its own frame.
+RecurrentGDN delegates validation to the native operator and only bumps the
+State version after a successful call.
 """
 
 from __future__ import annotations
@@ -599,19 +601,6 @@ def npu_recurrent_gated_delta_rule(
     Fusion flags select arithmetic only; disabling them never selects the
     historical kernel. The two ACLNN host ABIs share arch22 on A2/A3.
     """
-    if gk is not None:
-        raise ValueError("gk is reserved; only scalar gate g is supported.")
-    from ._recurrent_gdn import validate_recurrent_gdn
-
-    scale = validate_recurrent_gdn(query, key, value, state, beta=beta, scale=scale,
-        actual_seq_lengths=actual_seq_lengths, ssm_state_indices=ssm_state_indices,
-        num_accepted_tokens=num_accepted_tokens, g=g, gk=gk, A_log=A_log,
-        dt_bias=dt_bias, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-        use_gate_in_kernel=use_gate_in_kernel,
-        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-        allow_neg_eigval=allow_neg_eigval)
-    if state.requires_grad:
-        _refuse_grad_state("npu_recurrent_gated_delta_rule", state)
     result = _op("npu_recurrent_gated_delta_rule")(
         query, key, value, state, beta, actual_seq_lengths, ssm_state_indices,
         num_accepted_tokens, g, gk, A_log, dt_bias, scale,

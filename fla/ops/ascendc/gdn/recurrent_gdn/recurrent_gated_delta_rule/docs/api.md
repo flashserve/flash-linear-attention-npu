@@ -43,6 +43,11 @@ bank 流水实现。A5 编译不启用 `--cce-auto-sync=on`，跨 MTE2/Vector/MT
 
 ## 校验与异常
 
-Python 层在修改 State 前校验 dtype、shape、stride、元数据值和所有权。
-host 侧校验 dtype、shape、view 边界、参数组合，tiling 再校验平台及资源。
-非法输入返回参数错误并报告参数名与原因；缺少必要指针返回空指针错误。
+Python 层仅转发参数、获取当前 stream，并在调用成功后更新 State 版本；不执行输入校验，
+也不回读设备上的 metadata。
+C++ Stable-ABI 适配层在创建 ACL 描述符和分配输出前，检查所有已提供的 tensor 均位于
+NPU 且与 query 同设备；设备不匹配时抛出包含参数名及设备信息的异常。
+host 侧校验 dtype、shape、stride、view 边界、内存别名和参数组合，tiling 再校验平台及资源。
+metadata 的实际值由调用方保证符合上述约束，包括长度及其总和、索引范围、accepted 范围和
+跨请求 State 槽所有权；这些内容不在 Python 调用路径中同步校验。
+host 检出的非法输入返回参数错误并报告参数名与原因；缺少必要指针返回空指针错误。
