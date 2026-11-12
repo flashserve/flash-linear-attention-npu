@@ -99,26 +99,24 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     }
     const char *socName = aclrtGetSocName();
     if (socName == nullptr || std::strstr(socName, "Ascend950") == nullptr) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "soc", socName == nullptr ? "nullptr" : socName,
-                                 "Ascend910B, Ascend910C or Ascend950");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "soc", socName == nullptr ? "nullptr" : socName, "Ascend910B, Ascend910C or Ascend950");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #endif
 
     if (chunkSize != 64) {
         const std::string actual = std::to_string(chunkSize);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "chunkSize", actual.c_str(), "64");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", actual.c_str(), "64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "useGateInKernel", "true", "false");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "useGateInKernel", "true", "false");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
         const char *actual = cuSeqlensOptional == nullptr ? "cuSeqlens absent; chunkIndices present" :
             "cuSeqlens present; chunkIndices absent";
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual,
-                                 "both present or both absent");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual, "both present or both absent");
         return ACLNN_ERR_PARAM_INVALID;
     }
 

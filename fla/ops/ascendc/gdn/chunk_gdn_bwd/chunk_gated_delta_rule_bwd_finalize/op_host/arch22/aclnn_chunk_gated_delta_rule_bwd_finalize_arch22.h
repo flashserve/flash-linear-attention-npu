@@ -50,7 +50,7 @@ aclnnStatus CheckInputShape(const aclTensor *tensor, const std::string &paramete
     if (!GDN::FinalizeHostArch22::HasShape(tensor->GetViewShape(), expected)) {
         const std::string actualValue = parameter + "=" + ShapeString(tensor->GetViewShape());
         const std::string expectedValue = GDN::FinalizeHostArch22::DimensionsString(expected);
-        OP_LOGE_WITH_INVALID_INPUT_SHAPE(OP_NAME, inputIndex, actualValue.c_str(), expectedValue.c_str());
+        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, parameter.c_str(), actualValue.c_str(), expectedValue.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -89,28 +89,27 @@ aclnnStatus GetWorkspaceSize(
     if (!SameShape(q, k)) {
         const std::string actualValue = "k.shape=" + ShapeString(k->GetViewShape());
         const std::string expectedValue = "q.shape=" + ShapeString(q->GetViewShape());
-        OP_LOGE_WITH_INVALID_INPUT_SHAPE(OP_NAME, 1, actualValue.c_str(), expectedValue.c_str());
+        OP_LOGE_FOR_INVALID_SHAPE(OP_NAME, "k", actualValue.c_str(), expectedValue.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (chunkSize != 64 && chunkSize != 128) {
         const std::string actualValue = std::to_string(chunkSize);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "chunkSize", actualValue.c_str(), "64 or 128 on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", actualValue.c_str(), "64 or 128 on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!std::isfinite(scale) || !std::isfinite(static_cast<float>(scale))) {
         const std::string actualValue = std::to_string(scale);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "scale", actualValue.c_str(), "finite after conversion to FP32");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "scale", actualValue.c_str(), "finite after conversion to FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "useGateInKernel", "true", "false on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "useGateInKernel", "true", "false on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
         const std::string actualValue = std::string(cuSeqlensOptional == nullptr ? "absent/" : "present/") +
             (chunkIndicesOptional == nullptr ? "absent" : "present");
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional",
-                                 actualValue.c_str(), "both present or both absent");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actualValue.c_str(), "both present or both absent");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
@@ -120,7 +119,7 @@ aclnnStatus GetWorkspaceSize(
         if (requiredInputs[index]->GetViewShape().GetDimNum() != requiredRanks[index]) {
             const std::string actualValue = std::to_string(requiredInputs[index]->GetViewShape().GetDimNum());
             const std::string expectedValue = std::to_string(requiredRanks[index]);
-            OP_LOGE_WITH_INVALID_INPUT_SHAPESIZE(OP_NAME, index, actualValue.c_str(), expectedValue.c_str());
+            OP_LOGE_FOR_INVALID_SHAPESIZE(OP_NAME, requiredNames[index], actualValue.c_str(), expectedValue.c_str());
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -128,7 +127,7 @@ aclnnStatus GetWorkspaceSize(
     const int64_t tokens = qShape.GetDim(2);
     if (tokens <= 0 || tokens > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
         const std::string actualValue = std::to_string(tokens);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q.T", actualValue.c_str(), "1 <= T <= UINT32_MAX on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.T", actualValue.c_str(), "1 <= T <= UINT32_MAX on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t batch = qShape.GetDim(0);
@@ -138,28 +137,28 @@ aclnnStatus GetWorkspaceSize(
     const int64_t valueDim = v->GetViewShape().GetDim(3);
     if (batch <= 0 || keyHeads <= 0 || valueHeads <= 0) {
         const std::string actualValue = GDN::FinalizeHostArch22::DimensionsString({batch, keyHeads, valueHeads});
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "B/HK/HV", actualValue.c_str(), "all dimensions > 0");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HK/HV", actualValue.c_str(), "all dimensions > 0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t maxScheduleDimension = static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
     if (batch > maxScheduleDimension || keyHeads > maxScheduleDimension || valueHeads > maxScheduleDimension) {
         const std::string actualValue = GDN::FinalizeHostArch22::DimensionsString({batch, keyHeads, valueHeads});
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "B/HK/HV", actualValue.c_str(), "each dimension <= UINT32_MAX on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HK/HV", actualValue.c_str(), "each dimension <= UINT32_MAX on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (keyDim != 128) {
         const std::string actualValue = std::to_string(keyDim);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q.K", actualValue.c_str(), "128 on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.K", actualValue.c_str(), "128 on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (valueDim != 128 && valueDim != 256) {
         const std::string actualValue = std::to_string(valueDim);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "v.V", actualValue.c_str(), "128 or 256 on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "v.V", actualValue.c_str(), "128 or 256 on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (valueHeads % keyHeads != 0) {
         const std::string actualValue = "HV=" + std::to_string(valueHeads) + ", HK=" + std::to_string(keyHeads);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "v.HV/q.HK", actualValue.c_str(), "HV % HK == 0 with positive heads");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "v.HV/q.HK", actualValue.c_str(), "HV % HK == 0 with positive heads");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (cuSeqlensOptional == nullptr) {
@@ -167,14 +166,13 @@ aclnnStatus GetWorkspaceSize(
         if (!GDN::FinalizeHostArch22::ChunkEndFitsUint32(lastStart, static_cast<uint64_t>(chunkSize))) {
             const std::string actualValue = "T=" + std::to_string(tokens) +
                 ", last chunk start=" + std::to_string(lastStart) + ", chunkSize=" + std::to_string(chunkSize);
-            OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q.T/chunkSize", actualValue.c_str(),
-                                     "last chunk start + chunkSize <= UINT32_MAX on A2/A3");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.T/chunkSize", actualValue.c_str(), "last chunk start + chunkSize <= UINT32_MAX on A2/A3");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
         if (qShape.GetDim(0) != 1) {
             const std::string actualValue = std::to_string(qShape.GetDim(0));
-            OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q.B", actualValue.c_str(), "1 in varlen mode");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.B", actualValue.c_str(), "1 in varlen mode");
             return ACLNN_ERR_PARAM_INVALID;
         }
         GDN::FinalizeHostArch22::MetadataError error;
@@ -183,7 +181,7 @@ aclnnStatus GetWorkspaceSize(
             const std::string actualValue = error.actual;
             const std::string expectedValue = error.expected;
             const std::string parameterName = error.parameter;
-            OP_LOGE_WITH_INVALID_ATTR(OP_NAME, parameterName.c_str(), actualValue.c_str(), expectedValue.c_str());
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, parameterName.c_str(), actualValue.c_str(), expectedValue.c_str());
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -212,7 +210,7 @@ aclnnStatus GetWorkspaceSize(
         tokens / chunkSize + (tokens % chunkSize != 0) : static_cast<int64_t>(chunkIndicesOptional->Size() / 2);
     if (chunkIndicesOptional == nullptr && batch > maxScheduleDimension / stateChunks) {
         const std::string actualValue = "B=" + std::to_string(batch) + ", NT=" + std::to_string(stateChunks);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "totalChunkNum", actualValue.c_str(), "B * NT <= UINT32_MAX on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "totalChunkNum", actualValue.c_str(), "B * NT <= UINT32_MAX on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t stateDim3 = stateVFirst ? valueDim : keyDim;
@@ -232,27 +230,26 @@ aclnnStatus GetWorkspaceSize(
         if (mainInputs[index]->GetDataType() != DataType::DT_BF16) {
             const std::string actualValue = std::to_string(static_cast<int>(mainInputs[index]->GetDataType()));
             const std::string parameterName = std::string(mainInputNames[index]) + ".dtype";
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, parameterName.c_str(), actualValue.c_str(), "BF16");
+            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, parameterName.c_str(), actualValue.c_str(), "BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     const auto gateType = g->GetDataType();
     if (gateType != DataType::DT_BF16 && gateType != DataType::DT_FLOAT) {
         const std::string actualValue = std::to_string(static_cast<int>(gateType));
-        OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, "g.dtype", actualValue.c_str(), "BF16 or FP32");
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "g.dtype", actualValue.c_str(), "BF16 or FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (beta->GetDataType() != gateType) {
         const std::string actualValue = std::to_string(static_cast<int>(beta->GetDataType()));
         const std::string expectedValue = "g.dtype=" + std::to_string(static_cast<int>(gateType));
-        OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, "beta.dtype", actualValue.c_str(), expectedValue.c_str());
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta.dtype", actualValue.c_str(), expectedValue.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useQkL2NormInKernel && (qRstdOptional == nullptr || kRstdOptional == nullptr)) {
         const std::string actualValue = std::string(qRstdOptional == nullptr ? "absent/" : "present/") +
             (kRstdOptional == nullptr ? "absent" : "present");
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "qRstdOptional/kRstdOptional",
-                                 actualValue.c_str(), "both present when useQkL2NormInKernel=true");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "qRstdOptional/kRstdOptional", actualValue.c_str(), "both present when useQkL2NormInKernel=true");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclTensor *rstdInputs[] = {qRstdOptional, kRstdOptional};
@@ -261,18 +258,18 @@ aclnnStatus GetWorkspaceSize(
         if (rstdInputs[index] != nullptr && rstdInputs[index]->GetDataType() != DataType::DT_FLOAT) {
             const std::string actualValue = std::to_string(static_cast<int>(rstdInputs[index]->GetDataType()));
             const std::string parameterName = std::string(rstdNames[index]) + ".dtype";
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, parameterName.c_str(), actualValue.c_str(), "FP32");
+            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, parameterName.c_str(), actualValue.c_str(), "FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (useBetaSigmoidInKernel && betaRawOptional == nullptr) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "betaRawOptional", "absent", "present when useBetaSigmoidInKernel=true");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "betaRawOptional", "absent", "present when useBetaSigmoidInKernel=true");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (betaRawOptional != nullptr && betaRawOptional->GetDataType() != beta->GetDataType()) {
         const std::string actualValue = std::to_string(static_cast<int>(betaRawOptional->GetDataType()));
         const std::string expectedValue = "beta.dtype=" + std::to_string(static_cast<int>(beta->GetDataType()));
-        OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, "betaRawOptional.dtype", actualValue.c_str(), expectedValue.c_str());
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "betaRawOptional.dtype", actualValue.c_str(), expectedValue.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -303,8 +300,7 @@ aclnnStatus GetWorkspaceSize(
         if (!IsContiguous(outputs[index])) {
             const std::string actualValue = "false, shape=" + ShapeString(outputs[index]->GetViewShape());
             const std::string parameterName = std::string(outputNames[index]) + ".contiguous";
-            OP_LOGE_WITH_INVALID_ATTR(OP_NAME, parameterName.c_str(), actualValue.c_str(),
-                                     "true for direct A2/A3 kernel output writes");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, parameterName.c_str(), actualValue.c_str(), "true for direct A2/A3 kernel output writes");
             return ACLNN_ERR_PARAM_INVALID;
         }
         const auto storageFormat = outputs[index]->GetStorageFormat();
@@ -313,15 +309,14 @@ aclnnStatus GetWorkspaceSize(
             const std::string actualValue = std::to_string(static_cast<int>(storageFormat)) + "/" +
                 std::to_string(static_cast<int>(viewFormat));
             const std::string parameterName = std::string(outputNames[index]) + ".storageFormat/viewFormat";
-            OP_LOGE_WITH_INVALID_INPUT_FORMAT(OP_NAME, parameterName.c_str(), actualValue.c_str(),
-                                             "dense ND/NCHW/NCDHW/NCL");
+            OP_LOGE_FOR_INVALID_FORMAT(OP_NAME, parameterName.c_str(), actualValue.c_str(), "dense ND/NCHW/NCDHW/NCL");
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!SameShape(inputs[index], outputs[index])) {
             const std::string actualValue = ShapeString(outputs[index]->GetViewShape());
             const std::string expectedValue = "differentiated input shape=" + ShapeString(inputs[index]->GetViewShape());
             const std::string parameterName = std::string(outputNames[index]) + ".shape";
-            OP_LOGE_WITH_INVALID_ATTR(OP_NAME, parameterName.c_str(), actualValue.c_str(), expectedValue.c_str());
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, parameterName.c_str(), actualValue.c_str(), expectedValue.c_str());
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (inputs[index]->GetDataType() != outputs[index]->GetDataType()) {
@@ -329,7 +324,7 @@ aclnnStatus GetWorkspaceSize(
             const std::string expectedValue = "differentiated input dtype=" +
                 std::to_string(static_cast<int>(inputs[index]->GetDataType()));
             const std::string parameterName = std::string(outputNames[index]) + ".dtype";
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, parameterName.c_str(), actualValue.c_str(), expectedValue.c_str());
+            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, parameterName.c_str(), actualValue.c_str(), expectedValue.c_str());
             return ACLNN_ERR_PARAM_INVALID;
         }
     }

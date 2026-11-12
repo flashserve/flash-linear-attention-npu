@@ -31,8 +31,7 @@ inline bool Type(const aclTensor *t, std::initializer_list<op::DataType> allowed
                  const char *name, const char *expected, const char *entity)
 {
     if (!t || std::find(allowed.begin(), allowed.end(), t->GetDataType()) != allowed.end()) return true;
-    OP_LOGE_WITH_INVALID_INPUT_DTYPE(entity, name,
-        ge::TypeUtils::DataTypeToSerialString(t->GetDataType()), expected);
+    OP_LOGE_FOR_INVALID_DTYPE(entity, name, ge::TypeUtils::DataTypeToSerialString(t->GetDataType()), expected);
     return false;
 }
 
@@ -188,7 +187,7 @@ inline bool Check(const Params &p)
     for (const auto &input : tensors) {
         if (!Type(input.second,input.allowed,input.first,input.expected,entity)) return false;
         if (input.second && input.second->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
-            OP_LOGE_WITH_INVALID_INPUT_FORMAT(entity,input.first,"FRACTAL_NZ","any format except FRACTAL_NZ");
+            OP_LOGE_FOR_INVALID_FORMAT(entity, input.first, "FRACTAL_NZ", "any format except FRACTAL_NZ");
             return false;
         }
         if (!input.second || input.rank == 0) continue;

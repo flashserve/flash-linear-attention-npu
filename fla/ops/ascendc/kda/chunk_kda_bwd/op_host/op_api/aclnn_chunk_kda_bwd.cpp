@@ -283,6 +283,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                    ACLNN_ERR_PARAM_INVALID, "Recompute requires the six saved caches to be absent.");
     }
     auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     CHECK_RET(uniqueExecutor.get(), ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto *ex = uniqueExecutor.get();
     NormalizeOriginalShapes({q, k, v, beta, betaEffOptional, gk, aqk, akk, wOptional, qgOptional,
@@ -451,8 +452,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                "canonical dense q/h ranks are 4/5 and varlen ranks are 3/4.");
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr,
-              ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto *executorPtr = uniqueExecutor.get();
 
     const aclTensor *cuTensor =

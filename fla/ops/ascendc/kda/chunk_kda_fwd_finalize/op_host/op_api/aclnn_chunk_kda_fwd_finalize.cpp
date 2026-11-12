@@ -297,8 +297,7 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
         DFX_OUT(attnOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr,
-              ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     FinalizeParams params{qgScaled, aqk, vNew, h, cuSeqlensOptional,
                           chunkIndicesOptional, outputLayout, stateVFirst,
                           attnOut};

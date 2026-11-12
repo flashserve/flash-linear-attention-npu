@@ -178,8 +178,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
     for (const auto &rule : required) {
         const auto dtype = context_->GetInputDesc(rule.index)->GetDataType();
         if (dtype != rule.first && dtype != rule.second) {
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(context_->GetNodeName(),rule.name,
-                ge::TypeUtils::DataTypeToSerialString(dtype),rule.expected);
+            OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), rule.name, ge::TypeUtils::DataTypeToSerialString(dtype), rule.expected);
             return ge::GRAPH_FAILED;
         }
     }
@@ -194,8 +193,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
         if (!HasOptionalTensor(context_,rule.index)) continue;
         const auto dtype = context_->GetOptionalInputDesc(rule.index)->GetDataType();
         if (dtype != rule.first && dtype != rule.second) {
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(context_->GetNodeName(),rule.name,
-                ge::TypeUtils::DataTypeToSerialString(dtype),rule.expected);
+            OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), rule.name, ge::TypeUtils::DataTypeToSerialString(dtype), rule.expected);
             return ge::GRAPH_FAILED;
         }
         if (rule.index == G_INDEX) tilingData_.gDtype = dtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
@@ -276,7 +274,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
 bool RecurrentGatedDeltaRuleTiling::CheckFormat(ge::Format format, const std::string &Desc)
 {
     if (format == ge::FORMAT_FRACTAL_NZ) {
-        OP_LOGE_WITH_INVALID_INPUT_FORMAT(context_->GetNodeName(),Desc,ge::TypeUtils::FormatToSerialString(format),"any format except FRACTAL_NZ");
+        OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), Desc, ge::TypeUtils::FormatToSerialString(format), "any format except FRACTAL_NZ");
         return false;
     }
     return true;

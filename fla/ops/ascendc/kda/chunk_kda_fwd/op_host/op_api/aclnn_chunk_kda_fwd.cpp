@@ -33,6 +33,8 @@
 
 using namespace op;
 
+static constexpr const char *OP_NAME = "aclnnChunkKdaFwd";
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -204,8 +206,11 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 
 static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
 {
-    CHECK_COND(layout != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "layout must be uppercase and one of BSND, BNSD, TND or NTD.");
+    if (layout == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout",
+                                                 "layout is required and must be one of BSND, BNSD, TND or NTD");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (std::strcmp(layout, "BSND") == 0) {
         parsed = KdaFwdLayout::BSND;
     } else if (std::strcmp(layout, "BNSD") == 0) {
@@ -215,8 +220,9 @@ static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
     } else if (std::strcmp(layout, "NTD") == 0) {
         parsed = KdaFwdLayout::NTD;
     } else {
-        CHECK_COND(false, ACLNN_ERR_PARAM_INVALID,
-                   "layout must be uppercase and one of BSND, BNSD, TND or NTD.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "layout", layout,
+                                              "layout must be one of BSND, BNSD, TND or NTD");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
 }
@@ -226,15 +232,30 @@ aclnnStatus CheckCuSeqlens(const aclIntArray *cuSeqlens, int64_t seqlen)
     if (cuSeqlens == nullptr) {
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(cuSeqlens->Size() >= 2, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional must contain at least [0, total_tokens].");
-    CHECK_COND((*cuSeqlens)[0] == 0, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional[0] must be 0.");
-    CHECK_COND((*cuSeqlens)[cuSeqlens->Size() - 1] == seqlen, ACLNN_ERR_PARAM_INVALID,
-               "cuSeqlensOptional last element must equal the sequence length.");
+    if (cuSeqlens->Size() < 2) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "cuSeqlensOptional",
+                                     std::to_string(cuSeqlens->Size()), ">= 2");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*cuSeqlens)[0] != 0) {
+        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "cuSeqlensOptional[0]",
+                                  std::to_string((*cuSeqlens)[0]), "0");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if ((*cuSeqlens)[cuSeqlens->Size() - 1] != seqlen) {
+        OP_LOGE_FOR_INVALID_VALUE(OP_NAME, "cuSeqlensOptional[last]",
+                                  std::to_string((*cuSeqlens)[cuSeqlens->Size() - 1]),
+                                  std::to_string(seqlen));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
-        CHECK_COND((*cuSeqlens)[idx] <= (*cuSeqlens)[idx + 1], ACLNN_ERR_PARAM_INVALID,
-                   "cuSeqlensOptional must be nondecreasing.");
+        if ((*cuSeqlens)[idx] > (*cuSeqlens)[idx + 1]) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                OP_NAME, "cuSeqlensOptional[idx],cuSeqlensOptional[idx+1]",
+                std::to_string((*cuSeqlens)[idx]) + "," + std::to_string((*cuSeqlens)[idx + 1]),
+                "cuSeqlensOptional must be nondecreasing");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -257,11 +278,17 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
     if (chunkIndices == nullptr) {
         return ACLNN_SUCCESS;
     }
-    CHECK_COND(cuSeqlens != nullptr, ACLNN_ERR_PARAM_INVALID,
-               "chunkIndicesOptional requires cuSeqlensOptional.");
-    CHECK_COND(chunkIndices->Size() == static_cast<size_t>(totalChunks) * 2,
-               ACLNN_ERR_PARAM_INVALID,
-               "chunkIndicesOptional must contain exactly one (seq_id, chunk_id) pair per chunk.");
+    if (cuSeqlens == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "chunkIndicesOptional",
+                                                 "cuSeqlensOptional is required when chunkIndicesOptional is given");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (chunkIndices->Size() != static_cast<size_t>(totalChunks) * 2) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "chunkIndicesOptional",
+                                     std::to_string(chunkIndices->Size()),
+                                     std::to_string(static_cast<size_t>(totalChunks) * 2));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     size_t offset = 0;
     for (size_t seq = 0; seq + 1 < cuSeqlens->Size(); ++seq) {
         const int64_t length = (*cuSeqlens)[seq + 1] - (*cuSeqlens)[seq];
@@ -282,13 +309,25 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
     info.isRank3 = layout == KdaFwdLayout::TND || layout == KdaFwdLayout::NTD;
     const size_t tensorRank = info.isRank3 ? 3 : 4;
     const size_t betaRank = info.isRank3 ? 2 : 3;
-    CHECK_COND(Rank(params.q) == tensorRank && Rank(params.k) == tensorRank &&
-                   Rank(params.v) == tensorRank && Rank(params.g) == tensorRank &&
-                   Rank(params.beta) == betaRank,
-               ACLNN_ERR_PARAM_INVALID,
-               "q/k/v/g and beta ranks must match layout: rank3/rank2 for TND/NTD, rank4/rank3 for BSND/BNSD.");
-    CHECK_COND(SameShape(params.q, params.k), ACLNN_ERR_PARAM_INVALID,
-               "q and k must have identical shape.");
+    if (!(Rank(params.q) == tensorRank && Rank(params.k) == tensorRank &&
+          Rank(params.v) == tensorRank && Rank(params.g) == tensorRank &&
+          Rank(params.beta) == betaRank)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "q,k,v,g,beta",
+            "q=" + std::to_string(Rank(params.q)) + ",k=" + std::to_string(Rank(params.k)) +
+                ",v=" + std::to_string(Rank(params.v)) + ",g=" + std::to_string(Rank(params.g)) +
+                ",beta=" + std::to_string(Rank(params.beta)),
+            "ranks must match layout: rank3/rank2 for TND/NTD, rank4/rank3 for BSND/BNSD");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!SameShape(params.q, params.k)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "q,k",
+            "q=" + std::string(op::ToString(params.q->GetViewShape()).GetString()) +
+                ",k=" + std::string(op::ToString(params.k->GetViewShape()).GetString()),
+            "q and k must have identical shape");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (layout == KdaFwdLayout::TND) {
         info.batch = 1;
@@ -347,26 +386,56 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
 aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
 {
     const DataType dataType = params.q->GetDataType();
-    CHECK_COND((dataType == DataType::DT_FLOAT16 || dataType == DataType::DT_BF16) &&
-                   params.k->GetDataType() == dataType && params.v->GetDataType() == dataType,
-               ACLNN_ERR_PARAM_INVALID, "q, k and v must use the same float16 or bfloat16 dtype.");
+    if (!((dataType == DataType::DT_FLOAT16 || dataType == DataType::DT_BF16) &&
+          params.k->GetDataType() == dataType && params.v->GetDataType() == dataType)) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            OP_NAME, "q,k,v",
+            "q=" + ge::TypeUtils::DataTypeToSerialString(dataType) +
+                ",k=" + ge::TypeUtils::DataTypeToSerialString(params.k->GetDataType()) +
+                ",v=" + ge::TypeUtils::DataTypeToSerialString(params.v->GetDataType()),
+            "q, k and v must use the same float16 or bfloat16 dtype");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const DataType gateType = params.g->GetDataType();
-    CHECK_COND(gateType == DataType::DT_FLOAT || gateType == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "g must be float32 or bfloat16.");
+    if (gateType != DataType::DT_FLOAT && gateType != DataType::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "g",
+                                              ge::TypeUtils::DataTypeToSerialString(gateType),
+                                              "g must be float32 or bfloat16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const DataType betaType = params.beta->GetDataType();
-    CHECK_COND(betaType == DataType::DT_FLOAT || betaType == DataType::DT_BF16,
-               ACLNN_ERR_PARAM_INVALID, "beta must be float32 or bfloat16.");
+    if (betaType != DataType::DT_FLOAT && betaType != DataType::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "beta",
+                                              ge::TypeUtils::DataTypeToSerialString(betaType),
+                                              "beta must be float32 or bfloat16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.aLogOptional != nullptr) {
-        CHECK_COND(params.aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must be float32.");
+        if (params.aLogOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "aLogOptional",
+                ge::TypeUtils::DataTypeToSerialString(params.aLogOptional->GetDataType()),
+                "aLogOptional must be float32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND(params.dtBiasOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "dtBiasOptional must be float32.");
+        if (params.dtBiasOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "dtBiasOptional",
+                ge::TypeUtils::DataTypeToSerialString(params.dtBiasOptional->GetDataType()),
+                "dtBiasOptional must be float32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.initialStateOptional != nullptr) {
-        CHECK_COND(params.initialStateOptional->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "initialStateOptional must be float32.");
+        if (params.initialStateOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "initialStateOptional",
+                ge::TypeUtils::DataTypeToSerialString(params.initialStateOptional->GetDataType()),
+                "initialStateOptional must be float32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -379,8 +448,12 @@ aclnnStatus CheckStateShape(const aclTensor *state, const char *name, const KdaS
     const bool valid = stateVFirst
                            ? HasShape(state, {info.seqNum, info.hvNum, info.vDim, info.kDim})
                            : HasShape(state, {info.seqNum, info.hvNum, info.kDim, info.vDim});
-    CHECK_COND(valid, ACLNN_ERR_PARAM_INVALID,
-               "%s must be [N,HV,K,V] when stateVFirst=false and [N,HV,V,K] otherwise.", name);
+    if (!valid) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, name, std::string(op::ToString(state->GetViewShape()).GetString()),
+            "state must be [N,HV,K,V] when stateVFirst=false and [N,HV,V,K] otherwise");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 

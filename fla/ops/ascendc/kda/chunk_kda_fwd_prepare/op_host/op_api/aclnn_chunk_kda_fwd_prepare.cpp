@@ -770,8 +770,7 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
                 betaEffOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr,
-              ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     aclOpExecutor *executorPtr = uniqueExecutor.get();
 
     aclnnStatus status = CheckParams(params);

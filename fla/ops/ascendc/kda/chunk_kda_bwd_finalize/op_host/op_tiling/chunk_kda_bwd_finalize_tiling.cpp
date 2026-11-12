@@ -178,8 +178,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     const bool mixed = modelLayout && modelLayout[0];
     const bool modelTm = mixed && (std::strcmp(modelLayout,"BSND") == 0 || std::strcmp(modelLayout,"TND") == 0);
     if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) {
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "model_layout", modelLayout,
-                                  "BSND/BNSD/TND/NTD, or empty for standalone Finalize");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "model_layout", modelLayout, "BSND/BNSD/TND/NTD, or empty for standalone Finalize");
         return ge::GRAPH_FAILED;
     }
     ChunkKdaBwdFinalizeTilingContext ctx{
