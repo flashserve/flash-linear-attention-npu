@@ -321,6 +321,18 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     // BD=16 且 numBlksD==1（即 D==16）时，i_d 方向本来就只有 1 个块，chunk 并行度与普通路径
     // 完全一致（T<=64 时两条路径都只产生 1 个 chunk、1 个核）；不存在上面担心的“快路径 BT 过大
     // 反而压掉 chunk 并行度”的问题，因此可以无 i_d 切分直接启用快路径。
+    // activation 侧的 W 门控：NONE 变体直接读 dy、无额外物化，W∈[1,8] 均快于普通路径。
+    // SILU/SWISH 变体需要先把 dy/y 读进来算 silu'(y) 并把 dyAct(fp32) 物化回 UB，dx/dw 再按 fp32
+    // 读回，这份额外 UB 往返只在 i_d 方向并行度不足或已铺满时才被快路径的并行收益覆盖。
+    // 100 例 A/B 实测的盈亏边界按 i_d 方向块数 numBlksD 划分：
+    //   numBlksD ∈ [8,32]（D=512~2048，BD=64）：快路径比普通路径慢 9%~36%，退回普通路径；
+    //   numBlksD <= 4（D<=256）：D 方向并行度本来就低，快路径低时延更优，仍启用；
+    //   useIdSplit（D>=8192，i_d 已铺满，BD=16）：快路径仍快 4%~30%，仍启用；
+    //   W == 4：维持基线的快路径行为。
+    bool arch35WOk = (W >= 1 && W <= ARCH35_DIRECT_W_MAX);
+    if (activation != ACTIVATION_NONE) {
+        arch35WOk = arch35WOk && (W == 4 || numBlksD <= 4 || useIdSplit);
+    }
     bool useArch35DirectFast = isAscend950 &&
                                ((isB16Input && (BD == 64 ||
                                                 (BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))))) ||
@@ -328,7 +340,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                                (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH ||
                                 activation == ACTIVATION_NONE) &&
                                !useInitialState && !useFinalState &&
-                               W >= 1 && W <= ARCH35_DIRECT_W_MAX;
+                               arch35WOk;
     bool use910BDirectFast = isAscend910B && isB16Input &&
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
@@ -484,16 +496,31 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     // chunk × i_d 二维切分：把 numBlksD 个 i_d 与 numChunks 个 chunk 一起铺到 AIV 核上
-    // （blockNum = numBlksD * numChunks），每个核只处理 1 个 i_d 的 1 个 chunk 组，
-    // 消除「每核串行遍历全部 i_d」的固定开销（每 i_d 的 CopyInWeight/Duplicate/partial 回写/栅栏）。
-    // 小 shape 下该固定开销是主瓶颈：B2T63D80W2 的 aiv_scalar+mte2 合计 ~12us，与 vec 近似串行。
-    // 仅当全部 (i_d, chunk) 工作单元数严格小于 AIV 核数时启用：恰好在等于核数（=coreNum）的边界
-    // 配置上（如 B8·T256·D32·W2 ⇒ numBlksD=2、numChunks=32、乘积=64）1D 路径本就用满 chunk 维
-    // 并行度，2D 再把 partial 写回/归约规模按 numBlksD 放大，反而相对原始基线回归（单算子 TD
-    // 实测 -4.4%/-6.1%）；严格小于可排除该边界，同时保留小 shape（乘积远小于核数）的收益。
-    bool use2DSplit = isAscend950 && !useIdSplit && !useArch35DirectFast &&
-                      numBlksD >= 2 && numChunks >= 1 &&
-                      static_cast<uint64_t>(numBlksD) * numChunks < coreNum;
+    // （blockNum = numBlksD * splitG，核 c 处理 i_d = c / splitG、chunk 组 = c % splitG），
+    // 每个核只负责 1 个 i_d 的若干 chunk，消除「每核串行遍历全部 i_d」的固定开销
+    // （每 i_d 的 CopyInWeight/Duplicate/partial 回写/栅栏，小 shape 下与 vec 近似串行）。
+    // 两种启用场景：
+    //   a) 全部 (i_d, chunk) 工作单元数严格小于 AIV 核数：每核恰好 1 个单元（splitG = numChunks）。
+    //      严格小于可排除 product == coreNum 的边界（如 B8·T256·D32·W2 ⇒ numBlksD=2、numChunks=32、
+    //      乘积=64）：该边界上 1D 本就用满 chunk 维并行度，2D 再把 partial 回写/归约规模按 numBlksD
+    //      放大反而回归（单算子 TD 实测 -4.4%/-6.1%）。
+    //   b) 1D 的 chunk 数不足以铺满核（numChunks < coreNum），但 i_d 维能把核补满：
+    //     此时 1D 只起用 min(coreNum, numChunks) 个核（实测 B1·T1024·D1024·W3 的 SILU 用例
+    //     blockNum 仅 16、vec_ratio 仅 0.61），2D 取 splitG = min(numChunks, coreNum / numBlksD)，
+    //     把 blockNum 抬到 numBlksD * splitG，是 D>=512 大 shape（T<=2048）唯一可用的并行度来源。
+    //     下限 numBlksD >= 4 用于规避 i_d 维过短时 2D 归约开销反超收益（a 中已记录的边界形态）。
+    const bool twoDByUnit = static_cast<uint64_t>(numBlksD) * numChunks < coreNum;
+    uint32_t splitG = 0;
+    bool use2DSplit = false;
+    if (isAscend950 && !useIdSplit && !useArch35DirectFast && numBlksD >= 2 && numChunks >= 1) {
+        if (twoDByUnit) {
+            splitG = numChunks; // 每核恰好 1 个 (i_d, chunk) 单元，沿用历史行为
+            use2DSplit = true;
+        } else if (numBlksD >= 4 && numChunks < coreNum) {
+            splitG = std::min(numChunks, coreNum / numBlksD);
+            use2DSplit = (splitG >= 2); // splitG<2 时 2D 无额外并行度，退回 1D
+        }
+    }
 
     uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
@@ -546,7 +573,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t tailChunk = 0;
     uint32_t totalChunks = numChunks;
     uint32_t mainCoreNum = useIdSplit ? coreNum
-                          : (use2DSplit ? (numBlksD * numChunks)
+                          : (use2DSplit ? (numBlksD * splitG)
                                         : std::min(coreNum, totalChunks));
     if (useIdSplit || use2DSplit) {
         chunkPerCore = 0;
