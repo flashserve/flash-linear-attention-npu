@@ -26,7 +26,7 @@ Shape 符号统一引用 [KDA 模型符号表](../../README.md#model-shape-symbo
 | `g` | 必选 | `BSND=[B,T,H_v,K]` 或 `TND=[T,H_v,K]` | FP32/BF16/FP16 | BSND/TND | 预计算 step log gate 或 raw gate |
 | `beta` | 必选 | `BSND=[B,T,H_v]` 或 `TND=[T,H_v]` | FP32/BF16/FP16 | BSND/TND | delta 更新系数 |
 | `initial_state` | 必选 | V-first `[state_capacity,H_v,V,K]` 或 K-first `[state_capacity,H_v,K,V]` | FP32/BF16 | ND | 初始状态池；原位和非原位模式均须显式传入非 `None` 张量 |
-| `cu_seqlens` | 可选 | `[seq_num+1]` | INT32/INT64 | ND | 提供时，按 `cu_seqlens` 划分序列；为空时 BSND 按 batch 行划分，TND 视为一条序列 |
+| `cu_seqlens` | 可选 | `[seq_num+1]` | INT32/INT64 | ND | 提供时使用 fla-org 累积 offset；为空时 BSND 按 batch 行划分，TND 视为一条序列 |
 | `ssm_state_indices` | 可选 | packed `[>=T]` 或 speculative `[seq_num,max_step]` | INT32/INT64 | ND | 每个 token 对应的 state pool 槽索引 |
 | `A_log` | 条件必选 | `[H_v]` | FP32 | ND | `use_gate_in_kernel=True` 时必选 |
 | `dt_bias` | 可选 | `[H_v*K]` 或 `[H_v,K]` | FP32 | ND | raw gate 偏置 |
@@ -198,12 +198,6 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理地址或 tiling data 中的 Q/K/V/state stride 解释 GM 地址；非连续直调必须使用
 与实际 view shape、stride 和首地址匹配的 host tiling 结果。
 
-对于 BSND 输入，当 `B>1` 时，Q/K/V 各自的 stride 要求如下：
-
-- 传入 `cu_seqlens`：按 batch 顺序把 `B*T` 个 token 看成一个 token 轴，再按 `cu_seqlens` 划分序列，序列可以跨过 batch 边界。
-- 未传入 `cu_seqlens`：每个 batch 单独作为一条序列。
-- A2/A3/A5 均要求 `batchStride == T * tokenStride`。公开 Python/aclnn 入口先将可连续化的 batch-gap view 连续化；`<<<>>>` 直调须由调用方准备满足该条件的输入。
-
 ## 6. legacy `torch.ops.npu` 通路
 
 `torch.ops.npu.npu_recurrent_kda` 不属于当前支持范围，也不提供兼容性保证。请使用
@@ -216,8 +210,7 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 - Python/aclnn 入口支持符合 stride 约束的非连续 Q/K/V 与 `initial_state`。
 - Q/K/V 直接访问要求 feature stride=1、head/token 区间不重叠、stride 为正；BSND `B>1` 时
   `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride、batch-gap view 由 ACLNN
-  回退连续化。A2/A3/A5 使用相同的 token-major 校验：`tokenStride >= (headCount-1)*headStride + featureCount`。
-  feature 连续且 token/head 步长为正、均不小于 featureCount 时，不满足该条件的 view（包括 head-major view）返回参数错误。
+  回退连续化；token/head 置换或正 stride 重叠 descriptor 返回参数错误。
 - 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
 - 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。
