@@ -12,6 +12,7 @@
  * \brief
  */
 
+#include "op_common/log/log.h"
 #include "chunk_gated_delta_rule_fwd_h_tiling.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
@@ -19,6 +20,8 @@
 #include "chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdH";
 
 // Maps a ge::DataType to the {fp16:0, bf16:1, fp32:2} convention shared with the kernel.
 static int64_t GdnFwdHDtypeToEnum(ge::DataType dtype)
@@ -89,7 +92,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
     OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
-                OP_LOGE(context->GetNodeName(), "Either g or gk must be provided."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "g,gk", "either g or gk must be provided"),
                 return ge::GRAPH_FAILED);
     auto gateTensor = useGk ? gkTensor : gTensor;
 
@@ -130,16 +134,18 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 ||
         logicalVHeads <= 0 || logicalKDim <= 0 || logicalVDim <= 0 ||
         tilingCtx.vNumHead % tilingCtx.kNumHead != 0) {
-        OP_LOGE(context->GetNodeName(),
-                "Check logical shape failed: batch=%ld, seqlen=%ld, kDim=%ld, vDim=%ld; "
-                "vNumHead (%ld) must be divisible by kNumHead (%ld).",
-                logicalBatch, logicalSeqlen, logicalKDim, logicalVDim,
-                tilingCtx.vNumHead, tilingCtx.kNumHead);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "batch,seqlen,kDim,vDim,vNumHead,kNumHead",
+            std::to_string(logicalBatch) + "," + std::to_string(logicalSeqlen) + "," +
+                std::to_string(logicalKDim) + "," + std::to_string(logicalVDim) + "," +
+                std::to_string(tilingCtx.vNumHead) + "," + std::to_string(tilingCtx.kNumHead),
+            "logical dims must be positive and vNumHead must be divisible by kNumHead");
         return ge::GRAPH_FAILED;
     }
     if (tilingCtx.vHeadDim > V_DIM_256) {
-        OP_LOGE(context->GetNodeName(), "Check u shape failed, vHeadDim should be <= %ld, but get %ld.",
-                V_DIM_256, tilingCtx.vHeadDim);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "vHeadDim", std::to_string(tilingCtx.vHeadDim),
+            "vHeadDim must be <= " + std::to_string(V_DIM_256));
         return ge::GRAPH_FAILED;
     }
 
