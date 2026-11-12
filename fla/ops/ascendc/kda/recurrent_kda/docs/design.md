@@ -116,3 +116,10 @@ State、gate、beta 的 dtype 由算子 DataTypeList 对应的编译配置提供
 | mode 声明与 host 选择 | [recurrent_kda_tiling_key.h](../op_kernel/recurrent_kda_tiling_key.h)、[recurrent_kda_tiling.cpp](../op_host/recurrent_kda_tiling.cpp) |
 | 入口模板、dtype 与 Engine 实例化 | [recurrent_kda.cpp](../op_kernel/recurrent_kda.cpp) |
 | VF、State 搬运、元数据及同步 | [arch35/recurrent_kda.h](../op_kernel/arch35/recurrent_kda.h) |
+
+## 历史实验记录
+
+R1「状态写回合并」曾在旧 arch35 实现上，把逐 token 的 state 写回合并为末 token / 槽切换处写回，
+单 case 实测 kernel 1.10x（未达 1.20x）。PR #1096 的 class-based engine 已等价实现无 indices
+场景的末 token 写回；有 indices 场景的逐 token 写回属于 API 契约，不适用该合并规则。该实验
+不再作为待合入的代码变更，数据与边界验证记录见 [validation.md](validation.md)。
