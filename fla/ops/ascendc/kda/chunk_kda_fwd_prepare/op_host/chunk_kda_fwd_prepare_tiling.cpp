@@ -572,8 +572,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     case NpuArch::DAV_9201: // A6
         useLegacyTilingKey = true;
         workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES;
-        // A6 每 workgroup 只 3 个在途 head；kernel 侧 kArch92SlotCount=3。
-        slotsPerWorkgroup = 3;
+        slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_ARCH92_SLOTS_PER_WORKGROUP;
         break;
     default:
         OP_LOGE(context->GetNodeName(),
@@ -589,8 +588,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
             static_cast<uint64_t>(shape.batch),
             static_cast<uint64_t>(shape.seqLen),
             static_cast<uint64_t>(shape.qkHeadNum),
-            static_cast<uint64_t>(shape.valueHeadNum), totalChunks,
-            /*arch35=*/false, isVarLen, shape.sequenceMajor,
+            static_cast<uint64_t>(shape.valueHeadNum), totalChunks, false,
+            isVarLen, shape.sequenceMajor,
             betaDesc->GetDataType() == ge::DT_BF16,
             *useNormPtr, *useBetaPtr && !*allowNegPtr, !*useGatePtr,
             *useExp2Ptr, outputMode == CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE});

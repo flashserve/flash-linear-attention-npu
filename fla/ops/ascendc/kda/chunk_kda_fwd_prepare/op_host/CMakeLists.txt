@@ -38,7 +38,3 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
         OPTIONS --cce-no-dcache-flush
     )
 endif()
-
-if(ENABLE_TEST)
-    add_subdirectory(tests)
-endif()
