@@ -237,7 +237,8 @@ A5/A2≥0.5，case1/case3 分别为 0.4884/0.4937，整体性能目标尚未全�
 |198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|10463.28|9862.06|5.75%|
 |199|TND变长，T=16384，16×1024，HK=16，HV=128，G=8|15158.63|14270.13|5.86%|
 
-优化后使用同一ATK标杆再次完成精度20/20、确定性3/3。精度报告位于
-`/data/yqw/validation/prepare_gva/perf_opt_round2_accuracy20_ok`，确定性报告位于
-`/data/yqw/validation/prepare_gva/perf_opt_round2_determinism`。按要求未重新采集msprof；
+PR代码提交 `cc1a65966c3a1455f4dff90defdedc76d5267271` 使用同一ATK标杆再次完成
+精度20/20、确定性3/3。精度报告位于
+`/data/yqw/validation/prepare_gva/pr1168_cc1a659_accuracy20`，确定性报告位于
+`/data/yqw/validation/prepare_gva/pr1168_cc1a659_determinism`。按要求未重新采集msprof；
 NPU Event结果仅作为同窗口优化回归数据。
