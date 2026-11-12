@@ -6,7 +6,7 @@
 
 - 日期：2026-11-11；Ascend 950DT，CANN 9.2.1，driver 26.2.0.b020。
 - Python 3.12.16，torch 2.15.0+cpu，torch_npu 2.15.0+gitUnknown。
-- 被测实现：PR #923 合并主线后的 `38c195bf`；后续提交只增加测试和文档。
+- 被测实现：PR #923 合并主线后的 `38c195bf`；后续提交仅调整诊断文档和复现方式，不改变算子实现。
 - 主线基准：`238a8ec002c45fe65ef956b17ed7c014153c1f42`。
 - A/B 基线安装：`54ae09b1243cd851d986c2624a57bbb5ee63dc27` 构建的完整 A5 包。
   已核对该基线的 A5 finalize Cube、Vector、common 和 tiling struct 与上述主线一致。
@@ -34,13 +34,12 @@ GDN adapter 均与主线相同，未在本 PR 中修改。
 
 ## 精度与回归
 
-可直接执行仓内的两个回归脚本：
-
-```bash
-python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/check_gate_precision.py --device cpu
-python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/check_gate_precision.py --device npu
-python tests/atk/chunk_gated_delta_rule_bwd_finalize/scripts/repro_gate_zero_state.py
-```
+完整前后向的最简复现命令及修复前后原始输出见
+[PR #923 描述](https://github.com/flashserve/flash-linear-attention-npu/pull/923)，直接复制执行即可。
+复现脚本不作为源码文件提交；下表保留已执行的开发诊断结果。
+2026-11-12 在同一设备的基线和候选独立环境中重新执行 PR 描述里的同一条命令：
+基线 `max(abs(dg))=0.000498967245221138`，返回码 1；
+修复后 `dg=[0.0,0.0,0.0,0.0]`，返回码 0。原始标准输出附在 PR 描述中。
 
 | 检查 | 基线 | 修复后 |
 | --- | --- | --- |
