@@ -1,7 +1,6 @@
   (no options)                      Incrementally install this run package into the active Python wheel; preserve base operators
   --install                         Same incremental installation as no options (no --overlay option is required)
-  --full                            Replace the base wheel OPP directly; scoped packages may make other operators unavailable
-                                    Lists package operators, support status, and scoped aclnn ABI changes
+  --full                            Same incremental installation as --install; does not overwrite the base wheel
   --cann                            Install into the CANN OPP layout (ASCEND_CUSTOM_OPP_PATH / ASCEND_OPP_PATH)
   --install-path                    Install operator package to specific dir path (CANN layout)
   --install-for-all                 Allow other users to use the operator package

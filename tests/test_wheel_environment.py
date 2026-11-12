@@ -1158,9 +1158,8 @@ source {set_env!s}
                 checker["_manifest_from_directory"](package_dir),
             )
 
-    def test_both_run_package_installers_finalize_wheel_overlay(self) -> None:
+    def test_builtin_run_installer_keeps_legacy_finalizer(self) -> None:
         installers = (
-            REPO_ROOT / "cmake" / "scripts" / "custom" / "install.sh",
             REPO_ROOT
             / "scripts"
             / "package"
@@ -1497,7 +1496,6 @@ class DefaultRunInstallTest(unittest.TestCase):
         self.script = self.stage / "install.sh"
         self.script.write_text(installer.read_text(encoding="utf-8").replace(
             "vendor_name=customize", "vendor_name=fla_npu_transformer"))
-        (self.stage / "finalize_wheel_opp.py").write_text("# full-path fixture: no distribution metadata\n")
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
         (bin_dir / "python").symlink_to(sys.executable)
@@ -1510,7 +1508,7 @@ class DefaultRunInstallTest(unittest.TestCase):
                               env=self.env, capture_output=True, text=True, timeout=30)
 
     def test_no_options_and_install_delegate_without_touching_base(self):
-        for args in ((), ("--install",), ("--quiet",), ("--full", "--install")):
+        for args in ((), ("--install",), ("--quiet",), ("--full", "--install"), ("--install", "--full")):
             with self.subTest(args=args):
                 result = self.run_installer(*args)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -1531,11 +1529,15 @@ class DefaultRunInstallTest(unittest.TestCase):
         self.assertIn("the base was not overwritten", result.stdout)
         self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
 
-    def test_explicit_full_retains_legacy_base_replacement(self):
+    def test_explicit_full_is_incremental_and_keeps_base(self):
         result = self.run_installer("--full")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.log.exists())
-        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"new scoped library")
+        self.assertEqual(json.loads(self.log.read_text()), ["--overlay", "--source", str(self.source)])
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+        self.env["RUN_MANAGER_EXIT"] = "42"
+        result = self.run_installer("--full")
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
 
 
 if __name__ == "__main__":
