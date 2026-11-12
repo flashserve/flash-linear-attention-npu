@@ -17,8 +17,6 @@
 #include "opdev/tensor_view_utils.h"
 
 #if GDN_FINALIZE_ENABLE_ARCH22
-#include <cstring>
-
 #include "../arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_arch22.h"
 #endif
 #include "op_common/log/log.h"
@@ -98,9 +96,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
             useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
             dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor);
     }
-    const char *socName = aclrtGetSocName();
-    if (socName == nullptr || std::strstr(socName, "Ascend950") == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "soc", socName == nullptr ? "nullptr" : socName, "Ascend910B, Ascend910C or Ascend950");
+    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (npuArch != NpuArch::DAV_3510) {
+        const std::string actual = std::to_string(static_cast<int32_t>(npuArch));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "npuArch", actual.c_str(), "DAV_2201 or DAV_3510");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #endif

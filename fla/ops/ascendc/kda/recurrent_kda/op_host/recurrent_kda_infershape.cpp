@@ -15,7 +15,7 @@
 #include "exe_graph/runtime/shape.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "register/op_impl_registry.h"
-#include "log/log.h"
+#include "op_common/log/log.h"
 #include "err/ops_err.h"
 
 using namespace gert;
@@ -31,7 +31,7 @@ const size_t DIM_2 = 2;
 static ge::graphStatus InferShapeRecurrentKda(InferShapeContext *context)
 {
     if (context == nullptr) {
-        OP_LOGE("RecurrentKda", "inference context is null");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentKda", "infer_shape_context", "input argument must not be nullptr");
         return ge::GRAPH_FAILED;
     }
 
@@ -41,9 +41,24 @@ static ge::graphStatus InferShapeRecurrentKda(InferShapeContext *context)
     auto shapeOut = context->GetOutputShape(DIM_0);
     auto shapeInitialStateOut = context->GetOutputShape(DIM_1);
     auto shapeFinalState = context->GetOutputShape(DIM_2);
-    if (shapeValue == nullptr || shapeInitialState == nullptr || shapeOut == nullptr ||
-        shapeInitialStateOut == nullptr || shapeFinalState == nullptr) {
-        OP_LOGE(opName, "[InferShape] shape is null");
+    if (shapeValue == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "value", "input argument must not be nullptr");
+        return ge::GRAPH_FAILED;
+    }
+    if (shapeInitialState == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "initial_state", "input argument must not be nullptr");
+        return ge::GRAPH_FAILED;
+    }
+    if (shapeOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "attn_out.shape", "input argument must not be nullptr");
+        return ge::GRAPH_FAILED;
+    }
+    if (shapeInitialStateOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "initial_state_out.shape", "input argument must not be nullptr");
+        return ge::GRAPH_FAILED;
+    }
+    if (shapeFinalState == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "final_state.shape", "input argument must not be nullptr");
         return ge::GRAPH_FAILED;
     }
 
@@ -56,6 +71,10 @@ static ge::graphStatus InferShapeRecurrentKda(InferShapeContext *context)
 
 static ge::graphStatus InferDataTypeRecurrentKda(gert::InferDataTypeContext *context)
 {
+    if (context == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentKda", "infer_dtype_context", "input argument must not be nullptr");
+        return ge::GRAPH_FAILED;
+    }
     context->SetOutputDataType(0, ge::DT_BF16);
     context->SetOutputDataType(1, context->GetInputDataType(STATE_INDEX));
     context->SetOutputDataType(2, context->GetInputDataType(STATE_INDEX));

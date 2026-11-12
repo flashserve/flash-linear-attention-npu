@@ -396,11 +396,13 @@ assert 'torch' not in sys.modules and 'torch_npu' not in sys.modules
                     mock.patch.object(self.stable, "_loaded_path", None), \
                     mock.patch.object(self.stable, "_modules", return_value=(torch, None)), \
                     mock.patch.object(self.stable, "_init_hot"), \
+                    mock.patch.object(self.stable, "_register_launcher") as register, \
                     mock.patch.object(self.stable, "_check_build_stamp") as stamp:
                 self.stable.load()
                 self.assertEqual(self.stable._loaded_path, "override-launcher.so")
                 torch.ops.load_library.assert_called_once_with("override-launcher.so")
                 stamp.assert_called_once_with("override-launcher.so")
+                register.assert_called_once_with("override-launcher.so")
                 load.assert_called_once_with("override-launcher.so")
 
     def test_torch_npu_compatibility_aliases_are_stable_public_wrappers(self):

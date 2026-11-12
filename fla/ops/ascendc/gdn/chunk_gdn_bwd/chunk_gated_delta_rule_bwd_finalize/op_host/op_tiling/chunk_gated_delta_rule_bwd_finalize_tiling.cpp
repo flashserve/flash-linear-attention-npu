@@ -182,7 +182,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
 #if GDN_FINALIZE_ENABLE_ARCH22
     // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
     const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());
-    if (routePlatform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950) {
+    if (routePlatform.GetCurNpuArch() != NpuArch::DAV_3510) {
         return gdn_finalize_arch22::Tiling(context, routePlatform);
     }
 #endif
