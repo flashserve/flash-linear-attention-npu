@@ -104,7 +104,7 @@ const aclTensor *MaybeReshapeToHeadMajor4(const aclTensor *tensor, bool packed, 
     const aclTensor *reshaped =
         l0op::Reshape(tensor, MakeShape({1, heads, seqLen, columns}), executor);
     if (reshaped == nullptr) {
-    OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdV2: failed to reshape %s to rank-4 BNSD.", name);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "ChunkKdaFwdV2: failed to reshape %s to rank-4 BNSD.", name);
     }
     return reshaped;
 }
