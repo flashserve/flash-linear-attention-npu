@@ -185,7 +185,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -199,7 +199,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
         if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -212,7 +212,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalize(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "ChunkKdaBwdFinalize launch failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaBwdFinalize launch failed", __func__);
         return ACLNN_ERR_INNER;
     }
     return ACLNN_SUCCESS;

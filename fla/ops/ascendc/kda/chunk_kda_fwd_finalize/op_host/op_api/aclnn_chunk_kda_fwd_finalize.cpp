@@ -340,7 +340,7 @@ aclnnStatus MakeInputsContiguous(FinalizeParams &params,
         }
         *input = l0op::Contiguous(*input, executor);
         if (!(*input != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -379,7 +379,7 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -399,7 +399,7 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
         params.cuSeqlens, params.chunkIndices, params.outputLayout,
         params.stateVFirst, params.attnOut, uniqueExecutor.get());
     if (!(result != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
@@ -416,7 +416,7 @@ aclnnStatus aclnnChunkKdaFwdFinalize(
     L2_DFX_PHASE_2(aclnnChunkKdaFwdFinalize);
     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor,
                                    stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "ChunkKdaFwdFinalize AI Core 启动失败。", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdFinalize AI Core 启动失败。", __func__);
         return ACLNN_ERR_INNER;
     }
     return ACLNN_SUCCESS;

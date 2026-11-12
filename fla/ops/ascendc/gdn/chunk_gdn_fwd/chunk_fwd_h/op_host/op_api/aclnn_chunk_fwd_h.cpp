@@ -446,7 +446,7 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 {
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -656,7 +656,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -704,7 +704,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         hCompute, params.vNewOut, finalStateCompute, executorPtr);
     if (!(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -717,12 +717,12 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     }
     auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
     if (!(viewCopyResult0 != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
     if (!(viewCopyResult1 != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (outputFinalState && params.finalStateOut != nullptr) {
@@ -735,7 +735,7 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         }
         auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
         if (!(viewCopyResult2 != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -751,7 +751,7 @@ aclnnStatus aclnnChunkFwdH(void *workspace, uint64_t workspaceSize, aclOpExecuto
 {
     L2_DFX_PHASE_2(aclnnChunkFwdH);
     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "This is an error in ChunkFwdH launch aicore.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in ChunkFwdH launch aicore.", __func__);
         return ACLNN_ERR_INNER;
     }
     return ACLNN_SUCCESS;

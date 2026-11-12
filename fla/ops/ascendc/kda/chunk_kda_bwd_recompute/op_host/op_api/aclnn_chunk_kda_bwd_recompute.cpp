@@ -49,7 +49,7 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -110,7 +110,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -122,7 +122,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     if (gkBuffer == nullptr) {
         gkBuffer = executorPtr->AllocTensor(params.g->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
         if (!(gkBuffer != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "Unable to allocate internal gk output.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Unable to allocate internal gk output.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -133,7 +133,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         params.wOut, params.uOut, params.qgOut,
         params.kgOut, gkBuffer, executorPtr);
     if (!(outputs[0] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: " "ChunkKdaBwdRecompute launch failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaBwdRecompute launch failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

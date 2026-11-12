@@ -57,7 +57,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  {
      tensor = l0op::Contiguous(tensor, executor);
      if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
      return ACLNN_SUCCESS;
@@ -87,7 +87,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
      auto uniqueExecutor = CREATE_EXECUTOR();
      if (uniqueExecutor.get() == nullptr) {
-         OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+         OP_LOGE_WITHOUT_REPORT(OP_NAME,
                             "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
          return ACLNN_ERR_INNER_CREATE_EXECUTOR;
      }
@@ -107,7 +107,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
      if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "%s: CHECK_RET failed", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
  
@@ -120,7 +120,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  {
      L2_DFX_PHASE_2(aclnnSolveTri);
      if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER, "%s: " "SolveTri launch failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "SolveTri launch failed.", __func__);
         return ACLNN_ERR_INNER;
     }
      return ACLNN_SUCCESS;
