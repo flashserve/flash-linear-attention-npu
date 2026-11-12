@@ -3,6 +3,8 @@
  * BSD 3-Clause License.
  */
 
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "aclnn_chunk_gated_delta_rule_fwd_prepare.h"
 #include "chunk_gated_delta_rule_fwd_prepare.h"
 
@@ -24,6 +26,8 @@
 #include <cstdint>
 
 using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleFwdPrepare";
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,72 +82,189 @@ static bool IsGateDtype(DataType dtype)
 
 static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.beta != nullptr, ACLNN_ERR_PARAM_NULLPTR, "beta must not be nullptr.");
-    CHECK_COND(params.gOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "gOut must not be nullptr.");
-    CHECK_COND(params.wOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "wOut must not be nullptr.");
-    CHECK_COND(params.uOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "uOut must not be nullptr.");
-    CHECK_COND(params.aOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "aOut must not be nullptr.");
+    if (params.q == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "q", "q must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "v", "v must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "g must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.beta == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "beta", "beta must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.gOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "gOut", "gOut must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.wOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "wOut", "wOut must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.uOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "uOut", "uOut must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.aOut == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "aOut", "aOut must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     {
         const bool hasQHat = params.qHatOptional != nullptr;
         const bool hasKHat = params.kHatOptional != nullptr;
         const bool hasQRstd = params.qRstdOptional != nullptr;
         const bool hasKRstd = params.kRstdOptional != nullptr;
-        CHECK_COND(hasQHat == hasKHat && hasQHat == hasQRstd && hasQHat == hasKRstd, ACLNN_ERR_PARAM_INVALID,
-                   "qHat/kHat/qRstd/kRstd must all be set or all be nullptr.");
+        if (!(hasQHat == hasKHat && hasQHat == hasQRstd && hasQHat == hasKRstd)) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                OP_NAME, "qHat,kHat,qRstd,kRstd",
+                std::string(hasQHat ? "qHat=present" : "qHat=absent") + "," +
+                    (hasKHat ? "kHat=present" : "kHat=absent") + "," +
+                    (hasQRstd ? "qRstd=present" : "qRstd=absent") + "," +
+                    (hasKRstd ? "kRstd=present" : "kRstd=absent"),
+                "qHat/kHat/qRstd/kRstd must all be set or all be nullptr");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    CHECK_COND(params.chunkSize == CHUNK_SIZE, ACLNN_ERR_PARAM_INVALID, "chunkSize must be 64.");
-    CHECK_COND(!(params.dtBiasOptional != nullptr && params.aLogOptional == nullptr), ACLNN_ERR_PARAM_INVALID,
-               "dtBiasOptional requires aLogOptional (use_gate_in_kernel).");
-    CHECK_COND(!(params.allowNegEigval && params.betaEffOptional == nullptr), ACLNN_ERR_PARAM_INVALID,
-               "allowNegEigval requires betaEff (use_beta_sigmoid_in_kernel).");
+    if (params.chunkSize != CHUNK_SIZE) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.dtBiasOptional != nullptr && params.aLogOptional == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "dtBiasOptional", "dtBiasOptional requires aLogOptional (use_gate_in_kernel)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.allowNegEigval && params.betaEffOptional == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "betaEff", "allowNegEigval requires betaEff (use_beta_sigmoid_in_kernel)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.cuSeqlensOptional != nullptr) {
-        CHECK_COND(params.chunkIndicesOptional != nullptr, ACLNN_ERR_PARAM_INVALID,
-                   "varlen requires cuSeqlensOptional and chunkIndicesOptional together.");
+        if (params.chunkIndicesOptional == nullptr) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "chunkIndicesOptional",
+                "varlen requires cuSeqlensOptional and chunkIndicesOptional together");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckDtype(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    CHECK_COND(params.q->GetDataType() == DataType::DT_BF16, ACLNN_ERR_PARAM_INVALID, "q must be bfloat16.");
-    CHECK_COND(params.k->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "k dtype must match q.");
-    CHECK_COND(params.v->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "v dtype must match q.");
-    CHECK_COND(IsGateDtype(params.g->GetDataType()), ACLNN_ERR_PARAM_INVALID, "g must be fp32/bf16/fp16.");
-    CHECK_COND(IsGateDtype(params.beta->GetDataType()), ACLNN_ERR_PARAM_INVALID, "beta must be fp32/bf16/fp16.");
-    CHECK_COND(params.gOut->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID, "gOut must be fp32.");
-    CHECK_COND(params.wOut->GetDataType() == params.k->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "wOut dtype must match k.");
-    CHECK_COND(params.uOut->GetDataType() == params.v->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "uOut dtype must match v.");
-    CHECK_COND(params.aOut->GetDataType() == params.k->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-               "aOut dtype must match k.");
+    if (params.q->GetDataType() != DataType::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "q", ge::TypeUtils::DataTypeToSerialString(params.q->GetDataType()),
+            "q must be bfloat16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.k->GetDataType() != params.q->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "k", ge::TypeUtils::DataTypeToSerialString(params.k->GetDataType()),
+            "dtype must match q: " + ge::TypeUtils::DataTypeToSerialString(params.q->GetDataType()));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.v->GetDataType() != params.q->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "v", ge::TypeUtils::DataTypeToSerialString(params.v->GetDataType()),
+            "dtype must match q: " + ge::TypeUtils::DataTypeToSerialString(params.q->GetDataType()));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!IsGateDtype(params.g->GetDataType())) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "g", ge::TypeUtils::DataTypeToSerialString(params.g->GetDataType()),
+            "dtype must be fp32/bf16/fp16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!IsGateDtype(params.beta->GetDataType())) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "beta", ge::TypeUtils::DataTypeToSerialString(params.beta->GetDataType()),
+            "dtype must be fp32/bf16/fp16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.gOut->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "gOut", ge::TypeUtils::DataTypeToSerialString(params.gOut->GetDataType()),
+            "gOut must be fp32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.wOut->GetDataType() != params.k->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "wOut", ge::TypeUtils::DataTypeToSerialString(params.wOut->GetDataType()),
+            "dtype must match k: " + ge::TypeUtils::DataTypeToSerialString(params.k->GetDataType()));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.uOut->GetDataType() != params.v->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "uOut", ge::TypeUtils::DataTypeToSerialString(params.uOut->GetDataType()),
+            "dtype must match v: " + ge::TypeUtils::DataTypeToSerialString(params.v->GetDataType()));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (params.aOut->GetDataType() != params.k->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "aOut", ge::TypeUtils::DataTypeToSerialString(params.aOut->GetDataType()),
+            "dtype must match k: " + ge::TypeUtils::DataTypeToSerialString(params.k->GetDataType()));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.aLogOptional != nullptr) {
-        CHECK_COND(IsGateDtype(params.aLogOptional->GetDataType()), ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must be fp32/bf16/fp16.");
+        if (!IsGateDtype(params.aLogOptional->GetDataType())) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "aLogOptional", ge::TypeUtils::DataTypeToSerialString(params.aLogOptional->GetDataType()),
+                "dtype must be fp32/bf16/fp16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.dtBiasOptional != nullptr) {
-        CHECK_COND(IsGateDtype(params.dtBiasOptional->GetDataType()), ACLNN_ERR_PARAM_INVALID,
-                   "dtBiasOptional must be fp32/bf16/fp16.");
+        if (!IsGateDtype(params.dtBiasOptional->GetDataType())) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "dtBiasOptional", ge::TypeUtils::DataTypeToSerialString(params.dtBiasOptional->GetDataType()),
+                "dtype must be fp32/bf16/fp16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.qHatOptional != nullptr) {
-        CHECK_COND(params.qHatOptional->GetDataType() == params.q->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-                   "qHat dtype must match q.");
-        CHECK_COND(params.kHatOptional->GetDataType() == params.k->GetDataType(), ACLNN_ERR_PARAM_INVALID,
-                   "kHat dtype must match k.");
-        CHECK_COND(params.qRstdOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "qRstd must be fp32.");
-        CHECK_COND(params.kRstdOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "kRstd must be fp32.");
+        if (params.qHatOptional->GetDataType() != params.q->GetDataType()) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "qHatOptional", ge::TypeUtils::DataTypeToSerialString(params.qHatOptional->GetDataType()),
+                "dtype must match q: " + ge::TypeUtils::DataTypeToSerialString(params.q->GetDataType()));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.kHatOptional->GetDataType() != params.k->GetDataType()) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "kHatOptional", ge::TypeUtils::DataTypeToSerialString(params.kHatOptional->GetDataType()),
+                "dtype must match k: " + ge::TypeUtils::DataTypeToSerialString(params.k->GetDataType()));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.qRstdOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "qRstdOptional", ge::TypeUtils::DataTypeToSerialString(params.qRstdOptional->GetDataType()),
+                "must be fp32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (params.kRstdOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "kRstdOptional", ge::TypeUtils::DataTypeToSerialString(params.kRstdOptional->GetDataType()),
+                "must be fp32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.betaEffOptional != nullptr) {
-        CHECK_COND(params.betaEffOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
-                   "betaEffOptional must be fp32.");
+        if (params.betaEffOptional->GetDataType() != DataType::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "betaEffOptional", ge::TypeUtils::DataTypeToSerialString(params.betaEffOptional->GetDataType()),
+                "must be fp32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -163,32 +284,58 @@ static bool ShapeEqual(const op::Shape &lhs, const op::Shape &rhs)
 
 static aclnnStatus CheckA2PrepareMetadata(const ChunkGatedDeltaRuleFwdPrepareParams &params, int64_t tokens)
 {
-    CHECK_COND((params.cuSeqlensOptional == nullptr) == (params.chunkIndicesOptional == nullptr),
-               ACLNN_ERR_PARAM_INVALID, "A2 cuSeqlens and chunkIndices must be provided together.");
+    if ((params.cuSeqlensOptional == nullptr) != (params.chunkIndicesOptional == nullptr)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "cuSeqlens,chunkIndices",
+            std::string(params.cuSeqlensOptional == nullptr ? "cuSeqlens=absent" : "cuSeqlens=present") + "," +
+                (params.chunkIndicesOptional == nullptr ? "chunkIndices=absent" : "chunkIndices=present"),
+            "cuSeqlens and chunkIndices must be provided together");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.cuSeqlensOptional == nullptr) return ACLNN_SUCCESS;
     const auto &cu = *params.cuSeqlensOptional;
     const auto &indices = *params.chunkIndicesOptional;
-    CHECK_COND(cu.Size() >= 2 && cu[0] == 0 && cu[cu.Size() - 1] == tokens,
-               ACLNN_ERR_PARAM_INVALID, "cuSeqlens must start at 0 and end at T.");
+    if (!(cu.Size() >= 2 && cu[0] == 0 && cu[cu.Size() - 1] == tokens)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "cuSeqlens[0],cuSeqlens[last]",
+            std::to_string(cu.Size()) + " entries, first=" + std::to_string(cu[0]) +
+                ", last=" + std::to_string(cu[cu.Size() - 1]),
+            "cuSeqlens must start at 0 and end at T=" + std::to_string(tokens));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     uint64_t chunks = 0;
     for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
-        CHECK_COND(cu[seq] >= 0 && cu[seq] < cu[seq + 1] && cu[seq + 1] <= tokens,
-                   ACLNN_ERR_PARAM_INVALID, "cuSeqlens must be strictly increasing within [0,T].");
+        if (!(cu[seq] >= 0 && cu[seq] < cu[seq + 1] && cu[seq + 1] <= tokens)) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                OP_NAME, "cuSeqlens[seq],cuSeqlens[seq+1]",
+                std::to_string(cu[seq]) + "," + std::to_string(cu[seq + 1]),
+                "cuSeqlens must be strictly increasing within [0,T]");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
         const uint64_t count = length / params.chunkSize + (length % params.chunkSize != 0);
         CHECK_COND(chunks <= static_cast<uint64_t>(INT64_MAX) - count, ACLNN_ERR_PARAM_INVALID,
                    "A2 chunk count overflows.");
         chunks += count;
     }
-    CHECK_COND(indices.Size() % 2 == 0 && indices.Size() / 2 == chunks, ACLNN_ERR_PARAM_INVALID,
-               "chunkIndices must contain one canonical pair per chunk.");
+    if (!(indices.Size() % 2 == 0 && indices.Size() / 2 == chunks)) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(
+            OP_NAME, "chunkIndices", std::to_string(indices.Size()),
+            "2 * chunk count = " + std::to_string(chunks * 2));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     size_t index = 0;
     for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
         const int64_t length = cu[seq + 1] - cu[seq];
         const int64_t count = length / params.chunkSize + (length % params.chunkSize != 0);
         for (int64_t chunk = 0; chunk < count; ++chunk) {
-            CHECK_COND(indices[index] == static_cast<int64_t>(seq) && indices[index + 1] == chunk,
-                       ACLNN_ERR_PARAM_INVALID, "chunkIndices must use canonical sequence-major order.");
+            if (indices[index] != static_cast<int64_t>(seq) || indices[index + 1] != chunk) {
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "chunkIndices[index],chunkIndices[index+1]",
+                    std::to_string(indices[index]) + "," + std::to_string(indices[index + 1]),
+                    "chunkIndices must use canonical sequence-major order");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             index += 2;
         }
     }
@@ -202,11 +349,33 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     const op::Shape vShape = params.v->GetViewShape();
     const op::Shape gShape = params.g->GetViewShape();
     const op::Shape betaShape = params.beta->GetViewShape();
-    CHECK_COND(qShape.GetDimNum() == DIM_4, ACLNN_ERR_PARAM_INVALID, "q must be [B, Hk, T, K].");
-    CHECK_COND(ShapeEqual(kShape, qShape), ACLNN_ERR_PARAM_INVALID, "k shape must match q.");
-    CHECK_COND(vShape.GetDimNum() == DIM_4, ACLNN_ERR_PARAM_INVALID, "v must be [B, Hv, T, V].");
-    CHECK_COND(gShape.GetDimNum() == DIM_3, ACLNN_ERR_PARAM_INVALID, "g must be [B, Hv, T].");
-    CHECK_COND(ShapeEqual(betaShape, gShape), ACLNN_ERR_PARAM_INVALID, "beta shape must match g.");
+    if (qShape.GetDimNum() != DIM_4) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            OP_NAME, "q", std::to_string(qShape.GetDimNum()), "q must be [B, Hk, T, K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!ShapeEqual(kShape, qShape)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "k,q", std::string(op::ToString(kShape).GetString()),
+            "k shape must match q");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (vShape.GetDimNum() != DIM_4) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            OP_NAME, "v", std::to_string(vShape.GetDimNum()), "v must be [B, Hv, T, V]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (gShape.GetDimNum() != DIM_3) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            OP_NAME, "g", std::to_string(gShape.GetDimNum()), "g must be [B, Hv, T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!ShapeEqual(betaShape, gShape)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "beta,g", std::string(op::ToString(betaShape).GetString()),
+            "beta shape must match g");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const int64_t B = qShape.GetDim(0);
     const int64_t HK = qShape.GetDim(1);
@@ -215,64 +384,146 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     const int64_t HV = vShape.GetDim(1);
     const int64_t V = vShape.GetDim(3);
     if (IsA2PrepareSoc()) {
-        CHECK_COND(B > 0 && HK > 0 && HV > 0 && T > 0, ACLNN_ERR_PARAM_INVALID,
-                   "A2 Prepare requires positive B/Hk/Hv/T.");
+        if (!(B > 0 && HK > 0 && HV > 0 && T > 0)) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                OP_NAME, "B,Hk,Hv,T",
+                std::to_string(B) + "," + std::to_string(HK) + "," + std::to_string(HV) + "," +
+                    std::to_string(T),
+                "A2 Prepare requires positive B/Hk/Hv/T");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         CHECK_RET(CheckA2PrepareMetadata(params, T) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     }
-    CHECK_COND(vShape.GetDim(0) == B && vShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
-               "v batch/seq must match q.");
-    CHECK_COND(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T, ACLNN_ERR_PARAM_INVALID,
-               "g must be [B, Hv, T].");
-    CHECK_COND(K == K_SIZE, ACLNN_ERR_PARAM_INVALID, "K currently only supports 128.");
-    CHECK_COND(V == 128 || V == 256, ACLNN_ERR_PARAM_INVALID, "V must be 128 or 256.");
-    CHECK_COND(HK > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID, "Hv must be divisible by Hk.");
+    if (!(vShape.GetDim(0) == B && vShape.GetDim(2) == T)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "v.B,v.T", std::to_string(vShape.GetDim(0)) + "," + std::to_string(vShape.GetDim(2)),
+            "v batch/seq must match q B=" + std::to_string(B) + ",T=" + std::to_string(T));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(gShape.GetDim(0) == B && gShape.GetDim(1) == HV && gShape.GetDim(2) == T)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "g", "[" + std::to_string(gShape.GetDim(0)) + "," + std::to_string(gShape.GetDim(1)) +
+                "," + std::to_string(gShape.GetDim(2)) + "]",
+            "[B,Hv,T] with B=" + std::to_string(B) + ",Hv=" + std::to_string(HV) +
+                ",T=" + std::to_string(T));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (K != K_SIZE) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "K", std::to_string(K), "K currently only supports " + std::to_string(K_SIZE));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(V == 128 || V == 256)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "V", std::to_string(V), "V must be 128 or 256");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(HK > 0 && HV % HK == 0)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "Hk,Hv", std::to_string(HK) + "," + std::to_string(HV),
+            "Hv must be divisible by Hk");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const int64_t ratio = HV / HK;
-    CHECK_COND(ratio >= 1 && ratio <= (IsA2PrepareSoc() ? 16 : 4), ACLNN_ERR_PARAM_INVALID,
-               "Hv/Hk must be in [1,16] on A2/A3 or [1,4] on Ascend950.");
+    if (!(ratio >= 1 && ratio <= (IsA2PrepareSoc() ? 16 : 4))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "Hv/Hk", std::to_string(ratio),
+            IsA2PrepareSoc() ? "Hv/Hk must be in [1,16] on A2/A3" : "Hv/Hk must be in [1,4] on Ascend950");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (params.aLogOptional != nullptr) {
         const op::Shape aLogShape = params.aLogOptional->GetViewShape();
-        CHECK_COND(aLogShape.GetDimNum() == DIM_1 && aLogShape.GetDim(0) == HV, ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must be [Hv].");
+        if (!(aLogShape.GetDimNum() == DIM_1 && aLogShape.GetDim(0) == HV)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "aLogOptional", std::string(op::ToString(aLogShape).GetString()),
+                "[Hv] with Hv=" + std::to_string(HV));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.dtBiasOptional != nullptr) {
         const op::Shape dtShape = params.dtBiasOptional->GetViewShape();
-        CHECK_COND(dtShape.GetDimNum() == DIM_1 && dtShape.GetDim(0) == HV, ACLNN_ERR_PARAM_INVALID,
-                   "dtBiasOptional must be [Hv].");
+        if (!(dtShape.GetDimNum() == DIM_1 && dtShape.GetDim(0) == HV)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "dtBiasOptional", std::string(op::ToString(dtShape).GetString()),
+                "[Hv] with Hv=" + std::to_string(HV));
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.cuSeqlensOptional != nullptr) {
-        CHECK_COND(B == 1, ACLNN_ERR_PARAM_INVALID, "varlen requires B=1.");
+        if (B != 1) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_NAME, "B", std::to_string(B), "varlen requires B=1");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (params.qHatOptional != nullptr) {
-        CHECK_COND(ShapeEqual(params.qHatOptional->GetViewShape(), qShape), ACLNN_ERR_PARAM_INVALID,
-                   "qHat shape must match q.");
-        CHECK_COND(ShapeEqual(params.kHatOptional->GetViewShape(), kShape), ACLNN_ERR_PARAM_INVALID,
-                   "kHat shape must match k.");
+        if (!ShapeEqual(params.qHatOptional->GetViewShape(), qShape)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "qHat", std::string(op::ToString(params.qHatOptional->GetViewShape()).GetString()),
+                "qHat shape must match q");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        if (!ShapeEqual(params.kHatOptional->GetViewShape(), kShape)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "kHat", std::string(op::ToString(params.kHatOptional->GetViewShape()).GetString()),
+                "kHat shape must match k");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         {
             const op::Shape qRstd = params.qRstdOptional->GetViewShape();
-            CHECK_COND(qRstd.GetDimNum() == DIM_3 && qRstd.GetDim(0) == B && qRstd.GetDim(1) == HK &&
-                           qRstd.GetDim(2) == T,
-                       ACLNN_ERR_PARAM_INVALID, "qRstd must be [B, Hk, T].");
+            if (!(qRstd.GetDimNum() == DIM_3 && qRstd.GetDim(0) == B && qRstd.GetDim(1) == HK &&
+                  qRstd.GetDim(2) == T)) {
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "qRstd", std::string(op::ToString(qRstd).GetString()),
+                    "[B,Hk,T]");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
             const op::Shape kRstd = params.kRstdOptional->GetViewShape();
-            CHECK_COND(kRstd.GetDimNum() == DIM_3 && kRstd.GetDim(0) == B && kRstd.GetDim(1) == HK &&
-                           kRstd.GetDim(2) == T,
-                       ACLNN_ERR_PARAM_INVALID, "kRstd must be [B, Hk, T].");
+            if (!(kRstd.GetDimNum() == DIM_3 && kRstd.GetDim(0) == B && kRstd.GetDim(1) == HK &&
+                  kRstd.GetDim(2) == T)) {
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "kRstd", std::string(op::ToString(kRstd).GetString()),
+                    "[B,Hk,T]");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
         }
     }
     if (params.betaEffOptional != nullptr) {
-        CHECK_COND(ShapeEqual(params.betaEffOptional->GetViewShape(), gShape), ACLNN_ERR_PARAM_INVALID,
-                   "betaEffOptional shape must match g.");
+        if (!ShapeEqual(params.betaEffOptional->GetViewShape(), gShape)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "betaEffOptional",
+                std::string(op::ToString(params.betaEffOptional->GetViewShape()).GetString()),
+                "betaEffOptional shape must match g");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
-    CHECK_COND(ShapeEqual(params.gOut->GetViewShape(), gShape), ACLNN_ERR_PARAM_INVALID, "gOut shape must match g.");
-    CHECK_COND(ShapeEqual(params.uOut->GetViewShape(), vShape), ACLNN_ERR_PARAM_INVALID, "uOut shape must match v.");
+    if (!ShapeEqual(params.gOut->GetViewShape(), gShape)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "gOut", std::string(op::ToString(params.gOut->GetViewShape()).GetString()),
+            "gOut shape must match g");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!ShapeEqual(params.uOut->GetViewShape(), vShape)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "uOut", std::string(op::ToString(params.uOut->GetViewShape()).GetString()),
+            "uOut shape must match v");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const op::Shape wShape = params.wOut->GetViewShape();
-    CHECK_COND(wShape.GetDimNum() == DIM_4 && wShape.GetDim(0) == B && wShape.GetDim(1) == HV &&
-                   wShape.GetDim(2) == T && wShape.GetDim(3) == K,
-               ACLNN_ERR_PARAM_INVALID, "wOut must be [B, Hv, T, K].");
+    if (!(wShape.GetDimNum() == DIM_4 && wShape.GetDim(0) == B && wShape.GetDim(1) == HV &&
+          wShape.GetDim(2) == T && wShape.GetDim(3) == K)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "wOut", std::string(op::ToString(wShape).GetString()), "[B,Hv,T,K]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const op::Shape aShape = params.aOut->GetViewShape();
-    CHECK_COND(aShape.GetDimNum() == DIM_4 && aShape.GetDim(0) == B && aShape.GetDim(1) == HV &&
-                   aShape.GetDim(2) == T && aShape.GetDim(3) == params.chunkSize,
-               ACLNN_ERR_PARAM_INVALID, "aOut must be [B, Hv, T, chunkSize].");
+    if (!(aShape.GetDimNum() == DIM_4 && aShape.GetDim(0) == B && aShape.GetDim(1) == HV &&
+          aShape.GetDim(2) == T && aShape.GetDim(3) == params.chunkSize)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "aOut", std::string(op::ToString(aShape).GetString()), "[B,Hv,T,chunkSize]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
