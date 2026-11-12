@@ -1,7 +1,6 @@
 #ifndef CHUNK_KDA_BWD_C_TILING_PROCESSOR_H
 #define CHUNK_KDA_BWD_C_TILING_PROCESSOR_H
 
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>

@@ -15,7 +15,6 @@
 #include "../op_kernel/recurrent_kda_tiling_key.h"
 
 #include "err/ops_err.h"
-#include "op_common/log/log.h"
 #include "platform/soc_spec.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_def_registry.h"

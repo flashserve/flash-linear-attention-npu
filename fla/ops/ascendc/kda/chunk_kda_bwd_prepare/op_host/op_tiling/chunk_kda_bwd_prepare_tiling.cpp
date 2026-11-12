@@ -2,7 +2,6 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
-#include "op_common/log/log.h"
 #include "chunk_kda_bwd_prepare_tiling.h"
 
 #include <cmath>

@@ -1,4 +1,3 @@
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "chunk_kda_bwd_tiling.h"
 

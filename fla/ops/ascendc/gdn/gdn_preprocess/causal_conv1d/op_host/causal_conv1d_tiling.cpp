@@ -16,7 +16,6 @@
 #include "causal_conv1d_tiling_utils.h"
 #include "causal_conv1d_tiling_planner.h"
 #include "causal_conv1d_tiling_validation.h"
-#include "op_common/log/log.h"
 #include <string>
 
 namespace optiling {

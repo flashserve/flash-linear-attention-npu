@@ -3,7 +3,6 @@
  * BSD 3-Clause License.
  */
 
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "chunk_gated_delta_rule_fwd_prepare_tiling.h"
 

@@ -2,7 +2,6 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "../../../op_kernel/internal/arch22/pipeline/wu_ho/chunk_recompute_wu_fwd_ho_tiling.h"
 

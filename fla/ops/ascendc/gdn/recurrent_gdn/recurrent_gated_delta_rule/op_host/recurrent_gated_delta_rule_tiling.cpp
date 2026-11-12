@@ -22,7 +22,6 @@
 
 #include <cmath>
 #include <limits>
-#include "op_common/log/log.h"
 
 namespace optiling {
 

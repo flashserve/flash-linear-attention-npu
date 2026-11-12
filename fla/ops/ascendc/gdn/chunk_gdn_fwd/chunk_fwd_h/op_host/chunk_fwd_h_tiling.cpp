@@ -18,7 +18,6 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "../op_kernel/chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_tiling_processor.h"
-#include "op_common/log/log.h"
 
 namespace optiling {
 

@@ -12,7 +12,6 @@
  * \brief
  */
 
-#include "op_common/log/log.h"
 #include "chunk_gated_delta_rule_fwd_h_tiling.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"

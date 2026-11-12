@@ -25,7 +25,6 @@
 #include "err/ops_err.h"
 #include "tiling_base/tiling_base.h"
 #include "../../op_kernel/pre_process_bwd_kernel_merged_struct.h"
-#include "op_common/log/log.h"
 #include <string>
 
 using CP::PreProcessBwdKernelMergedTilingData;

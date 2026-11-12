@@ -16,7 +16,6 @@
 
 #include "../op_kernel/chunk_kda_bwd_recompute_struct.h"
 #include "../op_kernel/chunk_kda_bwd_recompute_tiling_key.h"
-#include "op_common/log/log.h"
 #include <string>
 
 namespace optiling {

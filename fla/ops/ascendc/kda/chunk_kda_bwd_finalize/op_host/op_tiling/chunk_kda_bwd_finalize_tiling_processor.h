@@ -10,7 +10,6 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../../op_kernel/chunk_kda_bwd_finalize_struct.h"
-#include "op_common/log/log.h"
 
 namespace optiling {
 

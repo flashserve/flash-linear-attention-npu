@@ -22,7 +22,6 @@
 #include "register/op_impl_registry.h"
 #include "recurrent_gated_delta_rule_error.h"
 #include "err/ops_err.h"
-#include "op_common/log/log.h"
 
 using namespace gert;
 namespace ops {

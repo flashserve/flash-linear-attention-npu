@@ -13,7 +13,6 @@
 #include "../chunk_kda_bwd_prepare_validation.h"
 #include "../../op_kernel/chunk_kda_bwd_prepare_struct.h"
 #include "../../op_kernel/chunk_kda_bwd_prepare_tiling_key.h"
-#include "op_common/log/log.h"
 namespace optiling {
 struct ChunkKdaBwdPrepareTilingContext {
     const char *nodeName;

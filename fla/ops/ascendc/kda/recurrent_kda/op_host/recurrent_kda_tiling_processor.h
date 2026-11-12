@@ -17,7 +17,6 @@
 
 #include "../op_kernel/recurrent_kda_struct.h"
 #include "err/ops_err.h"
-#include "op_common/log/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/tiling_api.h"
 #include "util/math_util.h"

@@ -12,7 +12,6 @@
  * \brief
  */
 
-#include "op_common/log/log.h"
 #include "chunk_fwd_o_tiling.h"
 #include "chunk_fwd_o_tiling_processor.h"
 #include "../op_kernel/chunk_fwd_o_tiling_key.h"

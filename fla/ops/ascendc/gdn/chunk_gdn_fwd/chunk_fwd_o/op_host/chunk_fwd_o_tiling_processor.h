@@ -15,7 +15,6 @@
 #ifndef CHUNK_FWD_O_TILING_PROCESSOR_H
 #define CHUNK_FWD_O_TILING_PROCESSOR_H
 
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include <cstddef>
 #include <cstdint>

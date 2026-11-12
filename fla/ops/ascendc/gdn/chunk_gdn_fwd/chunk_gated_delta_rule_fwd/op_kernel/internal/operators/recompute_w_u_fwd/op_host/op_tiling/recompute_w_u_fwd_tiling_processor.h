@@ -15,7 +15,6 @@
 #ifndef GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
 #define GDN_MEGA_ARCH35_RECOMPUTE_W_U_FWD_TILING_PROCESSOR_H
 
-#include "op_common/log/log.h"
 #include <cstddef>
 #include <cstdint>
 #include <vector>

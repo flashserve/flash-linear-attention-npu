@@ -25,7 +25,6 @@
 #include "causal_conv1d_bwd_tiling.h"
 #include <algorithm>
 #include <cstring>
-#include "op_common/log/log.h"
 #include <string>
 
 namespace {

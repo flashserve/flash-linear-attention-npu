@@ -2,7 +2,6 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "chunk_gated_delta_rule_fwd_32_tiling_data.h"
 

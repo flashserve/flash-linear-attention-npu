@@ -5,7 +5,6 @@
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "chunk_kda_bwd_finalize_arch22.h"
-#include "op_common/log/log.h"
 
 namespace optiling {
 

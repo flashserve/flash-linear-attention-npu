@@ -11,7 +11,6 @@
 #include "../chunk_gdn_bwd_intra_schedule.h"
 #include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
-#include "op_common/log/log.h"
 #include <string>
 
 namespace optiling {

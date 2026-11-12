@@ -15,7 +15,6 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
-#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
