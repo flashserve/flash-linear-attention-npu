@@ -15,7 +15,7 @@
 #ifndef CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 #define CHUNK_BWD_DV_LOCAL_CUBE_FIX_H
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #include "catlass/arch/arch.hpp"
 #include "catlass/catlass.hpp"
@@ -111,7 +111,7 @@ ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Init(GM_ADDR q, GM_ADDR k, GM_ADDR d
 template <typename QKVT, typename GT, typename Strategy, int V>
 __aicore__ inline void ChunkBwdDvLocalCube<QKVT, GT, Strategy, V>::Process()
 {
-    #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ArchTag = Catlass::Arch::Ascend950;
     #else
         using ArchTag = Catlass::Arch::AtlasA2;

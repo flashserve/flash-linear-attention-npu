@@ -31,7 +31,7 @@
 // kernel_utils/tile/copy_l0c_to_ub.hpp 无条件包含 ascend950 专用头，A2 构建会把 950 实现拉进来
 // （ScaleGranularity / CopyL0CToGm 重定义）。这里与已在 A2/A5 双平台发行的
 // chunk_bwd_dv_local_cube.h 保持一致：catlass 原生 BlockMmadTla + CATLASS_ARCH 选架构实现。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #include "catlass/arch/arch.hpp"
 #include "catlass/catlass.hpp"
@@ -98,7 +98,7 @@ public:
 
     __aicore__ inline void Process()
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ArchTag = Catlass::Arch::Ascend950;
 #else
         using ArchTag = Catlass::Arch::AtlasA2;

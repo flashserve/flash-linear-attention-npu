@@ -6,7 +6,7 @@
 #include "lib/matmul_intf.h"
 #include <type_traits>
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "chunk_gated_delta_rule_kkt_vector.h"
 #endif
 
@@ -264,7 +264,7 @@ private:
         LocalTensor<float> outTileLocal = outTileBuf_.Get<float>();
         LocalTensor<float> gateLocal = gateBuf_.Get<float>();
         LocalTensor<float> rowBrcbLocal = rowBrcbBuf_.Get<float>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (BT_ == static_cast<int64_t>(NsChunkGatedDeltaRuleKkt::KKT_A5_BT64) &&
             btAlign_ == static_cast<int64_t>(NsChunkGatedDeltaRuleKkt::KKT_A5_BT64) &&
             valid == static_cast<int64_t>(NsChunkGatedDeltaRuleKkt::KKT_A5_BT64)) {

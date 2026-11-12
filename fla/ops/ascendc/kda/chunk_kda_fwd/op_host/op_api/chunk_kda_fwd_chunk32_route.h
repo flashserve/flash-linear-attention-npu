@@ -680,7 +680,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
 aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
     // chunk32 单 kernel 只在 Ascend950(DAV_3510) 编译(op_kernel 由
-    // __CCE_AICORE__==310 门控);其它 SoC 若只按 chunkSize==32 路由,会在无实现
+    // __NPU_ARCH__ == 3510 门控);其它 SoC 若只按 chunkSize==32 路由,会在无实现
     // 的情况下成功返回但输出未初始化,必须在 host 侧明确拒绝。
     if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510) {
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "chunkSize", "32",

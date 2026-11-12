@@ -112,7 +112,7 @@ constexpr uint32_t CDHP_FLAG_SUBBLOCK_STRIDE = 16;
 // 注意历史：A2 三次接 1:2 都在 smoke 用例上挂死（详见 design.md §17、§21）：①两侧共用同一 id
 // （集合同步语义下一 set 放行两个 AIV，计数纪律被破坏）；②per-AIV 段 + 不按 window 分，gva 通过、
 // kda（Hv=64 两轮）挂住；③在 P 常驻 UB 之后重试，反而在第一个 gva 档就挂住。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CDHP_CROSS_CORE_MODE 0x4
 #else
 #define CDHP_CROSS_CORE_MODE 0x2
@@ -120,7 +120,7 @@ constexpr uint32_t CDHP_FLAG_SUBBLOCK_STRIDE = 16;
 
 __aicore__ inline constexpr uint32_t CdhpPeerFlag(uint32_t aiv, uint32_t localId)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     return localId + aiv * CDHP_FLAG_SUBBLOCK_STRIDE;
 #else
     (void)aiv;

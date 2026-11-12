@@ -3,7 +3,7 @@
 #ifndef GDN_ARCH22_UNIFIED_PREPARE_H
 #define GDN_ARCH22_UNIFIED_PREPARE_H
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 2201)
 #error "Unified GDN Prepare is a DAV_2201 implementation"
 #endif
 

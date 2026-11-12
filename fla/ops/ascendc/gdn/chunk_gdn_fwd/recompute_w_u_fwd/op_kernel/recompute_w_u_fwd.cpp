@@ -18,7 +18,7 @@
 #endif
 #include "recompute_w_u_fwd_struct.h"
 #include "recompute_w_u_fwd_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/recompute_w_u_fwd_cube_l1resident.h"
 #include "arch35/recompute_w_u_fwd_vector_regbase.h"
 #else
@@ -50,7 +50,7 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     GM_ADDR w, GM_ADDR u, GM_ADDR workspace, const RecomputeWUFwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         RecomputeWUFwdProcessL1Resident<kType, betaType, typename TileShapes::L1TileShape, typename TileShapes::L0TileShape>
 #else
         RecomputeWUFwdProcess<kType, betaType, typename TileShapes::L1TileShape, typename TileShapes::L0TileShape>
@@ -61,7 +61,7 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe tPipe;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim> recomputeWUFwdVectorProcess(
 #else
         RecomputeWUFwdVectorProcess<kType, betaType> recomputeWUFwdVectorProcess(

@@ -152,7 +152,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     //   ⇒ A5/ASCEND950 全开；A2/A3 **只放行 S=4**，S=2 仍禁用（回收 KDA 档约 5%）。
     //   复现/诊断：环境变量 PPFM_HYBRID_S 在门控之后生效，可强制打开任意 S。
     const bool hybridAll =
-        ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     int64_t hybridS = 1;
     int64_t hybridBase = 0;
     if (colSplit == 1 && aicNum > 1 && hwItems > aicNum) {

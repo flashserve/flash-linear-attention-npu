@@ -14,7 +14,7 @@
 
 #include "chunk_fwd_o_struct.h"
 #include "chunk_fwd_o_tiling_key.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/gemm/kernel/gdn_fwd_o_kernel.hpp"
 #else
 #include "gemm/kernel/gdn_fwd_o_kernel.hpp"
@@ -23,7 +23,7 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_fwd_o_a5.h"
 #endif
 
@@ -32,7 +32,7 @@ namespace GDN {
 constexpr int64_t CHUNK_FWD_O_DTYPE_BF16 = 1;
 constexpr int64_t CHUNK_FWD_O_DTYPE_FP32 = 2;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 
 template <bool UseExp2>
 __aicore__ inline void ChunkFwdOA5DispatchByGateType(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
@@ -64,7 +64,7 @@ __aicore__ inline void ChunkFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADD
                                          GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
                                          GM_ADDR userWorkspace, const ChunkFwdOTilingData *tilingData)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if constexpr (OutputTokenFirst) {
         ChunkFwdOA5DispatchByGateType<UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, userWorkspace,
                                               tilingData);

@@ -18,6 +18,7 @@
 #include <utility>
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
+#include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include <cmath>
 #include <cstring>
@@ -140,10 +141,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             OP_NAME, "useGateInKernel", "false", "use_gate_in_kernel must be true");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    const char *soc = aclrtGetSocName();
-    if (!(soc && std::strstr(soc, "Ascend950"))) {
+    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (npuArch != NpuArch::DAV_3510) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "soc", soc == nullptr ? "nullptr" : soc, "V2 requires Ascend950/A5");
+            OP_NAME, "npuArch", std::to_string(static_cast<int32_t>(npuArch)),
+            "V2 requires NpuArch::DAV_3510");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (betaEffOptional != nullptr || useBetaSigmoidInKernel || allowNegEigval) {

@@ -6,10 +6,6 @@
 #include "graph/utils/type_utils.h"
 #include "aclnn_chunk_gated_delta_rule_bwd.h"
 
-#ifndef GDN_BWD_ENABLE_ARCH22
-#define GDN_BWD_ENABLE_ARCH22 0
-#endif
-
 #include "../../../chunk_gdn_bwd_intra/op_host/op_api/chunk_gdn_bwd_intra.h"
 #include "../../../chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h"
 #include "../../../chunk_gated_delta_rule_bwd_finalize/op_host/op_api/chunk_gated_delta_rule_bwd_finalize.h"
@@ -138,12 +134,10 @@ bool IsAscend950()
     return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
 }
 
-#if GDN_BWD_ENABLE_ARCH22
 bool IsDav2201Device()
 {
     return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
 }
-#endif
 
 const aclIntArray *MakePerm(std::initializer_list<int64_t> dims, aclOpExecutor *executor)
 {
@@ -451,17 +445,12 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
 
 aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
 {
-#if GDN_BWD_ENABLE_ARCH22
-    if (!IsDav2201Device()) {
-#endif
-        if (!IsAscend950()) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                OP_NAME, "soc", "unsupported", "ChunkGatedDeltaRuleBwd is supported on Ascend950 only");
-            return ACLNN_ERR_PARAM_INVALID;
-        }
-#if GDN_BWD_ENABLE_ARCH22
+    if (!IsAscend950() && !IsDav2201Device()) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "soc", "unsupported",
+            "ChunkGatedDeltaRuleBwd requires NpuArch::DAV_2201 or DAV_3510");
+        return ACLNN_ERR_PARAM_INVALID;
     }
-#endif
     if (params.useGateInKernel) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "use_gate_in_kernel", "true", "use_gate_in_kernel=true is not supported");
@@ -523,7 +512,6 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             OP_NAME, "B", std::to_string(info.batch), "varlen rank-4 input requires B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
-
     const DataType dtype = params.q->GetDataType();
     if (dtype != DataType::DT_BF16) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -621,7 +609,6 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
     return ACLNN_SUCCESS;
 }
 
-#if GDN_BWD_ENABLE_ARCH22
 aclnnStatus MakeOutputContiguousArch22(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     if (tensor != nullptr && !IsContiguous(tensor)) {
@@ -641,7 +628,6 @@ aclnnStatus CopyOutputArch22(const aclTensor *src, const aclTensor *dst, aclOpEx
     }
     return ACLNN_SUCCESS;
 }
-#endif
 
 } // namespace
 
@@ -823,7 +809,6 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
-#if GDN_BWD_ENABLE_ARCH22
     if (IsDav2201Device()) {
         if (!(MakeOutputContiguousArch22(dqHead, executorPtr) == ACLNN_SUCCESS)) {
             OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: MakeOutputContiguousArch22(dqHead, executorPtr) == ACLNN_SUCCESS failed", __func__);
@@ -843,7 +828,6 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
-#endif
     // A2/A3 直接复用融合算子 ChunkGdnBwdIntra：BF16/FP32 gate、use_exp2 与
     // varlen（空序列无 chunk 记录，天然跳过）均由内核原生处理。
     const auto intraResult = l0op::ChunkGdnBwdIntra(
@@ -907,7 +891,6 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
-#if GDN_BWD_ENABLE_ARCH22
     if (IsDav2201Device()) {
         if (!info.sequenceMajor) {
             if (!(CopyOutputArch22(dqHead, params.dqOut, executorPtr) == ACLNN_SUCCESS)) {
@@ -928,7 +911,6 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
-#endif
     const aclTensor *dBetaSequence = TransposeContiguous(dBetaHead, {0, 2, 1}, executorPtr);
     const aclTensor *dGSequence = TransposeContiguous(dGHead, {0, 2, 1}, executorPtr);
     if (dBetaSequence != nullptr && dBetaSequence->GetDataType() != params.dBetaOut->GetDataType()) {

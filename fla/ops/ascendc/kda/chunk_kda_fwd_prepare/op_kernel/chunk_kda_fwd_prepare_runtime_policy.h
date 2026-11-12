@@ -12,7 +12,7 @@ struct RuntimeExpDomain {
     float stepScale = 1.0F;
     float expInputScale = 1.0F;
 
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
     __aicore__
 #endif
     inline void Init(bool exp2)
@@ -22,7 +22,7 @@ struct RuntimeExpDomain {
         expInputScale = exp2 ? ExpDomain::kLn2 : 1.0F;
     }
 
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
     __aicore__
 #endif
     inline float StoredBound(float base2Bound) const

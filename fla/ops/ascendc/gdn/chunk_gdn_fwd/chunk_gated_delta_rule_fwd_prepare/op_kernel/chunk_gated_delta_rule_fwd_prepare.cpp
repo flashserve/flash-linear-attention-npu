@@ -4,7 +4,7 @@
  */
 
 #include "kernel_operator.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #include "arch22/chunk_gated_delta_rule_fwd_prepare_standalone.h"
 #else
 #include "arch35/chunk_gated_delta_rule_fwd_prepare.h"

@@ -18,7 +18,7 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
 
     GM_ADDR userWorkspace = GetUserWorkspace(workspace);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if ASCEND_IS_AIC {
         TPipe pipe;
         NsChunkScaledDotKkt::ChunkScaledDotKkt<DTYPE_K, CHUNK_KEY> op;

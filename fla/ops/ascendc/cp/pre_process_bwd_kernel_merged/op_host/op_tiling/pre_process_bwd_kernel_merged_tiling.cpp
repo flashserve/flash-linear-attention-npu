@@ -73,7 +73,7 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     // A2/A3 用 1:1：910B 的 0x2 是"AIC:2*AIV 集合同步"，三次接 1:2 都在 smoke 用例上挂死
     // （共用 id 死锁 → per-AIV 段在 kda 挂 → P 常驻后再试仍在 gva 挂），详见 design.md §17/§21。
     const uint32_t aivPerBlock =
-        (ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) ? 2U : 1U;
+        (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) ? 2U : 1U;
 
     const auto gInputDesc = context->GetOptionalInputDesc(CDHP_INPUT_G_IDX);
     const auto gkInputDesc = context->GetOptionalInputDesc(CDHP_INPUT_GK_IDX);

@@ -8,7 +8,7 @@
 #include "chunk_kda_bwd_recompute_struct.h"
 #include "chunk_kda_bwd_recompute_common.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -195,7 +195,7 @@ public:
         LayoutTagW tagW = LayoutTagW::MakeLayout<QkType>(chunkSize_, K_);
         LayoutTagU tagU = LayoutTagU::MakeLayout<QkType>(chunkSize_, V_);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ArchTag = Arch::Ascend950;
         using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
 #else

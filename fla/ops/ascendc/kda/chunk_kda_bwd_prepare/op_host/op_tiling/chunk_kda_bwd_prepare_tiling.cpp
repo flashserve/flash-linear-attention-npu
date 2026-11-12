@@ -56,7 +56,7 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         *scale, *chunkSize, stateVFirst != nullptr && *stateVFirst,
         layout, static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950,
+        platform.GetCurNpuArch() == NpuArch::DAV_3510,
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {

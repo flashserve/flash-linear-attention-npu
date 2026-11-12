@@ -2,7 +2,7 @@
 #include "lib/matmul_intf.h"
 
 #include "chunk_kda_fwd_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310 && \
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510) && \
     (!defined(TILING_KEY_VAR) || TILING_KEY_VAR == 2UL)
 #define KDA_COMPILE_ARCH35_FAST_PATH 1
 #include "arch35/chunk_kda_fwd_impl.h"
@@ -140,7 +140,7 @@ __aicore__ inline void DispatchArch35SafeGate(
             kg, vNew, h, userWorkspace, tiling, pipe);
     }
 }
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 template <typename T, typename BETA_T, typename TilingData,
           uint32_t COMPILE_BT, uint32_t COMPILE_K, uint32_t COMPILE_V>
 __aicore__ inline void DispatchArch35SafeGate(
@@ -220,7 +220,7 @@ extern "C" __global__ __aicore__ void chunk_kda_fwd(
                 tilingData);
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaForward::DispatchArch35SafeGate<DTYPE_Q, DTYPE_BETA,
             ChunkKdaFwdTilingData, 64, 128, 128>(
 #else

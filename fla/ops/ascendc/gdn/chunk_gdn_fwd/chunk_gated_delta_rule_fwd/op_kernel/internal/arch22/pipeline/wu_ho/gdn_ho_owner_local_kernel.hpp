@@ -5,7 +5,7 @@
 #pragma once
 #include "gdn_ho_owner_local_config.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 namespace Catlass::Gemm::Kernel {
 
 template <class Original>

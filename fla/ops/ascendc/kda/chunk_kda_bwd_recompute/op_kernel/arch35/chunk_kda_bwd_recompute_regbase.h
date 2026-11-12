@@ -5,7 +5,7 @@
 #ifndef CHUNK_KDA_BWD_RECOMPUTE_ARCH35_REGBASE_H
 #define CHUNK_KDA_BWD_RECOMPUTE_ARCH35_REGBASE_H
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 
 #ifndef FLA_NPU_REGBASE_HPP_INCLUDED
 #define FLA_NPU_REGBASE_HPP_INCLUDED
@@ -603,6 +603,6 @@ static __simd_vf__ inline void ComputeVbRegbase(
 
 } // namespace KdaBwdRecomputeArch35
 
-#endif // __CCE_AICORE__ == 310
+#endif // __NPU_ARCH__ == 3510
 
 #endif // CHUNK_KDA_BWD_RECOMPUTE_ARCH35_REGBASE_H

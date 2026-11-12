@@ -2,13 +2,13 @@
 #define GDN_BWD_FINALIZE_A2_WORKSPACE_H
 
 #include <cstdint>
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #include "chunk_gated_delta_rule_bwd_finalize_struct.h"
 #else
 #include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
 #endif
 
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
 #define GDN_A2_HOST_DEVICE __aicore__ inline
 #else
 #define GDN_A2_HOST_DEVICE inline

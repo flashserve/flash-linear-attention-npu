@@ -20,7 +20,7 @@
 
 using GDN::RecomputeWUFwdTilingData;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -288,7 +288,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     LayoutTagW tagW = LayoutTagW::MakeLayout<kType>(chunkSize, K);
     LayoutTagU tagU = LayoutTagU::MakeLayout<kType>(chunkSize, V);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
     // 950: UnitFlag=true 时 L0C_STAGES 必须为 1（见 block_mmad_pingpong_tla.hpp static_assert）
     using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;

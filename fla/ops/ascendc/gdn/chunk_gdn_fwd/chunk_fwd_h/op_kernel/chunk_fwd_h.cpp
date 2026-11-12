@@ -7,7 +7,7 @@
 #include "chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_policy.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_fwd_h_cube.h"
 #include "arch35/chunk_fwd_h_vec.h"
 #else
@@ -48,7 +48,7 @@ struct FwdHKernelTraits {
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     if (RunFwdHGatedDispatch<GateT, CompilePolicy, STATE_V_FIRST>(args)) {
         return;
     }
@@ -59,7 +59,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         if (!hasCubeWork) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ChunkFwdHCubeArch35<CompilePolicy, STATE_V_FIRST> cube;
 #else
         AscendC::TPipe pipe;
@@ -69,7 +69,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         cube.Process();
     }
     if ASCEND_IS_AIV {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ChunkFwdHVecArch35<GateT, CompilePolicy, STATE_V_FIRST> vec;
         vec.Init(args);
 #else
