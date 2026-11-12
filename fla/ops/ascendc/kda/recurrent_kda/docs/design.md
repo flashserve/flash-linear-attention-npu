@@ -11,22 +11,9 @@
 
 ### A2/A3 平台边界
 
-A5 的输入 view 扩展、State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用 kernel 恢复为 PR 基线，保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径；A5 的 head-major 输入支持不扩展到 A2/A3。公共结构化错误码继续保留，auto-sync 配置不在本次修改范围。
+A5 的 State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用 kernel 恢复为 PR 基线，保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径。公共结构化错误码继续保留，auto-sync 配置不在本次修改范围。
 
 State 输入与输出沿用远程主线已修复的公开语义：非原位模式直接读取初态，仅写入有效目标槽，不克隆或预填整个输出池。
-
-### BSND 输入寻址
-
-A5 沿用原有整 tile DMA：没有 `cu_seqlens` 时，每个递推请求对应一行物理 batch，首地址按
-`(t/T)*batchStride + (t%T)*tokenStride + head*headStride` 计算，tile 不跨物理 batch。
-提供 `cu_seqlens` 时，kernel 按 `t*tokenStride + head*headStride` 读取逻辑 token；因此 host 对
-BSND `B>1` 的 Q/K/V 分别要求 `batchStride == T*tokenStride`，确保请求跨 batch 时整 tile DMA 仍正确。
-不满足该条件的 L0 输入明确拒绝，不读取 `cu_seqlens` 的设备值来推断是否可能跨 batch。
-
-公开 Python/aclnn 仍先将 batch-gap 和 BSND `B>1` 的 head-major view 连续化，再进入 L0；
-融合 QKV 切片中满足上述批间距的规则非连续 view 继续直接读取。TND、BSND `B=1` 和无
-`cu_seqlens` 的 A5 L0 view 保留原支持范围。Host 继续用完整物理 batch 跨度检查重叠并保护溢出。
-VF、State bank、UB 容量、Mutex 生命周期与原 kernel 一致。
 
 ### State 输入与输出
 

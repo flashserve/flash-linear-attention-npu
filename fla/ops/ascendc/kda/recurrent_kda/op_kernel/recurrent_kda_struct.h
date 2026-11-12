@@ -88,9 +88,6 @@ struct alignas(8) RecurrentKdaTilingData {
     uint64_t valueTokenStride;
     uint64_t valueHeadStride;
     uint32_t windowSize; // A5 token capacity selected by host tiling; A2/A3 ignore it.
-    uint64_t queryBatchStride;
-    uint64_t keyBatchStride;
-    uint64_t valueBatchStride;
     uint32_t a5VfFlags; // A2/A3 keep their existing flags and resource paths.
     uint32_t a5HeadRatio;
 };

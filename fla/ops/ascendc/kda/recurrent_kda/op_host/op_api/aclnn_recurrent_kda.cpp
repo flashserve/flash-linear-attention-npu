@@ -26,9 +26,7 @@
 #include "acl/acl_rt.h"
 
 #include <cstring>
-#include <algorithm>
 #include <limits>
-#include <vector>
 #include <cstdio>
 #include <cstdarg>
 #include <utility>
@@ -193,7 +191,7 @@ static bool SameTensorStorage(const aclTensor *lhs, const aclTensor *rhs)
 
 
 
-// A2/A3 keep the direct-view contract of the PR baseline.
+// All platforms use the same token-major direct-view contract.
 bool IsSupportedQkvView(const aclTensor *tensor, RecurrentKdaLayout layout)
 {
     if (tensor == nullptr) {
@@ -243,7 +241,7 @@ bool IsSupportedQkvView(const aclTensor *tensor, RecurrentKdaLayout layout)
 }
 
 bool CheckQkvMaterializationSafety(
-    const aclTensor *tensor, RecurrentKdaLayout layout, const char *name, bool isA5, bool &supportsDirect)
+    const aclTensor *tensor, RecurrentKdaLayout layout, const char *name, bool &supportsDirect)
 {
     supportsDirect = false;
     const size_t expectedRank = layout == RecurrentKdaLayout::TND ? 3 : 4;
@@ -262,58 +260,14 @@ bool CheckQkvMaterializationSafety(
         tokenStride < featureCount || headStride < featureCount) {
         return true;
     }
-    const int64_t tokenCount = Dim(tensor, tokenDim);
-    if (!isA5) {
-        const int64_t limit = std::numeric_limits<int64_t>::max();
-        if ((headCount > 1 && headStride > (limit - featureCount) / (headCount - 1)) ||
-            tokenStride < (headCount - 1) * headStride + featureCount) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
-                "expected representable token-major head span on A2/A3; actual " + TensorDescription(tensor));
-            return false;
-        }
-        supportsDirect = IsSupportedQkvView(tensor, layout);
-        return true;
-    }
     const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
-    if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
+    if ((headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) ||
+        tokenStride < (headCount - 1) * headStride + featureCount) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
-            "expected representable head span; actual " + TensorDescription(tensor));
+            "expected representable token-major head span; actual " + TensorDescription(tensor));
         return false;
     }
-    if (tokenCount > 1 && tokenStride > (maxInt64 - featureCount) / (tokenCount - 1)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
-            "expected representable token span; actual " + TensorDescription(tensor));
-        return false;
-    }
-    const int64_t tokenMajorSpan = (headCount - 1) * headStride + featureCount;
-    const int64_t headMajorSpan = (tokenCount - 1) * tokenStride + featureCount;
-    if (tokenStride < tokenMajorSpan && headStride < headMajorSpan) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
-            "expected non-overlapping token/head axes; actual " + TensorDescription(tensor));
-        return false;
-    }
-    if (layout == RecurrentKdaLayout::BSND && Dim(tensor, DIM0) > 1) {
-        if (tokenCount > 1 && tokenStride >
-            (maxInt64 - tokenMajorSpan) / (tokenCount - 1)) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
-                "expected representable full batch span; actual " + TensorDescription(tensor));
-            return false;
-        }
-        const int64_t fullViewSpan = (tokenCount - 1) * tokenStride +
-                                     (headCount - 1) * headStride + featureCount;
-        const int64_t batchSpan = fullViewSpan;
-        if (strides[DIM0] < batchSpan) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", name,
-                "expected batch stride covering the view; actual " + TensorDescription(tensor));
-            return false;
-        }
-    }
-    const bool positive = std::all_of(strides.begin(), strides.end(), [](int64_t x) { return x > 0; });
-    const bool tokenMajor = tokenStride >= tokenMajorSpan;
-    const uint64_t gap = static_cast<uint64_t>(tokenStride - featureCount);
-    supportsDirect = positive && gap <= std::numeric_limits<uint32_t>::max() / sizeof(uint16_t) &&
-        (layout == RecurrentKdaLayout::TND || Dim(tensor, DIM0) <= 1 ||
-         (tokenMajor && tokenStride <= maxInt64 / tokenCount && strides[0] == tokenCount * tokenStride));
+    supportsDirect = IsSupportedQkvView(tensor, layout);
     return true;
 }
 
@@ -758,9 +712,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
     if (!CheckShape(params, parsedLayout, isA5)) return ACLNN_ERR_PARAM_INVALID;
     bool querySupportsDirect = false, keySupportsDirect = false, valueSupportsDirect = false;
-    if (!CheckQkvMaterializationSafety(params.query, parsedLayout, "query", isA5, querySupportsDirect) ||
-        !CheckQkvMaterializationSafety(params.key, parsedLayout, "key", isA5, keySupportsDirect) ||
-        !CheckQkvMaterializationSafety(params.value, parsedLayout, "value", isA5, valueSupportsDirect))
+    if (!CheckQkvMaterializationSafety(params.query, parsedLayout, "query", querySupportsDirect) ||
+        !CheckQkvMaterializationSafety(params.key, parsedLayout, "key", keySupportsDirect) ||
+        !CheckQkvMaterializationSafety(params.value, parsedLayout, "value", valueSupportsDirect))
         return ACLNN_ERR_PARAM_INVALID;
     const bool queryUsesDirectView = !IsContiguous(params.query) && querySupportsDirect;
     const bool keyUsesDirectView = !IsContiguous(params.key) && keySupportsDirect;
