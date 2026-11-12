@@ -186,8 +186,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         return gdn_finalize_arch22::Tiling(context, routePlatform);
     }
 #endif
-    if (ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
-                return ge::GRAPH_FAILED);
+    if (ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     const double *scale = attrs->GetAttrPointer<double>(0);
     const int32_t *chunkSize = attrs->GetAttrPointer<int32_t>(1);
@@ -200,7 +201,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const bool useGateValue = useGate == nullptr ? false : *useGate;
     const bool useExp2Value = useExp2 == nullptr ? true : *useExp2;
     const int64_t actualChunkSize = chunkSize == nullptr ? tiling->chunkSize : *chunkSize;
-    OP_CHECK_IF(actualChunkSize != tiling->chunkSize) {
+    if (actualChunkSize != tiling->chunkSize) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "chunk_size only supports 64.");
         return ge::GRAPH_FAILED;
     }

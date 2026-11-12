@@ -70,15 +70,15 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const ge::DataType gDtype = gDesc->GetDataType();
     const ge::DataType betaDtype = betaDesc->GetDataType();
     if (mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(DtypeName(mainDtype)), "mainDtype dtype is %s, expect dtype is bf16 or fp16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(mainDtype), "dtype must be bf16 or fp16");
         return ge::GRAPH_FAILED;
     }
     if (gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(DtypeName(gDtype)), "gDtype dtype is %s, expect dtype is bf16 or fp32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(gDtype), "g dtype must be bf16 or fp32");
         return ge::GRAPH_FAILED;
     }
     if (betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(DtypeName(betaDtype)), "betaDtype dtype is %s, expect dtype is bf16 or fp32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(betaDtype), "beta dtype must be bf16 or fp32");
         return ge::GRAPH_FAILED;
     }
 
