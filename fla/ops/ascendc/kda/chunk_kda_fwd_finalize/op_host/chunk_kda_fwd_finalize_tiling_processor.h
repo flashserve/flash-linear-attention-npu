@@ -90,7 +90,11 @@ public:
             const uint64_t moverThreshold = context_.isVarLen
                 ? FINALIZE_A5_VARLEN_MOVER_MIN_CHUNKS_PER_CORE
                 : FINALIZE_A5_DENSE_MOVER_MIN_CHUNKS_PER_CORE;
-            useAivInputMover = chunksPerCore >= moverThreshold;
+            // HV=128 model cases are limited by the AIV UB-to-L1 path.
+            // Keep their work split across four-head AIC-only partitions;
+            // other head counts retain the scheme-B mover thresholds.
+            useAivInputMover = chunksPerCore >= moverThreshold &&
+                context_.valueHeadNum != 128;
             if (useAivInputMover) {
                 headsPerPartition = context_.valueHeadNum;
                 scheduleMode =

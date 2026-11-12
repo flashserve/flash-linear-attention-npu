@@ -631,3 +631,41 @@ Evidence root on the SSH host:
 Authoritative files: RESOLUTION_REPORT.md, acceptance_resumed.json,
 performance_op.json and the complete profiles_op/ raw msprof artifacts. The
 compact archive is pr1179_a5_resolution_evidence.zip. Source fix: 263b6be.
+
+
+## 2026-11-13 A5 HV=128 performance refinement
+
+Baseline commit: 12e20df. Only A5 HV=128 now selects the existing GROUP4
+AIC-only path; other HV retain the original mover thresholds. The kernel, ABI,
+math, reference and input ranges/standards are unchanged. A3 code paths are
+unchanged; no A3 device regression was run in this session.
+
+Same-device msprof op on NPU 3, runtime 28 AIC/56 AIV, 1650 MHz, CANN 9.2.0,
+Torch/NPU 2.12. Cases are the original 10/11: B1 HV128 K=V128 BF16,
+chunk64, BNSD, state_v_first=false. Each capture has 15 target records, with
+first five discarded and ten formal samples. Task Duration(us) results:
+
+| Case | Baseline P50 | Final P50 | Reduction | Baseline P90 | Final P90 |
+|---|---:|---:|---:|---:|---:|
+| 10 | 1676.776 | 1594.363 | 4.91% | 1678.135 | 1596.309 |
+| 11 | 2394.405 | 2337.477 | 2.38% | 2396.310 | 2342.882 |
+
+Final-policy frozen accuracy: 216/216 pass; determinism: 12 x 50 pass;
+memcheck: 12/12 pass, all twelve target kernel executions instrumented with
+no errors. Extra memory over twelve shapes: 17,768,960 bytes,
+excluding existing inputs and the returned output, below 200 MiB. Forty-eight
+host schedule boundary/head-count checks pass. The normal runtime's op_api
+and 21 kernel objects match the built package; sanitizer target object hashes
+are checked separately for its scoped package.
+
+Loop unrolling was measured and rejected (<0.02% P50 difference). Mover
+Default metrics show about 99% AIV MTE3 and 12% Cube utilization; pipe ratios
+include waits and do not prove peak bandwidth. Switching to GROUP4 both
+avoids the AIV copy path and improves work distribution; their contributions
+have not been isolated. Final actual key=0/mode=2/headsPerPartition=4/group=4,
+Nwork=5632/8192. Only these two shapes have demonstrated performance gains.
+
+Evidence: validation_pr1179_a5/optimization_unroll/OPTIMIZATION_REPORT.md,
+optimization_results.json, baseline/final/performance_op.json and raw profiles.
+No native performance-ratio target is claimed. The full GVA 720-case matrix
+was not rerun; the change is confined to Finalize scheduling.

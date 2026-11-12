@@ -52,7 +52,7 @@ A2/A3 在 `Nbase<aicCoreNum` 时选择 `headsPerPartition=1`，用 head 展开�
 kernel 内逐 head 使用既有双槽 L1 流水。两种模式单次只驻留一个 head 的
 72 KiB 输入，不随 HV 扩大 L1 占用。
 
-A5 高负载使用 `A5_FULL_HEAD_MOVER`：`headsPerPartition=HV`、`Nwork=Nbase`，
+A5 高负载（HV=128 的例外见后文）使用 `A5_FULL_HEAD_MOVER`：`headsPerPartition=HV`、`Nwork=Nbase`，
 AIC/AIV workgroup 完整拥有一个 chunk，内部按 4-head group 流水。低负载
 使用 `A5_GROUP4_AIC_ONLY`：`headsPerPartition=min(4,HV)`，不启动 AIV。
 full-HV mover 的阈值为 dense 每核至少 4 个完整 chunk、varlen 每核至少
@@ -434,3 +434,25 @@ token/head 轴，`TND/NTD` 交换 rank-3 的 token/head 轴。
 ### A5 dense mover boundary correction
 
 The dense mover eligibility threshold counts only complete 64-row chunks: `eligibleChunks=B*floor(T/64)`, using the full-HV path core count. Partial chunks still participate in work decoding and computation, but cannot by themselves satisfy the four-complete-chunks-per-core threshold. Varlen retains the eight-chunks-per-core threshold.
+
+
+## 2026-11-13 A5 HV=128 scheduling refinement
+
+On A5, HV=128 selects the existing GROUP4 AIC-only mapping, regardless of
+chunks/core. Other HV values retain the four-complete-dense/eight-packed-chunk
+mover thresholds; A2/A3 are unchanged. No public ABI, formula, layout, resource
+allocation or synchronization changes are required.
+
+NPU 3 msprof op measurements on the frozen model inputs found lower P50 with
+GROUP4: dense T11264 1676.776 -> 1594.363 us (4.91%); packed T16384,
+16x1024, 2394.405 -> 2337.477 us (2.38%). BasicInfo samples use five discarded
+warmup launches followed by ten formal samples. Default metrics show AIV MTE3
+around 99% and Cube around 12% on the mover path; these pipe ratios include
+waiting and are not claims of peak memory bandwidth. Loop unrolling alone
+was measured and rejected because its difference was below 0.02%.
+
+The HV policy is deliberately not keyed to the two exact token counts.
+Correctness checks cover tails, state orientation, dense/packed layouts and
+head counts through the frozen regression. Performance benefit is claimed
+only for the two measured model shapes. Original candidate and raw profiling
+artifacts are retained under validation_pr1179_a5/optimization_unroll/.
