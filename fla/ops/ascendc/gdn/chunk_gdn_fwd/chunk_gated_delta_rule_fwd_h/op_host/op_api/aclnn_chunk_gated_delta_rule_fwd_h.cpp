@@ -318,23 +318,35 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous u failed.");
+    if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous k failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous w failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous u failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.gOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Contiguous gOptional failed.");
+        if (!(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous gOptional failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     if (params.gkOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                   "Contiguous gkOptional failed.");
+        if (!(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous gkOptional failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     if (params.initialStateOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS,
-                   ACLNN_ERR_PARAM_INVALID, "Contiguous initialStateOptional failed.");
+        if (!(DataContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous initialStateOptional failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
 
     return ACLNN_SUCCESS;
@@ -538,8 +550,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "ParamsDataContiguous failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const auto kShape = params.k->GetViewShape();
     const auto uShape = params.u->GetViewShape();
     const int64_t seqNum = params.cuSeqlensOptional == nullptr

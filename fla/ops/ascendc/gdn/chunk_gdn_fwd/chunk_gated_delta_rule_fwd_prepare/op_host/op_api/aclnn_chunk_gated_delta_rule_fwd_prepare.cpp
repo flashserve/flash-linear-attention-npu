@@ -553,16 +553,34 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdPrepareParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous g failed.");
-    CHECK_COND(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous beta failed.");
-    CHECK_COND(OptionalDataContiguous(params.aLogOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous aLog failed.");
-    CHECK_COND(OptionalDataContiguous(params.dtBiasOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dtBias failed.");
+    if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous q failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous k failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous v failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous g failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous beta failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(OptionalDataContiguous(params.aLogOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous aLog failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(OptionalDataContiguous(params.dtBiasOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "Contiguous dtBias failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -703,8 +721,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     auto executorPtr = uniqueExecutor.get();
 
     CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s: " "ParamsDataContiguous failed.", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const bool a2 = IsA2PrepareSoc();
     auto compute = params;
