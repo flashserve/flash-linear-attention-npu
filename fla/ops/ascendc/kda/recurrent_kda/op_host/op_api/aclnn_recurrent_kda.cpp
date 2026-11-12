@@ -11,6 +11,8 @@
  * \file aclnn_recurrent_kda.cpp
  * \brief
  */
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "aclnn_recurrent_kda.h"
 #include "recurrent_kda.h"
 
@@ -32,6 +34,8 @@ extern "C" {
 #endif
 
 namespace {
+
+static constexpr const char *OP_NAME = "aclnnRecurrentKda";
 constexpr size_t DIM0 = 0;
 constexpr size_t DIM1 = 1;
 constexpr size_t DIM2 = 2;
@@ -141,7 +145,7 @@ static bool ParseLayout(const char *layout, RecurrentKdaLayout &parsed)
         parsed = RecurrentKdaLayout::TND;
         return true;
     }
-    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: layout must be BSND or TND.");
+    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "layout", layout, "layout must be BSND or TND");
     return false;
 }
 
@@ -214,13 +218,13 @@ bool CheckQkvMaterializationSafety(
     }
     const int64_t maxInt64 = std::numeric_limits<int64_t>::max();
     if (headCount > 1 && headStride > (maxInt64 - featureCount) / (headCount - 1)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: %s head span overflows.", name);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, name, "head span overflows int64");
         return false;
     }
     const int64_t minTokenStride = (headCount - 1) * headStride + featureCount;
     if (tokenStride < minTokenStride) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "npu_recurrent_kda: %s token/head axis order or overlap is unsupported.", name);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, name, "token/head axis order or overlap is unsupported");
         return false;
     }
     return true;
@@ -232,8 +236,10 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
         return true;
     }
     if (Rank(cuSeqlens) != 1 || Dim(cuSeqlens, DIM0) < 2) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "%s: cuSeqlensOptional must be a 1D tensor with at least two elements.", opName);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "cuSeqlensOptional",
+            std::string(op::ToString(cuSeqlens->GetViewShape()).GetString()),
+            "1D tensor with at least two elements");
         return false;
     }
     return true;
@@ -242,7 +248,11 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
 bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
 {
     if (!SameShape(params.query, params.key)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: query and key must have identical shape.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "query,key",
+            "query=" + std::string(op::ToString(params.query->GetViewShape()).GetString()) +
+                ",key=" + std::string(op::ToString(params.key->GetViewShape()).GetString()),
+            "query and key must have identical shape");
         return false;
     }
     int64_t totalTokens = 0;
@@ -254,8 +264,13 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
     int64_t vDim = 0;
     if (layout == RecurrentKdaLayout::TND) {
         if (Rank(params.query) != 3 || Rank(params.value) != 3 || Rank(params.gate) != 3 || Rank(params.beta) != 2) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "npu_recurrent_kda: TND expects q/k [T,H,K], v [T,HV,V], g [T,HV,K], beta [T,HV].");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                OP_NAME, "query,value,gate,beta",
+                "q/k rank=" + std::to_string(Rank(params.query)) +
+                    ",v rank=" + std::to_string(Rank(params.value)) +
+                    ",g rank=" + std::to_string(Rank(params.gate)) +
+                    ",beta rank=" + std::to_string(Rank(params.beta)),
+                "TND expects q/k [T,H,K], v [T,HV,V], g [T,HV,K], beta [T,HV]");
             return false;
         }
         totalTokens = Dim(params.query, DIM0);
@@ -267,13 +282,23 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         if (Dim(params.value, DIM0) != totalTokens || Dim(params.gate, DIM0) != totalTokens ||
             Dim(params.beta, DIM0) != totalTokens || Dim(params.gate, DIM1) != hv ||
             Dim(params.beta, DIM1) != hv || Dim(params.gate, DIM2) != kDim) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: TND shape mismatch.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                OP_NAME, "query,value,gate,beta",
+                "value=" + std::string(op::ToString(params.value->GetViewShape()).GetString()) +
+                    ",gate=" + std::string(op::ToString(params.gate->GetViewShape()).GetString()) +
+                    ",beta=" + std::string(op::ToString(params.beta->GetViewShape()).GetString()),
+                "TND expects v [T,HV,V], g [T,HV,K], beta [T,HV] with matching T/HV/K");
             return false;
         }
     } else {
         if (Rank(params.query) != 4 || Rank(params.value) != 4 || Rank(params.gate) != 4 || Rank(params.beta) != 3) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "npu_recurrent_kda: BSND expects q/k [B,T,H,K], v [B,T,HV,V], g [B,T,HV,K], beta [B,T,HV].");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                OP_NAME, "query,value,gate,beta",
+                "q/k rank=" + std::to_string(Rank(params.query)) +
+                    ",v rank=" + std::to_string(Rank(params.value)) +
+                    ",g rank=" + std::to_string(Rank(params.gate)) +
+                    ",beta rank=" + std::to_string(Rank(params.beta)),
+                "BSND expects q/k [B,T,H,K], v [B,T,HV,V], g [B,T,HV,K], beta [B,T,HV]");
             return false;
         }
         batch = Dim(params.query, DIM0);
@@ -288,22 +313,33 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
             Dim(params.gate, DIM2) != hv || Dim(params.gate, DIM3) != kDim ||
             Dim(params.beta, DIM0) != batch || Dim(params.beta, DIM1) != denseSeqLen ||
             Dim(params.beta, DIM2) != hv) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: BSND shape mismatch.");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                OP_NAME, "query,value,gate,beta",
+                "value=" + std::string(op::ToString(params.value->GetViewShape()).GetString()) +
+                    ",gate=" + std::string(op::ToString(params.gate->GetViewShape()).GetString()) +
+                    ",beta=" + std::string(op::ToString(params.beta->GetViewShape()).GetString()),
+                "BSND expects v/g/beta to match q batch and sequence dimensions");
             return false;
         }
     }
     if (h <= 0 || hv <= 0 || kDim <= 0 || vDim <= 0 || totalTokens <= 0 || denseSeqLen <= 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: all shape dimensions must be positive.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "H,HV,K,V,T",
+            std::to_string(h) + "," + std::to_string(hv) + "," + std::to_string(kDim) + "," +
+                std::to_string(vDim) + "," + std::to_string(totalTokens),
+            "all shape dimensions must be positive");
         return false;
     }
     if (hv % h != 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: HV must be divisible by H.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "H,HV", std::to_string(h) + "," + std::to_string(hv),
+            "HV must be divisible by H");
         return false;
     }
     if (kDim != 128 || (vDim != 128 && vDim != 256)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "npu_recurrent_kda: K/V currently support only K=128,V=128 or K=128,V=256, but K=%ld,V=%ld.",
-                kDim, vDim);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "K,V", std::to_string(kDim) + "," + std::to_string(vDim),
+            "K=128 with V=128 or 256 only");
         return false;
     }
     if (!CheckCuSeqlensShape(params.cuSeqlensOptional, "npu_recurrent_kda")) {
@@ -313,7 +349,9 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         ((layout == RecurrentKdaLayout::BSND) ? batch : 1) :
         Dim(params.cuSeqlensOptional, DIM0) - 1;
     if (Rank(params.initialStateRef) != 4) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: initialStateRef must be rank 4.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            OP_NAME, "initialState", std::to_string(Rank(params.initialStateRef)),
+            "initialState must be rank 4");
         return false;
     }
     int64_t stateCapacity = Dim(params.initialStateRef, DIM0);
@@ -322,17 +360,27 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         (Dim(params.initialStateRef, DIM2) == kDim && Dim(params.initialStateRef, DIM3) == vDim);
     if (stateCapacity <= 0 || Dim(params.initialStateRef, DIM1) != hv || !stateTailMatches ||
         (params.ssmStateIndicesOptional == nullptr && stateCapacity != seqNum)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "npu_recurrent_kda: state must be [state_capacity,HV,V,K] when stateVFirst=true or "
-                "[state_capacity,HV,K,V] otherwise; without ssmStateIndicesOptional, state_capacity must equal seq_num.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "initialState",
+            std::string(op::ToString(params.initialStateRef->GetViewShape()).GetString()),
+            "state must be [state_capacity,HV,V,K] when stateVFirst=true, otherwise [state_capacity,HV,K,V]; "
+            "state_capacity must equal seq_num when ssmStateIndicesOptional is absent");
         return false;
     }
     if (!SameShape(params.attnOut, params.value)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: attnOut shape must match value.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "attnOut,value",
+            "attnOut=" + std::string(op::ToString(params.attnOut->GetViewShape()).GetString()) +
+                ",value=" + std::string(op::ToString(params.value->GetViewShape()).GetString()),
+            "attnOut shape must match value");
         return false;
     }
     if (!SameShape(params.finalState, params.initialStateRef)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: finalState shape must match initialStateRef.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "finalState,initialState",
+            "finalState=" + std::string(op::ToString(params.finalState->GetViewShape()).GetString()) +
+                ",initialState=" + std::string(op::ToString(params.initialStateRef->GetViewShape()).GetString()),
+            "finalState shape must match initialStateRef");
         return false;
     }
     if (params.ssmStateIndicesOptional != nullptr) {
@@ -341,27 +389,40 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
         bool speculative2d = rank == 2 && Dim(params.ssmStateIndicesOptional, DIM0) == seqNum &&
                              Dim(params.ssmStateIndicesOptional, DIM1) > 0;
         if (!packed1d && !speculative2d) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "npu_recurrent_kda: ssm_state_indices must be packed [T] or speculative [seq_num,max_step].");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "ssmStateIndices",
+                std::string(op::ToString(params.ssmStateIndicesOptional->GetViewShape()).GetString()),
+                "packed [T] or speculative [seq_num,max_step]");
             return false;
         }
     }
     if (params.numAcceptedTokensOptional != nullptr &&
         (Rank(params.numAcceptedTokensOptional) != 1 || Dim(params.numAcceptedTokensOptional, DIM0) != seqNum)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: num_accepted_tokens length must equal sequence number.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "numAcceptedTokens",
+            std::string(op::ToString(params.numAcceptedTokensOptional->GetViewShape()).GetString()),
+            "[seq_num]");
         return false;
     }
     if (params.useGateInKernel && params.aLogOptional == nullptr) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: A_log is required when use_gate_in_kernel=True.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "aLog", "A_log is required when use_gate_in_kernel=True");
         return false;
     }
     if (!params.useGateInKernel && (params.safeGate || params.aLogOptional != nullptr || params.dtBiasOptional != nullptr)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "npu_recurrent_kda: A_log, dt_bias and safe_gate require use_gate_in_kernel=True.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "safeGate,aLog,dtBias",
+            std::string(params.safeGate ? "safeGate=true" : "safeGate=false") + "," +
+                (params.aLogOptional != nullptr ? "aLog=present" : "aLog=absent") + "," +
+                (params.dtBiasOptional != nullptr ? "dtBias=present" : "dtBias=absent"),
+            "A_log, dt_bias and safe_gate require use_gate_in_kernel=True");
         return false;
     }
     if (params.aLogOptional != nullptr && (Rank(params.aLogOptional) != 1 || Dim(params.aLogOptional, DIM0) != hv)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: A_log must be float32 with shape [HV].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "aLog",
+            std::string(op::ToString(params.aLogOptional->GetViewShape()).GetString()),
+            "[HV] with HV=" + std::to_string(hv));
         return false;
     }
     if (params.dtBiasOptional != nullptr) {
@@ -369,12 +430,17 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout)
                         (Rank(params.dtBiasOptional) == 2 && Dim(params.dtBiasOptional, DIM0) == hv &&
                          Dim(params.dtBiasOptional, DIM1) == kDim);
         if (!dtBiasOk) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: dt_bias must be float32 with shape [HV*K] or [HV,K].");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_NAME, "dtBias",
+                std::string(op::ToString(params.dtBiasOptional->GetViewShape()).GetString()),
+                "[HV*K] or [HV,K]");
             return false;
         }
     }
     if (params.safeGate && (params.lowerBound < -5.0 || params.lowerBound >= 0.0)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: lower_bound must be in [-5, 0) when safe_gate=True.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "lowerBound", std::to_string(params.lowerBound),
+            "lowerBound must be in [-5,0) when safe_gate=True");
         return false;
     }
     return true;
@@ -404,7 +470,11 @@ bool CheckDtypeValid(const RecurrentKdaParams &params)
     OP_CHECK_DTYPE_NOT_SUPPORT(params.attnOut, QKV_TYPE_SUPPORT_LIST, return false);
     OP_CHECK_DTYPE_NOT_SUPPORT(params.finalState, STATE_TYPE_SUPPORT_LIST, return false);
     if (params.finalState->GetDataType() != params.initialStateRef->GetDataType()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: finalState dtype must match initialStateRef.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "finalState",
+            ge::TypeUtils::DataTypeToSerialString(params.finalState->GetDataType()),
+            std::string("same as initialState: ") +
+                ge::TypeUtils::DataTypeToSerialString(params.initialStateRef->GetDataType()));
         return false;
     }
     if (params.cuSeqlensOptional != nullptr) {
@@ -501,8 +571,8 @@ aclnnStatus PreProcess(
     CHECK_RET(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     CHECK_RET(DataContiguous(params.numAcceptedTokensOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
     if (params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "numAcceptedTokens", "num_accepted_tokens requires ssm_state_indices");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
