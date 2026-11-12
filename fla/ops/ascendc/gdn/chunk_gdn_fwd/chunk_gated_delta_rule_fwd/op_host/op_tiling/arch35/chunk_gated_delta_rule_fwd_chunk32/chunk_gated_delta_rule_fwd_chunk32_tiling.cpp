@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "chunk_gated_delta_rule_fwd_32_tiling_data.h"
 
 #include "platform/platform_ascendc.h"
@@ -11,6 +13,8 @@
 #include <cstdint>
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdChunk32";
 namespace {
 
 constexpr size_t INPUT_Q = 0;
@@ -65,13 +69,17 @@ bool IsShape(const gert::StorageShape *shape, std::initializer_list<int64_t> dim
 ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *context)
 {
     OP_CHECK_IF(context == nullptr || context->GetAttrs() == nullptr,
-                OP_LOGE("ChunkGatedDeltaRuleFwd", "Invalid chunk32 tiling context."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "context", "chunk32 tiling context and attrs must not be null"),
                 return ge::GRAPH_FAILED);
 
     const int64_t *chunkSize = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
     const double *scale = context->GetAttrs()->GetAttrPointer<double>(ATTR_SCALE);
     OP_CHECK_IF(chunkSize == nullptr || *chunkSize != CHUNK_SIZE || scale == nullptr,
-                OP_LOGE(context->GetNodeName(), "Chunk32 tiling requires chunk_size=32 and a scale attribute."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "chunk_size,scale",
+                    chunkSize == nullptr ? "chunk_size=null" : std::to_string(*chunkSize),
+                    "chunk_size=32 and a scale attribute are required"),
                 return ge::GRAPH_FAILED);
 
     const auto *qShape = context->GetOptionalInputShape(INPUT_Q);
@@ -92,13 +100,16 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     stateShape == nullptr || qDesc == nullptr || kDesc == nullptr ||
                     vDesc == nullptr || betaDesc == nullptr || gDesc == nullptr ||
                     stateDesc == nullptr,
-                OP_LOGE(context->GetNodeName(), "Chunk32 requires valid q/k/v/beta/g and output descriptors."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "q,k,v,beta,g,o,final_state", "required shapes/descriptors must not be null"),
                 return ge::GRAPH_FAILED);
 
     const gert::Shape &q = qShape->GetStorageShape();
     const gert::Shape &v = vShape->GetStorageShape();
     OP_CHECK_IF(q.GetDimNum() != 4 || v.GetDimNum() != 4,
-                OP_LOGE(context->GetNodeName(), "Chunk32 q/k/v must use BNSD rank-4 storage."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    OP_NAME, "q,v", std::to_string(q.GetDimNum()) + "," + std::to_string(v.GetDimNum()),
+                    "q/k/v must use BNSD rank-4 storage"),
                 return ge::GRAPH_FAILED);
     const int64_t batch = q.GetDim(0);
     const int64_t keyHeads = q.GetDim(1);
@@ -108,8 +119,11 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     const int64_t valueDim = v.GetDim(3);
     OP_CHECK_IF(batch <= 0 || keyHeads <= 0 || valueHeads <= 0 || tokens <= 0 ||
                     valueHeads % keyHeads != 0 || keyDim != HEAD_DIM || valueDim != HEAD_DIM,
-                OP_LOGE(context->GetNodeName(),
-                        "Chunk32 requires positive B/H/T, Hv divisible by Hk, and K=V=128."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "B,Hk,Hv,T,K,V",
+                    std::to_string(batch) + "," + std::to_string(keyHeads) + "," + std::to_string(valueHeads) +
+                        "," + std::to_string(tokens) + "," + std::to_string(keyDim) + "," + std::to_string(valueDim),
+                    "positive B/H/T, Hv divisible by Hk, and K=V=128"),
                 return ge::GRAPH_FAILED);
     constexpr int64_t kU32Max = static_cast<int64_t>(UINT32_MAX);
     // seqNum keeps export flags in the top nibble, so the sequence count
@@ -119,22 +133,28 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
         static_cast<uint64_t>(batch) * static_cast<uint64_t>(valueHeads);
     OP_CHECK_IF(batch > kU32Max || keyHeads > kU32Max || valueHeads > kU32Max ||
                     tokens > kU32Max || headTasks > static_cast<uint64_t>(kU32Max),
-                OP_LOGE(context->GetNodeName(),
-                        "Chunk32 B/Hk/Hv/T or B*Hv does not fit in uint32."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "B,Hk,Hv,T,B*Hv",
+                    std::to_string(batch) + "," + std::to_string(keyHeads) + "," + std::to_string(valueHeads) +
+                        "," + std::to_string(tokens) + "," + std::to_string(headTasks),
+                    "must fit in uint32"),
                 return ge::GRAPH_FAILED);
     // A caller-owned contiguous o can arrive with its storage collapsed to
     // numel. The logical BNSD layout is already checked in ACLNN.
     uint64_t numel = headTasks;
     OP_CHECK_IF(tokens > 0 && numel > UINT64_MAX / static_cast<uint64_t>(tokens),
-                OP_LOGE(context->GetNodeName(), "Chunk32 o numel overflows."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "B*Hv*T*V", std::to_string(numel), "o numel must not overflow"),
                 return ge::GRAPH_FAILED);
     numel *= static_cast<uint64_t>(tokens);
     OP_CHECK_IF(valueDim > 0 && numel > UINT64_MAX / static_cast<uint64_t>(valueDim),
-                OP_LOGE(context->GetNodeName(), "Chunk32 o numel overflows."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "B*Hv*T*V", std::to_string(numel), "o numel must not overflow"),
                 return ge::GRAPH_FAILED);
     numel *= static_cast<uint64_t>(valueDim);
     OP_CHECK_IF(numel > static_cast<uint64_t>(INT64_MAX),
-                OP_LOGE(context->GetNodeName(), "Chunk32 o numel overflows."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "B*Hv*T*V", std::to_string(numel), "o numel must not overflow"),
                 return ge::GRAPH_FAILED);
     const int64_t oNumel = static_cast<int64_t>(numel);
     const gert::Shape &oStorage = oShape->GetStorageShape();
@@ -144,14 +164,20 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     !IsShape(betaShape, {batch, valueHeads, tokens}) ||
                     !IsShape(gShape, {batch, valueHeads, tokens}) ||
                     !(IsShape(oShape, {batch, valueHeads, tokens, valueDim}) || oFlat),
-                OP_LOGE(context->GetNodeName(), "Chunk32 input or output storage shape is invalid."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "k,v,beta,g,o", "storage shape mismatch",
+                    "Chunk32 input or output storage shape is invalid"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(qDesc->GetDataType() != ge::DT_BF16 ||
                     kDesc->GetDataType() != ge::DT_BF16 ||
                     vDesc->GetDataType() != ge::DT_BF16 ||
                     betaDesc->GetDataType() != ge::DT_BF16 ||
                     gDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(), "Chunk32 requires BF16 q/k/v/beta and FP32 g."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    OP_NAME, "q,k,v,beta,g",
+                    std::string("q=") + ge::TypeUtils::DataTypeToSerialString(qDesc->GetDataType()) +
+                        ",g=" + ge::TypeUtils::DataTypeToSerialString(gDesc->GetDataType()),
+                    "Chunk32 requires BF16 q/k/v/beta and FP32 g"),
                 return ge::GRAPH_FAILED);
 
     const auto *cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
@@ -161,7 +187,11 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     const bool hasCu = cuShape != nullptr && cuDesc != nullptr;
     const bool hasChunks = chunkShape != nullptr && chunkDesc != nullptr;
     OP_CHECK_IF(hasCu != hasChunks,
-                OP_LOGE(context->GetNodeName(), "Chunk32 varlen metadata must be paired."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "cu_seqlens,chunk_indices",
+                    std::string(hasCu ? "cu_seqlens=present" : "cu_seqlens=absent") + "," +
+                        (hasChunks ? "chunk_indices=present" : "chunk_indices=absent"),
+                    "varlen metadata must be paired"),
                 return ge::GRAPH_FAILED);
     uint32_t seqNum = 0;
     int64_t stateBatch = batch;
@@ -173,12 +203,17 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                         cu.GetDimNum() != 1 || cu.GetDim(0) < 2 ||
                         chunks.GetDimNum() != 1 || chunks.GetDim(0) < 0 ||
                         chunks.GetDim(0) % 2 != 0,
-                    OP_LOGE(context->GetNodeName(), "Chunk32 varlen metadata descriptor is invalid."),
+                    OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                        OP_NAME, "cu_seqlens,chunk_indices",
+                        std::string("cu=") + ge::TypeUtils::DataTypeToSerialString(cuDesc->GetDataType()) + "," +
+                            std::to_string(cu.GetDimNum()) + "D",
+                        "varlen metadata descriptor is invalid (B=1, int64, 1D, >=2 and even pairs)"),
                     return ge::GRAPH_FAILED);
         stateBatch = cu.GetDim(0) - 1;
         OP_CHECK_IF(stateBatch < 0 || stateBatch > kSeqCountMax,
-                    OP_LOGE(context->GetNodeName(),
-                            "Chunk32 sequence count does not fit beside the export flags."),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        OP_NAME, "seq_count", std::to_string(stateBatch),
+                        "sequence count must fit in the low 28 bits"),
                     return ge::GRAPH_FAILED);
         seqNum = static_cast<uint32_t>(stateBatch);
     }
@@ -194,7 +229,8 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
         OP_CHECK_IF(initialShape == nullptr || initialDesc == nullptr ||
                         (initialDesc->GetDataType() != ge::DT_BF16 &&
                          initialDesc->GetDataType() != ge::DT_FLOAT),
-                    OP_LOGE(context->GetNodeName(), "Chunk32 initial state descriptor is invalid."),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        OP_NAME, "initial_state", "initial state descriptor is invalid or dtype not BF16/FP32"),
                     return ge::GRAPH_FAILED);
         hasInitial = 1;
         initialFp32 = initialDesc->GetDataType() == ge::DT_FLOAT ? 1U : 0U;
@@ -202,13 +238,15 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     const ge::DataType stateDtype = stateDesc->GetDataType();
     if (hasInitial == 0 || initialFp32 != 0) {
         OP_CHECK_IF(stateDtype != ge::DT_FLOAT,
-                    OP_LOGE(context->GetNodeName(),
-                            "Chunk32 final state must be FP32 when initial state is absent or FP32."),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        OP_NAME, "final_state", ge::TypeUtils::DataTypeToSerialString(stateDtype),
+                        "final state must be FP32 when initial state is absent or FP32"),
                     return ge::GRAPH_FAILED);
     } else {
         OP_CHECK_IF(stateDtype != ge::DT_BF16,
-                    OP_LOGE(context->GetNodeName(),
-                            "Chunk32 final state must be BF16 when initial state is BF16."),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        OP_NAME, "final_state", ge::TypeUtils::DataTypeToSerialString(stateDtype),
+                        "final state must be BF16 when initial state is BF16"),
                     return ge::GRAPH_FAILED);
     }
 

@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "../../chunk_gated_delta_rule_fwd_tiling.h"
 
 #include "../../../op_kernel/internal/operators/chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
@@ -18,6 +20,8 @@
 #include <register/op_impl_registry.h>
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdArch35";
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingContext *context);
 ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *context);
@@ -130,7 +134,8 @@ ge::graphStatus BuildCoefficientCubeTiling(uint64_t bt, uint64_t k, ge::DataType
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context)
 {
     OP_CHECK_IF(context == nullptr || context->GetAttrs() == nullptr,
-                OP_LOGE("ChunkGatedDeltaRuleFwd", "Invalid tiling context."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "context", "tiling context and attrs must not be null"),
                 return ge::GRAPH_FAILED);
     const int64_t *requestedChunkSize =
         context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
@@ -151,7 +156,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                     betaShape->GetStorageShape().GetDimNum() != 3 ||
                     aShape->GetStorageShape().GetDimNum() != 4 ||
                     gShape->GetStorageShape().GetDimNum() != 3,
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g."),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    OP_NAME, "q,k,v,A,beta,raw_g",
+                    "q/k/v/A rank or beta/raw_g rank mismatch",
+                    "Phase 6 requires rank-4 q/k/v/A and rank-3 beta/raw_g"),
                 return ge::GRAPH_FAILED);
     const auto *qDesc = context->GetInputDesc(INPUT_Q);
     const auto *kDesc = context->GetInputDesc(INPUT_K);
@@ -161,7 +169,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
     OP_CHECK_IF(qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
                     aDesc == nullptr || gDesc == nullptr,
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires valid input descriptors."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "q,k,v,A,beta,raw_g", "input descriptors must not be null"),
                 return ge::GRAPH_FAILED);
     const ge::DataType inputDtype = qDesc->GetDataType();
     const bool isFp16 = inputDtype == ge::DT_FLOAT16;
@@ -185,28 +194,41 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                     batch <= 0 || heads <= 0 || tokens <= 0 || kDim != SUPPORTED_K_DIM ||
                     (vDim != SUPPORTED_V_DIM_128 && vDim != SUPPORTED_V_DIM_256) ||
                     valueHeads <= 0 || (valueHeads % heads) != 0,
-                OP_LOGE(context->GetNodeName(),
-                        "Phase 6 requires positive B/Hk/T, Hk divides Hv, K=128, and V=128/256; dense T may be arbitrary."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "B,Hk,Hv,T,K,V",
+                    std::to_string(batch) + "," + std::to_string(heads) + "," + std::to_string(valueHeads) +
+                        "," + std::to_string(tokens) + "," + std::to_string(kDim) + "," + std::to_string(vDim),
+                    "positive B/Hk/T, Hk divides Hv, K=128, V=128/256"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(kShape, {batch, heads, tokens, kDim}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires k to match q in [B,H,T,K]."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "k", "shape mismatch with q",
+                    "k must match q in [B,H,T,K]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(vShape, {batch, valueHeads, tokens, vDim}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires v=[B,Hv,T,V] with Hv divisible by Hk."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "v", "shape mismatch with q layout",
+                    "v must be [B,Hv,T,V] with Hv divisible by Hk"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(betaShape, {batch, valueHeads, tokens}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires beta=[B,Hv,T]."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "beta", "shape mismatch",
+                    "beta must be [B,Hv,T]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(gShape, {batch, valueHeads, tokens}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires raw_g=[B,Hv,T]."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "raw_g", "shape mismatch", "Phase 6 requires raw_g=[B,Hv,T]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(kDesc->GetDataType() != inputDtype ||
                     vDesc->GetDataType() != inputDtype ||
                     aDesc->GetDataType() != inputDtype ||
                     betaDesc->GetDataType() != ge::DT_FLOAT ||
                     gDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "Phase 6 requires matching FP16/BF16 inputs/A and FP32 beta/g."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    OP_NAME, "q,k,v,A,beta,g",
+                    "beta=" + ge::TypeUtils::DataTypeToSerialString(betaDesc->GetDataType()) +
+                        ",g=" + ge::TypeUtils::DataTypeToSerialString(gDesc->GetDataType()),
+                    "FP16/BF16 inputs/A and FP32 beta/g"),
                 return ge::GRAPH_FAILED);
 
     const bool *outputFinalState =
@@ -221,11 +243,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                                   cuShape->GetStorageShape().GetDimNum() != 1 ||
                                   cuShape->GetStorageShape().GetDim(0) < 2 ||
                                   !GetChunkCount(chunkShape, &varlenChunks))),
-                OP_LOGE(context->GetNodeName(),
-                        "Phase 6 requires chunk_size=64/128 and paired valid varlen metadata."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "chunk_size,cu_seqlens,chunk_indices",
+                    "chunkSize=" + std::to_string(*chunkSize),
+                    "chunk_size must be 64/128 and varlen metadata must be paired and valid"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize}),
-                OP_LOGE(context->GetNodeName(), "Phase 6 requires a_storage=[B,Hv,T,chunk_size]."),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "a_storage", "shape mismatch",
+                    "a_storage must be [B,Hv,T,chunk_size]"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(context) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "Reuse of the accepted Phase 5 suffix tiling failed."),
@@ -256,9 +282,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, gCumsumShape);
     const bool writeGCumsum = IsShape(gCumsumShape, {batch, tokens, valueHeads});
     OP_CHECK_IF(!writeGCumsum && !IsShape(gCumsumShape, {1}),
-                OP_LOGE(context->GetNodeName(),
-                        "Phase 6 cumsum output must be [B,T,Hv] or the internal [1] placeholder; "
-                        "storage rank=%zu, elements=%ld, origin rank=%zu, elements=%ld.",
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "gCumsumOut",
+                    "storage rank=" + std::to_string(gCumsumShape->GetStorageShape().GetDimNum()),
+                    "Phase 6 cumsum output must be [B,T,Hv] or the internal [1] placeholder"),
                         gCumsumShape->GetStorageShape().GetDimNum(),
                         gCumsumShape->GetStorageShape().GetShapeSize(),
                         gCumsumShape->GetOriginShape().GetDimNum(),
