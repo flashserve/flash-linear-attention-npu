@@ -490,6 +490,9 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0,
                ACLNN_ERR_PARAM_INVALID,
                "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
+    CHECK_COND(params.chunkSize != 64 || info.hvNum / info.hNum <= 16,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunk64 GVA requires HV/HK in [1,16].");
     CHECK_COND(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM,
                ACLNN_ERR_PARAM_INVALID, "H and HV must be less than or equal to 128.");
     // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
@@ -729,8 +732,23 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus checkParamsStatus = CheckParams(params, parsedLayout, info);
+    if (checkParamsStatus != ACLNN_SUCCESS) {
+        return checkParamsStatus;
+    }
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    // The Python work-item threshold was tuned for A2. On A5, eligible small
+    // inputs must also use the native three-stage implementation: the legacy
+    // generic recurrent backend can lose part of the final tail update.
+    if (IsAscend950() && CanUseKdaFwdV2Path(params, info)) {
+        const aclnnStatus status =
+            l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
+        CHECK_RET(status == ACLNN_SUCCESS, status);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
@@ -1041,7 +1059,10 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus checkParamsStatus = CheckParams(params, parsedLayout, info);
+    if (checkParamsStatus != ACLNN_SUCCESS) {
+        return checkParamsStatus;
+    }
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到

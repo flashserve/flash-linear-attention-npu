@@ -333,11 +333,12 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
     const bool isA5 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     ChunkKdaFwdFinalizeScheduleContext scheduleContext;
     scheduleContext.batch = info.batch;
     scheduleContext.valueHeadNum = info.heads;
     scheduleContext.chunksPerSequence = totalChunks;
+    scheduleContext.completeChunksPerSequence = info.seqLen / FINALIZE_CHUNK_ROWS;
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();

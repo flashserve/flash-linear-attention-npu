@@ -579,3 +579,30 @@ racecheck 的目标结论限于本算子。Cast/IsFinite/ReduceAll 等 ATK 辅�
 远程证据根：`/data/huangjunzhe/GDN/work/kda_finalize_sanitizer_keys_20261015`。正式 DC 证据为 `attempt_03/determinism`；44 条有效 sanitizer 原始记录的逐例来源、工具日志和 XLSX SHA 位于 `sanitizer_case_origins.json`（保留原 attempt 路径，不复制冒充完整运行）。共享设备占用导致的部分尝试和前期 runner 失败均单独保存，不计作通过。
 
 完整结果与复核：`a2a3_tiling_key_quality_report_20261015.md`、`independent_cross_attempt_validation_v2.json`、`deliverables/a2a3_tiling_key_quality_cases_20261015.csv`。证据归档为 `deliverables/a2a3_tiling_key_quality_evidence_20261015.zip`；其中保留正常包原生 DC XLSX、逐轮位比较记录、两工具各 22 份原始日志/XLSX、冻结资产/runner、18 源文件及实际 normal/san 对象的前后 SHA 核验。
+
+
+## 2026-11-12 A5 Scheme-B regression
+
+Ascend950PR, actual available AIC/AIV cores 28/56, CANN 9.2.0,
+Torch/Torch-NPU 2.12.0, ATK 26.9.8 plus the existing private precision plugin.
+The supplied 216 frozen cases and original seeds pass 216/216. Three additional
+fixed seeds pass 648/648 with unchanged input shapes, ranges and
+`cv_fused_double_benchmark` thresholds. All outputs are checked for NaN/Inf.
+Twenty extra dense/packed scheduling boundaries pass precision; actual tiling
+logs confirm key 0/GROUP4 AIC-only below the four-complete-dense-chunks/eight-packed-chunks thresholds and
+key 1/full-HV mover at the thresholds, including tail-head counts 1/2/3.
+
+The twelve frozen determinism cases pass 50 iterations each. All twelve frozen
+MSS cases pass memcheck with the target Finalize kernels actually instrumented.
+The twelve frozen performance shapes were used for an allocation audit only:
+peak extra allocated device memory excluding pre-existing inputs and the
+returned output is 17,768,960 bytes (16.95 MiB), below 200 MiB. These are not
+performance measurements.
+
+The full GVA composed-chain run remains a separate gate: the FP32 final_state
+output fails the existing mixed-tolerance rule in the smoke case, while its
+other ten outputs pass. No threshold/reference change is used to mask this
+failure. Do not infer complete GVA acceptance or performance acceptance from
+the Finalize single-operator results.
+
+The completed composed-chain matrix executed 720 cases: 0 all-output passes, 720 failures; failing output counts: {'output_1.pt': 720}. Full GVA acceptance remains failed and msprof was not run.

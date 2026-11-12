@@ -22,6 +22,7 @@ struct ChunkKdaFwdFinalizeScheduleContext {
     uint64_t batch = 0;
     uint64_t valueHeadNum = 0;
     uint64_t chunksPerSequence = 0;
+    uint64_t completeChunksPerSequence = 0;
     uint64_t totalVarLenChunks = 0;
     uint64_t aicCoreNum = 0;
     uint64_t libApiWorkspaceBytes = 0;
@@ -76,7 +77,16 @@ public:
         } else {
             groupSize = FINALIZE_A5_GROUP_SIZE;
             const uint64_t fullHeadCores = std::min(context_.aicCoreNum, chunkItems);
-            const uint64_t chunksPerCore = chunkItems / fullHeadCores;
+            // Dense mover threshold counts complete chunks; a partial tail must
+            // not promote a below-threshold workload to the MIX path.
+            uint64_t eligibleChunks = chunkItems;
+            if (!context_.isVarLen &&
+                !CheckedMultiply(context_.batch,
+                                 context_.completeChunksPerSequence,
+                                 eligibleChunks)) {
+                return false;
+            }
+            const uint64_t chunksPerCore = eligibleChunks / fullHeadCores;
             const uint64_t moverThreshold = context_.isVarLen
                 ? FINALIZE_A5_VARLEN_MOVER_MIN_CHUNKS_PER_CORE
                 : FINALIZE_A5_DENSE_MOVER_MIN_CHUNKS_PER_CORE;

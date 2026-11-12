@@ -429,3 +429,8 @@ token/head 轴，`TND/NTD` 交换 rank-3 的 token/head 轴。
 公开 intermediate states。稳定 `fla_npu.ops.ascendc` 入口通过 ctypes
 直接调用 aclnn，不注册 legacy `torch.ops.npu` 接口。算子私有 ATK
 直调只验证设备实现，不能替代稳定 Python 入口验证。
+
+
+### A5 dense mover boundary correction
+
+The dense mover eligibility threshold counts only complete 64-row chunks: `eligibleChunks=B*floor(T/64)`, using the full-HV path core count. Partial chunks still participate in work decoding and computation, but cannot by themselves satisfy the four-complete-chunks-per-core threshold. Varlen retains the eight-chunks-per-core threshold.
