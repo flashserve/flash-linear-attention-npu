@@ -204,6 +204,7 @@ aclnnStatus CheckRequiredInputs(const Params &params)
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "tensor", "required tensor must not be nullptr");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
+    }
     return ACLNN_SUCCESS;
 }
 

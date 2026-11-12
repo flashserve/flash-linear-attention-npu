@@ -111,7 +111,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else if (std::strcmp(inputLayoutStr, "BSND") == 0 || std::strcmp(inputLayoutStr, "BSH") == 0) {
         inputLayout = INPUT_LAYOUT_BSND;
     } else {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", std::to_string(inputLayoutStr), "unsupported inputLayout %s, expect BSND/TND/BNSD/NTD");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", inputLayoutStr, "unsupported inputLayout, expect BSND/TND/BNSD/NTD");
 
         return ge::GRAPH_FAILED;
     }
@@ -191,7 +191,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         inputN = 1;
         inputHeadDim = D;
     } else {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", std::to_string(inputLayoutStr), "x shape does not match inputLayout %s");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", inputLayoutStr, "x shape does not match inputLayout");
 
         return ge::GRAPH_FAILED;
     }
