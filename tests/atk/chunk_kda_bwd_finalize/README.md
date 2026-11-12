@@ -124,3 +124,58 @@ no NPU comparison or numerical accuracy conclusion was made.
 This project uses the `api_type` Python executor for CPU/NPU dispatch. It does
 not implement a direct `pyaclnn` executor: test-control attrs and canonical host
 metadata must be processed by `executor_chunk_kda_bwd_finalize.py` before dispatch.
+
+## Issue #1156 定向复检（2026-11-12，A2）
+
+本记录使用用户提供的外部 `fail.json` 和真实 FP32/FP64 双标杆 executor，
+没有使用上面的 Phase A 零输出 scaffold。该结果仅覆盖 issue 指定用例及定向回归，
+不表示本目录的全量正式验收已经完成。
+
+基线为 main 每日包 `0.dev20261111+main.4fc94af`，修复基于
+`4fc94af96fc181274cdfc5c1760a2bb0dc9d76f2`。硬件 Ascend910B3，CANN 9.2.0，
+ATK 26.9.24，CT 0.11.1。executor SHA256：
+`cd1b1726110b011f95d2230fbda8d12e6885403d068ec009442e52be22fe8e54`。
+
+| case | seed | 原始 dA_log 绝对误差 | 修复后绝对误差 | 最终复检 |
+|---|---:|---:|---:|---|
+| 4547 | 20265560 | 1.59368e-5 | 9.76026e-7 | 100 次，七输出 CT PASS |
+| 6404 | 20267417 | 5.96195e-5 | 2.83122e-7 | 100 次，七输出 CT PASS |
+| 9110 | 20270123 | 1.03936e-6 | 1.11759e-8 | 100 次，七输出 CT PASS |
+
+每轮实际调用修复后的 NPU 算子；不变的 CPU FP32/FP64 标杆可以缓存。
+每条真实 ATK JSON 含 100 次记录，每个输出有 100 个有效样本，再执行
+`ct dual analyze <ATK_JSON>`。三条用例的 21 项统计指标分别全部 PASS，
+CT 退出码均为 0，ATK 精度失败也为 0。没有修改输入值域、seed 或比较阈值。
+
+复现命令的结构为：
+
+```bash
+python -m atk node --port "$PORT" --backend pyaclnn --devices 0 -o "$OUT/results" \
+  node --port "$PORT" --backend cpu task -c "$CASE_JSON" --task accuracy \
+  -p "$EXECUTOR_DIR" -cp -mt 1 --loop_nums 100 --save_report_json -to 600
+ct dual analyze "$ATK_JSON"
+```
+
+两节点使用同一 PORT；每条任务使用独立 PORT、可见设备、输出目录。运行前在独立开发环境
+配置本轮 OPP 和 ATK_CUSTOM_OPP_PATH，核对已安装 libcust_opapi.so 及六个 kernel .o
+与本轮构建一致。工程及日志根目录为
+`/home/chenlinxin/wys/issue1156-20261111/fix`，各 case 的完整记录位于
+`ct100-<case>/results`、`ct100-<case>/ct-analyze.log`、`ct100-<case>/summary.json`。
+
+性能口径：同一物理卡 0、相同输入、20 次预热、50 次采样，取 msprof 目标 kernel
+`Task Duration(us)` 中位数；两版均为一个 Cube block。
+
+| case | 基线 / μs | 修复 / μs | 耗时变化 |
+|---|---:|---:|---:|
+| 4547 | 34651.93 | 35250.29 | +1.73% |
+| 6404 | 8684.85 | 8785.29 | +1.16% |
+| 9110 | 709.57 | 712.13 | +0.36% |
+
+精度复检目标达到；零性能回退目标未达到。保留双 head 调度、原有核数和流水，仍存在上述
+小幅代价。物理卡 1 上另测 B=1/T=1024/BSND/norm=False：H=3 耗时增加 2.11%，H=4
+增加 4.17%，也不能写成零回退。
+
+八组定向回归覆盖 H=1/2/3/4、dense/varlen、空序列、奇数 head、norm、三种 beta mode
+及三种输出布局。七组七输出通过 CT 单次 L1；另一组的 dq/dv 与原 main 包同样存在
+BF16 小误差，最大绝对误差分别为 1.90735e-6、3.81470e-6，没有新增失败项。
+多核调度、A3 设备及完整上界/异常输入矩阵未作为本次通过结论。

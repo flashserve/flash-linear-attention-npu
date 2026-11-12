@@ -15,21 +15,23 @@ constexpr uint32_t VECTOR_ROWS = 16;
 constexpr uint32_t HEADS_PER_WORK = 2;
 constexpr uint32_t FRACTAL_ELEMENTS = 16 * 16;
 
-// Byte offsets from design/L1内存.md. Both heads keep their own L1 lane.
-constexpr uint32_t L1_HEAD_BYTES = 192 * 1024;
+// Byte offsets from docs/design.md. Each head owns one 224 KiB L1 lane.
+constexpr uint32_t L1_HEAD_BYTES = 229376;
 constexpr uint32_t L1_BYTES = 512 * 1024;
 constexpr uint32_t L1_AKK = 0;
-constexpr uint32_t L1_DW = 8 * 1024;
-constexpr uint32_t L1_KE = 24 * 1024;
-constexpr uint32_t L1_ZB = 40 * 1024;
-constexpr uint32_t L1_TZA = 48 * 1024;
-constexpr uint32_t L1_AKK_BANK_STRIDE = 56 * 1024;
-constexpr uint32_t L1_TZA_BANK_STRIDE = 128 * 1024;
-constexpr uint32_t L1_H = 64 * 1024;
-constexpr uint32_t L1_DH = 96 * 1024;
-constexpr uint32_t L1_V_NEW = 128 * 1024;
-constexpr uint32_t L1_DV_SCAN = 144 * 1024;
-constexpr uint32_t L1_V = 160 * 1024;
+constexpr uint32_t L1_DW = 49152;
+constexpr uint32_t L1_KE = 81920;
+constexpr uint32_t L1_ZB = 81920;
+constexpr uint32_t L1_TZA = 49152;
+constexpr uint32_t L1_AKK_BANK_STRIDE = 8192;
+constexpr uint32_t L1_TZA_BANK_STRIDE = 0;
+constexpr uint32_t L1_AKK_FP32 = 16384;
+constexpr uint32_t WS_AKK_FP32 = 432 * 1024;
+constexpr uint32_t L1_H = 114688;
+constexpr uint32_t L1_DH = 147456;
+constexpr uint32_t L1_V_NEW = 180224;
+constexpr uint32_t L1_DV_SCAN = 196608;
+constexpr uint32_t L1_V = 212992;
 constexpr uint32_t L0_AB_SLOT_BYTES = 32 * 1024;
 constexpr uint32_t L0_C_SLOT_BYTES = 64 * 1024;
 
@@ -48,7 +50,7 @@ constexpr uint32_t UB_WORK = 88 * 1024;
 constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 
 // Two reusable workspace generations per head.
-constexpr uint32_t WS_BANK_BYTES = 384 * 1024;
+constexpr uint32_t WS_BANK_BYTES = 512 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 2 * WS_BANK_BYTES;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
 constexpr uint32_t WS_DK_STATE_RAW = 0;
@@ -56,9 +58,11 @@ constexpr uint32_t WS_DV_B = 32 * 1024;
 constexpr uint32_t WS_ZV = 64 * 1024;
 constexpr uint32_t WS_DKGB_RAW = 80 * 1024;
 constexpr uint32_t WS_ZW = 112 * 1024;
-constexpr uint32_t WS_KE = 144 * 1024;
-constexpr uint32_t WS_ZB = 160 * 1024;
-// Stage 5 replaces consumed raw slots; both generations still fit 256 KiB.
+constexpr uint32_t WS_KE = 384 * 1024;
+constexpr uint32_t WS_ZB = 416 * 1024;
+constexpr uint32_t WS_DW_FP32 = 448 * 1024;
+constexpr uint32_t WS_TZA_FP32 = 480 * 1024;
+// Stage 5 replaces consumed raw slots within each workspace generation.
 constexpr uint32_t WS_DK_BASE = 0;
 constexpr uint32_t WS_DQ_BASE = 32 * 1024;
 constexpr uint32_t WS_DG_BASE = 168 * 1024;
@@ -73,9 +77,10 @@ constexpr uint32_t WS_KNEG = 96 * 1024;
 constexpr uint32_t WS_QPOS = 128 * 1024;
 constexpr uint32_t WS_BKPOS = 224 * 1024;
 
-// Stage 8 has independent L1 lanes, leaving both generations of akk intact.
-constexpr uint32_t L1_STAGE8 = 384 * 1024;
-constexpr uint32_t L1_STAGE8_HEAD_BYTES = 64 * 1024;
+// Stage 8 aliases dW/kE only after Stage 2 and Stage 6 consume them.
+// Both akk banks and the next-work state preload remain disjoint.
+constexpr uint32_t L1_STAGE8 = 49152;
+constexpr uint32_t L1_STAGE8_HEAD_BYTES = 229376;
 constexpr uint32_t WS_DQ_LOCAL = 256 * 1024;
 constexpr uint32_t WS_LEFT = 288 * 1024;
 constexpr uint32_t WS_DAQK_FP32 = 320 * 1024;
@@ -179,7 +184,14 @@ static_assert(CAPTURE_BANDS + 2 * CAPTURE_BAND_BYTES == CAPTURE_DQ_LOCAL);
 static_assert(WS_LEFT + 32 * 1024 == WS_DAQK_FP32);
 static_assert(WS_DAQK_FP32 + 16 * 1024 == WS_KNEG_FP32);
 static_assert(WS_KNEG_FP32 + 32 * 1024 == WS_DAKK_FP32);
-static_assert(WS_DAKK_FP32 + 16 * 1024 == WS_BANK_BYTES);
+static_assert(WS_DAKK_FP32 + 16 * 1024 <= WS_KE);
+static_assert(WS_KE + 32 * 1024 == WS_ZB);
+static_assert(WS_ZB + 16 * 1024 == WS_AKK_FP32);
+static_assert(WS_AKK_FP32 + 16 * 1024 == WS_DW_FP32);
+static_assert(WS_DW_FP32 + 32 * 1024 == WS_TZA_FP32);
+static_assert(WS_TZA_FP32 + 16 * 1024 <= WS_BANK_BYTES);
+static_assert(L1_AKK_FP32 + 2 * 16 * 1024 <= L1_HEAD_BYTES);
+static_assert(L1_STAGE8 + HEADS_PER_WORK * L1_STAGE8_HEAD_BYTES <= L1_BYTES);
 
 static_assert(WS_RH + HEAD_DIM * 4 <= WS_DAKK_RAW);
 static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_BANK_BYTES);
