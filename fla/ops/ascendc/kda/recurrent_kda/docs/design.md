@@ -212,3 +212,23 @@ A2/A5 精度验证过程中修复以下问题：
 - state 最后两维必须为行主序稠密矩阵；slot/head 维可有间隔但不得重叠。
 - 显式 slot 模式要求所有活跃序列的写槽互不冲突，且 slot 值位于 state pool 容量范围内。
 - 后续若扩展长序列或更多 dtype，需要同步更新 op_host 校验、tiling、kernel、本地测试 case 和 API 文档。
+
+## 14. R1 状态合并回写（本次变更要点）
+
+本次只改 `arch35`（A5 / ascend950）的 `recurrent_kda` 状态回写频率，arch22 行为不变。
+
+- **问题**：decode 常态 `shouldStoreState_` 恒真，每个 token 都对整块 state 做
+  `AllocTensor + Cast + EnQue` 与 GM 写回；而 state 在 UB 内原地递推、不回读 GM，
+  外部只能观察到每个 state 槽的最后一次写入。
+- **改法**：新增 `NeedStore(t)` 门控 —— 末 token 必写；无 `ssm_state_indices` 时只写末次；
+  有 indices 时仅在 state 槽切换处写。`Compute` 增加 `storeState` 参数，`ProcessHead`
+  只在新写回时 flush pending。
+- **内部预留**：tiling 级字段 `storeStateEveryToken`（默认 0；=1 保持逐 token 写回旧行为）
+  已加入 `op_kernel/recurrent_kda_struct.h` 与 `op_host/recurrent_kda_tiling_processor.h`；
+  公开 attr 与调用链接线尚待补齐，当前不能从外部设置。
+- **影响面**：不改算术与归约顺序；`out` / `final_state` 已通过 5/5 语义边界验证
+  （见 [validation.md](validation.md) §4）。T=8 时写回字节数按结构估算降 87.5%，
+  这是**流量**口径，不等于耗时降幅。
+
+实测结果、达标差距与门禁状态见 [docs/validation.md](validation.md)；本次单 case 实测 1.10x，
+未达 1.20x 目标。

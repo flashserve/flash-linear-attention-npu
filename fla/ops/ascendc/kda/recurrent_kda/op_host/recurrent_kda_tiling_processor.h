@@ -83,6 +83,8 @@ struct RecurrentKdaTilingContext {
     uint32_t stateVFirst = 0;
     uint32_t outputFinalState = 0;
     uint32_t inplaceFinalState = 1;
+    // R1 回退开关：1 时逐 token 写回 state，0 时状态合并回写。默认 0（启用合并回写）。
+    uint32_t storeStateEveryToken = 0;
     ge::DataType stateDtype = ge::DT_BF16;
     ge::DataType gateDtype = ge::DT_FLOAT;
     ge::DataType betaDtype = ge::DT_FLOAT;
@@ -588,6 +590,7 @@ private:
         tiling.stateVFirst = ctx_.stateVFirst;
         tiling.outputFinalState = ctx_.outputFinalState;
         tiling.inplaceFinalState = ctx_.inplaceFinalState;
+        tiling.storeStateEveryToken = ctx_.storeStateEveryToken;
         tiling.gateDtype = ctx_.gateDtype == ge::DT_FLOAT ? 0 : (ctx_.gateDtype == ge::DT_BF16 ? 1 : 2);
         tiling.betaDtype = ctx_.betaDtype == ge::DT_FLOAT ? 0 : (ctx_.betaDtype == ge::DT_BF16 ? 1 : 2);
         tiling.cuSeqlensDtype = ctx_.cuSeqlensDtype == ge::DT_INT32 ? 0 : 1;

@@ -101,6 +101,7 @@ public:
         safeGate_ = (tilingData->safeGate == 1);
         stateVFirst_ = (tilingData->stateVFirst == 1);
         shouldStoreState_ = (tilingData->inplaceFinalState == 1 || tilingData->outputFinalState == 1);
+        storeStateEveryToken_ = (tilingData->storeStateEveryToken != 0);
         gateDtype_ = tilingData->gateDtype;
         betaDtype_ = tilingData->betaDtype;
         cuSeqlensDtype_ = tilingData->cuSeqlensDtype;
@@ -1031,7 +1032,7 @@ private:
     }
 
     __aicore__ inline void Compute(uint32_t curSingleV, uint64_t curQKOffset,
-                                   uint64_t curVOffset, uint64_t betaOffset)
+                                   uint64_t curVOffset, uint64_t betaOffset, bool storeState)
     {
         if (alignK_ == TWO_V_LENGTH) {
             DecayMatVecReduce128(stateInUb, gateInUb[curQKOffset],
@@ -1059,7 +1060,7 @@ private:
             ReduceSumDispatch(attnInUb, broadTmpInUb, curSingleV);
         }
         LocalTensor<outType> attnOutLocal = attnOutQueue_.AllocTensor<outType>();
-        if (shouldStoreState_) {
+        if (storeState) {
             LocalTensor<stateType> stateOutLocal = stateOutQueue_.AllocTensor<stateType>();
             if constexpr (std::is_same<stateType, float32_t>()) {
                 DataCopy(stateOutLocal, stateInUb, alignK_ * curSingleV);
@@ -1162,6 +1163,27 @@ private:
         return batchIdx;
     }
 
+    // R1：状态合并回写判定。state 在 UB 原地递推、从不回读 GM，外部只能观察到每个
+    // state 槽的最后一次写入，因此跳过中间写回不改变任何可观察结果。
+    // 规则：末 token 必写；无 ssm_state_indices 时只写末次；有 indices 时仅在槽切换处写。
+    __aicore__ inline bool NeedStore(uint64_t batchIdx, int64_t seq0, int64_t seq1,
+                                     int64_t tokenIdx, uint64_t curStateSlot) const
+    {
+        if (!shouldStoreState_) {
+            return false;
+        }
+        if (storeStateEveryToken_) {
+            return true;
+        }
+        if (tokenIdx == seq1 - 1) {
+            return true;
+        }
+        if (!hasSsmStateIndices_) {
+            return false;
+        }
+        return StateSlotForToken(batchIdx, seq0, tokenIdx + 1) != curStateSlot;
+    }
+
     __aicore__ inline float LoadBeta(uint64_t tokenOffset)
     {
         uint64_t betaRowStride =
@@ -1224,10 +1246,11 @@ private:
                 uint64_t attnOffset = (static_cast<uint64_t>(seq_i) * NV_ + head_i) * realV_ + v_i;
                 uint64_t curStateSlot = StateSlotForToken(batchIdx, seq0, seq_i);
                 uint64_t curStateOutSlot = curStateSlot;
+                bool storeState = NeedStore(batchIdx, seq0, seq1, seq_i, curStateSlot);
                 if (alignK_ != TWO_V_LENGTH) {
                     beta_ = LoadBeta(betaOffset);
                 }
-                Compute(curSingleV, curQKOffset, curVOffset, betaOffset);
+                Compute(curSingleV, curQKOffset, curVOffset, betaOffset, storeState);
                 if (attnOutBufferNum_ == BUFFER_NUM) {
                     CopyOutAttn(attnOffset, curSingleV);
                 } else {
@@ -1237,7 +1260,7 @@ private:
                     pendingAttnOffset = attnOffset;
                     hasPendingAttn = true;
                 }
-                if (shouldStoreState_) {
+                if (storeState) {
                     if (stateOutBufferNum_ == BUFFER_NUM) {
                         CopyOutState(curStateOutSlot, head_i, v_i, curSingleV);
                     } else {
@@ -1357,6 +1380,7 @@ private:
     bool safeGate_;
     bool stateVFirst_;
     bool shouldStoreState_;
+    bool storeStateEveryToken_;
     bool useAddFoldReduce_;
     float beta_;
     float scale_;

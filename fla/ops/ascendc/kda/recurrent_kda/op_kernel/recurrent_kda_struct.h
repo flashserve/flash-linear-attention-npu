@@ -71,6 +71,9 @@ struct alignas(8) RecurrentKdaTilingData {
     uint64_t keyHeadStride;
     uint64_t valueTokenStride;
     uint64_t valueHeadStride;
+    // R1 回退开关：1 时保持逐 token 写回 state 的旧行为（位级对齐基线），
+    // 0 时启用状态合并回写（仅末 token 与 state 槽切换处写回）。默认 0。
+    uint32_t storeStateEveryToken;
 };
 #pragma pack(pop)
 

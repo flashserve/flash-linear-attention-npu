@@ -56,3 +56,38 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=determi
 ```
 
 性能、确定性、mssanitizer 和用例生成均通过统一脚本的对应 `-scope` 执行。
+
+## 模型 case 与性能用例映射（评审稿 v2，2026-11-10）
+
+按 `tests/atk/README.md` 的正式验收用例包要求建立三类映射。`atk_chunk_kda_fwd_perf.json`
+已按工作区根 `target.md` §3 的 A5 Prefill 模型 case 重建（原文件只有 1 个 case）；
+全部 case 标记 `review_status=draft_await_device_validation`，
+**设备侧逐 case 跑通校验前不得作为正式验收依据**。
+
+### 模型 case → perf case id
+
+| 模型 case | Layout | B | H_k | H_v | T | chunk_size | perf case id | 预期路径 | 基线 | 目标 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
+| E | NTD | 1 | 32 | 32 | 65536 | 64 | 250 | V2（待实测） | 待实测 | 1.20x |
+| F | BNSD | 1 | 1 | 2 | 16384 | 64 | 251 | V1/V2 待实测 | 待实测 | 1.20x |
+| G | BSND | 64 | 8 | 8 | 2048 | 64 | 252 | V2（待实测） | 待实测 | 1.20x |
+
+> **契约校准**：历史 BSND C9 的 `chunk_size=128` 与 NTD C33 的 `V=256` 已被本文「输入限制」的
+> 参数校验拒绝，不能作为当前用例或基线；本映射全部按 `chunk_size=64`、`K=V=128` 重建，
+> 历史数据只用于判断耗时占比。
+> V1 融合与 V2 三算子是不同物理实现，路径须由 `FLA_NPU_STABLE_TRACE=1` 与
+> `stable_chunk_kda_fwd.cpp` 门控实测确认，并分别记录基线与收益，不跨路径取平均。
+
+### 另外两类映射（现状与缺口）
+
+| 映射 | 现状 | 待办 |
+| --- | --- | --- |
+| 逻辑分支 → 精度 case id | `atk_chunk_kda_fwd.json` 48 个 case（250–297） | 逐分支映射待补，覆盖四 layout、`return_intermediate` 两模式、尾块与变长 |
+| 可达 TilingKey → mss case id | `atk_chunk_kda_fwd_mss.json` 2 个 case（250 / 298） | 核对是否覆盖全部可达 TilingKey，缺项补齐后建映射 |
+
+### 设备侧校验门禁
+
+1. 每个 perf case 在 A5 上以 `-scope=performance` 单独运行，确认进入 NPU kernel、无参数校验拒绝、单次 <60s。
+2. 校验 `chunk_size=64`、`K=V=128`、`0 < H_k <= H_v <= 128` 且 `H_v % H_k == 0`；
+   rank-4 变长输入要求 `B=1`（E/F 满足），G 为非变长 dense。
+3. 用 `FLA_NPU_STABLE_TRACE=1` 记录实际 kernel 数与命中路径，写回 `docs/validation.md` 追踪表。
