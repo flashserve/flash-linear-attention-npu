@@ -56,6 +56,13 @@ static constexpr int64_t RKDA_UB_GUARD_BYTES = 2048;
 static constexpr size_t RKDA_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 // On A5, broadTmp aliases state in UB when K hits this fused-reduce size.
 static constexpr int64_t RKDA_FUSED_REDUCE_K = 128;
+// A6(DAV_9201) 静态 UB 引擎的布局常量定义在 op_kernel/recurrent_kda_struct.h，
+// host 与 kernel 共用同一份，避免各自维护。
+using RecurrentKda::RKDA_A6_BF16_STATE_BANKS;
+using RecurrentKda::RKDA_A6_DIM;
+using RecurrentKda::RKDA_A6_FP32_STATE_BANKS;
+using RecurrentKda::RKDA_A6_INPUT_BUFFERS;
+using RecurrentKda::RKDA_A6_TOKEN_TILE;
 
 struct RecurrentKdaTilingContext {
     const char *nodeName = "RecurrentKda";
@@ -105,6 +112,9 @@ struct RecurrentKdaTilingContext {
     uint64_t aivNum = 0;
     uint64_t ubSize = 0;
     uint32_t isA5 = 0;
+    // A6(ascend960dt, DAV_9201)：V=128 与 V=256 都走 arch92 静态 UB 引擎，
+    // V=256 在引擎内按 DIM 切片；UB 预算按平台实际值复核。
+    uint32_t isA6 = 0;
 };
 
 class RecurrentKdaTilingProcessor {
@@ -114,7 +124,7 @@ public:
     ge::graphStatus ProcessShapes(RecurrentKdaTilingData &tiling) const
     {
         // Validate byte products before dense-stride and device-field arithmetic.
-        if (ctx_.isA5 != 0) {
+        if (ctx_.isA5 != 0 || ctx_.isA6 != 0) {
             const uint64_t limit = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
             const std::array<const gert::Shape *, 6> shapes = {{
                 &ctx_.queryShape, &ctx_.keyShape, &ctx_.valueShape,
@@ -143,6 +153,11 @@ public:
     {
         tiling.a5VfFlags = 0;
         tiling.a5HeadRatio = 0;
+        if (ctx_.isA6 != 0) {
+            // A6 的 V=128 与 V=256 都由 arch92 静态 UB 引擎接管：UB 布局、buffer 数
+            // 与 V 切片在编译期确定，不需要公共 kernel 的 vStep 搜索。
+            return PlanA6Ub(tiling);
+        }
         if (ctx_.isA5 != 0) {
             return PlanA5Ub(tiling);
         }
@@ -176,7 +191,8 @@ private:
             }
             reason += "]";
         }
-        reason += "; isA5=" + std::to_string(ctx_.isA5) + "; UB bytes=" + std::to_string(ctx_.ubSize) +
+        reason += "; isA5=" + std::to_string(ctx_.isA5) + "; isA6=" + std::to_string(ctx_.isA6) +
+                  "; UB bytes=" + std::to_string(ctx_.ubSize) +
                   "; layout=" + std::to_string(ctx_.layout) + "; scale=" + std::to_string(ctx_.scale) +
                   "; output_final_state=" + std::to_string(ctx_.outputFinalState) +
                   "; inplace_final_state=" + std::to_string(ctx_.inplaceFinalState) +
@@ -435,7 +451,8 @@ private:
         OP_CHECK_IF(ctx_.useGateInKernel && !ctx_.hasALog,
                     OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "A_log"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.isA5 && !ctx_.useGateInKernel && (ctx_.hasALog || ctx_.hasDtBias || ctx_.safeGate),
+        OP_CHECK_IF((ctx_.isA5 != 0 || ctx_.isA6 != 0) && !ctx_.useGateInKernel &&
+                        (ctx_.hasALog || ctx_.hasDtBias || ctx_.safeGate),
                     ReportInvalid("use_gate_in_kernel", "A_log, dt_bias and safe_gate require use_gate_in_kernel=true."),
                     return ge::GRAPH_FAILED);
         if (ctx_.hasALog) {
@@ -446,7 +463,7 @@ private:
                         ReportInvalid("A_log", "A_log shape must be [HV]."),
                         return ge::GRAPH_FAILED);
         }
-        if (ctx_.hasDtBias && (!ctx_.isA5 || ctx_.hasALog)) {
+        if (ctx_.hasDtBias && ((ctx_.isA5 == 0 && ctx_.isA6 == 0) || ctx_.hasALog)) {
             size_t rank = ctx_.dtBiasShape.GetDimNum();
             bool valid = (rank == 1 && ctx_.dtBiasShape.GetDim(RKDA_DIM_0) == hvNum * kDim) ||
                          (rank == 2 && ctx_.dtBiasShape.GetDim(RKDA_DIM_0) == hvNum &&
@@ -617,13 +634,13 @@ private:
         tiling.hasCuSeqlens = ctx_.hasCuSeqlens;
         tiling.hasSsmStateIndices = ctx_.hasSsmStateIndices;
         tiling.hasALog = ctx_.hasALog;
-        tiling.hasDtBias = ctx_.isA5 ? ctx_.hasALog && ctx_.hasDtBias : ctx_.hasDtBias;
+        tiling.hasDtBias = (ctx_.isA5 != 0 || ctx_.isA6 != 0) ? ctx_.hasALog && ctx_.hasDtBias : ctx_.hasDtBias;
         tiling.hasAcceptedTokens = ctx_.hasAcceptedTokens;
         tiling.useQkL2norm = ctx_.useQkL2norm;
         tiling.useGateInKernel = ctx_.useGateInKernel;
         tiling.useBetaSigmoid = ctx_.useBetaSigmoid;
         tiling.allowNegEigval = ctx_.allowNegEigval;
-        tiling.safeGate = ctx_.isA5 ? ctx_.hasALog && ctx_.safeGate : ctx_.safeGate;
+        tiling.safeGate = (ctx_.isA5 != 0 || ctx_.isA6 != 0) ? ctx_.hasALog && ctx_.safeGate : ctx_.safeGate;
         tiling.stateVFirst = ctx_.stateVFirst;
         tiling.outputFinalState = ctx_.outputFinalState;
         tiling.inplaceFinalState = ctx_.inplaceFinalState;
@@ -663,7 +680,7 @@ private:
         }
         uint64_t maxCoreNum = (ctx_.aivNum > 0) ? ctx_.aivNum : 1;
         uint64_t selectedCoreNum = (taskUnits < maxCoreNum) ? taskUnits : maxCoreNum;
-        if (!ctx_.isA5) {
+        if (ctx_.isA5 == 0 && ctx_.isA6 == 0) {
             const uint64_t tasksPerCore = (taskUnits + maxCoreNum - 1) / maxCoreNum;
             selectedCoreNum = (taskUnits + tasksPerCore - 1) / tasksPerCore;
         }
@@ -688,11 +705,11 @@ private:
         const int64_t nv = ctx_.layout == RKDA_LAYOUT_TND ?
                                ctx_.valueShape.GetDim(RKDA_DIM_1) :
                                ctx_.valueShape.GetDim(RKDA_DIM_2);
-        OP_CHECK_IF(ctx_.isA5 && (nk > maxUint32 || nv > maxUint32),
+        OP_CHECK_IF((ctx_.isA5 != 0 || ctx_.isA6 != 0) && (nk > maxUint32 || nv > maxUint32),
                     ReportInvalid("query/key/value/gate/beta",
                             "head counts exceed uint32 tiling fields: H=%ld, HV=%ld.", nk, nv),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.isA5 != 0 &&
+        OP_CHECK_IF((ctx_.isA5 != 0 || ctx_.isA6 != 0) &&
                         static_cast<uint64_t>(nv - 1) > std::numeric_limits<uint32_t>::max() / (128ULL * 4),
                     ReportInvalid("gate", "Gate token gap exceeds the uint32 DMA stride field."),
                     return ge::GRAPH_FAILED);
@@ -724,6 +741,31 @@ private:
     ge::graphStatus SelectBlockCount(RecurrentKdaTilingData &tiling) const
     {
         UpdateDynamicBlockDimByTaskUnits(tiling);
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus PlanA6Ub(RecurrentKdaTilingData &tiling) const
+    {
+        const int64_t ubSize = static_cast<int64_t>(ctx_.ubSize);
+        const int64_t stateBytes = (ctx_.stateDtype == ge::DT_FLOAT) ? 4 : 2;
+        const int64_t banks = (ctx_.stateDtype == ge::DT_FLOAT) ?
+                                  RKDA_A6_FP32_STATE_BANKS : RKDA_A6_BF16_STATE_BANKS;
+        // 静态布局之外再留出一段余量，避免与框架占用的尾部空间重叠。
+        const int64_t usedBytes =
+            RecurrentKda::RkdaA6UbBytes(banks, RKDA_A6_TOKEN_TILE, stateBytes) + RKDA_UB_GUARD_BYTES;
+        OP_CHECK_IF(usedBytes > ubSize,
+                    ReportInvalid("UB/shape",
+                            "A6 static UB needs %ld bytes but only %ld are available "
+                            "(banks=%ld, token_tile=%ld, state_bytes=%ld, guard=%ld).",
+                            usedBytes, ubSize, banks, RKDA_A6_TOKEN_TILE, stateBytes, RKDA_UB_GUARD_BYTES),
+                    return ge::GRAPH_FAILED);
+        tiling.ubCalSize = static_cast<uint32_t>(ubSize);
+        tiling.ubRestBytes = static_cast<uint32_t>(ubSize - usedBytes);
+        // arch92 引擎在编译期自行布局，并把 V 维按 RKDA_A6_DIM 切片串行处理；
+        // 以下字段只用于保持 tiling 语义一致，引擎不读取。
+        tiling.vStep = static_cast<uint32_t>(RKDA_A6_DIM);
+        tiling.stateOutBufferNum = static_cast<uint32_t>(banks);
+        tiling.attnOutBufferNum = static_cast<uint32_t>(RKDA_A6_INPUT_BUFFERS);
         return ge::GRAPH_SUCCESS;
     }
 

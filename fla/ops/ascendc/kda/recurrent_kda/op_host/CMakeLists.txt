@@ -18,27 +18,20 @@ endif()
 add_modules_sources(OPTYPE recurrent_kda ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME RecurrentKda
-    OPTIONS -Wno-deprecated-declarations
+    OPTIONS --cce-auto-sync=off
+            -Wno-deprecated-declarations
 )
-
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     add_ops_compile_options(
         OP_NAME RecurrentKda
-        OPTIONS --cce-auto-sync=off
-                -mllvm -cce-aicore-jump-expand=false
+        OPTIONS -mllvm -cce-aicore-jump-expand=false
     )
 endif()
 
-if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
     add_ops_compile_options(
         OP_NAME RecurrentKda
-        OPTIONS --cce-auto-sync=off
-                -Werror
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-no-dcache-flush
     )
-    if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
-        add_ops_compile_options(
-            OP_NAME RecurrentKda
-            OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
-        )
-    endif()
 endif()

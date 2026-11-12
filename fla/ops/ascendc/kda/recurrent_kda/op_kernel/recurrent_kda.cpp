@@ -11,7 +11,9 @@
  * \file recurrent_kda.cpp
  * \brief
  */
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/recurrent_kda.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/recurrent_kda.h"
 #else
 #include "recurrent_kda.h"
@@ -34,7 +36,20 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     GM_ADDR stateOutput = tilingData.inplaceFinalState == 1 ? initialStateOut : finalState;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    {
+        // 静态 UB：引擎独占 UB 与 Mutex 编号，不创建 TPipe。V=256 在引擎内按 DIM 切片，
+        // 与 V=128 走同一套实例。
+        InitSocState();
+        constexpr bool stateVFirst = KERNEL_MODE == RKDA_TPL_V_FIRST || KERNEL_MODE == RKDA_TPL_V_FIRST_FUSED;
+        constexpr bool fusedMode = KERNEL_MODE == RKDA_TPL_V_FIRST_FUSED || KERNEL_MODE == RKDA_TPL_K_FIRST_FUSED;
+        RecurrentKdaA6::RecurrentKdaA6Engine<DTYPE_INITIAL_STATE, DTYPE_GATE, DTYPE_BETA,
+            stateVFirst, fusedMode> op(&tilingData);
+        op.Init(query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
+            aLog, dtBias, numAcceptedTokens, out, stateOutput);
+        op.Process();
+    }
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     {
         // Static Tensor programming owns UB and synchronization without a TPipe.
         InitSocState();

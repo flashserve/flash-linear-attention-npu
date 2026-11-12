@@ -65,6 +65,7 @@ void RecurrentKdaTiling::InitCompileInfo()
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
     compileInfo_.aivNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
+    compileInfo_.isA6 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
 
     if (compileInfo_.aivNum <= 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "platform_info.aiv_num", "0",
@@ -143,6 +144,7 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
     ctx.aivNum = compileInfo_.aivNum;
     ctx.ubSize = compileInfo_.ubSize;
     ctx.isA5 = compileInfo_.isA5 ? 1 : 0;
+    ctx.isA6 = compileInfo_.isA6 ? 1 : 0;
     ctx.stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     ctx.gateDtype = context_->GetInputDesc(GATE_INDEX)->GetDataType();
     ctx.betaDtype = context_->GetInputDesc(BETA_INDEX)->GetDataType();
@@ -228,6 +230,18 @@ ge::graphStatus RecurrentKdaTiling::DoLibApiTiling()
         } else {
             kernelMode = (tilingData_.a5VfFlags & RecurrentKda::RKDA_VF_FUSED) != 0
                 ? RKDA_TPL_K_FIRST_FUSED : RKDA_TPL_K_FIRST;
+        }
+    } else if (compileInfo_.isA6) {
+        // A6 的 V=128 与 V=256 都由 arch92 静态 UB 引擎处理（V=256 在引擎内按 DIM
+        // 切片）：State 布局决定 V/K 两条主线，norm + raw gate + dt_bias + beta sigmoid
+        // 且无负特征值、无 safe gate 时走预先融合的实例。
+        const bool fused = tilingData_.useQkL2norm != 0 && tilingData_.useGateInKernel != 0 &&
+            tilingData_.hasDtBias != 0 && tilingData_.useBetaSigmoid != 0 &&
+            tilingData_.allowNegEigval == 0 && tilingData_.safeGate == 0;
+        if (tilingData_.stateVFirst != 0) {
+            kernelMode = fused ? RKDA_TPL_V_FIRST_FUSED : RKDA_TPL_V_FIRST;
+        } else {
+            kernelMode = fused ? RKDA_TPL_K_FIRST_FUSED : RKDA_TPL_K_FIRST;
         }
     }
     tilingKey_ = GET_TPL_TILING_KEY(kernelMode);
