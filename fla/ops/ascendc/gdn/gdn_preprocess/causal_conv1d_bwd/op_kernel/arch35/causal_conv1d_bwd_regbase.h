@@ -427,8 +427,10 @@ __aicore__ inline void ComputeTileDirectRegbase(
     LocalTensor<float> stateLocal, LocalTensor<float> dxLocal, LocalTensor<float> dwLocal,
     LocalTensor<float> dbLocal, LocalTensor<float> dh0Local,
     uint32_t rows, uint32_t width, uint32_t dyRows, uint32_t activation,
-    uint32_t validRows, uint32_t useInitialState, uint32_t computeDh0, uint32_t hasBias)
+    uint32_t validRows, uint32_t useInitialState, uint32_t computeDh0, uint32_t hasBias,
+    uint32_t bd)
 {
+    (void)bd;
     auto xAddr = reinterpret_cast<__ubuf__ T *>(xRaw.GetPhyAddr());
     auto dyAddr = reinterpret_cast<__ubuf__ T *>(dyRaw.GetPhyAddr());
     auto yAddr = reinterpret_cast<__ubuf__ T *>(yRaw.GetPhyAddr());
