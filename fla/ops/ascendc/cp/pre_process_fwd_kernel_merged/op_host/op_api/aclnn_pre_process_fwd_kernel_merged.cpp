@@ -29,6 +29,8 @@
 #include "op_common/log/log.h"
 #include <string>
 
+static constexpr const char *OP_NAME = "aclnnPreProcessFwdKernelMerged";
+
 using namespace op;
 
 #ifdef __cplusplus

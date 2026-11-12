@@ -18,6 +18,8 @@
 #include "op_common/log/log.h"
 #include <string>
 
+static constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
+
 using namespace op;
 
 namespace {

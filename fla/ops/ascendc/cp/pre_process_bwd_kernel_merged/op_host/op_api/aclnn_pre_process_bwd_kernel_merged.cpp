@@ -28,6 +28,8 @@
 #include "opdev/make_op_executor.h"
 #include "op_common/log/log.h"
 
+static constexpr const char *OP_NAME = "aclnnPreProcessBwdKernelMerged";
+
 using namespace op;
 
 #ifdef __cplusplus
