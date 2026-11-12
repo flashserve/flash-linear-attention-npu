@@ -133,10 +133,11 @@ ge::graphStatus BuildCoefficientCubeTiling(uint64_t bt, uint64_t k, ge::DataType
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context)
 {
-    if (context == nullptr || context->GetAttrs() == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "context", "tiling context and attrs must not be null"),
-                return ge::GRAPH_FAILED);
+    if (context == nullptr || context->GetAttrs() == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "context", "tiling context and attrs must not be null");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t *requestedChunkSize =
         context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
     if (requestedChunkSize != nullptr && *requestedChunkSize == CHUNK_32) {
@@ -293,16 +294,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     const auto *gCumsumShape = context->GetOutputShape(OUTPUT_G_CUMSUM);
     OP_CHECK_NULL_WITH_CONTEXT(context, gCumsumShape);
     const bool writeGCumsum = IsShape(gCumsumShape, {batch, tokens, valueHeads});
-    if (!writeGCumsum && !IsShape(gCumsumShape, {1}),
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                    OP_NAME, "gCumsumOut",
-                    "storage rank=" + std::to_string(gCumsumShape->GetStorageShape().GetDimNum()),
-                    "Phase 6 cumsum output must be [B,T,Hv] or the internal [1] placeholder"),
-                        gCumsumShape->GetStorageShape().GetDimNum(),
-                        gCumsumShape->GetStorageShape().GetShapeSize(),
-                        gCumsumShape->GetOriginShape().GetDimNum(),
-                        gCumsumShape->GetOriginShape().GetShapeSize()),
-                return ge::GRAPH_FAILED);
+    if (!writeGCumsum && !IsShape(gCumsumShape, {1})) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            OP_NAME, "gCumsumOut",
+            "storage rank=" + std::to_string(gCumsumShape->GetStorageShape().GetDimNum()),
+            "Phase 6 cumsum output must be [B,T,Hv] or the internal [1] placeholder");
+        return ge::GRAPH_FAILED;
+    }
     trailer.writeGCumsum = writeGCumsum ? 1 : 0;
     auto &coefficient = trailer.coefficient;
     coefficient.B = static_cast<uint64_t>(batch);

@@ -139,11 +139,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     const auto *cuShapePtr = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
     const auto *chunkShapePtr = context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
     if (!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
-                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3),
-                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                     OP_NAME, "q,k,v,A,beta,g", "rank mismatch",
-                    "q/k/v/A must be rank 4 and beta/g rank 3"),
-                return ge::GRAPH_FAILED);
+                    "q/k/v/A must be rank 4 and beta/g rank 3");
+        return ge::GRAPH_FAILED;
+    }
     if ((cuShapePtr == nullptr) != (chunkShapePtr == nullptr)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "cu_seqlens,chunk_indices",
@@ -201,12 +202,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g must have shape [B,HV,T].");
         return ge::GRAPH_FAILED;
     }
-    if (vNumHead % kNumHead != 0,
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+    if (vNumHead % kNumHead != 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "kNumHead,vNumHead",
                     std::to_string(kNumHead) + "," + std::to_string(vNumHead),
-                    "vNumHead must be divisible by kNumHead"),
-                return ge::GRAPH_FAILED);
+                    "vNumHead must be divisible by kNumHead");
+        return ge::GRAPH_FAILED;
+    }
     if (kHeadDim != SUPPORTED_K ||
                     (vHeadDim != SUPPORTED_V128 && vHeadDim != SUPPORTED_V256)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(

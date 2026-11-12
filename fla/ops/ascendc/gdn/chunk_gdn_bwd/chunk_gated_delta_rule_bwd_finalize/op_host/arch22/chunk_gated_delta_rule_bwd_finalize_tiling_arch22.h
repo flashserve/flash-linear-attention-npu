@@ -229,8 +229,9 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    if (ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
-                return ge::GRAPH_FAILED);
+    if (ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     const double *scale = attrs->GetAttrPointer<double>(0);
     const int64_t *chunkSize = attrs->GetAttrPointer<int64_t>(1);

@@ -98,12 +98,13 @@ ge::graphStatus BuildKernelBTiling(
     OP_CHECK_NULL_WITH_CONTEXT(context, qShapeStorage);
     OP_CHECK_NULL_WITH_CONTEXT(context, vShapeStorage);
     if (qgDesc->GetDataType() != ge::DT_FLOAT16 &&
-                    qgDesc->GetDataType() != ge::DT_BF16,
-                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    qgDesc->GetDataType() != ge::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                     OP_NAME, "qg,kg,w",
                     ge::TypeUtils::DataTypeToSerialString(qgDesc->GetDataType()),
-                    "qg/kg/w inputs must be FP16 or BF16"),
-                return ge::GRAPH_FAILED);
+                    "qg/kg/w inputs must be FP16 or BF16");
+        return ge::GRAPH_FAILED;
+    }
     if (gkDesc->GetDataType() != ge::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                     OP_NAME, "gk", ge::TypeUtils::DataTypeToSerialString(gkDesc->GetDataType()),

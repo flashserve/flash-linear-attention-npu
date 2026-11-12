@@ -134,10 +134,11 @@ public:
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
                                              const char *inputName)
     {
-        if (curShape == nullptr,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                        ctx_.nodeName, inputName, "required input must not be nullptr"),
-                    return ge::GRAPH_FAILED);
+        if (curShape == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        ctx_.nodeName, inputName, "required input must not be nullptr");
+        return ge::GRAPH_FAILED;
+    }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         if (dimNum != validDimNum) {

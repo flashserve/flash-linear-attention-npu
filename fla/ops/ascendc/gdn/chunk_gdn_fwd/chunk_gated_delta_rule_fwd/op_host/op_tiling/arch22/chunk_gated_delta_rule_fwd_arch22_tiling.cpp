@@ -178,10 +178,11 @@ ge::graphStatus BuildAbcCubeTiling(uint64_t bt, uint64_t k, ge::DataType dtype,
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context)
 {
-    if (context == nullptr || context->GetAttrs() == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "context", "tiling context and attrs must not be null"),
-                return ge::GRAPH_FAILED);
+    if (context == nullptr || context->GetAttrs() == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "context", "tiling context and attrs must not be null");
+        return ge::GRAPH_FAILED;
+    }
     const auto *qShape = context->GetOptionalInputShape(INPUT_Q);
     const auto *kShape = context->GetOptionalInputShape(INPUT_K);
     const auto *vShape = context->GetOptionalInputShape(INPUT_V);
@@ -532,15 +533,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                         MulOverflow(taskCount, headStride, &elementCount) ||
                         MulOverflow(elementCount, sizeof(float), &bytes) ||
                         AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
-                        AddOverflow(workspaceOffset, alignedBytes, &nextOffset),
-                    OP_LOGE(context->GetNodeName(),
+                        AddOverflow(workspaceOffset, alignedBytes, &nextOffset)) {
+        OP_LOGE(context->GetNodeName(),
                             "Stage P workspace limit exceeded: region=g_last_exp, B=%" PRIu64 ", NT=%" PRIu64
                             ", Hv=%" PRIu64 ", headStride=%" PRIu64 ", offset=%" PRIu64
                             ", elementBytes=%zu, alignment=%" PRIu64
                             "; require offset+AlignUp(B*NT*headStride*elementBytes,alignment) <= UINT64_MAX=%" PRIu64 ".",
                             abc.B, abc.NT, abc.Hv, headStride, workspaceOffset, sizeof(float),
-                            WORKSPACE_ALIGNMENT, UINT64_MAX),
-                    return ge::GRAPH_FAILED);
+                            WORKSPACE_ALIGNMENT, UINT64_MAX);
+        return ge::GRAPH_FAILED;
+    }
         trailer.gLastExpOffset = workspaceOffset;
         workspaceOffset = nextOffset;
         if (MulOverflow(static_cast<uint64_t>(abc.B), static_cast<uint64_t>(abc.Hv), &elementCount) ||

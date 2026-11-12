@@ -247,11 +247,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const auto *cuShapePtr = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
     const auto *chunkShapePtr = context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
     if (!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
-                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3),
-                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                     OP_NAME, "q,k,v,A,beta,g", "rank mismatch",
-                    "q/k/v/A must be rank 4 and beta/g rank 3"),
-                return ge::GRAPH_FAILED);
+                    "q/k/v/A must be rank 4 and beta/g rank 3");
+        return ge::GRAPH_FAILED;
+    }
     if ((cuShapePtr == nullptr) != (chunkShapePtr == nullptr)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "cu_seqlens,chunk_indices",
@@ -498,15 +499,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const size_t elementSize = qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
     OwnerHWorkspace expectedOwner{};
     if (ownerLocalWorkspace &&
-                    !CheckOwnerHBeforeProcessor(hContext, recomputeProcessor.GetWorkspaceSize(), elementSize, expectedOwner),
-                OP_LOGE(context->GetNodeName(),
+                    !CheckOwnerHBeforeProcessor(hContext, recomputeProcessor.GetWorkspaceSize(), elementSize, expectedOwner)) {
+        OP_LOGE(context->GetNodeName(),
                         "Owner-local H/WU workspace precheck failed: region=H/WU, B=%" PRId64 ", Hv=%" PRId64
                         ", T=%" PRId64 ", N=%" PRId64 ", K=%" PRId64 ", V=%" PRId64 ", BT=%" PRId64
                         ", cores=%u, elementBytes=%zu, sysBytes=%zu, recomputeBytes=%zu; require K=V=128, BT=64,"
                         " no gk, sysBytes<=recomputeBytes and each size/offset <= INT64_MAX=%zu.",
                         batch, vNumHead, seqlen, tokenBatch, kHeadDim, vHeadDim, chunkSize, aicCoreNum,
-                        elementSize, sysWorkspaceSize, recomputeProcessor.GetWorkspaceSize(), MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        elementSize, sysWorkspaceSize, recomputeProcessor.GetWorkspaceSize(), MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
     ::GdnMegaArch22FwdHTilingData hPlain{};
     uint32_t hBlockDim = 0;
     size_t hWorkspaceSize = 0;
@@ -586,14 +588,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     }
     }
     size_t oWorkspaceSize = 0;
-    if (!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, oBase, oWorkspaceSize),
-                OP_LOGE(context->GetNodeName(),
+    if (!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, oBase, oWorkspaceSize)) {
+        OP_LOGE(context->GetNodeName(),
                         "O workspace limit exceeded: region=O, base=%zu, cores=%u, BT=%" PRId64 ", V=%" PRId64
                         ", hStages=%zu, pingPongStages=%" PRId64 ", elementBytes=%zu, alignment=%zu, reserveBytes=%zu;"
                         " require base+aligned(v,h,attn,aftermask,mask,reserve) <= INT64_MAX=%zu.",
                         oBase, aicCoreNum, chunkSize, vHeadDim, oHWorkStages, PING_PONG_STAGES,
-                        sizeof(float), WORKSPACE_ALIGNMENT, WORKSPACE_RESERVE, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        sizeof(float), WORKSPACE_ALIGNMENT, WORKSPACE_RESERVE, MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
 
     size_t workspaceOffset = 0;
     if (!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset)) {
@@ -615,15 +618,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                                        hIntermediateBytes) ||
                     !CheckedWorkspaceBytes({static_cast<size_t>(batch), static_cast<size_t>(vNumHead),
                                             static_cast<size_t>(seqlen), static_cast<size_t>(vHeadDim), elementSize},
-                                           vNewIntermediateBytes),
-                OP_LOGE(context->GetNodeName(),
+                                           vNewIntermediateBytes)) {
+        OP_LOGE(context->GetNodeName(),
                         "HO persistent workspace size limit exceeded: region=%s, B=%" PRId64 ", hBatch=%" PRId64
                         ", Hv=%" PRId64 ", T=%" PRId64 ", NT=%" PRId64 ", K=%" PRId64 ", V=%" PRId64
                         ", elementBytes=%zu; require hBatch*Hv*NT*K*V*elementBytes and B*Hv*T*V*elementBytes"
                         " <= INT64_MAX=%zu.",
                         vNewIntermediateBytes == 0 ? "h" : "vNew", batch, isVarlen ? int64_t{1} : batch,
-                        vNumHead, seqlen, totalChunks, kHeadDim, vHeadDim, elementSize, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        vNumHead, seqlen, totalChunks, kHeadDim, vHeadDim, elementSize, MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
     trailer.hIntermediateOffset = static_cast<int64_t>(workspaceOffset);
     if (!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "Persistent workspace end limit exceeded: region=h, offset=%zu, bytes=%zu, alignment=%zu;");
@@ -631,15 +635,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     }
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);
     if (!AppendWorkspace(vNewIntermediateBytes, workspaceOffset) ||
-                    !AppendWorkspace(WORKSPACE_RESERVE, workspaceOffset),
-                OP_LOGE(context->GetNodeName(),
+                    !AppendWorkspace(WORKSPACE_RESERVE, workspaceOffset)) {
+        OP_LOGE(context->GetNodeName(),
                         "Persistent workspace end limit exceeded: region=%s, offset=%zu, vNewBase=%" PRId64
                         ", vNewBytes=%zu, reserveBytes=%zu, alignment=%zu; require each appended bytes"
                         " <= INT64_MAX-(alignment-1) and offset+AlignUp(bytes,alignment) <= INT64_MAX=%zu.",
                         workspaceOffset == static_cast<size_t>(trailer.vNewIntermediateOffset) ? "vNew" : "reserve",
                         workspaceOffset, trailer.vNewIntermediateOffset, vNewIntermediateBytes,
-                        WORKSPACE_RESERVE, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        WORKSPACE_RESERVE, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
 
     const size_t hTilingSize = hTiling.GetDataSize();
     const size_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);

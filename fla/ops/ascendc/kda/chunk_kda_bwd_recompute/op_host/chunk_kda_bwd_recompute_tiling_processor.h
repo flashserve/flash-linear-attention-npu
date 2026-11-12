@@ -73,7 +73,9 @@ public:
 
     ge::graphStatus Process()
     {
-        if (CheckSpec() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (CheckSpec() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         if (ComputeChunkNum() != ge::GRAPH_SUCCESS) {
         ;
         return ge::GRAPH_FAILED;

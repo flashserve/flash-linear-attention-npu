@@ -58,7 +58,9 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     }
     if (mixed) {
         const auto &canonical = context->GetOutputShape(4)->GetStorageShape();
-        if (canonical.GetDimNum() != 4, , return ge::GRAPH_FAILED);
+        if (canonical.GetDimNum() != 4) {
+            return ge::GRAPH_FAILED;
+        }
         for (size_t i = 0; i < 4; ++i) {
             const auto *input = context->GetRequiredInputShape(i);
             OP_CHECK_NULL_WITH_CONTEXT(context, input);

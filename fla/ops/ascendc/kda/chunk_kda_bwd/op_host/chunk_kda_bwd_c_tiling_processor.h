@@ -69,11 +69,12 @@ public:
     ge::graphStatus Process()
     {
         for (size_t i = 0; i < KDA_C_REQUIRED_INPUT_COUNT; ++i) {
-            if (ctx_.shapes[i] == nullptr,
-                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            if (ctx_.shapes[i] == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                             ctx_.nodeName, "kernel_c_inputs",
-                            "all non-metadata Kernel C inputs are required"),
-                        return ge::GRAPH_FAILED);
+                            "all non-metadata Kernel C inputs are required");
+        return ge::GRAPH_FAILED;
+    }
         }
         if (ctx_.chunkSize != 64) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
