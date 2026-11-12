@@ -257,7 +257,8 @@ NPU Event结果仅作为同窗口优化回归数据。
 |198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|9869.14|9856.42|0.13%|
 |199|TND变长，T=16384，16x1024，HK=16，HV=128，G=8|14295.53|14262.43|0.23%|
 
-最终候选使用同一ATK标杆完成精度20/20、确定性3/3。精度报告位于
-`/data/yqw/validation/prepare_gva/pr1168_aqk_zero_accuracy20_retry`，确定性报告位于
-`/data/yqw/validation/prepare_gva/pr1168_aqk_zero_determinism`。本轮没有扩大任何GM或UB
-访问范围，未重新运行MSS；按要求未重新采集msprof，Event结果仅用于同窗口优化回归。
+最终候选使用同一ATK标杆完成精度20/20、全量NPU执行200/200、确定性3/3，执行失败均为0。
+精度报告位于 `/data/yqw/validation/prepare_gva/pr1168_aqk_zero_accuracy20_retry`，全量报告位于
+`/data/yqw/validation/prepare_gva/pr1168_aqk_zero_full_npu_200`，确定性报告位于
+`/data/yqw/validation/prepare_gva/pr1168_aqk_zero_determinism`。本轮没有扩大任何GM或UB访问范围，
+未重新运行MSS；按要求未重新采集msprof，Event结果仅用于同窗口优化回归。
