@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -255,9 +256,25 @@ class ManagedRunWorkflowTest(unittest.TestCase):
     def test_pending_is_not_mistaken_for_successful_install(self):
         from tests.test_wheel_overlay import package
         source = package(self.root / "incompatible", opp={"aclnnDemo": "bool"})
-        self.layers.install(self.base, source / "opp/vendors" / self.layers.BASE)
-        with self.assertRaises(self.checker["subprocess"].CalledProcessError):
-            self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
+        subprocess = self.checker["subprocess"]
+        # Run the real child process; capture stderr to verify why it failed.
+        capture_stderr = partial(subprocess.check_output, stderr=subprocess.PIPE)
+        for previous_active in (False, True):
+            with self.subTest(previous_active=previous_active):
+                if previous_active:
+                    result = self.layers.install(self.base, self.source_vendor)
+                    self.assertEqual(result["state"], "active")
+                active_before = self.layers.state(self.base).get("active")
+                result = self.layers.install(self.base, source / "opp/vendors" / self.layers.BASE)
+                self.assertEqual(result["state"], "pending")
+                state = self.layers.state(self.base)
+                self.assertEqual(state["pending"], Path(result["path"]).name)
+                self.assertEqual(state.get("active"), active_before)
+                with mock.patch.object(subprocess, "check_output", wraps=capture_stderr):
+                    with self.assertRaises(subprocess.CalledProcessError) as error:
+                        self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
+                self.assertIn("Run installation must activate, not just return success",
+                              error.exception.stderr)
 
     def test_repeat_compares_payload_not_snapshot_identity(self):
         first = self.layers.install(self.base, self.source_vendor)
@@ -325,13 +342,16 @@ class ManagedRunWorkflowTest(unittest.TestCase):
         from tests.test_wheel_overlay import package
         self.layers.install(self.base, self.source_vendor)
         self.env["FLA_NPU_OVERLAY_VENDOR"] = ""
-        self.assertNotEqual(self.configure_ci().returncode, 0)
+        result = self.configure_ci()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Selected OPP is missing or disabled", result.stderr)
         self.env.pop("FLA_NPU_OVERLAY_VENDOR")
         bad = package(self.root / "bad", opp={"aclnnDemo": "bool"})
         self.layers.install(self.base, bad / "opp/vendors" / self.layers.BASE)
         result = self.configure_ci()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("pending", result.stderr)
+        self.assertIn("Requested OPP is pending; CI must not test an older active/base version",
+                      result.stderr)
 
 
 if __name__ == "__main__":

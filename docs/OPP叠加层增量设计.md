@@ -40,7 +40,9 @@
 **base 与 launcher 的兼容边界**：不支持保留旧 Python/Stable launcher，再手工覆盖 base
 为 ABI 不兼容产物，也不承诺自动拦截手工覆盖。新 run 的默认、`--install`、`--full`
 均走增量管理器，不再提供直接覆盖 base 共享库的入口。
-需使用本管理器安装组件，或通过 pip 安装配套 base wheel。standalone 骨架补齐 base 的旧流程仍保留。
+需使用本管理器安装组件，或通过 pip 安装配套 base wheel。standalone 骨架 wheel 仍可用配套 run
+提供 OPP，但 OPP 安装在增量目录，不补写 base vendor 或 RECORD。安装后通过
+`python -m fla_npu_opp_manage --status` 确认启用状态，并在新进程中使用。
 
 ## 2. 架构与来源顺序
 
