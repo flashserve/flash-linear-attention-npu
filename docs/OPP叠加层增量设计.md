@@ -37,8 +37,8 @@
 本设计不提供进程内热更新，不实现通用对象文件增量缓存。KDA host 错误码及 KDA/KKT
 测试修正是独立回归事项，不是 overlay 的运行依赖。
 
-**base 与 launcher 的兼容边界**：不支持保留旧 Python/Stable launcher，仅通过 `.run --install`、
-`--full` 或手工覆盖将 base 换成 ABI 不兼容产物，也不承诺自动拦截这种直接覆盖。
+**base 与 launcher 的兼容边界**：不支持保留旧 Python/Stable launcher，仅通过显式 `.run --full`
+或手工覆盖将 base 换成 ABI 不兼容产物，也不承诺自动拦截这种直接覆盖。
 需使用本管理器安装组件，或通过 pip 安装配套 base wheel。standalone 骨架补齐 base 的旧流程仍保留。
 
 ## 2. 架构与来源顺序
@@ -344,7 +344,10 @@ python -m fla_npu_opp_manage --overlay --source /path/to/update.run
 python -m fla_npu_opp_manage --overlay --source /path/to/staging/vendors
 ```
 
-run 文件先解到临时目录，校验并复制为独立 O 组件；不执行对 base 的 `.run --install`。
+run 文件先解到临时目录，校验并复制为独立 O 组件，不执行对 base 的直接覆盖。
+已安装 base wheel 时，新构建的 run 裸执行或传 `--install`，也将解出的 vendor 交给同一
+增量管理器，无需用户传 `--overlay`；只更新 O，保留当前 P 和 base 文件。失败不回退到
+覆盖 base。显式 `--full` 保留旧的直接覆盖行为；CANN 和指定解包目录模式不变。
 仅有 O 且不匹配当前 P 时也可保存为 pending，稍后安装匹配的 standalone wheel 即可补齐。
 新增 OPP 接口不会自动新增 wrapper。共享算子继续用已有 adapter 时，其契约也须匹配。
 

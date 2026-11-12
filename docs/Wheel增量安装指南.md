@@ -74,6 +74,9 @@ python -m fla_npu_opp_manage --overlay --source /path/to/standalone.whl
 # 单独更新 OPP；保留已经安装的适配层。可先执行这一条，再执行上一条。
 python -m fla_npu_opp_manage --overlay --source /path/to/update.run
 # --source 也可以是 vendor 目录或只含一个 vendor 的父目录。
+# 新构建的 run 也可直接执行，默认进行相同的增量安装，无需 --overlay：
+bash /path/to/update.run
+# 显式 --install 与裸执行相同；--full 是会直接覆盖 base 的旧模式。
 
 # 一次同时更新两部分
 python -m fla_npu_opp_manage --overlay --source /path/to/with-opp.whl

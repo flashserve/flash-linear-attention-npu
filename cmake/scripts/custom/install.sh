@@ -20,6 +20,7 @@ vendordir=vendors/$vendor_name
 QUIET="y"
 INSTALL_FOR_ALL="n"
 WHEEL_INSTALL="y"
+FULL_WHEEL_INSTALL="n"
 MODE_SET="n"
 
 
@@ -30,8 +31,15 @@ do
         QUIET="y"
         shift
     ;;
-    --full|--install)
+    --install)
         WHEEL_INSTALL="y"
+        FULL_WHEEL_INSTALL="n"
+        MODE_SET="y"
+        shift
+    ;;
+    --full)
+        WHEEL_INSTALL="y"
+        FULL_WHEEL_INSTALL="y"
         MODE_SET="y"
         shift
     ;;
@@ -424,6 +432,26 @@ install_wheel_opp_package() {
         return 1
     fi
     wheel_opp_root="${wheel_opp_root%/}"
+
+    # A scoped vendor has shared opapi/tiling libraries. Copying it over the
+    # base vendor would remove other operators from those libraries. Let the
+    # installed controller compose this OPP with the unchanged base instead.
+    # --full retains the explicit, legacy base-replacement path.
+    if [ "${FULL_WHEEL_INSTALL}" != "y" ]; then
+        local python_bin
+        local status
+        python_bin=$(get_python_bin)
+        log "[INFO] Install this run package incrementally; preserve the base wheel and its other operators."
+        "${python_bin}" -m fla_npu_opp_manage --overlay --source "${src_vendor}"
+        status=$?
+        if [ "${status}" -ne 0 ]; then
+            log "[ERROR] Incremental installation failed. A wheel with fla_npu_opp_manage is required; the base was not overwritten."
+            exit "${status}"
+        fi
+        log "[INFO] Installation completed; see the reported activation state. Restart Python processes before use."
+        exit 0
+    fi
+
     dst_vendor="${wheel_opp_root}/${vendordir}"
 
     if [ ! -d "${dst_vendor}" ]; then
