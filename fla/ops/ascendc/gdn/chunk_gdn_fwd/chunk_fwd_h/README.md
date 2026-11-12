@@ -85,7 +85,7 @@ host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND�
 
 - A2、A3、A5。
 - `K=V=128`、`chunk_size=64`、`save_new_value=true`。
-- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`，gk-only 要求 `HK == HV`。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`。
 
 ## 变长序列
 

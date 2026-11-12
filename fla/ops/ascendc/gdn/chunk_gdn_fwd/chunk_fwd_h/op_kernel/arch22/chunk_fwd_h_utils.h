@@ -23,8 +23,25 @@
 
 #include <cstdint>
 #include <type_traits>
-
 #include "kernel_operator.h"
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/cross_core_sync.hpp"
+#include "catlass/arch/resource.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/coord.hpp"
+#include "catlass/debug.hpp"
+#include "catlass/epilogue/block/block_epilogue.hpp"
+#include "catlass/epilogue/tile/tile_copy.hpp"
+#include "catlass/gemm/dispatch_policy.hpp"
+#include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm/helper.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
+#include "catlass/gemm/tile/tile_mmad.hpp"
+#include "catlass/gemm_coord.hpp"
+#include "catlass/layout/layout.hpp"
+#include "catlass/matrix_coord.hpp"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
 
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 2201
@@ -59,14 +76,6 @@ struct ChunkGatedDeltaRuleFwdHTilingData {
     int64_t numChunksWorkspaceOffset;
 };
 
-// ---- 原 gemm/kernel/gdn_fwd_h_kernel_preload.hpp 的 catlass 头（补齐主模板声明等前置）
-#include "catlass/arch/arch.hpp"
-#include "catlass/arch/cross_core_sync.hpp"
-#include "catlass/arch/resource.hpp"
-#include "catlass/catlass.hpp"
-#include "catlass/debug.hpp"
-#include "catlass/epilogue/block/block_epilogue.hpp"
-
 // ---- 内联自原 epilogue/gdn_fwd_h_epilogue_policies.hpp（仅保留 preload 策略——
 // 非 preload 两策略 EpilogueAtlasGDNFwdH{Vnew,Update} 供原版非 preload 链使用，
 // 本拷贝未引入该链，零引用，已删）
@@ -85,10 +94,6 @@ struct EpilogueAtlasGDNFwdHUpdatePreload {
 };
 
 }  // namespace Catlass::Epilogue
-
-#include "catlass/gemm_coord.hpp"
-#include "catlass/matrix_coord.hpp"
-#include "catlass/epilogue/tile/tile_copy.hpp"
 
 // ---- 内联自原 epilogue/block/block_epilogue_gdn_fwdh_update_preload.hpp
 namespace Catlass::Epilogue::Block {
@@ -230,7 +235,6 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
         AscendC::PipeBarrier<PIPE_V>();
-
         Arch::CrossCoreWaitFlag(cube2Done);
 
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
@@ -471,7 +475,6 @@ public:
 
         AscendC::Exp(gUbTensor, gUbTensor, mActual);
         AscendC::PipeBarrier<PIPE_V>();
-
         Arch::CrossCoreWaitFlag(cube1Done);
 
         if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
@@ -545,9 +548,6 @@ private:
 };
 }
 
-#include "catlass/gemm/block/block_mmad.hpp"
-#include "kernel_utils/block/block_mmad_pingpong_tla_preload.hpp"
-#include "catlass/gemm/block/block_swizzle.hpp"
 
 // ---- 内联自原 gemm/block/block_scheduler_gdn_fwd_h_preload.hpp
 using namespace Catlass;
@@ -814,6 +814,13 @@ struct BlockSchedulerGdnFwdHPreload {
         return runningQ.streams[(runningQ.head + i) % PING_PONG_STAGES];
     }
 
+    // GetStream(i) 的物理槽位。流迁移时 i 变而槽位不变，epilogue 的事件组与
+    // UB 组须按槽位选取，否则迁移流的事件配对断裂，kernel 死锁。
+    CATLASS_DEVICE
+    uint32_t GetStreamSlot(uint32_t i) const {
+        return (runningQ.head + i) % PING_PONG_STAGES;
+    }
+
     CATLASS_DEVICE
     const GDNFwdHOffsetsPreload& GetCurTaskOffsets(const GDNFwdHStreamPreload& stream) const {
         return stream.offset;
@@ -854,15 +861,670 @@ struct BlockSchedulerGdnFwdHPreloadVec : public BlockSchedulerGdnFwdHPreload {
 
 }  // namespace Catlass::Gemm::Block
 
-#include "catlass/gemm/dispatch_policy.hpp"
-#include "catlass/gemm/gemm_type.hpp"
-#include "catlass/layout/layout.hpp"
-#include "tla/tensor.hpp"
-#include "tla/layout.hpp"
-
 // ---- 内联自原 gemm/kernel/gdn_fwd_h_kernel_preload.hpp（using 与类主体）
 using namespace Catlass;
 using namespace tla;
+
+namespace Catlass::Gemm {
+
+// ===== 本地 MMAD 策略结构体（fork 自 kernel_utils/block/
+// block_mmad_pingpong_tla_preload.hpp 的 MmadPingpongTlaPreload 并增
+// WAIT_A_BEFORE_LOAD_ 位）：公共块零改动（评审约定），本文件与其解耦——
+// 下方 BlockMmadTla 为共享特化的本地 fork，按策略位的 vecDone 等待位置
+// 取舍（true=前置到 A 装载前，供 A=Vwork 依赖 V1 输出的 vfirst C2；
+// false=共享默认，A 装载与 vecDone 尾部重叠）。勿再 include 原共享头。
+template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, bool USE_HF32_MODE_ = false, uint32_t L0C_STAGES_ = 1,
+    bool ENABLE_L1_RESIDENT_ = false, uint32_t L1A_STAGES_ = 2, uint32_t L1B_STAGES_ = 2, uint32_t L0A_STAGES_ = 2,
+    uint32_t L0B_STAGES_ = 2, bool WAIT_A_BEFORE_LOAD_ = false>
+struct MmadPingpongTlaPreload {
+    using ArchTag = ArchTag_;
+    static constexpr uint32_t L1A_STAGES = L1A_STAGES_;
+    static constexpr uint32_t L1B_STAGES = L1B_STAGES_;
+    static constexpr uint32_t L0A_STAGES = L0A_STAGES_;
+    static constexpr uint32_t L0B_STAGES = L0B_STAGES_;
+    static constexpr uint32_t L0C_STAGES = L0C_STAGES_;
+    static constexpr bool ENABLE_UNIT_FLAG = ENABLE_UNIT_FLAG_;
+    static constexpr bool USE_HF32_MODE = USE_HF32_MODE_;
+    static constexpr bool ENABLE_L1_RESIDENT = ENABLE_L1_RESIDENT_;
+    // WAIT_A_BEFORE_LOAD=true 时先等 vecDone 再装载 A，供 A 依赖 vec 输出的
+    // 形态使用；默认 false，A 装载与 vecDone 尾部重叠。
+    static constexpr bool WAIT_A_BEFORE_LOAD = WAIT_A_BEFORE_LOAD_;
+};
+
+}  // namespace Catlass::Gemm
+
+namespace Catlass::Gemm::Block {
+
+// ===== 本地 MMAD 块（2026-11-12 评审约定：公共块
+// block_mmad_pingpong_tla_preload.hpp 零改动、与本文件解耦）：
+// fork 共享 BlockMmadTla 的 MmadPingpongTlaPreload 特化并增策略位
+// WAIT_A_BEFORE_LOAD（见上方本地 MmadPingpongTlaPreload 注释）——
+// A=Vwork（V1 输出）形态等待前置到 A 装载前，其余行为与共享实现逐行
+// 一致，本文件三处 MMAD 使用（WH/KV/KVVFirst）全部走本副本。
+template <
+    class DispatchPolicy_,
+    class L1TileShape_,
+    class L0TileShape_,
+    class ElementA_,
+    class ElementB_,
+    class ElementC_,
+    class ElementBias_ = void,
+    class TileCopy_ = Catlass::Gemm::Tile::PackedTileCopyTla<typename DispatchPolicy_::ArchTag, ElementA_, Catlass::layout::RowMajor,
+        ElementB_, Catlass::layout::RowMajor, ElementC_, Catlass::layout::RowMajor, ElementBias_>,
+    class TileMmad_ =
+        Catlass::Gemm::Tile::TileMmadTla<typename DispatchPolicy_::ArchTag, ElementA_, typename TileCopy_::LayoutTagL1A>
+>
+struct BlockMmadTla {
+    // Type Aliases
+    using DispatchPolicy = DispatchPolicy_;
+    using ArchTag = typename DispatchPolicy::ArchTag;
+    using TileCopy = TileCopy_;
+    using L1TileShape = L1TileShape_;
+    using L0TileShape = L0TileShape_;
+    using ElementA = ElementA_;
+    using LayoutA = typename TileCopy::LayoutA;
+    using ElementB = ElementB_;
+    using LayoutB = typename TileCopy::LayoutB;
+    using ElementC = ElementC_;
+    using LayoutC = typename TileCopy::LayoutC;
+    using ElementBias = ElementBias_;
+
+    using TileMmad = TileMmad_;
+
+    using CopyL1ToL0A = typename TileCopy::CopyL1ToL0A;
+    using CopyL1ToL0B = typename TileCopy::CopyL1ToL0B;
+    using CopyL1ToBT = typename TileCopy::CopyL1ToBT;
+
+    using ElementAccumulator = typename TileCopy::ElementAccumulator;
+
+    static constexpr bool HAS_BIAS = TileCopy::HAS_BIAS;
+
+    using LayoutTagL1A = typename TileCopy::LayoutTagL1A;
+    using LayoutTagL1B = typename TileCopy::LayoutTagL1B;
+    using LayoutTagL0A = typename TileCopy::LayoutTagL0A;
+    using LayoutTagL0B = typename TileCopy::LayoutTagL0B;
+
+    using L1AAlignHelper = typename TileCopy_::L1AAlignHelper;
+    using L1BAlignHelper = typename TileCopy_::L1BAlignHelper;
+
+    static_assert(tla::is_tuple<L1TileShape>::value && tla::is_static<L1TileShape>::value,
+        "L1TileShape must be tla::tuple and static!");
+    static_assert(tla::is_tuple<L0TileShape>::value && tla::is_static<L0TileShape>::value,
+        "L0TileShape must be tla::tuple and static!");
+
+    static constexpr bool ENABLE_UNIT_FLAG = DispatchPolicy::ENABLE_UNIT_FLAG;
+    static constexpr bool USE_HF32_MODE = DispatchPolicy::USE_HF32_MODE;
+    static constexpr bool ENABLE_L1_RESIDENT = DispatchPolicy::ENABLE_L1_RESIDENT;
+    static constexpr uint32_t L1A_STAGES = DispatchPolicy::L1A_STAGES;
+    static constexpr uint32_t L1B_STAGES = DispatchPolicy::L1B_STAGES;
+    static constexpr uint32_t L0A_STAGES = DispatchPolicy::L0A_STAGES;
+    static constexpr uint32_t L0B_STAGES = DispatchPolicy::L0B_STAGES;
+    static constexpr uint32_t L0C_STAGES = DispatchPolicy::L0C_STAGES;
+    static constexpr uint32_t L1_TILE_M = tla::get<0>(L1TileShape{});
+    static constexpr uint32_t L1_TILE_N = tla::get<1>(L1TileShape{});
+    static constexpr uint32_t L1_TILE_K = tla::get<2>(L1TileShape{});
+    static constexpr uint32_t L0_TILE_M = tla::get<0>(L0TileShape{});
+    static constexpr uint32_t L0_TILE_N = tla::get<1>(L0TileShape{});
+    static constexpr uint32_t L0_TILE_K = tla::get<2>(L0TileShape{});
+
+    // L1 tile size
+    static constexpr uint32_t L1A_TILE_SIZE = L1_TILE_M * L1_TILE_K * sizeof(ElementA);
+    static constexpr uint32_t L1B_TILE_SIZE = L1_TILE_N * L1_TILE_K * sizeof(ElementB);
+    // L0 tile size
+    static constexpr uint32_t L0A_TILE_SIZE = L0_TILE_M * L0_TILE_K * sizeof(ElementA);
+    static constexpr uint32_t L0B_TILE_SIZE = L0_TILE_K * L0_TILE_N * sizeof(ElementB);
+    static constexpr uint32_t L0C_TILE_SIZE = L1_TILE_M * L1_TILE_N * sizeof(ElementAccumulator);
+
+    // Check HF32_MODE
+    static_assert(
+        !USE_HF32_MODE || (USE_HF32_MODE && std::is_same_v<ElementA, float> && std::is_same_v<ElementB, float>),
+        "HF32 MODE only supports in float!"
+    );
+
+    // Check L0C_STAGES
+    static_assert(!(ENABLE_UNIT_FLAG && L0C_STAGES != 1), "L0C_STAGES must be 1 when UnitFlag is true!");
+
+    // Check LayoutC
+    static_assert(tla::detail::isRowMajor<LayoutC>::value ||
+                      ((std::is_same_v<ElementC, half> || std::is_same_v<ElementC, bfloat16_t> ||
+                          std::is_same_v<ElementC, float>) && tla::detail::iszN<ElementC, LayoutC>::value),
+        "LayoutC only supports zN in half or bfloat16 or float, RowMajor in all dtype yet!");
+
+    // Check L1TileShape
+    static_assert(L1A_TILE_SIZE * L1A_STAGES + L1B_TILE_SIZE * L1B_STAGES <= ArchTag::L1_SIZE,
+        "L1TileShape exceeding the L1 space!");
+
+    // Check L0TileShape
+    static_assert(L0A_TILE_SIZE * L0A_STAGES <= ArchTag::L0A_SIZE, "L0TileShape exceeding the L0A space!");
+    static_assert(L0B_TILE_SIZE * L0B_STAGES <= ArchTag::L0B_SIZE, "L0TileShape exceeding the L0B space!");
+    static_assert(L0C_TILE_SIZE * L0C_STAGES <= ArchTag::L0C_SIZE, "L0TileShape exceeding the L0C space!");
+
+    static constexpr uint32_t _32B = 32*8; // in bits
+    static_assert(L1_TILE_M == L0_TILE_M && L1_TILE_N == L0_TILE_N,
+        "The situation where the basic blocks of L1 and L0 differ on the m and n axes is not supported yet");
+    static_assert(L0_TILE_K <= L1_TILE_K, "L0TileShape::K cannot exceed L1TileShape::K");
+#if (defined (CATLASS_ARCH) && CATLASS_ARCH == 2201)
+    static_assert(L1_TILE_M * SizeOfBits<ElementA>::value % _32B == 0, "L1TileShape::M must be 32B aligned.");
+    static_assert(L1_TILE_K * SizeOfBits<ElementA>::value % _32B == 0, "L1TileShape::K must be 32B aligned.");
+    static_assert(L1_TILE_K * SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::K must be 32B aligned.");
+    static_assert(L1_TILE_N * SizeOfBits<ElementB>::value % _32B == 0, "L1TileShape::N must be 32B aligned.");
+    static_assert(L0_TILE_K * SizeOfBits<ElementB>::value % _32B == 0, "L0TileShape::K must be 32B aligned.");
+#endif
+
+    static_assert((!HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 8) || (HAS_BIAS && (L1A_STAGES + L1B_STAGES) <= 7), 
+        "L1 Buffer overflow: Exceeds the supported range of EVENT(0~7)");
+
+    static_assert((!HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 8) || (HAS_BIAS && (L0A_STAGES + L0B_STAGES) <= 7), 
+        "L0 Buffer overflow: Exceeds the supported range of EVENT_ID(0~7)");
+
+    static constexpr auto L1A_LAYOUT =
+        tla::MakeLayout<ElementA, LayoutTagL1A>(tla::Int<L1_TILE_M>{}, tla::Int<L1_TILE_K>{});
+    static constexpr auto L1B_LAYOUT =
+        tla::MakeLayout<ElementB, LayoutTagL1B>(tla::Int<L1_TILE_K>{}, tla::Int<L1_TILE_N>{});
+    static constexpr auto L1BIAS_LAYOUT = tla::MakeLayout(tla::Int<L1_TILE_N>{});
+    static constexpr auto L0BIAS_LAYOUT = tla::MakeLayout(tla::Int<L0_TILE_N>{});
+
+    // When enabling L1 resident mode, restore the pointer and coordinates that record the last state
+    // to the initial state. if two blockmmad instances need to be consecutively invoked at the kernel layer,
+    // RestoreStatus() must be inserted between them.
+    CATLASS_DEVICE
+    void RestoreStatus()
+    {
+        for (int i = 0; i < L1A_STAGES; ++i) {
+            lastAddrA[i] = nullptr;
+            lastCoordA[i] = MatrixCoord{0U, 0U};
+        }
+        for (int i = 0; i < L1B_STAGES; ++i) {
+            lastAddrB[i] = nullptr;
+            lastCoordB[i] = MatrixCoord{0U, 0U};
+        }
+    }
+
+    /// Construct
+    CATLASS_DEVICE
+    BlockMmadTla(Arch::Resource<ArchTag> &resource, uint32_t l1BufAddrStart = 0)
+    {
+        if ASCEND_IS_AIC {
+            uint32_t l1AOffset = l1BufAddrStart;
+            uint32_t l1BOffset = l1BufAddrStart + L1A_TILE_SIZE * L1A_STAGES;
+            // Init buffers
+            for (uint32_t i = 0; i < L1A_STAGES; i++) {
+                // Assign L1/L0A/L0B space for each stages
+                l1ATensorList[i] = resource.l1Buf.template GetBufferByByte<ElementA>(l1AOffset + L1A_TILE_SIZE * i);
+                // Assign event ID for each stages
+                l1AEventList[i] = i;
+            }
+            for (uint32_t i = 0; i < L1B_STAGES; i++) {
+                // Assign L1/L0A/L0B space for each stages
+                l1BTensorList[i] = resource.l1Buf.template GetBufferByByte<ElementB>(l1BOffset + L1B_TILE_SIZE * i);
+                // Assign event ID for each stages
+                l1BEventList[i] = i + L1A_STAGES;
+            }
+            for (uint32_t i = 0; i < L0A_STAGES; i++) {
+                // Assign L1/L0A/L0B space for each stages
+                l0ATensorList[i] = resource.l0ABuf.template GetBufferByByte<ElementA>(L0A_TILE_SIZE * i);
+                // Assign event ID for each stages
+                l0AEventList[i] = i;
+            }
+            for (uint32_t i = 0; i < L0B_STAGES; i++) {
+                // Assign L1/L0A/L0B space for each stages
+                l0BTensorList[i] = resource.l0BBuf.template GetBufferByByte<ElementB>(L0B_TILE_SIZE * i);
+                // Assign event ID for each stages
+                l0BEventList[i] = i + L0A_STAGES;
+            }
+            if constexpr(!ENABLE_UNIT_FLAG) {
+                for (uint32_t i = 0; i < L0C_STAGES; i++) {
+                    l0CTensorList[i] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(L0C_TILE_SIZE * i);
+                    l0CEventList[i] = i;
+                }
+            } else {
+                l0CTensorList[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+            }
+            if constexpr (HAS_BIAS) {
+                uint32_t l1BiasOffset = l1BOffset + L1B_TILE_SIZE * L1B_STAGES;
+                l1BiasTensor = resource.l1Buf.template GetBufferByByte<uint8_t>(l1BiasOffset);
+                l0BiasTensor = resource.btBuf.template GetBufferByByte<ElementAccumulator>(0);
+            }
+        }
+    }
+
+    /// Destructor
+    CATLASS_DEVICE
+    ~BlockMmadTla() {}
+
+    CATLASS_DEVICE
+    void preSetFlags() {
+
+        if ASCEND_IS_AIC {
+            // use HF32 when USE_HF32_MODE is true
+            if constexpr (USE_HF32_MODE) {
+                AscendC::SetHF32Mode(true);
+            } else {
+                AscendC::SetHF32Mode(false);
+            }
+            if constexpr (ENABLE_UNIT_FLAG && tla::detail::isRowMajor<LayoutC>::value) {
+                AscendC::SetMMLayoutTransform(true);
+            }
+            for (uint32_t i = 0; i < L1A_STAGES; i++) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[i]);
+            }
+            for (uint32_t i = 0; i < L1B_STAGES; i++) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[i]);
+            }
+            for (uint32_t i = 0; i < L0A_STAGES; i++) {
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEventList[i]);
+            }
+            for (uint32_t i = 0; i < L0B_STAGES; i++) {
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEventList[i]);
+            }
+            if constexpr(!ENABLE_UNIT_FLAG) {
+                for (uint32_t i = 0; i < L0C_STAGES; i++) {
+                    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEventList[i]);
+                }
+            }
+            if constexpr (HAS_BIAS) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
+            }
+
+            if constexpr (ENABLE_L1_RESIDENT) {
+                RestoreStatus();
+            }
+        }
+    }
+
+    CATLASS_DEVICE
+    void finalWaitFlags() {
+        if ASCEND_IS_AIC {
+            if constexpr (USE_HF32_MODE) {
+                AscendC::SetHF32Mode(false);
+            }
+            if constexpr (ENABLE_UNIT_FLAG && tla::detail::isRowMajor<LayoutC>::value) {
+                AscendC::SetMMLayoutTransform(false);
+            }
+            for (uint32_t i = 0; i < L1A_STAGES; i++) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[i]);
+            }
+            for (uint32_t i = 0; i < L1B_STAGES; i++) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[i]);
+            }
+            for (uint32_t i = 0; i < L0A_STAGES; i++) {
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEventList[i]);
+            }
+            for (uint32_t i = 0; i < L0B_STAGES; i++) {
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEventList[i]);
+            }
+            if constexpr(!ENABLE_UNIT_FLAG) {
+                for (uint32_t i = 0; i < L0C_STAGES; i++) {
+                    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEventList[i]);
+                }
+            }
+            if constexpr (HAS_BIAS) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
+            }
+        }
+    }
+
+    /// Perform a block-scoped matrix multiply-accumulate
+    template <class TensorA, class TensorB, class TensorC, class TensorBias = EmptyClass>
+    CATLASS_DEVICE void operator()(TensorA &tensorA, TensorB &tensorB, TensorC &tensorC, GemmCoord const &actualShape, Arch::CrossCoreFlag vecDone,
+        TensorBias const &tensorBias = {})
+    {
+        // Check L1TileShape
+        if constexpr (HAS_BIAS) {
+            static constexpr uint32_t BIAS_BUF_SIZE = L0_TILE_N * sizeof(ElementAccumulator);
+            static constexpr uint32_t L1BIAS_SIZE = L1_TILE_N * sizeof(ElementBias);
+            static_assert(BIAS_BUF_SIZE <= ArchTag::BIAS_SIZE,
+                "BIAS_BUF_SIZE exceeding the BT space! Reduce L0_TILE_N");
+            static_assert(L1A_TILE_SIZE * L1A_STAGES + L1B_TILE_SIZE * L1B_STAGES + L1BIAS_SIZE <= ArchTag::L1_SIZE,
+                "L1TileShape exceeding the L1 space!");
+        }
+
+        using CopyGmToL1A = typename TileCopy_::template CopyGmToL1A<TensorA>;
+        using CopyGmToL1B = typename TileCopy_::template CopyGmToL1B<TensorB>;
+        CopyGmToL1A copyGmToL1A;
+        CopyGmToL1B copyGmToL1B;
+#if (defined (CATLASS_ARCH) && CATLASS_ARCH == 2201)
+        using CopyL0CToGm = typename TileCopy_::template CopyL0CToGm<TensorC>;
+        CopyL0CToGm copyL0CToDst;
+#endif        
+#if (defined (CATLASS_ARCH) && CATLASS_ARCH == 3510)
+        using CopyL0CToDst = typename TileCopy_::template CopyL0CToDst<TensorC>;
+        CopyL0CToDst copyL0CToDst;
+#endif        
+
+        uint32_t mBlockActual = actualShape.m();
+        uint32_t kBlockActual = actualShape.k();
+        uint32_t nBlockActual = actualShape.n();
+
+        uint32_t mL1Actual = mBlockActual;
+        if constexpr (std::is_same_v<ArchTag, Arch::AtlasA2>) {
+            // Avoid using the gemv mode in mmad
+            if (mL1Actual == 1) {
+                mL1Actual = 16;
+            }
+        }
+        uint32_t nL1Actual = nBlockActual;
+
+        auto layoutInL0C = tla::MakeLayoutL0C(mL1Actual, nL1Actual);
+        auto tensorL0C = tla::MakeTensor(l0CTensorList[l0CListId], layoutInL0C, Arch::PositionL0C{});
+        auto tensorL0Bias = tla::MakeTensor(l0BiasTensor, L0BIAS_LAYOUT, Arch::PositionBias{});
+
+        uint32_t kL1Actual = min(kBlockActual, L1_TILE_K);
+        // load first matrix A tile from GM to L1
+        if constexpr (DispatchPolicy::WAIT_A_BEFORE_LOAD) {
+            // A 依赖 vecDone 输出（A=Vwork 为 V1 输出）：把等待放到 A 装载（MTE2
+            // 异步发射）之前，确保依赖数据已写完。
+            Arch::CrossCoreWaitFlag(vecDone);
+        }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
+        auto tensorL1A = tla::MakeTensor(l1ATensorList[l1AListId], L1A_LAYOUT, Arch::PositionL1{});
+        auto tensorTileA = GetTileA(tensorA, 0, 0, mBlockActual, kL1Actual);
+        if constexpr (ENABLE_L1_RESIDENT) {
+            // If the currently loaded GM pointer and block coordinates are the same as the last loaded ones,
+            // skip this loading.
+            if (lastAddrA[l1AListId] != tensorTileA.data().GetPhyAddr()
+                || tla::get<0>(tensorTileA.coord()) != lastCoordA[l1AListId].row()
+                || tla::get<1>(tensorTileA.coord()) != lastCoordA[l1AListId].column()) {
+                copyGmToL1A(tensorL1A, tensorTileA);
+                lastCoordA[l1AListId] = MatrixCoord{tla::get<0>(tensorTileA.coord()), tla::get<1>(tensorTileA.coord())};
+                lastAddrA[l1AListId] = const_cast<__gm__ typename AscendC::GlobalTensor<ElementA>::PrimType *>(
+                    tensorTileA.data().GetPhyAddr()
+                );
+            }
+        } else {
+            copyGmToL1A(tensorL1A, tensorTileA);
+        }
+        if constexpr (!DispatchPolicy::WAIT_A_BEFORE_LOAD) {
+            Arch::CrossCoreWaitFlag(vecDone);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
+
+        // load first matrix B tile from GM to L1
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListId]);
+        auto tensorL1B = tla::MakeTensor(l1BTensorList[l1BListId], L1B_LAYOUT, Arch::PositionL1{});
+        auto tensorTileB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(kL1Actual, nBlockActual));
+        if constexpr (ENABLE_L1_RESIDENT) {
+            if (lastAddrB[l1BListId] != tensorTileB.data().GetPhyAddr()
+                || tla::get<0>(tensorTileB.coord()) != lastCoordB[l1BListId].row()
+                || tla::get<1>(tensorTileB.coord()) != lastCoordB[l1BListId].column()) {
+                copyGmToL1B(tensorL1B, tensorTileB);
+                lastCoordB[l1BListId] = MatrixCoord{tla::get<0>(tensorTileB.coord()), tla::get<1>(tensorTileB.coord())};
+                lastAddrB[l1BListId] = const_cast<__gm__ typename AscendC::GlobalTensor<ElementB>::PrimType *>(
+                    tensorTileB.data().GetPhyAddr()
+                );
+            }
+        } else {
+            copyGmToL1B(tensorL1B, tensorTileB);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BEventList[l1BListId]);
+
+        if constexpr (HAS_BIAS && !std::is_same_v<TensorBias, EmptyClass>) {
+            using CopyGmToL1Bias = typename TileCopy::template CopyGmToL1Bias<TensorBias>;
+            CopyGmToL1Bias copyGmToL1Bias;
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
+            auto l1Bias = l1BiasTensor.template ReinterpretCast<ElementBias>();
+            auto tensorL1Bias = tla::MakeTensor(l1Bias, L1BIAS_LAYOUT, Arch::PositionL1{});
+            copyGmToL1Bias(tensorL1Bias, tensorBias);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(L1A_STAGES + L1B_STAGES);
+        }
+
+        if constexpr (!ENABLE_UNIT_FLAG) {
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEventList[l0CListId]);
+        }
+
+        uint32_t mL0Loop = CeilDiv<L0_TILE_M>(mL1Actual);
+        uint32_t nL0Loop = CeilDiv<L0_TILE_N>(nL1Actual);
+
+        // main loop
+        uint32_t kL1Loop = CeilDiv<L1_TILE_K>(kBlockActual);
+        for (uint32_t kL1Idx = 0; kL1Idx < kL1Loop; kL1Idx++) {
+            uint32_t l1AListIdNext = (l1AListId + 1 < L1A_STAGES) ? (l1AListId + 1) : 0;
+            uint32_t l1BListIdNext = (l1BListId + 1 < L1B_STAGES) ? (l1BListId + 1) : 0;
+            uint32_t kL1ActualNext{0};
+            // preload next tile from GM to L1
+            if (kL1Idx < kL1Loop - 1) {
+                uint32_t kL1IdxNext = kL1Idx + 1;
+                kL1ActualNext = (kL1IdxNext < kL1Loop - 1) ? L1_TILE_K : (kBlockActual - kL1IdxNext * L1_TILE_K);
+
+                // Get L1 tensor for next stage
+                auto l1ATensor = l1ATensorList[l1AListIdNext];
+                auto l1BTensor = l1BTensorList[l1BListIdNext];
+                auto tensorL1A = tla::MakeTensor(l1ATensor, L1A_LAYOUT, Arch::PositionL1{});
+                auto tensorL1B = tla::MakeTensor(l1BTensor, L1B_LAYOUT, Arch::PositionL1{});
+                // Get GM tile for next stage
+                auto tensorTileA = GetTileA(tensorA, 0, kL1IdxNext * L1_TILE_K, mBlockActual, kL1ActualNext);
+                auto tensorTileB = GetTile(tensorB, tla::MakeCoord(kL1IdxNext * L1_TILE_K, 0),
+                    tla::MakeShape(kL1ActualNext, nBlockActual));
+
+                // load next matrix A tile from GM to L1
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListIdNext]);
+                if constexpr (ENABLE_L1_RESIDENT) {
+                    if (lastAddrA[l1AListIdNext] != tensorTileA.data().GetPhyAddr()
+                        || tla::get<0>(tensorTileA.coord()) != lastCoordA[l1AListIdNext].row()
+                        || tla::get<1>(tensorTileA.coord()) != lastCoordA[l1AListIdNext].column()) {
+                        copyGmToL1A(tensorL1A, tensorTileA);
+                        lastCoordA[l1AListIdNext] =
+                            MatrixCoord{tla::get<0>(tensorTileA.coord()), tla::get<1>(tensorTileA.coord())};
+                        lastAddrA[l1AListIdNext] =
+                            const_cast<__gm__ typename AscendC::GlobalTensor<ElementA>::PrimType *>(
+                                tensorTileA.data().GetPhyAddr()
+                            );
+                    }
+                } else {
+                    copyGmToL1A(tensorL1A, tensorTileA);
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListIdNext]);
+
+                // load next matrix B tile from GM to L1
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListIdNext]);
+                if constexpr (ENABLE_L1_RESIDENT) {
+                    if (lastAddrB[l1BListIdNext] != tensorTileB.data().GetPhyAddr()
+                        || tla::get<0>(tensorTileB.coord()) != lastCoordB[l1BListIdNext].row()
+                        || tla::get<1>(tensorTileB.coord()) != lastCoordB[l1BListIdNext].column()) {
+                        copyGmToL1B(tensorL1B, tensorTileB);
+                        lastCoordB[l1BListIdNext] =
+                            MatrixCoord{tla::get<0>(tensorTileB.coord()), tla::get<1>(tensorTileB.coord())};
+                        lastAddrB[l1BListIdNext] =
+                            const_cast<__gm__ typename AscendC::GlobalTensor<ElementB>::PrimType *>(
+                                tensorTileB.data().GetPhyAddr()
+                            );
+                    }
+                } else {
+                    copyGmToL1B(tensorL1B, tensorTileB);
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BEventList[l1BListIdNext]);
+            }
+
+            // Get L1 tensor for current stage
+            auto l1ATensor = l1ATensorList[l1AListId];
+            auto l1BTensor = l1BTensorList[l1BListId];
+            tensorL1A = tla::MakeTensor(l1ATensor, L1A_LAYOUT, Arch::PositionL1{});
+            tensorL1B = tla::MakeTensor(l1BTensor, L1B_LAYOUT, Arch::PositionL1{});
+            // Get the loop nums on L0
+            uint32_t kL0Loop = CeilDiv<L0_TILE_K>(kL1Actual);
+
+            for (int mL0Idx = 0; mL0Idx < mL0Loop; mL0Idx++) {
+                uint32_t mL0Actual = (mL0Idx < mL0Loop - 1) ? L0_TILE_M : (mL1Actual - mL0Idx * L0_TILE_M);
+
+                for (int kL0Idx = 0; kL0Idx < kL0Loop; kL0Idx++) {
+                    uint32_t kL0Actual = (kL0Idx < kL0Loop - 1) ? L0_TILE_K : (kL1Actual - kL0Idx * L0_TILE_K);
+
+                    // Locate the current tile on L0A
+                    auto l0ATile = l0ATensorList[l0AListId];
+                    auto layoutAInL0 = tla::MakeLayout<ElementA, LayoutTagL0A>(mL0Actual, kL0Actual);
+                    auto tensorL0A = tla::MakeTensor(l0ATile, layoutAInL0, Arch::PositionL0A{});
+                    // Locate the current tile of matrix A on L1
+                    auto tensorTileL1A = GetTileA(tensorL1A, mL0Idx * L0_TILE_M, kL0Idx * L0_TILE_K, mL0Actual, kL0Actual);
+
+                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEventList[l0AListId]);
+                    if ((mL0Idx == 0) && (kL0Idx == 0)) {
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEventList[l1AListId]);
+                    }
+
+                    // Load current tile from L1 to L0A
+                    copyL1ToL0A(tensorL0A, tensorTileL1A);
+
+                    if ((mL0Idx == mL0Loop - 1) && (kL0Idx == kL0Loop - 1)) {
+                        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
+                    }
+
+                    bool initC = ((kL1Idx == 0) && (kL0Idx == 0));
+                    for (int nL0Idx = 0; nL0Idx < nL0Loop; nL0Idx++) {
+                        uint32_t nL0Actual = (nL0Idx < nL0Loop - 1) ? L0_TILE_N : (nL1Actual - nL0Idx * L0_TILE_N);
+
+                        // Locate the current tile on L0B
+                        auto l0BTile = l0BTensorList[l0BListId];
+                        auto layoutBInL0 = tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, nL0Actual);
+                        auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
+                        // Locate the current tile of matrix B on L1
+                        auto tensorTileL1B = GetTile(tensorL1B,
+                                                     tla::MakeCoord(kL0Idx * L0_TILE_K, nL0Idx * L0_TILE_N),
+                                                     tla::MakeShape(kL0Actual, nL0Actual));
+
+                        // Wait for mmad finished
+                        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEventList[l0BListId]);
+                        // If the current tile is the first one on the k&n axis, wait for loading matrix B from GM to L1
+                        if ((mL0Idx == 0) && (kL0Idx == 0) && (nL0Idx == 0)) {
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BEventList[l1BListId]);
+                        }
+
+                        // Load current tile from L1 to L0B
+                        copyL1ToL0B(tensorL0B, tensorTileL1B);
+
+                        // If the current tile is the last one on the k&n axis, notify to load matrix B from GM to L1
+                        if ((mL0Idx == mL0Loop - 1) && (kL0Idx == kL0Loop - 1) && (nL0Idx == nL0Loop - 1)) {
+                            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListId]);
+                        }
+
+                        if constexpr (HAS_BIAS && !std::is_same_v<TensorBias, EmptyClass>) {
+                            if (initC) {
+                                if (nL0Idx == 0) {
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(L1A_STAGES + L1B_STAGES);
+                                }
+                                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
+                                auto l1Bias = l1BiasTensor.template ReinterpretCast<ElementBias>();
+                                auto tensorL1Bias = tla::MakeTensor(l1Bias, L1BIAS_LAYOUT, Arch::PositionL1{});
+                                auto tensorTileL1Bias = GetTile(tensorL1Bias,
+                                                                tla::MakeCoord(nL0Idx * L0_TILE_N),
+                                                                tla::MakeShape(nL0Actual));
+                                // Load bias to l0 biasTable
+                                copyL1ToBT(tensorL0Bias, tensorTileL1Bias);
+                                if (nL0Idx == nL0Loop - 1) {
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(L1A_STAGES + L1B_STAGES);
+                                }
+                            }
+                        }
+
+                        // Notify to do mmad
+                        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0CEventList[l0CListId]);
+
+                        // Locate the current tile on L0C
+                        auto tensorTileL0C = GetTile(tensorL0C,
+                                                     tla::MakeCoord(mL0Idx * L0_TILE_M, nL0Idx * L0_TILE_N),
+                                                     tla::MakeShape(mL0Actual, nL0Actual));
+
+                        // Compute the matrix multiplication on L0A and L0B and write the result to the accumulator
+                        // Wait for loading L0B
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0CEventList[l0CListId]);
+
+                        // If the unit flag is enabled, the unit flag is set according to the calculation progress
+                        uint8_t unitFlag = 0b00;
+                        if constexpr (ENABLE_UNIT_FLAG) {
+                            if ((kL1Idx == kL1Loop - 1) && (mL0Idx == mL0Loop - 1) &&
+                                (kL0Idx == kL0Loop - 1) && (nL0Idx == nL0Loop - 1)) {
+                                unitFlag = 0b11;
+                            } else {
+                                unitFlag = 0b10;
+                            }
+                        }
+
+                        if constexpr (HAS_BIAS && !std::is_same_v<TensorBias, EmptyClass>) {
+                            if (initC) {
+                                tileMmad(tensorTileL0C, tensorL0A, tensorL0B, tensorL0Bias,
+                                    mL0Actual, nL0Actual, kL0Actual, initC, unitFlag);
+                                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0A_STAGES + L0B_STAGES);
+                            } else {
+                                tileMmad(tensorTileL0C, tensorL0A, tensorL0B,
+                                    mL0Actual, nL0Actual, kL0Actual, initC, unitFlag);
+                            }
+                        } else {
+                            tileMmad(tensorTileL0C, tensorL0A, tensorL0B,
+                                mL0Actual, nL0Actual, kL0Actual, initC, unitFlag);
+                        }
+
+                        // Notify to move the next L0B tile
+                        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEventList[l0BListId]);
+                        l0BListId = (l0BListId + 1 < L0B_STAGES) ? (l0BListId + 1) : 0;
+                    }
+                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEventList[l0AListId]);
+                    l0AListId = (l0AListId + 1 < L0A_STAGES) ? (l0AListId + 1) : 0;
+                }
+            }
+            l1AListId = l1AListIdNext;
+            l1BListId = l1BListIdNext;
+            kL1Actual = kL1ActualNext;
+        }
+
+        // copy block out
+        if constexpr (!ENABLE_UNIT_FLAG) {
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEventList[l0CListId]);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEventList[l0CListId]);
+            copyL0CToDst(tensorC, tensorL0C);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEventList[l0CListId]);
+            l0CListId = (l0CListId + 1 < L0C_STAGES) ? (l0CListId + 1) : 0;
+        } else {
+            copyL0CToDst(tensorC, tensorL0C, 0b11);
+        }
+    }
+
+protected:
+    template<class TensorA>
+    CATLASS_DEVICE auto GetTileA(TensorA &tensorA, uint32_t mIndex, uint32_t kIndex, uint32_t mSize, uint32_t kSize)
+    {
+        if constexpr(tla::detail::isVector<LayoutA>::value) {
+            return GetTile(tensorA, tla::MakeCoord(kIndex), tla::MakeShape(kSize));
+        } else {
+            return GetTile(tensorA, tla::MakeCoord(mIndex, kIndex), tla::MakeShape(mSize, kSize));
+        }
+    }
+
+    // Multi-stage tensors list
+    AscendC::LocalTensor<ElementA> l1ATensorList[L1A_STAGES];
+    AscendC::LocalTensor<ElementB> l1BTensorList[L1B_STAGES];
+    AscendC::LocalTensor<ElementA> l0ATensorList[L0A_STAGES];
+    AscendC::LocalTensor<ElementB> l0BTensorList[L0B_STAGES];
+    AscendC::LocalTensor<ElementAccumulator> l0CTensorList[L0C_STAGES];
+    AscendC::LocalTensor<uint8_t> l1BiasTensor;
+    AscendC::LocalTensor<ElementAccumulator> l0BiasTensor;
+
+    // Multi-stage event id list
+    int32_t l1AEventList[L1A_STAGES];
+    int32_t l1BEventList[L1B_STAGES];
+    int32_t l0AEventList[L0A_STAGES];
+    int32_t l0BEventList[L0B_STAGES];
+    int32_t l0CEventList[L0C_STAGES];
+
+    __gm__ typename AscendC::GlobalTensor<ElementA>::PrimType* lastAddrA[L1A_STAGES];
+    __gm__ typename AscendC::GlobalTensor<ElementB>::PrimType* lastAddrB[L1B_STAGES];
+    MatrixCoord lastCoordA[L1A_STAGES];
+    MatrixCoord lastCoordB[L1B_STAGES];
+    
+    // The id of current stage
+    uint32_t l1AListId{0};
+    uint32_t l1BListId{0};
+    uint32_t l0AListId{0};
+    uint32_t l0BListId{0};
+    uint32_t l0CListId{0};
+
+    TileMmad tileMmad;
+    CopyL1ToL0A copyL1ToL0A;
+    CopyL1ToL0B copyL1ToL0B;
+    CopyL1ToBT copyL1ToBT;
+};
+
+}  // namespace Catlass::Gemm::Block
 
 namespace Catlass::Gemm::Kernel {
 
@@ -871,7 +1533,8 @@ template<
     typename G_TYPE,
     typename STATE_TYPE,
     typename WORKSPACE_TYPE,
-    bool USE_EXP2_
+    bool USE_EXP2_,
+    bool STATE_V_FIRST_
 >
 class GDNFwdHKernelPreload {
 public:
@@ -893,12 +1556,21 @@ public:
     using FinalStateType = Gemm::GemmType<STATE_TYPE, layout::RowMajor>;
 
     // cube 1
-    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
+    // vfirst 时 state 物理 [V,K]：C1 的 H 以 [K,V] ColumnMajor 视角消费（零搬运）；
+    // LayoutH 仅作用于 C1 输入视图，C2 输出恒 RowMajor（vfirst 时形状翻转）。
+    using LayoutH = std::conditional_t<STATE_V_FIRST_, Catlass::layout::ColumnMajor,
+                                       Catlass::layout::RowMajor>;
+    using TileCopyWH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, LayoutH, WORKSPACE_TYPE, layout::RowMajor>;
     using BlockMmadWH = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyWH>;
 
     // cube 2
     using TileCopyKV = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::ColumnMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
     using BlockMmadKV = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
+
+    // 等待前置策略实例（WAIT_A_BEFORE_LOAD=true）：见本地 MmadPingpongTlaPreload 注释
+    using DispatchPolicyKVVFirst = Gemm::MmadPingpongTlaPreload<ArchTag, true, false, 1, false, 2, 2, 2, 2, true>;
+    using BlockMmadKVVFirst = Gemm::Block::BlockMmadTla<DispatchPolicyKVVFirst, L1TileShapeTla, L0TileShapeTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyKV>;
+
 
     // vec 1
     using DispatchPolicyGDNFwdHVnew = Epilogue::EpilogueAtlasGDNFwdHVnewPreload<USE_EXP2_>;
@@ -922,7 +1594,6 @@ public:
     using ElementFinalState = STATE_TYPE;
     
     using LayoutW = Catlass::layout::RowMajor;
-    using LayoutH = Catlass::layout::RowMajor;
     using LayoutV = Catlass::layout::RowMajor;
     using LayoutK = Catlass::layout::ColumnMajor;
 
@@ -1013,14 +1684,19 @@ public:
 
             BlockMmadWH blockMmadWH(resource);
             BlockMmadKV blockMmadKV(resource);
+            BlockMmadKVVFirst blockMmadKVVFirst(resource);
 
             auto wLayout = tla::MakeLayout<ElementW, LayoutW>(shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kHeadDim);
-            auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
+            // C1 的 H per-tile 视角：vfirst 时以 [K,V] 视角索引 [V,K] 物理 state（零搬运）
+            auto hLayout = tla::MakeLayout<ElementH, LayoutH>(kHeadDim, vHeadDim);
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
-            
+
             auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
-            auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
+            // C2 的 hWorkspace 输出恒 RowMajor；vfirst 时形状翻转 [V,K]（等价转置式产出）
+            auto hworkLayout = STATE_V_FIRST_
+                ? tla::MakeLayout<ElementHWork, Catlass::layout::RowMajor>(vHeadDim, kHeadDim)
+                : tla::MakeLayout<ElementHWork, Catlass::layout::RowMajor>(kHeadDim, vHeadDim);
             AscendC::SyncAll<false>();    
             uint32_t currStage = 0; // 0: C1, 1: C2
             blockMmadWH.preSetFlags();
@@ -1045,7 +1721,9 @@ public:
                         auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
                         auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
                         auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
-                        blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape, cubeBlockScheduler.vec2Done[i]);
+                        // vec2Done 保证同流上一迭代 V2 的 h 写/读完成，按槽位（流）
+                        // 配对而非按 i：流迁移换 i 后按 i 等待会漏等，读写 h 竞态。
+                        blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape, cubeBlockScheduler.vec2Done[cubeBlockScheduler.GetStreamSlot(i)]);
                         Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done);
                     }
                 } else {
@@ -1062,14 +1740,29 @@ public:
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
-                            auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
-                            auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
                             auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
-                            GemmCoord cube2Shape{kHeadDim, vHeadDim, cube2Offsets.blockTokens};
-                            auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
-                            auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
-                            auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
-                            blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape, cubeBlockScheduler.vec1Done);
+                            if constexpr (STATE_V_FIRST_) {
+                                // 等价转置式：(k^T@v)^T = v^T@k，A/B 换视角后 L0C 直接
+                                // 产出物理 [V,K] 零转置开销。A=Vwork 依赖 V1 输出，
+                                // 用等待前置变体 BlockMmadKVVFirst 保证 A 读序。
+                                auto vworkALayout = tla::MakeLayout<ElementV, Catlass::layout::ColumnMajor>(vHeadDim, chunkSize);
+                                auto tensorVworkA = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkALayout, Catlass::Arch::PositionGM{});
+                                auto kRowLayout = tla::MakeLayout<ElementK, Catlass::layout::RowMajor>(chunkSize, kHeadDim);
+                                auto tensorKRow = tla::MakeTensor(gmK[cube2OffsetK], kRowLayout, Catlass::Arch::PositionGM{});
+                                GemmCoord cube2ShapeV{vHeadDim, kHeadDim, cube2Offsets.blockTokens};
+                                auto tensorBlockA = GetTile(tensorVworkA, tla::MakeCoord(0, 0), tla::MakeShape(cube2ShapeV.m(), cube2ShapeV.k()));
+                                auto tensorBlockB = GetTile(tensorKRow, tla::MakeCoord(0, 0), tla::MakeShape(cube2ShapeV.k(), cube2ShapeV.n()));
+                                auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2ShapeV.m(), cube2ShapeV.n()));
+                                blockMmadKVVFirst(tensorBlockA, tensorBlockB, tensorBlockHwork, cube2ShapeV, cubeBlockScheduler.vec1Done);
+                            } else {
+                                auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
+                                auto tensorVwork = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkLayout, Catlass::Arch::PositionGM{});
+                                GemmCoord cube2Shape{kHeadDim, vHeadDim, cube2Offsets.blockTokens};
+                                auto tensorBlockK = GetTile(tensorK, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.k()));
+                                auto tensorBlockVwork = GetTile(tensorVwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.k(), cube2Shape.n()));
+                                auto tensorBlockHwork = GetTile(tensorHwork, tla::MakeCoord(0, 0), tla::MakeShape(cube2Shape.m(), cube2Shape.n()));
+                                blockMmadKV(tensorBlockK, tensorBlockVwork, tensorBlockHwork, cube2Shape, cubeBlockScheduler.vec1Done);
+                            }
                         } else {
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec1Done);
                         }
@@ -1078,7 +1771,11 @@ public:
                 }
                 currStage ^= 0x01;
             }
-            blockMmadKV.finalWaitFlags();
+            if constexpr (STATE_V_FIRST_) {
+                blockMmadKVVFirst.finalWaitFlags();
+            } else {
+                blockMmadKV.finalWaitFlags();
+            }
             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[0]);
             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[1]);
 
@@ -1200,7 +1897,10 @@ public:
                             gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset],
                             vec1Offsets.blockTokens, vHeadDim,
                             vecBlockScheduler.cube1Done, vecBlockScheduler.vec1Done,
-                            vec1Offsets.isInitialState, storeFinalState, (i == 0)
+                            // isPing 按槽位取（事件组/UB 组与 vWork 槽同键，
+                            // 防流迁移换组断链，见 GetStreamSlot 注释）
+                            vec1Offsets.isInitialState, storeFinalState,
+                            (vecBlockScheduler.GetStreamSlot(i) == 0)
                         );
                     }
                 } else {
@@ -1220,12 +1920,15 @@ public:
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (i == 0)
+                                // isPing 按槽位取（同 V1，防流迁移换组断链）
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
+                                (vecBlockScheduler.GetStreamSlot(i) == 0)
                             );
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done);
                         }
-                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[i]);
+                        // 置位侧同 C1 等待侧按槽位配对（见 C1 处注释）
+                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[vecBlockScheduler.GetStreamSlot(i)]);
                     }
                 }
                 currStage ^= 0x01;
@@ -1256,27 +1959,24 @@ public:
 
 // ---- 自原 chunk_fwd_h.cpp 移入：gated 复用谓词与入口（RunFwdHTyped 分流调用）
 namespace GDN {
-// gated 复用谓词：g 模式 + vfirst=0（gated 恒按 [K,V] 产出 state，
-// vfirst=1 须经 aclnn 层转置翻译）；storeFinal 与 gate/state 的 fp32/bf16 均支持。
+// gated 复用谓词：g 模式即复用（vfirst 经 STATE_V_FIRST 模板维支持；storeFinal
+// 与 fp32/bf16 gate/state 均可）；g dtype 由 host 入口唯一校验。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
     // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
     // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
     // 与 host 侧 gatedEligible 两处同条件。
-    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
-           !STATE_V_FIRST &&
-           (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
+    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G;
 }
 
-// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
-// 各 AIC 幂等同值写）后调用 gated preload kernel；USE_EXP2 携带 g 输入域
-// （true=log2，false=ln），gated epilogue 的 LN2 换算按此模板维取舍。
-template <typename GateT, typename StateT, bool USE_EXP2>
+// gated 复用分支：构造 gated tiling 镜像（workspace gatedTilingOffset 段，各 AIC
+// 写入同值）后调 preload kernel；USE_EXP2 携带 g 域，STATE_V_FIRST 携带布局。
+template <typename GateT, typename StateT, bool USE_EXP2, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float, USE_EXP2>;
+    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float, USE_EXP2, STATE_V_FIRST>;
     __gm__ uint8_t *user = args.workspace;
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
@@ -1319,16 +2019,8 @@ __aicore__ inline bool RunFwdHGatedDispatch(const FwdHKernelArgs &args)
 {
     if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
         using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
-        // varlen 且 head 组数为奇（kNumHead>1）时 gated kernel 会死锁，回落老路径。
-        const int64_t group = args.tiling.kNumHead > 0
-            ? static_cast<int64_t>(args.tiling.vNumHead) / static_cast<int64_t>(args.tiling.kNumHead)
-            : 0;
-        const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
-            (group % 2) != 0 && args.tiling.kNumHead > 1;
-        if (!gatedDeadlockShape) {
-            RunFwdHGatedReuse<GateT, GatedStateT, CompilePolicy::USE_EXP2>(args);
-            return true;
-        }
+        RunFwdHGatedReuse<GateT, GatedStateT, CompilePolicy::USE_EXP2, STATE_V_FIRST>(args);
+        return true;
     }
     return false;
 }
