@@ -53,6 +53,9 @@ python3() {
     if [[ "$entrypoint" == "scripts/build_wheel.py" && -n "${CI_TEST_BUILD_ENV_LOG:-}" ]]; then
         "$CI_TEST_REAL_PYTHON3" -c 'import json, os, sys; print(json.dumps({"args": sys.argv[1:], "env": {key: os.environ.get(key) for key in ("MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL", "MAKEFLAGS", "FLA_NPU_BUILD_ARGS")}}))' "$@" >>"$CI_TEST_BUILD_ENV_LOG"
     fi
+    if [[ "$entrypoint" == "scripts/build_wheel.py" && -n "${CI_TEST_PARTIAL_BUILD_ENV_LOG:-}" ]]; then
+        "$CI_TEST_REAL_PYTHON3" -c 'import json, os; print(json.dumps({"FLA_NPU_OPS": os.environ.get("FLA_NPU_OPS")}))' >>"$CI_TEST_PARTIAL_BUILD_ENV_LOG"
+    fi
     if [[ "${CI_TEST_FAIL_STAGE_ONE:-false}" == "true" && \
           "$entrypoint" == "tests/test_wheel_environment.py" ]]; then
         echo "injected environment contract failure" >&2
@@ -64,13 +67,16 @@ python3() {
         return 26
     fi
     if [[ "$entrypoint" == "scripts/build_wheel.py" ]]; then
-        if [[ "${CI_TEST_FAIL_STAGE:-}" == "opp-package" ]]; then
+        if [[ "${CI_TEST_FAIL_STAGE:-}" == "opp-package" || "${CI_TEST_FAIL_FULL_BUILD:-false}" == "true" ]]; then
             echo "injected OPP package failure" >&2
             return 24
         fi
         mkdir -p build_out
         printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
         chmod +x build_out/fla_npu_linux-stage-test.run
+    fi
+    if [[ "$entrypoint" == "ci/check_partial_opp_abi.py" ]]; then
+        return "${CI_TEST_ABI_STATUS:-0}"
     fi
     if [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
@@ -166,6 +172,7 @@ run_case() {
         CI_TEST_FAIL_STAGE="$fail_stage" \
         CI_TEST_FAIL_MANAGER_INIT="$fail_manager_init" \
         CI_TEST_FAIL_STABLE_COVERAGE="$fail_stable_coverage" \
+        CI_TEST_PARTIAL_BUILD_ENV_LOG="$case_dir/build-env.jsonl" \
         CI_TEST_FAKE_PACKAGE_DIR="$fake_package_dir" \
         CI_MODE=quick \
         CI_SOC=ascend910b \
@@ -204,7 +211,39 @@ run_case() {
             "$command_log"
     fi
 
-    if [[ "$name" == "scoped" ]]; then
+    if [[ "$name" == partial-* ]]; then
+        grep -Fq 'bash build.sh --pkg' "$command_log"
+        grep -Fq 'python3 ci/check_partial_opp_abi.py' "$command_log"
+        if [[ "$name" == "partial-compatible" ]]; then
+            grep -Fq 'python3 -m fla_npu_opp_manage --overlay' "$command_log"
+            if grep -Fq 'python3 scripts/build_wheel.py' "$command_log"; then
+                echo "Compatible partial OPP unexpectedly triggered a full build." >&2
+                return 1
+            fi
+        elif [[ "$name" == "partial-invalid" ]]; then
+            if grep -Eq 'scripts/build_wheel.py|fla_npu_opp_manage --overlay' "$command_log"; then
+                echo "Invalid partial OPP must fail without rebuilding or installing." >&2
+                return 1
+            fi
+        else
+            grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
+            if grep -Fq 'fla_npu_opp_manage --overlay' "$command_log"; then
+                echo "Incompatible partial OPP must never be overlaid on the daily wheel." >&2
+                return 1
+            fi
+            if [[ "$name" == "partial-fallback" ]]; then
+                grep -Fxq 'bash build.sh' "$command_log"
+                grep -Fq 'python3 ci/run_example_st_cases.py' "$command_log"
+                command "$CI_TEST_REAL_PYTHON3" - "$case_dir/build-env.jsonl" <<'PY'
+import json
+import sys
+from pathlib import Path
+record, = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+assert record["FLA_NPU_OPS"] == "", record
+PY
+            fi
+        fi
+    elif [[ "$name" == "scoped" ]]; then
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
         grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
     elif [[ "$name" == "prerequisite-failure" ]]; then
@@ -303,5 +342,28 @@ run_case \
     false \
     '' \
     true
+
+for abi_case in compatible fallback invalid fallback-failure; do
+    abi_status=0
+    fail_full_build=false
+    expected_exit=0
+    expected_status=success
+    expected_stages=success,success,success,success,success
+    case "$abi_case" in
+        fallback) abi_status=10 ;;
+        invalid) abi_status=2 ;;
+        fallback-failure) abi_status=10; fail_full_build=true ;;
+    esac
+    if [[ "$abi_case" == invalid || "$abi_case" == fallback-failure ]]; then
+        expected_exit=1
+        expected_status=failure
+        expected_stages=success,failure,skipped,skipped,skipped
+    fi
+    # Use an explicit operator filter so the fixture does not need a source tree.
+    CI_TEST_ABI_STATUS="$abi_status" CI_TEST_FAIL_FULL_BUILD="$fail_full_build" \
+    CI_OPS=recurrent_gated_delta_rule FLA_NPU_OPS=must-not-limit-full-build \
+        run_case "partial-$abi_case" all false "$expected_exit" "$expected_status" \
+            "$expected_stages" true
+done
 
 echo "run_checks stage pipeline integration tests passed"
