@@ -91,6 +91,8 @@ outputs = chunk_kda_fwd(
   `return_intermediate_states` 必须为 `false`，`Aqk`/`Akk` 槽位返回 `None`，
   `gk/w/u/qg/kg/v_new/h` 也为 `None`。
 - `chunk_indices` 仅接受与 `cu_seqlens` 对应的 canonical sequence-major 顺序。
+- chunk64 变长调用只传 `cu_seqlens` 时，aclnn host 会自动生成缺省表并由 executor 持有；
+  C/C++ 调用者同样无需自行补表。显式提供的表仍按上述规则校验。
 - Python 的 `dt_bias=None` 会补成 FP32 零张量；aclnn chunk32 路径本身要求
   `aLogOptional/dtBiasOptional` 非空。Python 的 `state_v_first=true` 在调用前后转置，
   传到 fused L2 的 state 固定为 K-first。

@@ -7,6 +7,7 @@
 #include "aclnn_chunk_kda_fwd_prepare.h"
 #include "chunk_kda_fwd_prepare.h"
 #include "../chunk_kda_fwd_prepare_output_mask.h"
+#include "../../../common/kda_chunk_indices.h"
 
 #include <cstddef>
 #include <cmath>
@@ -775,6 +776,11 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     aclOpExecutor *executorPtr = uniqueExecutor.get();
 
     aclnnStatus status = CheckParams(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = Kda::EnsureChunkIndices(params.cuSeqlensOptional, params.chunkSize,
+                                    params.chunkIndicesOptional, executorPtr);
     if (status != ACLNN_SUCCESS) {
         return status;
     }

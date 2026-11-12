@@ -23,6 +23,11 @@ Shape 符号沿用 [KDA 模型符号表](../../README.md#核心符号)，公开�
 
 ## 2. 数学语义
 
+变长元数据先在 aclnn host 层校验，缺省的 `chunk_indices` 通过
+`Kda::EnsureChunkIndices` 生成 canonical 表并由 executor 持有；显式表保持原有校验。
+独立 Prepare 和 V2 组合的 Prepare 均走 kernel 已有查表分支。
+表的生成、复用和生命周期见 [Fwd 的变长元数据设计](../../chunk_kda_fwd/docs/design.md#chunk64-变长元数据)。
+
 对长度 `M<=64`、K/V 维为 128 的每个 chunk，先生成：
 
 ```text

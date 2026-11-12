@@ -1,5 +1,6 @@
 #include "aclnn_chunk_kda_fwd_finalize.h"
 #include "chunk_kda_fwd_finalize.h"
+#include "../../../common/kda_chunk_indices.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -303,6 +304,11 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
                           chunkIndicesOptional, outputLayout, stateVFirst,
                           attnOut};
     aclnnStatus status = CheckParams(params);
+    if (status != ACLNN_SUCCESS) {
+        return status;
+    }
+    status = Kda::EnsureChunkIndices(params.cuSeqlens, FINALIZE_CHUNK_ROWS,
+                                    params.chunkIndices, uniqueExecutor.get());
     if (status != ACLNN_SUCCESS) {
         return status;
     }
