@@ -314,8 +314,11 @@ static aclnnStatus CheckA2PrepareMetadata(const ChunkGatedDeltaRuleFwdPreparePar
         }
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
         const uint64_t count = length / params.chunkSize + (length % params.chunkSize != 0);
-        CHECK_COND(chunks <= static_cast<uint64_t>(INT64_MAX) - count, ACLNN_ERR_PARAM_INVALID,
-                   "A2 chunk count overflows.");
+        if (!(chunks <= static_cast<uint64_t>(INT64_MAX) - count)) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(
+            OP_NAME, "chunk_indices", std::to_string(chunks), "<= INT64_MAX - " + std::to_string(count));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
         chunks += count;
     }
     if (!(indices.Size() % 2 == 0 && indices.Size() / 2 == chunks)) {

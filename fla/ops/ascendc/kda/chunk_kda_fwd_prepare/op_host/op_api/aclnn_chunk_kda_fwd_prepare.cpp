@@ -337,9 +337,12 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         if (output == nullptr) {
             continue;
         }
-        CHECK_COND(output->GetDataType() == DataType::DT_BF16,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16。");
+        if (!(output->GetDataType() == DataType::DT_BF16)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
+            "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     const aclTensor *fp32Outputs[] = {
         params.gkOut, params.qRstdOut, params.kRstdOut, params.betaEffOut};
@@ -347,9 +350,12 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         if (output == nullptr) {
             continue;
         }
-        CHECK_COND(output->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID,
-                   "gk/qRstd/kRstd/betaEff 输出必须为 FP32。");
+        if (!(output->GetDataType() == DataType::DT_FLOAT)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
+            "gk/qRstd/kRstd/betaEff 输出必须为 FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     return ACLNN_SUCCESS;
 }
@@ -427,13 +433,14 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 2);
         info.valueHeadNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(
-            HasShape(params.v, {info.seqLen, info.valueHeadNum, info.vDim}) &&
-                HasShape(params.g,
-                         {info.seqLen, info.valueHeadNum, info.kDim}) &&
-                HasShape(params.beta, {info.seqLen, info.valueHeadNum}),
-            ACLNN_ERR_PARAM_INVALID,
-            "TND 要求 v/g/beta 分别为 [T,HV,V]、[T,HV,K]、[T,HV]。");
+        if (!(HasShape(params.v, {info.seqLen, info.valueHeadNum, info.vDim}) &&
+          HasShape(params.g, {info.seqLen, info.valueHeadNum, info.kDim}) &&
+          HasShape(params.beta, {info.seqLen, info.valueHeadNum}))) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "v,g,beta", "shape mismatch",
+            "TND 要求 v/g/beta 分别为 [T,HV,V]、[T,HV,K]、[T,HV]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     } else if (layout == PrepareLayout::NTD) {
         info.batch = 1;
         info.qkHeadNum = Dim(params.q, 0);
@@ -441,13 +448,14 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 2);
         info.valueHeadNum = Dim(params.v, 0);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(
-            HasShape(params.v, {info.valueHeadNum, info.seqLen, info.vDim}) &&
-                HasShape(params.g,
-                         {info.valueHeadNum, info.seqLen, info.kDim}) &&
-                HasShape(params.beta, {info.valueHeadNum, info.seqLen}),
-            ACLNN_ERR_PARAM_INVALID,
-            "NTD 要求 v/g/beta 分别为 [HV,T,V]、[HV,T,K]、[HV,T]。");
+        if (!(HasShape(params.v, {info.valueHeadNum, info.seqLen, info.vDim}) &&
+          HasShape(params.g, {info.valueHeadNum, info.seqLen, info.kDim}) &&
+          HasShape(params.beta, {info.valueHeadNum, info.seqLen}))) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "v,g,beta", "shape mismatch",
+            "NTD 要求 v/g/beta 分别为 [HV,T,V]、[HV,T,K]、[HV,T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     } else if (layout == PrepareLayout::BSND) {
         info.batch = Dim(params.q, 0);
         info.seqLen = Dim(params.q, 1);
@@ -455,16 +463,14 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 3);
         info.valueHeadNum = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(
-            HasShape(params.v,
-                     {info.batch, info.seqLen, info.valueHeadNum, info.vDim}) &&
-                HasShape(params.g,
-                         {info.batch, info.seqLen, info.valueHeadNum,
-                          info.kDim}) &&
-                HasShape(params.beta,
-                         {info.batch, info.seqLen, info.valueHeadNum}),
-            ACLNN_ERR_PARAM_INVALID,
-            "BSND 要求 v/g/beta 分别为 [B,T,HV,V]、[B,T,HV,K]、[B,T,HV]。");
+        if (!(HasShape(params.v, {info.batch, info.seqLen, info.valueHeadNum, info.vDim}) &&
+          HasShape(params.g, {info.batch, info.seqLen, info.valueHeadNum, info.kDim}) &&
+          HasShape(params.beta, {info.batch, info.seqLen, info.valueHeadNum}))) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "v,g,beta", "shape mismatch",
+            "BSND 要求 v/g/beta 分别为 [B,T,HV,V]、[B,T,HV,K]、[B,T,HV]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     } else {
         info.batch = Dim(params.q, 0);
         info.qkHeadNum = Dim(params.q, 1);
@@ -472,16 +478,14 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
         info.kDim = Dim(params.q, 3);
         info.valueHeadNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(
-            HasShape(params.v,
-                     {info.batch, info.valueHeadNum, info.seqLen, info.vDim}) &&
-                HasShape(params.g,
-                         {info.batch, info.valueHeadNum, info.seqLen,
-                          info.kDim}) &&
-                HasShape(params.beta,
-                         {info.batch, info.valueHeadNum, info.seqLen}),
-            ACLNN_ERR_PARAM_INVALID,
-            "BNSD 要求 v/g/beta 分别为 [B,HV,T,V]、[B,HV,T,K]、[B,HV,T]。");
+        if (!(HasShape(params.v, {info.batch, info.valueHeadNum, info.seqLen, info.vDim}) &&
+          HasShape(params.g, {info.batch, info.valueHeadNum, info.seqLen, info.kDim}) &&
+          HasShape(params.beta, {info.batch, info.valueHeadNum, info.seqLen}))) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            OP_NAME, "v,g,beta", "shape mismatch",
+            "BNSD 要求 v/g/beta 分别为 [B,HV,T,V]、[B,HV,T,K]、[B,HV,T]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
 
     if (!(FitsUint32(info.batch) && FitsUint32(info.seqLen) &&
@@ -899,10 +903,14 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize 不能为 nullptr。");
-    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "executor 不能为 nullptr。");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "workspaceSize", "workspaceSize 不能为 nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "executor", "executor 不能为 nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     ChunkKdaFwdPrepareParams params{
         q,          k,         v,          g,          beta,

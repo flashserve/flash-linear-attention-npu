@@ -363,9 +363,11 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize 与 executor 不能为空。");
+    if (workspaceSize == nullptr || executor == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "workspaceSize,executor", "workspaceSize 与 executor 不能为空");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     L2_DFX_PHASE_1(
         aclnnChunkKdaFwdFinalize,
         DFX_IN(qgScaled, aqk, vNew, h, cuSeqlensOptional,
