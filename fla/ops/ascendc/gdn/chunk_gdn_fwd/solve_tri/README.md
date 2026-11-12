@@ -77,6 +77,8 @@ torch.ops.npu.npu_solve_tri(
 
 完整接口约束参见 [docs/api.md](docs/api.md)，实现概述参见 [docs/design.md](docs/design.md)。
 
+本次新增的 shape、dtype、layout、输出及变长元数据校验和结构化错误仅用于 A2/A3。A5 保留 `546859c7` 的原有检查行为，调用方仍须满足其原有输入约束；不能将 A2/A3 的非法输入拦截结果视作 A5 的保证。
+
 ---
 
 ## 5. 输出参数
@@ -92,6 +94,8 @@ torch.ops.npu.npu_solve_tri(
 ### 6.1 算法原理
 
 A2/A3 的 chunk 64 路径使用 AIC/AIV 协同求解，chunk 16/32/128 使用 FP32 Vector 前向替代。A5 按 chunk size 分发到对应实现。FP32 是内部计算或中间存储精度，不表示公开接口接受 FP32 输入。
+
+新增 workspace 计算和 kernel 优化仅用于 A2/A3。A5 的 workspace 计算、kernel 入口及 `arch35` 实现保持上述基线行为；本次不对其原有 workspace 容量作新的验证结论。注册配置按平台分开，A2/A3 使用 `PrecisionReduceFlag(false)`，A5 保留基线的 `true`；该字段控制混合精度类型选择，不改变 kernel 内部的 FP32 运算。
 
 ## 7. 目录结构
 

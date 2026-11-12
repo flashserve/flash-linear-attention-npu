@@ -3,7 +3,6 @@
  * BSD 3-Clause License.
  */
 #include "kernel_operator.h"
-#include <type_traits>
 
 #ifndef CATLASS_ARCH
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -29,46 +28,36 @@
 using namespace AscendC;
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-template <typename T>
-__aicore__ inline void RunSolveTriArch35(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
+__global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
                                      GM_ADDR workspace, GM_ADDR tiling)
 {
     // tilingKey = chunkSize ∈ {16,32,64,128}
     // TILING_KEY_IS / KERNEL_TASK_TYPE 必须使用整型字面量，不能传 constexpr 变量
-    if constexpr (std::is_same_v<T, float>) {
-        return; // Host rejects FP32 on arch35.
-    } else {
     if (TILING_KEY_IS(64)) {
         KERNEL_TASK_TYPE(64, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri64<T, T> op;
+        SolveTri64<DTYPE_X, DTYPE_X> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(128)) {
         KERNEL_TASK_TYPE(128, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri128<T, T> op;
+        SolveTri128<DTYPE_X, DTYPE_X> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(16)) {
         KERNEL_TASK_TYPE(16, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri16<T, T> op;
+        SolveTri16<DTYPE_X, DTYPE_X> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     } else if (TILING_KEY_IS(32)) {
         KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
         GET_TILING_DATA(tilingData, tiling);
-        SolveTri32<T, T> op;
+        SolveTri32<DTYPE_X, DTYPE_X> op;
         op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
         op.Process();
     }
-    }
-}
-__global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
-                                     GM_ADDR workspace, GM_ADDR tiling)
-{
-    RunSolveTriArch35<DTYPE_X>(x, cu_seqlens, chunk_indices, x_out, workspace, tiling);
 }
 #else
 extern "C" __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,

@@ -20,6 +20,7 @@
  #include "opdev/op_log.h"
  #include "opdev/op_dfx.h"
  #include "opdev/make_op_executor.h"
+ #include "opdev/platform.h"
  #include "opdev/tensor_view_utils.h"
  
  using namespace op;
@@ -118,6 +119,17 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
  
  static aclnnStatus CheckNotNull(SolveTriParams params)
  {
+     CHECK_COND(params.x != nullptr, ACLNN_ERR_PARAM_NULLPTR, "x must not be nullptr.");
+     CHECK_COND(params.xOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "xOut must not be nullptr.");
+     return ACLNN_SUCCESS;
+ }
+
+ static aclnnStatus CheckParams(SolveTriParams params, bool isA2A3)
+ {
+     if (!isA2A3) {
+         CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+         return ACLNN_SUCCESS;
+     }
      if (params.x == nullptr) {
          InvalidArgument("x", "actual=nullptr; expected a non-null tensor");
          return ACLNN_ERR_PARAM_NULLPTR;
@@ -126,13 +138,6 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
          InvalidArgument("xOut", "actual=nullptr; expected a non-null tensor");
          return ACLNN_ERR_PARAM_NULLPTR;
      }
-     return ACLNN_SUCCESS;
- }
- 
- static aclnnStatus CheckParams(SolveTriParams params)
- {
-    const auto nullStatus = CheckNotNull(params);
-    if (nullStatus != ACLNN_SUCCESS) return nullStatus;
     const auto dtype = params.x->GetDataType();
     if (dtype != DataType::DT_FLOAT16 && dtype != DataType::DT_BF16) {
         return InvalidDtype("x.dtype", op::ToString(dtype).GetString(), "FLOAT16 or BF16");
@@ -286,14 +291,17 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
      aclOpExecutor **executor)
  {
      SolveTriParams params{x, cuSeqlens, chunkIndices, layout, xOut};
+     const bool isA2A3 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
 
-     if (workspaceSize == nullptr) {
-         InvalidArgument("workspaceSize", "actual=nullptr; expected a non-null pointer");
-         return ACLNN_ERR_PARAM_NULLPTR;
-     }
-     if (executor == nullptr) {
-         InvalidArgument("executor", "actual=nullptr; expected a non-null pointer");
-         return ACLNN_ERR_PARAM_NULLPTR;
+     if (isA2A3) {
+         if (workspaceSize == nullptr) {
+             InvalidArgument("workspaceSize", "actual=nullptr; expected a non-null pointer");
+             return ACLNN_ERR_PARAM_NULLPTR;
+         }
+         if (executor == nullptr) {
+             InvalidArgument("executor", "actual=nullptr; expected a non-null pointer");
+             return ACLNN_ERR_PARAM_NULLPTR;
+         }
      }
  
      L2_DFX_PHASE_1(aclnnSolveTri, DFX_IN(x, cuSeqlens, chunkIndices, layout), DFX_OUT(xOut));
@@ -302,8 +310,8 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
      CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
      auto executorPtr = uniqueExecutor.get();
  
-     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+     auto ret = CheckParams(params, isA2A3);
+     CHECK_RET(ret == ACLNN_SUCCESS, isA2A3 ? ret : ACLNN_ERR_PARAM_INVALID);
  
      CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
                 "ParamsDataContiguous failed.");

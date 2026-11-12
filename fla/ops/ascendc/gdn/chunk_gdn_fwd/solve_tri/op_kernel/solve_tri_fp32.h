@@ -649,7 +649,7 @@ public:
             WaitAic();
             for (int64_t i = 0; i < count; ++i) {
                 SelectTileSlot(aicIdx_, slotBase + i);
-                MergeResultToX(16);
+                Merge16ResultToX();
             }
             SignalFolded16();
 
@@ -664,11 +664,10 @@ public:
                 SignalAic();
             }
 
-            // Publish the separate 32->64 product into X before casting/storing.
+            // Consume the separate 32->64 product directly in the output buffer.
             WaitAic();
             for (int64_t i = 0; i < count; ++i) {
                 SelectTileSlot(aicIdx_, slotBase + i);
-                MergeResultToX(32);
                 CastAndStore(GetTileGMOffset(begin + i), GetTileValidSize(begin + i));
             }
         }
@@ -750,36 +749,53 @@ private:
         WaitFlag<HardEvent::MTE2_V>(0);
     }
 
-    __aicore__ inline void MergeResultToX(int32_t blockSize)
+    __aicore__ inline void Merge16ResultToX()
     {
-        if (blockSize == 16) {
-            int32_t packedBlock = static_cast<int32_t>(subBlockIdx_);
-            // The product fully replaces this 16x16 block, so only the merge
-            // result has to reach X; the old block is never read back.
-            LoadMergeResult(
-                fp32LocalA_,
-                packedBlock * 16,
-                packedBlock * 16,
-                16,
-                packedBlock * 32,
-                16,
-                16);
-            StoreMergeBlock(16, packedBlock * 32, rowBegin_ + 16, packedBlock * 32, 16, 16);
+        int32_t packedBlock = static_cast<int32_t>(subBlockIdx_);
+        // The product fully replaces this 16x16 block, so only the merge
+        // result has to reach X; the old block is never read back.
+        LoadMergeResult(
+            fp32LocalA_,
+            packedBlock * 16,
+            packedBlock * 16,
+            16,
+            packedBlock * 32,
+            16,
+            16);
+        StoreMergeBlock(16, packedBlock * 32, rowBegin_ + 16, packedBlock * 32, 16, 16);
+    }
+
+    __aicore__ inline void LoadFinalResult()
+    {
+        if (subBlockIdx_ == 0) {
+            LoadSlot(FP32_SLOT_X, fp32LocalA_);
             return;
         }
 
-        if (subBlockIdx_ == 1) {
-            // Merging the lower-right 32x32 only touches subcore 1's strip.
-            LoadMergeResult(
-                fp32LocalA_,
-                0,
-                0,
-                0,
-                0,
-                32,
-                32);
-            StoreMergeBlock(0, 0, rowBegin_, 0, 32, 32);
-        }
+        // Assemble the lower strip in UB; the final X has no further GM readers.
+        constexpr int32_t BLOCK_SIZE = FP32_MATRIX_SIZE / 2;
+        DataCopyExtParams copyParams{
+            static_cast<uint16_t>(STRIP_ROWS),
+            static_cast<uint32_t>(BLOCK_SIZE * sizeof(float)),
+            static_cast<uint32_t>((FP32_MATRIX_STRIDE - BLOCK_SIZE) * sizeof(float)),
+            static_cast<uint32_t>((FP32_MATRIX_SIZE - BLOCK_SIZE) * sizeof(float) / 32),
+            0};
+        DataCopyPadExtParams<float> padParams{false, 0, 0, 0};
+        SetFlag<HardEvent::V_MTE2>(0);
+        WaitFlag<HardEvent::V_MTE2>(0);
+        DataCopyPad(
+            fp32LocalA_,
+            coreWorkspaceGM_[FP32_SLOT_Y * FP32_SLOT_ELEMS],
+            copyParams,
+            padParams);
+        DataCopyPad(
+            fp32LocalA_[BLOCK_SIZE],
+            coreWorkspaceGM_[
+                FP32_SLOT_X * FP32_SLOT_ELEMS + rowBegin_ * FP32_MATRIX_STRIDE + BLOCK_SIZE],
+            copyParams,
+            padParams);
+        SetFlag<HardEvent::MTE2_V>(0);
+        WaitFlag<HardEvent::MTE2_V>(0);
     }
 
     __aicore__ inline void StoreMergeBlock(
@@ -978,7 +994,7 @@ private:
 
     __aicore__ inline void CastAndStore(int64_t gmOffset, int64_t validSize)
     {
-        LoadSlot(FP32_SLOT_X, fp32LocalA_);
+        LoadFinalResult();
         if constexpr (std::is_same_v<T, float>) {
             Adds(inputLocal_, fp32LocalA_, 0.0f, STRIP_ELEMS);
         } else {

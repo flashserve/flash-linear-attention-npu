@@ -5,6 +5,7 @@
  #include "opdev/op_log.h"
  #include "opdev/op_dfx.h"
  #include "opdev/make_op_executor.h"
+ #include "opdev/platform.h"
  #include "aclnn_solve_tri.h"
  #include <string>
  
@@ -26,7 +27,8 @@
      const aclTensor *actualCuSeqlens = nullptr;
      if (cuSeqlensOptional) {
          actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
-         if (actualCuSeqlens == nullptr) {
+         if (actualCuSeqlens == nullptr &&
+             GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
              OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens to tensor failed.");
              return nullptr;
          }
@@ -38,7 +40,8 @@
      const aclTensor *actualChunkIndices = nullptr;
      if (chunkIndicesOptional) {
          actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
-         if (actualChunkIndices == nullptr) {
+         if (actualChunkIndices == nullptr &&
+             GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
              OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices to tensor failed.");
              return nullptr;
          }
