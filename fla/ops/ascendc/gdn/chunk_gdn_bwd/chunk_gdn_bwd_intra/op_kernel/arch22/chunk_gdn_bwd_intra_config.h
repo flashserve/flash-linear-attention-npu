@@ -58,10 +58,8 @@ constexpr uint32_t UB_KV_RAW_END = UB_V_RAW_OFFSET + PART_KV_ELEMENTS * MAIN_BYT
 constexpr uint32_t UB_DELTA_OFFSET = UB_KV_RAW_END;
 constexpr uint32_t UB_SCORE_OUT_OFFSET = UB_DELTA_OFFSET + PART_SCORE_ELEMENTS * FLOAT_BYTES;
 constexpr uint32_t UB_ROW_GATE_OFFSET = UB_SCORE_OUT_OFFSET + PART_SCORE_ELEMENTS * MAIN_BYTES;
-// Brcb expands each row gate into one 32B block, consumed once per score row.
-constexpr uint32_t ROW_GATE_BYTES = VECTOR_PART_TOKENS * DMA_BLOCK_BYTES;
-constexpr uint32_t UB_BYTES = UB_ROW_GATE_OFFSET + ROW_GATE_BYTES;
-static_assert(RECORD_ELEMENTS == 24576 && UB_BYTES == 97 * 1024,
+constexpr uint32_t UB_BYTES = UB_ROW_GATE_OFFSET + AUX_VECTOR_BYTES;
+static_assert(RECORD_ELEMENTS == 24576 && UB_BYTES == 96 * 1024 + AUX_VECTOR_BYTES,
     "K/V-GateScore overlap layout compatibility");
 static_assert(UB_BETA_ROWS_OFFSET == 8192, "Phase-overlapped scratch compatibility");
 static_assert(K_OFFSET == 0 && V_OFFSET == 8192 && D_OFFSET == 16384 && S_OFFSET == 20480,
@@ -83,7 +81,7 @@ static_assert(UB_COEFF_OFFSET + AUX_VECTOR_BYTES <= UB_K_RAW_OFFSET, "Coefficien
 static_assert(UB_KV_RAW_END <= UB_DELTA_OFFSET &&
     UB_DELTA_OFFSET + PART_SCORE_ELEMENTS * FLOAT_BYTES <= UB_SCORE_OUT_OFFSET &&
     UB_SCORE_OUT_OFFSET + PART_SCORE_ELEMENTS * MAIN_BYTES <= UB_ROW_GATE_OFFSET &&
-    UB_ROW_GATE_OFFSET + ROW_GATE_BYTES == UB_BYTES, "GateScore scratch bounds");
+    UB_ROW_GATE_OFFSET + AUX_VECTOR_BYTES == UB_BYTES, "GateScore scratch bounds");
 static_assert(UB_K_RAW_OFFSET % DMA_BLOCK_BYTES == 0 && UB_V_RAW_OFFSET % DMA_BLOCK_BYTES == 0,
     "Raw staging alignment");
 }

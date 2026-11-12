@@ -33,21 +33,9 @@ dO、g、beta、betaRaw、dBeta/dG、rstd、state 和中间 workspace 各自沿�
 | arch22 Finalize | dq 子流程读取 q/k，WY 读取 k/v 并写最终 dv | 内部 dq/dk/dkWy/dw 保持 head-major |
 | arch22 A2FinalizeQkTail | 读取原 q/k，合并梯度及可选 L2Norm 后写最终 dq/dk | rstd 与内部梯度分别寻址 |
 
-DHU 对空序列不执行递推，有初态时直接将对应 dht 写到 dh0；无 dht 时沿用清零结果。
-两种状态布局均按相同物理布局搬运。arch22 复用原 q 输入、FP32 暂存和输出缓冲；
-arch35 通过输出 buffer 0 直接搬运同 dtype 的状态，不经过 FP32 转换。arch35 在搬入前
-等待该输出槽位的 MTE3→V 释放信用，再通过原 q 槽位的 V→MTE2、MTE2→V 事件及
-输出槽位的 V→MTE3 事件交接；搬出后归还 MTE3→V 信用，退出前恢复借用的 q 信用。
-不增加 workspace、EventID 或跨核同步。旧实现会将该区域留为零，此处按已有接口契约修正。
-
 A2/A3 与 A5 统一使用 Intra → FwdH → DHU → Finalize。Intra 原生处理 BF16/FP32 gate、
 useExp2 和空序列，不增加自然指数转换或重编号桥接。保留各平台原 GVA 归约顺序、BF16 阶段
 落盘、指数计算和状态编号，公开八个返回槽位不变。WU/DvLocal 独立算子的接口和实现沿用 main。
-
-arch22 FwdH 的 gated preload 内部使用压缩后的非空序列调度。初态和最终状态的
-序列轴仍保留空序列：发生压缩时，用非空序列起始 token 在原 cu_seqlens 中二分查找
-原序列编号；状态搬入和最终状态写回使用该编号，h 的 chunk 轴继续使用压缩编号。
-编号在 stream 初始化时保存，不在逐 chunk 更新中重复搜索，不增加 GM workspace 或同步。
 
 四个小算子的原 L0 接口末尾追加 `const char *layout = "BNSD"`，OpDef 追加同名
 默认 `BNSD` 的可选字符串属性。主算子显式传入自身 layout；省略参数的原调用继续
@@ -62,7 +50,9 @@ Q/K 写回使用 tiling data 中的运行时 layout 计算 GM offset 和行跨�
 
 ## 资源与同步
 
-arch22 Intra row-gate broadcast reserves one 32-byte block per AIV row: `32 * 32 = 1024` bytes. The final row-gate region therefore ends at 97 KiB, rather than reserving only the 256-byte source gate vector. The Brcb/Sub addresses, arithmetic and event protocol are unchanged.
+本 PR 仅承担布局转置消除。Intra 的既有 UB 预留、FwdH 的共享 tiling/前缀表、
+空序列状态与空子块搬运、GM 清零边界及 Finalize 模板键沿用基线，相关原有缺陷另行跟踪。
+因此先前包含这些修复的内存/空序列验证结论不能作为当前版本的通过依据。
 
 arch22 Intra 的每个 AIV 只持有 32 行 K/V 原始缓冲。连续和跨步搬运均将有效行数
 限制为 `max(0, min(validTokens - part*32, 32))`，无有效行时不发起 DMA，避免首个半片

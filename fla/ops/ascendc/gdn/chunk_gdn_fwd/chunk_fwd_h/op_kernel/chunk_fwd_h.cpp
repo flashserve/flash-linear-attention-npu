@@ -59,47 +59,47 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
            (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
 }
 
-// gated 复用分支：逐核构造本地 tiling 视图并调用 gated preload kernel；
-// g 须为 log2 域输入。
+// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
+// 各 AIC 幂等同值写）后调用 gated preload kernel；g 须为 log2 域输入。
 template <typename GateT, typename StateT>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<
-        DataT, GateT, StateT, float>;
+    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float>;
     __gm__ uint8_t *user = args.workspace;
-    // Each block already owns the host tiling values. Keep the private preload
-    // view local so initialization needs no shared GM mirror or publication barrier.
-    ChunkGatedDeltaRuleFwdHTilingData gatedTiling{};
-    gatedTiling.layout = args.tiling.layout;
-    gatedTiling.batch = args.tiling.batch;
-    gatedTiling.seqlen = args.tiling.seqlen;
-    gatedTiling.kNumHead = args.tiling.kNumHead;
-    gatedTiling.vNumHead = args.tiling.vNumHead;
-    gatedTiling.kHeadDim = args.tiling.kHeadDim;
-    gatedTiling.vHeadDim = args.tiling.vHeadDim;
-    gatedTiling.chunkSize = args.tiling.chunkSize;
-    gatedTiling.useInitialState = args.tiling.useInitialState;
-    gatedTiling.storeFinalState = args.tiling.storeFinalState;
-    gatedTiling.dataType = 1;
-    gatedTiling.gDataType = std::is_same_v<GateT, float> ? 2 : 1;
-    gatedTiling.stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
-    gatedTiling.isVariedLen = args.tiling.isVariedLen;
-    gatedTiling.shapeBatch = args.tiling.shapeBatch;
-    gatedTiling.tokenBatch = args.tiling.tokenBatch;
-    gatedTiling.useG = true;
-    gatedTiling.useGk = false;
-    gatedTiling.vWorkspaceOffset = args.tiling.vWorkspaceOffset;
-    gatedTiling.vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
-    gatedTiling.kDecayWorkspaceOffset = 0;
-    gatedTiling.hWorkspaceOffset = args.tiling.hWorkspaceOffset;
-    gatedTiling.numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
-    gatedTiling.numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
+    __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
+        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
+    {
+        gtiling->layout = args.tiling.layout;
+        gtiling->batch = args.tiling.batch;
+        gtiling->seqlen = args.tiling.seqlen;
+        gtiling->kNumHead = args.tiling.kNumHead;
+        gtiling->vNumHead = args.tiling.vNumHead;
+        gtiling->kHeadDim = args.tiling.kHeadDim;
+        gtiling->vHeadDim = args.tiling.vHeadDim;
+        gtiling->chunkSize = args.tiling.chunkSize;
+        gtiling->useInitialState = args.tiling.useInitialState;
+        gtiling->storeFinalState = args.tiling.storeFinalState;
+        gtiling->dataType = 1; // bf16 输入
+        gtiling->gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
+        gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
+        gtiling->isVariedLen = args.tiling.isVariedLen;
+        gtiling->shapeBatch = args.tiling.shapeBatch;
+        gtiling->tokenBatch = args.tiling.tokenBatch;
+        gtiling->useG = true;
+        gtiling->useGk = false;
+        gtiling->vWorkspaceOffset = args.tiling.vWorkspaceOffset;
+        gtiling->vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
+        gtiling->kDecayWorkspaceOffset = 0;
+        gtiling->hWorkspaceOffset = args.tiling.hWorkspaceOffset;
+        gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
+        gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
+    }
     GatedKernel gatedKernel;
     gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
                      args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
                      args.finalState,
-                     gatedTiling,
+                     reinterpret_cast<GM_ADDR>(gtiling),
                      user);
     gatedKernel.Process();
 }

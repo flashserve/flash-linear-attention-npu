@@ -16,54 +16,9 @@
 
 namespace GDN {
 
-namespace FinalizeArch22 {
-#ifndef TPL_BF16
-#define TPL_BF16 10
-#define TPL_FP32 30
-#endif
-#ifndef TORCH_MODE
-// Host and arch22 kernels share the complete template declaration.
-ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdFinalize,
-    ASCENDC_TPL_DTYPE_DECL(D_T_Q, TPL_BF16),
-    ASCENDC_TPL_DTYPE_DECL(D_T_G, TPL_BF16, TPL_FP32),
-    ASCENDC_TPL_BOOL_DECL(USE_QK_L2NORM, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(USE_BETA_SIGMOID, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(USE_EXP2, 0, 1),
-    ASCENDC_TPL_BOOL_DECL(ENABLE_MHA_OWNER, 0, 1),
-);
-
-#define GDN_A2_TPL_SEL_ONE(Q, G, NORM, SIGMOID, EXP2, MHA_OWNER) \
-    ASCENDC_TPL_ARGS_SEL( \
-        ASCENDC_TPL_DTYPE_SEL(D_T_Q, Q), \
-        ASCENDC_TPL_DTYPE_SEL(D_T_G, G), \
-        ASCENDC_TPL_BOOL_SEL(USE_QK_L2NORM, NORM), \
-        ASCENDC_TPL_BOOL_SEL(USE_BETA_SIGMOID, SIGMOID), \
-        ASCENDC_TPL_BOOL_SEL(USE_EXP2, EXP2), \
-        ASCENDC_TPL_BOOL_SEL(ENABLE_MHA_OWNER, MHA_OWNER), \
-    )
-
-#define GDN_A2_TPL_SEL_FOR_DTYPE(Q, G, MHA_OWNER) \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 0, 0, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 0, 1, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 1, 0, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 0, 1, 1, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 0, 0, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 0, 1, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 1, 0, MHA_OWNER), \
-    GDN_A2_TPL_SEL_ONE(Q, G, 1, 1, 1, MHA_OWNER)
-
-ASCENDC_TPL_SEL(
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_BF16, 0),
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_FP32, 0),
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_BF16, 1),
-    GDN_A2_TPL_SEL_FOR_DTYPE(TPL_BF16, TPL_FP32, 1),
-);
-
-#undef GDN_A2_TPL_SEL_FOR_DTYPE
-#undef GDN_A2_TPL_SEL_ONE
-#endif
-
-} // namespace FinalizeArch22
+// 固定 SDK 模板字段宽度为 8+8+1+1+1；私有第六个 bool 占 bit19。
+// Host 保持原五字段 GET，确认旧 key 不占该位后才合入此标志。
+constexpr uint64_t A2_FINALIZE_MHA_OWNER_KEY_MASK = uint64_t{1} << 19;
 
 // Host 和 device 共用同一份字节布局。DQ/WY 的临时区只在全核 barrier 后复用。
 struct A2FinalizeWorkspaceLayout {

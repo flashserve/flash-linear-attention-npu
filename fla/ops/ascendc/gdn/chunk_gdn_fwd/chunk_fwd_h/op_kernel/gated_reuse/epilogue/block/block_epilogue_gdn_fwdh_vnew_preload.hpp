@@ -121,13 +121,6 @@ public:
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
-        if (mActualThisSubBlock == 0) {
-            // A one-token tail leaves the second AIV empty. Consume and
-            // produce the cross-core handshake without zero-length DMA.
-            Arch::CrossCoreWaitFlag(cube1Done);
-            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
-            return;
-        }
         uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
         uint32_t nOffset = 0;
         // 当前场景内部一定连续

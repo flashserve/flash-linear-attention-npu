@@ -438,13 +438,13 @@ public:
                     if constexpr (sizeof(DT) == sizeof(uint16_t)) {
                         AscendC::GlobalTensor<uint16_t> dh0ClearGm;
                         dh0ClearGm.SetGlobalBuffer(
-                            reinterpret_cast<__gm__ uint16_t *>(dh0Addr_) + clearOffset, clearElems);
+                            reinterpret_cast<__gm__ uint16_t *>(dh0Addr_) + clearOffset);
                         AscendC::Fill(dh0ClearGm, static_cast<uint64_t>(clearElems),
                                       static_cast<uint16_t>(0));
                     } else {
                         AscendC::GlobalTensor<uint32_t> dh0ClearGm;
                         dh0ClearGm.SetGlobalBuffer(
-                            reinterpret_cast<__gm__ uint32_t *>(dh0Addr_) + clearOffset, clearElems);
+                            reinterpret_cast<__gm__ uint32_t *>(dh0Addr_) + clearOffset);
                         AscendC::Fill(dh0ClearGm, static_cast<uint64_t>(clearElems),
                                       static_cast<uint32_t>(0));
                     }
@@ -470,9 +470,6 @@ public:
             SeqInfo seqInfo;
             GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
             if (!seqInfo.valid) {
-                if (isVariable_ != 0 && seqInfo.tokenStart == seqInfo.tokenEnd) {
-                    CopyEmptySequenceDh0(seqIdx, hvBase, headCnt);
-                }
                 continue;
             }
 
@@ -1033,41 +1030,6 @@ private:
         AscendC::DataCopy(outTensor[outOffset], outputBuf_[outputIdx], elements);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx]);
         curOutputPingPong_ ^= 1U;
-    }
-
-    __aicore__ inline void CopyEmptySequenceDh0(
-        int64_t seqIdx, int64_t hvBase, int64_t headCnt)
-    {
-        if (!hasDh0_ || !hasDht_) {
-            return;
-        }
-        // hT == h0, including the physical state layout and dtype. Copy the
-        // bits through output slot 0; no FP32 conversion or Vector scratch.
-        // Temporarily borrow q slot 0's empty event credits to bridge
-        // MTE3 -> V -> MTE2 and MTE2 -> V -> MTE3 for this output buffer.
-        // No q buffer is accessed, and its initial credit is restored below.
-        constexpr uint32_t SLOT = 0;
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
-        for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
-            if (headOffset % subBlockNum_ != subBlockIdx_) {
-                continue;
-            }
-            const int64_t stateBase = (seqIdx * HV_ + hvBase + headOffset) * K_ * V_;
-            for (int64_t offset = 0; offset < K_ * V_; offset += vecRow_ * V_) {
-                const uint32_t elems = static_cast<uint32_t>(Min(vecRow_ * V_, K_ * V_ - offset));
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SLOT]);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
-                AscendC::DataCopy(outputBuf_[SLOT], dhtGm_[stateBase + offset], elems);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SLOT]);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SLOT]);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[SLOT]);
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[SLOT]);
-                AscendC::DataCopy(dh0Gm_[stateBase + offset], outputBuf_[SLOT], elems);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SLOT]);
-            }
-        }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
     }
 
     // Load the terminal gradient into the internal fp32 [K, V] state.

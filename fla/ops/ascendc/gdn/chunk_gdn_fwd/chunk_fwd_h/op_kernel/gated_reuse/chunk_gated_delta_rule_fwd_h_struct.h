@@ -11,9 +11,9 @@
  * \file chunk_gated_delta_rule_fwd_h_struct.h
  * \brief Plain tiling data struct for chunk_gated_delta_rule_fwd_h.
  *
- * Private runtime view for ChunkFwdH's gated reuse path. Each block constructs
- * this view from its kernel arguments and passes it by const reference. It is
- * independent of the standalone forward operator's generated GM tiling ABI.
+ * Private GM tiling mirror for ChunkFwdH's gated reuse path. The launcher
+ * fills this workspace view before the preload kernel reads it. The runtime
+ * layout field controls K addressing without changing the standalone operator.
  */
 
 #ifndef CHUNK_GATED_DELTA_RULE_FWD_H_STRUCT_H
