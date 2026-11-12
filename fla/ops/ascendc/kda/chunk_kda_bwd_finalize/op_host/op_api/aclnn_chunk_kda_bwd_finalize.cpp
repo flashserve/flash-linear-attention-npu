@@ -110,7 +110,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
                ACLNN_ERR_PARAM_INVALID, "public finalize requires C=64, safe_gate/use_gate/use_exp2=true and K-first state");
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto result = l0op::ChunkKdaBwdFinalize(
         q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh,
         dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,

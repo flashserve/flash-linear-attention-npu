@@ -373,7 +373,11 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
         DFX_OUT(attnOut));
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     FinalizeParams params{qgScaled, aqk, vNew, h, cuSeqlensOptional,
                           chunkIndicesOptional, outputLayout, stateVFirst,
                           attnOut};

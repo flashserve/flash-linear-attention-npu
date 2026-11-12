@@ -238,7 +238,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
                              layout, scale, chunkSize, dAqkOut, dvOut, dqRawOut);
     if (status != ACLNN_SUCCESS) return status;
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto result = l0op::ChunkKdaBwdPrepare(
         aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
         layout, scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut,
