@@ -455,7 +455,8 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         }
         Mte2ToV();DrainStores(); // kg uses v_, which becomes the Aqk buffer below.
         Duplicate(q_,bfloat16_t(0),4096);
-        Duplicate(v_,bfloat16_t(0),8192);
+        // Aqk occupies only the first 64x64 BF16 lanes of v_.
+        Duplicate(v_,bfloat16_t(0),4096);
         if constexpr(Norm==0 || Gate==0)Duplicate(g_,0.0F,4096);
         VBarrier();
         // Four independent 16-row bands replace the scalar row/beta dispatch.

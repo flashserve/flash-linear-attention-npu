@@ -242,3 +242,22 @@ PR代码提交 `cc1a65966c3a1455f4dff90defdedc76d5267271` 使用同一ATK标杆�
 `/data/yqw/validation/prepare_gva/pr1168_cc1a659_accuracy20`，确定性报告位于
 `/data/yqw/validation/prepare_gva/pr1168_cc1a659_determinism`。按要求未重新采集msprof；
 NPU Event结果仅作为同窗口优化回归数据。
+
+### A2 Aqk有效区清零优化（2026-11-12）
+
+`LowerAndAqk` 的Aqk结果只占用 `v_` 的前64x64个BF16元素，因此将该缓冲区的
+预清零范围从8192个元素缩减为4096个元素。其余Lower生成、尾块补零、tiling key和
+输出合同保持不变。曾实验同时删除Precomputed路径的BF16 Lower生成和满块FP32 Lower
+预清零，但case 198分别出现双峰或明确回退，均未采用。
+
+同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
+
+|典型case|布局与规模|本轮优化前（us）|本轮优化后（us）|耗时降低|
+|---|---|---:|---:|---:|
+|198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|9869.14|9856.42|0.13%|
+|199|TND变长，T=16384，16x1024，HK=16，HV=128，G=8|14295.53|14262.43|0.23%|
+
+最终候选使用同一ATK标杆完成精度20/20、确定性3/3。精度报告位于
+`/data/yqw/validation/prepare_gva/pr1168_aqk_zero_accuracy20_retry`，确定性报告位于
+`/data/yqw/validation/prepare_gva/pr1168_aqk_zero_determinism`。本轮没有扩大任何GM或UB
+访问范围，未重新运行MSS；按要求未重新采集msprof，Event结果仅用于同窗口优化回归。
