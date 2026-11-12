@@ -1577,7 +1577,8 @@ def npu_chunk_kda_bwd_prepare(
 def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
                               layout="BSND", cu_seqlens=None, chunk_indices=None,
                               safe_gate=False, lower_bound=None,
-                              use_gate_in_kernel=False, A_log=None, dt_bias=None,
+                              use_gate_in_kernel=False, a_log=None, A_log=None,
+                              dt_bias=None,
                               epsilon=1e-6, use_qk_l2norm_in_kernel=False,
                               use_beta_sigmoid_in_kernel=False,
                               allow_neg_eigval=False, use_exp2=True,
@@ -1587,6 +1588,10 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
     反向需要的 L2 norm 保存值（q_hat/k_hat/q_rstd/k_rstd/beta_eff）按需在这里
     导出；不传输出槽时接口只做校验并返回 13 个 None，老路径不受影响。
     """
+    if a_log is not None:
+        if A_log is not None:
+            raise ValueError("pass only one of a_log and A_log")
+        A_log = a_log
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     # L2 的档位契约要求 gk/aqk/w/u/kg/qg_scaled 六个槽
