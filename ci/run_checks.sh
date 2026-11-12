@@ -553,7 +553,33 @@ install_custom_opp_package() {
         "${run_file}" --quiet
     fi
 
-    configure_installed_fla_npu_opp
+    # Full builds install the run before building their first wheel. Only that
+    # bootstrap may use CANN paths; never hide an installed wheel's errors.
+    local installed_package
+    installed_package="$(python3 - <<'PY'
+import importlib.util
+
+if importlib.util.find_spec("fla_npu") is not None:
+    print("installed")
+PY
+)" || return
+    if [[ -n "$installed_package" || "$change_scope" == "partial" ]]; then
+        configure_installed_fla_npu_opp
+        return
+    fi
+
+    local op_api_lib
+    for op_api_lib in \
+        "${ASCEND_OPP_PATH:-}/vendors/fla_npu_transformer/op_api/lib" \
+        "/usr/local/Ascend/vendors/fla_npu_transformer/op_api/lib"; do
+        if [[ -d "$op_api_lib" ]]; then
+            export LD_LIBRARY_PATH="${op_api_lib}:${LD_LIBRARY_PATH:-}"
+            echo "[CI] Custom OPP op_api lib before wheel installation: ${op_api_lib}"
+            return 0
+        fi
+    done
+    echo "[CI][ERROR] Custom OPP op_api lib path not found before wheel installation." >&2
+    return 1
 }
 
 check_example_python_deps() {

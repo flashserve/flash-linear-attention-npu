@@ -11,6 +11,7 @@ keep comparing the installed tree byte for byte.
 import runpy
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -310,15 +311,46 @@ class ManagedRunWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "references missing"):
             self.checker["_assert_record_covers_opp"](self.base, managed=True)
 
-    def configure_ci(self):
-        script = (REPO_ROOT / "ci/run_checks.sh").read_text(encoding="utf-8")
-        function = script.split("configure_installed_fla_npu_opp() {", 1)[1].split(
-            "\ncheck_environment_contracts()", 1)[0]
-        script = "set -euo pipefail\nconfigure_installed_fla_npu_opp() {" + function
-        script += "\nconfigure_installed_fla_npu_opp\n"
+    def build_adapter_ci(self):
+        source = (REPO_ROOT / "ci/run_checks.sh").read_text(encoding="utf-8")
+        names = ["configure_installed_fla_npu_opp", "install_custom_opp_package", "build_pytorch_adapter"]
+        env = self.env.copy()
+        script = "set -euo pipefail\n"
+        # A real Python without site-packages makes the no-wheel case
+        # independent of whatever is installed on the test machine.
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        python = bin_dir / "python3"
+        python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -S "$@"\n')
+        python.chmod(0o700)
+        run = self.root / "fixture.run"
+        run.write_text("#!/bin/sh\nexit 0\n")
+        run.chmod(0o700)
+        env.update(PATH=str(bin_dir) + os.pathsep + env["PATH"], CI_TEST_RUN_PACKAGE=str(run))
+        script += '''change_scope=full
+ci_mode=quick
+CI_RUN_TORCH_TESTS=false
+find_single_run_package() { printf '%s\\n' "$CI_TEST_RUN_PACKAGE"; }
+check_example_python_deps() { :; }
+build_torch_custom() { echo WHEEL_BUILD_REACHED; }
+'''
+        for name in names:
+            body = source.split(name + "() {", 1)[1].split("\n}\n", 1)[0]
+            script += name + "() {" + body + "\n}\n"
+        script += "build_pytorch_adapter\n"
         script += 'python3 -c \'import json,os; print(json.dumps({k:os.environ.get(k) for k in ("ASCEND_CUSTOM_OPP_PATH","FLA_NPU_OP_API_LIBS")}))\'\n'
-        return self.checker["subprocess"].run(["bash", "-c", script], env=self.env,
+        return self.checker["subprocess"].run(["bash", "-c", script], env=env, cwd=self.root,
                                               capture_output=True, text=True)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell required")
+    def test_ci_first_install_uses_cann_then_reaches_wheel_build(self):
+        self.env["PYTHONPATH"] = ""
+        self.env["ASCEND_OPP_PATH"] = str(self.source_vendor.parents[1])
+        result = self.build_adapter_ci()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("before wheel installation: " + str(self.source_vendor / "op_api/lib"),
+                      result.stdout)
+        self.assertIn("WHEEL_BUILD_REACHED", result.stdout)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell required")
     def test_ci_configuration_accepts_skeleton_and_preserves_full_base_fallback(self):
@@ -328,7 +360,7 @@ class ManagedRunWorkflowTest(unittest.TestCase):
                 if full:
                     vendor(self.base, {"aclnnDemo": "int64", "aclnnOther": "int64"})
                 self.layers.install(self.base, self.source_vendor)
-                result = self.configure_ci()
+                result = self.build_adapter_ci()
                 self.assertEqual(result.returncode, 0, result.stderr)
                 values = json.loads(result.stdout.splitlines()[-1])
                 vendors = self.layers.runtime_plan(self.base)["vendors"]
@@ -341,17 +373,21 @@ class ManagedRunWorkflowTest(unittest.TestCase):
     def test_ci_configuration_rejects_pending_or_disabled_update(self):
         from tests.test_wheel_overlay import package
         self.layers.install(self.base, self.source_vendor)
+        # A valid CANN vendor must not mask an installed wheel's readiness error.
+        self.env["ASCEND_OPP_PATH"] = str(self.source_vendor.parents[1])
         self.env["FLA_NPU_OVERLAY_VENDOR"] = ""
-        result = self.configure_ci()
+        result = self.build_adapter_ci()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Selected OPP is missing or disabled", result.stderr)
+        self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
         self.env.pop("FLA_NPU_OVERLAY_VENDOR")
         bad = package(self.root / "bad", opp={"aclnnDemo": "bool"})
         self.layers.install(self.base, bad / "opp/vendors" / self.layers.BASE)
-        result = self.configure_ci()
+        result = self.build_adapter_ci()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Requested OPP is pending; CI must not test an older active/base version",
                       result.stderr)
+        self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
 
 
 if __name__ == "__main__":
