@@ -125,37 +125,6 @@ bool CheckHeadPartitionWorkItemOverflow()
     return !optiling::ChunkKdaFwdPrepareTilingProcessor(context).Process(schedule);
 }
 
-bool CheckPlatformTraits()
-{
-    using namespace optiling;
-    constexpr auto arch22 = GetPlatformTraits(PrepareKernelTier::Arch22);
-    constexpr auto arch35 = GetPlatformTraits(PrepareKernelTier::Arch35);
-    constexpr auto arch92 = GetPlatformTraits(PrepareKernelTier::Arch92);
-    constexpr auto unknown = GetPlatformTraits(PrepareKernelTier::Unknown);
-    return arch22.tier == PrepareKernelTier::Arch22 &&
-        !arch22.useLegacyTilingKey &&
-        arch22.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES &&
-        arch22.slotsPerWorkgroup == CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP &&
-        arch35.tier == PrepareKernelTier::Arch35 &&
-        arch35.useLegacyTilingKey &&
-        arch35.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES &&
-        arch35.slotsPerWorkgroup == CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP &&
-        arch92.tier == PrepareKernelTier::Arch92 &&
-        arch92.useLegacyTilingKey &&
-        arch92.workspaceSlotBytes == CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES &&
-        arch92.slotsPerWorkgroup == 3 &&
-        unknown.tier == PrepareKernelTier::Unknown && unknown.workspaceSlotBytes == 0;
-}
-
-bool CheckTierForNpuArchId()
-{
-    using namespace optiling;
-    return TierForNpuArchId(2201) == PrepareKernelTier::Arch22 &&
-        TierForNpuArchId(3510) == PrepareKernelTier::Arch35 &&
-        TierForNpuArchId(9201) == PrepareKernelTier::Arch92 &&
-        TierForNpuArchId(9999) == PrepareKernelTier::Unknown;
-}
-
 bool CheckArch92Workspace()
 {
     optiling::ChunkKdaFwdPrepareScheduleContext arch92Context{
@@ -182,7 +151,6 @@ int main()
                    CheckVarLenSchedule() && CheckInvalidGva() &&
                    CheckChunkWorkItemOverflow() &&
                    CheckHeadPartitionWorkItemOverflow() &&
-                   CheckPlatformTraits() && CheckTierForNpuArchId() &&
                    CheckArch92Workspace()
                ? 0
                : 1;

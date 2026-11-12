@@ -553,10 +553,29 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const auto platform =
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
-    const PrepareKernelTier tier = TierForNpuArchId(
-        static_cast<uint32_t>(platform.GetCurNpuArch()));
-    const PreparePlatformTraits traits = GetPlatformTraits(tier);
-    if (traits.tier == PrepareKernelTier::Unknown) {
+    // host 侧按 NpuArch 显式平台分支，替代 tier 表；kernel 侧仍按编译期架构宏 +
+    // 独立实现目录分派，TilingKey 仅表达场景族，三者互不耦合。
+    bool useLegacyTilingKey = false;
+    uint64_t workspaceSlotBytes = 0;
+    uint64_t slotsPerWorkgroup = 0;
+    switch (platform.GetCurNpuArch()) {
+    case NpuArch::DAV_2201: // A2/A3
+        useLegacyTilingKey = false;
+        workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
+        slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+        break;
+    case NpuArch::DAV_3510: // A5
+        useLegacyTilingKey = true;
+        workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES;
+        slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+        break;
+    case NpuArch::DAV_9201: // A6
+        useLegacyTilingKey = true;
+        workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES;
+        // A6 每 workgroup 只 3 个在途 head；kernel 侧 kArch92SlotCount=3。
+        slotsPerWorkgroup = 3;
+        break;
+    default:
         OP_LOGE(context->GetNodeName(),
                 "chunk_kda_fwd_prepare 不支持的 NPU 架构 id=%u，"
                 "期望 DAV_2201(A2/A3)、DAV_3510(A5)、DAV_9201(A6) 之一。",
@@ -565,7 +584,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     }
     // 仅 Arch22 评估 target 变体；A5/A6 恒走通用路径，不会再误命中 arch22 快速路径。
     const bool useArch22TargetVariant =
-        traits.tier == PrepareKernelTier::Arch22 &&
+        platform.GetCurNpuArch() == NpuArch::DAV_2201 &&
         KdaPrepare::Arch22TargetConfig::Matches({
             static_cast<uint64_t>(shape.batch),
             static_cast<uint64_t>(shape.seqLen),
@@ -587,8 +606,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.targetPipeline = useArch22TargetVariant;
     scheduleContext.workspaceSlotBytes =
         useArch22TargetVariant ? KdaPrepare::Arch22TargetConfig::kSlotBytes
-                              : traits.workspaceSlotBytes;
-    scheduleContext.slotsPerWorkgroup = traits.slotsPerWorkgroup;
+                              : workspaceSlotBytes;
+    scheduleContext.slotsPerWorkgroup = slotsPerWorkgroup;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),
@@ -623,7 +642,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         outputMode);
     const auto pipeline = useArch22TargetVariant
         ? PreparePipeline::Target : PreparePipeline::Generic;
-    const uint64_t tilingKey = traits.useLegacyTilingKey ? legacyTilingKey
+    const uint64_t tilingKey = useLegacyTilingKey ? legacyTilingKey
         : RuntimeKey::Encode(gateDtypeToken, betaDtypeToken, pipeline);
 
     ChunkKdaFwdPrepareTilingData tiling;

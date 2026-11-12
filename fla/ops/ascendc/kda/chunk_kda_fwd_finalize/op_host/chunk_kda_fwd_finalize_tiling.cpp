@@ -335,10 +335,24 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
-    const FinalizeKernelTier tier = FinalizeTierForNpuArchId(
-        static_cast<uint32_t>(platform.GetCurNpuArch()));
-    const FinalizePlatformTraits traits = GetFinalizePlatformTraits(tier);
-    if (traits.tier == FinalizeKernelTier::Unknown) {
+    // host 侧按 NpuArch 显式平台分支，替代 tier 表；kernel 侧仍按编译期架构宏 +
+    // 独立实现目录分派。
+    uint64_t headGroupSize = 0;
+    bool allowAivInputMover = false;
+    switch (platform.GetCurNpuArch()) {
+    case NpuArch::DAV_2201: // A2/A3 用 bounded head group（headGroupSize=1）
+        headGroupSize = 1;
+        allowAivInputMover = false;
+        break;
+    case NpuArch::DAV_3510: // A5 chunk-first 全 head，允许 AIV input mover
+        headGroupSize = 0;
+        allowAivInputMover = true;
+        break;
+    case NpuArch::DAV_9201: // A6 chunk-first 全 head，允许 AIV input mover
+        headGroupSize = 0;
+        allowAivInputMover = true;
+        break;
+    default:
         OP_LOGE(context->GetNodeName(),
                 "chunk_kda_fwd_finalize 不支持的 NPU 架构 id=%u，"
                 "期望 DAV_2201(A2/A3)、DAV_3510(A5)、DAV_9201(A6) 之一。",
@@ -352,7 +366,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
-    scheduleContext.headGroupSize = traits.headGroupSize;
+    scheduleContext.headGroupSize = headGroupSize;
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
@@ -377,7 +391,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
         : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
     const bool useAivInputMover =
-        traits.allowAivInputMover && schedule.headsPerPartition == info.heads &&
+        allowAivInputMover && schedule.headsPerPartition == info.heads &&
         minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(

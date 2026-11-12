@@ -219,7 +219,7 @@ constexpr uint32_t kArch35WorkgroupStride =
     kArch35SlotCount * kSlotStride;
 // A6(1:1) 每 workgroup 只同时在途 3 个 head，slot 数从 4 收敛到 3，
 // 省掉第 4 个空闲 slot 的 GM relay。该 3 槽是 A6 的固定契约，仅 arch92 代码消费，
-// host 侧需同步使用 3（见 tiling.cpp 的 GetPlatformTraits）。不再散点 #if 门控。
+// host 侧需同步使用 3（见 tiling.cpp 按 NpuArch 的显式平台分支）。不再散点 #if 门控。
 constexpr uint32_t kArch92SlotCount = 3;
 constexpr uint32_t kArch92WorkgroupStride =
     kArch92SlotCount * kSlotStride;
