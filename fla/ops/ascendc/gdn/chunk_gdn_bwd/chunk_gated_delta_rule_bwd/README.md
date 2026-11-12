@@ -19,7 +19,7 @@ A2/A3 仅保留非连续输出暂存这一私有分支。纯 `ascend950` 构建�
 用于组合一致性对比的公开算子链依次由以下算子组成：
 
 1. `ChunkGdnBwdIntra`（`chunk_gdn_bwd_intra`），重计算 W/U 并生成局部 Value 梯度；
-2. `ChunkGatedDeltaRuleFwdH`（`chunk_gated_delta_rule_fwd_h`），重计算分块状态和新 Value；
+2. `ChunkFwdH`（`chunk_fwd_h`），重计算分块状态和新 Value；
 3. `ChunkGatedDeltaRuleBwdDhu`（`chunk_gated_delta_rule_bwd_dhu`），反向扫描状态梯度；
 4. `ChunkGatedDeltaRuleBwdFinalize`（`chunk_gated_delta_rule_bwd_finalize`），生成最终输入梯度。
 
@@ -142,7 +142,7 @@ gate 的通过结果宣称已覆盖任意 gate 值域。
 
 1. 组合一致性测试：分别调用四个公开 NPU 算子，对比 `dq/dk/dv/dBeta/dG/dh0`，验证
    L2 组合顺序、可选参数传导、公开布局转换和 `stateVFirst` 状态转换。
-2. 本次独立快照的 ATK 精度测试：组合 `ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、
+2. 本次独立快照的 ATK 精度测试：组合 `ChunkGdnBwdIntra`、`ChunkFwdH`、
    `ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize` 已有的 CPU reference，
    使用 ATK 原生 `cv_fused_double_benchmark` 的 L1 双标杆对比全部有效梯度，不使用混合容差。
 
