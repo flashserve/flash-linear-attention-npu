@@ -299,9 +299,15 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     }
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
+    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
         return ACLNN_ERR_PARAM_INVALID;
@@ -314,7 +320,9 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     auto result = l0op::PreProcessFwdKernelMerged(params.k, params.w, params.u, params.g, params.gk, params.bg,
                                                  params.v, params.cuSeqlensOptional, params.chunkSize,
                                                  params.hmOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.hmOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {

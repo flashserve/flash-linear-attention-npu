@@ -359,9 +359,15 @@ static aclnnStatus CheckParams(ChunkFwdOParams params)
     if (!(ret == ACLNN_SUCCESS)) {
         return ret;
     }
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckFormat(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     return ACLNN_SUCCESS;
 }
 
@@ -409,7 +415,9 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     auto result = l0op::ChunkFwdO(params.q, params.k, params.v, params.h, params.g, params.cuSeqlensOptional,
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
                                  params.stateVFirst, params.outputLayout, params.oOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.oOut, executorPtr);

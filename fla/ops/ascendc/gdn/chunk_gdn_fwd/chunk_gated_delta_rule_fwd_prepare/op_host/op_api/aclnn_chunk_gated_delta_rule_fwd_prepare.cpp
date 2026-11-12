@@ -395,7 +395,9 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
                 "A2 Prepare requires positive B/Hk/Hv/T");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        CHECK_RET(CheckA2PrepareMetadata(params, T) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+        if (!(CheckA2PrepareMetadata(params, T) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     }
     if (!(vShape.GetDim(0) == B && vShape.GetDim(2) == T)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -667,9 +669,15 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
 
 static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     return ACLNN_SUCCESS;
 }
 
@@ -720,7 +728,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     }
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ParamsDataContiguous failed.", __func__);
         return ACLNN_ERR_PARAM_INVALID;
@@ -741,10 +751,18 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         compute.aLogOptional != nullptr, compute.betaEffOptional != nullptr, compute.outputA,
         compute.gOut, compute.wOut, compute.uOut, compute.aOut, compute.qHatOptional, compute.kHatOptional,
         compute.qRstdOptional, compute.kRstdOptional, compute.betaEffOptional, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
+    if (!(result[1] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
+    if (!(result[2] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
+    if (!(result[3] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
 
     if (!(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);

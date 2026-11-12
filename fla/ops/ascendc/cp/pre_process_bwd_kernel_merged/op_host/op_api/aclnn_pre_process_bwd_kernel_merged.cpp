@@ -164,7 +164,9 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
     }
     auto executorPtr = uniqueExecutor.get();
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
         return ACLNN_ERR_PARAM_INVALID;
@@ -172,7 +174,9 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
                                                  params.chunkSize, params.dhmOut, executorPtr);
-    CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;

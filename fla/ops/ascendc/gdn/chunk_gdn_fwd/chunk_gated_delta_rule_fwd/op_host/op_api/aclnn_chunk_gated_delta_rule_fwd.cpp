@@ -820,18 +820,21 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
             OP_NAME, "B", std::to_string(batch), "chunkSize=32 varlen input requires physical B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(CheckMetadata(params, tokens) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckMetadata(params, tokens) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     const int64_t seqNum = SeqNum(params, batch);
     const int64_t stateDim0 = params.stateVFirst ? valueDim : keyDim;
     const int64_t stateDim1 = params.stateVFirst ? keyDim : valueDim;
-    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialState", seqNum,
-                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum,
-                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckStateShape(params.initialStateOptional, "initialState", seqNum,
+                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum,
+                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (params.initialStateOptional != nullptr) {
         const DataType stateDtype = params.initialStateOptional->GetDataType();
         if (!(stateDtype == DataType::DT_BF16 || stateDtype == DataType::DT_FLOAT)) {
@@ -863,25 +866,35 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         return supportedContractStatus;
     }
     GdnShapeInfo info;
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     const size_t qkvRank = 4;
     const size_t scalarRank = 3;
-    CHECK_RET(CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.qHatOutOptional, qkvRank, "qHatOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.kHatOutOptional, qkvRank, "kHatOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.qRstdOutOptional, scalarRank, "qRstdOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.kRstdOutOptional, scalarRank, "kRstdOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckOptionalRank(params.hOutOptional, 5, "hOutOptional") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.qHatOutOptional, qkvRank, "qHatOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.kHatOutOptional, qkvRank, "kHatOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.qRstdOutOptional, scalarRank, "qRstdOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.kRstdOutOptional, scalarRank, "kRstdOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckOptionalRank(params.hOutOptional, 5, "hOutOptional") == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     const int64_t chunks = ExpectedChunks(params, info.seqlen);
     if (!(info.batch > 0 && info.hq > 0 && info.hv > 0 && info.seqlen > 0)) {
@@ -1000,19 +1013,23 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
             OP_NAME, "B", std::to_string(info.batch), "varlen rank-4 input requires physical B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(CheckMetadata(params, info.seqlen) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckMetadata(params, info.seqlen) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     const int64_t seqNum = SeqNum(params, info.batch);
     const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;
     const int64_t stateDim1 = params.stateVFirst ? info.kDim : info.vDim;
-    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialState", seqNum, info.hv, stateDim0, stateDim1) ==
-                  ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckStateShape(params.initialStateOptional, "initialState", seqNum, info.hv, stateDim0, stateDim1) ==
+                  ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (params.finalStateOutOptional != nullptr) {
-        CHECK_RET(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum, info.hv,
+        if (!(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum, info.hv,
                                   stateDim0, stateDim1) ==
-                      ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+                      ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     }
 
     const DataType dtype = params.q->GetDataType();
@@ -1181,7 +1198,9 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    CHECK_RET(CheckRequiredInputs(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME,
@@ -1197,14 +1216,28 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_32;
     const aclnnStatus paramStatus =
         useChunk32 ? CheckChunk32Params(params) : CheckParams(params);
-    CHECK_RET(paramStatus == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(paramStatus == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
-    CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     if (useChunk32) {
         // The kernel consumes head-major q/k/v and [B,Hv,T] g/beta, and writes
@@ -1329,7 +1362,9 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     }
 
     GdnShapeInfo info;
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     const int64_t batch = info.batch;
     const int64_t hq = info.hq;
     const int64_t hv = info.hv;
@@ -1428,8 +1463,12 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const aclTensor *dtBias = params.dtBiasOptional;
         const aclTensor *initialState = params.initialStateOptional;
         if (IsDav2201Device()) {
-            CHECK_RET(MakeContiguous(aLog, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-            CHECK_RET(MakeContiguous(dtBias, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+            if (!(MakeContiguous(aLog, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+            if (!(MakeContiguous(dtBias, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
             if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT) {
                 aLog = l0op::Cast(aLog, DataType::DT_FLOAT, executorPtr);
             }

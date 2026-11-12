@@ -550,9 +550,10 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
-    CHECK_RET(CheckStateShape(params.finalStateOut, "finalStateOut", info, params.stateVFirst) ==
-                  ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckStateShape(params.finalStateOut, "finalStateOut", info, params.stateVFirst) ==
+                  ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (params.finalStateOut != nullptr) {
         if (!(params.finalStateOut->GetDataType() == DataType::DT_FLOAT)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "finalStateOut", "invalid", "finalStateOut must be float32.");
@@ -583,8 +584,12 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize only supports 64 on the three-stage path");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ParseLayout(params.layout, layout) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
     if (!(info.batch > 0)) {
@@ -612,9 +617,12 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", std::to_string(kvDimSupported), "K/V must both be 64 or both be 128; mixed K/V and other dims are not");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckDtypes(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1)) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", "invalid", "rank4 varlen input with cuSeqlensOptional requires B=1.");
         return ACLNN_ERR_PARAM_INVALID;
@@ -623,12 +631,14 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", "invalid", "varlen input supports at most 1024 sequences.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
-                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
-                              params.stateVFirst) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
+                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
+                              params.stateVFirst) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     // 归一化 / gate 开关约束：epsilon 只在 in-kernel L2 norm 时参与计算，
     // allowNegEigval 依赖 in-kernel beta sigmoid。
     const float epsilonFp32 = static_cast<float>(params.epsilon);
@@ -662,21 +672,38 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     }
         }
     }
-    CHECK_RET(CheckOutputShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckOutputShapes(params, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
-    CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(MakeContiguous(params.q, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.k, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.v, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.g, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     return ACLNN_SUCCESS;
 }
 
@@ -859,8 +886,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
@@ -1217,8 +1248,12 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。

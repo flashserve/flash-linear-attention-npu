@@ -49,7 +49,9 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
  static aclnnStatus CheckParams(SolveTriParams params)
  {
-     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+     if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
      return ACLNN_SUCCESS;
  }
  
@@ -94,7 +96,9 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
      auto executorPtr = uniqueExecutor.get();
  
      auto ret = CheckParams(params);
-     CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+     if (!(ret == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
  
      if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
@@ -103,7 +107,9 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);
-     CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+     if (!(result != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
      if (!(viewCopyResult != nullptr)) {

@@ -491,18 +491,32 @@ static aclnnStatus CheckVariableLength(const ChunkGatedDeltaRuleFwdHParams &para
 
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(params.chunkSize == 64 || params.chunkSize == 128)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64 or 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckGkParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckVariableLength(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckGkParams(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckFormat(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckVariableLength(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     return ACLNN_SUCCESS;
 }
 
@@ -551,7 +565,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     }
     auto executorPtr = uniqueExecutor.get();
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ParamsDataContiguous failed.", __func__);
         return ACLNN_ERR_PARAM_INVALID;
@@ -600,7 +616,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
         params.k, params.w, params.u, params.gOptional, params.gkOptional, initialStateCompute,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
         hCompute, params.vNewOut, finalStateCompute, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
 
     const aclTensor *hResult = result[0];
     if (params.stateVFirst) {

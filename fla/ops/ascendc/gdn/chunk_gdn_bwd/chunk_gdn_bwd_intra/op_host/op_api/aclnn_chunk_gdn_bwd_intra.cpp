@@ -237,7 +237,9 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
     const Params params{q, k, v, g, beta, a, dO, cuSeqlensOptional,
                         chunkIndicesOptional, scale, chunkSize, useExp2,
                         wOut, uOut, dvLocalOut};
-    CHECK_RET(Check(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(Check(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {

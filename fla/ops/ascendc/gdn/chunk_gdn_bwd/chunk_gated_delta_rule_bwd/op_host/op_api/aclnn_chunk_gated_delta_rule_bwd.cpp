@@ -482,7 +482,9 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             OP_NAME, "scale", std::to_string(params.scale), "scale must be finite");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(ResolveShapeInfo(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (!(info.batch > 0 && info.hk > 0 && info.hv > 0 && info.tokens > 0)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "B,HK,HV,T",
@@ -503,9 +505,12 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             "HV/HK must be an integer in [1, 4]");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    CHECK_RET(CheckLayoutShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckLayoutShapes(params, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
     if (params.cuSeqlens != nullptr && info.batch != 1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "B", std::to_string(info.batch), "varlen rank-4 input requires B=1");
@@ -676,7 +681,9 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                   useQkL2normInKernel, useBetaSigmoidInKernel, stateVFirst,
                   dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
                   dALogOutOptional, dDtBiasOutOptional};
-    CHECK_RET(CheckRequiredInputs(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    };
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
@@ -691,20 +698,46 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     }
 
     ShapeInfo info;
-    CHECK_RET(CheckParams(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(CheckParams(params, info) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
-    CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.a, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.initialState, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.dht, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.qRstd, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.kRstd, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.betaRaw, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.a, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.initialState, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.dht, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.qRstd, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.kRstd, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
+    if (!(MakeContiguous(params.betaRaw, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    };
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
