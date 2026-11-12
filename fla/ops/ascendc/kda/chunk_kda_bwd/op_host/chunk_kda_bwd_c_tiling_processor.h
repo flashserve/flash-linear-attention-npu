@@ -11,6 +11,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../op_kernel/chunk_kda_bwd_common.h"
+#include <string>
 
 namespace optiling {
 
@@ -69,7 +70,7 @@ public:
     ge::graphStatus Process()
     {
         for (size_t i = 0; i < KDA_C_REQUIRED_INPUT_COUNT; ++i) {
-            OP_CHECK_IF(ctx_.shapes[i] == nullptr,
+            if (ctx_.shapes[i] == nullptr,
                         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                             ctx_.nodeName, "kernel_c_inputs",
                             "all non-metadata Kernel C inputs are required"),
@@ -416,10 +417,10 @@ private:
                 static_cast<uint64_t>(tiling_.zaOutputOffset) +
                     64U * 64U * sizeof(uint16_t)),
             240U * 1024U + 2U * 128U * sizeof(float));
-        OP_CHECK_IF(wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES),
-                    OP_LOGE(ctx_.nodeName,
-                            "derived WY slot exceeds the shared 256 KiB slot"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "derived WY slot exceeds the shared 256 KiB slot");
+        return ge::GRAPH_FAILED;
+    }
 
         const uint64_t c = 64;
         const uint64_t k = 128;
@@ -453,10 +454,10 @@ private:
             Align512(static_cast<uint64_t>(
                          tiling_.intraResultDkUpperOffset) +
                      bc * k * sizeof(float));
-        OP_CHECK_IF(intraEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES),
-                    OP_LOGE(ctx_.nodeName,
-                            "derived Intra slot exceeds the shared 256 KiB slot"),
-                    return ge::GRAPH_FAILED);
+        if (intraEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "derived Intra slot exceeds the shared 256 KiB slot");
+        return ge::GRAPH_FAILED;
+    }
         return ge::GRAPH_SUCCESS;
     }
 

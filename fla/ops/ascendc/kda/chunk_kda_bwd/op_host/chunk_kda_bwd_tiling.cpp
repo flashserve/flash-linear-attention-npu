@@ -12,6 +12,7 @@
 #include "chunk_kda_bwd_a_tiling_processor.h"
 #include "chunk_kda_bwd_c_tiling_processor.h"
 #include "../op_kernel/kda_gate_bwd_post_common.h"
+#include <string>
 
 namespace optiling {
 
@@ -97,7 +98,7 @@ ge::graphStatus BuildKernelBTiling(
     OP_CHECK_NULL_WITH_CONTEXT(context, gkDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, qShapeStorage);
     OP_CHECK_NULL_WITH_CONTEXT(context, vShapeStorage);
-    OP_CHECK_IF(qgDesc->GetDataType() != ge::DT_FLOAT16 &&
+    if (qgDesc->GetDataType() != ge::DT_FLOAT16 &&
                     qgDesc->GetDataType() != ge::DT_BF16,
                 OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                     OP_NAME, "qg,kg,w",
@@ -349,10 +350,10 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     tiling->kernelC.deferGatePost = *deferGatePost ? 1 : 0;
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
-    OP_CHECK_IF(cTotalWorkspace < systemWorkspace,
-                OP_LOGE(context->GetNodeName(),
-                        "Kernel C workspace is smaller than system workspace"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(cTotalWorkspace < systemWorkspace) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Kernel C workspace is smaller than system workspace");
+        return ge::GRAPH_FAILED;
+    }
     const uint64_t cUserWorkspace = cTotalWorkspace - systemWorkspace;
     const gert::Shape qShape =
         context->GetRequiredInputShape(INPUT_Q)->GetOriginShape();
@@ -404,11 +405,10 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         KDA::KDA_BWD_WORKSPACE_ALIGN);
     tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
-    OP_CHECK_IF(cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX,
-                OP_LOGE(context->GetNodeName(),
-                        "single-launch private workspace exceeds the 2 TiB "
-                        "offset budget"),
-                return ge::GRAPH_FAILED);
+    if (cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "single-launch private workspace exceeds the 2 TiB");
+        return ge::GRAPH_FAILED;
+    }
     const uint64_t totalWorkspace = systemWorkspace + cursor;
 
     context->SetBlockDim(blockDim);

@@ -33,6 +33,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include <string>
 
 
 using namespace op;
@@ -529,8 +530,10 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
 
 static aclnnStatus CheckGateOptionalNonNull(const ChunkFwdHParams &params)
 {
-    CHECK_COND((params.gOptional != nullptr) != (params.gkOptional != nullptr), ACLNN_ERR_PARAM_INVALID,
-               "Exactly one of g and gk must be provided.");
+    if (!((params.gOptional != nullptr) != (params.gkOptional != nullptr))) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "Exactly one of g and gk must be provided.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -538,16 +541,26 @@ static aclnnStatus CheckGkParams(const ChunkFwdHParams &params)
 {
     if (params.gkOptional != nullptr) {
         auto gkShape = params.gkOptional->GetViewShape();
-        CHECK_COND(gkShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID,
-                   "gk must have rank 4 when provided, got rank %ld.", gkShape.GetDimNum());
-        CHECK_COND(gkShape.GetDim(3) == params.k->GetViewShape().GetDim(3), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[3] (K) must match k.shape[3] (K).");
-        CHECK_COND(gkShape.GetDim(2) == params.k->GetViewShape().GetDim(2), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[2] (T) must match k.shape[2] (T).");
-        CHECK_COND(gkShape.GetDim(1) == params.u->GetViewShape().GetDim(1), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[1] (HV) must match u.shape[1] (HV).");
-        CHECK_COND(gkShape.GetDim(0) == params.k->GetViewShape().GetDim(0), ACLNN_ERR_PARAM_INVALID,
-                   "gk.shape[0] (B) must match k.shape[0] (B).");
+        if (!(gkShape.GetDimNum() == 4)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", std::to_string(gkShape.GetDimNum()), "gk must have rank 4 when provided, got rank %ld.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+        if (!(gkShape.GetDim(3) == params.k->GetViewShape().GetDim(3))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "k", "invalid", "gk.shape[3] (K) must match k.shape[3] (K).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+        if (!(gkShape.GetDim(2) == params.k->GetViewShape().GetDim(2))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "k", "invalid", "gk.shape[2] (T) must match k.shape[2] (T).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+        if (!(gkShape.GetDim(1) == params.u->GetViewShape().GetDim(1))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "gk.shape[1] (HV) must match u.shape[1] (HV).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+        if (!(gkShape.GetDim(0) == params.k->GetViewShape().GetDim(0))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "k", "invalid", "gk.shape[0] (B) must match k.shape[0] (B).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     return ACLNN_SUCCESS;
 }
@@ -562,9 +575,14 @@ static aclnnStatus CheckParams(ChunkFwdHParams params)
     if (status != ACLNN_SUCCESS) {
         return status;
     }
-    CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize must be 64, but got %ld.", params.chunkSize);
-    CHECK_COND(params.saveNewValue, ACLNN_ERR_PARAM_INVALID, "saveNewValue must be true.");
+    if (!(params.chunkSize == 64)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64, but got %ld.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.saveNewValue)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "saveNewValue", std::to_string(params.saveNewValue), "saveNewValue must be true.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     status = CheckVariableLengthInputs(params);
     if (status != ACLNN_SUCCESS) {
         return status;
@@ -604,10 +622,14 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "workspaceSize must not be nullptr.");
-    CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "executor must not be nullptr.");
+    if (!(workspaceSize != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "workspaceSize", "workspaceSize must not be nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(executor != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "executor", "executor must not be nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     ChunkFwdHParams params{k,
                                          w,
                                          u,

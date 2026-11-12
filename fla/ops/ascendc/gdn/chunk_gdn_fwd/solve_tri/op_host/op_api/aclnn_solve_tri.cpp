@@ -62,8 +62,10 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
  static aclnnStatus ParamsDataContiguous(SolveTriParams &params, aclOpExecutor *executorPtr)
  {
-     CHECK_COND(DataContiguous(params.x, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                "Contiguous x failed.");
+     if (!(DataContiguous(params.x, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Contiguous x failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
      return ACLNN_SUCCESS;
  }
  
@@ -91,8 +93,10 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
      auto ret = CheckParams(params);
      CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
  
-     CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-                "ParamsDataContiguous failed.");
+     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
  
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);

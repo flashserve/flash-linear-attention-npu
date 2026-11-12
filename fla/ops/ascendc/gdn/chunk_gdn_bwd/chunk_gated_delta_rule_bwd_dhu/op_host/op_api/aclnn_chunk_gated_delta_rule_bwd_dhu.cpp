@@ -25,6 +25,7 @@
 #include "opdev/op_log.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include <string>
 
 using namespace op;
 
@@ -473,24 +474,42 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleBwdDhuParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dO failed.");
-    CHECK_COND(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dv failed.");
-    CHECK_COND(OptionalDataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
-    CHECK_COND(OptionalDataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous gk failed.");
-    CHECK_COND(OptionalDataContiguous(params.h0Optional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous h0 failed.");
-    CHECK_COND(OptionalDataContiguous(params.dhtOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dht failed.");
+    if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "Contiguous q failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "k", "invalid", "Contiguous k failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "w", "invalid", "Contiguous w failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "dO", "invalid", "Contiguous dO failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "dv", "invalid", "Contiguous dv failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(OptionalDataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", "invalid", "Contiguous g failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(OptionalDataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Contiguous gk failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(OptionalDataContiguous(params.h0Optional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "h0", "invalid", "Contiguous h0 failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(OptionalDataContiguous(params.dhtOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "dht", "invalid", "Contiguous dht failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -548,8 +567,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     // 固定写法，参数检查
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     auto result = l0op::ChunkGatedDeltaRuleBwdDhu(
         params.q, params.k, params.w, params.dO, params.dv, params.gOptional, params.gkOptional,

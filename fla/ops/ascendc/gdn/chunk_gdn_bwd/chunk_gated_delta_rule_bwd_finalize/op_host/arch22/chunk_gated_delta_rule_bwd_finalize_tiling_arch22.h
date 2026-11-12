@@ -16,6 +16,7 @@
 #include "op_common/log/log.h"
 #include "platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include <string>
 
 namespace optiling {
 namespace {
@@ -229,7 +230,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
-    OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
+    if (ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
 
     const double *scale = attrs->GetAttrPointer<double>(0);
@@ -448,9 +449,10 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
         static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
         static_cast<uint64_t>(useExp2Value));
-    OP_CHECK_IF(baseTilingKey >= GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK,
-                OP_LOGE(context->GetNodeName(), "A2 Finalize base TilingKey overlaps the private MHA-owner bit."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(baseTilingKey >= GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "A2 Finalize base TilingKey overlaps the private MHA-owner bit.");
+        return ge::GRAPH_FAILED;
+    }
     const bool enableMhaOwner = qKey == TPL_BF16 && tiling->K == K_SIZE_128 &&
         tiling->chunkSize == CHUNK_SIZE_64 && tiling->V == V_SIZE_128 && tiling->HK == tiling->HV;
     const uint64_t actualTilingKey = baseTilingKey |

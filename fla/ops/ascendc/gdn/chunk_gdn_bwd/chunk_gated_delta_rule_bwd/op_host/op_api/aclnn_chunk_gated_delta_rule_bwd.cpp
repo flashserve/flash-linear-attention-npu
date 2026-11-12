@@ -33,6 +33,7 @@
 
 #if GDN_BWD_ENABLE_ARCH22
 #include "external/aclnn_kernels/aclnn_platform.h"
+#include <string>
 #endif
 
 using namespace op;
@@ -187,7 +188,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR, "Contiguous failed.");
+    if (!(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR, "Contiguous failed.");
     return ACLNN_SUCCESS;
 }
 
@@ -198,8 +199,10 @@ aclnnStatus CheckRequiredInputs(const Params &params)
         params.dO, params.dqOut, params.dkOut, params.dvOut,
         params.dBetaOut, params.dGOut};
     for (const aclTensor *tensor : required) {
-        CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "required tensor must not be nullptr.");
+        CHECK_COND(tensor != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "tensor", "required tensor must not be nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     }
     return ACLNN_SUCCESS;
 }

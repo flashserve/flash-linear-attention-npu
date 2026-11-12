@@ -178,32 +178,31 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
-        OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
+
         return ge::GRAPH_FAILED;
     }
 
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
-        OP_LOGE(context->GetNodeName(),
-                "Logical batch, sequence length and head counts must be positive, but got "
-                "batch=%ld, seqlen=%ld, HK=%ld, HV=%ld.",
-                logicalBatch, logicalSeqlen, logicalKHeads, logicalVHeads);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "Logical batch, sequence length and head counts must be positive, but got "
+                "batch=%ld, seqlen=%ld, HK=%ld, HV=%ld.");
+
         return ge::GRAPH_FAILED;
     }
     if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE(context->GetNodeName(),
-                "FwdH requires K=128, V=128 and chunk_size=64, but got K=%ld, V=%ld, chunk_size=%ld.",
-                logicalKDim, logicalVDim, chunkSize);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "FwdH requires K=128, V=128 and chunk_size=64, but got K=%ld, V=%ld, chunk_size=%ld.");
+
         return ge::GRAPH_FAILED;
     }
     if (!saveNewValue) {
-        OP_LOGE(context->GetNodeName(), "save_new_value must be true.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "save_new_value", "invalid", "save_new_value must be true.");
+
         return ge::GRAPH_FAILED;
     }
     if ((useG && logicalVHeads % logicalKHeads != 0) || (useGk && logicalKHeads != logicalVHeads)) {
-        OP_LOGE(context->GetNodeName(),
-                "g-only requires HV %% HK == 0; gk-only requires k/ kg head count equal HV. "
-                "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.",
-                useG, useGk, logicalKHeads, logicalVHeads);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g-only requires HV %% HK == 0; gk-only requires k/ kg head count equal HV. "
+                "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.");
+
         return ge::GRAPH_FAILED;
     }
 

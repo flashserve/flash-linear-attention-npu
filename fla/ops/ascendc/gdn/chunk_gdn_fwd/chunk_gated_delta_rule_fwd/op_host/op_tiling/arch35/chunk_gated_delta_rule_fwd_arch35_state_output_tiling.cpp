@@ -15,6 +15,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include <algorithm>
 #include <register/op_impl_registry.h>
+#include <string>
 
 namespace optiling {
 
@@ -138,7 +139,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     const auto *gShapePtr = context->GetOptionalInputShape(INPUT_G);
     const auto *cuShapePtr = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
     const auto *chunkShapePtr = context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
-    OP_CHECK_IF(!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
+    if (!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
                     !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3),
                 OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
                     OP_NAME, "q,k,v,A,beta,g", "rank mismatch",
@@ -192,10 +193,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
                     "v/beta/A must match q/k in B/T and value heads"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead ||
-                    gShape.GetDim(2) != seqlen,
-                OP_LOGE(context->GetNodeName(), "g must have shape [B,HV,T]."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vNumHead % kNumHead != 0,
+                    gShape.GetDim(2) != seqlen) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g must have shape [B,HV,T].");
+        return ge::GRAPH_FAILED;
+    }
+    if (vNumHead % kNumHead != 0,
                 OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "kNumHead,vNumHead",
                     std::to_string(kNumHead) + "," + std::to_string(vNumHead),
@@ -317,9 +319,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
-    OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "RecomputeWUFwd tiling failed."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "RecomputeWUFwd tiling failed.");
+        return ge::GRAPH_FAILED;
+    }
 
     ChunkGatedDeltaRuleFwdHTilingContext hContext{};
     hContext.seqlen = seqlen;
@@ -426,20 +429,23 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     const size_t rawTilingSize = trailerOffset + sizeof(trailer);
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
-    OP_CHECK_IF(rawTilingSize > rawTiling->GetCapacity(),
-                OP_LOGE(context->GetNodeName(), "Combined tiling data exceeds raw tiling capacity."),
-                return ge::GRAPH_FAILED);
+    if (rawTilingSize > rawTiling->GetCapacity()) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Combined tiling data exceeds raw tiling capacity.");
+        return ge::GRAPH_FAILED;
+    }
     void *rawData = rawTiling->GetData();
-    OP_CHECK_IF(memset_s(rawData, rawTiling->GetCapacity(), 0, rawTilingSize) != EOK,
-                OP_LOGE(context->GetNodeName(), "Clear raw tiling data failed."),
-                return ge::GRAPH_FAILED);
+    if (memset_s(rawData, rawTiling->GetCapacity(), 0, rawTilingSize) != EOK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "invalid", "Clear raw tiling data failed.");
+        return ge::GRAPH_FAILED;
+    }
     hTiling.SaveToBuffer(rawData, rawTiling->GetCapacity());
-    OP_CHECK_IF(memcpy_s(static_cast<uint8_t *>(rawData) + oTilingOffset,
+    if (memcpy_s(static_cast<uint8_t *>(rawData) + oTilingOffset,
                          rawTiling->GetCapacity() - oTilingOffset, &oTiling, sizeof(oTiling)) != EOK ||
                     memcpy_s(static_cast<uint8_t *>(rawData) + trailerOffset,
-                             rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK,
-                OP_LOGE(context->GetNodeName(), "Serialize combined tiling data failed."),
-                return ge::GRAPH_FAILED);
+                             rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "invalid", "Serialize combined tiling data failed.");
+        return ge::GRAPH_FAILED;
+    }
     rawTiling->SetDataSize(rawTilingSize);
 
     context->SetTilingKey(vHeadDim > SUPPORTED_V128 ? TILING_KEY_V256 : TILING_KEY_V128);

@@ -23,6 +23,7 @@
 #include <cstring>
 #include <limits>
 #include <vector>
+#include <string>
 
 using namespace op;
 
@@ -168,8 +169,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
-    CHECK_COND(chunkSize == 64 && safeGate && useExp2 && !stateVFirst,
-               ACLNN_ERR_PARAM_INVALID, "A5 V2 requires C=64, safe_gate=true, use_exp2=true and K-first state.");
+    if (!(chunkSize == 64 && safeGate && useExp2 && !stateVFirst)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "A5 V2 requires C=64, safe_gate=true, use_exp2=true and K-first state.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (initialStateOptional != nullptr || dhtOptional != nullptr || dh0OutOptional != nullptr) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "initialState,dht,dh0",
@@ -367,14 +370,18 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     if (variable) {
         const auto *cu = cuSeqlensOptional;
         const auto *indices = chunkIndicesOptional;
-        CHECK_COND(cu->Size() >= 2 &&
-                       (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T,
-                   ACLNN_ERR_PARAM_INVALID, "Invalid cu_seqlens.");
+        if (!(cu->Size() >= 2 &&
+                       (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "Invalid cu_seqlens.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
         nc = 0;
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t begin = (*cu)[seq], end = (*cu)[seq+1];
-            CHECK_COND(begin >= 0 && end > begin && end <= T,
-                       ACLNN_ERR_PARAM_INVALID, "Invalid sequence boundaries.");
+            if (!(begin >= 0 && end > begin && end <= T)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Invalid sequence boundaries.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
             for (int64_t c = 0; c < (end - begin + 63) / 64; ++c, ++nc) {
                 if (!(static_cast<size_t>(2*nc+1) < indices->Size() &&
                       (*indices)[2*nc] == static_cast<int64_t>(seq) && (*indices)[2*nc+1] == c)) {

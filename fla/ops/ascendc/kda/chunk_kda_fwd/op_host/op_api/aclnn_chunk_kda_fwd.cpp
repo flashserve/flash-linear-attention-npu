@@ -294,10 +294,11 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
         const int64_t length = (*cuSeqlens)[seq + 1] - (*cuSeqlens)[seq];
         const int64_t chunks = (length + chunkSize - 1) / chunkSize;
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-            CHECK_COND((*chunkIndices)[offset] == static_cast<int64_t>(seq) &&
-                           (*chunkIndices)[offset + 1] == chunk,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "chunkIndicesOptional must use canonical sequence-major chunk order.");
+            if (!((*chunkIndices)[offset] == static_cast<int64_t>(seq) &&
+                           (*chunkIndices)[offset + 1] == chunk)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndicesOptional", "invalid", "chunkIndicesOptional must use canonical sequence-major chunk order.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
             offset += 2;
         }
     }
@@ -336,10 +337,12 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(HasShape(params.v, {info.seqlen, info.hvNum, info.vDim}) &&
+        if (!(HasShape(params.v, {info.seqlen, info.hvNum, info.vDim}) &&
                        HasShape(params.g, {info.seqlen, info.hvNum, info.kDim}) &&
-                       HasShape(params.beta, {info.seqlen, info.hvNum}),
-                   ACLNN_ERR_PARAM_INVALID, "TND expects v/g/beta as [T,HV,V], [T,HV,K], [T,HV].");
+                       HasShape(params.beta, {info.seqlen, info.hvNum}))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "TND expects v/g/beta as [T,HV,V], [T,HV,K], [T,HV].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     } else if (layout == KdaFwdLayout::NTD) {
         info.batch = 1;
         info.hNum = Dim(params.q, 0);
@@ -347,10 +350,12 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 2);
         info.hvNum = Dim(params.v, 0);
         info.vDim = Dim(params.v, 2);
-        CHECK_COND(HasShape(params.v, {info.hvNum, info.seqlen, info.vDim}) &&
+        if (!(HasShape(params.v, {info.hvNum, info.seqlen, info.vDim}) &&
                        HasShape(params.g, {info.hvNum, info.seqlen, info.kDim}) &&
-                       HasShape(params.beta, {info.hvNum, info.seqlen}),
-                   ACLNN_ERR_PARAM_INVALID, "NTD expects v/g/beta as [HV,T,V], [HV,T,K], [HV,T].");
+                       HasShape(params.beta, {info.hvNum, info.seqlen}))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "NTD expects v/g/beta as [HV,T,V], [HV,T,K], [HV,T].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     } else if (layout == KdaFwdLayout::BSND) {
         info.batch = Dim(params.q, 0);
         info.seqlen = Dim(params.q, 1);
@@ -358,11 +363,12 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 3);
         info.hvNum = Dim(params.v, 2);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim}) &&
+        if (!(HasShape(params.v, {info.batch, info.seqlen, info.hvNum, info.vDim}) &&
                        HasShape(params.g, {info.batch, info.seqlen, info.hvNum, info.kDim}) &&
-                       HasShape(params.beta, {info.batch, info.seqlen, info.hvNum}),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "BSND expects v/g/beta as [B,T,HV,V], [B,T,HV,K], [B,T,HV].");
+                       HasShape(params.beta, {info.batch, info.seqlen, info.hvNum}))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "BSND expects v/g/beta as [B,T,HV,V], [B,T,HV,K], [B,T,HV].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     } else {
         info.batch = Dim(params.q, 0);
         info.hNum = Dim(params.q, 1);
@@ -370,11 +376,12 @@ aclnnStatus ResolveShapeInfo(const ChunkKdaFwdParams &params, KdaFwdLayout layou
         info.kDim = Dim(params.q, 3);
         info.hvNum = Dim(params.v, 1);
         info.vDim = Dim(params.v, 3);
-        CHECK_COND(HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim}) &&
+        if (!(HasShape(params.v, {info.batch, info.hvNum, info.seqlen, info.vDim}) &&
                        HasShape(params.g, {info.batch, info.hvNum, info.seqlen, info.kDim}) &&
-                       HasShape(params.beta, {info.batch, info.hvNum, info.seqlen}),
-                   ACLNN_ERR_PARAM_INVALID,
-                   "BNSD expects v/g/beta as [B,HV,T,V], [B,HV,T,K], [B,HV,T].");
+                       HasShape(params.beta, {info.batch, info.hvNum, info.seqlen}))) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "BNSD expects v/g/beta as [B,HV,T,V], [B,HV,T,K], [B,HV,T].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     info.seqNum = params.cuSeqlensOptional == nullptr
                       ? info.batch
@@ -464,16 +471,19 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                     ? HasShape(params.attnOut, {info.seqlen, info.hvNum, info.vDim})
                                     : HasShape(params.attnOut,
                                                {info.batch, info.seqlen, info.hvNum, info.vDim});
-    CHECK_COND(attnShapeValid && params.attnOut->GetDataType() == dataType,
-               ACLNN_ERR_PARAM_INVALID,
-               "attnOut must match q dtype and use fixed sequence-major TND/BSND layout.");
+    if (!(attnShapeValid && params.attnOut->GetDataType() == dataType)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "attnOut must match q dtype and use fixed sequence-major TND/BSND layout.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.gkOut != nullptr) {
         const bool valid = info.isRank3
                                ? HasShape(params.gkOut, {info.hvNum, info.seqlen, info.kDim})
                                : HasShape(params.gkOut,
                                           {info.batch, info.hvNum, info.seqlen, info.kDim});
-        CHECK_COND(valid && params.gkOut->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "gkOut must be float32 in fixed head-major NTD/BNSD layout.");
+        if (!(valid && params.gkOut->GetDataType() == DataType::DT_FLOAT)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "gkOut must be float32 in fixed head-major NTD/BNSD layout.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     const aclTensor *matrixOutputs[] = {params.aqkOut, params.akkOut};
     for (const aclTensor *output : matrixOutputs) {
@@ -485,8 +495,10 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                ? HasShape(output, {info.hvNum, info.seqlen, params.chunkSize})
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, params.chunkSize});
-        CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout when provided.");
+        if (!(valid && output->GetDataType() == dataType)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout when provided.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     const aclTensor *kOutputs[] = {params.wOut, params.qgOut, params.kgOut};
     for (const aclTensor *output : kOutputs) {
@@ -497,8 +509,10 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                ? HasShape(output, {info.hvNum, info.seqlen, info.kDim})
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, info.kDim});
-        CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "w/qg/kg must match q dtype and use fixed head-major NTD/BNSD layout.");
+        if (!(valid && output->GetDataType() == dataType)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "w/qg/kg must match q dtype and use fixed head-major NTD/BNSD layout.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     const aclTensor *vOutputs[] = {params.uOut, params.vNewOut};
     for (const aclTensor *output : vOutputs) {
@@ -509,8 +523,10 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                ? HasShape(output, {info.hvNum, info.seqlen, info.vDim})
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, info.vDim});
-        CHECK_COND(valid && output->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "u/vNew must match q dtype and use fixed head-major NTD/BNSD layout.");
+        if (!(valid && output->GetDataType() == dataType)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "u/vNew must match q dtype and use fixed head-major NTD/BNSD layout.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     if (params.hOut != nullptr) {
         const bool valid = params.stateVFirst
@@ -526,62 +542,84 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                       : HasShape(params.hOut,
                                                  {info.batch, info.totalChunks, info.hvNum,
                                                   info.kDim, info.vDim}));
-        CHECK_COND(valid && params.hOut->GetDataType() == dataType, ACLNN_ERR_PARAM_INVALID,
-                   "hOut must match q dtype, use fixed sequence-major layout, and follow stateVFirst.");
+        if (!(valid && params.hOut->GetDataType() == dataType)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "hOut must match q dtype, use fixed sequence-major layout, and follow stateVFirst.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     CHECK_RET(CheckStateShape(params.finalStateOut, "finalStateOut", info, params.stateVFirst) ==
                   ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
     if (params.finalStateOut != nullptr) {
-        CHECK_COND(params.finalStateOut->GetDataType() == DataType::DT_FLOAT,
-                   ACLNN_ERR_PARAM_INVALID, "finalStateOut must be float32.");
+        if (!(params.finalStateOut->GetDataType() == DataType::DT_FLOAT)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "finalStateOut", "invalid", "finalStateOut must be float32.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     }
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, KdaShapeInfo &info)
 {
-    CHECK_COND(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
-                   params.g != nullptr && params.beta != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "q, k, v, g and beta must not be nullptr.");
-    CHECK_COND(params.attnOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "attnOut must not be nullptr.");
+    if (!(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
+                   params.g != nullptr && params.beta != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "q, k, v, g and beta must not be nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.attnOut != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "attnOut", "attnOut must not be nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     // aqkOut 对应 op def 的 REQUIRED 输出；akkOut 对应 OPTIONAL，省略时算子内部
     // 自建不导出的占位张量，V2 组合入口随之使用 Prepare 的 none 档。
-    CHECK_COND(params.aqkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "aqkOut must not be nullptr.");
-    CHECK_COND(params.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
-               "chunkSize only supports 64 on the three-stage path "
-               "(32 is handled by the ChunkKdaFwdFused kernel).");
+    if (!(params.aqkOut != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "aqkOut", "aqkOut must not be nullptr.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.chunkSize == 64)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize only supports 64 on the three-stage path");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_RET(ParseLayout(params.layout, layout) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
-    CHECK_COND(info.batch > 0, ACLNN_ERR_PARAM_INVALID,
-               "batch dimension must be greater than 0, but got B=%ld.", info.batch);
-    CHECK_COND(info.seqlen > 0, ACLNN_ERR_PARAM_INVALID,
-               "sequence length must be greater than 0, but got T=%ld.", info.seqlen);
-    CHECK_COND(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0,
-               ACLNN_ERR_PARAM_INVALID,
-               "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
-    CHECK_COND(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM,
-               ACLNN_ERR_PARAM_INVALID, "H and HV must be less than or equal to 128.");
+    if (!(info.batch > 0)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", std::to_string(info.batch), "batch dimension must be greater than 0, but got B=%ld.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(info.seqlen > 0)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "T", std::to_string(info.seqlen), "sequence length must be greater than 0, but got T=%ld.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "H and HV must be less than or equal to 128.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
     // 其它取值；报错打印实际 K/V，便于调用方直接定位 shape。
     const bool kvDimSupported =
         (info.kDim == KDA_FWD_KV_DIM_SMALL && info.vDim == KDA_FWD_KV_DIM_SMALL) ||
         (info.kDim == KDA_FWD_KV_DIM_LARGE && info.vDim == KDA_FWD_KV_DIM_LARGE);
-    CHECK_COND(kvDimSupported, ACLNN_ERR_PARAM_INVALID,
-               "K/V must both be 64 or both be 128; mixed K/V and other dims are not "
-               "supported, but got Kdim=%ld, Vdim=%ld.",
-               info.kDim, info.vDim);
+    if (!(kvDimSupported)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", std::to_string(kvDimSupported), "K/V must both be 64 or both be 128; mixed K/V and other dims are not");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_RET(CheckDtypes(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
-               ACLNN_ERR_PARAM_INVALID,
-               "rank4 varlen input with cuSeqlensOptional requires B=1.");
-    CHECK_COND(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES,
-               ACLNN_ERR_PARAM_INVALID, "varlen input supports at most 1024 sequences.");
+    if (!(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", "invalid", "rank4 varlen input with cuSeqlensOptional requires B=1.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", "invalid", "varlen input supports at most 1024 sequences.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_RET(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
                                 info.totalChunks, params.chunkSize) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);
@@ -591,23 +629,34 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     // 归一化 / gate 开关约束：epsilon 只在 in-kernel L2 norm 时参与计算，
     // allowNegEigval 依赖 in-kernel beta sigmoid。
     const float epsilonFp32 = static_cast<float>(params.epsilon);
-    CHECK_COND(std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F, ACLNN_ERR_PARAM_INVALID,
-               "epsilon must be a positive finite number, but got %f.", params.epsilon);
-    CHECK_COND(!params.allowNegEigval || params.useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
-               "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
+    if (!(std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "epsilon", std::to_string(params.epsilon), "epsilon must be a positive finite number, but got %f.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(!params.allowNegEigval || params.useBetaSigmoidInKernel)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (params.useGateInKernel) {
-        CHECK_COND(params.aLogOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "aLogOptional is required when useGateInKernel is true.");
-        CHECK_COND(HasShape(params.aLogOptional, {info.hvNum}), ACLNN_ERR_PARAM_INVALID,
-                   "aLogOptional must have shape [HV].");
+        if (!(params.aLogOptional != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "aLogOptional", "aLogOptional is required when useGateInKernel is true.");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+        if (!(HasShape(params.aLogOptional, {info.hvNum}))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "aLogOptional must have shape [HV].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
         if (params.dtBiasOptional != nullptr) {
-            CHECK_COND(HasShape(params.dtBiasOptional, {info.hvNum * info.kDim}),
-                       ACLNN_ERR_PARAM_INVALID, "dtBiasOptional must have shape [HV*K].");
+            if (!(HasShape(params.dtBiasOptional, {info.hvNum * info.kDim}))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "dtBiasOptional must have shape [HV*K].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
         }
         if (params.safeGate) {
-            CHECK_COND(params.lowerBound >= -5.0 && params.lowerBound < 0.0,
-                       ACLNN_ERR_PARAM_INVALID,
-                       "lowerBound must be in [-5, 0) when safeGate is true.");
+            if (!(params.lowerBound >= -5.0 && params.lowerBound < 0.0)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "lowerBound", "invalid", "lowerBound must be in [-5, 0) when safeGate is true.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
         }
     }
     CHECK_RET(CheckOutputShapes(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -800,8 +849,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (params.chunkSize == 32) {
         // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
         // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "chunkSize must be 64 or 128 (chunkSize=32 is only supported via aclnnChunkKdaFwdV2).");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ACLNN_ERR_PARAM_INVALID, "chunkSize", "invalid", "chunkSize must be 64 or 128 (chunkSize=32 is only supported via aclnnChunkKdaFwdV2).");
+
         return ACLNN_ERR_PARAM_INVALID;
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
@@ -1015,7 +1064,7 @@ aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
                              aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
                ACLNN_ERR_INNER, "ChunkKdaFwd launch failed.");
     return ACLNN_SUCCESS;
 }
@@ -1127,9 +1176,10 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。
-    CHECK_COND(CanUseKdaFwdV2Path(params, info), ACLNN_ERR_PARAM_INVALID,
-               "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
-               "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
+    CHECK_COND(CanUseKdaFwdV2Path(params, info))) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "chunk_size", "invalid", "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
     CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);

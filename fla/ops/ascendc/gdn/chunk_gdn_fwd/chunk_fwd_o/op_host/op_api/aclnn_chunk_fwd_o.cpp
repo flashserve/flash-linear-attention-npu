@@ -30,6 +30,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include <string>
 
 
 using namespace op;
@@ -276,16 +277,26 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkFwdOParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.h, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous h failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "Contiguous q failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "k", "invalid", "Contiguous k failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "v", "invalid", "Contiguous v failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.h, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Contiguous h failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", "invalid", "Contiguous g failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -384,8 +395,10 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     // 固定写法，参数检查（透传 CheckParams 的错误码，保留 NULLPTR 161001 语义）
     auto ret = CheckParams(params);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto result = l0op::ChunkFwdO(params.q, params.k, params.v, params.h, params.g, params.cuSeqlensOptional,
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
                                  params.stateVFirst, params.outputLayout, params.oOut, executorPtr);

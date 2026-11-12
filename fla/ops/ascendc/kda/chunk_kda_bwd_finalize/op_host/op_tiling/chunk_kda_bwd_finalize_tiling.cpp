@@ -5,6 +5,7 @@
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "chunk_kda_bwd_finalize_arch22.h"
+#include "op_common/log/log.h"
 
 namespace optiling {
 
@@ -15,16 +16,18 @@ ge::graphStatus ValidateFinalize(
     bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout)
 {
     if (allowNegEigval && !useBetaSigmoid) {
-        OP_LOGE(ctx.nodeName, "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "value", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+
         return ge::GRAPH_FAILED;
     }
     if (!arch22 && useBetaSigmoid) {
-        OP_LOGE(ctx.nodeName,
-                "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "value", "invalid", "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+
         return ge::GRAPH_FAILED;
     }
     auto fail = [&]() {
-        OP_LOGE(ctx.nodeName, "invalid finalize shape, dtype, layout or metadata");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx.nodeName, "layout", "invalid", "invalid finalize shape, dtype, layout or metadata");
+
         return ge::GRAPH_FAILED;
     };
     const bool variable = shape.isVariable != 0;
@@ -162,7 +165,8 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
     if (!std::isfinite(static_cast<float>(*scale)) || !std::isfinite(static_cast<float>(*lowerBound)) ||
         *lowerBound < -5.0 || static_cast<float>(*lowerBound) >= 0.0f) {
-        OP_LOGE(context->GetNodeName(), "scale/lower_bound must be finite");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "scale", "invalid", "scale/lower_bound must be finite");
+
         return ge::GRAPH_FAILED;
     }
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());

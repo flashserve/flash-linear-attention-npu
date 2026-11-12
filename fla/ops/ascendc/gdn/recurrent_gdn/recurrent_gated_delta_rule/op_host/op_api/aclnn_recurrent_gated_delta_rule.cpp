@@ -30,6 +30,7 @@
 #include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
 #include "recurrent_gated_delta_rule_check.h"
+#include "op_common/log/log.h"
 
 using namespace op;
 
@@ -38,6 +39,7 @@ extern "C" {
 #endif
 
 namespace {
+static constexpr const char *OP_NAME = "aclnnRecurrentGatedDeltaRule";
 constexpr size_t QUERY_DIM_NUM = 3;
 constexpr size_t KEY_DIM_NUM = 3;
 constexpr size_t VALUE_DIM_NUM = 3;

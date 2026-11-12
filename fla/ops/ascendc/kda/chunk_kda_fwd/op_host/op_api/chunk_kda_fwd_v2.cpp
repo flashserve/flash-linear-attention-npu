@@ -23,6 +23,7 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "op_common/log/log.h"
+#include <string>
 
 using namespace op;
 
@@ -102,7 +103,8 @@ const aclTensor *MaybeReshapeToHeadMajor4(const aclTensor *tensor, bool packed, 
     const aclTensor *reshaped =
         l0op::Reshape(tensor, MakeShape({1, heads, seqLen, columns}), executor);
     if (reshaped == nullptr) {
-    OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ChunkKdaFwdV2: failed to reshape %s to rank-4 BNSD.", name);
+    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ACLNN_ERR_INNER_NULLPTR, "rank", std::to_string(name), "ChunkKdaFwdV2: failed to reshape %s to rank-4 BNSD.");
+
     }
     return reshaped;
 }

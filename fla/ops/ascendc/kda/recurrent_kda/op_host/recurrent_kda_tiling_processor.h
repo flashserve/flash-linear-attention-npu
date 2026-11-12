@@ -125,9 +125,10 @@ public:
             {"RuleUpdateDynamicBlockDimByTaskUnits", &RecurrentKdaTilingProcessor::RuleUpdateDynamicBlockDimByTaskUnits},
         }};
         for (const auto &rule : shapeRules) {
-            OP_CHECK_IF((this->*(rule.fn))(tiling) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(ctx_.nodeName, "ProcessShapes rule failed: %s", rule.name),
-                        return ge::GRAPH_FAILED);
+            if ((this->*(rule.fn))(tiling) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "rule", std::to_string(rule.name), "ProcessShapes rule failed: %s");
+        return ge::GRAPH_FAILED;
+    }
         }
         return ge::GRAPH_SUCCESS;
     }
@@ -147,9 +148,10 @@ public:
             {"RuleFinalizeVStepFromUb", &RecurrentKdaTilingProcessor::RuleFinalizeVStepFromUb},
         }};
         for (const auto &rule : ubRules) {
-            OP_CHECK_IF((this->*(rule.fn))(tiling, ubCalcCtx) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(ctx_.nodeName, "ProcessUb rule failed: %s", rule.name),
-                        return ge::GRAPH_FAILED);
+            if ((this->*(rule.fn))(tiling, ubCalcCtx) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "rule", std::to_string(rule.name), "ProcessUb rule failed: %s");
+        return ge::GRAPH_FAILED;
+    }
         }
         return ge::GRAPH_SUCCESS;
     }
@@ -838,7 +840,8 @@ private:
         }
 
         if (!selected.valid) {
-            OP_LOGE(ctx_.nodeName, "vStep should be at least %zu, shape is too big", RKDA_MAX_MTP);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "vStep", std::to_string(RKDA_MAX_MTP), "vStep should be at least %zu, shape is too big");
+
             return ge::GRAPH_FAILED;
         }
 
@@ -847,14 +850,16 @@ private:
         int64_t ubRestBytes = ubSize - ubCalcCtx.fixedUbBytes -
                               queueCoeff * static_cast<int64_t>(selected.vStep);
         if (ubRestBytes < 0) {
-            OP_LOGE(ctx_.nodeName, "ubRestBytes should be non-negative, but got %ld", ubRestBytes);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "ubRestBytes", std::to_string(ubRestBytes), "ubRestBytes should be non-negative, but got %ld");
+
             return ge::GRAPH_FAILED;
         }
         if (ctx_.isA5 == 0) {
             const int64_t tmpBytes = ubCalcCtx.workingUbBytes - ubCalcCtx.fixedUbBytes +
                                      CalcComputeUbCoeff(aDk) * static_cast<int64_t>(selected.vStep);
             if (tmpBytes > ubRestBytes) {
-                OP_LOGE(ctx_.nodeName, "packed input buffers exceed the UB budget");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "packed input buffers exceed the UB budget");
+
                 return ge::GRAPH_FAILED;
             }
             // Generic A2/A3 kernels allocate only named live scratch slices.

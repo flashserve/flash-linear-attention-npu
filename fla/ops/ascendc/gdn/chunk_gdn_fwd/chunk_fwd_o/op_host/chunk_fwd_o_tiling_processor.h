@@ -27,6 +27,7 @@
 #include "../op_kernel/chunk_fwd_o_struct.h"
 #include "../op_kernel/chunk_fwd_o_a5_constants.h"
 #include "tiling/platform/platform_ascendc.h"
+#include <string>
 
 using GDN::ChunkFwdOTilingData;
 
@@ -134,7 +135,7 @@ public:
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
                                              const char *inputName)
     {
-        OP_CHECK_IF(curShape == nullptr,
+        if (curShape == nullptr,
                     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                         ctx_.nodeName, inputName, "required input must not be nullptr"),
                     return ge::GRAPH_FAILED);
@@ -382,9 +383,10 @@ public:
 
     ge::graphStatus A5ChunkTilingVarLen()
     {
-        OP_CHECK_IF(tiling_.shapeBatch != 1,
-                    OP_LOGE(ctx_.nodeName, "A5 varlen chunk_fwd_o requires batch=1."),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(tiling_.shapeBatch != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "size", "invalid", "A5 varlen chunk_fwd_o requires batch=1.");
+        return ge::GRAPH_FAILED;
+    }
         const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();
         tiling_.chunkNum = chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) / CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE;
         tiling_.numChunksPerBatch = 0;

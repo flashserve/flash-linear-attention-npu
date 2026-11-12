@@ -11,6 +11,7 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "arch22/chunk_gated_delta_rule_fwd_prepare_tiling_arch22.h"
+#include <string>
 
 namespace optiling {
 
@@ -247,7 +248,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t *ws = context->GetWorkspaceSizes(1);
     if (ws == nullptr) {
-        OP_LOGE(context->GetNodeName(), "workspace size buffer is null");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "buffer", "invalid", "workspace size buffer is null");
+
         return ge::GRAPH_FAILED;
     }
     // Per-core user WS: gmWsY 4×16 KiB. Must match kWsPerCoreBytes.
