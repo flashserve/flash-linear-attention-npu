@@ -579,7 +579,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                 return ge::GRAPH_FAILED);
 
     size_t workspaceOffset = 0;
-    OP_CHECK_IF(!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset)) {
+    if (!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "HO workspace alignment limit exceeded: region=HO, hEnd=%zu, oEnd=%zu, alignment=%zu;");
         return ge::GRAPH_FAILED;
     }
@@ -608,7 +608,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                         vNumHead, seqlen, totalChunks, kHeadDim, vHeadDim, elementSize, MAX_INT64_AS_SIZE_T),
                 return ge::GRAPH_FAILED);
     trailer.hIntermediateOffset = static_cast<int64_t>(workspaceOffset);
-    OP_CHECK_IF(!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
+    if (!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "Persistent workspace end limit exceeded: region=h, offset=%zu, bytes=%zu, alignment=%zu;");
         return ge::GRAPH_FAILED;
     }

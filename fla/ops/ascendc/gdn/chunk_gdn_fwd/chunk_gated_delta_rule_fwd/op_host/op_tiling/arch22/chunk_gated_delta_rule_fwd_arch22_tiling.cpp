@@ -420,7 +420,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
         (ownerInitial == nullptr || ownerInitial->GetDataType() == ge::DT_FLOAT) &&
         !MulOverflow(ownerSequencesUpper, static_cast<uint64_t>(valueHeads), &ownerTasksUpper) &&
         ownerTasksUpper > aicCoreNum;
-    OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(
+    if (Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(
                     context, hoPipelineReserved || ownerLocalPossible, ownerLocalPossible) !=
                     ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Reuse", "invalid", "Reuse of the accepted Phase 5 suffix tiling failed.");
@@ -584,7 +584,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     // 回绕只可能来自天文尺寸输入，此时分配不可实现，直接返回失败而不是把
     // 回绕后的值当成功分配上报。
     uint64_t totalWorkspaceSize = 0;
-    OP_CHECK_IF(AddOverflow(systemWorkspace, workspaceOffset, &totalWorkspaceSize)) {
+    if (AddOverflow(systemWorkspace, workspaceOffset, &totalWorkspaceSize)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "Phase 6 total workspace size wraps uint64.");
         return ge::GRAPH_FAILED;
     }

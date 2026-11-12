@@ -333,7 +333,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     coefficient.layoutMode = isVarlen ? 3 : 0;
     coefficient.dtypeMode = isBf16 ? 1 : 0;
     coefficient.totalTokens = isVarlen ? tokens : 0;
-    OP_CHECK_IF(BuildCoefficientCubeTiling(coefficient.BT, coefficient.K, inputDtype,
+    if (BuildCoefficientCubeTiling(coefficient.BT, coefficient.K, inputDtype,
                                            coefficient.cubeTilingData) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Failed to build the Phase 6 KKT Matmul tiling.");
         return ge::GRAPH_FAILED;
