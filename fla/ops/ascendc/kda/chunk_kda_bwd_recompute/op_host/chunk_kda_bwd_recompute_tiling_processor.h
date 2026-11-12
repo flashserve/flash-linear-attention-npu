@@ -74,8 +74,14 @@ public:
     ge::graphStatus Process()
     {
         if (CheckSpec() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ComputeChunkNum() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(SetVecRow() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (ComputeChunkNum() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
+        if (SetVecRow() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
         workspaceSize_ = ctx_.sysWorkspaceSize + userWorkspaceSize_;
         tilingKey_ = ComputeTilingKey();
         return ge::GRAPH_SUCCESS;

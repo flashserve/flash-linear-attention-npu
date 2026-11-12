@@ -436,11 +436,26 @@ public:
 
     ge::graphStatus Process()
     {
-        OP_CHECK_IF(Init() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ResolveGateMode() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ResolveSegment() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(PlanCorePartition() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(PlanWorkspace() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (Init() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
+        if (ResolveGateMode() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
+        if (ResolveSegment() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
+        if (PlanCorePartition() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
+        if (PlanWorkspace() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
 
         const bool isScale = ctx_.hasScaleAttr;
         tiling_.B = B_;

@@ -252,27 +252,30 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                     OP_NAME, "q,k,v,A,beta,g", "rank mismatch",
                     "q/k/v/A must be rank 4 and beta/g rank 3"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF((cuShapePtr == nullptr) != (chunkShapePtr == nullptr),
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+    if ((cuShapePtr == nullptr) != (chunkShapePtr == nullptr)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "cu_seqlens,chunk_indices",
                     std::string(cuShapePtr == nullptr ? "cu_seqlens=absent" : "cu_seqlens=present") + "," +
                         (chunkShapePtr == nullptr ? "chunk_indices=absent" : "chunk_indices=present"),
-                    "cu_seqlens and chunk_indices must be both present or both absent"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(cuShapePtr != nullptr && (!IsRank(cuShapePtr, 1) || !IsRank(chunkShapePtr, 1)),
-                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    "cu_seqlens and chunk_indices must be both present or both absent");
+        return ge::GRAPH_FAILED;
+    }
+    if (cuShapePtr != nullptr && (!IsRank(cuShapePtr, 1) || !IsRank(chunkShapePtr, 1))) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                     OP_NAME, "cu_seqlens,chunk_indices", "rank mismatch",
-                    "cu_seqlens and chunk_indices must be rank 1"),
-                return ge::GRAPH_FAILED);
+                    "cu_seqlens and chunk_indices must be rank 1");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const int64_t *qkvLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_QKV_LAYOUT);
     const int64_t qkvLayout = qkvLayoutAttr == nullptr ? 0 : *qkvLayoutAttr;
-    OP_CHECK_IF(qkvLayout != 0 && qkvLayout != 1,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                    OP_NAME, "qkv_layout", std::to_string(qkvLayout), "qkv_layout must be 0 or 1"),
-                return ge::GRAPH_FAILED);
+    if (qkvLayout != 0 && qkvLayout != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "qkv_layout", std::to_string(qkvLayout), "qkv_layout must be 0 or 1");
+        return ge::GRAPH_FAILED;
+    }
     auto LogicalQkvShape = [qkvLayout](const gert::StorageShape *input) {
         gert::StorageShape logical = *input;
         if (qkvLayout == 1) {
@@ -300,92 +303,104 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const int64_t vHeadDim = vShape.GetDim(DIM_CHANNEL);
     const int64_t *rawGLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_RAW_G_LAYOUT);
     const int64_t rawGLayout = rawGLayoutAttr == nullptr ? 0 : *rawGLayoutAttr;
-    OP_CHECK_IF(rawGLayout != 0 && rawGLayout != 1,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+    if (rawGLayout != 0 && rawGLayout != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                     OP_NAME, "raw_g_layout", std::to_string(rawGLayout),
-                    "raw_g_layout must be 0 (BHT) or 1 (BTH)"),
-                return ge::GRAPH_FAILED);
+                    "raw_g_layout must be 0 (BHT) or 1 (BTH)");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t *oLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_O_LAYOUT);
     const int64_t oLayout = oLayoutAttr == nullptr ? 0 : *oLayoutAttr;
-    OP_CHECK_IF(oLayout != 0 && oLayout != 1,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                    OP_NAME, "o_layout", std::to_string(oLayout), "o_layout must be 0 or 1"),
-                return ge::GRAPH_FAILED);
+    if (oLayout != 0 && oLayout != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "o_layout", std::to_string(oLayout), "o_layout must be 0 or 1");
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(batch <= 0 || kNumHead <= 0 || vNumHead <= 0 || seqlen <= 0,
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+    if (batch <= 0 || kNumHead <= 0 || vNumHead <= 0 || seqlen <= 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "B,Hk,Hv,T",
                     std::to_string(batch) + "," + std::to_string(kNumHead) + "," +
                         std::to_string(vNumHead) + "," + std::to_string(seqlen),
-                    "B/Hk/Hv/T dimensions must be positive"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kShape.GetDim(DIM_BATCH) != batch || kShape.GetDim(DIM_HEAD) != kNumHead ||
-                    kShape.GetDim(DIM_TOKEN) != seqlen || kShape.GetDim(DIM_CHANNEL) != kHeadDim,
-                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-                    OP_NAME, "q,k", "shape mismatch", "q and k must have the same shape"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vShape.GetDim(DIM_BATCH) != batch || vShape.GetDim(DIM_TOKEN) != seqlen ||
+                    "B/Hk/Hv/T dimensions must be positive");
+        return ge::GRAPH_FAILED;
+    }
+    if (kShape.GetDim(DIM_BATCH) != batch || kShape.GetDim(DIM_HEAD) != kNumHead ||
+                    kShape.GetDim(DIM_TOKEN) != seqlen || kShape.GetDim(DIM_CHANNEL) != kHeadDim) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    OP_NAME, "q,k", "shape mismatch", "q and k must have the same shape");
+        return ge::GRAPH_FAILED;
+    }
+    if (vShape.GetDim(DIM_BATCH) != batch || vShape.GetDim(DIM_TOKEN) != seqlen ||
                     betaShape.GetDim(0) != batch || betaShape.GetDim(1) != vNumHead ||
                     betaShape.GetDim(2) != seqlen || aShape.GetDim(DIM_BATCH) != batch ||
                     aShape.GetDim(DIM_HEAD) != vNumHead || aShape.GetDim(DIM_TOKEN) != seqlen ||
-                    aShape.GetDim(DIM_CHANNEL) <= 0,
-                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    aShape.GetDim(DIM_CHANNEL) <= 0) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                     OP_NAME, "v,beta,A", "shape mismatch",
-                    "v/beta/A must match q/k in B/T and value heads"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((rawGLayout == 0 &&
+                    "v/beta/A must match q/k in B/T and value heads");
+        return ge::GRAPH_FAILED;
+    }
+    if ((rawGLayout == 0 &&
                  (gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead || gShape.GetDim(2) != seqlen)) ||
                     (rawGLayout == 1 &&
                      (gShape.GetDim(0) != batch || gShape.GetDim(1) != seqlen ||
-                      gShape.GetDim(2) != vNumHead)),
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                      gShape.GetDim(2) != vNumHead))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
                     OP_NAME, "g", "layout=" + std::to_string(rawGLayout),
-                    "g layout contract is 0:[B,HV,T] or 1:[B,T,HV]"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vNumHead % kNumHead != 0,
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    "g layout contract is 0:[B,HV,T] or 1:[B,T,HV]");
+        return ge::GRAPH_FAILED;
+    }
+    if (vNumHead % kNumHead != 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "kNumHead,vNumHead",
                     std::to_string(kNumHead) + "," + std::to_string(vNumHead),
-                    "vNumHead must be divisible by kNumHead"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kHeadDim != SUPPORTED_K ||
-                    (vHeadDim != SUPPORTED_V128 && vHeadDim != SUPPORTED_V256),
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    "vNumHead must be divisible by kNumHead");
+        return ge::GRAPH_FAILED;
+    }
+    if (kHeadDim != SUPPORTED_K ||
+                    (vHeadDim != SUPPORTED_V128 && vHeadDim != SUPPORTED_V256)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "K,V", std::to_string(kHeadDim) + "," + std::to_string(vHeadDim),
-                    "Phase 5 fused path supports K=128 and V=128/256"),
-                return ge::GRAPH_FAILED);
+                    "Phase 5 fused path supports K=128 and V=128/256");
+        return ge::GRAPH_FAILED;
+    }
 
     const bool outputFinalState = *(attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE));
     const int64_t chunkSize = *(attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE));
     const double scale = *(attrs->GetAttrPointer<double>(ATTR_SCALE));
-    OP_CHECK_IF(chunkSize != CHUNK_64 && chunkSize != CHUNK_128,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                    OP_NAME, "chunk_size", std::to_string(chunkSize), "chunk_size must be 64 or 128"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(aShape.GetDim(DIM_CHANNEL) != chunkSize,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+    if (chunkSize != CHUNK_64 && chunkSize != CHUNK_128) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "chunk_size", std::to_string(chunkSize), "chunk_size must be 64 or 128");
+        return ge::GRAPH_FAILED;
+    }
+    if (aShape.GetDim(DIM_CHANNEL) != chunkSize) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                     OP_NAME, "A.chunk_size", std::to_string(aShape.GetDim(DIM_CHANNEL)),
-                    "A last dimension must equal chunk_size=" + std::to_string(chunkSize)),
-                return ge::GRAPH_FAILED);
+                    "A last dimension must equal chunk_size=" + std::to_string(chunkSize));
+        return ge::GRAPH_FAILED;
+    }
 
     const bool isVarlen = cuShapePtr != nullptr;
     const int64_t tokenBatch = isVarlen ? cuShapePtr->GetStorageShape().GetDim(0) - 1 : 1;
-    OP_CHECK_IF(tokenBatch <= 0 || (isVarlen && batch != 1),
-                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+    if (tokenBatch <= 0 || (isVarlen && batch != 1)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "B,tokenBatch",
                     std::to_string(batch) + "," + std::to_string(tokenBatch),
-                    "varlen input requires physical B=1 and at least one sequence"),
-                return ge::GRAPH_FAILED);
+                    "varlen input requires physical B=1 and at least one sequence");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t totalChunks = isVarlen
                                     ? chunkShapePtr->GetStorageShape().GetDim(0) / 2
                                     : (seqlen + chunkSize - 1) / chunkSize;
-    OP_CHECK_IF(totalChunks <= 0 ||
-                    (isVarlen && chunkShapePtr->GetStorageShape().GetDim(0) % 2 != 0),
-                OP_LOGE_FOR_INVALID_LISTSIZE(
+    if (totalChunks <= 0 ||
+                    (isVarlen && chunkShapePtr->GetStorageShape().GetDim(0) % 2 != 0)) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(
                     OP_NAME, "chunk_indices",
                     std::to_string(isVarlen ? chunkShapePtr->GetStorageShape().GetDim(0) : 0),
-                    "2 * chunk count"),
-                return ge::GRAPH_FAILED);
+                    "2 * chunk count");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t aicCoreNum = platform.GetCoreNumAic();
@@ -402,26 +417,29 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     OP_CHECK_NULL_WITH_CONTEXT(context, betaDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, aDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
-    OP_CHECK_IF(qDesc->GetDataType() != ge::DT_FLOAT16 && qDesc->GetDataType() != ge::DT_BF16,
-                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+    if (qDesc->GetDataType() != ge::DT_FLOAT16 && qDesc->GetDataType() != ge::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                     OP_NAME, "q", ge::TypeUtils::DataTypeToSerialString(qDesc->GetDataType()),
-                    "q/k/v must be float16 or bfloat16"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kDesc->GetDataType() != qDesc->GetDataType() ||
+                    "q/k/v must be float16 or bfloat16");
+        return ge::GRAPH_FAILED;
+    }
+    if (kDesc->GetDataType() != qDesc->GetDataType() ||
                     vDesc->GetDataType() != qDesc->GetDataType() ||
-                    aDesc->GetDataType() != qDesc->GetDataType(),
-                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    aDesc->GetDataType() != qDesc->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                     OP_NAME, "q,k,v,A",
                     ge::TypeUtils::DataTypeToSerialString(qDesc->GetDataType()),
-                    "q/k/v/A must use the same dtype"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(betaDesc->GetDataType() != ge::DT_FLOAT || gDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    "q/k/v/A must use the same dtype");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDesc->GetDataType() != ge::DT_FLOAT || gDesc->GetDataType() != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                     OP_NAME, "beta,g",
                     std::string("beta=") + ge::TypeUtils::DataTypeToSerialString(betaDesc->GetDataType()) +
                         ",g=" + ge::TypeUtils::DataTypeToSerialString(gDesc->GetDataType()),
-                    "Phase 5 fused path requires float32 beta and g"),
-                return ge::GRAPH_FAILED);
+                    "Phase 5 fused path requires float32 beta and g");
+        return ge::GRAPH_FAILED;
+    }
     const auto *initialDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
     const bool useInitialState = initialDesc != nullptr;
     const bool useGk = context->GetOptionalInputDesc(INPUT_GK) != nullptr;

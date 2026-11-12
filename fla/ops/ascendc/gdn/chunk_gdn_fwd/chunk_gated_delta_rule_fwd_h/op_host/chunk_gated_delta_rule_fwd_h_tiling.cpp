@@ -90,10 +90,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
-    OP_CHECK_IF(gTensor == nullptr && gkTensor == nullptr,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "g,gk", "either g or gk must be provided"),
-                return ge::GRAPH_FAILED);
+    if (gTensor == nullptr && gkTensor == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "g,gk", "either g or gk must be provided");
+        return ge::GRAPH_FAILED;
+    }
     auto gateTensor = useGk ? gkTensor : gTensor;
 
     auto attrPtr = context->GetAttrs();

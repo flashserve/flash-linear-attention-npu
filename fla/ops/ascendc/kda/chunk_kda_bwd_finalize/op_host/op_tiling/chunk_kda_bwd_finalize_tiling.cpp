@@ -220,7 +220,10 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         elements *= static_cast<uint64_t>(dim);
     }
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, shape);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        ;
+        return ge::GRAPH_FAILED;
+    }
     shape.qkTokenMajor = modelTm && !ctx.qRstd;
     shape.vTokenMajor = modelTm;
     shape.rawTokenMajor = mixed;
