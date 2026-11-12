@@ -350,7 +350,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     tiling->kernelC.deferGatePost = *deferGatePost ? 1 : 0;
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
-    OP_CHECK_IF(cTotalWorkspace < systemWorkspace) {
+    if (cTotalWorkspace < systemWorkspace) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Kernel C workspace is smaller than system workspace");
         return ge::GRAPH_FAILED;
     }

@@ -454,7 +454,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     GdnArch22RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
-    OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
+    if (recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "RecomputeWUFwd tiling failed.");
         return ge::GRAPH_FAILED;
     }
@@ -495,7 +495,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     size_t hWorkspaceSize = 0;
     ChunkGatedDeltaRuleFwdHTilingProcessor hProcessor(hContext);
     hProcessor.Process(hPlain, hBlockDim, hWorkspaceSize);
-    OP_CHECK_IF(ownerLocalWorkspace &&
+    if (ownerLocalWorkspace &&
                     (hPlain.vWorkspaceOffset != static_cast<int64_t>(expectedOwner.v) ||
                      hPlain.vUpdateWorkspaceOffset != static_cast<int64_t>(expectedOwner.decay) ||
                      hPlain.kDecayWorkspaceOffset != static_cast<int64_t>(expectedOwner.kDecay) ||
@@ -630,7 +630,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const size_t rawTilingSize = trailerOffset + sizeof(trailer);
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
-    OP_CHECK_IF(rawTilingSize > rawTiling->GetCapacity()) {
+    if (rawTilingSize > rawTiling->GetCapacity()) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Combined tiling data exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }

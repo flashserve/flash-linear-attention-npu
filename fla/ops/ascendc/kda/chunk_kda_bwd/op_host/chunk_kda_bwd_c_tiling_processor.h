@@ -417,7 +417,7 @@ private:
                 static_cast<uint64_t>(tiling_.zaOutputOffset) +
                     64U * 64U * sizeof(uint16_t)),
             240U * 1024U + 2U * 128U * sizeof(float));
-        OP_CHECK_IF(wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
+        if (wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "derived WY slot exceeds the shared 256 KiB slot");
         return ge::GRAPH_FAILED;
     }

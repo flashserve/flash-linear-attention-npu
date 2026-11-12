@@ -383,7 +383,7 @@ public:
 
     ge::graphStatus A5ChunkTilingVarLen()
     {
-        OP_CHECK_IF(tiling_.shapeBatch != 1) {
+        if (tiling_.shapeBatch != 1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "size", "invalid", "A5 varlen chunk_fwd_o requires batch=1.");
         return ge::GRAPH_FAILED;
     }

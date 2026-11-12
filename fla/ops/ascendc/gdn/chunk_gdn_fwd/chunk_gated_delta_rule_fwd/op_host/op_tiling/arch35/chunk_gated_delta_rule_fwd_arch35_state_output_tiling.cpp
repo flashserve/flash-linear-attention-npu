@@ -192,7 +192,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
                     OP_NAME, "v,beta,A", "shape mismatch",
                     "v/beta/A must match q/k in B/T and value heads"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead ||
+    if (gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead ||
                     gShape.GetDim(2) != seqlen) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g must have shape [B,HV,T].");
         return ge::GRAPH_FAILED;
@@ -319,7 +319,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
-    OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
+    if (recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "RecomputeWUFwd tiling failed.");
         return ge::GRAPH_FAILED;
     }

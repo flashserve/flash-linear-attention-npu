@@ -95,7 +95,7 @@ public:
 private:
     ge::graphStatus CheckSpec()
     {
-        OP_CHECK_IF(ctx_.chunkSize != 64) {
+        if (ctx_.chunkSize != 64) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be 64.");
         return ge::GRAPH_FAILED;
     }

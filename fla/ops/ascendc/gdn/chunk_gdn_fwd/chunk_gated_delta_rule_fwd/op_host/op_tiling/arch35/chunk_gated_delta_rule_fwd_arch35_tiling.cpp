@@ -254,7 +254,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                     OP_NAME, "a_storage", "shape mismatch",
                     "a_storage must be [B,Hv,T,chunk_size]"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(context) != ge::GRAPH_SUCCESS) {
+    if (Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(context) != ge::GRAPH_SUCCESS) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Reuse", "invalid", "Reuse of the accepted Phase 5 suffix tiling failed.");
         return ge::GRAPH_FAILED;
     }
