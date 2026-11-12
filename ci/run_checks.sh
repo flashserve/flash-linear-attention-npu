@@ -651,6 +651,7 @@ check_environment_contracts() {
     python3 torch_custom/fla_npu/tools/op_abi_parity.py
     python3 tests/test_opp_overlay.py -b
     python3 tests/test_opp_abi_contract.py -b
+    python3 tests/test_wheel_overlay.py -b
     python3 tests/test_stable_gates.py -b
     python3 tests/test_stable_only_runtime.py -b
     python3 tests/test_stable_build_policy.py -b
