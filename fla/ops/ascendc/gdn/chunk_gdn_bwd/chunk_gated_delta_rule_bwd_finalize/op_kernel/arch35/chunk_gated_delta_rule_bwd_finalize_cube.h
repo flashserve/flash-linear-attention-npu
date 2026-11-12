@@ -1158,10 +1158,8 @@ private:
         AscendC::GlobalTensor<DT> gmDkbT;
         gmDA.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dA0_) + workspaceBase);
         gmKb.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + workspaceBase);
-        gmDkb.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbOut_) + workspaceBase,
-                             WORKSPACE_VECTOR_ELEMS);
-        gmDkbT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbTOut_) + workspaceBase,
-                              WORKSPACE_VECTOR_ELEMS);
+        gmDkb.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbOut_) + workspaceBase);
+        gmDkbT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbTOut_) + workspaceBase);
         auto tensorGmDA = tla::MakeTensor(gmDA, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmKb = tla::MakeTensor(gmKb, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDkb = tla::MakeTensor(gmDkb, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
