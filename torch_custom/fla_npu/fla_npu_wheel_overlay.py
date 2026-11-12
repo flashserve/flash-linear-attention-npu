@@ -392,6 +392,8 @@ def install(package, source, *, opp_source=None, force=False):
             latest = previous.get("pending") or previous.get("active")
             selected = (components(package, layer_path(package, latest)) if latest
                         else {"adapter": None, "opp": None})
+            previous_opp = (layer_path(package, selected["opp"]) / "fla_npu/opp/vendors" / BASE
+                            if selected["opp"] else None)
             identity = uuid.uuid4().hex
             target = layer_path(package, identity)
             target.mkdir()
@@ -408,6 +410,8 @@ def install(package, source, *, opp_source=None, force=False):
                 selected["opp"] = identity
             _atomic_json(target / "components.json", {"version": 1, **selected})
             plan = resolve(package, target)
+            base_opp = _vendor(package)
+            installed_opp = _vendor(target / "fla_npu")
             _atomic_json(target / "installation.json", {"component_protocol": 1, "source": str(source.resolve()),
                          "opp_source": str(Path(opp_source).resolve()) if opp_source else None,
                          "errors": plan["errors"]})
@@ -433,7 +437,15 @@ def install(package, source, *, opp_source=None, force=False):
         # processes may still map it. Explicit removal reclaims retained layers.
         return {"state": "pending" if plan["errors"] else "active", "path": str(target),
                 "operators": plan["exports"], "components": plan["components"],
-                "affected_base_operators": plan["affected_base_operators"], "errors": plan["errors"]}
+                "affected_base_operators": plan["affected_base_operators"], "errors": plan["errors"],
+                "installation": {
+                    "artifact": "wheel" if is_wheel else "run",
+                    "base_opp": str(base_opp) if base_opp else None,
+                    "previous_overlay_opp": str(previous_opp) if previous_opp else None,
+                    "previous_state": "pending" if previous.get("pending") else "active",
+                    "installed_opp": str(installed_opp) if installed_opp else None,
+                    "selection": "overlay" if enabled() and current.get("active") else "base",
+                }}
 
 
 def remove(package):

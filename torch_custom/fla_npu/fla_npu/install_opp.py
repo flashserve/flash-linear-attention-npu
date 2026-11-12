@@ -490,6 +490,8 @@ def install_overlay(
                 raise RuntimeError("Remove the wheel overlay before installing a run overlay")
         vendor_src = _resolve_overlay_source(source)
         _validate_overlay_abi(vendor_src)
+        previous_opps = sorted(str(path) for path in vendors_root.iterdir()
+                               if path.is_dir() and _is_overlay_name(path.name))
         order = _replace_overlay(vendor_src, vendor_dst, force)
     if os.environ.get(OVERLAY_VENDOR_ENV):
         os.environ[OVERLAY_VENDOR_ENV] = overlay_name
@@ -505,6 +507,13 @@ def install_overlay(
         "pip-managed file set). Remove it with:\n"
         f"        python -m fla_npu_opp_manage --remove-overlay --overlay-name {overlay_name}"
     )
+    base = vendors_root / BASE_VENDOR_NAME
+    _print_install_summary({
+        "artifact": "run", "base_opp": str(base) if base.is_dir() else None,
+        "previous_overlay_opp": ", ".join(previous_opps) or None, "previous_state": "active",
+        "installed_opp": str(vendor_dst),
+        "selection": "overlay" if overlay_name in overlay_vendor_names() else "base",
+    }, "active")
     return vendor_dst
 
 
@@ -571,6 +580,18 @@ def print_status() -> None:
             )
 
 
+def _print_install_summary(summary: dict, state: str) -> None:
+    """Report committed paths, without importing or initializing the NPU runtime."""
+    print(f"[fla-npu] Installation successful: mode=overlay, artifact={summary['artifact']}")
+    print(f"[fla-npu] base OPP: {summary['base_opp'] or 'none'}")
+    print(f"[fla-npu] previous overlay OPP ({summary['previous_state']}): "
+          f"{summary['previous_overlay_opp'] or 'none'}")
+    print(f"[fla-npu] installed OPP: {summary['installed_opp'] or 'none (no OPP supplied; previous selection retained)'}")
+    detail = " (installed, not enabled; previous active combination unchanged)" if state == "pending" else ""
+    print(f"[fla-npu] combination: {state}{detail}")
+    print(f"[fla-npu] selection for a new process: {summary['selection']} (restart Python processes before use)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage the FLA NPU OPP embedded in the installed package.")
     parser.add_argument("--install-path", type=Path, help="Target OPP root. vendors/ will be created below it.")
@@ -609,10 +630,9 @@ def main() -> int:
             if args.overlay_name and args.overlay_name != layers.NAME:
                 parser.error("component overlays use the default overlay name")
             result = layers.install(package, args.source, opp_source=args.opp_source, force=args.force)
+            summary = result.pop("installation")
             print(json.dumps(result, indent=2))
-            if result["state"] == "pending":
-                print("Components installed; waiting for a compatible combination. "
-                      "The previous active combination is unchanged.")
+            _print_install_summary(summary, result["state"])
         else:
             if args.opp_source:
                 parser.error("--opp-source requires a wheel --source")

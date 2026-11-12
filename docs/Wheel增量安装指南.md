@@ -89,6 +89,27 @@ python -m fla_npu_opp_manage --status
 python -m fla_npu_opp_manage --remove-overlay
 ```
 
+每次 run 或 overlay wheel 安装成功后，会打印安装类型、原有和本次安装的 OPP 路径，
+以及新进程的选择。例如在已有 overlay 上再次安装 run：
+
+```text
+[fla-npu] Installation successful: mode=overlay, artifact=run
+[fla-npu] base OPP: /.../fla_npu/opp/vendors/fla_npu_transformer
+[fla-npu] previous overlay OPP (active): /.../wheel_layers/<旧ID>/fla_npu/opp/vendors/fla_npu_transformer
+[fla-npu] installed OPP: /.../wheel_layers/<新ID>/fla_npu/opp/vendors/fla_npu_transformer
+[fla-npu] combination: active
+[fla-npu] selection for a new process: overlay (restart Python processes before use)
+```
+
+`artifact=wheel` 表示增量 wheel；`artifact=run` 也包含直接传入已解包 OPP 目录的情况。
+骨架 base 没有 OPP 时显示 `base OPP: none`。standalone wheel 未携带 OPP 时，
+`installed OPP` 显示 `none`，并说明沿用原选择，不把原 OPP 误报为本次新增。
+原有增量 OPP 的 `active` / `pending` 标注对应本次安装所继承的组合。
+新组合为 pending 时明确提示“已安装、尚未启用”，新进程仍用原 active，没有原 active 则用 base；
+显式禁用 overlay 时，新进程选择同样为 base。路径是实际保存位置，安装后仍须重启业务进程。
+普通 `pip install base.whl` 不增加此摘要；run 的外部 CANN 安装则单独标为 `mode=CANN`，
+打印目标位置原有和本次安装的 OPP 路径，不把它标成 wheel 的 base 或 overlay。
+
 | 查询状态 | 含义 |
 | --- | --- |
 | `active` | 当前可运行组合，新进程使用它 |

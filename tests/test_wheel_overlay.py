@@ -570,6 +570,110 @@ a = npu_a
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(config.read_bytes(), original)
 
+    def summary_cli_base(self, full=True):
+        site = self.root / "summary-site"
+        base = package(site / "fla_npu", opp={"aclnnDemo": "int64", "aclnnOther": "int64"} if full else None)
+        (base / "__init__.py").write_text('raise RuntimeError("must not import runtime")')
+        shutil.copyfile(SETUP / "fla_npu/install_opp.py", base / "install_opp.py")
+        for name in ("fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
+            shutil.copyfile(SETUP / name, site / name)
+        return base
+
+    def summary_cli_install(self, base, source, **environment):
+        result = subprocess.run([sys.executable, "-m", "fla_npu_opp_manage", "--overlay", "--source", str(source)],
+                                env=dict(os.environ, PYTHONPATH=str(base.parent), **environment),
+                                cwd=self.root, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout
+
+    def test_install_summary_reports_paths_and_pending_without_claiming_activation(self):
+        base = self.summary_cli_base()
+        output = self.summary_cli_install(base, self.update())
+        original_opp = layers.component_paths(base, layers.active(base))[1]
+        self.assertIn("Installation successful: mode=overlay, artifact=wheel", output)
+        self.assertIn(f"base OPP: {base / 'opp/vendors' / layers.BASE}", output)
+        self.assertIn("previous overlay OPP (active): none", output)
+        self.assertIn(f"installed OPP: {original_opp}", output)
+        self.assertIn("selection for a new process: overlay", output)
+
+        output = self.summary_cli_install(base, self.update(full=False, kind="int64"))
+        self.assertIn(f"previous overlay OPP (active): {original_opp}", output)
+        self.assertIn("installed OPP: none (no OPP supplied; previous selection retained)", output)
+        self.assertIn("combination: pending (installed, not enabled; previous active combination unchanged)", output)
+        self.assertIn("selection for a new process: overlay", output)
+        self.assertEqual(layers.component_paths(base, layers.active(base))[1], original_opp)
+
+        opp = package(self.root / "run-update", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        output = self.summary_cli_install(base, opp / "opp/vendors")
+        new_opp = layers.component_paths(base, layers.active(base))[1]
+        self.assertIn("Installation successful: mode=overlay, artifact=run", output)
+        self.assertIn(f"previous overlay OPP (pending): {original_opp}", output)
+        self.assertIn(f"installed OPP: {new_opp}", output)
+        self.assertNotEqual(new_opp, original_opp)
+        self.assertIn("combination: active", output)
+
+        output = self.summary_cli_install(base, self.update(full=False, kind="int64"))
+        self.assertIn(f"previous overlay OPP (active): {new_opp}", output)
+        self.assertIn("installed OPP: none (no OPP supplied; previous selection retained)", output)
+        self.assertEqual(layers.component_paths(base, layers.active(base))[1], new_opp)
+        output = self.summary_cli_install(base, self.update(), FLA_NPU_OVERLAY_VENDOR="")
+        self.assertIn("combination: active", output)
+        self.assertIn("selection for a new process: base", output)
+
+    def test_install_summary_without_base_opp_and_without_active_overlay(self):
+        base = self.summary_cli_base(full=False)
+        output = self.summary_cli_install(base, self.update(full=False))
+        self.assertIn("base OPP: none", output)
+        self.assertIn("combination: pending (installed, not enabled", output)
+        self.assertIn("selection for a new process: base", output)
+        output = self.summary_cli_install(base, self.update())
+        self.assertIn("base OPP: none", output)
+        self.assertIn("combination: active", output)
+        self.assertIn(f"installed OPP: {layers.component_paths(base, layers.active(base))[1]}", output)
+
+    def test_failed_install_does_not_print_success_summary(self):
+        base = self.summary_cli_base()
+        result = subprocess.run([sys.executable, "-m", "fla_npu_opp_manage", "--overlay", "--source",
+                                 str(self.update(corrupt=True))],
+                                env=dict(os.environ, PYTHONPATH=str(base.parent)), cwd=self.root,
+                                capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RECORD", result.stderr)
+        self.assertNotIn("Installation successful", result.stdout)
+        self.assertIsNone(layers.active(base))
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "run installer requires Linux/bash")
+    def test_run_installer_summary_for_managed_and_external_opp(self):
+        base = self.summary_cli_base()
+        stage = self.root / "payload"
+        source = package(stage / "packages", opp={"aclnnDemo": "int64"})
+        shutil.move(str(source / "opp/vendors"), str(stage / "packages/vendors"))
+        installer = stage / "install.sh"
+        installer.write_text((ROOT / "cmake/scripts/custom/install.sh").read_text().replace(
+            "vendor_name=customize", "vendor_name=fla_npu_transformer"))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python").symlink_to(sys.executable)
+        env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.defpath, PYTHONPATH=str(base.parent))
+        previous = None
+        for args in ((), ("--install",), ("--full",)):
+            result = subprocess.run(["bash", str(installer), *args], cwd=stage, env=env,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            current = layers.component_paths(base, layers.active(base))[1]
+            self.assertIn("Installation successful: mode=overlay, artifact=run", result.stdout)
+            self.assertIn(f"previous overlay OPP (active): {previous or 'none'}", result.stdout)
+            self.assertIn(f"installed OPP: {current}", result.stdout)
+            previous = current
+        target = self.root / "external-opp"
+        for previous in ("none", str(target / "vendors" / layers.BASE)):
+            result = subprocess.run(["bash", str(installer), f"--install-path={target}"], cwd=stage, env=env,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("mode=CANN (external OPP; not wheel base/overlay), artifact=run", result.stdout)
+            self.assertIn(f"previous OPP: {previous}", result.stdout)
+            self.assertIn(f"installed OPP: {target / 'vendors' / layers.BASE}", result.stdout)
+
 
 def uuid_name():
     import uuid

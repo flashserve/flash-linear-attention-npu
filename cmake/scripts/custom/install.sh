@@ -327,6 +327,11 @@ delete_optiling_file()
 
 log "[INFO] copy uninstall sh success"
 
+previous_opp="none"
+if [ -d "${targetdir}/${vendordir}" ]; then
+    previous_opp="${targetdir}/${vendordir}"
+fi
+
 if [ ! -d ${targetdir}/vendors ];then
         log "[INFO] create ${targetdir}/vendors."
         mkdir -p ${targetdir}/vendors
@@ -431,4 +436,7 @@ if [ -d ${targetdir}/$vendordir/op_impl/cpu/aicpu_kernel/impl/ ]; then
 fi
 
 echo "SUCCESS"
+printf '[fla-npu] Installation successful: mode=CANN (external OPP; not wheel base/overlay), artifact=run\n'
+printf '[fla-npu] previous OPP: %s\n' "${previous_opp}"
+printf '[fla-npu] installed OPP: %s\n' "${targetdir}/${vendordir}"
 exit 0
