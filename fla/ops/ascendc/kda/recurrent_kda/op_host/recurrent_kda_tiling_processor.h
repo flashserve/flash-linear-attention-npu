@@ -275,7 +275,6 @@ private:
                         headStride > (maxUint64 - featureCount) / (headCount - 1),
                     ReportInvalid("query/key/value/gate/beta", "%s head stride calculation overflows.", name),
                     return ge::GRAPH_FAILED);
-        const uint64_t tokenCount = static_cast<uint64_t>(shape.GetDim(tokenDim));
         const uint64_t tokenMajorSpan = (headCount - 1) * headStride + featureCount;
         OP_CHECK_IF(tokenStride < tokenMajorSpan,
                     ReportInvalid("query/key/value/gate/beta",
@@ -303,13 +302,6 @@ private:
                             "actual=%llu, expected=%llu.", name,
                             static_cast<unsigned long long>(strides[RKDA_DIM_0]),
                             static_cast<unsigned long long>(expectedBatchStride)),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(tokenCount > 1 && tokenStride > (maxUint64 - tokenMajorSpan) / (tokenCount - 1),
-                        ReportInvalid("query/key/value/gate/beta", "%s full batch span calculation overflows.", name),
-                        return ge::GRAPH_FAILED);
-            const uint64_t batchSpan = (tokenCount - 1) * tokenStride + tokenMajorSpan;
-            OP_CHECK_IF(static_cast<uint64_t>(strides[RKDA_DIM_0]) < batchSpan,
-                        ReportInvalid("query/key/value/gate/beta", "%s batch stride overlaps the view.", name),
                         return ge::GRAPH_FAILED);
         }
         return ge::GRAPH_SUCCESS;
@@ -609,9 +601,6 @@ private:
         tiling.keyHeadStride = static_cast<uint64_t>(keyStrides[headDim]);
         tiling.valueTokenStride = static_cast<uint64_t>(valueStrides[tokenDim]);
         tiling.valueHeadStride = static_cast<uint64_t>(valueStrides[headDim]);
-        tiling.queryBatchStride = ctx_.hasCuSeqlens ? 0 : static_cast<uint64_t>(queryStrides[0]);
-        tiling.keyBatchStride = ctx_.hasCuSeqlens ? 0 : static_cast<uint64_t>(keyStrides[0]);
-        tiling.valueBatchStride = ctx_.hasCuSeqlens ? 0 : static_cast<uint64_t>(valueStrides[0]);
         const auto stateInStrides = ResolveStateStrides(false);
         const auto stateOutStrides = ResolveStateStrides(true);
         tiling.stateInStride0 = static_cast<uint64_t>(stateInStrides[RKDA_DIM_0]);

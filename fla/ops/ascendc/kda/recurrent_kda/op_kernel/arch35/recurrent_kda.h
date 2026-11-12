@@ -675,20 +675,12 @@ private:
         }
     }
 
-    __aicore__ inline uint64_t InputOffset(int64_t token, uint64_t head, uint64_t batchStride,
-        uint64_t tokenStride, uint64_t headStride) const
-    {
-        if (tiling_->layout == 0 && !tiling_->hasCuSeqlens) return (uint64_t(token) / tiling_->seqLen) * batchStride +
-            (uint64_t(token) % tiling_->seqLen) * tokenStride + head * headStride;
-        return uint64_t(token) * tokenStride + head * headStride;
-    }
-
     __aicore__ inline void CopyInputTile(uint32_t buffer, int64_t start, uint16_t rows, uint64_t keyHead, uint64_t head,
         uint32_t valueOffset)
     {
-        const uint64_t queryOffset = InputOffset(start, keyHead, tiling_->queryBatchStride, tiling_->queryTokenStride, tiling_->queryHeadStride);
-        const uint64_t keyOffset = InputOffset(start, keyHead, tiling_->keyBatchStride, tiling_->keyTokenStride, tiling_->keyHeadStride);
-        const uint64_t valueGmOffset = InputOffset(start, head, tiling_->valueBatchStride, tiling_->valueTokenStride, tiling_->valueHeadStride) + valueOffset;
+        const uint64_t queryOffset = uint64_t(start) * tiling_->queryTokenStride + keyHead * tiling_->queryHeadStride;
+        const uint64_t keyOffset = uint64_t(start) * tiling_->keyTokenStride + keyHead * tiling_->keyHeadStride;
+        const uint64_t valueGmOffset = uint64_t(start) * tiling_->valueTokenStride + head * tiling_->valueHeadStride + valueOffset;
         const uint64_t gateOffset = (uint64_t(start) * tiling_->nv + head) * DIM;
         const uint64_t betaOffset = uint64_t(start) * tiling_->nv + head;
         const DataCopyPadExtParams<bfloat16_t> pad{false, 0, 0, bfloat16_t(0)};
