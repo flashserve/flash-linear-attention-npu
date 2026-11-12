@@ -79,25 +79,6 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_bwd_finalize -scope=ge
 本套泛化用例按上述分组值域生成，不得通过修改精度阈值或跳过失败用例制造通过结论。
 
 
-## 门控梯度相消回归
-
-单 token、初始状态为零时，门控仅作用于零状态，因此 `dg` 应为零。
-Stage 13 的三个 Cube 累加结果保留 FP32，供 Stage 14 计算门控点积；
-`dq/dk` 仍使用原有 BF16 partial。CPU 标杆遵循相同精度边界。
-
-完整前后向的最简复现命令及修复前后原始输出放在
-[PR #923 描述](https://github.com/flashserve/flash-linear-attention-npu/pull/923)中，可直接复制执行，无需仓内复现脚本。
-该命令检查单 token、零初始状态且无末状态梯度时 `dg == 0`。
-该条件不要求一般输入的门控梯度为零，也不以两组不同输入的梯度相等作为判据。
-
-开发时另行执行了 32 个随机种子和 FP32/BF16 gate 的 64 个独立 finalize 用例，
-检查 `dg == 0`、全部输出有限及重复执行逐位一致。该诊断不替代上述完整 ATK 验收矩阵。
-
-2026-11-11 在 Ascend 950DT/CANN 9.2.1 上，64 个独立 finalize 回归和上述完整链最简复现通过。
-完整链最简复现的 `max(abs(dg))` 从 `4.9896724522e-4` 降为 `0`。
-长序列对照、性能开销和未完成的正式验收项见
-[开发验证记录](../../../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/docs/validation.md)。
-
 ## A2/A3 新增回归（原 A5 路径保留）
 
 上方 200/64/8 条为原 A5 资产，ID、seed 和 payload 未改动；A5 CPU 标杆更新了 Stage 13/14 门控点积的 FP32 精度边界。
