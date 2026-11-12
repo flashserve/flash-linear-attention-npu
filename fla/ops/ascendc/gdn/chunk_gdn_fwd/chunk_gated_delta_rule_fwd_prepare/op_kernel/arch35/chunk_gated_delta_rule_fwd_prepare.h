@@ -6,8 +6,9 @@
  * Memory map: design/chunk_gated_delta_rule_fwd_prepare_ascendc-design.md.
  *
  * Pack: TG = 3 if G=3 else 4. AIV0 tasks 0,2; AIV1 1,3. kkt once per kkt
- * group (OwnsHk): G in {1,2,3,4} keep the HK grouping; G>4 align to the
- * pack of 4 when G % 4 == 0, else every task owns its own kkt (see KktGroup).
+ * group (OwnsHk): G in {1,2,3,4} keep the HK grouping (raw-HV packs); G>4
+ * schedule by (chunk, hk) unit so each unit computes exactly one kkt, with
+ * the unit's extra sub-packs reusing it (see KktGroup / MakePackWalk).
  * L1: Y [0,64); k' aliases NegL [64,128). Pack N+1 Stage1 waits pack N Stage4
  * before the k' L1 write so Stage5/6/7 of N can overlap next Stage1.
  * Do not gate Stage1 on Stage7: that kills the overlap and regresses G=1.
@@ -487,6 +488,19 @@ public:
         }
     }
 
+    // G>4 sibling sub-pack: it holds no (chunk, hk) owner, so the Cube kkt is
+    // not recomputed. The unit's first sub-pack already dumped that shared
+    // kkt into both AIVs' ubKkt, and the AIV skipped the k' upload + Stage1
+    // notify for these tasks. All that is left is to echo the kkt-ready
+    // notify. Do NOT touch FIX_M / M_FIX / M_MTE1 here: every one of those
+    // is Wait→Set paired per task (see Stage4_PrefillI: Mmad Waits FIX_M(bank)
+    // then Sets it back), and a bare Set would push that event counter past
+    // its depth and stall the Cube core.
+    __aicore__ inline void Stage2_AicShareOnly(int64_t taskIdx)
+    {
+        NotifyAivKktDone(taskIdx);
+    }
+
     // ========================= Stage 3 =========================
     // Gate (no kkt) plus I_vcs → ubResVcs, both before WaitCubeKktDone so Exp
     // and the MTE3 copy overlap Cube kkt. I dst is ubResVcs, not ubLFull.
@@ -781,7 +795,7 @@ public:
         Stage0_GenerateResidentAux();
 
         const int64_t packSize = TasksPerPack();
-        const int64_t nPacks = CeilDiv(totalChunks, packSize);
+        const int64_t nPacks = NumPacks();
         for (int64_t pack = coreIdx; pack < nPacks; pack += numCore) {
             const PackWalk cur = MakePackWalk(pack, packSize);
             PackWalk prev{};
@@ -808,6 +822,16 @@ public:
                 Stage3_AivOne(PackWorkId(cur.base, cur.nThis, t) % HV, t);
             }
             if (pack != coreIdx) {
+                // A one-element sub-pack (HRatio 5/9/13) has no task for the
+                // odd sub-block, so the kkt-ready chain that normally orders
+                // this drain after the Cube's Stage7 for `prev` does not exist
+                // for AIV1 and the tail case does not cover it either. Take the
+                // S7Done handshake explicitly; the Cube notifies once per
+                // unit-scheduled pack. Kept away from the Stage1 loop on
+                // purpose -- gating Stage1 on Stage7 kills the pack overlap.
+                if (UnitScheduled() && !(PackHasTail(cur) || PackHasTail(prev))) {
+                    WaitAicStage7Done();
+                }
                 DrainPackWuToGm(prev.base, prev.nThis);
             }
             SetFlag<HardEvent::MTE3_MTE2>(kHeUb0);
@@ -840,18 +864,40 @@ public:
         for (int64_t t = 0; t < packSize; ++t) {
             NotifyAivStage4Done(t);
         }
-        const int64_t nPacks = CeilDiv(totalChunks, packSize);
+        const int64_t nPacks = NumPacks();
         for (int64_t pack = coreIdx; pack < nPacks; pack += numCore) {
             const PackWalk cur = MakePackWalk(pack, packSize);
             WaitFlag<HardEvent::FIX_MTE1>(0);
-            for (int64_t t = 0; t < cur.nThis; ++t) {
-                if (!OwnsHk(PackWorkId(cur.base, cur.nThis, t) % HV)) {
-                    continue;
+            // G>4 walks a (chunk, hk) unit as several sub-packs; only the
+            // unit's first sub-pack owns the kkt. Detect the owner-free packs
+            // so they skip the GEMM and just echo the shared kkt.
+            bool packOwns = true;
+            if (UnitScheduled()) {
+                packOwns = false;
+                for (int64_t t = 0; t < cur.nThis; ++t) {
+                    if (OwnsHk(PackWorkId(cur.base, cur.nThis, t) % HV)) {
+                        packOwns = true;
+                        break;
+                    }
                 }
-                WaitAivStage1Done(t);
-                Stage2_AicOne(t, cur.nThis);
-                if (KktGroup() > 1) {
-                    NotifyKktSiblings(cur.base, cur.nThis, t);
+            }
+            if (!packOwns) {
+                for (int64_t t = 0; t < cur.nThis; ++t) {
+                    Stage2_AicShareOnly(t);
+                }
+            } else {
+                for (int64_t t = 0; t < cur.nThis; ++t) {
+                    if (!OwnsHk(PackWorkId(cur.base, cur.nThis, t) % HV)) {
+                        // Sibling in the owner's pack: skip the GEMM (and every
+                        // Stage2 event pair) but keep per-task ordering. Its kkt
+                        // notify comes from NotifyKktSiblings below.
+                        continue;
+                    }
+                    WaitAivStage1Done(t);
+                    Stage2_AicOne(t, cur.nThis);
+                    if (KktGroup() > 1) {
+                        NotifyKktSiblings(cur.base, cur.nThis, t);
+                    }
                 }
             }
             Stage4_PrefillI(cur.nThis);
@@ -890,7 +936,9 @@ public:
             const int64_t nextPack = pack + numCore;
             if (nextPack < nPacks) {
                 const PackWalk nxt = MakePackWalk(nextPack, packSize);
-                if (PackHasTail(cur) || PackHasTail(nxt)) {
+                // Unit-scheduled packs always hand off S7Done (see ProcessAiv's
+                // drain gate); the tail rule stays for the raw-HV packs.
+                if (UnitScheduled() || PackHasTail(cur) || PackHasTail(nxt)) {
                     NotifyAivStage7Done();
                 }
             } else {

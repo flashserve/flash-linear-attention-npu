@@ -93,8 +93,8 @@ struct ChunkGatedDeltaRuleFwdStageTilingData {
     int64_t valueHeadDim;
 
     // G = Hv / Hk in [1,16]. hk = hv / G. OwnsHk uses the effective kkt
-    // group (KktGroup): G in {1,2,3,4} group by HK, G>4 by pack of 4 when
-    // G % 4 == 0, else per task.
+    // group (KktGroup = G): G in {1,2,3,4} group by HK, G > 4 by (chunk, hk)
+    // unit so each unit computes exactly one kkt.
     int64_t valueHeadsPerQueryKeyHead;
 
     // BT. Tokens in one chunk tile. First version is 64. Last chunk may be shorter.
@@ -317,22 +317,24 @@ struct PrepareState {
         kktGroup = ComputeKktGroup();
     }
 
-    // Effective kkt sharing granularity within a pack: how many consecutive
-    // HV (of the same chunk) read one Cube kkt.
-    //   G in {1,2,3,4}: keep the historical grouping (1 = every task owns).
-    //   G > 4 and G % 4 == 0: a pack of 4 always lies inside one HK group
-    //     (HV = HK * G is a multiple of 4), so each pack shares one kkt.
-    //   G > 4 and G % 4 != 0: a pack of 4 straddles HK groups, so every task
-    //     owns its own kkt (equivalent to the G=1 path, hk = hv / G).
+    // Effective kkt sharing granularity: how many consecutive HV (of the same
+    // chunk) read one Cube kkt.
+    //   G in {1,2,3,4}: historical grouping. One pack still covers <= 4 HV of
+    //     a single HK group, so G=1 means every task owns its own kkt and
+    //     G=2/3/4 mean the HK group shares one kkt.
+    //   G > 4: one kkt per (chunk, hk), shared by all G HV. The scheduler is
+    //     unit-aligned (UnitScheduled / MakePackWalk): a (chunk, hk) unit is
+    //     covered by CeilDiv(G, 4) consecutive sub-packs, the first of which
+    //     owns the kkt and the rest reuse it. OwnsHk() then reduces to
+    //     (hv % HRatio == 0), i.e. only a unit's first task. This removes the
+    //     former O(G) per-HK redundancy for G % 4 != 0 and the 2x redundancy
+    //     for G % 4 == 0.
     __aicore__ inline int64_t ComputeKktGroup() const
     {
-        if (HRatio <= kTasksPerRound) {
-            return HRatio;
-        }
-        if ((HRatio % kTasksPerRound) == 0) {
-            return kTasksPerRound;
-        }
-        return 1;
+        // The sharing granularity is the HK group for every G: G in {1,2,3,4}
+        // reproduces the historical values (one pack <= 4 HV of one HK group),
+        // G > 4 becomes one kkt per (chunk, hk) via the unit scheduler.
+        return HRatio;
     }
 
     __aicore__ inline int64_t KktGroup() const
@@ -362,9 +364,54 @@ struct PrepareState {
         int64_t nThis;
     };
 
+    // G > 4: schedule by (chunk, hk) "unit" instead of by raw HV, so a unit
+    // costs exactly one Cube kkt. Unit u owns work ids [u*G, u*G + G); each
+    // unit is covered by CeilDiv(G, 4) sub-packs of <= 4 tasks, walked back to
+    // back by one core so the first sub-pack owns the kkt and the rest reuse
+    // it. G in {1,2,3,4} keeps the raw-HV pack walk untouched.
+    __aicore__ inline bool UnitScheduled() const
+    {
+        return HRatio > kTasksPerRound;
+    }
+
+    // totalChunks == numChunkTiles * B * HV; one unit == one (chunk, hk), and
+    // HV == HRatio * HK, so the unit count is totalChunks / HRatio.
+    __aicore__ inline int64_t UnitCount() const
+    {
+        return totalChunks / HRatio;
+    }
+
+    __aicore__ inline int64_t SubPacksPerUnit() const
+    {
+        return CeilDiv(HRatio, kTasksPerRound);
+    }
+
+    __aicore__ inline int64_t NumPacks() const
+    {
+        if (UnitScheduled()) {
+            return CeilDiv(UnitCount(), numCore) * numCore * SubPacksPerUnit();
+        }
+        return CeilDiv(totalChunks, TasksPerPack());
+    }
+
     __aicore__ inline PackWalk MakePackWalk(int64_t pack, int64_t packSize) const
     {
         PackWalk w;
+        if (UnitScheduled()) {
+            const int64_t nSub = SubPacksPerUnit();
+            const int64_t ordinal = (pack - coreIdx) / numCore;
+            const int64_t unit = coreIdx + (ordinal / nSub) * numCore;
+            const int64_t sub = ordinal % nSub;
+            if (unit >= UnitCount()) {
+                w.base = 0;
+                w.nThis = 0;
+                return w;
+            }
+            w.base = unit * HRatio + sub * kTasksPerRound;
+            const int64_t remain = HRatio - sub * kTasksPerRound;
+            w.nThis = remain < kTasksPerRound ? remain : kTasksPerRound;
+            return w;
+        }
         w.base = pack * packSize;
         const int64_t remain = totalChunks - w.base;
         w.nThis = remain < packSize ? remain : packSize;
@@ -384,6 +431,11 @@ struct PrepareState {
         const int64_t g = KktGroup();
         if (g <= 1) {
             return taskIdx;
+        }
+        if (g > kTasksPerRound) {
+            // G > 4: the (chunk, hk) kkt is produced by task 0 of the unit's
+            // first sub-pack (ping slot 0); every task of the unit reads it.
+            return 0;
         }
         if (g == 2) {
             if ((hv & 1) == 0) {
