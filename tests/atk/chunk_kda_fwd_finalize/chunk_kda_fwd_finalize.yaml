@@ -1,0 +1,142 @@
+name: chunk_kda_fwd_finalize
+api: pytorch
+api_type: executor_chunk_kda_fwd_finalize
+aclnn_name: ChunkKdaFwdFinalize
+version: v2.1
+generate: generator_chunk_kda_fwd_finalize
+dtype_numbers: 200
+extra_numbers: 0
+shape_distributions:
+  - [0, 1.0]
+standard:
+  acc: mixed_tolerance_bm
+  perf: not_key
+inputs:
+  - name: qg_scaled
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid: &operand_range
+        values: [[-1.0, 1.0]]
+        random_types:
+          - name: nd
+            mean: [0.0]
+            std: [0.4, 0.8]
+        custom_dist_ratio: [[0.5, 0.0], [0.5, 0.0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+    boundary: &positive_boundary
+      has_empty: false
+      has_infnan: false
+      has_scalar: false
+      has_upper_border: false
+      has_lower_border: false
+  - name: aqk
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid: *operand_range
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [64]
+    boundary: *positive_boundary
+  - name: v_new
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid: *operand_range
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+    boundary: *positive_boundary
+  - name: h
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid: *operand_range
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [5]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [128]
+        - values: [128]
+    boundary: *positive_boundary
+  - name: cu_seqlens
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
+  - name: chunk_indices
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
+  - name: output_layout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [BNSD, BSND, NTD, TND]
+      invalid:
+        values: []
+  - name: state_v_first
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
