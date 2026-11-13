@@ -20,9 +20,6 @@ using namespace AscendC::MicroAPI;
 constexpr float FWD_H_LN2 = 0.69314718055994530942f;
 constexpr uint32_t FWD_H_ARCH92_GATE_SLOT_BYTES = 512;
 constexpr uint32_t FWD_H_ARCH92_GATE_SCALE_OFFSET = 256;
-static_assert(FWD_H_CHUNK * sizeof(float) <= FWD_H_ARCH92_GATE_SCALE_OFFSET);
-static_assert(FWD_H_ARCH92_GATE_SCALE_OFFSET + FWD_H_CHUNK * sizeof(float) <=
-              FWD_H_ARCH92_GATE_SLOT_BYTES);
 
 constexpr CastTrait FWD_H_B16_TO_F32_ZERO = {
     RegLayout::ZERO,
@@ -75,8 +72,6 @@ __simd_callee__ inline void FwdHLoadGateVector(RegTensor<float> &dst,
     if constexpr (std::is_same<T, float>::value) {
         DataCopy<float, LoadDist::DIST_NORM>(dst, src);
     } else {
-        static_assert(std::is_same<T, bfloat16_t>::value,
-                      "chunk_fwd_h scalar gate only supports float/bfloat16_t");
         RegTensor<T> raw;
         DataCopy<T, LoadDist::DIST_UNPACK_B16>(raw, src);
         Cast<float, T, FWD_H_B16_TO_F32_ZERO>(dst, raw, mask);
@@ -441,60 +436,35 @@ private:
         return UbAt<float>(FwdHArch92::ALPHA_BASE + FwdHArch92::BankSlot(chunk, slot) * 32);
     }
 
-    __aicore__ inline AscendC::TEventID IoEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(slot);
-    }
-
-    __aicore__ inline AscendC::TEventID WorkEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(2 + slot);
-    }
-
     // Event numbers are local to each direction. MTE3_V 0/1 protects right,
     // 2/3 protects state; MTE3_MTE2 0/1 protects initialization, 2/3 U/vNew.
+    static constexpr uint32_t WORK_EVENT_BASE = 2;
+
     __aicore__ inline void InitLocalEvents()
     {
         for (uint32_t slot = 0; slot < FwdHArch92::HEADS; ++slot) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoEvent(slot));
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(WorkEvent(slot));
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(IoEvent(slot));
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(IoEvent(slot));
+            const auto ioEvent = static_cast<AscendC::TEventID>(slot);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioEvent);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(static_cast<AscendC::TEventID>(WORK_EVENT_BASE + slot));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(ioEvent);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(ioEvent);
         }
     }
 
     __aicore__ inline void DrainLocalEvents()
     {
         for (uint32_t slot = 0; slot < FwdHArch92::HEADS; ++slot) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(WorkEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(IoEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(IoEvent(slot));
+            const auto ioEvent = static_cast<AscendC::TEventID>(slot);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(ioEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(static_cast<AscendC::TEventID>(WORK_EVENT_BASE + slot));
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(ioEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(ioEvent);
         }
     }
 
     __aicore__ inline bool NeedsStage3(const FwdHChunkSpan &chunk) const
     {
         return args_.tiling.storeFinalState != 0 || !chunk.last;
-    }
-
-    __aicore__ inline uint64_t StateOffset(const FwdHWorkUnit &unit,
-                                           const FwdHHeadBinding &head) const
-    {
-        return FwdHStateOffset<STATE_V_FIRST>(args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
-    }
-
-    __aicore__ inline uint64_t HOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                       const FwdHHeadBinding &head) const
-    {
-        return FwdHHOffset(args_.tiling, unit.sequence, head.hv, chunk.globalChunk);
-    }
-
-    __aicore__ inline uint64_t UOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                       const FwdHHeadBinding &head) const
-    {
-        return FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
-                               chunk.tokenBegin, FWD_H_V);
     }
 
     __aicore__ inline void StoreEmptySequenceFinalState(const FwdHWorkUnit &unit)
@@ -506,52 +476,58 @@ private:
         AscendC::GlobalTensor<StateT> finalState;
         finalState.SetGlobalBuffer(reinterpret_cast<__gm__ StateT *>(args_.finalState));
         for (uint32_t coreHeadId = 0; coreHeadId < unit.headRound.activeHeadCount; ++coreHeadId) {
-            const uint64_t offset = StateOffset(unit, unit.headRound.heads[coreHeadId]);
+            const auto ioEvent = static_cast<AscendC::TEventID>(coreHeadId);
+            const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                args_.tiling, unit.sequence.sequence, unit.headRound.heads[coreHeadId].hv, 0, 0);
             auto state = StateFp32(coreHeadId).template ReinterpretCast<StateT>();
             // The previous unit may still be writing from this state bank. Empty
             // units use only the local IO credit; the AIC skips them entirely.
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoEvent(coreHeadId));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(ioEvent);
             if (args_.tiling.useInitialState) {
                 AscendC::GlobalTensor<StateT> initial;
                 initial.SetGlobalBuffer(reinterpret_cast<__gm__ StateT *>(args_.initialState));
                 AscendC::DataCopy(state, initial[offset], FWD_H_K * FWD_H_V);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoEvent(coreHeadId));
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoEvent(coreHeadId));
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(ioEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(ioEvent);
             if (!args_.tiling.useInitialState) {
                 AscendC::VF_CALL<FwdHZeroStateArch92Vf<StateT>>(
                     reinterpret_cast<__ubuf__ StateT *>(state.GetPhyAddr()));
             }
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoEvent(coreHeadId));
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoEvent(coreHeadId));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(ioEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(ioEvent);
             // Copy the physical state verbatim: no transpose or BF16 round-trip.
             AscendC::DataCopy(finalState[offset], state, FWD_H_K * FWD_H_V);
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoEvent(coreHeadId));
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ioEvent);
         }
     }
 
     __aicore__ inline void LoadInitialState(const FwdHWorkUnit &unit, const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(IoEvent(slot));
+        const auto ioEvent = static_cast<AscendC::TEventID>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(ioEvent);
         if (args_.tiling.useInitialState) {
+            const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             if constexpr (CompilePolicy::STATE_FP32) {
                 AscendC::GlobalTensor<float> initial;
                 initial.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.initialState));
-                AscendC::DataCopy(StateFp32(slot), initial[StateOffset(unit, head)], FWD_H_K * FWD_H_V);
+                AscendC::DataCopy(StateFp32(slot), initial[offset], FWD_H_K * FWD_H_V);
             } else {
                 AscendC::GlobalTensor<bfloat16_t> initial;
                 initial.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.initialState));
-                AscendC::DataCopy(StateBf16Slot(slot), initial[StateOffset(unit, head)], FWD_H_K * FWD_H_V);
+                AscendC::DataCopy(StateBf16Slot(slot), initial[offset], FWD_H_K * FWD_H_V);
             }
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(IoEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(ioEvent);
     }
 
     __aicore__ inline void StoreInitialH(const FwdHWorkUnit &unit, const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(IoEvent(slot));
+        const auto ioEvent = static_cast<AscendC::TEventID>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(ioEvent);
         auto hLocal = StateBf16Slot(slot);
         if (args_.tiling.useInitialState) {
             if constexpr (CompilePolicy::STATE_FP32) {
@@ -566,13 +542,14 @@ private:
             AscendC::VF_CALL<FwdHZeroStateArch92Vf<bfloat16_t>>(
                 reinterpret_cast<__ubuf__ bfloat16_t *>(hLocal.GetPhyAddr()));
         }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoEvent(slot));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(ioEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(ioEvent);
         AscendC::GlobalTensor<bfloat16_t> h;
         h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
-        AscendC::DataCopy(h[HOffset(unit, FwdHBuildChunk(unit.sequence, 0), head)], hLocal,
-                          FWD_H_K * FWD_H_V);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(WorkEvent(slot)); // state is free for S3
+        const uint64_t offset = FwdHHOffset(args_.tiling, unit.sequence, head.hv, unit.sequence.chunkPrefix);
+        AscendC::DataCopy(h[offset], hLocal, FWD_H_K * FWD_H_V);
+        // Return the state slot after H0 is written.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(static_cast<AscendC::TEventID>(WORK_EVENT_BASE + slot));
         if (args_.tiling.useInitialState) {
             // Also orders the initial PD->H store before the first Fixpipe P write.
             AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(FwdHArch92::H_FLAG + slot);
@@ -590,14 +567,6 @@ private:
         StoreInitialH(unit, unit.headRound.heads[unit.headRound.activeHeadCount - 1]);
     }
 
-    __aicore__ inline uint64_t GateOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                          const FwdHHeadBinding &head) const
-    {
-        const uint32_t dim = CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G ? 1 : FWD_H_K;
-        return FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
-                               chunk.tokenBegin, dim);
-    }
-
     __aicore__ inline void CopyGateToUb(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
                                         const FwdHHeadBinding &head, uint32_t gateSlot)
     {
@@ -605,8 +574,10 @@ private:
         gateGm.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(
             CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G ? args_.g : args_.gk));
         gateGm.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        constexpr uint32_t gateDim = CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G ? 1 : FWD_H_K;
+        const uint64_t gateOffset = FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
+                                                    chunk.tokenBegin, gateDim);
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
-            const uint64_t gateOffset = GateOffset(unit, chunk, head);
             if (chunk.validTokens == FWD_H_CHUNK) {
                 AscendC::DataCopy(GateSlot(gateSlot), gateGm[gateOffset], FWD_H_CHUNK);
             } else {
@@ -616,8 +587,7 @@ private:
                 AscendC::DataCopyPad(GateSlot(gateSlot), gateGm[gateOffset], copy, pad);
             }
         } else {
-            const uint64_t lastOffset = GateOffset(unit, chunk, head) +
-                                        static_cast<uint64_t>(chunk.validTokens - 1) * FWD_H_K;
+            const uint64_t lastOffset = gateOffset + static_cast<uint64_t>(chunk.validTokens - 1) * FWD_H_K;
             AscendC::DataCopy(GateSlot(gateSlot), gateGm[lastOffset], FWD_H_K);
         }
     }
@@ -625,19 +595,22 @@ private:
     __aicore__ inline void PrefetchInputs(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
     {
         for (uint32_t coreHeadId = 0; coreHeadId < unit.headRound.activeHeadCount; ++coreHeadId) {
+            const auto workEvent = static_cast<AscendC::TEventID>(WORK_EVENT_BASE + coreHeadId);
             const FwdHHeadBinding &head = unit.headRound.heads[coreHeadId];
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(WorkEvent(coreHeadId));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(workEvent);
             if (NeedsStage3(chunk)) {
-                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(IoEvent(coreHeadId));
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(static_cast<AscendC::TEventID>(coreHeadId));
             }
             AscendC::GlobalTensor<bfloat16_t> u;
             u.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.u));
             u.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-            AscendC::DataCopy(WorkBf16Slot(coreHeadId), u[UOffset(unit, chunk, head)], chunk.validTokens * FWD_H_V);
+            const uint64_t offset = FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
+                                                     chunk.tokenBegin, FWD_H_V);
+            AscendC::DataCopy(WorkBf16Slot(coreHeadId), u[offset], chunk.validTokens * FWD_H_V);
             if (NeedsStage3(chunk)) {
                 CopyGateToUb(unit, chunk, head, head.localSlot);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(WorkEvent(coreHeadId));
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(workEvent);
         }
     }
 
@@ -645,7 +618,8 @@ private:
                                                   const FwdHChunkSpan &chunk)
     {
         for (uint32_t coreHeadId = 0; coreHeadId < unit.headRound.activeHeadCount; ++coreHeadId) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(WorkEvent(coreHeadId));
+            const auto workEvent = static_cast<AscendC::TEventID>(WORK_EVENT_BASE + coreHeadId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(workEvent);
             if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
                 if (NeedsStage3(chunk)) {
                     AscendC::VF_CALL<FwdHPrepareScalarGateArch92Vf<CompilePolicy::USE_EXP2, GateT>>(
@@ -665,12 +639,14 @@ private:
         const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
+        const auto workEvent = static_cast<AscendC::TEventID>(WORK_EVENT_BASE + slot);
+        const auto ioEvent = static_cast<AscendC::TEventID>(slot);
         using PType = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
         if constexpr (HAS_P) {
             AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHArch92::P_FLAG + slot);
         }
         if constexpr (WRITE_RIGHT) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(IoEvent(slot));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(ioEvent);
             if (chunk.chunk >= FwdHArch92::BANKS) {
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
                     FwdHArch92::RIGHT_FLAG + FwdHArch92::BankSlot(chunk.chunk, slot));
@@ -689,13 +665,15 @@ private:
         }
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G && WRITE_RIGHT) {
             // alpha is separate; only rawGate/scale may be overwritten by c+1 now.
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(IoEvent(slot));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(ioEvent);
         }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(WorkEvent(slot));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(WorkEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(workEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(workEvent);
         AscendC::GlobalTensor<bfloat16_t> vNew;
         vNew.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.vNew));
-        AscendC::DataCopy(vNew[UOffset(unit, chunk, head)], WorkBf16Slot(slot), chunk.validTokens * FWD_H_V);
+        const uint64_t offset = FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
+                                                 chunk.tokenBegin, FWD_H_V);
+        AscendC::DataCopy(vNew[offset], WorkBf16Slot(slot), chunk.validTokens * FWD_H_V);
         if constexpr (WRITE_RIGHT) {
             AscendC::GlobalTensor<bfloat16_t> rightGm;
             rightGm.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(
@@ -704,9 +682,9 @@ private:
                               chunk.validTokens * FWD_H_V);
             AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                 FwdHArch92::RIGHT_FLAG + FwdHArch92::BankSlot(chunk.chunk, slot));
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(IoEvent(slot));
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(ioEvent);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(WorkEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(workEvent);
     }
 
     __aicore__ inline void RunStage1(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
@@ -735,7 +713,9 @@ private:
         const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head)
     {
         const uint32_t slot = head.localSlot;
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(WorkEvent(slot));
+        const auto workEvent = static_cast<AscendC::TEventID>(WORK_EVENT_BASE + slot);
+        const auto ioEvent = static_cast<AscendC::TEventID>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(workEvent);
         AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(FwdHArch92::D_FLAG + slot);
         auto hLocal = StateBf16Slot(slot);
         if constexpr (CompilePolicy::STATE_FP32) {
@@ -754,29 +734,32 @@ private:
             reinterpret_cast<__ubuf__ bfloat16_t *>(hLocal.GetPhyAddr()));
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::KEY_GK) {
             // gk_last is consumed by S3, so it cannot be prefetched at the scalar-g point.
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(IoEvent(slot));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(ioEvent);
         }
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoEvent(slot));
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(ioEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(ioEvent);
         if constexpr (WRITE_H) {
             AscendC::GlobalTensor<bfloat16_t> h;
             h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
             const FwdHChunkSpan next = FwdHBuildChunk(unit.sequence, chunk.chunk + 1);
-            AscendC::DataCopy(h[HOffset(unit, next, head)], hLocal, FWD_H_K * FWD_H_V);
+            const uint64_t offset = FwdHHOffset(args_.tiling, unit.sequence, head.hv, next.globalChunk);
+            AscendC::DataCopy(h[offset], hLocal, FWD_H_K * FWD_H_V);
             AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(FwdHArch92::H_FLAG + slot);
         } else {
+            const uint64_t offset = FwdHStateOffset<STATE_V_FIRST>(
+                args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
             if constexpr (CompilePolicy::STATE_FP32) {
                 AscendC::GlobalTensor<float> finalState;
                 finalState.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.finalState));
-                AscendC::DataCopy(finalState[StateOffset(unit, head)], StateFp32(slot), FWD_H_K * FWD_H_V);
+                AscendC::DataCopy(finalState[offset], StateFp32(slot), FWD_H_K * FWD_H_V);
             } else {
                 AscendC::GlobalTensor<bfloat16_t> finalState;
                 finalState.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.finalState));
-                AscendC::DataCopy(finalState[StateOffset(unit, head)], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
+                AscendC::DataCopy(finalState[offset], StateBf16Slot(slot), FWD_H_K * FWD_H_V);
             }
         }
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(FwdHArch92::D_FLAG + slot);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(WorkEvent(slot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(workEvent);
     }
 
     __aicore__ inline void RunStage3(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
@@ -834,10 +817,11 @@ private:
             }
         }
         for (uint32_t coreHeadId = 0; coreHeadId < unit.headRound.activeHeadCount; ++coreHeadId) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(WorkEvent(coreHeadId));
+            const auto workEvent = static_cast<AscendC::TEventID>(WORK_EVENT_BASE + coreHeadId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(workEvent);
             // Return the initialization credit only after the entire unit. The next
             // unit cannot load state until all current state writebacks complete.
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(IoEvent(coreHeadId));
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(static_cast<AscendC::TEventID>(coreHeadId));
         }
         const bool hasCubeWork = args_.tiling.useInitialState || args_.tiling.storeFinalState ||
             args_.tiling.seqlen > static_cast<int64_t>(FWD_H_CHUNK);

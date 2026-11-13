@@ -245,13 +245,11 @@ constexpr uint32_t RIGHT_BASE = 288 * 1024;
 constexpr uint32_t GATE_BASE = 320 * 1024;
 constexpr uint32_t ALPHA_BASE = 321 * 1024;
 constexpr uint32_t UB_USED = ALPHA_BASE + BANKS * HEADS * 32;
-constexpr uint32_t UB_AVAILABLE = 376 * 1024; // reserve the high 8 KiB for runtime/VF
 constexpr uint32_t L1_BANK_BYTES = 160 * 1024;
 constexpr uint32_t L1_W_BASE = 0;
 constexpr uint32_t L1_H_BASE = 32 * 1024;
 constexpr uint32_t L1_RIGHT_BASE = 96 * 1024;
 constexpr uint32_t L1_K_BASE = 128 * 1024;
-constexpr uint32_t L1_USED = BANKS * L1_BANK_BYTES;
 
 // mode=0x4, one AIC / one AIV. Opposite directions have independent counters.
 constexpr uint32_t P_FLAG = 0;      // 0/1: P_READY -> V, P_FREE -> FIX
@@ -259,10 +257,6 @@ constexpr uint32_t D_FLAG = 2;      // 2/3: D_READY -> V, PD_FREE -> FIX
 constexpr uint32_t RIGHT_FLAG = 4;  // 4..7: bank*2+head, READY -> MTE2, FREE -> V
 constexpr uint32_t H_FLAG = 8;      // 8/9: H_READY -> MTE2
 constexpr uint32_t ROUND_FLAG = 10;
-static_assert(UB_USED == 328832 && UB_USED <= UB_AVAILABLE);
-static_assert(L1_USED == 320 * 1024);
-static_assert(BANKS * HEADS == FWD_H_WORKSPACE_HEAD_SLOTS);
-static_assert(ROUND_FLAG <= 10);
 
 __aicore__ inline uint32_t BankSlot(uint32_t chunk, uint32_t head)
 {

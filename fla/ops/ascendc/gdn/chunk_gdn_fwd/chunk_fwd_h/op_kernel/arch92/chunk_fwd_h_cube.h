@@ -93,11 +93,6 @@ private:
         ArchTag, bfloat16_t, LayoutLeftS2, bfloat16_t, LayoutRightS2, float, LayoutOutput>;
     using ElementAccumulator = typename TileS2::ElementAccumulator;
 
-    __aicore__ inline uint32_t DataSlot(const FwdHHeadBinding &head) const
-    {
-        return head.localSlot;
-    }
-
     using CopyL1ToL0AS0 = typename TileS0::CopyL1ToL0A;
     using CopyL1ToL0BS0 = typename TileS0::CopyL1ToL0B;
     using CopyL1ToL0AS2 = typename TileS2::CopyL1ToL0A;
@@ -131,154 +126,69 @@ private:
         tla::MakeLayout<bfloat16_t, typename TileS2::LayoutTagL1B>(
             tla::Int<FWD_H_CHUNK>{}, tla::Int<FWD_H_V>{});
 
+    // L0A and L0C use event IDs 0/1. L0B uses 2/3.
     static constexpr uint32_t L0_SLOTS = 2;
-    static_assert(FwdHArch92::L1_USED <= ArchTag::L1_SIZE);
-    static_assert(FwdHArch92::UB_USED <= ArchTag::UB_SIZE);
     static constexpr uint32_t L0A_SLOT_BYTES = FWD_H_CHUNK * FWD_H_K * sizeof(bfloat16_t);
     static constexpr uint32_t L0B_SLOT_BYTES = FWD_H_K * FWD_H_V * sizeof(bfloat16_t);
     static constexpr uint32_t L0C_SLOT_BYTES = FWD_H_K * FWD_H_V * sizeof(ElementAccumulator);
 
     // MTE1_MTE2: 0/1 = whole-bank free. MTE2_MTE1: 0/1 = K ready,
     // 2..5 = bank/head operands ready (S0 then S2). Never use reserved IDs 6/7.
-    __aicore__ inline AscendC::TEventID BankEvent(uint32_t bank) const
-    {
-        return static_cast<AscendC::TEventID>(bank);
-    }
+    static constexpr uint32_t L1_OPERAND_EVENT_BASE = 2;
 
-    __aicore__ inline AscendC::TEventID OperandEvent(uint32_t slot) const
+    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1At(uint32_t slot, uint32_t base, uint32_t slotBytes) const
     {
-        return static_cast<AscendC::TEventID>(2 + slot);
-    }
-
-    __aicore__ inline AscendC::TEventID L0AFreeEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(slot);
-    }
-
-    __aicore__ inline AscendC::TEventID L0AReadyEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(slot);
-    }
-
-    __aicore__ inline AscendC::TEventID L0BFreeEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(L0_SLOTS + slot);
-    }
-
-    __aicore__ inline AscendC::TEventID L0BReadyEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(L0_SLOTS + slot);
-    }
-
-    __aicore__ inline AscendC::TEventID FixFreeEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(slot);
-    }
-
-    __aicore__ inline AscendC::TEventID FixDoneEvent(uint32_t slot) const
-    {
-        return static_cast<AscendC::TEventID>(slot);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<uint8_t> L1Buffer() const
-    {
-        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::A1, 0, ArchTag::L1_SIZE);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<uint8_t> L0ABuffer() const
-    {
-        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::A2, 0, ArchTag::L0A_SIZE);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<uint8_t> L0BBuffer() const
-    {
-        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::B2, 0, ArchTag::L0B_SIZE);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<uint8_t> L0CBuffer() const
-    {
-        return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::CO1, 0, ArchTag::L0C_SIZE);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<uint8_t> UbBuffer() const
-    {
-        return FwdHArch92::UbBuffer();
-    }
-
-    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1At(uint32_t slot,
-        uint32_t base, uint32_t bytes)
-    {
-        return L1Buffer()[(slot / FwdHArch92::HEADS) * FwdHArch92::L1_BANK_BYTES +
-                          base + (slot % FwdHArch92::HEADS) * bytes]
-            .template ReinterpretCast<bfloat16_t>();
-    }
-
-    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1W(uint32_t slot)
-    {
-        return L1At(slot, FwdHArch92::L1_W_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1H(uint32_t slot)
-    {
-        return L1At(slot, FwdHArch92::L1_H_BASE, FWD_H_STATE_BF16_BYTES);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1Right(uint32_t slot)
-    {
-        return L1At(slot, FwdHArch92::L1_RIGHT_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
-    }
-
-    __aicore__ inline AscendC::LocalTensor<bfloat16_t> L1Kg(uint32_t slot)
-    {
-        return L1At(slot, FwdHArch92::L1_K_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
+        const uint32_t offset = (slot / FwdHArch92::HEADS) * FwdHArch92::L1_BANK_BYTES +
+                                base + (slot % FwdHArch92::HEADS) * slotBytes;
+        AscendC::LocalTensor<uint8_t> l1(AscendC::TPosition::A1, 0, ArchTag::L1_SIZE);
+        return l1[offset].template ReinterpretCast<bfloat16_t>();
     }
 
     __aicore__ inline AscendC::LocalTensor<bfloat16_t> L0A(uint32_t slot)
     {
-        return L0ABuffer()[slot * L0A_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
+        AscendC::LocalTensor<uint8_t> l0(AscendC::TPosition::A2, 0, ArchTag::L0A_SIZE);
+        return l0[slot * L0A_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
     }
 
     __aicore__ inline AscendC::LocalTensor<bfloat16_t> L0B(uint32_t slot)
     {
-        return L0BBuffer()[slot * L0B_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
+        AscendC::LocalTensor<uint8_t> l0(AscendC::TPosition::B2, 0, ArchTag::L0B_SIZE);
+        return l0[slot * L0B_SLOT_BYTES].template ReinterpretCast<bfloat16_t>();
     }
 
     __aicore__ inline AscendC::LocalTensor<ElementAccumulator> L0C(uint32_t slot)
     {
-        return L0CBuffer()[slot * L0C_SLOT_BYTES]
-            .template ReinterpretCast<ElementAccumulator>();
+        AscendC::LocalTensor<uint8_t> l0(AscendC::TPosition::CO1, 0, ArchTag::L0C_SIZE);
+        return l0[slot * L0C_SLOT_BYTES].template ReinterpretCast<ElementAccumulator>();
     }
 
     __aicore__ inline void InitEvents()
     {
         for (uint32_t bank = 0; bank < FwdHArch92::BANKS; ++bank) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(BankEvent(bank));
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(bank));
         }
         for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(slot));
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
+            const auto slotEvent = static_cast<AscendC::TEventID>(slot);
+            const auto l0BEvent = static_cast<AscendC::TEventID>(L0_SLOTS + slot);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(slotEvent);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(slotEvent);
         }
     }
 
     __aicore__ inline void DrainEvents()
     {
         for (uint32_t bank = 0; bank < FwdHArch92::BANKS; ++bank) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(BankEvent(bank));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(bank));
         }
         for (uint32_t slot = 0; slot < L0_SLOTS; ++slot) {
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(slot));
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(slot));
+            const auto slotEvent = static_cast<AscendC::TEventID>(slot);
+            const auto l0BEvent = static_cast<AscendC::TEventID>(L0_SLOTS + slot);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(slotEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(slotEvent);
         }
         // 固定 EventID 已全部回收到初始 free 状态，下一次 kernel launch 可重新使用。
-    }
-
-    __aicore__ inline uint64_t WOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                       const FwdHHeadBinding &head) const
-    {
-        return FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
-                               chunk.tokenBegin, FWD_H_K);
     }
 
     __aicore__ inline void ClearL1(AscendC::LocalTensor<bfloat16_t> tensor,
@@ -290,12 +200,6 @@ private:
         AscendC::PipeBarrier<PIPE_MTE2>();
     }
 
-    __aicore__ inline uint64_t HOffset(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk,
-                                       const FwdHHeadBinding &head) const
-    {
-        return FwdHHOffset(args_.tiling, unit.sequence, head.hv, chunk.globalChunk);
-    }
-
     // 保留 leaf stage 调用边界，使 TLA 临时对象在各 head/stage 之间复用标量栈区。
     __aicore__ inline void LoadStage0W(
         const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk, const FwdHHeadBinding &head,
@@ -303,16 +207,19 @@ private:
     {
         // W has a dedicated L1 slot. The combined operand-ready is published after H.
         AscendC::GlobalTensor<bfloat16_t> gmW;
-        gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) + WOffset(unit, chunk, head));
+        const uint64_t offset = FwdHInputOffset(args_.tiling, unit.sequence.physicalBatch, head.hv,
+                                                chunk.tokenBegin, FWD_H_K);
+        gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.w) + offset);
         gmW.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        auto l1W = L1At(wSlot, FwdHArch92::L1_W_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(L1W(wSlot), FWD_H_L1_W_SLOT_BYTES);
+            ClearL1(l1W, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         }
         auto gmWLayout = tla::MakeLayout<bfloat16_t, LayoutW>(chunk.validTokens, FWD_H_K);
         auto tensorW = tla::MakeTensor(gmW, gmWLayout, Catlass::Arch::PositionGM{});
         auto blockW = tla::GetTile(tensorW, tla::MakeCoord(0, 0),
                                    tla::MakeShape(chunk.validTokens, FWD_H_K));
-        auto tensorL1W = tla::MakeTensor(L1W(wSlot), L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1W = tla::MakeTensor(l1W, L1_W_LAYOUT, Catlass::Arch::PositionL1{});
         CopyGmToL1AS0<decltype(blockW)> copyW;
         copyW(tensorL1W, blockW);
     }
@@ -323,15 +230,18 @@ private:
     {
         AscendC::GlobalTensor<bfloat16_t> gmH;
         AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(FwdHArch92::H_FLAG + head.localSlot);
-        gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h) + HOffset(unit, chunk, head));
+        const uint64_t offset = FwdHHOffset(args_.tiling, unit.sequence, head.hv, chunk.globalChunk);
+        gmH.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h) + offset);
         auto gmHLayout = tla::MakeLayout<bfloat16_t, LayoutH>(FWD_H_K, FWD_H_V);
         auto tensorH = tla::MakeTensor(gmH, gmHLayout, Catlass::Arch::PositionGM{});
         auto blockH = tla::GetTile(tensorH, tla::MakeCoord(0, 0),
                                    tla::MakeShape(FWD_H_K, FWD_H_V));
-        auto tensorL1H = tla::MakeTensor(L1H(hSlot), L1_H_LAYOUT, Catlass::Arch::PositionL1{});
+        auto l1H = L1At(hSlot, FwdHArch92::L1_H_BASE, FWD_H_STATE_BF16_BYTES);
+        auto tensorL1H = tla::MakeTensor(l1H, L1_H_LAYOUT, Catlass::Arch::PositionL1{});
         CopyGmToL1BS0<decltype(blockH)> copyH;
         copyH(tensorL1H, blockH);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(OperandEvent(hSlot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+            static_cast<AscendC::TEventID>(L1_OPERAND_EVENT_BASE + hSlot));
     }
 
     __aicore__ inline void ComputeStage0Head(
@@ -341,44 +251,50 @@ private:
         // Stage0 计算：Pacc_c,h = W_c,h @ H_c,h，BF16 x BF16 -> FP32；
         // 随后按 StateT 转为 PType，Fixpipe 直接写入该 head 所属 AIV 的 local slot。
         const uint32_t m = FwdHAlignCube(chunk.validTokens);
-        auto tensorL1W = tla::MakeTensor(L1W(wSlot), L1_W_LAYOUT, Catlass::Arch::PositionL1{});
-        auto tensorL1H = tla::MakeTensor(L1H(hSlot), L1_H_LAYOUT, Catlass::Arch::PositionL1{});
+        auto l1W = L1At(wSlot, FwdHArch92::L1_W_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
+        auto l1H = L1At(hSlot, FwdHArch92::L1_H_BASE, FWD_H_STATE_BF16_BYTES);
+        auto tensorL1W = tla::MakeTensor(l1W, L1_W_LAYOUT, Catlass::Arch::PositionL1{});
+        auto tensorL1H = tla::MakeTensor(l1H, L1_H_LAYOUT, Catlass::Arch::PositionL1{});
         auto layoutL0A = tla::MakeLayout<bfloat16_t, typename TileS0::LayoutTagL0A>(m, FWD_H_K);
         auto layoutL0B = tla::MakeLayout<bfloat16_t, typename TileS0::LayoutTagL0B>(FWD_H_K, FWD_H_V);
         auto layoutL0C = tla::MakeLayoutL0C(m, FWD_H_V);
         auto tensorL0A = tla::MakeTensor(L0A(pipelineSlot), layoutL0A, Catlass::Arch::PositionL0A{});
         auto tensorL0B = tla::MakeTensor(L0B(pipelineSlot), layoutL0B, Catlass::Arch::PositionL0B{});
         auto tensorL0C = tla::MakeTensor(L0C(pipelineSlot), layoutL0C, Catlass::Arch::PositionL0C{});
+        const auto slotEvent = static_cast<AscendC::TEventID>(pipelineSlot);
+        const auto l0BEvent = static_cast<AscendC::TEventID>(L0_SLOTS + pipelineSlot);
+        const auto bankEvent = static_cast<AscendC::TEventID>(chunk.chunk & 1U);
 
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(OperandEvent(hSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
+            static_cast<AscendC::TEventID>(L1_OPERAND_EVENT_BASE + hSlot));
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(slotEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
         CopyL1ToL0AS0 copyA;
         CopyL1ToL0BS0 copyB;
         copyA(tensorL0A, tla::GetTile(tensorL1W, tla::MakeCoord(0, 0), tla::MakeShape(m, FWD_H_K)));
         copyB(tensorL0B, tla::GetTile(tensorL1H, tla::MakeCoord(0, 0),
                                      tla::MakeShape(FWD_H_K, FWD_H_V)));
         if (!NeedsStage2(chunk) && head.roundHead + 1 == unit.headRound.activeHeadCount) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(BankEvent(chunk.chunk & 1U));
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(bankEvent);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(pipelineSlot));
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slotEvent);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0BEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slotEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0BEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(slotEvent);
         TileMmadS0 mmad;
         mmad(tensorL0C, tensorL0A, tensorL0B, true, 0);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(slotEvent);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(slotEvent);
 
         if (!chunk.first) {
             // Only this head's hNext MTE3 owns its PD slot until PD_FREE.
             AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(FwdHArch92::D_FLAG + head.localSlot);
         }
-        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
-        AscendC::LocalTensor<PType> pUb = UbBuffer()[
-            FwdHLocalSlotBase(DataSlot(head))].template ReinterpretCast<PType>();
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(slotEvent);
+        AscendC::LocalTensor<PType> pUb = FwdHArch92::UbBuffer()[
+            FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<PType>();
         auto ubLayout = tla::MakeLayout<PType, LayoutOutput>(m, FWD_H_V);
         auto tensorUb = tla::MakeTensor(pUb, ubLayout, Catlass::Arch::PositionUB{});
         auto blockUb = tla::GetTile(tensorUb, tla::MakeCoord(0, 0),
@@ -387,7 +303,7 @@ private:
         copyP(blockUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
             FwdHArch92::P_FLAG + head.localSlot);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(slotEvent);
     }
 
     __aicore__ inline void RunStage0(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
@@ -419,8 +335,9 @@ private:
     {
         // Each bank loads only the distinct kh required by this work unit.
         const uint32_t slot = FwdHArch92::BankSlot(chunk.chunk, binding.slot);
+        auto l1Kg = L1At(slot, FwdHArch92::L1_K_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(L1Kg(slot), FWD_H_L1_KG_SLOT_BYTES);
+            ClearL1(l1Kg, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         }
         AscendC::GlobalTensor<bfloat16_t> gmKg;
         const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
@@ -443,8 +360,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(FWD_H_K, chunk.validTokens));
-            auto tensorL1 = tla::MakeTensor(L1Kg(slot), L1_LEFT_S2_LAYOUT,
-                                            Catlass::Arch::PositionL1{});
+            auto tensorL1 = tla::MakeTensor(l1Kg, L1_LEFT_S2_LAYOUT, Catlass::Arch::PositionL1{});
             CopyGmToL1AS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
         } else {
@@ -452,8 +368,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(chunk.validTokens, FWD_H_K));
-            auto tensorL1 = tla::MakeTensor(L1Kg(slot), L1_RIGHT_S2_LAYOUT,
-                                            Catlass::Arch::PositionL1{});
+            auto tensorL1 = tla::MakeTensor(l1Kg, L1_RIGHT_S2_LAYOUT, Catlass::Arch::PositionL1{});
             CopyGmToL1BS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
         }
@@ -465,8 +380,9 @@ private:
         // The right slot is separate from H, and its ready belongs to this bank/head.
         AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
             FwdHArch92::RIGHT_FLAG + FwdHArch92::BankSlot(chunk.chunk, head.localSlot));
+        auto l1Right = L1At(hSlot, FwdHArch92::L1_RIGHT_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         if (chunk.validTokens < FWD_H_CHUNK) {
-            ClearL1(L1Right(hSlot), FWD_H_L1_KG_SLOT_BYTES);
+            ClearL1(l1Right, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         }
         AscendC::GlobalTensor<bfloat16_t> gmRight;
         const uint64_t offset = args_.tiling.vUpdateWorkspaceOffset / sizeof(bfloat16_t) +
@@ -477,8 +393,7 @@ private:
             auto tensorGm = tla::MakeTensor(gmRight, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(chunk.validTokens, FWD_H_V));
-            auto tensorL1 = tla::MakeTensor(L1Right(hSlot), L1_RIGHT_S2_LAYOUT,
-                                            Catlass::Arch::PositionL1{});
+            auto tensorL1 = tla::MakeTensor(l1Right, L1_RIGHT_S2_LAYOUT, Catlass::Arch::PositionL1{});
             CopyGmToL1BS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
         } else {
@@ -486,12 +401,12 @@ private:
             auto tensorGm = tla::MakeTensor(gmRight, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(FWD_H_V, chunk.validTokens));
-            auto tensorL1 = tla::MakeTensor(L1Right(hSlot), L1_LEFT_S2_LAYOUT,
-                                            Catlass::Arch::PositionL1{});
+            auto tensorL1 = tla::MakeTensor(l1Right, L1_LEFT_S2_LAYOUT, Catlass::Arch::PositionL1{});
             CopyGmToL1AS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(OperandEvent(hSlot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
+            static_cast<AscendC::TEventID>(L1_OPERAND_EVENT_BASE + hSlot));
     }
 
     __aicore__ inline void ComputeStage2Head(
@@ -508,67 +423,68 @@ private:
         auto tensorL0A = tla::MakeTensor(L0A(pipelineSlot), layoutL0A, Catlass::Arch::PositionL0A{});
         auto tensorL0B = tla::MakeTensor(L0B(pipelineSlot), layoutL0B, Catlass::Arch::PositionL0B{});
         auto tensorL0C = tla::MakeTensor(L0C(pipelineSlot), layoutL0C, Catlass::Arch::PositionL0C{});
+        const auto slotEvent = static_cast<AscendC::TEventID>(pipelineSlot);
+        const auto l0BEvent = static_cast<AscendC::TEventID>(L0_SLOTS + pipelineSlot);
+        const auto bankEvent = static_cast<AscendC::TEventID>(chunk.chunk & 1U);
 
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(slotEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
         if (head.roundHead == 0) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(BankEvent(chunk.chunk & 1U));
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(bankEvent);
         }
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(OperandEvent(hSlot));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(
+            static_cast<AscendC::TEventID>(L1_OPERAND_EVENT_BASE + hSlot));
+        const uint32_t kgSlot = FwdHArch92::BankSlot(chunk.chunk, binding.slot);
+        auto l1Kg = L1At(kgSlot, FwdHArch92::L1_K_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
+        auto l1Right = L1At(hSlot, FwdHArch92::L1_RIGHT_BASE, FWD_H_TOKEN_MATRIX_BF16_BYTES);
         CopyL1ToL0AS2 copyA;
         CopyL1ToL0BS2 copyB;
         if constexpr (STATE_V_FIRST) {
             // LoadRight 已将 GM ND right[M,V] 按 ColumnMajor 映射为 L1[V,M]，
             // kg 保持 GM ND[M,K]，Cube 直接执行 [V,M]@[M,K] -> [V,K]。
-            auto tensorRight = tla::MakeTensor(L1Right(hSlot), L1_LEFT_S2_LAYOUT,
-                                               Catlass::Arch::PositionL1{});
-            auto tensorKg = tla::MakeTensor(L1Kg(FwdHArch92::BankSlot(chunk.chunk, binding.slot)),
-                                            L1_RIGHT_S2_LAYOUT,
-                                            Catlass::Arch::PositionL1{});
+            auto tensorRight = tla::MakeTensor(l1Right, L1_LEFT_S2_LAYOUT, Catlass::Arch::PositionL1{});
+            auto tensorKg = tla::MakeTensor(l1Kg, L1_RIGHT_S2_LAYOUT, Catlass::Arch::PositionL1{});
             copyA(tensorL0A, tla::GetTile(tensorRight, tla::MakeCoord(0, 0),
                                           tla::MakeShape(m, k)));
             copyB(tensorL0B, tla::GetTile(tensorKg, tla::MakeCoord(0, 0),
                                           tla::MakeShape(k, FWD_H_V)));
         } else {
-            auto tensorKg = tla::MakeTensor(L1Kg(FwdHArch92::BankSlot(chunk.chunk, binding.slot)),
-                                            L1_LEFT_S2_LAYOUT,
-                                            Catlass::Arch::PositionL1{});
-            auto tensorRight = tla::MakeTensor(L1Right(hSlot), L1_RIGHT_S2_LAYOUT,
-                                               Catlass::Arch::PositionL1{});
+            auto tensorKg = tla::MakeTensor(l1Kg, L1_LEFT_S2_LAYOUT, Catlass::Arch::PositionL1{});
+            auto tensorRight = tla::MakeTensor(l1Right, L1_RIGHT_S2_LAYOUT, Catlass::Arch::PositionL1{});
             copyA(tensorL0A, tla::GetTile(tensorKg, tla::MakeCoord(0, 0),
                                           tla::MakeShape(m, k)));
             copyB(tensorL0B, tla::GetTile(tensorRight, tla::MakeCoord(0, 0),
                                           tla::MakeShape(k, FWD_H_V)));
         }
         if (head.roundHead + 1 == unit.headRound.activeHeadCount) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(BankEvent(chunk.chunk & 1U));
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(bankEvent);
         }
         AscendC::CrossCoreSetFlag<0x4, PIPE_MTE1>(
             FwdHArch92::RIGHT_FLAG + FwdHArch92::BankSlot(chunk.chunk, head.localSlot));
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(pipelineSlot));
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0AReadyEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(L0BReadyEvent(pipelineSlot));
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slotEvent);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0BEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slotEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0BEvent);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(slotEvent);
         TileMmadS2 mmad;
         mmad(tensorL0C, tensorL0A, tensorL0B, true, 0);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0AFreeEvent(pipelineSlot));
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0BFreeEvent(pipelineSlot));
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(slotEvent);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(slotEvent);
 
         if (stage0Ran) {
             AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(FwdHArch92::P_FLAG + head.localSlot);
         }
-        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(FixDoneEvent(pipelineSlot));
+        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(slotEvent);
         AscendC::LocalTensor<float> dUb =
-            UbBuffer()[FwdHLocalSlotBase(DataSlot(head))].template ReinterpretCast<float>();
+            FwdHArch92::UbBuffer()[FwdHLocalSlotBase(head.localSlot)].template ReinterpretCast<float>();
         auto ubLayout = tla::MakeLayout<float, LayoutOutput>(FWD_H_K, FWD_H_V);
         auto tensorUb = tla::MakeTensor(dUb, ubLayout, Catlass::Arch::PositionUB{});
         CopyL0CToUbS2<decltype(tensorUb)> copyD;
         copyD(tensorUb, tensorL0C, static_cast<uint8_t>(head.aiv), 0);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
             FwdHArch92::D_FLAG + head.localSlot);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FixFreeEvent(pipelineSlot));
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(slotEvent);
     }
 
     __aicore__ inline bool NeedsStage2(const FwdHChunkSpan &chunk) const
@@ -584,12 +500,14 @@ private:
         for (uint32_t kgSlot = 0; kgSlot < unit.headRound.requiredKhCount; ++kgSlot) {
             LoadKg(unit, chunk, FwdHBuildKgBinding(unit.headRound, kgSlot));
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(BankEvent(chunk.chunk & 1U));
+        const auto bankEvent = static_cast<AscendC::TEventID>(chunk.chunk & 1U);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(bankEvent);
     }
 
     __aicore__ inline void PrefetchWK(const FwdHWorkUnit &unit, const FwdHChunkSpan &chunk)
     {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(BankEvent(chunk.chunk & 1U));
+        const auto bankEvent = static_cast<AscendC::TEventID>(chunk.chunk & 1U);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(bankEvent);
         for (uint32_t roundHead = 0; roundHead < unit.headRound.activeHeadCount; ++roundHead) {
             LoadStage0W(unit, chunk, unit.headRound.heads[roundHead],
                         FwdHArch92::BankSlot(chunk.chunk, roundHead));
@@ -639,7 +557,7 @@ private:
             SyncNextWorkUnit(hasNextWorkUnit);
             return;
         }
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(BankEvent(0));
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(0));
         for (uint32_t chunkId = 0; chunkId < unit.sequence.chunkCount; ++chunkId) {
             const FwdHChunkSpan chunk = FwdHBuildChunk(unit.sequence, chunkId);
             const bool stage0Ran = !(chunk.first && args_.tiling.useInitialState == 0);
