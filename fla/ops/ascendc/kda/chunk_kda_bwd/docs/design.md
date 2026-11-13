@@ -18,6 +18,10 @@
 
 ## 原 ACLNN 入口的形状描述
 
+A2/A3 总接口在创建 executor 和调用 L0 前校验 `safe_gate=True`，覆盖保存缓存和
+重计算路径。组合调用直接复用 Finalize 的 L0，不经过独立 Finalize ACLNN 入口，
+因此总接口须自行保证这一属性约束，避免由 tiling 失败转换成内部空指针错误。
+
 `aclnnChunkKdaBwdGetWorkspaceSize` 在调用 L0 前，将所有非空输入和输出的
 `OriginalShape` 统一为 `ViewShape`，避免一维存储描述导致 tiling 误判逻辑 rank。
 该操作原地更新 descriptor，不改变 StorageShape、stride、offset 或数据布局；

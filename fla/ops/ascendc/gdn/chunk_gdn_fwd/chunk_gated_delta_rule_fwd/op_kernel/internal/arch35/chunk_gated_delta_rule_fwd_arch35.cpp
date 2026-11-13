@@ -4,6 +4,7 @@
  */
 #include "chunk_gated_delta_rule_fwd_arch35_struct.h"
 #include "ho_pipeline_context.h"
+#include "chunk_gated_delta_rule_fwd_chunk32/chunk_gated_delta_rule_fwd_32.h"
 #include <type_traits>
 
 #include "../gated_delta_rule_state_update_output/chunk_gated_delta_rule_state_update_output.cpp"
@@ -476,11 +477,30 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR a_storage, GM_ADDR raw_g,
     GM_ADDR gk, GM_ADDR initial_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
     GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A,
+    GM_ADDR q_hat, GM_ADDR k_hat, GM_ADDR q_rstd, GM_ADDR k_rstd, GM_ADDR h, GM_ADDR beta_eff,
     GM_ADDR workspace, GM_ADDR tiling)
 {
-    (void)a_storage;
     REGISTER_TILING_DEFAULT(GDN::Arch35ChunkGatedDeltaRuleFwdTrailer);
-    if (TILING_KEY_IS(1)) {
+    if (TILING_KEY_IS(32)) {
+        KERNEL_TASK_TYPE(32, KERNEL_TYPE_MIX_AIC_1_2);
+        GET_TILING_DATA_WITH_STRUCT(
+            ChunkGatedDeltaRuleFwd32TilingData, chunk32Tiling, tiling);
+        const bool fastInfer = chunk32Tiling.stateVFirst == 0 && chunk32Tiling.allowNegEigval == 0 &&
+                               (chunk32Tiling.seqNum & 0xf0000000u) == 0;
+        if (fastInfer) {
+            GdnFwd32::Kernel<true> op;
+            op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
+                    o, final_state, g_cumsum_bth, A, q_hat, k_hat, q_rstd, k_rstd, h, beta_eff,
+                    chunk32Tiling);
+            op.Process();
+        } else {
+            GdnFwd32::Kernel<false> op;
+            op.Init(q, k, v, raw_g, a_storage, initial_state, cu_seqlens,
+                    o, final_state, g_cumsum_bth, A, q_hat, k_hat, q_rstd, k_rstd, h, beta_eff,
+                    chunk32Tiling);
+            op.Process();
+        }
+    } else if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
         GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
             q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,

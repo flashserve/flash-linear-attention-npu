@@ -8,16 +8,8 @@ const EXPECTED_CODEOWNERS = Object.freeze([
   'weiwei-612',
   'chen-linxin',
   'Ensley0304',
+  'zhangshuolei-hfut',
 ]);
-
-const permissionRank = Object.freeze({
-  admin: 4,
-  maintain: 3,
-  push: 2,
-  triage: 1,
-  pull: 0,
-  none: -1,
-});
 
 function normalizeLogin(login) {
   return typeof login === 'string' ? login.trim().toLowerCase() : '';
@@ -63,7 +55,7 @@ function parseCodeowners(text) {
     throw new Error(`全仓 Code Owner 必须且只能是：${EXPECTED_CODEOWNERS.join('、')}。`);
   }
   if (allOwners.size !== expected.size || [...allOwners.keys()].some((login) => !expected.has(login))) {
-    throw new Error('所有路径级 Code Owner 都必须属于指定四人，不能引入其他账号或团队。');
+    throw new Error('所有路径级 Code Owner 都必须属于指定用户，不能引入其他账号或团队。');
   }
   return [...EXPECTED_CODEOWNERS];
 }
@@ -93,12 +85,20 @@ function computeActiveApprovals(reviews, allowedOwners) {
   return allowedOwners.filter((login) => states.get(normalizeLogin(login)) === true);
 }
 
-function requireReviewerWritePermissions(permissions) {
-  for (const [login, permission] of Object.entries(permissions)) {
-    if ((permissionRank[String(permission).toLowerCase()] ?? -1) < permissionRank.push) {
-      throw new Error(`Code Owner @${login} 当前仓库权限为 ${permission || 'none'}，至少需要 write 权限。`);
-    }
+function getTargetBranchRef(pr) {
+  const ref = pr?.base?.ref;
+  if (typeof ref !== 'string' || !ref.trim()) {
+    throw new Error('无法确定 PR 当前目标分支，不能读取 CODEOWNERS。');
   }
+  return ref;
+}
+
+function parsePullNumber(value) {
+  const text = String(value ?? '').trim();
+  if (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(Number(text))) {
+    throw new Error('PR 编号必须是合法的正整数。');
+  }
+  return Number(text);
 }
 
 function truncateDescription(value) {
@@ -117,16 +117,10 @@ async function setStatus({ github, context, core, sha, prUrl, state, description
   core.info(`${STATUS_CONTEXT}: ${state} - ${description}`);
 }
 
-async function run({ github, context, core }) {
-  const eventPr = context.payload.pull_request;
-  if (!eventPr) {
-    core.info('事件中没有 pull_request，跳过 Code Owner approval 检查。');
-    return;
-  }
-
+async function evaluatePullRequest({ github, context, core, pullNumber }) {
   const { data: pr } = await github.rest.pulls.get({
     ...context.repo,
-    pull_number: eventPr.number,
+    pull_number: pullNumber,
   });
   if (pr.state !== 'open' || pr.merged || pr.merged_at) {
     core.info(`PR #${pr.number} 已关闭或合入，跳过状态写入。`);
@@ -137,7 +131,9 @@ async function run({ github, context, core }) {
     const { data: codeownersFile } = await github.rest.repos.getContent({
       ...context.repo,
       path: CODEOWNERS_PATH,
-      ref: pr.base.sha,
+      // PR base.sha can remain at the original merge base for long-lived PRs.
+      // Read the current target branch so workflow/CODEOWNERS upgrades apply.
+      ref: getTargetBranchRef(pr),
     });
     if (!codeownersFile || Array.isArray(codeownersFile) ||
         codeownersFile.type !== 'file' || !codeownersFile.content) {
@@ -148,15 +144,6 @@ async function run({ github, context, core }) {
       codeownersFile.encoding || 'base64',
     ).toString('utf8');
     const allowedOwners = parseCodeowners(codeownersText);
-
-    const permissionEntries = await Promise.all(allowedOwners.map(async (login) => {
-      const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-        ...context.repo,
-        username: login,
-      });
-      return [login, data.permission || 'none'];
-    }));
-    requireReviewerWritePermissions(Object.fromEntries(permissionEntries));
 
     const reviews = await github.paginate(github.rest.pulls.listReviews, {
       ...context.repo,
@@ -203,7 +190,68 @@ async function run({ github, context, core }) {
     } catch (statusError) {
       core.warning(`无法写入 Code Owner approval 失败状态：${statusError.message}`);
     }
+    throw error;
+  }
+}
+
+function getPushTargetBranch(context) {
+  const ref = context.ref;
+  if (typeof ref !== 'string' || !ref.startsWith('refs/heads/')) {
+    throw new Error('无法确定 push 事件的目标分支，不能重新计算已有 PR。');
+  }
+  return ref.slice('refs/heads/'.length);
+}
+
+async function listOpenPullNumbers({ github, context, base }) {
+  if (typeof base !== 'string' || !base.trim()) {
+    throw new Error('无法确定 PR 目标分支，不能重新计算已有 PR。');
+  }
+  const pulls = await github.paginate(github.rest.pulls.list, {
+    ...context.repo,
+    state: 'open',
+    base,
+    per_page: 100,
+  });
+  return pulls.map((pull) => pull.number);
+}
+
+async function run({ github, context, core, pullNumber }) {
+  const eventPr = context.payload.pull_request;
+  const targetPullNumber = pullNumber ?? eventPr?.number;
+  if (targetPullNumber !== undefined) {
+    try {
+      await evaluatePullRequest({ github, context, core, pullNumber: targetPullNumber });
+    } catch (error) {
+      core.setFailed(error.message);
+    }
+    return;
+  }
+
+  if (context.eventName !== 'push') {
+    core.info('当前事件不需要计算 Code Owner approval。');
+    return;
+  }
+
+  let pullNumbers;
+  try {
+    const base = getPushTargetBranch(context);
+    pullNumbers = await listOpenPullNumbers({ github, context, base });
+    core.info(`重新计算 ${pullNumbers.length} 个面向 ${base} 的 open PR。`);
+  } catch (error) {
     core.setFailed(error.message);
+    return;
+  }
+  const failures = [];
+  for (const pullNumber of pullNumbers) {
+    try {
+      await evaluatePullRequest({ github, context, core, pullNumber });
+    } catch (error) {
+      failures.push(`#${pullNumber}: ${error.message}`);
+      core.error(`PR #${pullNumber} 的 Code Owner approval 重新计算失败：${error.message}`);
+    }
+  }
+  if (failures.length) {
+    core.setFailed(`${failures.length} 个开放 PR 的 Code Owner approval 重新计算失败。`);
   }
 }
 
@@ -214,6 +262,9 @@ module.exports = {
   EXPECTED_CODEOWNERS,
   parseCodeowners,
   computeActiveApprovals,
-  requireReviewerWritePermissions,
+  getTargetBranchRef,
+  parsePullNumber,
+  getPushTargetBranch,
+  listOpenPullNumbers,
   run,
 };

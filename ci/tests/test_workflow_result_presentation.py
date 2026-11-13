@@ -675,6 +675,7 @@ globalThis.core = {
         workflow_run_status="completed",
         workflow_run=None,
         workflow_run_error=False,
+        debug=False,
         run_attempt="1",
         files=None,
         pr_author="ci-admin-author",
@@ -699,6 +700,7 @@ globalThis.context = {
   payload: { inputs: {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
+    debug: process.env.PREPARE_DEBUG,
     ops: process.env.PREPARE_OPS,
     ...JSON.parse(process.env.PREPARE_EXPECTED_SNAPSHOT),
   } },
@@ -773,6 +775,7 @@ globalThis.core = {
                     "NPU_CI_WORKFLOW_REF": "main",
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
+                    "PREPARE_DEBUG": str(debug).lower(),
                     "PREPARE_OPS": ops,
                     "PREPARE_PR_AUTHOR": pr_author,
                     "PREPARE_AUTHOR_PERMISSION": author_permission,
@@ -823,10 +826,12 @@ globalThis.core = {
         )
         self.assertIn("::group::", run_script)
         self.assertIn('tee "$CI_RAW_LOG_FILE"', run_script)
-        self.assertIn("summarize_npu_ci.py", run_script)
-        self.assertIn("--require-accuracy-report", run_script)
-        self.assertIn("--require-stage-report", run_script)
-        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', run_script)
+        self.assertNotIn("summarize_npu_ci.py", run_script)
+        summary = next(step for step in self.matrix_steps if step.get("id") == "npu_ci_summary")
+        self.assertIn("always()", summary["if"])
+        self.assertIn("--require-accuracy-report", summary["run"])
+        self.assertIn("--require-stage-report", summary["run"])
+        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', summary["run"])
         self.assertIn('elif wait "$ci_pid"; then', run_script)
 
     def test_platforms_share_container_tmpdir_and_isolate_host_storage(self):
@@ -1070,12 +1075,16 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
     fi
 """,
         )
-        fixture += "\nrun_case parallelism all false 0 success success,success,skipped,success,success true\n"
+        fixture += "\nrun_case parallelism all false 0 success success,success,success,success,success true\n"
         for soc in ("ascend910b", "ascend950"):
             with self.subTest(soc=soc), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 (root / "ci/tests").mkdir(parents=True)
-                for source in (RUN_CHECKS_PATH, REPO_ROOT / "ci/manage_npu_ci_stage_report.py"):
+                for source in (
+                    RUN_CHECKS_PATH,
+                    REPO_ROOT / "ci/classify_changes.py",
+                    REPO_ROOT / "ci/manage_npu_ci_stage_report.py",
+                ):
                     shutil.copyfile(source, root / "ci" / source.name)
                 (root / "ci/tests/parallelism.sh").write_text(
                     fixture.replace("ascend910b", soc), encoding="utf-8"
@@ -1094,8 +1103,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 )
                 self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
                 builds = [json.loads(line) for line in build_log.read_text().splitlines()]
-                self.assertTrue(any("--pkg" in item["args"] and "-j16" in item["args"] for item in builds))
-                self.assertTrue(any(item["args"] == ["build.sh"] for item in builds))
+                self.assertTrue(any(item["args"] == ["scripts/build_wheel.py"] for item in builds))
                 for build in builds:
                     self.assertEqual(build["env"], {
                         "MAX_JOBS": "16", "CMAKE_BUILD_PARALLEL_LEVEL": "16", "MAKEFLAGS": "-j16",
@@ -1378,6 +1386,13 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertIn("quick|full)", script)
         self.assertNotIn("bash gdn-verify.sh", script)
 
+        tests_only_body = script.split("run_tests_only()", 1)[1].split(
+            "run_gdr_example_st()", 1
+        )[0]
+        self.assertIn("install_latest_arch_wheel", tests_only_body)
+        self.assertNotIn("test.sh", tests_only_body)
+        self.assertIn("existing GDR/Example-ST stage", tests_only_body)
+
     def test_ci_contract_tests_run_outside_the_npu_environment_stage(self):
         run_checks = RUN_CHECKS_PATH.read_text(encoding="utf-8")
         workflow = CONTRACT_TEST_WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -1538,6 +1553,33 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
                 self.assertFalse(any(item["kind"] == "workflow_run" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_debug_requests_get_fresh_logs_instead_of_reusing_ordinary_runs(self):
+        for state, title, should_run in (
+            ("success", "NPU CI · PR #527", "true"),
+            ("success", "NPU CI · PR #527 · debug", "true"),
+            ("pending", "NPU CI · PR #527", "true"),
+            ("pending", "NPU CI · PR #527 · debug", "false"),
+        ):
+            with self.subTest(state=state, title=title):
+                statuses = [{
+                    "context": name, "state": state, "description": "result (quick,all,A2+A5)",
+                    "target_url": "https://github.com/example/repo/actions/runs/88",
+                    "created_at": "2026-09-14T00:00:00Z",
+                } for name in STATUS_CONTEXTS]
+                run = {
+                    "status": "completed" if state == "success" else "in_progress",
+                    "display_title": title, "event": "workflow_dispatch",
+                    "path": ".github/workflows/ci.yml", "head_sha": "c" * 40, "head_branch": "main",
+                    "repository": {"full_name": "example/repo"},
+                }
+                completed, records = self._run_prepare_script(statuses, debug=True, workflow_run=run)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                outputs = {item["payload"]["name"]: item["payload"]["value"]
+                           for item in records if item["kind"] == "output"}
+                self.assertEqual(outputs["should_run"], should_run)
+                self.assertEqual(outputs["debug"], "true")
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_reuses_same_base_pending_run_with_one_api_read(self):
@@ -1787,7 +1829,7 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         upload = next(
             step
             for step in self.matrix_steps
-            if step.get("uses") == "actions/upload-artifact@v6"
+            if step.get("with", {}).get("name", "").startswith("npu-ci-result-")
         )
         paths = upload["with"]["path"]
         self.assertIn("CI_ACCURACY_REPORT_FILE", paths)

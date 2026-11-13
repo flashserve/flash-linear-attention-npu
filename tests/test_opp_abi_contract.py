@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from tests.opp_abi_fixtures import write_elf_exports
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "torch_custom/fla_npu"
@@ -17,22 +18,76 @@ abi = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(abi)
 
 
-def vendor(path, scalar="double", exports=None):
+def vendor(path, scalar="double", exports=None, *, name="Demo"):
     (path / abi.LIBRARY).parent.mkdir(parents=True, exist_ok=True)
     (path / abi.LIBRARY).write_bytes(b"fixture ELF, exports supplied by the test")
-    header = path / abi.INCLUDE / "aclnn_demo.h"
+    header = path / abi.INCLUDE / f"aclnn_{name.lower()}.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        f"aclnnStatus aclnnDemoGetWorkspaceSize(const aclTensor *x, {scalar} scale, "
+        f"aclnnStatus aclnn{name}GetWorkspaceSize(const aclTensor *x, {scalar} scale, "
         "uint64_t *workspaceSize, aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize, "
+        f"aclnnStatus aclnn{name}(void *workspace, uint64_t workspaceSize, "
         "aclOpExecutor *executor, aclrtStream stream);\n", encoding="utf-8")
-    with mock.patch.object(abi, "exported_symbols", return_value=exports or {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}):
+    exports = exports if exports is not None else set(abi.public_prototypes(path / abi.INCLUDE))
+    write_elf_exports(path / abi.LIBRARY, exports)
+    with mock.patch.object(abi, "exported_symbols", return_value=exports):
         abi.write_manifest(path)
     return path
 
 
 class ContractTest(unittest.TestCase):
+    def test_elf_reader_supports_classes_and_byte_orders(self):
+        for bits in (32, 64):
+            for byteorder in ("<", ">"):
+                with self.subTest(bits=bits, byteorder=byteorder), tempfile.TemporaryDirectory() as tmp:
+                    library = Path(tmp) / "vendor.so"
+                    symbols = {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+                    write_elf_exports(library, symbols | {"private_helper"}, bits=bits, byteorder=byteorder)
+                    self.assertEqual(abi.elf_exported_symbols(library), symbols)
+
+    def test_invalid_elf_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp) / "vendor.so"
+            write_elf_exports(library, {"aclnnDemo"})
+            complete = library.read_bytes()
+            for content in (b"not ELF", complete[:20], complete[:-1]):
+                library.write_bytes(content)
+                with self.assertRaisesRegex(RuntimeError, "Invalid ELF"):
+                    abi.elf_exported_symbols(library)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("cc") and shutil.which("nm"), "native ELF compiler/nm")
+    def test_native_elf_matches_nm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, library = Path(tmp) / "test.c", Path(tmp) / "test.so"
+            source.write_text('extern int puts(const char *);\n'
+                              'int aclnnDemo(void) { return puts("unused"); }\n'
+                              'int aclnnDemoGetWorkspaceSize(void) { return 0; }\n'
+                              'int unrelated(void) { return 0; }\n')
+            subprocess.run(["cc", "-shared", "-fPIC", str(source), "-o", str(library)], check=True, capture_output=True)
+            self.assertEqual(abi.elf_exported_symbols(library), abi.exported_symbols(library))
+
+    def test_omitted_interface_pair_is_not_treated_as_new(self):
+        for omitted in ("base", "overlay"):
+            with self.subTest(omitted=omitted), tempfile.TemporaryDirectory() as tmp:
+                base = vendor(Path(tmp) / "base", "double")
+                vendor(base, name="Keep")
+                overlay = vendor(Path(tmp) / "overlay", "float")
+                vendor(overlay, name="Keep")
+                manifest = (base if omitted == "base" else overlay) / abi.MANIFEST_NAME
+                data = json.loads(manifest.read_text())
+                for symbol in ("aclnnDemo", "aclnnDemoGetWorkspaceSize"):
+                    del data["contracts"][symbol]
+                manifest.write_text(json.dumps(data))
+                problems = abi.compare_overlay_to_base(overlay, base)
+                self.assertTrue(any("Incomplete ABI manifest" in p for p in problems), problems)
+
+    def test_extra_unexported_header_declarations_are_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = vendor(Path(tmp))
+            vendor(path, name="DeclarationOnly", exports={"aclnnDemo", "aclnnDemoGetWorkspaceSize"})
+            self.assertEqual(set(abi.validated_contracts(path, require_manifest=True)),
+                             {"aclnnDemo", "aclnnDemoGetWorkspaceSize"})
+
     def test_exact_pointer_levels_and_unknown_types(self):
         for left, right in [("double scale", "double *scale"),
                             ("aclTensor *x", "aclTensor **x"),
@@ -54,10 +109,46 @@ class ContractTest(unittest.TestCase):
             problems = abi.compare_overlay_to_base(overlay, base)
             self.assertTrue(any("double*" in p for p in problems), problems)
 
+    def test_new_interfaces_are_allowed_with_manifest_or_legacy_base(self):
+        for legacy in (False, True):
+            for include_existing in (False, True):
+                with self.subTest(legacy=legacy, include_existing=include_existing), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    base = vendor(Path(tmp) / "base")
+                    if legacy:
+                        (base / abi.MANIFEST_NAME).unlink()
+                    overlay = Path(tmp) / "overlay"
+                    if include_existing:
+                        vendor(overlay)
+                    vendor(overlay, name="RecurrentGatedDeltaRuleV2")
+                    self.assertEqual(abi.compare_overlay_to_base(overlay, base), [])
+
+    def test_new_interface_does_not_allow_drift_in_existing_interface(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = vendor(Path(tmp) / "base")
+            overlay = vendor(Path(tmp) / "overlay", "float")
+            vendor(overlay, name="RecurrentGatedDeltaRuleV2")
+            problems = abi.compare_overlay_to_base(overlay, base)
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("aclnnDemoGetWorkspaceSize", problems[0])
+            self.assertIn("float", problems[0])
+
+    def test_new_interface_requires_both_phases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = vendor(Path(tmp) / "base")
+            overlay = vendor(Path(tmp) / "overlay", name="RecurrentGatedDeltaRuleV2")
+            manifest = overlay / abi.MANIFEST_NAME
+            data = json.loads(manifest.read_text())
+            del data["contracts"]["aclnnRecurrentGatedDeltaRuleV2"]
+            manifest.write_text(json.dumps(data))
+            problems = abi.compare_overlay_to_base(overlay, base)
+            self.assertTrue(any("Missing phase-two" in p for p in problems), problems)
+
     def test_missing_manifest_headers_and_modified_library_fail_closed(self):
         for mutation in ["manifest", "headers", "library"]:
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
-                base, overlay = vendor(Path(tmp)/"base"), vendor(Path(tmp)/"overlay")
+                base = vendor(Path(tmp) / "base")
+                overlay = vendor(Path(tmp) / "overlay", name="RecurrentGatedDeltaRuleV2")
                 if mutation == "manifest": (overlay/abi.MANIFEST_NAME).unlink()
                 elif mutation == "headers": shutil.rmtree(overlay/abi.INCLUDE)
                 else: (overlay/abi.LIBRARY).write_bytes(b"different library")

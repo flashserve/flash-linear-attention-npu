@@ -63,7 +63,8 @@ workspace 区域表：
 | `OUTPUT_MODE` | 公开输出档位 | none / save | L2 的输出指针组合 |
 
 TilingKey 只由上述 dtype 与模式决定，**不编码平台**：A2/A3/A5 生成同样的 key，平台在 kernel 入口按
-`__CCE_AICORE__` 选择 `arch22` 或 `arch35` 实现。`chunk_size`（64/128）作为独立场景族，通过
+`defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)` 选择 `arch22` 或 `arch35` 实现。`chunk_size`
+（64/128）作为独立场景族，通过
 tiling 数据传入并在同一 key 内分支。
 
 ## 5. 平台差异

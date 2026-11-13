@@ -95,7 +95,7 @@ void Runtime::init(const std::string& custom_lib_path) {
   }
   std::vector<std::string> custom_paths;
   if (!custom_lib_path.empty()) {
-    custom_paths.push_back(custom_lib_path);
+    custom_paths = split_path_list(custom_lib_path.c_str());
   } else {
     // FLA_NPU_OP_API_LIBS (plural) is an os.pathsep-separated list, highest
     // priority first: overlay vendors first, the complete base library last.
