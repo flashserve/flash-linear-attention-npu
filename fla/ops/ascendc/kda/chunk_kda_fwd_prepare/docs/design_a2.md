@@ -49,8 +49,8 @@ beta --activation--> betaEff ----|-------------------------+
 |1|ScorePayload，FP32 Exp/乘法及BF16 Cast|Q/K/G→GM Payload|score-ready覆盖其MTE3|
 |2|Cube::Scores，ND2NZ/LoadData/Mmad/Fixpipe|Payload→FP32 Raw|raw-ready；scoreReleased释放L1读取租约|
 |3|RhsAndOutputs|G/K/V/beta→BF16 RHS及公开输出|rhs-ready；DMA退休后复用UB|
-|4|LowerAndAqk、RebuildLowerFp32、LeafInverse16/32/64|Raw→Lower/Aqk、选择位及可选叶逆|key3/5先发选择，再发完整叶逆；其余key沿用lower-ready|
-|5|InversePair/PackedLeavesPair/MergePair/MergeLeaves16Fp32/MergeFp32Lane|Lower/叶逆→BF16 resident X|每次FIX_MTE1后才读X；末次读取后复用|
+|4|LowerAndAqk、LeafInverse16/32/64|Raw→Lower/Aqk、选择位及可选叶逆|key3/5先发选择，再发完整叶逆；其余key沿用lower-ready|
+|5|InversePair/PackedLeavesPair/MergePair/MergeFp32Pair|Lower/叶逆→BF16 resident X|每次FIX_MTE1后才读X；末次读取后复用|
 |6|PreloadWu/Wu|共享resident X、独立RHS→W/U|MTE1释放L1；FIX结束释放GM slot|
 
 `reference_source`：A5 Prepare 的 `arch35/chunk_kda_fwd_prepare_vec.h` 中
@@ -166,8 +166,8 @@ GM workspace 每 lane152KiB，record字段如下；每 slot 两lane=304KiB，每
 |0x00000 Payload|72KiB|score payload→AIC；raw-ready后低8KiB交接BF16逆模板|
 |0x02000 DiagFp32|8KiB（Payload别名）|风险且r>16：AIV写两个32阶块对角模板；AIC补FP32跨16块后重载|
 |0x04000 CrossFp32|4KiB（Payload别名）|风险且r>16：两份跨16块P的32阶块对角打包|
-|0x05000 MergeFp32|4KiB（Payload别名）|FP32 T中转：16→32时16×32，32→64时32×32|
-|0x06000 FinalCrossFp32|4KiB（Payload别名）|风险且r>32：FP32跨32块P21|
+|0x05000 FinalCrossFp32|4KiB（Payload别名）|风险且r>32：FP32跨32块P21，与CrossFp32连续|
+|0x06000 MergeFp32|4KiB（Payload别名）|FP32 T中转：16→32时16×32，32→64时32×32；与仍活跃的P包分离|
 |0x10000 InverseChoice|4B（Payload别名）|key3/5每lane独立发布选择，早期flag后读取|
 |0x12000 Raw|32KiB|AIC FP32 score→AIV Lower/Aqk|
 |0x1a000 Lower|8KiB|AIV BF16 strict lower→AIC inverse|
@@ -295,11 +295,11 @@ key3/5在早期flag10/11后失效选择cache line再读取每lane选择位。快
 快路径计算与Vector风险前代交叠；随后每work都消费最终flag4/5，再加载风险BF16模板及FP32数据。
 风险路径跳过BF16幂链及合并。HF32关闭，全部跨块操作数和累加保持FP32。
 16→32的两组合并打包为两次[16,32]@[32,32]：A横拼两个odd叶，B为跨16块P或even叶的块对角。
-T经GM 0x5000中转；第二次MMAD的两个16阶输出位于L0C偏移0/256，
+T经GM MergeFp32=0x6000中转；第二次MMAD的两个16阶输出位于L0C偏移0/256，
 以FP32写回GM两个32阶模板的跨块，并以BF16发布resident X及有效Akk对应区域。
 原FP32对角模板仍在L1 X0/X1，只有两个下左16阶块变化；一条ndNum=2的ND2NZ修补两块，
 源/目标矩阵stride均为1024个float，源leaves[512]、目标FpX0[512]，传输2KiB。
-跨32块P21载入0x6000，
+跨32块P21从GM FinalCrossFp32=0x5000载入L1 FpFinalP=0x7000，
 两次[32,32] GEMM计算T=X22@P21、X21=T@X11，最后Fixpipe为BF16。
 A2/A3不能把FP32 L0C直接Fixpipe到L1，所有FP32 GM中转均由PIPE_ALL保护生产者到MTE2读取。
 每个32×32矩阵按四个16×16 FP32方块打包，ND2NZ每指令两块、共两条；
