@@ -251,7 +251,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     constexpr int64_t maxHeadsPerTask = 4;
     const int64_t maxGvaPerTask = maxHeadsPerTask / tiling->headRatio;
     if (tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->HK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(tiling->totalChunkNum) + "/" + std::to_string(tiling->HK), "The chunk/GVA task count overflows"));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(tiling->totalChunkNum) + "/" + std::to_string(tiling->HK), "The chunk/GVA task count overflows");
         return ge::GRAPH_FAILED;
     }
     const int64_t totalGvaTaskNum = tiling->totalChunkNum * tiling->HK;
@@ -265,7 +265,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     tiling->taskGroupSize = gvaPerTask * tiling->headRatio;
     tiling->headGroupNum = tiling->HK / gvaPerTask;
     if (tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->headGroupNum) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(tiling->totalChunkNum) + "/" + std::to_string(tiling->headGroupNum), "The flattened chunk/head-group task count overflows"));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(tiling->totalChunkNum) + "/" + std::to_string(tiling->headGroupNum), "The flattened chunk/head-group task count overflows");
         return ge::GRAPH_FAILED;
     }
     tiling->taskNum = tiling->totalChunkNum * tiling->headGroupNum;
