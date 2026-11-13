@@ -1,6 +1,6 @@
 # ChunkKdaFwdPrepare
 
-[设计文档](docs/design.md) | [API 文档](docs/api.md)
+[A5设计文档](docs/design.md) | [A2设计文档](docs/design_a2.md) | [API 文档](docs/api.md)
 
 ## 功能
 
@@ -28,7 +28,7 @@ outputs = chunk_kda_fwd_prepare(
     allow_neg_eigval=False,
     safe_gate=False,
     lower_bound=-5.0,
-    use_exp2=False,
+    use_exp2=True,
     a_log=None,
     dt_bias=None,
     cu_seqlens=None,
@@ -55,20 +55,25 @@ BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
 | 输入 | dense shape | 无 batch shape | 说明 |
 | --- | --- | --- | --- |
 | `q/k` | BNSD `[B,HK,T,128]`；BSND `[B,T,HK,128]` | NTD `[HK,T,128]`；TND `[T,HK,128]` | BF16 |
-| `v/g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | `v` 为 BF16；`g` 为 BF16/FP32 |
-| `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32 |
+| `v` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | BF16 |
+| `g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | BF16/FP32，跟随 layout |
+| `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32，跟随 layout |
 | `a_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
 | `dt_bias` | `[HV*128]` | `[HV*128]` | 可选，逻辑 shape 为 `[HV,128]` |
 
 `cu_seqlens` 和 `chunk_indices` 是可选 host int array，不是 tensor。前者 shape 为
 `[sequence_count+1]`；后者若提供，扁平长度必须为 `2*total_chunks`。
 
+A2 支持四种 layout、g/beta 的 BF16/FP32 组合、Exp/Exp2 和四档输出策略；
+实现位于 `op_kernel/arch22/`。本次设备验证范围为 A2，A3 尚需独立验证；A5 沿用 arch35 实现。
+
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。所有输出固定为 head-major：
 
-`BSND/TND` 输入按 token 读取同一行内的各个 head，跨 head DMA stride 必须可由
-`uint32_t` 表示。具体要求为 `(HK-1)*128*2`、`(HV-1)*128*2`、
-`(HV-1)*128*sizeof(g)` 和 `(HV-1)*sizeof(beta)` 均不超过 `UINT32_MAX`。
+`layout` 同时描述 q/k/v/g/beta。仅 BSND/TND 的跨 head DMA 要求
+`(HK-1)*128*2`、`(HV-1)*128*2`、`(HV-1)*128*sizeof(g)` 和
+`(HV-1)*sizeof(beta)` 不超过 `UINT32_MAX`；BNSD/NTD 按 head 连续读取。
+不根据 shape 猜测或自动切换布局语义，也不增加整张输入的布局转置。
 
 | 输出 | dense shape | 无 batch shape | dtype |
 | --- | --- | --- | --- |
@@ -115,8 +120,8 @@ tiling 参数位置不会随策略变化。L2 接口允许未保留的七项传 
 
 默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。各档都执行相同的前向数学计算、
 静态 UB/L1 布局和跨核同步，仅关闭未请求结果的公开 GM 写回；`Akk/qg` 等数据在本算子
-内部仍按 C4/C5/C7 或 BF16 舍入语义使用。四档由 TilingKey 的编译期 `OUTPUT_MODE`
-选择，Stage 内不读取运行时输出 mask。
+内部仍按 C4/C5/C7 或 BF16 舍入语义使用。A2通过调用内不可变的tiling `outputMode`
+选择四档；A5保持编译期输出策略。两者均不借用关闭的公开输出作为scratch。
 
 完整 forward 的 `output_final_state` 与 `return_intermediate_states` 是和
 `backward_mode` 正交的用户输出开关，只控制 `final_state/h`。这两个数据由 FwdH/完整
@@ -143,15 +148,11 @@ sequence-major `(sequence_id, local_chunk_id)` 序列。rank-4 变长容器要�
 
 ## 实现
 
-内核支持 A2、A3 和 A5，采用 MIX AIC/AIV 八阶段流水：
+各平台共用公开接口，内部调度分别实现。
 
-```text
-V0 -> V1 -> C2 -> V3 -> C4 -> C5 -> V6 -> C7
-```
+A2 使用 value-head pair：一个 AIC 配两个 AIV，每个 AIV 准备一个完整 value head。
+两个 lane 映射到不同 Q/K head 时分别准备 Q/K；奇数 head 的 inactive lane 仍参与事件协议。
+六个 Norm/Gate key 共用 BF16 resident relay、W/U inverse 复用、paired L0 和两代 GM workspace。
+普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见 [A2 设计](docs/design_a2.md)。
 
-Prepare 首先按 chunk 分核，只有 chunk 数不足以覆盖已用核时才按完整 GVA Q/K 头组切分
-head。S 固定为 4，C2 以四个 16 行 query band 生成因果 score。UB、L1 和 workspace 均为
-静态地址规划；A5 使用 Mutex 表达核内 pipe 生命周期，A2/A3 使用 HardEvent。跨核采用
-ready/free 双向握手，生产者不会覆盖仍被消费者使用的 slot。
-
-生产实现位于 `op_kernel/`。
+A5 保留原有 MIX AIC/AIV 八阶段流水，见 [A5 设计](docs/design.md)。

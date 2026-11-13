@@ -1374,7 +1374,11 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
 
     rank3 = layout in ("TND", "NTD")
     sequence_major = layout in ("BSND", "TND")
-    if rank3:
+    if rank3 and not sequence_major:
+        qk_heads, seq_len, key_dim = q.shape
+        value_heads, value_dim = v.shape[0], v.shape[2]
+        batch = 1
+    elif rank3:
         seq_len, qk_heads, key_dim = q.shape
         value_heads, value_dim = v.shape[1], v.shape[2]
         batch = 1
