@@ -65,7 +65,7 @@ def _npu_us(fn, iters: int) -> list[float]:
 def main() -> int:
     import torch
     import torch_npu  # noqa: F401
-    from fla_npu.ops.ascendc import chunk_kda_bwd_recompute
+    from fla_npu.ops.ascendc import npu_chunk_kda_bwd_recompute as chunk_kda_bwd_recompute
 
     B, HK, HV, T, K, V, BT = (
         SHAPE["B"],

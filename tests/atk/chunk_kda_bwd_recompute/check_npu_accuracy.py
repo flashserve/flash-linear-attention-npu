@@ -68,7 +68,7 @@ def _fused_ref(q, k, v, g, beta, a, a_log, dt_bias, chunk_size: int):
 def _run_one(batch: int, hk: int, hv: int, tokens: int, seed: int) -> int:
     import torch
     import torch_npu  # noqa: F401
-    from fla_npu.ops.ascendc import chunk_kda_bwd_recompute
+    from fla_npu.ops.ascendc import npu_chunk_kda_bwd_recompute as chunk_kda_bwd_recompute
 
     torch.npu.set_device(0)
     chunk_size = 64
@@ -95,12 +95,15 @@ def _run_one(batch: int, hk: int, hv: int, tokens: int, seed: int) -> int:
     second = launch()
     torch.npu.synchronize()
     names = ("gk", "w", "u", "qg", "kg")
+    # Cast on CPU so comparison does not launch extra NPU Cast kernels.
+    first_cpu = tuple(t.detach().cpu() for t in first)
+    second_cpu = tuple(t.detach().cpu() for t in second)
     print(f"device={torch.npu.get_device_name(0)} visible={os.environ.get('ASCEND_RT_VISIBLE_DEVICES')}")
     print(f"shape B={batch} HK={hk} HV={hv} T={tokens}")
     ok = True
-    for name, got, again, cpu in zip(names, first, second, ref):
-        g1 = got.float().cpu()
-        g2 = again.float().cpu()
+    for name, got, again, cpu in zip(names, first_cpu, second_cpu, ref):
+        g1 = got.float()
+        g2 = again.float()
         if not torch.isfinite(g1).all():
             print(f"{name}: NON_FINITE")
             ok = False

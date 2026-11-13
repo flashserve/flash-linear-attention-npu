@@ -23,7 +23,6 @@ from _ascendc_common_executor import (
     _RCP_LN2,
     _calc_dtype,
     _case_spec,
-    _chunks,
     _kda_gate,
     _marker_device,
     _rand,
@@ -98,7 +97,28 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     }
     if _bool(spec.get("has_dt_bias", True)):
         inputs["dt_bias"] = _randn((HV, K), "fp32", calc_fp, device, seed + 8, 0.05)
+    if "seq_lengths" in spec:
+        lengths = [int(length) for length in spec["seq_lengths"]]
+        if B != 1 or any(length < 0 for length in lengths) or sum(lengths) != T:
+            raise ValueError("varlen cases require B=1 and nonnegative seq_lengths summing to T")
+        cu = [0]
+        indices = []
+        for seq, length in enumerate(lengths):
+            cu.append(cu[-1] + length)
+            for chunk in range((length + chunk_size - 1) // chunk_size):
+                indices.extend((seq, chunk))
+        inputs["cu_seqlens"] = cu
+        inputs["chunk_indices"] = indices
     return inputs
+
+
+def _input_chunks(inputs):
+    tokens = inputs["g"].shape[2]
+    chunk_size = int(inputs["chunk_size"])
+    cu = inputs.get("cu_seqlens", [0, tokens])
+    for bos, eos in zip(cu, cu[1:]):
+        for start in range(bos, eos, chunk_size):
+            yield start, min(start + chunk_size, eos)
 
 
 def _fused_ref(inputs: dict[str, Any]):
@@ -118,7 +138,6 @@ def _fused_ref(inputs: dict[str, Any]):
 
     hv = g.shape[1]
     tokens = g.shape[2]
-    chunk_size = int(inputs["chunk_size"])
     use_gate = _bool(inputs["use_gate"])
     use_exp2 = _bool(inputs["use_exp2"])
     lower_bound = float(inputs["lower_bound"])
@@ -133,7 +152,7 @@ def _fused_ref(inputs: dict[str, Any]):
         g_corr = g
     scale = _RCP_LN2 if use_exp2 else 1.0
     gk = torch.empty_like(g_corr)
-    for start, end in _chunks(tokens, chunk_size):
+    for start, end in _input_chunks(inputs):
         gk[:, :, start:end] = torch.cumsum(g_corr[:, :, start:end], dim=2) * scale
 
     e2 = torch.exp2(gk) if use_exp2 else torch.exp(gk)
@@ -148,7 +167,7 @@ def _fused_ref(inputs: dict[str, Any]):
     kg = torch.empty_like(k_hv)
     w = torch.empty((q.shape[0], hv, tokens, k.shape[-1]), dtype=calc, device=q.device)
     u = torch.empty((v.shape[0], hv, tokens, v.shape[-1]), dtype=calc, device=v.device)
-    for start, end in _chunks(tokens, chunk_size):
+    for start, end in _input_chunks(inputs):
         gk_last = gk[:, :, end - 1 : end, :]
         delta = gk_last - gk[:, :, start:end]
         scale_k = torch.exp2(delta) if use_exp2 else torch.exp(delta)
@@ -162,9 +181,9 @@ def _fused_ref(inputs: dict[str, Any]):
         u[:, :, start:end] = torch.matmul(a_tile, vb_tile).to(calc)
 
     if orig == torch.float64:
-        return gk, w, u, qg, kg
+        return gk if use_gate else None, w, u, qg, kg
     return (
-        gk.to(torch.float32),
+        gk.to(torch.float32) if use_gate else None,
         w.to(orig),
         u.to(orig),
         qg.to(orig),
@@ -181,9 +200,9 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
     """运行 NPU DUT。"""
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
-    from fla_npu.ops.ascendc import chunk_kda_bwd_recompute
+    from fla_npu.ops.ascendc import npu_chunk_kda_bwd_recompute
 
-    return chunk_kda_bwd_recompute(
+    return npu_chunk_kda_bwd_recompute(
         inputs["q"],
         inputs["k"],
         inputs["v"],
@@ -193,6 +212,8 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         inputs["chunk_size"],
         A_log=inputs["A_log"],
         dt_bias=inputs.get("dt_bias"),
+        cu_seqlens=inputs.get("cu_seqlens"),
+        chunk_indices=inputs.get("chunk_indices"),
         use_gate_in_kernel=bool(inputs["use_gate"]),
         use_exp2=bool(inputs["use_exp2"]),
         lower_bound=float(inputs["lower_bound"]),
