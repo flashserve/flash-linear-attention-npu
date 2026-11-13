@@ -170,7 +170,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     if (aicCoreNum == 0) {
         // The A5 aclnn direct-launch context may omit platform info.  This
         // checkpoint is A5-only and must still expose all 28 physical AICs.
-        aicCoreNum = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 ? 28U : 1U;
+        aicCoreNum = platform.GetCurNpuArch() == NpuArch::DAV_3510 ? 28U : 1U;
         OP_LOGW(context->GetNodeName(),
                 "platform info did not report AIC count; fallback to %u", aicCoreNum);
     }
@@ -222,7 +222,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     shape.qkTokenMajor = modelTm && !ctx.qRstd;
     shape.vTokenMajor = modelTm;
     shape.rawTokenMajor = mixed;
-    const bool arch22 = platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+    const bool arch22 = !(platform.GetCurNpuArch() == NpuArch::DAV_3510);
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,
                          *allowNegEigval, outputLayout) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
     if (arch22) return TilingFinalizeArch22(context, ctx, shape);
