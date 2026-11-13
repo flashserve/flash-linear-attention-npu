@@ -341,7 +341,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
             "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     }
     const aclTensor *fp32Outputs[] = {
@@ -354,7 +354,7 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
             "gk/qRstd/kRstd/betaEff 输出必须为 FP32");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     }
     return ACLNN_SUCCESS;
@@ -502,7 +502,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             OP_NAME, "q.K,v.V",
             std::to_string(info.kDim) + "," + std::to_string(info.vDim),
             "K=V=128 is required by the current implementation");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (info.valueHeadNum < info.qkHeadNum || info.valueHeadNum % info.qkHeadNum != 0) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -611,7 +611,7 @@ aclnnStatus CheckVariableLengthInputs(
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "chunkIndicesOptional",
                 "cuSeqlensOptional is required when chunkIndicesOptional is given");
-            return ACLNN_ERR_PARAM_INVALID;
+            return ACLNN_ERR_PARAM_NULLPTR;
         }
         return ACLNN_SUCCESS;
     }
@@ -841,8 +841,8 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -966,8 +966,8 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
         params.qgOut, params.kgOut, params.qgScaledOut, params.qHatOut,
         params.kHatOut, params.qRstdOut, params.kRstdOut, params.betaEffOut,
         GetOutputMode(params), executorPtr);
-    if (!((result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr) failed", __func__);
+    if (!(result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

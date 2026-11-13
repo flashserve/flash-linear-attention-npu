@@ -104,7 +104,7 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     }
     if (params.dhOut == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dhOut", "dhOut must not be nullptr");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.h0Optional != nullptr) {
         if (params.dh0Out == nullptr) {
@@ -460,8 +460,8 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -618,20 +618,20 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     };
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dhOut, executorPtr);
-    if (!((viewCopyResult != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.dh0Out != nullptr) {
         viewCopyResult = l0op::ViewCopy(result[1], params.dh0Out, executorPtr);
-        if (!((viewCopyResult != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+        if (!(viewCopyResult != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     viewCopyResult = l0op::ViewCopy(result[2], params.dv2Out, executorPtr);
-    if (!((viewCopyResult != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

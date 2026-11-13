@@ -295,8 +295,8 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         return ACLNN_ERR_INNER_NULLPTR;
     }
         }
-        if (!((CopyToOutput(vNewCompute, vNewDst, executor) == ACLNN_SUCCESS))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (CopyToOutput(vNewCompute, vNewDst, executor) == ACLNN_SUCCESS) failed", __func__);
+        if (!(CopyToOutput(vNewCompute, vNewDst, executor) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CopyToOutput(vNewCompute, vNewDst, executor) == ACLNN_SUCCESS failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -312,8 +312,8 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         return ACLNN_ERR_INNER_NULLPTR;
     }
         }
-        if (!((CopyToOutput(hSrc, hDst, executor) == ACLNN_SUCCESS))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (CopyToOutput(hSrc, hDst, executor) == ACLNN_SUCCESS) failed", __func__);
+        if (!(CopyToOutput(hSrc, hDst, executor) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CopyToOutput(hSrc, hDst, executor) == ACLNN_SUCCESS failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

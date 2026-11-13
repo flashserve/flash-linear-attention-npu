@@ -406,8 +406,8 @@ static aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -439,8 +439,8 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
     if (dst == nullptr) {
         return ACLNN_SUCCESS;
     }
-    if (!((src != nullptr && l0op::ViewCopy(src, dst, executor) != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (src != nullptr && l0op::ViewCopy(src, dst, executor) != nullptr) failed", __func__);
+    if (!(src != nullptr && l0op::ViewCopy(src, dst, executor) != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: src != nullptr && l0op::ViewCopy(src, dst, executor) != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -578,7 +578,7 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
 {
     if (params.layout == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout", "layout must not be nullptr");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (IsDav2201Device()) {
         if (!(params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 ||
@@ -716,14 +716,14 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
             "chunkSize=32 requires positive B/H/T, Hv divisible by Hk, and K=V=128");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!((sequenceMajor
+    if (!(sequenceMajor
                ? (HasShape(params.k, {batch, tokens, keyHeads, keyDim}) &&
                   HasShape(params.v, {batch, tokens, valueHeads, valueDim}))
                : (HasShape(params.k, {batch, keyHeads, tokens, keyDim}) &&
                   HasShape(params.v, {batch, valueHeads, tokens, valueDim}))) &&
           HasShape(params.g, {batch, tokens, valueHeads}) &&
           HasShape(params.beta, {batch, tokens, valueHeads}) &&
-          HasShape(params.oOut, {batch, tokens, valueHeads, valueDim}))) {
+          HasShape(params.oOut, {batch, tokens, valueHeads, valueDim})) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "k,v,g,beta,oOut",
             "k=" + std::string(op::ToString(params.k->GetViewShape()).GetString()) +
@@ -1084,8 +1084,8 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
             "q/k/v/oOut/aOutOptional must have the same dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!((params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
-          (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == dtype))) {
+    if (!(params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
+          (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == dtype)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "g,beta",
             std::string("g=") + ge::TypeUtils::DataTypeToSerialString(params.g->GetDataType()) +
@@ -1101,17 +1101,17 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
             "gCumsumOutOptional must be float32");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!((params.qHatOutOptional == nullptr || params.qHatOutOptional->GetDataType() == dtype) &&
+    if (!(params.qHatOutOptional == nullptr || params.qHatOutOptional->GetDataType() == dtype) &&
           (params.kHatOutOptional == nullptr || params.kHatOutOptional->GetDataType() == dtype) &&
-          (params.hOutOptional == nullptr || params.hOutOptional->GetDataType() == dtype))) {
+          (params.hOutOptional == nullptr || params.hOutOptional->GetDataType() == dtype)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "qHatOut,kHatOut,hOut", "mismatch",
             "qHatOutOptional/kHatOutOptional/hOutOptional must match q dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!((params.qRstdOutOptional == nullptr || params.qRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
+    if (!(params.qRstdOutOptional == nullptr || params.qRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
           (params.kRstdOutOptional == nullptr || params.kRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
-          (params.betaEffOutOptional == nullptr || params.betaEffOutOptional->GetDataType() == DataType::DT_FLOAT))) {
+          (params.betaEffOutOptional == nullptr || params.betaEffOutOptional->GetDataType() == DataType::DT_FLOAT)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "qRstdOut,kRstdOut,betaEffOut", "mismatch",
             "qRstdOutOptional/kRstdOutOptional/betaEffOutOptional must be float32");
@@ -1363,26 +1363,26 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         if (exportL2 && sequenceMajor) {
             const aclTensor *qHatBsnd = TransposeContiguous(qHatHead, {0, 2, 1, 3}, executorPtr);
             const aclTensor *kHatBsnd = TransposeContiguous(kHatHead, {0, 2, 1, 3}, executorPtr);
-            if (!((ViewCopyIfPresent(qHatBsnd, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(qHatBsnd, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(qHatBsnd, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(qHatBsnd, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
-            if (!((ViewCopyIfPresent(kHatBsnd, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(kHatBsnd, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(kHatBsnd, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(kHatBsnd, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (exportGA) {
             const aclTensor *gPublic = TransposeContiguous(gCumsumArg, {0, 2, 1}, executorPtr);
-            if (!((ViewCopyIfPresent(gPublic, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(gPublic, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(gPublic, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(gPublic, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (exportBeta) {
             const aclTensor *betaPublic = TransposeContiguous(betaArg, {0, 2, 1}, executorPtr);
-            if (!((ViewCopyIfPresent(betaPublic, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(betaPublic, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(betaPublic, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(betaPublic, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -1537,8 +1537,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             params.chunkSize, true, params.useExp2, params.stateVFirst, h, vNew, finalState, executorPtr);
         GDN_STAGE_CHECK(hResult[0] != nullptr && hResult[1] != nullptr, 169105);
         if (IsDav2201Device()) {
-            if (!((ViewCopyIfPresent(finalState, params.finalStateOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(finalState, params.finalStateOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(finalState, params.finalStateOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(finalState, params.finalStateOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -1562,8 +1562,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         if (a2Prepare) {
             const aclTensor *oExport = TransposeContiguous(oCompute, {0, 2, 1, 3}, executorPtr);
             GDN_STAGE_CHECK(oExport != nullptr, 169111);
-            if (!((ViewCopyIfPresent(oExport, params.oOut, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(oExport, params.oOut, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(oExport, params.oOut, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(oExport, params.oOut, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -1573,8 +1573,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             if (info.isSequenceMajor) {
                 qHatExport = TransposeContiguous(qHatExport, {0, 2, 1, 3}, executorPtr);
             }
-            if (!((ViewCopyIfPresent(qHatExport, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(qHatExport, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(qHatExport, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(qHatExport, params.qHatOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -1583,46 +1583,46 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             if (info.isSequenceMajor) {
                 kHatExport = TransposeContiguous(kHatExport, {0, 2, 1, 3}, executorPtr);
             }
-            if (!((ViewCopyIfPresent(kHatExport, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(kHatExport, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(kHatExport, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(kHatExport, params.kHatOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (params.qRstdOutOptional != nullptr) {
-            if (!((ViewCopyIfPresent(qRstd, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(qRstd, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(qRstd, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(qRstd, params.qRstdOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (params.kRstdOutOptional != nullptr) {
-            if (!((ViewCopyIfPresent(kRstd, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(kRstd, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(kRstd, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(kRstd, params.kRstdOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         const aclTensor *aExport = a;
         const aclTensor *hExport = h;
-        if (!((ViewCopyIfPresent(aExport, params.aOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(aExport, params.aOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+        if (!(ViewCopyIfPresent(aExport, params.aOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(aExport, params.aOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
-        if (!((ViewCopyIfPresent(hExport, params.hOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(hExport, params.hOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+        if (!(ViewCopyIfPresent(hExport, params.hOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(hExport, params.hOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
         if (params.gCumsumOutOptional != nullptr) {
             const aclTensor *gCumsumBth = TransposeContiguous(gCumsumBht, {0, 2, 1}, executorPtr);
             const aclTensor *gCumsumExport = gCumsumBth;
-            if (!((ViewCopyIfPresent(gCumsumExport, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(gCumsumExport, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(gCumsumExport, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(gCumsumExport, params.gCumsumOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (params.betaEffOutOptional != nullptr) {
             const aclTensor *betaEffBth = TransposeContiguous(betaEffBht, {0, 2, 1}, executorPtr);
             const aclTensor *betaEffExport = betaEffBth;
-            if (!((ViewCopyIfPresent(betaEffExport, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(betaEffExport, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            if (!(ViewCopyIfPresent(betaEffExport, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopyIfPresent(betaEffExport, params.betaEffOutOptional, executorPtr) == ACLNN_SUCCESS failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }

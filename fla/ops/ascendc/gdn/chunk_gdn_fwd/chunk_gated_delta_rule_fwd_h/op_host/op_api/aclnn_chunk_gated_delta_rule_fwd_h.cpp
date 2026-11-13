@@ -311,8 +311,8 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -603,16 +603,16 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclTensor *finalStateCompute = params.finalStateOut;
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        if (!((initialStateCompute != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (initialStateCompute != nullptr) failed", __func__);
+        if (!(initialStateCompute != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: initialStateCompute != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (params.stateVFirst) {
         hCompute = executorPtr->AllocTensor(
             SwapLastTwo(params.hOut->GetViewShape()), params.hOut->GetDataType(), Format::FORMAT_ND);
-        if (!((hCompute != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (hCompute != nullptr) failed", __func__);
+        if (!(hCompute != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: hCompute != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -628,8 +628,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
             SwapLastTwo(params.finalStateOut->GetViewShape()),
             params.finalStateOut->GetDataType(), Format::FORMAT_ND);
     }
-    if (!((finalStateCompute != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateCompute != nullptr) failed", __func__);
+    if (!(finalStateCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateCompute != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -647,33 +647,33 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     const aclTensor *hResult = result[0];
     if (params.stateVFirst) {
         hResult = TransposeLastTwo(hResult, executorPtr);
-        if (!((hResult != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (hResult != nullptr) failed", __func__);
+        if (!(hResult != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: hResult != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
-    if (!((viewCopyResult0 != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult0 != nullptr) failed", __func__);
+    if (!(viewCopyResult0 != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult0 != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
-    if (!((viewCopyResult1 != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult1 != nullptr) failed", __func__);
+    if (!(viewCopyResult1 != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult1 != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (outputFinalState && params.finalStateOut != nullptr) {
         const aclTensor *finalStateResult = result[2];
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            if (!((finalStateResult != nullptr))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateResult != nullptr) failed", __func__);
+            if (!(finalStateResult != nullptr)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateResult != nullptr failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
-        if (!((viewCopyResult2 != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult2 != nullptr) failed", __func__);
+        if (!(viewCopyResult2 != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult2 != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

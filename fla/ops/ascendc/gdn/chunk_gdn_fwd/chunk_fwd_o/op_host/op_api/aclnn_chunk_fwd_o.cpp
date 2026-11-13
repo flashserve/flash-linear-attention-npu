@@ -271,8 +271,8 @@ static aclnnStatus CheckShape(ChunkFwdOParams params)
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -432,8 +432,8 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.oOut, executorPtr);
-    if (!((viewCopyResult != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

@@ -190,7 +190,7 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "chunkIndicesOptional",
                 "cuSeqlensOptional is required when chunkIndicesOptional is given");
-            return ACLNN_ERR_PARAM_INVALID;
+            return ACLNN_ERR_PARAM_NULLPTR;
         }
         shape.totalChunks = (shape.seqLen - 1) / FINALIZE_CHUNK_ROWS + 1;
     } else {
@@ -339,8 +339,8 @@ aclnnStatus MakeInputsContiguous(FinalizeParams &params,
             continue;
         }
         *input = l0op::Contiguous(*input, executor);
-        if (!((*input != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (*input != nullptr) failed", __func__);
+        if (!(*input != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: *input != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -398,8 +398,8 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
         params.qgScaled, params.aqk, params.vNew, params.h,
         params.cuSeqlens, params.chunkIndices, params.outputLayout,
         params.stateVFirst, params.attnOut, uniqueExecutor.get());
-    if (!((result != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (result != nullptr) failed", __func__);
+    if (!(result != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: result != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

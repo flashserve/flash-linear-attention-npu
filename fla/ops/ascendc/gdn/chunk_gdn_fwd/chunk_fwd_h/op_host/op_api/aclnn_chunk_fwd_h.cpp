@@ -445,8 +445,8 @@ static aclnnStatus CheckDtype(ChunkFwdHParams params)
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -533,7 +533,7 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
 
 static aclnnStatus CheckGateOptionalNonNull(const ChunkFwdHParams &params)
 {
-    if (!((params.gOptional != nullptr) != (params.gkOptional != nullptr))) {
+    if (!(params.gOptional != nullptr) != (params.gkOptional != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "Exactly one of g and gk must be provided.");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -702,8 +702,8 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
         params.saveNewValue, params.useExp2, params.stateVFirst && !translateVFirst,
         hCompute, params.vNewOut, finalStateCompute, executorPtr);
-    if (!((result[0] != nullptr && result[1] != nullptr && (!outputFinalState || result[2] != nullptr)))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (result[0] != nullptr && result[1] != nullptr && (!outputFinalState || result[2] != nullptr)) failed", __func__);
+    if (!(result[0] != nullptr && result[1] != nullptr && (!outputFinalState || result[2] != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: result[0] != nullptr && result[1] != nullptr && (!outputFinalState || result[2] != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -715,13 +715,13 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         }
     }
     auto viewCopyResult0 = l0op::ViewCopy(hResult, params.hOut, executorPtr);
-    if (!((viewCopyResult0 != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult0 != nullptr) failed", __func__);
+    if (!(viewCopyResult0 != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult0 != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
-    if (!((viewCopyResult1 != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult1 != nullptr) failed", __func__);
+    if (!(viewCopyResult1 != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult1 != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (outputFinalState && params.finalStateOut != nullptr) {
@@ -733,8 +733,8 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
             }
         }
         auto viewCopyResult2 = l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr);
-        if (!((viewCopyResult2 != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult2 != nullptr) failed", __func__);
+        if (!(viewCopyResult2 != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult2 != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

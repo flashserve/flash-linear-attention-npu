@@ -166,7 +166,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
                 "KDA backward required tensor must not be nullptr");
-            return ACLNN_ERR_PARAM_INVALID;
+            return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
     if (!(chunkSize == 64 && safeGate && useExp2 && !stateVFirst)) {
@@ -437,8 +437,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
     }
     auto uniqueExecutor = CREATE_EXECUTOR();
-    if (!((uniqueExecutor.get()))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (uniqueExecutor.get()) failed", __func__);
+    if (!(uniqueExecutor.get())) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: uniqueExecutor.get() failed", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto *ex = uniqueExecutor.get();
@@ -451,8 +451,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     };
     // Recompute and Finalize share one head-major beta input.
     const auto *betaHead = useBetaSigmoidInKernel ? betaEffOptional : SwapHeadToken(beta, packed, ex);
-    if (!((betaHead))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (betaHead) failed", __func__);
+    if (!(betaHead)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: betaHead failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     const aclTensor *aLog = aLogOptional;
@@ -460,16 +460,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     if (!dtBias) {
         const std::vector<float> zeros(static_cast<size_t>(H * 128), 0.0f);
         const auto *flat = ex->ConvertToTensor(zeros.data(), zeros.size(), DataType::DT_FLOAT);
-        if (!((flat))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (flat) failed", __func__);
+        if (!(flat)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: flat failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
         dtBias = l0op::Reshape(flat, MakeShape({H,128}), ex);
     } else {
         dtBias = l0op::Reshape(dtBias, MakeShape({H,128}), ex);
     }
-    if (!((dtBias))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (dtBias) failed", __func__);
+    if (!(dtBias)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dtBias failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     const aclTensor *w = wOptional, *qg = qgOptional, *kg = kgOptional;
@@ -479,8 +479,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         const auto *rawRecompute = rawGOptional;
         const auto *logRecompute = aLog;
         const auto *biasRecompute = dtBias;
-        if (!((rawRecompute && logRecompute && biasRecompute))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (rawRecompute && logRecompute && biasRecompute) failed", __func__);
+        if (!(rawRecompute && logRecompute && biasRecompute)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: rawRecompute && logRecompute && biasRecompute failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
         w = alloc(token, DataType::DT_BF16);
@@ -490,8 +490,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         h = alloc(state, DataType::DT_BF16);
         gk = alloc(token, DataType::DT_FLOAT);
         const auto *u = alloc(token, DataType::DT_BF16);
-        if (!((w && qg && kg && vNew && h && gk && u))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (w && qg && kg && vNew && h && gk && u) failed", __func__);
+        if (!(w && qg && kg && vNew && h && gk && u)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: w && qg && kg && vNew && h && gk && u failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
         const auto result = l0op::ChunkKdaBwdRecompute(
@@ -501,8 +501,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             useExp2, lowerBound, packed ? "NTD" : "BNSD", BatchView(w, packed, ex), BatchView(u, packed, ex),
             BatchView(qg, packed, ex), BatchView(kg, packed, ex), BatchView(gk, packed, ex), ex, layout, qRstdOptional != nullptr);
         for (const auto *value : result) {
-            if (!((value))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (value) failed", __func__);
+            if (!(value)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: value failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -511,8 +511,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             nullptr, BatchView(gk, packed, ex), nullptr, cuSeqlensOptional, chunkIndicesOptional,
             false, chunkSize, true, useExp2, stateVFirst,
             BatchView(h, packed, ex), BatchView(vNew, packed, ex), nullptr, ex);
-        if (!((forward[0] && forward[1]))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (forward[0] && forward[1]) failed", __func__);
+        if (!(forward[0] && forward[1])) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: forward[0] && forward[1] failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -521,8 +521,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const auto *dqRaw = alloc(token, DataType::DT_FLOAT);
     const auto *dh = alloc(state, DataType::DT_BF16);
     const auto *dvScan = alloc(token, DataType::DT_BF16);
-    if (!((dAqk && dvLocal && dqRaw && dh && dvScan))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (dAqk && dvLocal && dqRaw && dh && dvScan) failed", __func__);
+    if (!(dAqk && dvLocal && dqRaw && dh && dvScan)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dAqk && dvLocal && dqRaw && dh && dvScan failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     // A5 Prepare's existing varlen kernel uses rank-3 NTD. Drop only the
@@ -539,8 +539,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     if (T == H) {
         // Square shapes cannot distinguish token-major from head-major.
         dOInput = SwapHeadToken(dO, packed, ex);
-        if (!((dOInput != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (dOInput != nullptr) failed", __func__);
+        if (!(dOInput != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dOInput != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -549,8 +549,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
         prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex);
     for (const auto *value : prepare) {
-        if (!((value))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (value) failed", __func__);
+        if (!(value)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: value failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -560,22 +560,22 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         BatchView(gk, packed, ex), nullptr, nullptr, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, false, BatchView(dh, packed, ex), nullptr,
         BatchView(dvScan, packed, ex), ex);
-    if (!((scan[0] && scan[2]))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (scan[0] && scan[2]) failed", __func__);
+    if (!(scan[0] && scan[2])) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: scan[0] && scan[2] failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     // Finalize converts original gate parameters on-chip.
     const auto *betaFinal = betaHead;
-    if (!((betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog)))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog)) failed", __func__);
+    if (!(betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: betaFinal && (!rawGOptional || rawGOptional) && (!aLogOptional || aLog) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     // Finalize writes q/k/v gradients in layout and gate gradients token-major.
     const auto *dbFinal = dbOut;
     const auto *dA = dAOutOptional ? dAOutOptional : alloc(MakeShape({H}), DataType::DT_FLOAT);
     const auto *dBias = alloc(MakeShape({H,128}), DataType::DT_FLOAT);
-    if (!((dbFinal && dA && dBias))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (dbFinal && dA && dBias) failed", __func__);
+    if (!(dbFinal && dA && dBias)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dbFinal && dA && dBias failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     NormalizeOriginalShapes({q, k, v, gk, rawGOptional, betaFinal, aLog, dtBias,
@@ -589,8 +589,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         useBetaSigmoidInKernel, allowNegEigval, layout,
         dqOut, dkOut, dvOut, dbFinal, dgOut, dA, dBias, ex, layout);
     for (const auto *value : finalize) {
-        if (!((value))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (value) failed", __func__);
+        if (!(value)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: value failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

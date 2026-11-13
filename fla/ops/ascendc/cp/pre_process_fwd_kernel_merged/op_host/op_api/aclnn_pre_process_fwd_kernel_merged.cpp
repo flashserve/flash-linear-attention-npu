@@ -211,8 +211,8 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -256,15 +256,15 @@ static aclnnStatus ParamsGateToFp32(PreProcessFwdKernelMergedParams &params, acl
 {
     if (params.g != nullptr && params.g->GetDataType() != DataType::DT_FLOAT) {
         params.g = l0op::Cast(params.g, DataType::DT_FLOAT, executor);
-        if (!((params.g != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (params.g != nullptr) failed", __func__);
+        if (!(params.g != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: params.g != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (params.gk != nullptr && params.gk->GetDataType() != DataType::DT_FLOAT) {
         params.gk = l0op::Cast(params.gk, DataType::DT_FLOAT, executor);
-        if (!((params.gk != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (params.gk != nullptr) failed", __func__);
+        if (!(params.gk != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: params.gk != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -333,8 +333,8 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     };
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.hmOut, executorPtr);
-    if (!((viewCopyResult != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

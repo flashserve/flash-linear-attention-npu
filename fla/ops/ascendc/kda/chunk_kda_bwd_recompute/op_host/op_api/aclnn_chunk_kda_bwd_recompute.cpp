@@ -48,8 +48,8 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -126,7 +126,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "q,k,v,g,beta,a,wOut,uOut,qgOut,kgOut",
             "required tensors must not be nullptr");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (workspaceSize == nullptr || executor == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(

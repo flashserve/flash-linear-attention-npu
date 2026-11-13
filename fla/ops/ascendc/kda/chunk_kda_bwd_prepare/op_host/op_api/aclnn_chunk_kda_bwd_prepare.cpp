@@ -248,8 +248,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
         layout, scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        if (!((tensor != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+        if (!(tensor != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

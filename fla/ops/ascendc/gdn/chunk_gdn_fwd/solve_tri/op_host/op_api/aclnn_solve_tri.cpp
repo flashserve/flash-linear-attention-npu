@@ -61,8 +61,8 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
  {
      tensor = l0op::Contiguous(tensor, executor);
-     if (!((tensor != nullptr))) {
-         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+     if (!(tensor != nullptr)) {
+         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
          return ACLNN_ERR_INNER_NULLPTR;
      }
      return ACLNN_SUCCESS;
@@ -117,8 +117,8 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
     };
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
-     if (!((viewCopyResult != nullptr))) {
-         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+     if (!(viewCopyResult != nullptr)) {
+         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
          return ACLNN_ERR_INNER_NULLPTR;
      }
  

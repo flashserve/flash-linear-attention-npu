@@ -160,7 +160,7 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "beta", "invalid", "beta must be BF16 or FP32.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!((p.cuSeqlens != nullptr) == (p.chunkIndices != nullptr))) {
+    if (!(p.cuSeqlens != nullptr) == (p.chunkIndices != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "cu_seqlens", "cu_seqlens and chunk_indices must be provided together.");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -175,7 +175,7 @@ aclnnStatus Check(const Params &p)
     }
         if (!(p.chunkIndices != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "cu_seqlens", "chunk_indices is required when cu_seqlens is provided.");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
         if (!(p.chunkIndices->Size() > 0 && p.chunkIndices->Size() % 2 == 0)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_indices", "invalid", "chunk_indices flattened length must be a positive multiple of 2.");
@@ -252,8 +252,8 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
         q, k, v, g, beta, a, dO, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, wOut, uOut, dvLocalOut, executorPtr);
     for (const aclTensor *tensor : result) {
-        if (!((tensor != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+        if (!(tensor != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

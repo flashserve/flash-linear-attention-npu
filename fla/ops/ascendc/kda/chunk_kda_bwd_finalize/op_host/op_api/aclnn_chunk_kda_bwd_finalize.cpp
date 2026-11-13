@@ -90,7 +90,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     }
     if (beta == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "beta", "beta must not be nullptr");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (beta->GetDataType() != DataType::DT_BF16 && beta->GetDataType() != DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -181,7 +181,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     const bool rank3 = rank == 3;
     if (outputLayout == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "outputLayout", "outputLayout is required");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") != 0 &&
         std::strcmp(outputLayout, rank3 ? "TND" : "BSND") != 0) {
@@ -230,8 +230,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        if (!((tensor != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+        if (!(tensor != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

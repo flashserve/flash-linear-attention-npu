@@ -200,8 +200,8 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!((tensor != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -212,7 +212,7 @@ static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
     if (layout == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout",
                                                  "layout is required and must be one of BSND, BNSD, TND or NTD");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(layout, "BSND") == 0) {
         parsed = KdaFwdLayout::BSND;
@@ -284,7 +284,7 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
     if (cuSeqlens == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "chunkIndicesOptional",
                                                  "cuSeqlensOptional is required when chunkIndicesOptional is given");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (chunkIndices->Size() != static_cast<size_t>(totalChunks) * 2) {
         OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "chunkIndicesOptional",
@@ -568,7 +568,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     if (!(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
                    params.g != nullptr && params.beta != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "q, k, v, g and beta must not be nullptr.");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.attnOut != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "attnOut", "attnOut must not be nullptr.");
@@ -925,8 +925,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         gHead = Transpose(params.g, {1, 0, 2}, executorPtr);
         betaHead = Transpose(params.beta, {1, 0}, executorPtr);
     }
-    if (!((qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr) failed", __func__);
+    if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -936,8 +936,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         vHead = AsRank4(vHead, MakeShape({1, info.hvNum, info.seqlen, info.vDim}), executorPtr);
         gHead = AsRank4(gHead, MakeShape({1, info.hvNum, info.seqlen, info.kDim}), executorPtr);
         betaHead = AsRank4(betaHead, MakeShape({1, info.hvNum, info.seqlen}), executorPtr);
-        if (!((qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr) failed", __func__);
+        if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -972,8 +972,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             executorPtr, splitStages ? gkShape4 : placeholderShape,
             DataType::DT_FLOAT);
     }
-    if (!((gkCompute != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (gkCompute != nullptr) failed", __func__);
+    if (!(gkCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gkCompute != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -997,7 +997,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             hExport = AsRank4(hExport, hExportShape5, executorPtr);
         }
     }
-    if (!(((params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nullptr) && (params.qgOut == nullptr || qgExport != nullptr) && (params.kgOut == nullptr || kgExport != nullptr) && (params.vNewOut == nullptr || vNewExport != nullptr) && (params.hOut == nullptr || hExport != nullptr)))) {
+    if (!((params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nullptr) && (params.qgOut == nullptr || qgExport != nullptr) && (params.kgOut == nullptr || kgExport != nullptr) && (params.vNewOut == nullptr || vNewExport != nullptr) && (params.hOut == nullptr || hExport != nullptr))) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ((params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nullptr) && (params.qgOut == nullptr || qgExport != nullptr) && (params.kgOut == nullptr || kgExport != nullptr) && (params.vNewOut == nullptr || vNewExport != nullptr) && (params.hOut == nullptr || hExport != nullptr)) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
@@ -1030,16 +1030,16 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *hCompute = AllocTensor(
         executorPtr, hExport == nullptr && !splitStages ? placeholderShape : hShape5,
         params.q->GetDataType());
-    if (!((aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr && vNewCompute != nullptr && hCompute != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr && vNewCompute != nullptr && hCompute != nullptr) failed", __func__);
+    if (!(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr && vNewCompute != nullptr && hCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr && vNewCompute != nullptr && hCompute != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     const aclTensor *initialStateCompute = params.initialStateOptional;
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
-        if (!((initialStateCompute != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (initialStateCompute != nullptr) failed", __func__);
+        if (!(initialStateCompute != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: initialStateCompute != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1047,8 +1047,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *finalStateCompute = AllocTensor(
         executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
-    if (!((finalStateCompute != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateCompute != nullptr) failed", __func__);
+    if (!(finalStateCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateCompute != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1056,8 +1056,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (info.isRank3) {
         attnCompute = AsRank4(
             params.attnOut, MakeShape({1, info.seqlen, info.hvNum, info.vDim}), executorPtr);
-        if (!((attnCompute != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (attnCompute != nullptr) failed", __func__);
+        if (!(attnCompute != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: attnCompute != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1068,8 +1068,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     const aclTensor *uSeedCompute = AllocTensor(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
-    if (!((qgScaledCompute != nullptr && uSeedCompute != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (qgScaledCompute != nullptr && uSeedCompute != nullptr) failed", __func__);
+    if (!(qgScaledCompute != nullptr && uSeedCompute != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qgScaledCompute != nullptr && uSeedCompute != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1092,8 +1092,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
              ++stage) {
             result = launchStage(stage);
             for (const aclTensor *tensor : result) {
-                if (!((tensor != nullptr))) {
-                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+                if (!(tensor != nullptr)) {
+                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
                     return ACLNN_ERR_INNER_NULLPTR;
                 }
             }
@@ -1101,8 +1101,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     } else {
         result = launchStage(KDA_STAGE_FULL);
         for (const aclTensor *tensor : result) {
-            if (!((tensor != nullptr))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+            if (!(tensor != nullptr)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
@@ -1112,25 +1112,25 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *finalStateResult = result[1];
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
-            if (!((finalStateResult != nullptr))) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateResult != nullptr) failed", __func__);
+            if (!(finalStateResult != nullptr)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateResult != nullptr failed", __func__);
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
-        if (!((l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr) failed", __func__);
+        if (!(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (hExport != nullptr) {
         const aclTensor *hResult = params.stateVFirst
             ? TransposeLastTwo(result[10], executorPtr) : result[10];
-        if (!((hResult != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (hResult != nullptr) failed", __func__);
+        if (!(hResult != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: hResult != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
-        if (!((l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr))) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr) failed", __func__);
+        if (!(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
