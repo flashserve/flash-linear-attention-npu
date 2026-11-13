@@ -6,6 +6,8 @@ import ctypes
 import json
 import math
 import os
+import sys
+from pathlib import Path
 import re
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -826,7 +828,7 @@ def _run_positive_npu(inputs: _PreparedInputs, spec: dict):
 
         return chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
     if route == "aclnn":
-        from fla_npu.ops.ascendc._aclnn_ctypes import npu_chunk_kda_fwd
+        from fla_npu.ops.ascendc._stable import npu_chunk_kda_fwd
 
         return npu_chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
     if route == "direct_launch":
@@ -919,14 +921,16 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
     elif mutation == "qk_shape":
         values["k"] = inputs.k[..., :-16].contiguous()
     elif mutation == "v_shape":
-        values["v"] = inputs.v[..., :-16].contiguous()
+        values["v"] = inputs.v.narrow(_head_axis(layout), 0, int(spec["HV"]) - 1).contiguous()
     elif mutation == "g_shape":
         values["g"] = inputs.g[..., :-16].contiguous()
     elif mutation == "beta_shape":
         values["beta"] = inputs.beta.narrow(_head_axis(layout), 0, max(1, int(spec["HV"]) - 1)).contiguous()
-    elif mutation in {"h_zero", "hv_lt_h", "hv_not_divisible", "h_gt_128"}:
+    elif mutation in {"h_zero", "hv_zero", "hv_ratio_gt16", "hv_lt_h", "hv_not_divisible", "h_gt_128"}:
         head_sizes = {
             "h_zero": (0, 4),
+            "hv_zero": (2, 0),
+            "hv_ratio_gt16": (1, 17),
             "hv_lt_h": (4, 2),
             "hv_not_divisible": (3, 4),
             "h_gt_128": (129, 129),
@@ -938,14 +942,14 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         values["v"] = _resize_axis(inputs.v, head_axis, hv_num)
         values["g"] = _resize_axis(inputs.g, head_axis, hv_num)
         values["beta"] = _resize_axis(inputs.beta, head_axis, hv_num)
-    elif mutation.startswith("k_"):
+    elif mutation.startswith("k_") and mutation != "k_dtype":
         # k_mixed 把 K 降到 64 而 V 保持 128：K/V 不同档，公开契约要求两侧都拒绝。
         k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24,
                   "k_mixed": 64}[mutation]
         values["q"] = _resize_axis(inputs.q, inputs.q.dim() - 1, k_size)
         values["k"] = _resize_axis(inputs.k, inputs.k.dim() - 1, k_size)
         values["g"] = _resize_axis(inputs.g, inputs.g.dim() - 1, k_size)
-    elif mutation.startswith("v_"):
+    elif mutation.startswith("v_") and mutation != "v_dtype":
         # v_mixed 对称：V=64 而 K 保持 128。
         v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24,
                   "v_mixed": 64}[mutation]
@@ -1048,7 +1052,8 @@ def _raw_output_tensors(inputs: _PreparedInputs, spec: dict) -> list:
 
 
 def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
-    from fla_npu.ops.ascendc._aclnn_ctypes import _GET_WORKSPACE_ARGTYPES, _call_aclnn
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    from aclnn_error_probe import reject_workspace as _call_aclnn
 
     outputs = _raw_output_tensors(inputs, spec)
     values = _mutate_raw(inputs, spec, outputs)
@@ -1077,7 +1082,10 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
                 *[ctx.tensor(output, _OUTPUT_NAMES[index]) for index, output in enumerate(outputs)],
             ],
             tuple(output for output in outputs if output is not None),
+            expect_success=bool(spec.get("expect_workspace_success", False)),
         )
+        if spec.get("expect_workspace_success", False):
+            return (torch.zeros(1, dtype=torch.int64, device=inputs.q.device),)
     except RuntimeError as exc:
         match = re.search(r"aclnnStatus=(\d+)", str(exc))
         actual_code = int(match.group(1)) if match else None

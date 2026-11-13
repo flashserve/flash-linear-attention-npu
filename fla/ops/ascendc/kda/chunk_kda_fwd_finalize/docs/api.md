@@ -21,6 +21,10 @@ attn_out = chunk_kda_fwd_finalize(
 legacy `torch.ops.npu` 接口。输入、输出和变长元数据的形状与约束
 见下文及[算子 README](../README.md#输入输出)。
 
+本接口不接收 HK 或 ratio。支持 GVA ratio 1~16 时，HK 到 HV 的映射以及
+`HV % HK == 0`、ratio 范围校验由最早同时持有 HK/HV 的上游入口负责；
+Finalize 对已经展开的任意合法 HV 逐 head 独立计算，不新增 ratio 参数或特化。
+
 ## aclnn
 
 ```cpp
@@ -60,8 +64,11 @@ ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
 sequence-major `(sequence_id,local_chunk_id)` 列表。
 
 唯一输出 `attnOut` 是 BF16。`BSND/TND` 按 token 优先写出，
-`BNSD/NTD` 按 value head 优先写出；所有输入仍然按 value head
-优先排列。数值精度边界见[设计文档](design.md#数学与精度)。
+`BNSD/NTD` 按 value head 优先写出；三个 token 输入仍然按 value head
+优先排列；h 为 NT-first，未传 cu_seqlens 时为 `[B,C,HV,128,128]`，
+传入 cu_seqlens 时为 `[1,C,HV,128,128]`，与 token 输入的 rank 分开判断。
+旧 head-first h 调用者需要交换 chunk/head 轴并连续化，不能只 reshape。
+数值精度边界见[设计文档](design.md#数学与精度)。
 
 ## 返回码
 

@@ -171,7 +171,7 @@ NEGATIVE_CASES = (
     ("null_g", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
     ("null_beta", "ACLNN_ERR_PARAM_NULLPTR", 161001, "q, k, v, g and beta must not be nullptr"),
     ("null_attn", "ACLNN_ERR_PARAM_NULLPTR", 161001, "attnOut must not be nullptr"),
-    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
+    ("null_aqk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut must not be nullptr"),
     ("missing_alog", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aLogOptional is required when useGateInKernel is true"),
     ("chunk_invalid", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkSize must be 64 or 128"),
     ("layout_lower", "ACLNN_ERR_PARAM_INVALID", 161002, "layout must be uppercase and one of BSND, BNSD, TND or NTD"),
@@ -214,7 +214,7 @@ NEGATIVE_CASES = (
     ("dtbias_shape", "ACLNN_ERR_PARAM_INVALID", 161002, "dtBiasOptional must have shape [HV*K]"),
     ("lower_low", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
     ("lower_high", "ACLNN_ERR_PARAM_INVALID", 161002, "lowerBound must be in [-5, 0)"),
-    ("null_akk", "ACLNN_ERR_PARAM_NULLPTR", 161001, "aqkOut and akkOut must not be nullptr"),
+    ("null_akk", "ACLNN_SUCCESS", 0, "akkOut is optional"),
     # 追加在末尾：既有负向用例的 id 与 dtype 奇偶分配保持不变。
     ("k_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
     ("v_mixed", "ACLNN_ERR_PARAM_INVALID", 161002, "K/V must both be 64 or both be 128"),
@@ -222,6 +222,8 @@ NEGATIVE_CASES = (
     # 指明逻辑维的拦截文案，而不是下沉到 tiling 后只回传无上下文的 561103。
     ("t_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "sequence length must be greater than 0"),
     ("b_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "batch dimension must be greater than 0"),
+    ("hv_zero", "ACLNN_ERR_PARAM_INVALID", 161002, "H and HV must be positive"),
+    ("hv_ratio_gt16", "ACLNN_ERR_PARAM_INVALID", 161002, "chunk64 GVA requires HV/HK in [1,16]"),
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
@@ -261,6 +263,9 @@ def _negative_case(local_id: int, soc: str) -> dict:
         "gate_scale": 1.0,
         "seed": SEED_BASE + 5000 + local_id,
         "mutation": mutation,
+        # Preserve the historical slot as a positive host-contract regression:
+        # akkOut is OPTIONAL and must be accepted, without launching a kernel.
+        "expect_workspace_success": mutation == "null_akk",
         "expected_code_name": code_name,
         "expected_return_code": code,
         "expected_message": message,
@@ -345,7 +350,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
     ]
 
     expected_error_msg = None
-    if "expected_return_code" in spec:
+    if spec.get("expected_return_code", 0) != 0:
         expected_error_msg = (
             f"{spec['expected_code_name']}({spec['expected_return_code']}): "
             f"{spec['expected_message']}"
@@ -360,7 +365,14 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         "api_type": "executor_chunk_kda_fwd",
         "expected_error_msg": expected_error_msg,
         "backward": False,
-        "standard": L1_STANDARD,
+        "standard": (
+            {"acc": {"mixed_tolerance_bm": {
+                "output_dtype_overrides": {"1": spec["q_dtype"]}
+            }}, "perf": "not_key"}
+            if spec.get("output_final_state") and spec.get("q_dtype") in {"bf16", "fp16"}
+            and "negative" not in str(spec["tags"]).split(",")
+            else L1_STANDARD
+        ),
         "outputs": None,
         "inputs": inputs,
         "save_name": "chunk_kda_fwd",

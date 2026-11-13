@@ -22,7 +22,17 @@ except ModuleNotFoundError as exc:
 
 OP_NAME = "chunk_kda_fwd_finalize"
 SEED = 20260914
-STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
+STANDARD = {
+    "acc": {
+        "cv_fused_double_benchmark": {
+            "max_re_ratio": 5,
+            "avg_re_ratio": 1.5,
+            "root_mean_squared_ratio": 1.5,
+        }
+    },
+    "perf": "not_key",
+    "mem": 1.1,
+}
 INPUT_NAMES = (
     "qg_scaled", "aqk", "v_new", "h", "cu_seqlens", "chunk_indices",
     "output_layout", "state_v_first",
@@ -66,7 +76,12 @@ def _profiles():
         "name": "varlen_key2_h5_a1_a3_a4", "B": 1, "HV": 5, "T": 479,
         "seqs": (1,) * 382 + (33, 64), "explicit_indices": True,
     })
-    assert len(profiles) == 25
+    profiles.extend((
+        {"name": "dense_h128_t130", "B": 1, "HV": 128, "T": 130},
+        {"name": "varlen_h128_65_65", "B": 1, "HV": 128, "T": 130,
+         "seqs": (65, 65), "explicit_indices": True},
+    ))
+    assert len(profiles) == 27
     return profiles
 
 
@@ -114,7 +129,7 @@ def _case(index, profile, layout, state_v_first):
     vector_shape = ([batch, heads, tokens, 128] if not packed else [heads, tokens, 128])
     score_shape = vector_shape[:-1] + [64]
     value_shape = [batch, heads, tokens, 128]
-    state_shape = [batch, heads, chunks, 128, 128]
+    state_shape = [batch, chunks, heads, 128, 128]
     name = "%s_%04d_%s_%s_%s" % (
         OP_NAME, index, profile["name"], layout.lower(),
         "vk" if state_v_first else "kv",
@@ -152,7 +167,7 @@ def accuracy_cases():
         for layout in LAYOUTS:
             for state_v_first in (False, True):
                 cases.append(_case(len(cases), profile, layout, state_v_first))
-    assert len(cases) == 200
+    assert len(cases) == 216
     return cases
 
 
@@ -164,6 +179,8 @@ def perf_cases():
         (2, 16, 11264, None), (4, 96, 128, None),
         (1, 32, 160, None), (6, 6, 1084, None),
         (1, 8, 32768, None), (1, 32, 65536, (1024,) * 64),
+        (1, 128, 11264, None),
+        (1, 128, 16384, (1024,) * 16),
     )
     cases = []
     for index, (batch, heads, tokens, seqs) in enumerate(settings):

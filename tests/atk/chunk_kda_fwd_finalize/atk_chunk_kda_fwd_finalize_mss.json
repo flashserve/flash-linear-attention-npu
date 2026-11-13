@@ -10,7 +10,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -80,8 +86,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -211,7 +217,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -281,8 +293,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -412,7 +424,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -482,8 +500,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -613,7 +631,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -683,8 +707,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -814,7 +838,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -882,8 +912,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -1013,7 +1043,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1081,8 +1117,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -1212,7 +1248,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1280,8 +1322,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -1411,7 +1453,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1479,8 +1527,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          13,
           2,
+          13,
           128,
           128
         ],
@@ -1610,7 +1658,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1680,8 +1734,8 @@
         "dtype": "bf16",
         "shape": [
           384,
-          2,
           1,
+          2,
           128,
           128
         ],
@@ -1756,7 +1810,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1826,8 +1886,8 @@
         "dtype": "bf16",
         "shape": [
           384,
-          2,
           1,
+          2,
           128,
           128
         ],
@@ -1902,7 +1962,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -1970,8 +2036,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          2,
           384,
+          2,
           128,
           128
         ],
@@ -14707,7 +14773,13 @@
     "expected_error_msg": "",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -14775,8 +14847,8 @@
         "dtype": "bf16",
         "shape": [
           1,
-          2,
           384,
+          2,
           128,
           128
         ],

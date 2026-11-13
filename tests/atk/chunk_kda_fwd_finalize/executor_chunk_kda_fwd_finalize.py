@@ -1,13 +1,23 @@
-"""ChunkKdaFwdFinalize 的 ATK executor 和独立 CPU 参考。"""
+"""ChunkKdaFwdFinalize 的 ATK executor 和独立 CPU 参考。
+
+支持三种 ATK 节点角色：NPU DUT（aclnn 直调）、CPU 双标杆（golden=FP64 真值 /
+cpu_benchmark 节点普通任务=FP32+BF16 舍入的同精度标杆，行为保持不变）、
+GPU 双标杆（golden=FP64 真值 / 普通任务=scripts/gpu.py 所选 GPU control，
+按 is_benchmark_task 区分角色；支持全矩阵契约标杆和真实上游严格模式）。
+"""
 
 from __future__ import annotations
 
-import ctypes
+import importlib.util
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import torch
 
+from atk.configs.base_config import TaskTypesSelect
 from atk.configs.dataset_config import InputDataset
 from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
@@ -17,6 +27,24 @@ from atk.tasks.api_execute.base_api import BaseApi
 OP_NAME = "chunk_kda_fwd_finalize"
 CHUNK_SIZE = 64
 HEAD_DIM = 128
+
+# GPU 标杆和 FP64 真值位于本算子 ATK scripts/。
+_GPU_REFERENCE_PY = Path(__file__).resolve().parent / "scripts" / "gpu.py"
+_GPU_REFERENCE_MODULE = None
+
+
+def _load_gpu_reference():
+    """加载 scripts/gpu.py；upstream_strict 额外依赖原版 fla。"""
+    global _GPU_REFERENCE_MODULE
+    if _GPU_REFERENCE_MODULE is None:
+        if not _GPU_REFERENCE_PY.is_file():
+            raise FileNotFoundError(f"找不到 GPU 标杆：{_GPU_REFERENCE_PY}")
+        spec = importlib.util.spec_from_file_location("_chunk_kda_fwd_finalize_gpu", _GPU_REFERENCE_PY)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_chunk_kda_fwd_finalize_gpu"] = module
+        spec.loader.exec_module(module)
+        _GPU_REFERENCE_MODULE = module
+    return _GPU_REFERENCE_MODULE
 
 
 def _as_bool(value: Any) -> bool:
@@ -85,10 +113,8 @@ def _prepare(values: dict[str, Any]) -> Inputs:
     value_shapes = [(batch, heads, tokens, 128)]
     if qg.ndim == 3:
         value_shapes.append((heads, tokens, 128))
-    if (tuple(v_new.shape) not in value_shapes
-            or h.shape[:2] != (batch, heads)
-            or h.shape[-2:] != (128, 128)):
-        raise ValueError("v_new or h shape does not match stage inputs")
+    if tuple(v_new.shape) not in value_shapes:
+        raise ValueError("v_new shape does not match stage inputs")
     cu = _int_array(values.get("cu_seqlens"))
     indices = _int_array(values.get("chunk_indices"))
     if cu is not None:
@@ -108,10 +134,30 @@ def _prepare(values: dict[str, Any]) -> Inputs:
         if indices != canonical:
             raise ValueError("chunk_indices must be canonical sequence-major pairs")
     expected_chunks = len(_chunk_map(batch, tokens, cu)[0])
-    if h.shape != (batch, heads, expected_chunks, 128, 128):
+    h_shape = (batch, expected_chunks, heads, 128, 128)
+    if h.shape != h_shape:
         raise ValueError("h chunk dimension does not match cu_seqlens")
     return Inputs(qg, aqk, v_new, h, cu, indices, layout,
                   _as_bool(values["state_v_first"]), batch, heads, tokens)
+
+
+def _clear_aqk_upper_(inputs: Inputs) -> None:
+    """ATK input preparation: retain each sequence/chunk's lower triangle."""
+    local_rows = torch.empty(inputs.tokens, dtype=torch.int64, device="cpu")
+    segments = ([(0, inputs.tokens)] if inputs.cu_seqlens is None
+                else zip(inputs.cu_seqlens, inputs.cu_seqlens[1:]))
+    for begin, end in segments:
+        local_rows[begin:end] = torch.arange(
+            end - begin, dtype=torch.int64, device="cpu").remainder_(CHUNK_SIZE)
+    columns = torch.arange(CHUNK_SIZE, dtype=torch.int64, device="cpu")
+    upper = columns.unsqueeze(0) > local_rows.unsqueeze(1)
+    with torch.no_grad():
+        inputs.aqk.masked_fill_(upper.to(device=inputs.aqk.device), 0)
+    # Finish input preparation before any timed forward call.
+    if inputs.aqk.device.type == "cuda":
+        torch.cuda.synchronize(inputs.aqk.device)
+    elif inputs.aqk.device.type == "npu":
+        torch.npu.synchronize(inputs.aqk.device)
 
 
 def _head_major(value: torch.Tensor) -> torch.Tensor:
@@ -138,61 +184,39 @@ def _output_shape(inputs: Inputs) -> tuple[int, ...]:
     return (inputs.tokens, inputs.heads, 128)
 
 
-def run_cpu(inputs: Inputs) -> torch.Tensor:
+def run_cpu(inputs: Inputs, high_precision: bool = True) -> torch.Tensor:
     # CPU 参考独立消费已经 BF16 舍入的四个阶段输入。
-    qg = _head_major(inputs.qg_scaled.to(torch.bfloat16)).float()
-    aqk = _head_major(inputs.aqk.to(torch.bfloat16)).float()
-    v_new = _head_major(inputs.v_new.to(torch.bfloat16)).float()
-    h = inputs.h.to(torch.bfloat16).float()
-    result = torch.zeros((inputs.batch, inputs.heads, inputs.tokens, 128), dtype=torch.float32)
+    dtype = torch.float64 if high_precision else torch.float32
+    qg = _head_major(inputs.qg_scaled.to(torch.bfloat16)).to(dtype)
+    aqk = _head_major(inputs.aqk.to(torch.bfloat16)).to(dtype)
+    v_new = _head_major(inputs.v_new.to(torch.bfloat16)).to(dtype)
+    h = inputs.h.to(torch.bfloat16).to(dtype)
+    result = torch.zeros(
+        (inputs.batch, inputs.heads, inputs.tokens, 128),
+        dtype=dtype,
+        device=qg.device,
+    )
     for batch_id, chunks in enumerate(_chunk_map(inputs.batch, inputs.tokens, inputs.cu_seqlens)):
         for begin, end, chunk_id in chunks:
             rows = end - begin
-            state = h[batch_id, :, chunk_id]
+            state = h[batch_id, chunk_id]
             if inputs.state_v_first:
                 state = state.transpose(-1, -2)
             qh = torch.matmul(qg[batch_id, :, begin:end], state)
             av = torch.matmul(aqk[batch_id, :, begin:end, :rows],
                               v_new[batch_id, :, begin:end])
-            result[batch_id, :, begin:end] = (qh + av).to(torch.bfloat16).float()
+            value = qh + av
+            result[batch_id, :, begin:end] = value if high_precision else value.to(torch.bfloat16).float()
     return _output_layout(result, inputs.output_layout)
 
 
 def run_npu(inputs: Inputs) -> torch.Tensor:
-    # 局限于 ATK 交付目录的 aclnn 直调，不向共享 Python 注册表添加临时入口。
-    from fla_npu.ops.ascendc._runtime import ACL_FORMAT_ND, call_aclnn
+    from fla_npu.ops.ascendc import chunk_kda_fwd_finalize
 
-    output = torch.empty(_output_shape(inputs), dtype=torch.bfloat16,
-                         device=inputs.qg_scaled.device)
-    layout_bytes = ctypes.create_string_buffer(inputs.output_layout.encode("ascii"))
-
-    def nd_tensor(ctx, tensor, name):
-        tensor = tensor.contiguous()
-        if tensor.storage_offset():
-            tensor = tensor.clone()
-        return ctx.tensor(tensor, name, acl_format_override=ACL_FORMAT_ND,
-                          storage_shape_override=tuple(tensor.shape))
-
-    argtypes = [
-        *([ctypes.c_void_p] * 6), ctypes.c_char_p, ctypes.c_bool,
-        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64),
-        ctypes.POINTER(ctypes.c_void_p),
-    ]
-    return call_aclnn(
-        "aclnnChunkKdaFwdFinalize",
-        lambda ctx: [
-            nd_tensor(ctx, inputs.qg_scaled, "qg_scaled"),
-            nd_tensor(ctx, inputs.aqk, "aqk"),
-            nd_tensor(ctx, inputs.v_new, "v_new"),
-            nd_tensor(ctx, inputs.h, "h"),
-            ctx.int_array(inputs.cu_seqlens),
-            ctx.int_array(inputs.chunk_indices),
-            ctypes.cast(layout_bytes, ctypes.c_char_p),
-            ctypes.c_bool(inputs.state_v_first),
-            nd_tensor(ctx, output, "attn_out"),
-        ],
-        output,
-        get_workspace_argtypes=argtypes,
+    return chunk_kda_fwd_finalize(
+        inputs.qg_scaled, inputs.aqk, inputs.v_new, inputs.h,
+        cu_seqlens=inputs.cu_seqlens, chunk_indices=inputs.chunk_indices,
+        output_layout=inputs.output_layout, state_v_first=inputs.state_v_first,
     )
 
 
@@ -201,37 +225,132 @@ class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
         self.inputs: Optional[Inputs] = None
+        self.gpu_control = None
+        task_name = str(task_result.name)
+        self.task_name = task_name
+        tasks = set(task_result.task_type or ())
+        self.low_precision_benchmark = (
+            self.device == "cpu"
+            and not task_result.is_benchmark_task
+            and bool(tasks & set(TaskTypesSelect.ACCURACY_TASKS))
+        )
+        # GPU 双标杆：远端 GPU 参考节点被调用两次 —— golden 任务（is_benchmark_task=True）
+        # 跑 FP64 真值，普通任务跑显式选择的 GPU control。
+        self.accuracy_requires_output = (
+            bool(tasks & set(TaskTypesSelect.ACCURACY_TASKS))
+            or task_name.endswith("phase6")
+        )
+        accuracy_golden = bool(task_result.is_benchmark_task) and bool(
+            tasks & set(TaskTypesSelect.ACCURACY_TASKS)
+        )
+        self.gpu_performance = self.device == "gpu" and not accuracy_golden and bool(
+            tasks & set(TaskTypesSelect.PERFORMANCE_TASKS)
+        )
+        self.gpu_high_precision = (
+            self.device == "gpu" and bool(task_result.is_benchmark_task)
+            and not self.gpu_performance
+        )
 
     def init_by_input_data(self, input_data: InputDataset):
         self.inputs = _prepare(input_data.kwargs)
+        _clear_aqk_upper_(self.inputs)
+        if self.device == "gpu" and not self.gpu_high_precision:
+            # Performance always measures the real upstream operator.  Mixed
+            # accuracy/performance tasks retain their separate FP64 golden pass.
+            self.gpu_control = _load_gpu_reference().prepare_gpu_reference(
+                self.inputs, reference="upstream_strict" if self.gpu_performance else None
+            )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
+        if os.environ.get("KDA_FINALIZE_ATK_TRACE_OUTPUT") == "1":
+            print(
+                "KDA_FINALIZE_ATK_CALL",
+                f"node={self.task_name}",
+                f"device={self.device}",
+                f"with_output={with_output}",
+                f"accuracy_requires_output={self.accuracy_requires_output}",
+                flush=True,
+            )
         if self.inputs is None:
             self.init_by_input_data(input_data)
         if self.inputs is None:
             raise RuntimeError("ATK inputs were not initialized")
-        if self.device == "cpu":
-            output = run_cpu(self.inputs)
+        if self.low_precision_benchmark:
+            output = run_cpu(self.inputs, high_precision=False)
+        elif self.device == "cpu":
+            output = run_cpu(self.inputs, high_precision=not self.low_precision_benchmark)
+        elif self.device == "gpu":
+            output = (_load_gpu_reference().run_gpu(self.inputs, high_precision=True)
+                      if self.gpu_high_precision else self.gpu_control())
         elif self.device in ("npu", "pyaclnn"):
             output = run_npu(self.inputs)
         else:
             raise RuntimeError("unsupported ATK backend %r" % self.device)
+        if self.low_precision_benchmark:
+            expected_dtype = torch.float32
+        elif self.device == "gpu":
+            expected_dtype = torch.float64 if self.gpu_high_precision else torch.bfloat16
+        elif self.device == "cpu":
+            expected_dtype = torch.float32 if self.low_precision_benchmark else torch.float64
+        else:
+            expected_dtype = torch.bfloat16
         if (tuple(output.shape) != _output_shape(self.inputs)
-                or output.dtype != (torch.float32 if self.device == "cpu"
-                                    else torch.bfloat16)):
+                or output.dtype != expected_dtype):
             raise RuntimeError("unexpected attn_out dtype or shape")
-        if not with_output:
+        if os.environ.get("KDA_FINALIZE_ATK_TRACE_OUTPUT") == "1":
+            print(
+                "KDA_FINALIZE_ATK_RETURN_CHECK",
+                f"node={self.task_name}",
+                f"device={self.device}",
+                f"with_output={with_output}",
+                f"accuracy_requires_output={self.accuracy_requires_output}",
+                flush=True,
+            )
+        # ATK 26.9.24 may invoke the actual node with with_output=False during
+        # double-benchmark accuracy.  Accuracy still needs the actual payload;
+        # retain the no-output fast path only for non-accuracy tasks.
+        if not with_output and not self.accuracy_requires_output:
             return None
-        if self.device != "cpu":
+        if self.device == "gpu":
+            torch.cuda.synchronize()
+        elif self.device != "cpu":
             torch.npu.synchronize()
         if not torch.isfinite(output.float()).all().item():
             raise RuntimeError("attn_out contains NaN or Inf")
+        # 双标杆比较要求 DUT、同精度标杆和高精度真值的 payload dtype 一致。
+        # NPU/GPU 的低精度结果仅转换保存载体，不改变其已经产生的数值。
+        output = output.float()
+        output = output.detach().cpu().contiguous()
+        if os.environ.get("KDA_FINALIZE_ATK_TRACE_OUTPUT") == "1":
+            print(
+                "KDA_FINALIZE_ATK_OUTPUT",
+                f"node={self.task_name}",
+                f"device={self.device}",
+                f"with_output={with_output}",
+                f"accuracy_requires_output={self.accuracy_requires_output}",
+                f"shape={tuple(output.shape)}",
+                f"dtype={output.dtype}",
+                flush=True,
+            )
         return (output,)
 
     def export_custom_data(self, input_data: InputDataset):
         del input_data
         if self.inputs is None:
             raise RuntimeError("ATK inputs were not initialized")
-        return {"output_layout": self.inputs.output_layout,
+        if self.low_precision_benchmark:
+            reference = f"{self.device}_fp32_bf16"
+        elif self.device == "cpu":
+            reference = "cpu_fp64"
+        elif self.device == "gpu":
+            reference = "gpu_fp64" if self.gpu_high_precision else "gpu_control"
+        else:
+            reference = "aclnn_dut"
+        data = {"output_layout": self.inputs.output_layout,
                 "state_v_first": self.inputs.state_v_first,
-                "chunks": int(self.inputs.h.shape[2])}
+                "reference": reference,
+                "aqk_structure": "chunk_lower_triangular",
+                "chunks": int(self.inputs.h.shape[1])}
+        if self.gpu_control is not None:
+            data.update(self.gpu_control.export_custom_data())
+        return data
