@@ -449,7 +449,7 @@ public:
         dk.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DK_BASE));
         dg.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DG_BASE));
         dbOut.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_DB_BASE));
-        savedRh.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + (CUBE_RH ? WS_DQ_LOCAL : WS_RH)));
+        savedRh.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace_ + base + WS_RH));
         AscendC::GlobalTensor<uint8_t> snapshot;
         if constexpr (CAPTURE) {
             snapshot.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(
