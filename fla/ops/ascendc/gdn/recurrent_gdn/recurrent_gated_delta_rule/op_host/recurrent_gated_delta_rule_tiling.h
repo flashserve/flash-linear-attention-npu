@@ -45,7 +45,7 @@ public:
     explicit RecurrentGatedDeltaRuleTiling(gert::TilingContext *context) : Ops::Transformer::OpTiling::TilingBaseClass(context)
     {
         InitCompileInfo();
-    }
+    };
     ~RecurrentGatedDeltaRuleTiling() override = default;
 
 protected:

@@ -71,7 +71,7 @@ void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetPlatformInfo()
 {
     return ge::GRAPH_SUCCESS;
-}
+};
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetShapeAttrsInfo()
 {
@@ -118,18 +118,18 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
             tilingData_.useQkL2NormInKernel != 0, tilingData_.useGateInKernel != 0,
             betaSigmoid != 0, betaSigmoid && tilingData_.allowNegEigval != 0);
     return ge::GRAPH_SUCCESS;
-}
+};
 
 uint64_t RecurrentGatedDeltaRuleTiling::GetTilingKey() const
 {
     return tilingKey_;
-}
+};
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetWorkspaceSize()
 {
     workspaceSize_ = static_cast<int64_t>(RGDR_SYS_WORKSPACE_SIZE);
     return ge::GRAPH_SUCCESS;
-}
+};
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::PostTiling()
 {

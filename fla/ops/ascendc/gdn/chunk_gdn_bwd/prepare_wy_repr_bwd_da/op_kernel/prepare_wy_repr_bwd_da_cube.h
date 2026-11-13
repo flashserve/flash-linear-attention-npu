@@ -410,7 +410,7 @@ __aicore__ inline PrepareWyReprBwdDAProcess<kType, betaType>::PrepareWyReprBwdDA
       dA(dA_),
       workspace(workspace_)
 {
-}
+};
 
 template <typename kType, typename betaType>
 __aicore__ void inline PrepareWyReprBwdDAProcess<kType, betaType>::Init(const PrepareWyReprBwdDaTilingData &tiling) {

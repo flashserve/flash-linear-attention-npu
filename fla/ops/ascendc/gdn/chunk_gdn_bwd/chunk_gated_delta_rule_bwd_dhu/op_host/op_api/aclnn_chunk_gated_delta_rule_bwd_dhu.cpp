@@ -528,19 +528,19 @@ static aclnnStatus CheckParams(ChunkGatedDeltaRuleBwdDhuParams params)
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckDtype(params);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckShape(params);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     return ACLNN_SUCCESS;
 }
 
