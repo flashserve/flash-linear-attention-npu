@@ -436,10 +436,9 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
                "当前实现要求 K=V=128，当前 K=%ld,V=%ld。", info.kDim,
                info.vDim);
     CHECK_COND(info.valueHeadNum >= info.qkHeadNum &&
-                   info.valueHeadNum % info.qkHeadNum == 0 &&
-                   info.valueHeadNum / info.qkHeadNum <= 16,
+                   info.valueHeadNum % info.qkHeadNum == 0,
                ACLNN_ERR_PARAM_INVALID,
-               "GVA 要求 HV>=HK、HV 能被 HK 整除且 HV/HK<=16，当前 HK=%ld,HV=%ld。",
+               "GVA 要求 HV>=HK 且 HV 能被 HK 整除，当前 HK=%ld,HV=%ld。",
                info.qkHeadNum, info.valueHeadNum);
     return ACLNN_SUCCESS;
 }

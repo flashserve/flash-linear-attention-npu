@@ -114,9 +114,8 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `lower_bound` | float | 转为 FP32 后有限；SafeSigmoid 模式要求 `[-5,0)` |
 | `backward_mode` | string | Python 层输出策略：`"none"`、`"forward"`、`"recompute"` 或 `"save"`；默认 `"save"` |
 
-`B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；head 数要求 `0 < HK <= HV`、
-`HV % HK == 0` 且 `1 <= HV/HK <= 16`。`HK=HV` 是原始非 GVA，
-`2 <= HV/HK <= 16` 才走 GVA 分支。tensor descriptor 必须使用标准、
+`B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
+`HV % HK == 0`。tensor descriptor 必须使用标准、
 非私有且可连续化的 ND 物理布局；输出必须连续，因为 kernel 直接写入输出地址。
 q/k/v/g/beta 均跟随 layout。跨 head DMA stride 的 `uint32_t` 限制仅对 BSND/TND
 生效，完整公式见 [README 输入输出约束](../README.md#输入输出)。

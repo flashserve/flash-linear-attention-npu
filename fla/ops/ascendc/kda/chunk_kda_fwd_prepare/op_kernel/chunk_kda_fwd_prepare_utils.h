@@ -235,41 +235,31 @@ __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
     return true;
 }
 
-template <bool GvaMode>
 __aicore__ inline uint32_t QkHeadForValueHead(
     const PrepareRuntimeTiling &tiling, uint32_t valueHead)
 {
-    if constexpr (!GvaMode) {
-        return valueHead;
-    } else {
-        if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
-            tiling.valueHeadNum % tiling.qkHeadNum != 0) {
-            return 0;
-        }
-        const uint32_t headsPerQk = tiling.valueHeadNum / tiling.qkHeadNum;
-        if (headsPerQk == 0) {
-            return 0;
-        }
-        return valueHead / headsPerQk;
+    if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
+        tiling.valueHeadNum % tiling.qkHeadNum != 0) {
+        return 0;
     }
+    const uint32_t headsPerQk = tiling.valueHeadNum / tiling.qkHeadNum;
+    if (headsPerQk == 0) {
+        return 0;
+    }
+    return valueHead / headsPerQk;
 }
 
 // Q/K 归一化结果按 HK 保存。GVA 中一个 HK 对应多个连续 HV，只有该
 // QK 头组的第一个 HV 写公开输出，避免多个 AIV 重叠写同一段 GM。
-template <bool GvaMode>
 __aicore__ inline bool IsQkOutputOwner(
     const PrepareRuntimeTiling &tiling, uint32_t valueHead)
 {
-    if constexpr (!GvaMode) {
-        return true;
-    } else {
-        if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
-            tiling.valueHeadNum % tiling.qkHeadNum != 0) {
-            return false;
-        }
-        const uint32_t headsPerQk = tiling.valueHeadNum / tiling.qkHeadNum;
-        return headsPerQk != 0 && valueHead % headsPerQk == 0;
+    if (tiling.qkHeadNum == 0 || tiling.valueHeadNum < tiling.qkHeadNum ||
+        tiling.valueHeadNum % tiling.qkHeadNum != 0) {
+        return false;
     }
+    const uint32_t headsPerQk = tiling.valueHeadNum / tiling.qkHeadNum;
+    return headsPerQk != 0 && valueHead % headsPerQk == 0;
 }
 
 __aicore__ inline uint64_t QkInputOffset(

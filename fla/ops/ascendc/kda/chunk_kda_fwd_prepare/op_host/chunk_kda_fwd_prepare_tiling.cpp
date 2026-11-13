@@ -490,11 +490,10 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     if (!FitsUint32(shape.batch) || !FitsUint32(shape.seqLen) ||
         !FitsUint32(shape.qkHeadNum) || !FitsUint32(shape.valueHeadNum) ||
         shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
-        !IsValidChunkKdaFwdPrepareGva(
-            static_cast<uint64_t>(shape.qkHeadNum),
-            static_cast<uint64_t>(shape.valueHeadNum))) {
+        shape.valueHeadNum < shape.qkHeadNum ||
+        shape.valueHeadNum % shape.qkHeadNum != 0) {
         OP_LOGE(context->GetNodeName(),
-                "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、1<=HV/HK<=16 且 HV%%HK=0；"
+                "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、HV>=HK 且 HV%%HK=0；"
                 "当前 B=%ld,T=%ld,HK=%ld,HV=%ld,K=%ld,V=%ld。",
                 shape.batch, shape.seqLen, shape.qkHeadNum, shape.valueHeadNum,
                 shape.kDim, shape.vDim);
@@ -594,16 +593,14 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         : (*safeGatePtr ? CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID
                         : CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS);
     using namespace KdaPrepare;
-    const uint64_t gvaMode = static_cast<uint64_t>(
-        shape.valueHeadNum != shape.qkHeadNum);
     const uint64_t legacyTilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken, betaDtypeToken, normMode, betaMode, gateMode,
         static_cast<uint64_t>(*useExp2Ptr),
         static_cast<uint64_t>(*safeGatePtr),
-        outputMode, gvaMode);
+        outputMode);
     const auto pipeline = PreparePipeline::Generic;
     const uint64_t tilingKey = isAscend950 ? legacyTilingKey
-        : RuntimeKey::Encode(normMode, gateMode, gvaMode);
+        : RuntimeKey::Encode(normMode, gateMode);
 
     ChunkKdaFwdPrepareTilingData tiling;
     tiling.set_batch(static_cast<uint32_t>(shape.batch));

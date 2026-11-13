@@ -16,11 +16,11 @@
 #endif
 
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
-template <uint32_t NORM_MODE, uint32_t GATE_MODE, bool GVA_MODE>
+template <uint32_t NORM_MODE, uint32_t GATE_MODE>
 #else
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
-          bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE, bool GVA_MODE>
+          bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE>
 #endif
 __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
@@ -87,7 +87,7 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
 
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
     static_assert(NORM_MODE<=1 && GATE_MODE<=2);
-    KdaPrepare::Arch22::Run<NORM_MODE,GATE_MODE,GVA_MODE,DTYPE_G,DTYPE_BETA>(args);
+    KdaPrepare::Arch22::Run<NORM_MODE,GATE_MODE,DTYPE_G,DTYPE_BETA>(args);
 #else
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NORM_MODE),
@@ -96,6 +96,6 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
         static_cast<KdaPrepare::OutputMode>(OUTPUT_MODE)>;
     using GateT = typename KdaPrepare::PrepareStorageType<D_T_GATE>::type;
     using BetaT = typename KdaPrepare::PrepareStorageType<D_T_BETA>::type;
-    KdaPrepare::RunPrepare<GateT, BetaT, Policy, GVA_MODE>(args);
+    KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);
 #endif
 }

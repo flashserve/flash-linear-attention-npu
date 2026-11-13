@@ -710,3 +710,16 @@ Evidence: validation_pr1179_a5/optimization_08/TARGET_08_REPORT.md,
 acceptance_08.json, final/performance_op.json, baseline/prefetch/mover raw profiles,
 QA workbooks, sanitizer logs and workspace_trace_development.patch. The inherited
 gate field in performance_op.json is historical, not a fresh GVA test in this round.
+
+
+## 2026-11-13 PR scope cleanup: remove Prepare changes
+
+All files under chunk_kda_fwd_prepare are restored to target-base64dc6073,
+including GVA template specialization, copy/initialization optimizations, ratio
+validation, host tests and documentation. The stable Prepare wrapper is unchanged
+from that base. Prepare development is tracked separately in PR1168.
+Finalize kernel/host sources and test inputs are byte-identical to c92099b5;
+this cleanup does not rerun or extend the historical full-chain validation above.
+A5 package rebuild and Finalize kernel hash verification are recorded under
+validation_pr1179_a5/remove_prepare/. Existing Finalize-only numerical and timing
+results refer to the same compiled A5 kernel; no extra performance shapes are run.

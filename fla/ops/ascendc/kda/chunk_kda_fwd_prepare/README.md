@@ -71,16 +71,13 @@ A2 实现的合同范围为：
 - `q/k/v` 为 BF16，`K=V=128`，`chunk_size=64`；
 - `g` 和 `beta` 各自支持 BF16/FP32，四种组合独立选择正确的输入加载；其余 dtype 由 host 拒绝；
 - 布局为 BNSD、BSND、NTD 或 TND，输入连续；变长输入使用 `cu_seqlens`，rank-4 变长容器要求 `B=1`；
-- head 数要求 `0 < HK <= HV`、`HV % HK == 0` 且 `1 <= HV/HK <= 16`；`HK=HV` 是原始非 GVA，`2 <= HV/HK <= 16` 才是 GVA；
+- GVA 要求 `0 < HK <= HV` 且 `HV % HK == 0`；
 - A2 支持 `use_exp2=false/true`，按原接口选择自然对数域或 log2 域；A5 保留原 arch35 入口和原有属性合同；
 - `backward_mode` 为 `none`、`forward`、`recompute` 或 `save`，13 个输出槽位及其返回顺序不变。
 
 不在上述范围内的组合必须在 host 侧返回参数错误，不会静默落入 A2 流水。A2 的通用 key 由
-`normMode × gateMode × GVA_MODE` 组成 12 个实际实例；A2/A3 共用同一套 RuntimeKey 定义，
-`HK=HV` 选择普通 key，`HV>HK` 统一选择 `GVA_MODE=1` 的 GVA key。具体 `G=HV/HK`
-仍由 tiling 数据运行时读取，不为比例 2..16
-分别生成实例。beta 模式、输出模式和 Exp2 通过本次调用内不可变的 tiling 字段传入。
-四个 dtype 对象各包含相同 12 个 key。
+`normMode × gateMode` 组成六个实际实例；beta 模式、输出模式和 Exp2 通过本次调用内不可变的 tiling
+字段传入。四个 dtype 对象各包含相同六个 key，不增加数学模式的笛卡尔积。
 实现位于 `op_kernel/arch22/`；A2 只有统一 BF16 resident relay，不再保留 Target/GeneralVec 或 FP32 relay 分支。
 关闭的公开输出不能作为 scratch。完整数学、平台和工具验收以对应的独立报告为准。
 
@@ -89,8 +86,8 @@ A2 实现的合同范围为：
 本次优化的设备验收范围为 A2；A3 需要独立编译和设备 smoke 验证。GVA 的 `chunk_size=32` 不在支持范围内。
 Issue 672 针对 `chunk_kda_bwd_prepare`，本算子是前向 Prepare，不能用本 README 或本 PR 声称关闭该 issue。
 
-`B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；head 数要求 `0 < HK <= HV`、
-`HV % HK == 0` 且 `1 <= HV/HK <= 16`，其中 `HK=HV` 为非 GVA。所有输出固定为 head-major：
+`B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
+`HV % HK == 0`。所有输出固定为 head-major：
 
 `layout` 同时描述 q/k/v/g/beta。仅 BSND/TND 的跨 head DMA 要求
 `(HK-1)*128*2`、`(HV-1)*128*2`、`(HV-1)*128*sizeof(g)` 和
@@ -174,8 +171,7 @@ sequence-major `(sequence_id, local_chunk_id)` 序列。rank-4 变长容器要�
 
 A2 使用 value-head pair：一个 AIC 配两个 AIV，每个 AIV 准备一个完整 value head。
 两个 lane 映射到不同 Q/K head 时分别准备 Q/K；奇数 head 的 inactive lane 仍参与事件协议。
-六个 Norm/Gate 数学策略及其普通/GVA key 共用 BF16 resident relay、W/U inverse 复用、
-paired L0 和两代 GM workspace。
+六个 Norm/Gate key 共用 BF16 resident relay、W/U inverse 复用、paired L0 和两代 GM workspace。
 普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见 [A2 设计](docs/design_a2.md)。
 
 A5 保留原有 MIX AIC/AIV 八阶段流水及 [A5 设计](docs/design.md)：
@@ -209,35 +205,3 @@ A5/A2≥0.5，case1/case3 分别为 0.4884/0.4937，整体性能目标尚未全�
 均映射至实际 Akk 内，36 个输出 redzone 探针完整。synccheck 另有 6,340 条冗余等待 WARNING；
 不宣称零警告验收。逐例数据、源码/包身份及运行命令维护在
 [独立 ATK 交付件](https://gitcode.com/chen-linxin4/work_tool/pull/32)，不在本 PR 重复提交测试工程。
-
-### A2 Precomputed 行内复用优化（2026-11-12）
-
-`LeafInverse64` 的第k步源行与后续目标行不重叠，现直接从 `work_` 读取源行，
-删除每步64个FP32元素的冗余复制及复制后的PIPE_V屏障；更新顺序和每步写后屏障保持不变。
-在同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
-
-|典型case|布局与规模|优化前（us）|优化后（us）|耗时降低|
-|---|---|---:|---:|---:|
-|198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|10998.53|10037.25|8.74%|
-|199|TND变长，T=16384，16×1024，HK=16，HV=128，G=8|15863.48|14557.19|8.23%|
-
-优化后使用 `/data/yqw/requirement/prepare/kda_bwd_prepare/atk标杆` 完成精度20/20、
-确定性3/3。按本轮要求未重新采集msprof；上述NPU Event只用于同环境回归对比，
-不替代统一的msprof Task Duration性能结论。
-
-### A2 满块与Gather索引优化（2026-11-12）
-
-在上述行内复用提交基础上，Precomputed路径进一步复用16步Gather索引模式，后续批次只对整批
-索引增加64字节；满64行work跳过Q/K/G/beta、RHS和V输入缓冲区的冗余预清零，尾块保持补零；
-无消费者的Norm关闭rstd初始化及Precomputed Lower写回一并删除。数学分支、tiling key和输出合同不变。
-同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
-
-|典型case|布局与规模|本轮优化前（us）|本轮优化后（us）|耗时降低|
-|---|---|---:|---:|---:|
-|198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|10463.28|9862.06|5.75%|
-|199|TND变长，T=16384，16×1024，HK=16，HV=128，G=8|15158.63|14270.13|5.86%|
-
-优化后使用同一ATK标杆再次完成精度20/20、确定性3/3。精度报告位于
-`/data/yqw/validation/prepare_gva/perf_opt_round2_accuracy20_ok`，确定性报告位于
-`/data/yqw/validation/prepare_gva/perf_opt_round2_determinism`。按要求未重新采集msprof；
-NPU Event结果仅作为同窗口优化回归数据。

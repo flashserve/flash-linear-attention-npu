@@ -32,16 +32,16 @@ struct PrepareStorageType<CHUNK_KDA_FWD_PREPARE_TPL_FP32> {
     using type = float;
 };
 
-template <typename GateT, typename BetaT, typename CompilePolicy, bool GvaMode>
+template <typename GateT, typename BetaT, typename CompilePolicy>
 __aicore__ inline void RunPrepare(const PrepareKernelArgs &args)
 {
     if ASCEND_IS_AIV {
-        Arch35::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy, GvaMode> vec;
+        Arch35::ChunkKdaFwdPrepareVec<GateT, BetaT, CompilePolicy> vec;
         vec.Init(args);
         vec.Process();
     }
     if ASCEND_IS_AIC {
-        Arch35::ChunkKdaFwdPrepareCube<CompilePolicy, GvaMode> cube;
+        Arch35::ChunkKdaFwdPrepareCube<CompilePolicy> cube;
         cube.Init(args);
         cube.Process();
     }

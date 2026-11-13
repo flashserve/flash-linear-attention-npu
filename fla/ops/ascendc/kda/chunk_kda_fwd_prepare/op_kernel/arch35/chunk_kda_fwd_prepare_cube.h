@@ -23,7 +23,7 @@ constexpr AscendC::FixpipeConfig kFixpipeRowMajorUb = {
 constexpr AscendC::FixpipeConfig kFixpipeNzL1 = {
     AscendC::CO2Layout::NZ, false};
 
-template <typename CompilePolicy, bool GvaMode>
+template <typename CompilePolicy>
 class ChunkKdaFwdPrepareCube {
 public:
     __aicore__ inline void Init(const PrepareKernelArgs &args)
@@ -52,11 +52,10 @@ public:
         const uint32_t chunkWork = static_cast<uint32_t>(
             static_cast<uint64_t>(args_.tiling.batch) *
             args_.tiling.totalChunks);
-        const uint32_t headsPerQk = GvaMode ?
-            args_.tiling.valueHeadNum / args_.tiling.qkHeadNum : 1;
+        const uint32_t headsPerQk =
+            args_.tiling.valueHeadNum / args_.tiling.qkHeadNum;
         const bool fourHeadGroupPreservesGva =
-            !GvaMode ||
-            (headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0);
+            headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
         const bool balanceDenseTail =
             !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
             fourHeadGroupPreservesGva && chunkWork >= coreCount &&
