@@ -63,8 +63,11 @@ template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class
         VBarrier();
     }
     __aicore__ inline void Normalize(LocalTensor<bfloat16_t> src,LocalTensor<float> rstd) {
-        Duplicate(rstd,1.0F,64);VBarrier();
-        if constexpr(Norm==1) {
+        if constexpr(Norm==0) {
+            if(a_.tiling.outputMode==1||a_.tiling.outputMode==2) {
+                Duplicate(rstd,1.0F,64);VBarrier();
+            }
+        } else {
             auto values=work_,squares=work_[8192],ones=small_[1536];
             uint32_t rows=w_.rows,count=rows*128;
             Cast(values,src,RoundMode::CAST_NONE,count);VBarrier();
@@ -82,8 +85,11 @@ template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class
         }
     }
     __aicore__ inline void Prepare() {
-        Duplicate(q_,bfloat16_t(0),8192);Duplicate(k_,bfloat16_t(0),8192);
-        Duplicate(g_,0.0F,8192);Duplicate(beta_,0.0F,64);VBarrier();
+        // Full chunks overwrite every input lane. Only tails need zero padding.
+        if(w_.rows<64) {
+            Duplicate(q_,bfloat16_t(0),8192);Duplicate(k_,bfloat16_t(0),8192);
+            Duplicate(g_,0.0F,8192);Duplicate(beta_,0.0F,64);VBarrier();
+        }
         const auto &t=a_.tiling;uint32_t h=w_.head[lane_],qh=w_.qh[lane_];
         Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,!GvaMode);
         Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,!GvaMode);
@@ -336,7 +342,8 @@ template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class
         Cast(values,k_,RoundMode::CAST_NONE,count);VBarrier();Mul(values,values,factor,count);VBarrier();
         Cast(rhs,values,RoundMode::CAST_RINT,count);VBarrier();Cast(values,rhs,RoundMode::CAST_NONE,count);VBarrier();
         RowMultiply(values,values,blocks_,w_.rows,128);
-        Duplicate(rhs,bfloat16_t(0),8192);VBarrier();Cast(rhs,values,RoundMode::CAST_RINT,count);VBarrier();
+        if(w_.rows<64){Duplicate(rhs,bfloat16_t(0),8192);VBarrier();}
+        Cast(rhs,values,RoundMode::CAST_RINT,count);VBarrier();
         Write(a_.workspace+base_+RhsK,0,rhs,8192,false);
         Cast(values,q_,RoundMode::CAST_NONE,count);VBarrier();Mul(values,values,factor,count);VBarrier();
         Cast(qg,values,RoundMode::CAST_RINT,count);VBarrier();
@@ -349,10 +356,11 @@ template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class
         Cast(values,k_,RoundMode::CAST_NONE,count);VBarrier();Mul(values,values,factor,count);VBarrier();
         Cast(v_,values,RoundMode::CAST_RINT,count);VBarrier();
         Write(a_.kg,Out(t,w_,h,t.valueHeadNum,128),v_,count,false);
-        Duplicate(qg,bfloat16_t(0),8192);VBarrier();
+        if(w_.rows<64){Duplicate(qg,bfloat16_t(0),8192);VBarrier();}
         Read(qg,a_.v,QkvInputOffset(t,w_,h,t.valueHeadNum,128),w_.rows,128,t.valueHeadNum,t.inputSequenceMajor,true);Mte2ToV();
         Cast(values,qg,RoundMode::CAST_NONE,count);VBarrier();RowMultiply(values,values,blocks_,w_.rows,128);
-        Duplicate(rhs,bfloat16_t(0),8192);VBarrier();Cast(rhs,values,RoundMode::CAST_RINT,count);VBarrier();
+        if(w_.rows<64){Duplicate(rhs,bfloat16_t(0),8192);VBarrier();}
+        Cast(rhs,values,RoundMode::CAST_RINT,count);VBarrier();
         Write(a_.workspace+base_+RhsV,0,rhs,8192,false);
     }
     __aicore__ inline void LeafInverse32() {
@@ -404,23 +412,31 @@ template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class
         Cast(inverse,v_,RoundMode::CAST_NONE,4096);VBarrier();
         auto indices=small_[InverseGatherIndexSmall].template ReinterpretCast<int32_t>();
         auto batchIndices=work_[4096].template ReinterpretCast<int32_t>();
-        auto gathered=work_[5120],rowCopy=small_[1536];
-        DrainStores(); // Retire Lower/Q/K stores before the Q alias is overwritten.
+        auto gathered=work_[5120];
+        DrainStores(); // Retire Q/K stores before the Q alias is overwritten.
         auto coefficients=ub_.template GetWithOffset<float>((UbK-UbQ)/4,UbQ);
         const uint32_t steps=w_.rows-1;
+        const uint32_t firstCount=steps<16?steps:16;
+        for(uint32_t k=0;k<firstCount;++k)
+            Adds(batchIndices[k*64],indices,static_cast<int32_t>(k*4),64);
+        VBarrier();
         for(uint32_t begin=0;begin<steps;begin+=16) {
             const uint32_t count=steps-begin<16?steps-begin:16;
-            for(uint32_t k=0;k<count;++k)
-                Adds(batchIndices[k*64],indices,static_cast<int32_t>((begin+k)*4),64);
-            VBarrier();
+            // Later batches preserve the row pattern and advance every offset
+            // by 16 FP32 columns, replacing one vector add per solve step.
+            if(begin) {
+                Adds(batchIndices,batchIndices,static_cast<int32_t>(16*4),64*count);
+                VBarrier();
+            }
             Gather(gathered,g_,batchIndices.template ReinterpretCast<uint32_t>(),0,64*count);
             VBarrier();
             Brcb(coefficients,gathered,static_cast<uint8_t>(8*count),{1,8});VBarrier();
             for(uint32_t step=0;step<count;++step) {
                 const uint32_t k=begin+step,first=k+1;
-                Adds(rowCopy,inverse[k*64],0.0F,64);VBarrier();
                 BinaryRepeatParams update{1,1,0,8,0,1};
-                MulAddDst(inverse[first*64],rowCopy,coefficients[step*512+first*8],
+                // The source row precedes and never overlaps the updated rows.
+                // Read it in place instead of copying 64 FP32 values per step.
+                MulAddDst(inverse[first*64],inverse[k*64],coefficients[step*512+first*8],
                           64,63-k,update);VBarrier();
             }
         }
@@ -472,9 +488,13 @@ template<uint32_t Norm,uint32_t Gate,bool GvaMode,class GateT,class BetaT> class
         // to the same +0 BF16 bits as the former per-row Duplicate operations.
         Write(a_.aqk,Out(a_.tiling,w_,w_.head[lane_],a_.tiling.valueHeadNum,64),v_,w_.rows*64);
         if constexpr(Norm==0 || Gate==0) {
-            Write(a_.workspace+base_+Lower,0,q_,4096,false);
-            if constexpr(Gate==0)LeafInverse64();
-            else LeafInverse32();
+            if constexpr(Gate==0) {
+                // Precomputed inversion consumes g_ directly; Cube only needs Payload.
+                LeafInverse64();
+            } else {
+                Write(a_.workspace+base_+Lower,0,q_,4096,false);
+                LeafInverse32();
+            }
         } else {
             if(a_.tiling.outputMode!=0) {
                 Duplicate(v_,bfloat16_t(0),4096);VBarrier();

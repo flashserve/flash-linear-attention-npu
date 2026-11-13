@@ -8,6 +8,7 @@
 namespace optiling {
 
 constexpr uint64_t FINALIZE_CHUNK_ROWS = 64;
+constexpr uint64_t FINALIZE_A2A3_HEADS_PER_PARTITION = 16;
 constexpr uint64_t FINALIZE_A5_GROUP_SIZE = 4;
 constexpr uint64_t FINALIZE_A5_DENSE_MOVER_MIN_CHUNKS_PER_CORE = 4;
 constexpr uint64_t FINALIZE_A5_VARLEN_MOVER_MIN_CHUNKS_PER_CORE = 8;
@@ -73,7 +74,8 @@ public:
         bool useAivInputMover = false;
         if (!context_.isA5) {
             headsPerPartition = chunkItems < context_.aicCoreNum
-                ? 1 : context_.valueHeadNum;
+                ? 1 : std::min(FINALIZE_A2A3_HEADS_PER_PARTITION,
+                               context_.valueHeadNum);
         } else {
             groupSize = FINALIZE_A5_GROUP_SIZE;
             const uint64_t fullHeadCores = std::min(context_.aicCoreNum, chunkItems);

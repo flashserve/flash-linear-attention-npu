@@ -69,6 +69,14 @@ public:
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.vNew));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.h));
         out_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.attnOut));
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
+        // Every A2/A3 input tile is consumed once. Bypass L2 so the 72 KiB
+        // per-head stream does not evict data needed by concurrent cores.
+        q_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        a_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        v_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        h_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+#endif
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if ASCEND_IS_AIC {
             SetLoadDataPaddingValue<Element>(static_cast<Element>(0));
