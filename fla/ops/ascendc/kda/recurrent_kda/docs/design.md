@@ -127,7 +127,7 @@ tiling data 驱动，避免把 runtime shape 组合扩张到 tiling key。
 ### 7.1 计算流程
 
 1. 解析当前任务对应的逻辑序列、value head、query/key head 和状态槽。
-2. 加载初始状态到 UB 工作区；Python 仅在非原位模式下允许 `initial_state=None`，并预先创建全零状态。
+2. 将调用方提供的初始状态加载到 UB 工作区；Python 在原位和非原位模式下均拒绝 `initial_state=None`。需要零初态时，由调用方显式创建零状态池。
 3. 按 Q/K/V 各自 token/head stride 计算 GM 首地址并二维搬运到紧凑 UB；随后按属性执行 q/k
    normalize、raw gate 转换和 beta sigmoid。
 4. 对状态做 gate decay，计算 `S @ k`、delta 和 outer 更新。
@@ -181,7 +181,7 @@ Q/K/V 公开输入为 BF16，gate/beta 保持 FP32/BF16/FP16 输入 dtype，并�
 
 - BSND raw gate + unsafe gate + beta sigmoid。
 - BSND safe gate + `allow_neg_eigval`。
-- TND 预计算 log gate + 空 initial_state。
+- TND 预计算 log gate + 显式传入的零初始状态。
 - Kimi/KDA 关键泛化 shape：GVA head 映射、`K=128,V=128` dense raw gate、`K=128,V=256` TND safe gate。
 - Kimi K3 TP16：本地 head 数 6、`K=V=128`、BF16 Q/K/V、raw+safe gate、TND packed decode/MTP 1-8；
   覆盖 `[0,1,4,4,5]` 非等长序列、二维 slot 索引、容量化 state pool、非连续槽更新和未命中槽保持不变。
