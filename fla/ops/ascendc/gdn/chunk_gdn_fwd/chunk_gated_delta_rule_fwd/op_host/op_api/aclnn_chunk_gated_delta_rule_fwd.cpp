@@ -820,20 +820,27 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
             OP_NAME, "B", std::to_string(batch), "chunkSize=32 varlen input requires physical B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckMetadata(params, tokens) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckMetadata(params, tokens);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
 
     const int64_t seqNum = SeqNum(params, batch);
     const int64_t stateDim0 = params.stateVFirst ? valueDim : keyDim;
     const int64_t stateDim1 = params.stateVFirst ? keyDim : valueDim;
-    if (!(CheckStateShape(params.initialStateOptional, "initialState", seqNum,
-                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckStateShape(params.initialStateOptional, "initialState", seqNum, valueHeads, stateDim0, stateDim1);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum,
-                              valueHeads, stateDim0, stateDim1) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum, valueHeads, stateDim0, stateDim1);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (params.initialStateOptional != nullptr) {
         const DataType stateDtype = params.initialStateOptional->GetDataType();
@@ -871,29 +878,53 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     };
     const size_t qkvRank = 4;
     const size_t scalarRank = 3;
-    if (!(CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.gCumsumOutOptional, scalarRank, "gCumsumOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.qHatOutOptional, qkvRank, "qHatOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.qHatOutOptional, qkvRank, "qHatOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.kHatOutOptional, qkvRank, "kHatOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.kHatOutOptional, qkvRank, "kHatOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.qRstdOutOptional, scalarRank, "qRstdOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.qRstdOutOptional, scalarRank, "qRstdOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.kRstdOutOptional, scalarRank, "kRstdOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.kRstdOutOptional, scalarRank, "kRstdOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckOptionalRank(params.hOutOptional, 5, "hOutOptional") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOptionalRank(params.hOutOptional, 5, "hOutOptional");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
 
     const int64_t chunks = ExpectedChunks(params, info.seqlen);
@@ -1013,8 +1044,11 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
             OP_NAME, "B", std::to_string(info.batch), "varlen rank-4 input requires physical B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckMetadata(params, info.seqlen) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckMetadata(params, info.seqlen);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
 
     const int64_t seqNum = SeqNum(params, info.batch);

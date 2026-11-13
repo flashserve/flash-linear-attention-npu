@@ -49,9 +49,12 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
  static aclnnStatus CheckParams(SolveTriParams params)
  {
-     if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
+     {
+         const aclnnStatus checkStatus = CheckNotNull(params);
+         if (checkStatus != ACLNN_SUCCESS) {
+             return checkStatus;
+         }
+     };
      return ACLNN_SUCCESS;
  }
  

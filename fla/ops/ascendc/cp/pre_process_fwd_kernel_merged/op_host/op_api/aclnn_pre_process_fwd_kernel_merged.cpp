@@ -302,11 +302,17 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
     if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_NULLPTR;
     };
-    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckDtype(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckShape(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_INNER_NULLPTR;

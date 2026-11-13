@@ -617,11 +617,17 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K/V", std::to_string(info.kDim) + "/" + std::to_string(info.vDim), "K/V must both be 64 or both be 128; mixed K/V and other dims are not");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckDtypes(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckDtypes(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (!(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1)) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", "invalid", "rank4 varlen input with cuSeqlensOptional requires B=1.");
@@ -631,13 +637,17 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", "invalid", "varlen input supports at most 1024 sequences.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
-                                info.totalChunks, params.chunkSize) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional, info.totalChunks, params.chunkSize);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckStateShape(params.initialStateOptional, "initialStateOptional", info,
-                              params.stateVFirst) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckStateShape(params.initialStateOptional, "initialStateOptional", info, params.stateVFirst);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     // 归一化 / gate 开关约束：epsilon 只在 in-kernel L2 norm 时参与计算，
     // allowNegEigval 依赖 in-kernel beta sigmoid。
@@ -672,8 +682,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     }
         }
     }
-    if (!(CheckOutputShapes(params, info) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckOutputShapes(params, info);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     return ACLNN_SUCCESS;
 }
@@ -886,8 +899,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckParams(params, parsedLayout, info);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
@@ -1239,8 +1255,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    if (!(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckParams(params, parsedLayout, info);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;

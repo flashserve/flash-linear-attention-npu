@@ -506,11 +506,17 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             "HV/HK must be an integer in [1, 4]");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckLayoutShapes(params, info) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckLayoutShapes(params, info);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckMetadata(params, info.tokens) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckMetadata(params, info.tokens);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (params.cuSeqlens != nullptr && info.batch != 1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
@@ -699,8 +705,11 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     }
 
     ShapeInfo info;
-    if (!(CheckParams(params, info) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckParams(params, info);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
 
     if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {

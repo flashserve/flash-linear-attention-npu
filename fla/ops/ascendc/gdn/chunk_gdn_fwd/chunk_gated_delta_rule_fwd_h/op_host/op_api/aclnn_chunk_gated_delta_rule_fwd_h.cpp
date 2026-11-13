@@ -491,31 +491,52 @@ static aclnnStatus CheckVariableLength(const ChunkGatedDeltaRuleFwdHParams &para
 
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
-    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckNotNull(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (!(params.chunkSize == 64 || params.chunkSize == 128)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64 or 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckGateOptionalNonNull(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckGkParams(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckGkParams(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckFormat(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckFormat(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckShape(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckDtype(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckVariableLength(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckVariableLength(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     return ACLNN_SUCCESS;
 }

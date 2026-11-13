@@ -81,9 +81,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
              {k, "k"}, {v, "v"}, {akk, "akk"},
              {vNew, "v_new"}, {h, "h"}, {dh, "dh"}, {dvScan, "dv_scan"},
              {dqOut, "dq"}, {dkOut, "dk"}, {dvOut, "dv"}}) {
-        if (!(CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.first, DataType::DT_BF16, item.second);
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
     if (beta == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "beta", "beta must not be nullptr");
@@ -95,19 +98,28 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
             "beta must be BF16 or FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(CheckRequired(beta, beta->GetDataType(), "beta") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckRequired(beta, beta->GetDataType(), "beta");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckRequired(dBetaOut, beta->GetDataType(), "d_beta") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckRequired(dBetaOut, beta->GetDataType(), "d_beta");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(gk, "gk"),
              {dAqk, "d_aqk"}, {dqRaw, "dq_raw"}, {aLog, "a_log"},
              {dtBias, "dt_bias"}, {dALogOut, "d_a_log"}, {dDtBiasOut, "d_dt_bias"}}) {
-        if (!(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.first, DataType::DT_FLOAT, item.second);
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
     for (const auto &item : {
              std::pair<const aclTensor *, const aclTensor *>(rawG, dGOut)}) {
@@ -120,12 +132,18 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
                 "gate parameters must be BF16 or FP32");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        if (!(CheckRequired(item.first, item.first->GetDataType(), "gate parameter") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
-        if (!(CheckRequired(item.second, item.first->GetDataType(), "gate gradient") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.first, item.first->GetDataType(), "gate parameter");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.second, item.first->GetDataType(), "gate gradient");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
     if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -136,12 +154,18 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (qRstdOptional != nullptr) {
-        if (!(CheckRequired(qRstdOptional, DataType::DT_FLOAT, "q_rstd") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
-        if (!(CheckRequired(kRstdOptional, DataType::DT_FLOAT, "k_rstd") == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
+        {
+            const aclnnStatus checkStatus = CheckRequired(qRstdOptional, DataType::DT_FLOAT, "q_rstd");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
+        {
+            const aclnnStatus checkStatus = CheckRequired(kRstdOptional, DataType::DT_FLOAT, "k_rstd");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
     if (cuSeqlensOptional == nullptr && chunkIndicesOptional != nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(

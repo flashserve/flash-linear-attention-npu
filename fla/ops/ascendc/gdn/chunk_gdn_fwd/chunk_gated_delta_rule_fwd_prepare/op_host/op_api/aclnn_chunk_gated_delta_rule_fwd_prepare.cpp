@@ -395,9 +395,12 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
                 "A2 Prepare requires positive B/Hk/Hv/T");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        if (!(CheckA2PrepareMetadata(params, T) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    };
+        {
+            const aclnnStatus checkStatus = CheckA2PrepareMetadata(params, T);
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
     if (!(vShape.GetDim(0) == B && vShape.GetDim(2) == T)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -664,14 +667,23 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
 
 static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
-    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckNotNull(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckDtype(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckDtype(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
-    if (!(CheckShape(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckShape(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     return ACLNN_SUCCESS;
 }
@@ -723,8 +735,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     }
     auto executorPtr = uniqueExecutor.get();
 
-    if (!(CheckParams(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkStatus = CheckParams(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
     };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         
