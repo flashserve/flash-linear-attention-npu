@@ -16,6 +16,21 @@ struct Work {
 __aicore__ inline uint64_t WorkCount(const PrepareRuntimeTiling &t) {
     return (t.isVarLen?uint64_t(t.totalChunks):uint64_t(t.batch)*t.totalChunks)*((t.valueHeadNum+1)/2);
 }
+__aicore__ inline uint64_t RotateWork(const PrepareRuntimeTiling &t,uint64_t cursor,
+                                     uint32_t core,uint32_t generation) {
+    const uint32_t pairs=(t.valueHeadNum+1)/2;
+    // Correct stride resonance only: other strides already change head pairs.
+    if(pairs==1 || t.usedCoreNum%pairs!=0)return cursor;
+    const uint64_t begin=cursor-core,remaining=WorkCount(t)-begin;
+    const uint32_t width=remaining<t.usedCoreNum?static_cast<uint32_t>(remaining):t.usedCoreNum;
+    // WorkCount and full-wave widths are multiples of pairs, so a nonempty
+    // partial width is too. Rotation < pairs <= width; one subtraction suffices.
+    uint32_t offset=core+generation%pairs;
+    if(offset>=width)offset-=width;
+    // A permutation inside each active wave, including a partial final wave.
+    // The same physical core/slot owns all buffers and flags as before.
+    return begin+offset;
+}
 __aicore__ inline Work Describe(const PrepareKernelArgs &a,uint64_t job) {
     const auto &t=a.tiling; Work w;
     uint32_t pairs=(t.valueHeadNum+1)/2, chunk=job/pairs, pair=job%pairs;

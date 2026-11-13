@@ -4,7 +4,7 @@
 namespace KdaPrepare::Arch22 {
 constexpr FixpipeConfig NzOutput={CO2Layout::NZ,false};
 template<uint32_t Norm,uint32_t Gate> class Cube {
-    const PrepareKernelArgs &a_;TPipe *pipe_;uint32_t core_,slot_;bool identityReady_[2];Work w_;
+    const PrepareKernelArgs &a_;TPipe *pipe_;uint32_t core_,slot_;bool identityReady_[2],leafFast_[2];Work w_;
     TBuf<TPosition::A1> l1_;TBuf<TPosition::A2> la_;
     TBuf<TPosition::B2> lb_;TBuf<TPosition::CO1> lc_;
     TEventID copyReady_,loadReady_,abFree_[2],matrixReady_,cFree_,l1Ready_,laneFree_[2],scoreReleased_;
@@ -64,12 +64,13 @@ template<uint32_t Norm,uint32_t Gate> class Cube {
             SetFlag<HardEvent::FIX_M>(cFree_);
         }
     }
-    template<uint32_t Block> __aicore__ inline void GemmPair(
+    template<uint32_t Block,bool FastOnly=false> __aicore__ inline void GemmPair(
         uint32_t left,uint32_t right,uint32_t dst,
         uint32_t ar,uint32_t ac,uint32_t br,uint32_t bc,uint32_t cr,uint32_t cc,bool publish) {
         WaitFlag<HardEvent::FIX_M>(cFree_);
         for(uint32_t lane=0;lane<2;++lane) {
             if(!w_.active[lane])continue;
+            if constexpr(FastOnly)if(!leafFast_[lane])continue;
             auto A=la_.Get<bfloat16_t>()[lane*8192],B=lb_.Get<bfloat16_t>()[lane*16384];
             auto C=lc_.Get<float>()[lane*4096];
             WaitFlag<HardEvent::M_MTE1>(abFree_[lane]);
@@ -81,6 +82,7 @@ template<uint32_t Norm,uint32_t Gate> class Cube {
         MatrixReady();
         for(uint32_t lane=0;lane<2;++lane) {
             if(!w_.active[lane])continue;
+            if constexpr(FastOnly)if(!leafFast_[lane])continue;
             auto C=lc_.Get<float>()[lane*4096];
             auto f=FixpipeParamsV220(Block,Block,Block,64,false);f.quantPre=QuantMode_t::F322BF16;
             Fixpipe<bfloat16_t,float,NzOutput>(L1(lane,dst)[cc*64+cr*16],C,f);
@@ -102,7 +104,7 @@ template<uint32_t Norm,uint32_t Gate> class Cube {
         uint32_t depth=square?16:32;
         WaitFlag<HardEvent::FIX_M>(cFree_);
         for(uint32_t lane=0;lane<2;++lane) {
-            if(!w_.active[lane])continue;
+            if(!w_.active[lane] || !leafFast_[lane])continue;
             auto A=la_.Get<bfloat16_t>()[lane*8192],B=lb_.Get<bfloat16_t>()[lane*16384];
             auto C=lc_.Get<float>()[lane*4096];
             WaitFlag<HardEvent::M_MTE1>(abFree_[lane]);
@@ -123,7 +125,7 @@ template<uint32_t Norm,uint32_t Gate> class Cube {
         // A/B load for lane1 overlaps lane0 MAC; both C banks retire before reuse.
         MatrixReady();
         for(uint32_t lane=0;lane<2;++lane) {
-            if(!w_.active[lane])continue;
+            if(!w_.active[lane] || !leafFast_[lane])continue;
             auto C=lc_.Get<float>()[lane*4096];
             for(uint32_t leaf=0;leaf<4;++leaf) {
                 uint32_t b=leaf*16;
@@ -140,10 +142,136 @@ template<uint32_t Norm,uint32_t Gate> class Cube {
         SetFlag<HardEvent::FIX_M>(cFree_);
         SetFlag<HardEvent::FIX_MTE1>(l1Ready_);WaitFlag<HardEvent::FIX_MTE1>(l1Ready_);
     }
-    template<uint32_t Block> __aicore__ inline void MergePair(uint32_t base) {
+    template<uint32_t Block,bool FastOnly=false> __aicore__ inline void MergePair(uint32_t base) {
         uint32_t lower=base+Block;
-        GemmPair<Block>(X,P,Tmp,lower,lower,lower,base,lower,base,false);
-        GemmPair<Block>(Tmp,X,X,lower,base,base,base,lower,base,true);
+        GemmPair<Block,FastOnly>(X,P,Tmp,lower,lower,lower,base,lower,base,false);
+        GemmPair<Block,FastOnly>(Tmp,X,X,lower,base,base,base,lower,base,true);
+    }
+    __aicore__ inline LocalTensor<float> L1Fp32(uint32_t lane,uint32_t offset) {
+        return L1(lane,offset).template ReinterpretCast<float>();
+    }
+    __aicore__ inline void CopySquareFp32(uint32_t lane,uint32_t offset,GlobalTensor<float> src) {
+        // Each 16x32 slice is four consecutive 16x8 FP32 fractals, exactly
+        // the same Zz order as the former four separate 16x16 squares.
+        Nd2NzParams p{};p.ndNum=2;p.nValue=16;p.dValue=32;p.srcDValue=32;
+        p.srcNdMatrixStride=512;p.dstNzMatrixStride=512;
+        p.dstNzNStride=1;p.dstNzC0Stride=16;
+        DataCopy(L1Fp32(lane,offset),src,p);
+    }
+    __aicore__ inline void LoadSquareAFp32(LocalTensor<float> dst,LocalTensor<float> src) {
+        LoadData2DParams p{};p.repeatTimes=8;p.srcStride=1;LoadData(dst,src,p);
+    }
+    __aicore__ inline void LoadSquareBFp32(LocalTensor<float> dst,LocalTensor<float> src) {
+        LoadData2dTransposeParams p{};p.repeatTimes=1;p.srcStride=1;p.dstFracGap=1;
+        for(uint32_t row=0;row<2;++row)
+            for(uint32_t col=0;col<2;++col)
+                LoadDataWithTranspose(dst[row*512+col*128],src[(row*2+col)*256],p);
+    }
+    template<bool Leaves> __aicore__ inline void MergeFp32Pair() {
+        // Each lane keeps distinct A/B/C, L1 and GM banks. Only phase boundaries
+        // are shared; the two products and FP32 relays within a head are unchanged.
+        MmadParams mm{};mm.m=Leaves?16:32;mm.n=32;mm.k=32;mm.cmatrixInitVal=true;
+        WaitFlag<HardEvent::FIX_M>(cFree_);
+        for(uint32_t lane=0;lane<2;++lane) {
+            if(!w_.active[lane] || leafFast_[lane])continue;
+            auto A=la_.Get<float>()[lane*4096],B=lb_.Get<float>()[lane*8192];
+            auto C=lc_.Get<float>()[lane*4096];
+            WaitFlag<HardEvent::M_MTE1>(abFree_[lane]);
+            if constexpr(Leaves) {
+                LoadData2DParams p{};p.repeatTimes=2;p.srcStride=1;
+                LoadData(A,L1Fp32(lane,FpX0)[768],p);
+                LoadData(A[256],L1Fp32(lane,FpX1)[768],p);
+            } else LoadSquareAFp32(A,L1Fp32(lane,FpX1));
+            LoadSquareBFp32(B,L1Fp32(lane,Leaves?FpP:FpFinalP));LoadsReady();
+            Mmad(C,A,B,mm);SetFlag<HardEvent::M_MTE1>(abFree_[lane]);
+        }
+        MatrixReady();
+        for(uint32_t lane=0;lane<2;++lane) {
+            if(!w_.active[lane] || leafFast_[lane])continue;
+            auto C=lc_.Get<float>()[lane*4096];
+            auto f=FixpipeParamsV220(32,Leaves?16:32,Leaves?16:32,32,false);
+            f.quantPre=QuantMode_t::NoQuant;
+            auto relay=Gm<float>(a_.workspace+GmLane(core_,slot_,lane)+MergeFp32);
+            Fixpipe<float,float,CFG_ROW_MAJOR>(relay,C,f);
+        }
+        // Both FP32 GM producers retire before either DMA consumer. A2/A3
+        // cannot directly relay FP32 L0C to L1; do not quantize this boundary.
+        PipeBarrier<PIPE_ALL>();
+        for(uint32_t lane=0;lane<2;++lane) {
+            if(!w_.active[lane] || leafFast_[lane])continue;
+            auto relay=Gm<float>(a_.workspace+GmLane(core_,slot_,lane)+MergeFp32);
+            if constexpr(Leaves) {
+                Nd2NzParams p{};p.ndNum=1;p.nValue=16;p.dValue=32;p.srcDValue=32;
+                p.dstNzNStride=1;p.dstNzC0Stride=16;
+                DataCopy(L1Fp32(lane,FpT),relay,p);
+            } else CopySquareFp32(lane,FpT,relay);
+        }
+        CopiesReady();
+        for(uint32_t lane=0;lane<2;++lane) {
+            if(!w_.active[lane] || leafFast_[lane])continue;
+            auto A=la_.Get<float>()[lane*4096],B=lb_.Get<float>()[lane*8192];
+            auto C=lc_.Get<float>()[lane*4096];
+            WaitFlag<HardEvent::M_MTE1>(abFree_[lane]);
+            if constexpr(Leaves) {
+                LoadData2DParams p{};p.repeatTimes=4;p.srcStride=1;
+                LoadData(A,L1Fp32(lane,FpT),p);
+                LoadData2dTransposeParams t{};t.repeatTimes=1;t.srcStride=1;t.dstFracGap=1;
+                LoadDataWithTranspose(B,L1Fp32(lane,FpX0),t);
+                LoadDataWithTranspose(B[128],L1Fp32(lane,FpX0)[256],t);
+                LoadDataWithTranspose(B[512],L1Fp32(lane,FpX0)[256],t);
+                LoadDataWithTranspose(B[640],L1Fp32(lane,FpX1),t);
+            } else {
+                LoadSquareAFp32(A,L1Fp32(lane,FpT));
+                LoadSquareBFp32(B,L1Fp32(lane,FpX0));
+            }
+            LoadsReady();Mmad(C,A,B,mm);SetFlag<HardEvent::M_MTE1>(abFree_[lane]);
+        }
+        MatrixReady();
+        for(uint32_t lane=0;lane<2;++lane) {
+            if(!w_.active[lane] || leafFast_[lane])continue;
+            auto C=lc_.Get<float>()[lane*4096];
+            if constexpr(Leaves) {
+                auto leaves=Gm<float>(a_.workspace+GmLane(core_,slot_,lane)+DiagFp32);
+                for(uint32_t pair=0;pair<2;++pair) {
+                    const uint32_t row=pair*32+16,col=pair*32;
+                    auto fp=FixpipeParamsV220(16,16,16,16,false);fp.quantPre=QuantMode_t::NoQuant;
+                    Fixpipe<float,float,CFG_ROW_MAJOR>(leaves[pair*1024+512],C[pair*256],fp);
+                    auto bf=FixpipeParamsV220(16,16,16,64,false);bf.quantPre=QuantMode_t::F322BF16;
+                    Fixpipe<bfloat16_t,float,NzOutput>(L1(lane,X)[col*64+row*16],C[pair*256],bf);
+                    if(a_.tiling.outputMode!=0 && row<w_.rows) {
+                        const uint32_t rows=w_.rows-row<16?w_.rows-row:16;
+                        auto g=FixpipeParamsV220(16,rows,16,64,false);g.quantPre=QuantMode_t::F322BF16;
+                        const uint64_t off=Out(a_.tiling,w_,w_.head[lane],a_.tiling.valueHeadNum,64)+row*64+col;
+                        Fixpipe<bfloat16_t,float,CFG_ROW_MAJOR>(Gm<bfloat16_t>(a_.akk,off),C[pair*256],g);
+                    }
+                }
+            } else {
+                auto bf=FixpipeParamsV220(32,32,32,64,false);bf.quantPre=QuantMode_t::F322BF16;
+                Fixpipe<bfloat16_t,float,NzOutput>(L1(lane,X)[32*16],C,bf);
+                if(a_.tiling.outputMode!=0) {
+                    auto g=FixpipeParamsV220(32,w_.rows-32,32,64,false);g.quantPre=QuantMode_t::F322BF16;
+                    const uint64_t off=Out(a_.tiling,w_,w_.head[lane],a_.tiling.valueHeadNum,64)+32*64;
+                    Fixpipe<bfloat16_t,float,CFG_ROW_MAJOR>(Gm<bfloat16_t>(a_.akk,off),C,g);
+                }
+            }
+        }
+        if constexpr(Leaves) {
+            PipeBarrier<PIPE_ALL>();
+            if(w_.rows>32) {
+                for(uint32_t lane=0;lane<2;++lane) {
+                    if(!w_.active[lane] || leafFast_[lane])continue;
+                    const uint64_t base=GmLane(core_,slot_,lane);
+                    auto leaves=Gm<float>(a_.workspace+base+DiagFp32);
+                    Nd2NzParams cross{};cross.ndNum=2;cross.nValue=16;cross.dValue=16;cross.srcDValue=16;
+                    cross.srcNdMatrixStride=1024;cross.dstNzMatrixStride=1024;
+                    cross.dstNzNStride=1;cross.dstNzC0Stride=16;
+                    DataCopy(L1Fp32(lane,FpX0)[512],leaves[512],cross);
+                }
+                CopiesReady();
+            }
+        }
+        SetFlag<HardEvent::FIX_M>(cFree_);
+        SetFlag<HardEvent::FIX_MTE1>(l1Ready_);WaitFlag<HardEvent::FIX_MTE1>(l1Ready_);
     }
     __aicore__ inline void PreloadRhs() {
         WaitFlag<HardEvent::MTE1_MTE2>(scoreReleased_);
@@ -162,33 +290,68 @@ template<uint32_t Norm,uint32_t Gate> class Cube {
         if constexpr(Norm==0 || Gate==0) {
             for(uint32_t lane=0;lane<2;++lane) {
                 if(!w_.active[lane])continue;
-                uint64_t base=GmLane(core_,slot_,lane);
-                auto source=Gm<bfloat16_t>(a_.workspace+base);
+                auto source=Gm<bfloat16_t>(a_.workspace+GmLane(core_,slot_,lane));
                 if constexpr(Gate!=0)CopyNz(L1(lane,P),source[Lower/2],64,64);
                 CopyNz(L1(lane,X),source[Payload/2],64,64);
             }
             CopiesReady();
-            if constexpr(Gate!=0)if(w_.rows>32)MergePair<32>(0);
         } else {
+            // Arch22 CrossCoreWaitFlag blocks all subsequent instructions.
+            // Lower-ready already acquires the producer's drained choice store;
+            // reading that flag does not require retiring independent RHS DMA.
             for(uint32_t lane=0;lane<2;++lane) {
+                leafFast_[lane]=false;
                 if(!w_.active[lane])continue;
-                uint64_t base=GmLane(core_,slot_,lane);auto source=Gm<bfloat16_t>(a_.workspace+base);
-                PublishCache(source);
-                CopyNz(L1(lane,P),source[Lower/2],64,64);
-                CopyNz(L1(lane,Power),source[Lower/2],64,64);
-                CopyNz(L1(lane,X),source[Eye/2],64,64);
-                if(!identityReady_[lane]) {
-                    CopyNz(L1(lane,I),source[Eye/2],64,64);identityReady_[lane]=true;
+                const uint64_t base=GmLane(core_,slot_,lane);
+                auto choice=Gm<float>(a_.workspace+base+InverseChoice);
+                DataCacheCleanAndInvalid<float,CacheLine::SINGLE_CACHE_LINE,DcciDst::CACHELINE_OUT>(choice);
+                leafFast_[lane]=choice.GetValue(0)==0.0F;
+                auto source=Gm<bfloat16_t>(a_.workspace+base);
+                if(leafFast_[lane]) {
+                    CopyNz(L1(lane,X),source[Eye/2],64,64);
+                    CopyNz(L1(lane,P),source[Lower/2],64,64);
+                    CopyNz(L1(lane,Power),source[Lower/2],64,64);
+                    if(!identityReady_[lane]) {
+                        CopyNz(L1(lane,I),source[Eye/2],64,64);identityReady_[lane]=true;
+                    }
                 }
             }
             CopiesReady();
-            for(uint32_t iteration=0;iteration<4;++iteration) {
-                PackedLeavesPair(false,iteration==3);
-                if(iteration!=3)PackedLeavesPair(true,false);
+            if(leafFast_[0] || leafFast_[1]) {
+                for(uint32_t iteration=0;iteration<4;++iteration) {
+                    PackedLeavesPair(false,iteration==3);
+                    if(iteration!=3)PackedLeavesPair(true,false);
+                }
+                if(w_.rows>16)MergePair<16,true>(0);
+                if(w_.rows>48)MergePair<16,true>(32);
             }
-            if(w_.rows>16)MergePair<16>(0);
-            if(w_.rows>48)MergePair<16>(32);
-            if(w_.rows>32)MergePair<32>(0);
+        }
+        if constexpr(Gate!=0)if(w_.rows>32) {
+            if constexpr(Norm!=0) {
+                if(leafFast_[0] || leafFast_[1])MergePair<32,true>(0);
+            } else MergePair<32>(0);
+        }
+        if constexpr(Norm!=0 && Gate!=0) {
+            // Consume the final publication even for an all-fast pair so flags
+            // cannot leak across slot generations. Risk relays are read only now.
+            CrossCoreWaitFlag<0x2,PIPE_MTE2>(4+slot_);
+            bool risk=false;
+            for(uint32_t lane=0;lane<2;++lane) {
+                if(!w_.active[lane] || leafFast_[lane])continue;
+                risk=true;
+                const uint64_t base=GmLane(core_,slot_,lane);
+                CopyNz(L1(lane,X),Gm<bfloat16_t>(a_.workspace+base+Payload),64,64);
+                if(w_.rows>16) {
+                    auto squares=Gm<float>(a_.workspace+base+DiagFp32);
+                    Nd2NzParams p{};p.ndNum=w_.rows>32?16:12;p.nValue=16;p.dValue=16;p.srcDValue=16;
+                    p.srcNdMatrixStride=256;p.dstNzMatrixStride=256;
+                    p.dstNzNStride=1;p.dstNzC0Stride=16;
+                    DataCopy(L1Fp32(lane,FpX0),squares,p);
+                }
+            }
+            if(risk)CopiesReady();
+            if(risk && w_.rows>16)MergeFp32Pair<true>();
+            if(risk && w_.rows>32)MergeFp32Pair<false>();
         }
     }
     __aicore__ inline void PreloadWu(uint32_t lane) {
@@ -225,6 +388,7 @@ public:
     __aicore__ inline Cube(const PrepareKernelArgs &a):a_(a) {}
     __aicore__ inline void Init(const PrepareKernelArgs &a,TPipe *pipe) {
         pipe_=pipe;core_=GetBlockIdx();
+        if constexpr(Norm!=0 && Gate!=0)SetHF32Mode(HF32Mode::DISABLE);
         pipe_->InitBuffer(l1_,L1Bytes);pipe_->InitBuffer(la_,0x10000);
         pipe_->InitBuffer(lb_,0x10000);pipe_->InitBuffer(lc_,0x10000);
         copyReady_=pipe_->AllocEventID<HardEvent::MTE2_MTE1>();
@@ -246,7 +410,9 @@ public:
         CrossCoreSetFlag<0x2,PIPE_FIX>(6);CrossCoreSetFlag<0x2,PIPE_FIX>(7);
         uint32_t generation=0;
         for(uint64_t job=core_;job<WorkCount(a_.tiling);job+=a_.tiling.usedCoreNum,++generation) {
-            slot_=generation&1;w_=Describe(a_,job);
+            uint64_t workJob=job;
+            if constexpr(Norm!=0 && Gate!=0)workJob=RotateWork(a_.tiling,job,core_,generation);
+            slot_=generation&1;w_=Describe(a_,workJob);
             CrossCoreWaitFlag<0x2,PIPE_MTE2>(slot_);
             if(w_.rows) {
                 for(uint32_t lane=0;lane<2;++lane)if(w_.active[lane])Scores(lane);
@@ -256,8 +422,11 @@ public:
             CrossCoreSetFlag<0x2,PIPE_FIX>(2+slot_);
             CrossCoreWaitFlag<0x2,PIPE_MTE2>(RhsReadyBase+slot_);
             if(w_.rows)PreloadRhs();
-            CrossCoreWaitFlag<0x2,PIPE_MTE2>(4+slot_);
+            if constexpr(Norm!=0 && Gate!=0)
+                CrossCoreWaitFlag<0x2,PIPE_MTE2>(LowerChoiceReadyBase+slot_);
+            else CrossCoreWaitFlag<0x2,PIPE_MTE2>(4+slot_);
             if(w_.rows)InversePair();
+            else if constexpr(Norm!=0 && Gate!=0)CrossCoreWaitFlag<0x2,PIPE_MTE2>(4+slot_);
             if(w_.rows)Wu();
             CrossCoreSetFlag<0x2,PIPE_FIX>(6+slot_);
         }
