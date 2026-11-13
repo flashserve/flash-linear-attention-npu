@@ -240,7 +240,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     isVarLen = cuTensor != nullptr;
     if (!isVarLen) {
         if (chunkTensor != nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(chunkTensor), "chunk_indices 只有与 cu_seqlens 同时传入时才合法。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "present", "chunk_indices 只有与 cu_seqlens 同时传入时才合法");
 
             return false;
         }
@@ -455,13 +455,13 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (*chunkSizePtr != PREPARE_CHUNK_SIZE) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(chunkSizePtr), "chunk_size 仅支持 64d。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(*chunkSizePtr), "chunk_size 仅支持 64");
 
         return ge::GRAPH_FAILED;
     }
     if (!std::isfinite(*scalePtr) || !std::isfinite(*epsilonPtr) ||
         *epsilonPtr <= 0.0F || !std::isfinite(*lowerBoundPtr)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "scale", std::to_string(epsilonPtr), "scale/lower_bound 必须为有限数，epsilon 必须为正有限数。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "scale", std::to_string(*epsilonPtr), "scale/lower_bound 必须为有限数，epsilon 必须为正有限数");
 
         return ge::GRAPH_FAILED;
     }
@@ -486,7 +486,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         attrs->GetAttrPointer<int64_t>(PREPARE_ATTR_OUTPUT_MODE);
     if (outputModePtr == nullptr || *outputModePtr < PREPARE_OUTPUT_MODE_NONE ||
         *outputModePtr > PREPARE_OUTPUT_MODE_FORWARD) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "output_mode", std::to_string(outputModePtr), "output_mode 只支持 0(none)、1(recompute)、2(save)、3(forward)。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "output_mode", std::to_string(*outputModePtr), "output_mode 只支持 0(none)、1(recompute)、2(save)、3(forward)。");
 
         return ge::GRAPH_FAILED;
     }

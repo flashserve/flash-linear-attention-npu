@@ -183,7 +183,7 @@ private:
     {
         if (ctx_.cuSeqlensShape != nullptr) {
             if (ctx_.chunkIndicesShape == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices", std::to_string(ctx_.chunkIndicesShape), "chunk_indices required for varlen.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices", "null", "chunk_indices required for varlen");
         return ge::GRAPH_FAILED;
     }
             tiling_.chunkNum = ctx_.chunkIndicesShape->GetStorageShape().GetDim(0) / 2;
