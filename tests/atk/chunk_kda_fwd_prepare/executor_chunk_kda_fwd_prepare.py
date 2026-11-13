@@ -678,7 +678,7 @@ def run_npu(spec: dict[str, Any], inputs: PreparedInputs):
         safe_gate=_as_bool(spec["safe_gate"]),
         lower_bound=float(spec["lower_bound"]),
         use_exp2=_as_bool(spec["use_exp2"]),
-        a_log=inputs.a_log,
+        A_log=inputs.a_log,
         dt_bias=inputs.dt_bias,
         cu_seqlens=inputs.cu_seqlens,
         chunk_indices=inputs.chunk_indices,

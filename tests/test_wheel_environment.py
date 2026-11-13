@@ -115,22 +115,25 @@ def _create_minimal_vendor(vendor_dir: Path, *, include_alias: bool = False) -> 
     _write_aclnn_header(vendor_dir, "int64_t")
 
 
-def _write_aclnn_header(vendor_dir: Path, scalar_type: str) -> None:
+def _write_aclnn_header(vendor_dir: Path, scalar_type: str, *, symbol: str = "aclnnDemo") -> None:
+    from tests.opp_abi_fixtures import write_elf_exports
     header = vendor_dir / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        f"aclnnStatus {symbol}GetWorkspaceSize(\n"
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
         "    aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);\n",
+        f"aclnnStatus {symbol}(void *workspace, uint64_t workspaceSize, "
+        "aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
 
     abi = runpy.run_path(str(OP_ABI_SOURCE))
+    write_elf_exports(vendor_dir / abi["LIBRARY"], {symbol, symbol + "GetWorkspaceSize"})
     with mock.patch.dict(abi["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
     }):
         abi["write_manifest"](vendor_dir)
 
@@ -323,6 +326,59 @@ class WheelEnvironmentTest(unittest.TestCase):
                         artifacts["get_wheel_filename"](REPO_ROOT),
                         f"flash_linear_attention_npu_{tier}-{version}-py3-none-"
                         f"manylinux_2_34_{arch}.whl")
+
+    def test_soc_case_matches_between_wheel_metadata_and_build_command(self) -> None:
+        for soc, tier in (("ascend910b", "a2"), ("ascend910_93", "a3"), ("ascend950", "a5")):
+            for spelling in (soc, soc.capitalize(), soc.upper()):
+                with self.subTest(soc=spelling), tempfile.TemporaryDirectory() as tmp, \
+                        mock.patch.dict(os.environ, {
+                            "FLA_NPU_SOC": spelling, "FLA_NPU_OPS": "", "FLA_NPU_BUILD_ARGS": "",
+                        }):
+                    loaded, metadata = _load_setup()
+                    build = loaded["_build_run_package"]
+                    run = mock.Mock()
+                    artifact = Path(tmp) / "fla_npu_linux-x86_64.run"
+                    with mock.patch.dict(build.__globals__, {
+                        "REPO_ROOT": Path(tmp), "_run": run,
+                        "_find_single_run_package": lambda: artifact,
+                    }):
+                        self.assertEqual(build(), artifact)
+                    self.assertEqual(metadata["name"], f"flash-linear-attention-npu-{tier}")
+                    command = run.call_args.args[0]
+                    self.assertEqual([arg for arg in command if arg.startswith("--soc=")],
+                                     [f"--soc={soc}"])
+
+    def test_a5_triton_preflight_is_case_insensitive(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        try:
+            loaded = runpy.run_path(str(REPO_ROOT / "scripts/check_npu_env.py"))
+        finally:
+            sys.path.pop(0)
+        check = loaded["_check_triton_ascend_a5_compat"]
+        for spelling in ("ascend950", "Ascend950", "ASCEND950"):
+            for version, rejected in (("3.2.0", True), ("3.2.1", False), ("unknown", True)):
+                with self.subTest(soc=spelling, version=version), \
+                        mock.patch.dict(os.environ, {"FLA_NPU_SOC": spelling}):
+                    failures = []
+                    check(failures, version)
+                    self.assertEqual(bool(failures), rejected)
+                    if rejected:
+                        self.assertIn("FLA_NPU_SOC=ascend950", failures[0])
+        for spelling in ("Ascend910B", "ASCEND910_93"):
+            with self.subTest(soc=spelling), mock.patch.dict(os.environ, {"FLA_NPU_SOC": spelling}):
+                failures = []
+                check(failures, "3.2.0")
+                self.assertEqual(failures, [])
+
+    def test_soc_normalization_preserves_default_and_rejects_unknown_tier(self) -> None:
+        artifacts = self._artifacts_globals()
+        with mock.patch.dict(os.environ):
+            os.environ.pop("FLA_NPU_SOC", None)
+            self.assertEqual(artifacts["get_soc"](), "ascend910b")
+            os.environ["FLA_NPU_SOC"] = "Ascend999"
+            self.assertEqual(artifacts["get_soc"](), "ascend999")
+            with self.assertRaisesRegex(ValueError, "no published product tier"):
+                artifacts["get_tier"]()
 
     def test_local_build_matches_the_published_name_and_tag(self) -> None:
         """An un-flagged build produces the published distribution identity.
@@ -1102,9 +1158,8 @@ source {set_env!s}
                 checker["_manifest_from_directory"](package_dir),
             )
 
-    def test_both_run_package_installers_finalize_wheel_overlay(self) -> None:
+    def test_builtin_run_installer_keeps_legacy_finalizer(self) -> None:
         installers = (
-            REPO_ROOT / "cmake" / "scripts" / "custom" / "install.sh",
             REPO_ROOT
             / "scripts"
             / "package"
@@ -1263,14 +1318,65 @@ source {set_env!s}
                     _load_runtime(runtime_path)
 
     def test_overlay_import_prepares_order_without_loading_torch_or_launcher(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        for symbol in ("aclnnDemo", "aclnnRecurrentGatedDeltaRuleV2"):
+            self._check_overlay_import(symbol)
+
+    def test_latest_installed_overlay_is_the_only_loaded_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {
+            "ASCEND_HOME_PATH": "/fake/cann", "FLA_NPU_STABLE_ABI": "stable",
+        }, clear=True):
+            site = Path(temp_dir) / "package"
+            runtime, base, _ = _create_runtime_package(site)
+            _create_minimal_vendor(base)
+            source = Path(temp_dir) / "source"
+            _create_minimal_vendor(source)
+            installer = runpy.run_path(str(RUNTIME_SOURCE.with_name("install_opp.py")))
+            installer["install_overlay"].__globals__["PACKAGE_OPP_ROOT"] = base.parent.parent
+            _write_aclnn_header(source, "float", symbol="aclnnNew")
+            a = installer["install_overlay"](source, overlay_name="fla_npu_overlay_a")
+            _write_aclnn_header(source, "double", symbol="aclnnNew")
+            b = installer["install_overlay"](source, overlay_name="fla_npu_overlay_b")
+            self.assertFalse(a.exists())
+            hook = site / "fla_npu_opp_env.py"
+            shutil.copy2(REPO_ROOT / "torch_custom/fla_npu/fla_npu_opp_env.py", hook)
+            runpy.run_path(str(hook))
+            self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"].split(os.pathsep), [str(b), str(base)])
+            with mock.patch("ctypes.CDLL", return_value=mock.sentinel.library):
+                _load_runtime(runtime)
+            self.assertEqual(os.environ["FLA_NPU_OP_API_LIBS"].split(os.pathsep),
+                             [str(path / "op_api/lib/libcust_opapi.so") for path in (b, base)])
+
+    def test_multiple_overlay_signatures_and_explicit_load_order(self) -> None:
+        for conflict in (False, True):
+            with self.subTest(conflict=conflict), tempfile.TemporaryDirectory() as temp_dir:
+                runtime, base, _ = _create_runtime_package(Path(temp_dir) / "package")
+                _create_minimal_vendor(base)
+                one, two = [base.parent / f"fla_npu_overlay_{name}" for name in ("one", "two")]
+                for path, scalar in ((one, "float"), (two, "double" if conflict else "float")):
+                    _create_minimal_vendor(path)
+                    _write_aclnn_header(path, scalar, symbol="aclnnNew")
+                for selected in ((one, two), (two, one), (one,)):
+                    with self.subTest(selected=selected), mock.patch.dict(os.environ, {
+                        "ASCEND_HOME_PATH": "/fake/cann", "FLA_NPU_STABLE_ABI": "stable",
+                        "FLA_NPU_OVERLAY_VENDOR": os.pathsep.join(path.name for path in selected),
+                    }, clear=True), mock.patch("ctypes.CDLL", return_value=mock.sentinel.library):
+                        if conflict and len(selected) == 2:
+                            with self.assertRaisesRegex(RuntimeError, "aclnnNewGetWorkspaceSize"):
+                                _load_runtime(runtime)
+                        else:
+                            _load_runtime(runtime)
+                            self.assertEqual(os.environ["FLA_NPU_OP_API_LIBS"].split(os.pathsep),
+                                [str(path / "op_api/lib/libcust_opapi.so") for path in (*selected, base)])
+
+    def _check_overlay_import(self, symbol: str) -> None:
+        with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as temp_dir:
             runtime_path, base, _ = _create_runtime_package(
                 Path(temp_dir) / "site-packages"
             )
             overlay = base.parent / "fla_npu_overlay_transformer"
             _create_minimal_vendor(overlay)
             _write_aclnn_header(base, "int64_t")
-            _write_aclnn_header(overlay, "int64_t")
+            _write_aclnn_header(overlay, "int64_t", symbol=symbol)
 
             with mock.patch.dict(
                 os.environ,
@@ -1366,6 +1472,73 @@ source {set_env!s}
                     r"packaged FLA NPU op_api library",
                 ):
                     _load_runtime(runtime_path)
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "run installer requires Linux/bash")
+class DefaultRunInstallTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="run installer ")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.stage = self.root / "payload"
+        self.site = self.root / "site"
+        self.source = self.stage / "packages/vendors/fla_npu_transformer"
+        self.base = self.site / "fla_npu/opp/vendors/fla_npu_transformer"
+        for vendor, content in ((self.source, b"new scoped library"), (self.base, b"old full library")):
+            _create_minimal_vendor(vendor)
+            (vendor / "op_api/lib/libcust_opapi.so").write_bytes(content)
+        (self.site / "fla_npu/__init__.py").write_text("raise RuntimeError('installer must not import runtime')\n")
+        self.manager = self.site / "fla_npu_opp_manage.py"
+        self.manager.write_text(
+            "import json,os,sys\nfrom pathlib import Path\n"
+            "Path(os.environ['RUN_CALL_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+            "raise SystemExit(int(os.environ.get('RUN_MANAGER_EXIT','0')))\n")
+        installer = REPO_ROOT / "cmake/scripts/custom/install.sh"
+        self.script = self.stage / "install.sh"
+        self.script.write_text(installer.read_text(encoding="utf-8").replace(
+            "vendor_name=customize", "vendor_name=fla_npu_transformer"))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python").symlink_to(sys.executable)
+        self.log = self.root / "manager.json"
+        self.env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                        PYTHONPATH=str(self.site), RUN_CALL_LOG=str(self.log), FLA_NPU_DISABLE_PTH="1")
+
+    def run_installer(self, *args):
+        return subprocess.run(["bash", str(self.script), *args], cwd=self.stage,
+                              env=self.env, capture_output=True, text=True, timeout=30)
+
+    def test_no_options_and_install_delegate_without_touching_base(self):
+        for args in ((), ("--install",), ("--quiet",), ("--full", "--install"), ("--install", "--full")):
+            with self.subTest(args=args):
+                result = self.run_installer(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(self.log.read_text()),
+                                 ["--overlay", "--source", str(self.source)])
+                self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
+    def test_failed_manager_does_not_fall_back_to_base_replacement(self):
+        self.env["RUN_MANAGER_EXIT"] = "42"
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
+    def test_missing_manager_does_not_fall_back_to_base_replacement(self):
+        self.manager.write_text("raise ModuleNotFoundError('fla_npu_opp_manage unavailable')\n")
+        result = self.run_installer("--install")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the base was not overwritten", result.stdout)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
+    def test_explicit_full_is_incremental_and_keeps_base(self):
+        result = self.run_installer("--full")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(self.log.read_text()), ["--overlay", "--source", str(self.source)])
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+        self.env["RUN_MANAGER_EXIT"] = "42"
+        result = self.run_installer("--full")
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
 
 if __name__ == "__main__":
     unittest.main()

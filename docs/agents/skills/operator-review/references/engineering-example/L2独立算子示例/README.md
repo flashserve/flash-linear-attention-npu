@@ -45,7 +45,7 @@ L2独立算子示例/                            # 形态 A 的示例根目录�
 | 档位由非空组合推导并显式校验 | `_output_mask.h` + `aclnn_op_name.cpp` 的 `ResolveOutputMode` |
 | 模板化 TilingKey 必需 | `_tiling_key.h` 的 `ASCENDC_TPL_ARGS_DECL`/`ASCENDC_TPL_SEL` + `_tiling.cpp` 的 `GET_TPL_TILING_KEY` |
 | `arch22` 与 `arch35` 都是平台实现目录 | `op_kernel/arch22/`、`op_kernel/arch35/`；`op_host/op_tiling/arch22/`、`op_host/op_tiling/arch35/` 下的 `*_tiling_impl.h` |
-| TilingKey 不编码平台 | key 只由 dtype 与模式决定；平台在 kernel 入口按 `__CCE_AICORE__` 选择 |
+| TilingKey 不编码平台 | key 只由 dtype 与模式决定；平台在 kernel 入口按 `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)` 选择 |
 | 看护位置 | `tests/atk/op_name/`（单算子）+ 调用层门禁；算子目录里不放测试 |
 | ATK 用例用真实 inputs/attr/outputs | `op_name.yaml` 声明 `x/g/a_log/initial_state/cu_seqlens/chunk_indices/layout/chunk_size/scale/epsilon/return_saved`；固化 JSON 不含 `low_precision_marker`/`fp32_marker`/`case_spec` 等占位参数 |
 

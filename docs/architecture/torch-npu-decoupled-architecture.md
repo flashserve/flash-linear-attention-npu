@@ -131,6 +131,14 @@ Python ctypes 执行后端已删除；标准库 `ctypes.CDLL` 仍可用于加载
 
 当前路径不查找 `torch.ops.npu.<op>`，也不加载 `custom_aclnn_extension_lib*.so`。适配层是 `torch.ops.load_library()` 加载的普通共享库：它用到 dispatcher，但不是 CPython extension。
 
+支持 wheel overlay 的 launcher 在加载和指纹检查后，通过 `fla_npu_stable_register(namespace, paths)`
+显式注册 `StableLibrary` schema/impl，并绑定选定的 OPP 库列表。base 与增量层使用不同 dispatcher
+命名空间，因此允许同名公共入口具有不同 schema；公共 wrapper 负责选择对应层。
+适配层和 OPP 独立保存，后安装的同类组件优先；standalone 只更新适配层，run-only
+只更新 OPP，完整 wheel 更新两部分。未配齐组合保存 pending，保留旧 active，配齐后原子切换。
+各 launcher 按 active 组合绑定同一 OPP 来源顺序，不从自己的 wheel 目录推断 OPP。直接调用
+`torch.ops.load_library()` 不再等于完成注册。安装和兼容边界见 [Wheel 增量安装指南](../Wheel增量安装指南.md)。
+
 ### 2.6 wheel 中实际交付什么
 
 ```text
@@ -215,7 +223,7 @@ import 不会因此导入 `torch`、`torch_npu` 或注册 legacy dispatcher。
 | 原组件 | 原本提供的能力 | 解耦后的状态 | 能力类别 |
 | --- | --- | --- | --- |
 | `custom_aclnn_extension_lib*.so` | 把 torch tensor 转为 aclnn 参数；承接 C++ dispatcher 调用 | 构建和加载入口已删除；由 Stable-ABI 适配层完成 | 基础调用 |
-| dispatcher schema | 可声明参数、返回值、alias、inplace mutation 和默认值；只有 schema 写准确才生效 | 适配层用 `STABLE_TORCH_LIBRARY` 注册 `kSchema_<op>`，schema 对 dispatcher 可见；Python `MUTATED_ARGUMENTS` 继续管理 eager 状态更新契约 | 功能正确性 |
+| dispatcher schema | 可声明参数、返回值、alias、inplace mutation 和默认值；只有 schema 写准确才生效 | 适配层用 `StableLibrary` 显式注册 `kSchema_<op>`，schema 对 dispatcher 可见；Python `MUTATED_ARGUMENTS` 继续管理 eager 状态更新契约 | 功能正确性 |
 | Ascend PyTorch NPU 运行时能力（通常由 torch_npu 提供） | NPU device 注册、allocator、device guard、stream、NPU dispatch key 等运行时能力 | 仍由目标环境提供，但 fla_npu 不默认 import torch_npu，也不链接其 C++ ABI | 功能正确性 |
 | torch_npu derivatives / dispatcher autograd | 自动把 forward 和 backward 注册到 autograd | 默认不使用；改由 Python 公共入口绑定 | 易用性 |
 | dispatcher 的 FakeTensor / functionalization 接入 | 帮助 `torch.compile`、`torch.export` 和图变换理解算子 | schema 有了，但没有 FakeTensor / functionalization 实现，图编译仍不能直接吃；按需补 Python `torch.library` adapter | 易用性 + 正确性 |
@@ -296,13 +304,12 @@ from fla_npu.ops.triton import chunk_local_cumsum
 
 旧 `load_legacy_torch_ops()` 及 legacy 扩展已删除；`install_torch_npu_ops_compat()` 保留为纯 Python 别名安装器，全部调用 Stable。
 调用方和仓内测试统一使用 `fla_npu.ops.ascendc`；完整迁移表见[兼容与迁移指南](../兼容与迁移指南.md)。
-KDA `implementation="legacy"` 是 Stable 内部保留的原 fused 算法选择，与旧扩展无关。
 
 ## 5. 功能正确性能力如何保证
 
 ### 5.1 alias、inplace mutation 和 cache 状态
 
-dispatcher schema 可以用 `Tensor(a!)` 表示某个 tensor 会被原地修改，并通过 alias 标记表达返回值与输入共享 storage。适配层用 `STABLE_TORCH_LIBRARY` 把算子注册进 dispatcher，所以 schema 里写下的这些标记 dispatcher 能看到（`npu_recurrent_gated_delta_rule` / `npu_recurrent_kda` 的 state 就是这么标的）；未在 schema 中声明的状态修改仍需通过下面的 wrapper 契约补齐。
+dispatcher schema 可以用 `Tensor(a!)` 表示某个 tensor 会被原地修改，并通过 alias 标记表达返回值与输入共享 storage。适配层用 `StableLibrary` 把算子注册进 dispatcher，所以 schema 里写下的这些标记 dispatcher 能看到（`npu_recurrent_gated_delta_rule` / `npu_recurrent_kda` 的 state 就是这么标的）；未在 schema 中声明的状态修改仍需通过下面的 wrapper 契约补齐。
 
 ![状态修改的 wrapper 契约](../assets/fla-npu-mutation-contract.svg)
 
@@ -658,7 +665,7 @@ wheel 内仍有 host ELF（`libfla_npu_stable.so`）和目标 SoC 的 OPP，所�
 | Triton Ascend | 面向昇腾的 Triton Python/JIT 编程和运行能力 | 只影响 `fla_npu.ops.triton`，与 Ascend C OPP 分层 |
 | capability probe | 不看版本字符串，直接检查某个 API/行为是否存在 | 用于适配 torch storage、device、stream 等差异 |
 | preflight | 真正执行任务前的一次集中环境检查 | 提前报告缺失 tensor/NPU/aclnn 能力 |
-| legacy | 为旧用户暂时保留、但不推荐新代码继续使用的兼容路径 | 旧 `load_legacy_torch_ops()` / `torch.ops.npu.*` 已删除；KDA 的同名算法选择仍保留 |
+| legacy | 为旧用户暂时保留、但不推荐新代码继续使用的兼容路径 | 旧 `load_legacy_torch_ops()` / `torch.ops.npu.*` 已删除 |
 | Python minor 版本 | Python 版本号中的次版本，例如 3.9、3.10、3.11 | CPython C extension 通常不能跨 minor 版本直接复用 |
 | CPU / aarch64 / x86_64 | CPU 是 host 处理器；aarch64 和 x86_64 是两类常见 CPU 指令集架构 | host ELF 必须按架构分别构建 |
 | gcc | Linux 常用的 C/C++ 编译器 | 旧 C++ extension 的 ABI 和 libstdc++ 版本可能受它影响 |

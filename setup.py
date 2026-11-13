@@ -43,12 +43,12 @@ from stable_build_policy import (  # noqa: E402
 from fla_npu_artifacts import (  # noqa: E402
     get_distribution_name,
     get_package_version,
+    get_soc,
     get_wheel_build_tag,
     get_wheel_platform_tag,
 )
 
 
-DEFAULT_SOC = "ascend910b"
 DEFAULT_VENDOR_NAME = "fla_npu"
 MIN_PYTHON = (3, 9)
 # Version promises are shared with scripts/check_npu_env.py and the wheel's
@@ -197,7 +197,7 @@ def _check_build_environment():
     except Exception as exc:
         failures.append(f"torch link libraries: {exc}")
 
-    print(f"[fla-npu build][OK] FLA_NPU_SOC={os.getenv('FLA_NPU_SOC', DEFAULT_SOC)}")
+    print(f"[fla-npu build][OK] FLA_NPU_SOC={get_soc()}")
     print(f"[fla-npu build][OK] FLA NPU vendor={DEFAULT_VENDOR_NAME}")
 
     if failures:
@@ -255,7 +255,7 @@ def _check_ops_filter(ops_filter):
 
 
 def _build_run_package():
-    soc = os.getenv("FLA_NPU_SOC", DEFAULT_SOC)
+    soc = get_soc()
     ops_filter = os.getenv("FLA_NPU_OPS", "").strip()
     _check_ops_filter(ops_filter)
     build_out = REPO_ROOT / "build_out"
@@ -527,9 +527,11 @@ class FlaNpuBuildPy(_build_py):
         super().run()
         run_package = _RUN_PACKAGE or _find_single_run_package()
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")
+        from build_layer_manifest import write_layer_manifest
+        write_layer_manifest(built_package_dir)
         _stage_offline_bundle(Path(self.build_lib))
         opp_env_src = REPO_ROOT / "torch_custom" / "fla_npu"
-        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py"):
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
             src = opp_env_src / name
             if src.exists():
                 shutil.copyfile(str(src), str(Path(self.build_lib) / name))

@@ -21,9 +21,9 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
-#include <cstring>
 #include <cstdint>
 #include <string>
 
@@ -45,11 +45,7 @@ constexpr int64_t DIM_1 = 1;
 
 static bool IsA2PrepareSoc()
 {
-    const char *soc = aclrtGetSocName();
-    return soc != nullptr && (std::strncmp(soc, "Ascend910B", std::strlen("Ascend910B")) == 0 ||
-        std::strcmp(soc, "ascend910b") == 0 ||
-        std::strncmp(soc, "Ascend910_93", std::strlen("Ascend910_93")) == 0 ||
-        std::strncmp(soc, "ascend910_93", std::strlen("ascend910_93")) == 0);
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
 }
 
 struct ChunkGatedDeltaRuleFwdPrepareParams {

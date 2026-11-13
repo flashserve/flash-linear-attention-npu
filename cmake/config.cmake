@@ -176,7 +176,6 @@ endif ()
 ########################################################################################################################
 # 公开编译参数
 ########################################################################################################################
-list(TRANSFORM ASCEND_COMPUTE_UNIT TOLOWER)
 if (BUILD_OPEN_PROJECT)
     message(STATUS "ENABLE_CCACHE=${ENABLE_CCACHE}, CUSTOM_CCACHE=${CUSTOM_CCACHE}")
     message(STATUS "CCACHE_PROGRAM=${CCACHE_PROGRAM}")

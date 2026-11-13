@@ -37,7 +37,7 @@ npu-smi info
 - `Ascend-cann-toolkit_<version>_linux-<arch>.run`
 - `Ascend-cann-<chip>-ops_<version>_linux-<arch>.run`
 
-### Step 2. 编译并安装 wheel
+### Step 2. 安装 wheel
 
 #### 2.1 环境检查
 
@@ -52,7 +52,26 @@ python -m pip install -r requirements.txt
 python scripts/check_npu_env.py            # 无 NPU 的纯构建环境可加 --build-only
 ```
 
-#### 2.2 编译
+#### 2.2 安装
+
+##### 2.2.1 预编译包安装（推荐）
+
+完成环境检查后，推荐从[华为云内源镜像站](https://mirrors.huaweicloud.com/ascend/repos/pypi/)直接安装正式 Release，无需本地编译。以下以 **A2** 为例，A3 / A5 将包名中的 `a2` 替换为 `a3` / `a5`；pip 自动匹配 ARM / x86。以下命令使用 `--no-deps`，运行时依赖需在 2.1 中准备好。
+
+```sh
+# 以正式版 26.9.1 为例
+python -m pip install --upgrade --no-deps \
+  --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/ \
+  "flash-linear-attention-npu-a2==26.9.1"
+```
+
+Daily、`latest` 安装及版本命名等说明见 [Daily 和 Release 包发布与安装说明](docs/Daily和Release包发布与安装说明.md)。安装完成后进入 **Step 3 验证与测试**。
+
+##### 2.2.2 手工编译安装
+
+如需修改源码或定制编译算子，可按以下步骤编译并安装。
+
+先编译 wheel：
 
 ```sh
 FLA_NPU_SOC=ascend910b python scripts/build_wheel.py            # A2；A3→ascend910_93，A5→ascend950
@@ -61,7 +80,7 @@ FLA_NPU_SOC=ascend910b python scripts/build_wheel.py            # A2；A3→asce
 FLA_NPU_OPS=chunk_fwd_o,chunk_bwd_dv_local FLA_NPU_SOC=ascend910b python scripts/build_wheel.py
 ```
 
-#### 2.3 安装
+编译完成后安装本地产物：
 
 ```sh
 python -m pip install --force-reinstall --no-cache-dir --no-deps dist/<wheel文件名>.whl

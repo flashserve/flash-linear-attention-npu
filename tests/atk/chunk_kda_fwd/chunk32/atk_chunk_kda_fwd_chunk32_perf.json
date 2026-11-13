@@ -1,0 +1,696 @@
+[
+ {
+  "id": 0,
+  "default_seed": 20261019,
+  "name": "chunk_kda_fwd_chunk32_perf_h96_t8192_bf16",
+  "aclnn_name": "ChunkKdaFwd",
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": "",
+  "api": "pytorch",
+  "api_type": "executor_chunk_kda_fwd",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": {
+    "cv_fused_double_benchmark": {
+     "max_re_ratio": 5,
+     "avg_re_ratio": 1.5,
+     "root_mean_squared_ratio": 1.5
+    }
+   },
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "save_name": "chunk_kda_fwd",
+  "inputs": [
+   {
+    "name": "q",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.08838834764831843
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "k",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.08838834764831843
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "v",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.05
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "g",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      1.25
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "beta",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      1.5
+     ],
+     "std": [
+      0.35
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "scale",
+    "type": "attr",
+    "required": true,
+    "dtype": "float",
+    "shape": null,
+    "range_values": 0.08838834764831843,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "layout",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "BNSD",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "initial_state",
+    "type": "tensor",
+    "required": false,
+    "dtype": "fp32",
+    "shape": [
+     1,
+     96,
+     128,
+     128
+    ],
+    "range_values": "null",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "output_final_state",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   [
+    {
+     "name": "cu_seqlens",
+     "type": "attrs",
+     "required": false,
+     "dtype": "string",
+     "shape": null,
+     "range_values": "null",
+     "backward": false,
+     "align_32B": null,
+     "outlier_values": null
+    }
+   ],
+   [
+    {
+     "name": "chunk_indices",
+     "type": "attrs",
+     "required": false,
+     "dtype": "string",
+     "shape": null,
+     "range_values": "null",
+     "backward": false,
+     "align_32B": null,
+     "outlier_values": null
+    }
+   ],
+   {
+    "name": "safe_gate",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": true,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "lower_bound",
+    "type": "attr",
+    "required": true,
+    "dtype": "float",
+    "shape": null,
+    "range_values": -0.001,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "use_gate_in_kernel",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": true,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "A_log",
+    "type": "tensor",
+    "required": false,
+    "dtype": "fp32",
+    "shape": [
+     96
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.12
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dt_bias",
+    "type": "tensor",
+    "required": false,
+    "dtype": "fp32",
+    "shape": [
+     12288
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      -3.0
+     ],
+     "std": [
+      1.65
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "disable_recompute",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "return_intermediate_states",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "state_v_first",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ },
+ {
+  "id": 1,
+  "default_seed": 20261019,
+  "name": "chunk_kda_fwd_chunk32_perf_h96_t8192_fp32",
+  "aclnn_name": "ChunkKdaFwd",
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": "",
+  "api": "pytorch",
+  "api_type": "executor_chunk_kda_fwd",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": {
+    "cv_fused_double_benchmark": {
+     "max_re_ratio": 5,
+     "avg_re_ratio": 1.5,
+     "root_mean_squared_ratio": 1.5
+    }
+   },
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "save_name": "chunk_kda_fwd",
+  "inputs": [
+   {
+    "name": "q",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.08838834764831843
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "k",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.08838834764831843
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "v",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.05
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "g",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1,
+     96,
+     8192,
+     128
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      1.25
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "beta",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1,
+     96,
+     8192
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      1.5
+     ],
+     "std": [
+      0.35
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "scale",
+    "type": "attr",
+    "required": true,
+    "dtype": "float",
+    "shape": null,
+    "range_values": 0.08838834764831843,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "layout",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "BNSD",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "initial_state",
+    "type": "tensor",
+    "required": false,
+    "dtype": "fp32",
+    "shape": [
+     1,
+     96,
+     128,
+     128
+    ],
+    "range_values": "null",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "output_final_state",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   [
+    {
+     "name": "cu_seqlens",
+     "type": "attrs",
+     "required": false,
+     "dtype": "string",
+     "shape": null,
+     "range_values": "null",
+     "backward": false,
+     "align_32B": null,
+     "outlier_values": null
+    }
+   ],
+   [
+    {
+     "name": "chunk_indices",
+     "type": "attrs",
+     "required": false,
+     "dtype": "string",
+     "shape": null,
+     "range_values": "null",
+     "backward": false,
+     "align_32B": null,
+     "outlier_values": null
+    }
+   ],
+   {
+    "name": "safe_gate",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": true,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "lower_bound",
+    "type": "attr",
+    "required": true,
+    "dtype": "float",
+    "shape": null,
+    "range_values": -0.001,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "use_gate_in_kernel",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": true,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "A_log",
+    "type": "tensor",
+    "required": false,
+    "dtype": "fp32",
+    "shape": [
+     96
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      0.0
+     ],
+     "std": [
+      0.12
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dt_bias",
+    "type": "tensor",
+    "required": false,
+    "dtype": "fp32",
+    "shape": [
+     12288
+    ],
+    "range_values": {
+     "name": "nd",
+     "mean": [
+      -3.0
+     ],
+     "std": [
+      1.65
+     ]
+    },
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "disable_recompute",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "return_intermediate_states",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "state_v_first",
+    "type": "attr",
+    "required": true,
+    "dtype": "attr_bool",
+    "shape": null,
+    "range_values": false,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ]
+ }
+]
