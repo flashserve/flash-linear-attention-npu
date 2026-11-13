@@ -669,3 +669,44 @@ Evidence: validation_pr1179_a5/optimization_unroll/OPTIMIZATION_REPORT.md,
 optimization_results.json, baseline/final/performance_op.json and raw profiles.
 No native performance-ratio target is claimed. The full GVA 720-case matrix
 was not rerun; the change is confined to Finalize scheduling.
+
+
+## 2026-11-13 A5 0.8 throughput target acceptance
+
+Accepted change after user authorization: retain HV128 GROUP4 AIC-only and add
+one-head GM-to-L1 lookahead using existing L1 lanes and input mutex0/1.
+Mover and non-A5 branches are unchanged; no reference/range/tolerance changes.
+Performance acceptance runs only original design cases10/11, both B1 HV128
+K=V128 BF16, chunk64, BNSD, state_v_first=false. Dense T11264; packed totalT16384,
+sixteen1024-token segments. Same NPU3 at1650MHz, CANN9.2/Torch-NPU2.12.
+msprof op BasicInfo Task Duration(us),15 launches, first5 discarded,10 formal.
+
+| Case | User baseline us | Limit=baseline/0.8 us | P50 us | P90 us | Throughput ratio |
+|---|---:|---:|---:|---:|---:|
+| 10 dense | 1149 | 1436.25 | 1417.444580 | 1419.794043 | 81.06% |
+| 11 packed | 1707 | 2133.75 | 2055.684937 | 2060.516626 | 83.04% |
+
+Both P50 and all ten formal samples pass. Baselines are supplied by the user,
+not independently measured native timings. Same-device original mover P50:
+1677.336975/2393.848999us; previous GROUP4:1594.223999/2340.004028us.
+Final key0/mode2/group4/headsPerPartition4, work5632/8192,28 AIC.
+
+Final frozen accuracy216/216; DC12x50; memcheck12/12; racecheck12/12 Pass.
+Each sanitizer log has12 target-kernel completed instrumented runs, no errors.
+Extra memory max17,768,960 bytes across12 cases. Existing inputs/output excluded.
+No new full720 GVA-chain rerun. Prior precision/layout qualifications above remain.
+A2/A3 preprocessor equivalence arch2200/2201 passes; no device regression claimed.
+Temporary workspace trace:864 completed head lifecycles, same-core parity reuse,
+bitwise output agreement on two boundary cases. Trace records issued operations,
+not completion times, and is removed from production. Normal installed op_api and
+all21 kernel objects match package; production kernel SHA matches pre-trace bytes.
+
+PipeUtilization capture supports overlapping busy intervals (mean MTE1=.12546,
+MTE2=.99840), not a peak-bandwidth claim. Optional PipeTimeline stalled in warmup,
+was stopped, and is not used as accepted evidence. Additional performance shapes
+were stopped per user; their partial data is excluded from acceptance.
+
+Evidence: validation_pr1179_a5/optimization_08/TARGET_08_REPORT.md,
+acceptance_08.json, final/performance_op.json, baseline/prefetch/mover raw profiles,
+QA workbooks, sanitizer logs and workspace_trace_development.patch. The inherited
+gate field in performance_op.json is historical, not a fresh GVA test in this round.

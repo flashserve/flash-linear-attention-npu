@@ -109,6 +109,14 @@ public:
                     active = Shape::kHeadsPerGroup;
                 }
                 for (uint32_t localHead = 0; localHead < active; ++localHead) {
+                    if constexpr (!UseAivInputMover) {
+                        if (localHead == 0) {
+                            PrefetchA5Inputs(chunk, group, 0);
+                        }
+                        if (localHead + 1 < active) {
+                            PrefetchA5Inputs(chunk, group + localHead + 1, localHead + 1);
+                        }
+                    }
                     StageC0(chunk, group + localHead, localHead, outputSlot);
                     outputSlotUsed[outputSlot] = true;
                     outputSlot ^= 1;
@@ -407,12 +415,37 @@ private:
 #endif
     }
 
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+    __aicore__ inline void PrefetchA5Inputs(const FinalizeChunk &chunk,
+                                            uint32_t head, uint32_t localHead)
+    {
+        const uint32_t lane = localHead * kL1HeadBytes;
+        const uint64_t qOffset = InputOffset(args_, chunk, head, Shape::kHeadDim);
+        const uint64_t aOffset = InputOffset(args_, chunk, head, Shape::kChunkRows);
+        const uint64_t hOffset = StateOffset(args_, chunk, head);
+        const uint8_t inputMutex = static_cast<uint8_t>(localHead & 1U);
+        Mutex::Lock<PIPE_MTE2>(inputMutex);
+        LoadOperands<TileCopyQH, HLayout>(
+            q_, h_, qOffset, hOffset, lane + kQOffset, lane + kHOffset,
+            chunk.validRows, Shape::kHeadDim, Shape::kHeadDim,
+            Shape::kHeadDim, Shape::kHeadDim);
+        LoadOperands<TileCopyAV, LayoutRM>(
+            a_, v_, aOffset, qOffset, lane + kAOffset, lane + kVOffset,
+            chunk.validRows, chunk.validRows, Shape::kChunkRows,
+            Shape::kChunkRows, Shape::kHeadDim);
+        Mutex::Unlock<PIPE_MTE2>(inputMutex);
+    }
+#endif
+
     __aicore__ inline void StageC0(const FinalizeChunk &chunk,
                                     uint32_t head, uint32_t localHead,
                                     uint32_t outputSlot)
     {
         const uint32_t lane = localHead * kL1HeadBytes;
         if constexpr (!UseAivInputMover) {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+            Mutex::Lock<PIPE_MTE1>(static_cast<uint8_t>(localHead & 1U));
+#else
             const uint64_t qOffset = InputOffset(args_, chunk, head, Shape::kHeadDim);
             const uint64_t aOffset = InputOffset(args_, chunk, head, Shape::kChunkRows);
             const uint64_t hOffset = StateOffset(args_, chunk, head);
@@ -437,6 +470,7 @@ private:
                 WaitFlag<HardEvent::FIX_M>(outputSlot);
                 l0OutputInFlight_[outputSlot] = false;
             }
+#endif
 #endif
         } else {
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
@@ -465,7 +499,7 @@ private:
                                           Shape::kChunkRows, Shape::kChunkRows,
                                           Shape::kHeadDim, 1, outputSlot);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-        Mutex::Unlock<PIPE_MTE1>(0);
+        Mutex::Unlock<PIPE_MTE1>(UseAivInputMover ? 0 : static_cast<uint8_t>(localHead & 1U));
         if constexpr (UseAivInputMover) {
             // Q/H 与 Aqk/V 均已离开 L1，AIV 可提前复用该 head 槽。
             CrossCoreSetFlag<A5Sync::kCrossCoreMode, PIPE_MTE1>(

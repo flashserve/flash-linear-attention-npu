@@ -456,3 +456,27 @@ Correctness checks cover tails, state orientation, dense/packed layouts and
 head counts through the frozen regression. Performance benefit is claimed
 only for the two measured model shapes. Original candidate and raw profiling
 artifacts are retained under validation_pr1179_a5/optimization_unroll/.
+
+
+## 2026-11-13 A5 AIC-only input lookahead
+
+The user permits scheduling changes with measured comparison. A5 HV128 keeps
+GROUP4 AIC-only. Prime localHead0 once per active group and issue the next valid
+head's GM-to-L1 loads before current StageC0. No prefetch beyond active heads.
+The existing four72KiB L1 head lanes (288KiB total) are unchanged. Input mutex
+ID=localHead&1 (0/1): MTE2 lock/load/unlock publishes ready; MTE1 locks before
+operand reads and unlocks after both QH and AV inputs leave L1. A later head
+reuses the parity only after the previous consumer releases it, including group
+and work boundaries. L0 operand mutex4/5 and output mutex2/3 are unchanged.
+Mover remains unchanged; helper and new call sites compile only for A5 arch3510.
+A2/A3 branches are preprocessor-equivalent to281f5c4; no A3 hardware run is claimed.
+
+Only the two design typical shapes are performance acceptance cases. With user
+baselines1149/1707us and throughput requirement0.8, time limits are1436.25/2133.75us.
+Final msprof op P50=1417.444580/2055.684937us, P90=1419.794043/2060.516626us.
+Each uses five discarded launches plus ten formal samples on NPU3 at1650MHz.
+Every formal sample meets the limit. Native baseline values are user supplied.
+Same-device mover control P50=1677.336975/2393.848999us; previous GROUP4 without
+lookahead P50=1594.223999/2340.004028us. This iteration preserves numerical rules,
+ABI, workspace size and arithmetic. ATK README and optimization_08 archive record
+accuracy, DC, memory/race checks, temporary workspace tracing and profiling limits.
