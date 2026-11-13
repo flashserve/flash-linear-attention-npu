@@ -170,7 +170,9 @@ public:
         return ge::GRAPH_FAILED;
     }
         if ((Hv_ % Hk_) != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "GVA: Hv (value/state heads) must be an integer multiple of Hk (q/k heads); got Hk=%lu");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv/Hk",
+            std::to_string(Hv_) + "/" + std::to_string(Hk_),
+            "GVA: Hv (value/state heads) must be an integer multiple of Hk (q/k heads)");
         return ge::GRAPH_FAILED;
     }
         // 本版只支持 K = V = 128：状态行按 64 行分组、列按 16 个元素（64B）成组，Vector 侧逐行的
@@ -178,11 +180,14 @@ public:
         // 区域，表现为设备报错或结果错误，所以这里只放开目标场景，其余取值直接拦截。
         if (K_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_K_DIM ||
                         V_ != CP::PRE_PROCESS_BWD_KERNEL_MERGED_V_DIM) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "this version only supports K=%u, V=%u, chunk_size=%u; got K=%lu V=%lu.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "K/V",
+            std::to_string(K_) + "/" + std::to_string(V_),
+            "this version only supports K/V = 128/128");
         return ge::GRAPH_FAILED;
     }
         if (static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size",
+            std::to_string(ctx_.chunkSize), "chunk_size must be 64");
         return ge::GRAPH_FAILED;
     }
 

@@ -227,7 +227,8 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
 inline ge::graphStatus ValidateAlignedDim(gert::TilingContext *context, int64_t dim)
 {
     if (dim % DIM_ALIGN_ELEMS != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", "invalid", "dim must satisfy dim %% %ld == 0 for causal_conv1d;");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", std::to_string(dim),
+            "dim must be a multiple of " + std::to_string(DIM_ALIGN_ELEMS) + " for causal_conv1d");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

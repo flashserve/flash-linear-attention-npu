@@ -727,7 +727,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ParamsDataContiguous failed.", __func__);
+        
         return ACLNN_ERR_PARAM_INVALID;
     }
 

@@ -168,7 +168,6 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
         return ret;
     };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ParamsDataContiguous failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
