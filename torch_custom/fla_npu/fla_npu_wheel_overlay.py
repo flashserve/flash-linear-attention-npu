@@ -27,10 +27,25 @@ MANIFEST = "layer_manifest.json"
 BASE = "fla_npu_transformer"
 NAME = "fla_npu_overlay_transformer"
 LIBRARY = "op_api/lib/libcust_opapi.so"
+PACKAGE = "fla_npu"
+LAUNCHER = "libfla_npu_stable.so"
+STAMP = "ops/ascendc/_stable_hash.py"
+OVERLAY_PREFIX = "fla_npu_overlay_"
+
+
+def configure_layout(*, package, base_vendor, overlay_vendor, launcher, stamp, overlay_prefix):
+    """Configure a private module instance before use; defaults preserve fla_npu.
+
+    This describes payload paths, not a package identity or compatibility gate.
+    Callers selecting another layout must load their own module instance.
+    """
+    global PACKAGE, BASE, NAME, LAUNCHER, STAMP, OVERLAY_PREFIX
+    PACKAGE, BASE, NAME = package, base_vendor, overlay_vendor
+    LAUNCHER, STAMP, OVERLAY_PREFIX = launcher, stamp, overlay_prefix
 
 
 def package_dir():
-    return Path(__file__).resolve().parent / "fla_npu"
+    return Path(__file__).resolve().parent / PACKAGE
 
 
 def storage(package):
@@ -108,10 +123,10 @@ def components(package, snapshot):
         if record.is_file() and _json(record).get("component_protocol") == 1:
             raise RuntimeError("Overlay component selections are missing; use --remove-overlay to recover")
         # Previously published wheel layers kept both components in one payload.
-        if not (snapshot / "fla_npu" / MANIFEST).is_file():
+        if not (snapshot / PACKAGE / MANIFEST).is_file():
             raise RuntimeError("Overlay snapshot is damaged; use --remove-overlay to recover")
         return {"adapter": snapshot.name,
-                "opp": snapshot.name if _vendor(snapshot / "fla_npu") else None}
+                "opp": snapshot.name if _vendor(snapshot / PACKAGE) else None}
     data = _json(path)
     if (not isinstance(data, dict) or data.get("version") != 1
             or set(data) != {"version", "adapter", "opp"}):
@@ -127,9 +142,9 @@ def component_paths(package, snapshot):
     selected = components(package, snapshot)
     adapter = layer_path(package, selected["adapter"]) if selected["adapter"] else None
     opp = layer_path(package, selected["opp"]) if selected["opp"] else None
-    if adapter and not (adapter / "fla_npu" / MANIFEST).is_file():
+    if adapter and not (adapter / PACKAGE / MANIFEST).is_file():
         raise RuntimeError("Selected adapter is missing; use --remove-overlay to recover")
-    vendor = _vendor(opp / "fla_npu") if opp else None
+    vendor = _vendor(opp / PACKAGE) if opp else None
     if opp and vendor is None:
         raise RuntimeError("Selected OPP is missing; use --remove-overlay to recover")
     return adapter, vendor
@@ -166,12 +181,12 @@ def manifest(package):
             if not re.fullmatch(r"aclnn\w+", symbol) or not isinstance(signature, list) or not all(isinstance(v, str) for v in signature):
                 raise RuntimeError("Invalid wheel layer ACLNN contract")
     assignments = {}
-    for node in ast.parse((package / "ops/ascendc/_stable_hash.py").read_text(encoding="utf-8")).body:
+    for node in ast.parse((package / STAMP).read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
             assignments[node.targets[0].id] = ast.literal_eval(node.value)
     if assignments.get("LAYER_PROTOCOL") != 1 or assignments.get("SOURCE_HASH") != data.get("source_hash"):
         raise RuntimeError("Wheel launcher metadata does not match its layer manifest")
-    if not (package / "libfla_npu_stable.so").is_file():
+    if not (package / LAUNCHER).is_file():
         raise RuntimeError("Wheel has no Stable launcher")
     return data
 
@@ -201,7 +216,7 @@ def resolve(package, layer):
     """
     base = manifest(package)
     adapter, overlay_vendor = component_paths(package, layer)
-    update = manifest(adapter / "fla_npu") if adapter else {"operators": {}, "exports": []}
+    update = manifest(adapter / PACKAGE) if adapter else {"operators": {}, "exports": []}
     if adapter and base.get("tier") != update.get("tier"):
         raise RuntimeError("Wheel layer and base target different NPU products")
     abi = abi_module(package)
@@ -277,7 +292,7 @@ def extract_wheel(wheel, destination):
             mapped = _payload_name(item.filename)
             if stat.S_ISLNK(item.external_attr >> 16):
                 raise RuntimeError("Wheel symlinks are unsupported")
-            if item.is_dir() or not mapped.parts or mapped.parts[0] != "fla_npu":
+            if item.is_dir() or not mapped.parts or mapped.parts[0] != PACKAGE:
                 continue
             if mapped in seen:
                 raise RuntimeError(f"Duplicate wheel payload: {mapped}")
@@ -292,7 +307,7 @@ def extract_wheel(wheel, destination):
             target = destination.joinpath(*mapped.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-    manifest(destination / "fla_npu")
+    manifest(destination / PACKAGE)
 
 
 def validate_wheel_environment(archive):
@@ -340,7 +355,7 @@ def _attach_opp(source, destination):
                       [p for p in source.iterdir() if p.is_dir() and (p / LIBRARY).is_file()])
         if len(candidates) != 1:
             raise RuntimeError("--opp-source must contain exactly one OPP vendor")
-        target = destination / "fla_npu/opp/vendors" / BASE
+        target = destination / PACKAGE / "opp/vendors" / BASE
         if target.exists():
             shutil.rmtree(target)
         shutil.copytree(candidates[0], target)
@@ -350,13 +365,13 @@ def _adopt_vendor_overlay(package, previous, created):
     """Copy a pre-component run overlay without changing its live directory."""
     if previous.get("active") or previous.get("pending") or previous.get("version") == 2:
         return previous
-    candidates = sorted((package / "opp/vendors").glob("fla_npu_overlay_*"))
+    candidates = sorted((package / "opp/vendors").glob(OVERLAY_PREFIX + "*"))
     if not candidates:
         return previous
     if len(candidates) != 1:
         raise RuntimeError("Multiple legacy vendor overlays exist; remove extras before composing components")
     source = candidates[0]
-    if (not re.fullmatch(r"fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*", source.name)
+    if (not re.fullmatch(re.escape(OVERLAY_PREFIX) + r"[A-Za-z0-9][A-Za-z0-9_.-]*", source.name)
             or source.is_symlink() or not source.is_dir()):
         raise RuntimeError("Invalid legacy overlay vendor")
     identity = uuid.uuid4().hex
@@ -403,7 +418,7 @@ def install(package, source, *, opp_source=None, force=False):
                 selected["adapter"] = identity
                 if opp_source is not None:
                     _attach_opp(opp_source, target)
-                if _vendor(target / "fla_npu"):
+                if _vendor(target / PACKAGE):
                     selected["opp"] = identity
             else:
                 _attach_opp(source, target)
@@ -459,8 +474,8 @@ def remove(package):
         # A pre-component vendor may have been adopted. Do not resurrect it on
         # removal, including recovery from an unreadable state.json.
         vendors = package / "opp/vendors"
-        for path in vendors.glob("fla_npu_overlay_*"):
-            if (re.fullmatch(r"fla_npu_overlay_[A-Za-z0-9][A-Za-z0-9_.-]*", path.name)
+        for path in vendors.glob(OVERLAY_PREFIX + "*"):
+            if (re.fullmatch(re.escape(OVERLAY_PREFIX) + r"[A-Za-z0-9][A-Za-z0-9_.-]*", path.name)
                     and path.is_dir() and not path.is_symlink()
                     and path.resolve().parent == vendors.resolve()):
                 shutil.rmtree(path)
