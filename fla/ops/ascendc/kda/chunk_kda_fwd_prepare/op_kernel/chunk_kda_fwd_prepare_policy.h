@@ -62,10 +62,6 @@ enum class OutputMode : uint8_t {
     Save = CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE,
 };
 
-enum class PreparePipeline : uint32_t {
-    Generic = 0,
-};
-
 namespace ExpDomain {
 constexpr float kLn2 = 0.69314718055994530942F;
 constexpr float kRcpLn2 = 1.44269504088896340736F;
