@@ -16,7 +16,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
 aclnnStatus CheckChunkKdaFwd32Layout(const ChunkKdaFwdParams &params, KdaFwdLayout &layout)
 {
     if (params.layout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnChunkKdaFwd", "layout", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("aclnnChunkKdaFwd", "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(params.layout, "BSND") == 0) layout = KdaFwdLayout::BSND;

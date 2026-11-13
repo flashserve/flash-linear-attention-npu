@@ -210,8 +210,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 static aclnnStatus ParseLayout(const char *layout, KdaFwdLayout &parsed)
 {
     if (layout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout",
-                                                 "layout is required and must be one of BSND, BNSD, TND or NTD");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(layout, "BSND") == 0) {
@@ -282,8 +281,7 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
         return ACLNN_SUCCESS;
     }
     if (cuSeqlens == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "chunkIndicesOptional",
-                                                 "cuSeqlensOptional is required when chunkIndicesOptional is given");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "chunkIndicesOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (chunkIndices->Size() != static_cast<size_t>(totalChunks) * 2) {
@@ -567,17 +565,17 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
 {
     if (!(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
                    params.g != nullptr && params.beta != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "q, k, v, g and beta must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.attnOut != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "attnOut", "attnOut must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "attnOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     // aqkOut 对应 op def 的 REQUIRED 输出；akkOut 对应 OPTIONAL，省略时算子内部
     // 自建不导出的占位张量，V2 组合入口随之使用 Prepare 的 none 档。
     if (!(params.aqkOut != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "aqkOut", "aqkOut must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "aqkOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.chunkSize == 64)) {
@@ -662,7 +660,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     }
     if (params.useGateInKernel) {
         if (!(params.aLogOptional != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "aLogOptional", "aLogOptional is required when useGateInKernel is true.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "aLogOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
         if (!(HasShape(params.aLogOptional, {info.hvNum}))) {

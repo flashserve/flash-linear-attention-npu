@@ -53,8 +53,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const gert::StorageShape *gShape = context->GetRequiredInputShape(PREPARE_INPUT_G);
     const gert::StorageShape *betaShape = context->GetRequiredInputShape(PREPARE_INPUT_BETA);
     if (qShape == nullptr || kShape == nullptr || vShape == nullptr || gShape == nullptr || betaShape == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "q,k,v,g,beta", "required input shape must not be null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta");
         return ge::GRAPH_FAILED;
     }
 
@@ -150,8 +149,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const auto *gDesc = context->GetInputDesc(PREPARE_INPUT_G);
     const auto *betaDesc = context->GetInputDesc(PREPARE_INPUT_BETA);
     if (qDesc == nullptr || gDesc == nullptr || betaDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "q,k,v,g,beta", "required input desc must not be null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType qDtype = qDesc->GetDataType();

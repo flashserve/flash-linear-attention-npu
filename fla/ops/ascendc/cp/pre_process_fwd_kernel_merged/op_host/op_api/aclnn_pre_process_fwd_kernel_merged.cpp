@@ -58,23 +58,23 @@ struct PreProcessFwdKernelMergedParams {
 static aclnnStatus CheckNotNull(PreProcessFwdKernelMergedParams params)
 {
     if (!(params.k != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.w != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "w", "w must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.u != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "u", "u must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "u");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.hmOut != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "hmOut", "hmOut must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "hmOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.cuSeqlensOptional != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "cuSeqlensOptional", "cuSeqlensOptional must not be nullptr (this operator is varlen only).");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "cuSeqlensOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

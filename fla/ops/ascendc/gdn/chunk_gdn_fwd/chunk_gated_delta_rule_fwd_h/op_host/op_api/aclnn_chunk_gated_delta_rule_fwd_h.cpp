@@ -102,24 +102,24 @@ static const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleFwdHParams params)
 {
     if (params.k == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.w == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "w", "w must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.u == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "u", "u must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "u");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
     if (params.hOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "hOut", "hOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "hOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.vNewOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "vNewOut", "vNewOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "vNewOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

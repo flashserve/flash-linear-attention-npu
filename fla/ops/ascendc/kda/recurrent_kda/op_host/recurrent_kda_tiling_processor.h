@@ -446,7 +446,7 @@ private:
     ge::graphStatus CheckOptionalGateShapes(int64_t hvNum, int64_t kDim) const
     {
         if (ctx_.useGateInKernel && !ctx_.hasALog) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx_.nodeName, "A_log", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "A_log");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.isA5 && !ctx_.useGateInKernel && (ctx_.hasALog || ctx_.hasDtBias || ctx_.safeGate)) {

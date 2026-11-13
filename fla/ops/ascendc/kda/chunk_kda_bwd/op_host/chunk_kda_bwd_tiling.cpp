@@ -268,9 +268,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
                     hShape == nullptr || wDesc == nullptr ||
                     qgDesc == nullptr || kgDesc == nullptr ||
                     vNewDesc == nullptr || hDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "w,qg,kg,v_new,h",
-                    "w, qg, kg, v_new and h are required when disable_recompute=true");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w,qg,kg,v_new,h");
         return ge::GRAPH_FAILED;
     }
 

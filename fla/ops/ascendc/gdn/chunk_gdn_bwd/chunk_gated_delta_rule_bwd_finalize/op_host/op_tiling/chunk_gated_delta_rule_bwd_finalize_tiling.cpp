@@ -344,7 +344,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     }
     if (useBetaSigmoidValue) {
         if (!CheckRank(betaRawShape, 3) || betaRawDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "beta_raw", "beta_raw is required when beta sigmoid backward is enabled.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "beta_raw");
         return ge::GRAPH_FAILED;
     }
         const gert::Shape betaRaw = betaRawShape->GetStorageShape();

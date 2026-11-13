@@ -201,7 +201,7 @@ aclnnStatus CheckRequiredInputs(const Params &params)
         params.dBetaOut, params.dGOut};
     for (const aclTensor *tensor : required) {
         if (tensor == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "inputs", "required tensor must not be nullptr");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "inputs");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -316,7 +316,7 @@ aclnnStatus CheckMetadata(const Params &params, int64_t tokens)
 aclnnStatus ResolveShapeInfo(const Params &params, ShapeInfo &info)
 {
     if (params.layout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout", "layout must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(params.layout, "BNSD") == 0) {
@@ -556,8 +556,7 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.useQkL2normInKernel && (params.qRstd == nullptr || params.kRstd == nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "qRstd,kRstd", "q_rstd and k_rstd are required for Q/K L2Norm backward");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "qRstd,kRstd");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!params.useQkL2normInKernel && (params.qRstd != nullptr || params.kRstd != nullptr)) {
@@ -567,8 +566,7 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.useBetaSigmoidInKernel && params.betaRaw == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "betaRaw", "beta_raw is required for beta sigmoid backward");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "betaRaw");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!params.useBetaSigmoidInKernel && params.betaRaw != nullptr) {
@@ -675,8 +673,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         DFX_OUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
                 dALogOutOptional, dDtBiasOutOptional));
     if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 

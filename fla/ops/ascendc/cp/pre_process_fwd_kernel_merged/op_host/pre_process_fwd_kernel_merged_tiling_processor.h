@@ -92,7 +92,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     // cu_seqlens：host int 数组，必给；校验 0 <= cu[0] < ... < cu[-1] <= T
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
     if (cuSeqlensTensor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "cu_seqlens", "cu_seqlens is required (varlen only)");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cu_seqlens");
         return ge::GRAPH_FAILED;
     }
     const int64_t cuNumel = static_cast<int64_t>(cuSeqlensTensor->GetShapeSize());

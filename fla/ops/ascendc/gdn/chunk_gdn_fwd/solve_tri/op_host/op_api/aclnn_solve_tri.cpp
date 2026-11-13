@@ -37,11 +37,11 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  static aclnnStatus CheckNotNull(SolveTriParams params)
  {
      if (params.x == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "x", "x must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
      if (params.xOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "xOut", "xOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "xOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
      return ACLNN_SUCCESS;

@@ -79,39 +79,39 @@ static bool IsGateDtype(DataType dtype)
 static aclnnStatus CheckNotNull(const ChunkGatedDeltaRuleFwdPrepareParams &params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "q", "q must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.v == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "v", "v must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "v");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "g must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.beta == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "beta", "beta must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "beta");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.gOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "gOut", "gOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "gOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.wOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "wOut", "wOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "wOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.uOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "uOut", "uOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "uOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.aOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "aOut", "aOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "aOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     {

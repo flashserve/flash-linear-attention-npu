@@ -70,9 +70,7 @@ public:
     {
         for (size_t i = 0; i < KDA_C_REQUIRED_INPUT_COUNT; ++i) {
             if (ctx_.shapes[i] == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                            ctx_.nodeName, "kernel_c_inputs",
-                            "all non-metadata Kernel C inputs are required");
+        OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "kernel_c_inputs");
         return ge::GRAPH_FAILED;
     }
         }
@@ -140,9 +138,7 @@ public:
         if (ctx_.useGateInKernel) {
             if (ctx_.shapes[KDA_C_RAW_G] == nullptr ||
                             ctx_.shapes[KDA_C_A_LOG] == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                            ctx_.nodeName, "raw_g,a_log",
-                            "raw_g and a_log are required when use_gate_in_kernel=true");
+        OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "raw_g,a_log");
         return ge::GRAPH_FAILED;
     }
             if ((ctx_.types[KDA_C_RAW_G] != ge::DT_FLOAT &&

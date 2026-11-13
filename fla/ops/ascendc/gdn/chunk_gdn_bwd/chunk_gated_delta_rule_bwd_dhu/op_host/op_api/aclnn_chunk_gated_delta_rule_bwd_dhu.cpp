@@ -73,23 +73,23 @@ struct ChunkGatedDeltaRuleBwdDhuParams {
 static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "q", "q must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.w == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "w", "w must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dO == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dO", "dO must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dO");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.dv == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dv", "dv must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dv");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if ((params.gOptional != nullptr) == (params.gkOptional != nullptr)) {
@@ -103,18 +103,17 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.dhOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dhOut", "dhOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dhOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.h0Optional != nullptr) {
         if (params.dh0Out == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "dh0Out", "dh0Out must not be nullptr when h0Optional is not nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dh0Out");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     }
     if (params.dv2Out == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dv2Out", "dv2Out must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dv2Out");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

@@ -160,8 +160,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                 dAOutOptional, dBiasOutOptional));
 
     if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!useGateInKernel) {
@@ -172,9 +171,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
 #ifdef KDA_BWD_STAGES_ARCH22
     for (const auto *tensor : {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut}) {
         if (tensor == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
-                "KDA backward required tensor must not be nullptr");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -601,9 +598,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         dqOut, dkOut, dvOut, dbOut, dgOut};
     for (const aclTensor *tensor : required) {
         if (tensor == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                OP_NAME, "q,k,v,beta,gk,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
-                "ChunkKdaBwd required tensor must not be nullptr");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,gk,aqk,akk,dO,dq,dk,dv,d_beta,d_g");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -629,9 +624,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     }
     if (wOptional == nullptr || qgOptional == nullptr || kgOptional == nullptr ||
         vNewOptional == nullptr || hOptional == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "w,qg,kg,v_new,h",
-            "w, qg, kg, v_new and h are required when disable_recompute=true");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w,qg,kg,v_new,h");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
@@ -654,8 +647,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel && (rawGOptional == nullptr || aLogOptional == nullptr || dAOutOptional == nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "raw_g,a_log,dA", "raw_g, a_log and dA are required for raw-gate backward");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g,a_log,dA");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!useGateInKernel &&
@@ -667,13 +659,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel && dtBiasOptional == nullptr && dBiasOutOptional != nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "dt_bias", "dt_bias is required when dbias output is requested");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dt_bias");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (useGateInKernel && dtBiasOptional != nullptr && dBiasOutOptional == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "dbias", "dbias output is required when dt_bias is present");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dbias");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     for (const auto *param : {aLogOptional, dtBiasOptional, dAOutOptional, dBiasOutOptional}) {

@@ -64,8 +64,7 @@ bool HasShape(const aclTensor *tensor, std::initializer_list<int64_t> dims)
 aclnnStatus ResolveLayout(const FinalizeParams &params, FinalizeShape &shape)
 {
     if (params.outputLayout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "outputLayout", "outputLayout is required and must be BSND/BNSD/TND/NTD");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "outputLayout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     shape.packed = std::strcmp(params.outputLayout, "NTD") == 0 ||
@@ -187,9 +186,7 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
 {
     if (params.cuSeqlens == nullptr) {
         if (params.chunkIndices != nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                OP_NAME, "chunkIndicesOptional",
-                "cuSeqlensOptional is required when chunkIndicesOptional is given");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "chunkIndicesOptional");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         shape.totalChunks = (shape.seqLen - 1) / FINALIZE_CHUNK_ROWS + 1;
@@ -304,9 +301,7 @@ aclnnStatus CheckParams(const FinalizeParams &params)
 {
     if (!(params.qgScaled != nullptr && params.aqk != nullptr && params.vNew != nullptr &&
           params.h != nullptr && params.attnOut != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "qgScaled,aqk,vNew,h,attnOut",
-            "qgScaled/aqk/vNew/h/attnOut are required and must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "qgScaled,aqk,vNew,h,attnOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     FinalizeShape shape;

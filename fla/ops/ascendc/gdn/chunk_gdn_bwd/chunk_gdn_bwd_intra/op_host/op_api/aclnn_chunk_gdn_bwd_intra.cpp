@@ -63,7 +63,7 @@ aclnnStatus Check(const Params &p)
         p.q, p.k, p.v, p.g, p.beta, p.a, p.dO, p.wOut, p.uOut, p.dvLocalOut};
     for (const aclTensor *tensor : tensors) {
         if (!(tensor != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "arguments", "ChunkGdnBwdIntra tensor arguments must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "arguments");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
         if (!(IsContiguous(tensor))) {
@@ -174,7 +174,7 @@ aclnnStatus Check(const Params &p)
         return ACLNN_ERR_PARAM_INVALID;
     }
         if (!(p.chunkIndices != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "cu_seqlens", "chunk_indices is required when cu_seqlens is provided.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "cu_seqlens");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
         if (!(p.chunkIndices->Size() > 0 && p.chunkIndices->Size() % 2 == 0)) {
@@ -231,7 +231,7 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
                           chunkIndicesOptional, scale, chunkSize, useExp2),
                    DFX_OUT(wOut, uOut, dvLocalOut));
     if (!(workspaceSize != nullptr && executor != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "executor", "workspaceSize and executor must not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const Params params{q, k, v, g, beta, a, dO, cuSeqlensOptional,

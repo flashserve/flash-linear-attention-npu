@@ -441,7 +441,7 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, boo
         return false;
     }
     if (params.useGateInKernel && params.aLogOptional == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", "A_log", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentKda", "A_log");
         return false;
     }
     if (!params.useGateInKernel &&
@@ -676,10 +676,10 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     OP_CHECK_IF(executor == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKdaGetWorkspaceSize", "executor", "input argument must not be nullptr"),
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentKdaGetWorkspaceSize", "executor"),
         return ACLNN_ERR_PARAM_NULLPTR);
     OP_CHECK_IF(workspaceSize == nullptr,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKdaGetWorkspaceSize", "workspaceSize", "input argument must not be nullptr"),
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentKdaGetWorkspaceSize", "workspaceSize"),
         return ACLNN_ERR_PARAM_NULLPTR);
     L2_DFX_PHASE_1(aclnnRecurrentKda,
                    DFX_IN(query, key, value, gate, beta, initialStateRef, cuSeqlensOptional,

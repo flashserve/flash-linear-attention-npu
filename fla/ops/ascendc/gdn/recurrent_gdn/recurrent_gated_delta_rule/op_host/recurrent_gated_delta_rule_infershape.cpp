@@ -39,7 +39,7 @@ const size_t DIM_3 = 3;
 static ge::graphStatus InferShapeRecurrentGatedDeltaRule(InferShapeContext *context)
 {
     if (context == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentGatedDeltaRule", "InferShapeContext", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("RecurrentGatedDeltaRule", "InferShapeContext");
         return ge::GRAPH_FAILED;
     }
 
@@ -88,7 +88,7 @@ static ge::graphStatus InferShapeRecurrentGatedDeltaRule(InferShapeContext *cont
 static ge::graphStatus InferDataTypeRecurrentGatedDeltaRule(gert::InferDataTypeContext *context)
 {
     if (!context) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentGatedDeltaRule", "InferDataTypeContext", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("RecurrentGatedDeltaRule", "InferDataTypeContext");
         return ge::GRAPH_FAILED;
     }
     context->SetOutputDataType(0, ge::DT_BF16);

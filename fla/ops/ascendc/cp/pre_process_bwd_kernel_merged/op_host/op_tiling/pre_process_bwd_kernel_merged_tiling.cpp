@@ -55,7 +55,7 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
 
     auto attrs = context->GetAttrs();
     if (attrs == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "attrs", "attrs is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "attrs");
         return ge::GRAPH_FAILED;
     }
     const double *scalePtr = attrs->GetAttrPointer<double>(CDHP_ATTR_SCALE_IDX);

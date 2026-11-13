@@ -101,8 +101,7 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     stateShape == nullptr || qDesc == nullptr || kDesc == nullptr ||
                     vDesc == nullptr || betaDesc == nullptr || gDesc == nullptr ||
                     stateDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "q,k,v,beta,g,o,final_state", "required shapes/descriptors must not be null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,g,o,final_state");
         return ge::GRAPH_FAILED;
     }
 

@@ -58,7 +58,7 @@ void RecurrentKdaTiling::InitCompileInfo()
 {
     auto platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "platform_info", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "platform_info");
         return;
     }
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -251,7 +251,7 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
     auto tilingDataSize = sizeof(RecurrentKdaTilingData);
     auto *rawTilingData = context_->GetRawTilingData();
     if (rawTilingData == nullptr || rawTilingData->GetData() == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "raw_tiling_data", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "raw_tiling_data");
         return ge::GRAPH_FAILED;
     }
     errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(),
@@ -269,7 +269,7 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
 
     size_t *workspaces = context_->GetWorkspaceSizes(1);
     if (workspaces == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "workspace_sizes", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "workspace_sizes");
         return ge::GRAPH_FAILED;
     }
     workspaces[0] = workspaceSize_;
@@ -409,7 +409,7 @@ ge::graphStatus RecurrentKdaTiling::GetAttrsInfo()
 {
     auto attrs = context_->GetAttrs();
     if (attrs == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrs", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "attrs");
         return ge::GRAPH_FAILED;
     }
     const char *layout = attrs->GetAttrPointer<char>(ATTR_LAYOUT_INDEX);
@@ -507,7 +507,7 @@ ge::graphStatus RecurrentKdaTiling::CalUbSize()
 static ge::graphStatus RecurrentKdaTilingFunc(gert::TilingContext *context)
 {
     if (context == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentKda", "tiling_context", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("RecurrentKda", "tiling_context");
         return ge::GRAPH_FAILED;
     }
     return Ops::Transformer::OpTiling::TilingRegistry::GetInstance().DoTilingImpl(context);
@@ -516,19 +516,19 @@ static ge::graphStatus RecurrentKdaTilingFunc(gert::TilingContext *context)
 static ge::graphStatus TilingPrepareForRecurrentKda(gert::TilingParseContext *context)
 {
     if (context == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("RecurrentKda", "tiling_parse_context", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT("RecurrentKda", "tiling_parse_context");
         return ge::GRAPH_FAILED;
     }
 
     fe::PlatFormInfos *platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "platform_info", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "platform_info");
         return ge::GRAPH_FAILED;
     }
 
     auto compileInfoPtr = context->GetCompiledInfo<RecurrentKdaCompileInfo>();
     if (compileInfoPtr == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "compile_info", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "compile_info");
         return ge::GRAPH_FAILED;
     }
 

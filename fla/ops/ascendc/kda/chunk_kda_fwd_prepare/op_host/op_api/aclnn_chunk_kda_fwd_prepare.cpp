@@ -131,8 +131,7 @@ bool HasShape(const aclTensor *tensor,
 aclnnStatus ParseLayout(const char *layout, PrepareLayout &parsed)
 {
     if (layout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "layout", "layout is required and must be BNSD/BSND/NTD/TND");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(layout, "BNSD") == 0) {
@@ -557,8 +556,7 @@ aclnnStatus CheckModesAndOptionalInputs(
     }
 
     if (params.aLogOptional == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "aLogOptional", "required when useGateInKernel=true");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "aLogOptional");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!HasShape(params.aLogOptional, {info.valueHeadNum})) {
@@ -608,9 +606,7 @@ aclnnStatus CheckVariableLengthInputs(
 {
     if (params.cuSeqlensOptional == nullptr) {
         if (params.chunkIndicesOptional != nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                OP_NAME, "chunkIndicesOptional",
-                "cuSeqlensOptional is required when chunkIndicesOptional is given");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "chunkIndicesOptional");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         return ACLNN_SUCCESS;

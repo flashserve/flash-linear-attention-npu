@@ -58,8 +58,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "workspaceSize,executor", "workspaceSize/executor must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (allowNegEigval && !useBetaSigmoidInKernel) {
@@ -89,7 +88,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         };
     }
     if (beta == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "beta", "beta must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "beta");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (beta->GetDataType() != DataType::DT_BF16 && beta->GetDataType() != DataType::DT_FLOAT) {
@@ -180,7 +179,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     }
     const bool rank3 = rank == 3;
     if (outputLayout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "outputLayout", "outputLayout is required");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "outputLayout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") != 0 &&

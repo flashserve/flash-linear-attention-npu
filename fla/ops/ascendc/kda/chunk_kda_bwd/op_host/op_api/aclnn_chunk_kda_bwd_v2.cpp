@@ -132,8 +132,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
                 dAOutOptional, dBiasOutOptional));
 
     if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!useGateInKernel) {
@@ -163,9 +162,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     }
     for (const auto *tensor : {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut}) {
         if (tensor == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
-                "KDA backward required tensor must not be nullptr");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }

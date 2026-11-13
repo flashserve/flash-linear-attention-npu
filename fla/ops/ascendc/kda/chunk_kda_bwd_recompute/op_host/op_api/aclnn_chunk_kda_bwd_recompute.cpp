@@ -123,14 +123,11 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
           params.g != nullptr && params.beta != nullptr && params.a != nullptr &&
           params.wOut != nullptr && params.uOut != nullptr && params.qgOut != nullptr &&
           params.kgOut != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "q,k,v,g,beta,a,wOut,uOut,qgOut,kgOut",
-            "required tensors must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta,a,wOut,uOut,qgOut,kgOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 

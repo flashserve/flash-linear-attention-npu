@@ -51,8 +51,7 @@ public:
         if (ctx_.aqkShape == nullptr ||
                         ctx_.vNewShape == nullptr || ctx_.hShape == nullptr ||
                         ctx_.doShape == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                        ctx_.nodeName, "aqk,v_new,h,d_o", "Aqk/v_new/h/d_o are required");
+        OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "aqk,v_new,h,d_o");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.dataType != ge::DT_FLOAT16 &&

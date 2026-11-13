@@ -43,7 +43,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
 
     const bool isAscend950 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     if (!isAscend950 && context->GetOutputShape(4) == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "buffer", "gk output buffer is required on A2/A3.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "buffer");
         return ge::GRAPH_FAILED;
     }
     const char *modelLayout = attrPtr->GetStr(5);

@@ -53,27 +53,27 @@ struct PreProcessBwdKernelMergedParams {
 static aclnnStatus CheckNotNull(PreProcessBwdKernelMergedParams params)
 {
     if (!(params.q != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "q", "q is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.k != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.w != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "w", "w is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.dO != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "d_o", "d_o is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "d_o");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.dv != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dv", "dv is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dv");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.dhmOut != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dhm", "dhm is nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dhm");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

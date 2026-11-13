@@ -67,27 +67,27 @@ struct ChunkFwdOParams {
 static aclnnStatus CheckNotNull(ChunkFwdOParams params)
 {
     if (params.q == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "q", "q must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.k == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k", "k must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.v == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "v", "v must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "v");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.h == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "h", "h must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "h");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.g == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "g must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (params.oOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "oOut", "oOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "oOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;

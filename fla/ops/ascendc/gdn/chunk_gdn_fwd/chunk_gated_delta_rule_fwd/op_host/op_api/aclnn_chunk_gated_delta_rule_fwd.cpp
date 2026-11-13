@@ -417,8 +417,7 @@ static aclnnStatus CheckRequiredInputs(const ChunkGatedDeltaRuleFwdParams &param
 {
     if (params.q == nullptr || params.k == nullptr || params.v == nullptr || params.g == nullptr ||
         params.beta == nullptr || params.oOut == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "q,k,v,g,beta,oOut", "q/k/v/g/beta/oOut must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta,oOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -577,7 +576,7 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
 static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &params)
 {
     if (params.layout == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout", "layout must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (IsDav2201Device()) {
@@ -1228,8 +1227,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         kHatOutOptional, qRstdOutOptional, kRstdOutOptional, betaEffOutOptional,
         gCumsumOutOptional, aOutOptional, hOutOptional};
     if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            OP_NAME, "workspaceSize,executor", "workspaceSize and executor must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {

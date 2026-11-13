@@ -425,7 +425,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
 
     if (qslAbsent) {
         if (inputMode == 0) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "queryStartLoc", "queryStartLoc is required in 2D varlen mode (inputMode=0)");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "queryStartLoc");
         return ge::GRAPH_FAILED;
     }
         qslSize = batch + 1;
