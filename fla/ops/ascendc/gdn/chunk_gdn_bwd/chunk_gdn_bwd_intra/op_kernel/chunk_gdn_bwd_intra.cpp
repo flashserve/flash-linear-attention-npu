@@ -6,7 +6,7 @@
 #include "lib/matmul_intf.h"
 #include "chunk_gdn_bwd_intra_struct.h"
 #include "chunk_gdn_bwd_intra_tiling_key.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "chunk_gdn_bwd_intra_cube.h"
 #include "chunk_gdn_bwd_intra_vector.h"
 #else
@@ -45,26 +45,31 @@ __aicore__ inline void DispatchKernel(
     GM_ADDR dvLocal, GM_ADDR workspace,
     const ChunkGdnBwdIntraTilingData *__restrict tiling)
 {
-    static_assert(G_KEY >= 1 && G_KEY <= 4, "G must be in [1, 4].");
+    static_assert(G_KEY <= 4, "G_KEY must be 0 (runtime) or in [1, 4].");
     using MainT = typename IntraMainType<MAIN_KEY>::type;
     using GateT = typename IntraAuxType<GATE_KEY>::type;
     using BetaT = typename IntraAuxType<BETA_KEY>::type;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // 一个 MixBlock 包含 1 个 AIC 和 2 个 AIV：AIC 顺序执行 Stage 0/2，
     // 两个 AIV 并行执行 Stage 1 的前、后半行，二者通过 CrossCore flag 交接数据。
-    if ASCEND_IS_AIC {
-        ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
-        kernel.Init(q, k, v, dO, w, u, dvLocal, workspace,
-                    cuSeqlens, chunkIndices, tiling);
-        kernel.Process();
-    }
-    if ASCEND_IS_AIV {
-        ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
-        kernel.Init(v, dO, a, g, beta, dvLocal, workspace,
-                    cuSeqlens, chunkIndices, tiling);
-        kernel.Process();
+    // 共用模板表会编译 G_KEY=0；A5 的 host 拒绝该 key，不实例化其计算路径。
+    if constexpr (G_KEY != CHUNK_GDN_BWD_INTRA_G_RUNTIME) {
+        if ASCEND_IS_AIC {
+            ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
+            kernel.Init(q, k, v, dO, w, u, dvLocal, workspace,
+                        cuSeqlens, chunkIndices, tiling);
+            kernel.Process();
+        }
+        if ASCEND_IS_AIV {
+            ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY> kernel;
+            kernel.Init(v, dO, a, g, beta, dvLocal, workspace,
+                        cuSeqlens, chunkIndices, tiling);
+            kernel.Process();
+        }
     }
 #else
+    // G_KEY=0 是 A2 的运行时 G 桶：GVA 比例从 tiling->groupSize 读取，
+    // 复用 arch22 cube/vector 的同一套 head 级循环与同步逻辑。
     if ASCEND_IS_AIC {
         Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY> kernel;
         kernel.Init(q, k, a, dO, w, u, dvLocal, workspace, cuSeqlens, chunkIndices, tiling);

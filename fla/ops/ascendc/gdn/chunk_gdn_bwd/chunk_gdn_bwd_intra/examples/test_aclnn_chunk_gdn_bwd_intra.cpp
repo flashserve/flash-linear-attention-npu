@@ -175,12 +175,20 @@ int main(int argc, char **argv)
     const bool betaFp32 = argc >= 10 && std::string(argv[9]) == "fp32";
     const bool constantGate = argc >= 11 && std::string(argv[10]) == "constant-g";
     const bool identityD = argc >= 12 && std::string(argv[11]) == "identity-d";
-    if (groupSize < 1 || groupSize > 4 || repeats < 1 || T < 1 ||
-        HV < 4 || HV % 4 != 0 || HV % groupSize != 0) {
+    // 算子仅要求 HV % HK == 0；HV >= 1 保证非空。历史样例的 HV%4==0 约束
+    // 与算子语义无关，已随 GVA 1~16 放宽移除。G>4 仅 A2/A3（910B/910C）支持，
+    // A5（950）上限为 4，超限会在 aclnn 参数校验层被拒绝。此处只做入参粗筛：
+    // 本样例仅链接公开 aclnn 接口，故按 arch22 上限 16 取值，真实上限以算子侧
+    // op_host/chunk_gdn_bwd_intra_schedule.h 的 IntraMaxGvaRatio 为准，调整需同步。
+    if (groupSize < 1 || groupSize > 16 || repeats < 1 || T < 1 || HV < 1) {
         std::cerr << "Invalid G, repeats, T, or HV\n";
         return 1;
     }
     const int64_t HK = HV / groupSize;
+    if (HK < 1 || HV % groupSize != 0) {
+        std::cerr << "Invalid G, repeats, T, or HV\n";
+        return 1;
+    }
 
     aclrtStream stream = nullptr;
     if (aclInit(nullptr) != ACL_SUCCESS || aclrtSetDevice(0) != ACL_SUCCESS ||

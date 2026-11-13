@@ -23,6 +23,18 @@ constexpr uint32_t INTRA_SCORE_UB_BASE = 0;
 constexpr uint32_t INTRA_MATRIX_HALF_BYTES = 4 * 1024;
 constexpr uint32_t INTRA_VDO_INPUT_HALF_BYTES = 8 * 1024;
 
+// 运行时 G 桶（G_KEY=0，仅 A2）的除数：ccec 禁止 aicore 函数访问全局可变
+// 变量，因此比例必须以参数形式传入调用链。G_KEY 1~4 时返回编译期常量。
+template <uint32_t G>
+__aicore__ inline int64_t ChunkGdnBwdIntraGroup(int64_t runtimeGroup)
+{
+    if constexpr (G == 0) {
+        return runtimeGroup;
+    } else {
+        return static_cast<int64_t>(G);
+    }
+}
+
 class ChunkGdnBwdIntraWorkMapper {
 public:
     __aicore__ inline void Init(
@@ -76,23 +88,29 @@ private:
     AscendC::GlobalTensor<int64_t> chunkIndices_;
 };
 
+// G_KEY=0 时调用方需传 runtimeGroup=tiling->groupSize；G_KEY 1~4 时传任意值
+// （编译期常量分支不读它）。
 template <uint32_t G>
-__aicore__ inline bool ChunkGdnBwdIntraScoreLeader(int64_t hvBegin, int64_t r)
+__aicore__ inline bool ChunkGdnBwdIntraScoreLeader(
+    int64_t hvBegin, int64_t r, int64_t runtimeGroup)
 {
     // 当前 r 是该 q/k head 在 HV 切片内的首次出现时，才需要计算一份 Score。
     if (r == 0) {
         return true;
     }
-    return (hvBegin + r) / G != (hvBegin + r - 1) / G;
+    return (hvBegin + r) / ChunkGdnBwdIntraGroup<G>(runtimeGroup) !=
+           (hvBegin + r - 1) / ChunkGdnBwdIntraGroup<G>(runtimeGroup);
 }
 
 template <uint32_t G>
-__aicore__ inline int64_t ChunkGdnBwdIntraLeaderR(int64_t hvBegin, int64_t r)
+__aicore__ inline int64_t ChunkGdnBwdIntraLeaderR(
+    int64_t hvBegin, int64_t r, int64_t runtimeGroup)
 {
     // 回溯到共享同一个 q/k head 的首个 r，用它定位复用的 Score 和 k 槽。
-    const int64_t hk = (hvBegin + r) / G;
+    const int64_t group = ChunkGdnBwdIntraGroup<G>(runtimeGroup);
+    const int64_t hk = (hvBegin + r) / group;
     for (int64_t candidate = r; candidate > 0; --candidate) {
-        if ((hvBegin + candidate - 1) / G != hk) {
+        if ((hvBegin + candidate - 1) / group != hk) {
             return candidate;
         }
     }

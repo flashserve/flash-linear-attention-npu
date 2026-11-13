@@ -4,11 +4,14 @@
  */
 #include "aclnn_chunk_gdn_bwd_intra.h"
 #include "chunk_gdn_bwd_intra.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
 
 #include <array>
 #include <set>
+#include <string>
 #include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
+#include "external/aclnn_kernels/aclnn_platform.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -19,6 +22,18 @@
 using namespace op;
 
 namespace {
+
+constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
+
+// GVA 上限与 host tiling 共用同一来源：平台由 GetCurNpuArch 判定，上限值取自
+// schedule.h 的 IntraMaxGvaRatio。DAV_2201（A2/A3）支持 1~16（超 4 部分由
+// tiling 落到运行时 G 桶）；DAV_3510（A5）维持 4。未知架构回退保守上限 4
+// （报文按该上限提示合法范围）。
+int64_t GvaLimitForCurrentSoC()
+{
+    const NpuArch arch = GetCurrentPlatformInfo().GetCurNpuArch();
+    return optiling::IntraMaxGvaRatio(arch == NpuArch::DAV_2201);
+}
 
 struct Params {
     const aclTensor *q;
@@ -93,8 +108,16 @@ aclnnStatus Check(const Params &p)
                "K and V must both be 128.");
     CHECK_COND(vShape.GetDim(0) == b && vShape.GetDim(2) == t,
                ACLNN_ERR_PARAM_INVALID, "q/k and value tensors must share B and T.");
-    CHECK_COND(hv % hk == 0 && hv / hk <= 4, ACLNN_ERR_PARAM_INVALID,
-               "HV/HK must be an integer in [1, 4].");
+    // GVA 上限按运行平台在 aclnn 参数校验层拦截（与 tiling 同判据），
+    // 使错误对调用方可见，而不是落到 tiling 后以图编译失败形式透出。
+    const int64_t gvaLimit = GvaLimitForCurrentSoC();
+    if (hv % hk != 0 || hv / hk < 1 || hv / hk > gvaLimit) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "Parameter hv/hk of %s has incorrect value HV=%ld, HK=%ld (G=%ld). "
+                "It should be an integer ratio in [1, %ld] on the current SoC arch.",
+                OP_NAME, hv, hk, hk > 0 ? hv / hk : 0, gvaLimit);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_COND(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t,
                ACLNN_ERR_PARAM_INVALID, "g/beta shape must be [B, HV, T].");
     CHECK_COND(aShape.GetDim(0) == b && aShape.GetDim(1) == hv &&

@@ -18,7 +18,8 @@ recompute_w_u_fwd(k, v, beta, A, g, cu_seqlens) -> w, u
 chunk_bwd_dv_local(q, k, d_o, g, scale, cu_seqlens, chunk_size) -> dv_local
 ```
 
-目标 SoC 为 A5（Ascend 950）。模型 case 为 `B=1`、`HK=16`、`HV=32`、`T=11K`、
+目标 SoC 为 A5（Ascend 950），A2/A3（Ascend 910B/910C）走同一 arch22 路径。
+模型 case 为 `B=1`、`HK=16`、`HV=32`、`T=11K`、
 `K=V=128`、`chunk_size=64`。该 case 在 H20 上的设备耗时为 300 us；融合算子的性能
 目标是达到 H20 性能的 0.8 倍，即 A5 设备耗时不超过 `300 us / 0.8 = 375 us`。
 
@@ -60,13 +61,15 @@ dtype。`g/beta` 进入 Vector 计算后统一转 FP32。上述 W/U 变换来自
 输入 A/v/g/beta/d_o 的 value-head 轴长度为 `HV`。一个 MixBlock 由 1 个 AIC 和
 2 个 AIV 组成；`CG` 表示它一次沿该输入轴连续处理的 head 数。每个 work 的连续切片
 从 `hv_begin` 开始，包含 `[hv_begin,min(hv_begin+CG,HV))`。`r` 是切片内偏移。
-`G=3` 时取 `CG=3`，其它支持场景取 `CG=4`。全文调度变量只按下表定义：
+`G=3` 时取 `CG=3`（切片与 hk 边界对齐），其它支持场景（含 A2 运行时 G 桶的
+`G=5~16`）取 `CG=4`；`G>4` 时一个 CG 切片最多跨 2 个 hk，leader 判定天然覆盖该
+跨界情形。全文调度变量只按下表定义：
 
 ```text
 hv = hv_begin + r                              当前切片中第 r 个 value head
 hk = floor(hv/G)                               当前 value head 读取的 q/k head
 valid_r = min(CG,HV-hv_begin)                  当前切片的有效 value head 数
-leader = r - (r mod G)                         当前 hk 共用的 S_hk 和 k 槽
+leader = max(0, floor((hv_begin+r)/G)*G - hv_begin) 当前 hk 在切片内首次出现的槽
 leaders = [0,valid_r) 内所有不同的 leader，按升序排列
 
 Nchunk = B * ceil(T/BT),         fixed length
@@ -82,10 +85,28 @@ blockDim = min(AIC_CORE_NUM,Nwork)
 `BT/2` 行，因此两个 AIV 都遍历全部 `r=0..valid_r-1`。Stage 0 按唯一 `hk` 计算
 Score，同一 `hk` 对应的连续 `hv` 顺序复用 leader 槽中的同一份结果。
 
-TilingKey 直接编码输入确定的 `G=1/2/3/4`，Kernel 由模板参数 `G` 计算 `hk`、leader
-和最后消费者。所有 `G` 使用同一调度：work 按 chunk 优先、value-head 切片次序编号，
+TilingKey 编码输入确定的 `G`：`1/2/3/4` 直接作为编译期模板参数，Kernel 由模板
+参数 `G` 计算 `hk`、leader 和最后消费者。A2/A3 上 `G>4` 时不新增模板取值，而是统一
+落入 `G_KEY=0` 的运行时 G 实例：host tiling 将实际比例写入 `tilingData.groupSize`，
+kernel 的每个使用点经 `ChunkGdnBwdIntraGroup<G>(tiling->groupSize)` 读取——ccec
+禁止 `__aicore__` 函数访问全局可变变量，比例无法以全局变量缓存，只能以参数形式
+贯穿调用链；`G!=0` 时该函数返回编译期常量，除法仍可常量折叠。所有
+`G` 使用同一调度：work 按 chunk 优先、value-head 切片次序编号，
 并按 `work_id=block_idx+n*blockDim` 网格步进。每个 work 始终包含完整的 `valid_r`，
 末轮也保持相同任务粒度；`G` 只影响 `hv -> hk` 映射和 Score/k 的复用次数。
+
+模板实例表说明：
+
+- `G_KEY=0` 的 16 个实例（2 种定长/变长策略 × 2 种主 dtype × 2 种 g dtype ×
+  2 种 beta dtype）保留在全平台共用的实例表中。A5（DAV_3510）的 dispatch 使用
+  `if constexpr (G_KEY != CHUNK_GDN_BWD_INTRA_G_RUNTIME)`，使共享表中的 0 实例
+  可编译而不实例化 A5 Cube/Vector 计算路径。A5 host tiling（上限 4）永不选择
+  0，aclnn 也在参数校验层拒绝超限比例；编译期隔离与运行期拒绝分别保证构建和调用安全。
+
+GVA 比例上限只在 `op_host/chunk_gdn_bwd_intra_schedule.h` 的
+`IntraMaxGvaRatio(arch22)` 定义一处（arch22 为 16、其余为 4），aclnn 参数校验、
+host tiling 校验和 `BuildIntraSchedule` 中的比例检查共同引用它。新增平台或调整
+档位时只改该函数，避免多层判据各自展开导致放行与拒绝不一致。
 
 模型 case 有 `Nwork=1408`、`blockDim=28`：`block_idx=0..7` 各处理 51 个完整 work，
 其余 20 个核各处理 50 个完整 work；每个完整 work 处理 4 个 value head。
@@ -111,7 +132,9 @@ AIC 在输入 `HV` 轴的当前连续切片中找出映射到不同 q/k head 的
 相同 `hk` 的 value head 不搬 q/k，也不重复 MMAD。所有 leader
 的 q/k 先连续发射 MTE2 预取，再按 leader 顺序进入 MTE1/Cube。由于模板要求
 `G=3` 时 `CG=3`、其它场景 `CG=4`，完整切片在 `G=1/2/3/4` 时分别预取
-`4/2/1/1` 份不同 q/k；最后一个不足 `CG` 的切片预取 `ceil(valid_r/G)` 份。
+`4/2/1/1` 份不同 q/k。任意非空切片（含运行时 G 和尾切片）的唯一 hk 数为
+`floor((hv_begin+valid_r-1)/G)-floor(hv_begin/G)+1`，不能忽略切片起点的对齐。
+例如 `G=5,hv_begin=4,valid_r=4` 有两个 hk，分别使用 leader 槽 0 和 1。
 
 Stage 0 将同类型数据放在连续地址中，并按最多 4 份任务统一预留。空间布局
 （每个 AIC，单位 KiB）：
@@ -374,7 +397,7 @@ MmadFromOwnedL1(left_l1, right_l1, slot, output_gm):
   with PIPE_FIX l0c_mutex[slot]: Fixpipe L0C[slot] -> output_gm
 
 Stage0AIC(chunk_id,hv_begin,valid_r):
-  leaders = [0,valid_r) 内所有不同的 r-(r mod G)，按升序排列
+  leaders = [0,valid_r) 内所有不同的 max(0,floor((hv_begin+r)/G)*G-hv_begin)，按升序排列
   for leader in leaders:
     wait score_free[0,leader], score_free[1,leader] from PIPE_MTE2 # 两个 AIV 都读完后才能覆盖。
     hk = floor((hv_begin+leader)/G)
@@ -400,7 +423,7 @@ Stage1AIV(part,chunk_id,hv_begin,valid_r,next_item):
       with PIPE_MTE2 input_mutex[r]: MTE2 A/g/beta/v/d_o[r] -> UB input
   for r in [0,valid_r):
     hv = hv_begin+r
-    leader = r-(r mod G)
+    leader = max(0,floor((hv_begin+r)/G)*G-hv_begin)
     vslot = r mod 2
     if r == leader: wait score_ready[part,leader] from PIPE_V
     if vslot 已使用: wait stage1_free[part,上一次使用该 vslot 的 r] from PIPE_MTE3
@@ -418,7 +441,7 @@ Stage2AIC(chunk_id,hv_begin,valid_r):
   for r in [0,valid_r):
     wait stage1_ready[part,r] for part in [0,2) from PIPE_MTE1 # record/v/d_o 两个半片均已写完。
     hv = hv_begin+r
-    leader = r-(r mod G)
+    leader = max(0,floor((hv_begin+r)/G)*G-hv_begin)
     vslot = r mod 2
     MmadFromOwnedL1(D[r],d_o[r],0,dv_local[chunk_id,hv])
     MmadFromOwnedL1(A_bg[r],k[leader],1,w[chunk_id,hv])
@@ -431,8 +454,10 @@ Schedule<G>(block_idx):
   map work_id -> (chunk_id=floor(work_id/ceil(HV/CG)),hv_slice=work_id mod ceil(HV/CG))
   yield work_id in [block_idx,Nwork) step blockDim       # 所有 G 依次处理 chunk 内的 head 切片。
 
-TilingKey 的模板参数 `G` 是 head 映射的唯一来源。AIC 和 AIV 的热循环直接按编译期
-`G` 计算 `leader`、`hk` 和最后消费者；`G=2` 时编译器可将除法化简为移位。
+上述伪代码的 `G` 表示实际比例。模板参数 `G_KEY=1/2/3/4` 时，AIC/AIV 通过
+`ChunkGdnBwdIntraGroup<G_KEY>(tiling->groupSize)` 取得编译期常量，`G_KEY=2` 时除法
+可化简为移位；`G_KEY=0` 时同一 helper 返回 host 写入的 `tiling->groupSize`。
+两条路径均按绝对 `hv` 计算 `hk`、leader 和最后消费者，不以切片内 `r` 的整除代替。
 
 template Process<G>:
   parallel MixBlock block_idx in [0,blockDim):

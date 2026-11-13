@@ -358,7 +358,7 @@ private:
                 PrefetchStage1Input(meta, r + 1);
             }
             const int64_t leader =
-                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r);
+                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r, tiling_->groupSize);
             if (r == leader) {
                 // AIC 只为每个唯一 hk 发布一次 Score；同一 hk 的后续 hv 直接复用该槽。
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
@@ -376,7 +376,8 @@ private:
             vdoSlotUsed[vdoSlot] = true;
             RunStage1(meta, r, leader, pairInputs);
             const bool lastConsumer = r + 1 == meta.validHeads ||
-                (meta.hvBegin + r) / G != (meta.hvBegin + r + 1) / G;
+                (meta.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize) !=
+                (meta.hvBegin + r + 1) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
             if (lastConsumer) {
                 // 当前 hk 的最后一个 hv 已读完 Score，向 AIC 归还本 AIV 的半片槽。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
