@@ -39,7 +39,8 @@ const aclTensor *RecurrentGatedDeltaRule(const aclTensor *query, const aclTensor
     DataType outType = DataType::DT_BF16;
     Format format = Format::FORMAT_ND;
     auto out = executor->AllocTensor(outType, format, format);
-    if (!(out != nullptr)) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRule: output allocation failed"); return nullptr; };
+    if (!(out != nullptr)) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRule: output allocation failed"); return nullptr;
+    }
 
     const auto stateStorageShape = stateRef->GetStorageShape();
     const auto stateViewShape = stateRef->GetViewShape();
@@ -84,7 +85,8 @@ const aclTensor *RecurrentGatedDeltaRuleV2(const aclTensor *query, const aclTens
 
     auto out = executor->AllocTensor(outType, format, format);
 
-    if (!(out != nullptr)) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRule: output allocation failed"); return nullptr; };
+    if (!(out != nullptr)) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRule: output allocation failed"); return nullptr;
+    }
 
     // State is an existing strided allocation, rather than a newly allocated
     // output. InferShape normalizes every output descriptor to its logical

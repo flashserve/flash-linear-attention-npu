@@ -178,7 +178,8 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
         }
     };
     auto ret = PreProcess(params);
-    if (!(ret == ACLNN_SUCCESS)) { return ret; };
+    if (!(ret == ACLNN_SUCCESS)) { return ret;
+    }
 
     auto query_ = l0op::Contiguous(query, uniqueExecutor.get());
     auto key_ = l0op::Contiguous(key, uniqueExecutor.get());
@@ -281,7 +282,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
 
     const auto contiguous = [&](const aclTensor *tensor) -> const aclTensor * {
         return tensor ? l0op::Contiguous(tensor, uniqueExecutor.get()) : nullptr;
-    };
+    }
     const auto betaContiguous = contiguous(beta);
     const auto lengthsContiguous = contiguous(actualSeqLengths);
     const auto indicesContiguous = contiguous(ssmStateIndices);

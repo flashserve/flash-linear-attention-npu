@@ -586,7 +586,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     }
     if (!(ParseLayout(params.layout, layout) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
     };
