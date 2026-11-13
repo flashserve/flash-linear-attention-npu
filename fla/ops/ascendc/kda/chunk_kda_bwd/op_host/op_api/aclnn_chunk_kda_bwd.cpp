@@ -730,7 +730,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     auto fp32Output = [&](const aclTensor *out) -> const aclTensor * {
         if (!out || out->GetDataType() == DataType::DT_FLOAT) return out;
         return executorPtr->AllocTensor(out->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
-    }
+    };
     const auto *dbKernel = fp32Output(dbOut);
     const auto *dgKernel = fp32Output(dgOut);
     const auto *dAKernel = dAOutOptional;
