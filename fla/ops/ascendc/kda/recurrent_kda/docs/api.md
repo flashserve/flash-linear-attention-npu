@@ -98,7 +98,7 @@ shape、storage、stride 和 offset，kernel 按 tiling
 另外传入独立的 `finalState` 输出，仅为该输出保留一次必要的 `ViewCopy`。`cuSeqlensOptional` 为空时，BSND
 按 batch 行划分序列，TND 视为一条序列；提供时仅在 host 检查 rank/dtype，具体 offset 值由 device kernel 读取，
 因而可在 ACLGraph capture/replay 中变化。首项必须为 0，offset 必须单调不减，末项不得超过输入 token capacity，
-A2/A3 和 A5 均按固定时间窗口处理每段序列，不再限制每段长度为 8。
+A2/A3、A5 和 A6 均按固定时间窗口处理每段序列，不再限制每段长度为 8。
 输入、输出、workspace 和 executor 必须保持有效，直到 stream 完成。
 
 ### 3.2 调用示例
@@ -193,7 +193,7 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 | `RKDA_TPL_V_FIRST_FUSED` (3) | A5/A6 V-first 常用融合 | `state_v_first=true`，满足常用融合条件 |
 | `RKDA_TPL_K_FIRST_FUSED` (4) | A5/A6 K-first 常用融合 | `state_v_first=false`，满足常用融合条件 |
 
-常用融合条件为 norm、raw gate、dt_bias、beta sigmoid 同时开启，且 `allow_neg_eigval=false`、`safe_gate=false`；A5 由 host 的 `a5VfFlags` 决定，A6 直接按上述六项属性判定。A5 与 A6 的 V=128/V=256 共用上述四种模式，FP32/BF16 State 使用各自的 dtype 编译实例。
+常用融合条件为 norm、raw gate、dt_bias、beta sigmoid 同时开启，且 `allow_neg_eigval=false`、`safe_gate=false`；A5 由 host 的 `a5VfFlags` 决定，A6 直接按上述六项属性判定（与 arch92 的 FUSED 模板特化对应）。A5 与 A6 的 V=128/V=256 共用上述四种模式，FP32/BF16 State 使用各自的 dtype 编译实例。
 A6（`ascend960dt`）的 V=128 与 V=256 都由 arch92 静态 UB 引擎按 128 切片串行处理，host 只下发 1～4，不下发 `COMPAT`；tiling key 声明本身不按平台裁剪。
 
 直调通路只作为 route/诊断入口；公开 Python 和 aclnn API 负责完整参数校验。直调通路按连续物理地址或 tiling data 中的 Q/K/V/state stride 解释 GM 地址；非连续直调必须使用
@@ -214,6 +214,7 @@ A6（`ascend960dt`）的 V=128 与 V=256 都由 arch92 静态 UB 引擎按 128 �
   回退连续化；token/head 置换或正 stride 重叠 descriptor 返回参数错误。
 - 未传 `ssm_state_indices` 时 `state_capacity=seq_num`；传入后容量可大于序列数，所有有效 slot 必须位于 `[0,state_capacity)`。
 - `ssm_state_indices` 支持 packed `[T]` 和 speculative `[seq_num,max_step]`；活跃序列不得共享正在写入的 state slot。
+- `num_accepted_tokens` 的合法范围随 `ssm_state_indices` 形态变化：packed 一维表要求 `1<=accepted<=请求长度`，speculative 二维表要求 `1<=accepted<=max_step`（允许超过本次请求长度），且选中的初态槽位必须位于 `[0,state_capacity)`。
 - 空序列不读取 `ssm_state_indices/num_accepted_tokens`，也不读写 state pool。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分，TND 视为一条序列。提供时首项必须为 0，offset
   必须单调不减，末项为有效 token 数且不得超过输入
@@ -221,7 +222,7 @@ A6（`ascend960dt`）的 V=128 与 V=256 都由 arch92 静态 UB 引擎按 128 �
 - 末项小于 capacity 时，kernel 仅处理有效前缀并逐行跳过零长度序列；padding tail 输出不作保证。
 - state 支持 V-first 与 K-first，支持 FP32/BF16，以及原位/非原位 final state。
 - 非连续 state 仅允许 slot/head 外层维存在间隔，最后两维必须为行主序稠密矩阵，且外层地址区间不得重叠。
-- A2/A3 支持超过 8 token 的 dense/varlen 序列，内部以最多 8 token 的窗口顺序递推；A5 的 V=128/V=256 路径均支持长序列，内部以最多 4 token 的窗口顺序递推。Token 容量和元数据宽度须能由现有 uint32 tiling 字段表示，地址计算使用 64 位并保留容量校验。
+- A2/A3 支持超过 8 token 的 dense/varlen 序列，内部以最多 8 token 的窗口顺序递推；A5 的 V=128/V=256 路径均支持长序列，内部以最多 4 token 的窗口顺序递推；A6（`ascend960dt`）的 V=128/V=256 按 token 直接递推，不限制每段长度。Token 容量和元数据宽度须能由现有 uint32 tiling 字段表示，地址计算使用 64 位并保留容量校验。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - `use_gate_in_kernel=false` 时 `A_log/dt_bias/safe_gate` 必须为空或 false。
 

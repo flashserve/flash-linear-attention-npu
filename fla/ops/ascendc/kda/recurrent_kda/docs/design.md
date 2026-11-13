@@ -5,13 +5,13 @@
 
 ## 目标与结构
 
-整体采用参考 PR 的类式 constructor / Init / Process 组织、静态 UB、X=4 输入/out 双缓冲、三个 State bank 轮换、每 token 一个 VF 和 Mutex 同步。V-first 沿用 UnalignRegForStore 输出收集，K-first 在寄存器中累计完整 out 后连续写 UB。A5 的 V=128/V=256 统一使用同一 Engine，不沿用 x8-pr 调度器或 UB 地址规划；A2/A3 继续走兼容实现。
+A5 采用参考 PR 的类式 constructor / Init / Process 组织、静态 UB、X=4 输入/out 双缓冲、三个 State bank 轮换、每 token 一个 VF 和 Mutex 同步。V-first 沿用 UnalignRegForStore 输出收集，K-first 在寄存器中累计完整 out 后连续写 UB。A5 与 A6 的 V=128/V=256 均复用各自的同一个 Engine（A6 的 tile/bank 差异见平台段），不沿用 x8-pr 调度器或 UB 地址规划；A2/A3 继续走兼容实现。
 
 保留 KDA 原接口，包括向量 gate、128 维 dt_bias、K-first、空请求、非连续输入及各输出组合。host 依次完成形状检查、维度与 stride 填充、属性检查、分核和 UB 规划，复用既有公开接口校验。
 
 ### A2/A3 平台边界
 
-A5 的 State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用 kernel 恢复为 PR 基线，保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径。公共结构化错误码继续保留，auto-sync 配置不在本次修改范围。
+A5/A6 的 State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用 kernel 恢复为 PR 基线，保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径。公共结构化错误码继续保留，auto-sync 配置不在本次修改范围。
 
 A6（`ascend960dt`）的输入 view、QKV 直读、State 前置校验、`num_accepted_tokens` 上界与同槽 State 快照写序规则均与 A5 完全一致，但 UB 布局和调度参数独立：`TOKEN_TILE=32`、State bank 4 份、`dv=256` 在引擎内按 128 切片。A6 的 UB 账本由 host `PlanA6Ub()` 与 kernel `static_assert` 两侧共同约束。
 
@@ -34,9 +34,9 @@ aclnn 保留输入与 State 输出 view 的 stride/offset，kernel 直接读输�
 
 ## Stage 与分核
 
-每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做 grid-stride 分配，hk=hv/(HV/H)。A5 的 blockDim=min(AIV 数,任务数)，不使用 AIC；A2/A3 保留基线先计算每核任务数、再确定 blockDim 的公式。B=32、HV=48 时共有 1536 个任务，56 个 AIV 每核 27 或 28 个任务。
+每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做 grid-stride 分配，hk=hv/(HV/H)。A5/A6 的 blockDim=min(AIV 数,任务数)，不使用 AIC；A2/A3 保留基线先计算每核任务数、再确定 blockDim 的公式。B=32、HV=48 时共有 1536 个任务，56 个 AIV 每核 27 或 28 个任务。
 
-V=128 每任务处理一个128列 V 分块；V=256 沿 V 分成 `[0,128)`、`[128,256)`，同一 AIV 依次完成两个分块的全部 token。每个分块复用原128×128 VF、三个 State bank 和输入/out 槽。K-first 从 GM 的 `[K,256]` 中逐 K 行搬入对应128列，UB 保持 `[K,128]`，输出按原 stride 写回，无转置。V-first 对应128个 V 行。请求元数据、A_log 和 bias 每任务解析或搬入一次；q/k/g/beta 每分块读入。两种 V 维度均按四 token 的 tile 顺序递推，支持跨任意多个 tile，末 tile 仅处理有效 token；UB 占用不随序列长度增加。保留 cu_seqlens 和 State 索引容量校验。
+V=128 每任务处理一个128列 V 分块；V=256 沿 V 分成 `[0,128)`、`[128,256)`，同一 AIV 依次完成两个分块的全部 token。A5 的每个分块复用原128×128 VF、三个 State bank 和输入/out 槽；A6 的分块复用四个 bank 与 32 token 的 tile，见平台段。K-first 从 GM 的 `[K,256]` 中逐 K 行搬入对应128列，UB 保持 `[K,128]`，输出按原 stride 写回，无转置。V-first 对应128个 V 行。请求元数据、A_log 和 bias 每任务解析或搬入一次；q/k/g/beta 每分块读入。两种 V 维度均按 token 顺序递推（A5 每 tile 四个 token、A6 每 tile 32 个 token），支持跨任意多个 tile，末 tile 仅处理有效 token；UB 占用不随序列长度增加。保留 cu_seqlens 和 State 索引容量校验。
 
 1. Scalar 解析请求、初态槽位和 head，MTE2 搬入初态与当前 tile 的 q/k/v/g/beta。
 2. Vector 对每个 token 计算归一化、gate、prediction、State 更新和 out。
@@ -46,11 +46,13 @@ q/k 可选按 FP32 的 x/sqrt(sum(x*x)+1e-6) 归一化，q 乘 scale；仅在开
 
 两种布局计算相同的递推公式：prediction[v]=sum_k(State[v,k]*alpha[k]*k[k])，residual[v]=v[v]-prediction[v]，State_new[v,k]=State[v,k]*alpha[k]+residual[v]*beta*k[k]，out[v]=sum_k(State_new[v,k]*q[k])。公式中的 State 使用逻辑 [V,K] 下标，物理布局由路径决定。BF16 State 每 token 写回 UB 前 RINT 舍入，out 基于舍入前的 FP32 更新值；FMA、归约顺序和公共乘积的重排须通过原有精度阈值。
 
-V-first FP32/BF16 保留两行粒度，采用两遍读取：先预计算 alpha*k，第一遍归约 prediction，使用 StoreUnAlign 收集到512 B scratch；批量读取 prediction 与 v，计算 residual 后以交织布局覆盖同一 scratch。第二遍重读原 State，从 scratch 逐行广播 residual，执行 State_new=State*alpha+residual*(beta*k)，沿用原 out 收集与写回。prediction 收集完成和 residual 写入完成后各执行一处 VST→VLD 屏障。FP32 每 token 读取128 KiB、BF16 每 token 读取64 KiB State UB，GM字节数不变。
+A5 的 V-first FP32/BF16 保留两行粒度，采用两遍读取：先预计算 alpha*k，第一遍归约 prediction，使用 StoreUnAlign 收集到512 B scratch；批量读取 prediction 与 v，计算 residual 后以交织布局覆盖同一 scratch。第二遍重读原 State，从 scratch 逐行广播 residual，执行 State_new=State*alpha+residual*(beta*k)，沿用原 out 收集与写回。prediction 收集完成和 residual 写入完成后各执行一处 VST→VLD 屏障。FP32 每 token 读取128 KiB、BF16 每 token 读取64 KiB State UB，GM字节数不变。
 
 K-first 参考 x8-pr 的 UpdateKFirstColumns，保持紧凑 [K,V] 存储，沿连续 V 维使用两个64元素寄存器计算，不转置或增加 State 行 padding。q/k/alpha 在此路径按前后64个 K 元素加载。先将 alpha*k 写入512 B系数 scratch，执行一次 VST→VLD 屏障，再逐 K 行广播系数、连续读取128个 V，使用 FMA 在两个寄存器中累加完整 prediction。随后原位计算 delta=(v-prediction)*beta，第二遍逐 K 行重读原 State，广播 alpha/k/q，更新 State 并在寄存器中累加完整 out。BF16 State 在寄存器中转 FP32，out 使用舍入前的更新值，再 RINT 转 BF16 写回 UB。最终 out 通过两组64元素转换和 Store 写入 UB，整个 tile 完成后再 DMA。第一遍读取结束后 prediction 原位变为 delta，系数 scratch 在当前 VF 之后可复用；GM 搬运、State bank 调度和 Mutex 不变。
 
 ## UB 与 workspace
+
+下表为 A5 的 UB 布局（256 KiB、3 份 State bank）。A6 使用 4 份 bank 与 32 token 的静态布局，字节账本由 `op_kernel/recurrent_kda_struct.h` 的 `RkdaA6UbBytes` 给出（FP32 364 544 B、BF16 233 472 B），host `PlanA6Ub()` 与 kernel `static_assert` 两侧对齐。
 
 | 区域 | 字节区间 | 用途 |
 | --- | --- | --- |
@@ -71,19 +73,19 @@ State view 的末两维必须稠密，slot/head 维允许正向、互不重叠�
 
 ## 同步与生命周期
 
-engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、parameter[10,11]，共九个。input 保护 MTE2→V→MTE2；out 保护 V→MTE3→V；State 保护 V 更新、MTE3 读取和 MTE2 覆盖。V 只读取旧 State 时允许 MTE3 同时读。parameter 分别保护两个向量 bias 槽的跨任务复用；未开启 raw gate 或未传入 dt_bias 时，不执行参数锁操作。
+engine 独占 UB 与 Mutex 编号：A5 为 input[3,4]、out[5,6]、State[7,8,9]、parameter[10,11]（共九个）；A6 为 input[3,4]、out[5,6]、State[7,8,9,10]、parameter[11,12]（共十个）。input 保护 MTE2→V→MTE2；out 保护 V→MTE3→V；State 保护 V 更新、MTE3 读取和 MTE2 覆盖。V 只读取旧 State 时允许 MTE3 同时读。parameter 分别保护两个向量 bias 槽的跨任务复用；未开启 raw gate 或未传入 dt_bias 时，不执行参数锁操作。
 
-任务入口等待 V→MTE2 握手，选择 (current+1)%3 的 bank 搬入初态；然后向当前参数槽提交 bias 和首 tile 输入，Vector 持有该槽参数锁直到任务结束。相邻有效任务选择不同参数槽，下一任务输入搬入无需等待当前任务释放参数槽；再次复用同一槽时仍须等待其上一个消费者释放。每个 token 锁住目标 bank，执行 VF，再按需提交 State 搬出。tile 完成后释放输入/out 锁并提交整个 tile out。
+任务入口等待 V→MTE2 握手，按 bank 数轮换选择下一个 bank 搬入初态（A5 为 `%3`、A6 为 `%4`）；然后向当前参数槽提交 bias 和首 tile 输入，Vector 持有该槽参数锁直到任务结束。相邻有效任务选择不同参数槽，下一任务输入搬入无需等待当前任务释放参数槽；再次复用同一槽时仍须等待其上一个消费者释放。每个 token 锁住目标 bank，执行 VF，再按需提交 State 搬出。tile 完成后释放输入/out 锁并提交整个 tile out。
 
 indexed State 写回时，每个 bank 记录其尚未回收的快照目标槽位。Vector 获取目标 bank 的 Mutex 后，上一笔以该 bank 为源的搬出已完成，可清除对应记录。提交新快照前，若其 GM 槽位与其他未完成快照相同，在 MTE3 上插入 `PipeBarrier<PIPE_MTE3>()`，并清除此前记录，保证同址覆盖按 token 顺序完成；其他槽位继续重叠搬出。只靠不同 bank 的 Mutex 或同流水 Lock/Unlock 不能保证重叠 GM 写的完成顺序。记录在每个任务的 V 分块内维护；不同活跃请求不得共享写槽，同一任务的不同 V 分块写入不同 GM 区间。该等待不阻塞 Scalar。
 
-倒数第二个 token VF 后发布 V→MTE2，保证下一工作项（下一 V 分块或下一任务）所需 bank 已完成最后一次 Vector 读取。T=1 时下一任务所用 bank 不参与当前 VF，可提前发布。下一工作项初态搬入允许与当前末 token VF 重叠；同一任务的下一 V 分块继续复用参数槽，下一任务参数搬入使用另一参数槽，覆盖旧槽时仍由该槽独立的 parameter Mutex 保护。结尾关闭未消费的握手，再由 V 按槽0、槽1依次获取并立即释放 output Mutex，等待两槽最后的 MTE3 搬出完成，替代入口的 PipeBarrier<PIPE_ALL>。最后一笔 tile out 位于此前全部 State 搬出之后，因此该等待覆盖本 AIV 的 State/out 写回；全部 MTE2 输入已在 VF 前由 input/parameter Mutex 消费。未使用的 out 槽处于释放状态，不增加等待；cu_seqlens 校验早退时尚未提交算子数据 DMA。核尾不新增 Mutex 编号，不使用 MTE3_S 或 PIPE_S。
+倒数第 (bank 数-1) 个 token 的 VF 后发布 V→MTE2（A5 为倒数第二个、A6 为倒数第三个），保证下一工作项（下一 V 分块或下一任务）所需 bank 已完成最后一次 Vector 读取。任务 token 数不足 bank 数减一时，下一任务所用 bank 不参与当前 VF，可在进入 token 循环前提前发布。下一工作项初态搬入允许与当前末 token VF 重叠；同一任务的下一 V 分块继续复用参数槽，下一任务参数搬入使用另一参数槽，覆盖旧槽时仍由该槽独立的 parameter Mutex 保护。结尾关闭未消费的握手，再由 V 按槽0、槽1依次获取并立即释放 output Mutex，等待两槽最后的 MTE3 搬出完成，替代入口的 PipeBarrier<PIPE_ALL>。最后一笔 tile out 位于此前全部 State 搬出之后，因此该等待覆盖本 AIV 的 State/out 写回；全部 MTE2 输入已在 VF 前由 input/parameter Mutex 消费。未使用的 out 槽处于释放状态，不增加等待；cu_seqlens 校验早退时尚未提交算子数据 DMA。核尾不新增 Mutex 编号，不使用 MTE3_S 或 PIPE_S。
 
 沿用参考 PR 的逐 tile 提交方式，不额外引入 x8-pr 的 lookahead 输入预取。不同物理输入/out 槽可在复用保护下覆盖搬运与计算；是否形成有效流水重叠须由设备采集确认。
 
 ## 元数据与模板
 
-cu_seqlens、indices、accepted 是设备 tensor，host 检查 shape/dtype 等描述信息，不读取内容，保持 graph replay 时读取当前设备值。A5 kernel 在提交算子数据 DMA 前检查全部 cu_seqlens 的首值、单调性和范围；二维 indices 还要求请求长度不超过 max_step。该检查失败时本核直接返回。每个非空请求另行检查初态及各 token 的 State 槽位和 accepted；失败时停止本核后续任务，但此前任务可能已经写出，不能保证输出完全未修改，也不在 host 同步报错。空请求跳过上述槽位检查及算子数据 DMA。
+cu_seqlens、indices、accepted 是设备 tensor，host 检查 shape/dtype 等描述信息，不读取内容，保持 graph replay 时读取当前设备值。A5/A6 kernel 在提交算子数据 DMA 前检查全部 cu_seqlens 的首值、单调性和范围；二维 indices 还要求请求长度不超过 max_step。该检查失败时本核直接返回。每个非空请求另行检查初态及各 token 的 State 槽位和 accepted；失败时停止本核后续任务，但此前任务可能已经写出，不能保证输出完全未修改，也不在 host 同步报错。空请求跳过上述槽位检查及算子数据 DMA。
 
 无 indices 时初态槽位为请求编号；有 indices 且无 accepted 时，使用请求首 token 对应的槽位。有 accepted 时使用 `begin+accepted-1` 对应槽位：packed 一维 indices 要求 `1<=accepted<=请求长度`，二维 speculative indices 要求 `1<=accepted<=max_step`，允许超过本次请求长度，但选中的初态槽位仍须在 State pool 内。每个有效 token 的写槽也须在 pool 内。同一请求可重复写槽，按前述 MTE3 顺序保护；不同活跃请求的写槽不得冲突，这一要求由调用方保证。
 
@@ -91,11 +93,11 @@ kernel 入口唯一显式模板参数为 `uint32_t KERNEL_MODE`，host 用 `GET_
 
 State、gate、beta 的 dtype 由算子 DataTypeList 对应的编译配置提供 `DTYPE_INITIAL_STATE`、`DTYPE_GATE`、`DTYPE_BETA` 宏；这些宏再作为 Engine/VF 的类型模板实参。它们不是入口额外的显式模板参数，也不编码到本算子的 `KERNEL_MODE` 中。
 
-常用融合要求 norm、raw gate、bias、sigmoid 全开且 negative、safe 全关；其 `FUSED=true` 将这六项 VF 条件固定为编译期常量。其他组合使用 `FUSED=false`，VF 从 `a5VfFlags` 中解析运行时开关。State 写回、indices、请求长度等调度条件仍由 Scalar 按 tiling/设备元数据处理，融合模式并未将这些分支全部特化。
+常用融合要求 norm、raw gate、bias、sigmoid 全开且 negative、safe 全关；其 `FUSED=true` 将这六项 VF 条件固定为编译期常量。其他组合使用 `FUSED=false`，A5 的 VF 从 `a5VfFlags` 解析运行时开关，A6 从 tiling 的各功能位解析。A5 与 A6 各自维护自己的融合判据，二者都只与该平台 kernel 的 `FUSED` 特化对齐。State 写回、indices、请求长度等调度条件仍由 Scalar 按 tiling/设备元数据处理，融合模式并未将这些分支全部特化。
 
 ## 验证矩阵
 
-沿用原 CPU 标杆、输入值域和精度标准。精度覆盖布局、dtype、gate 模式、tail、长序列、空请求、槽位和输出组合；补充同一 AIV 连续任务与跨 tile 复用。A5 可达四种模板模式，按下表核对，不能把 A2/A3 的 compat 计为第五种 A5 模式。
+沿用原 CPU 标杆、输入值域和精度标准。精度覆盖布局、dtype、gate 模式、tail、长序列、空请求、槽位和输出组合；补充同一 AIV 连续任务与跨 tile 复用。A5 与 A6 均可达四种模板模式，按下表核对，不能把 A2/A3 的 compat 计为第五种模式。
 
 | 模板模式 | mode 值 | 布局 | 功能组合 |
 | --- | --- | --- | --- |
