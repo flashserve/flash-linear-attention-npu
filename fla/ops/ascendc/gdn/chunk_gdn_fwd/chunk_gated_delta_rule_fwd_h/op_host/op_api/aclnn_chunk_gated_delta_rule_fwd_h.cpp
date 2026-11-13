@@ -617,7 +617,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
         hCompute, params.vNewOut, finalStateCompute, executorPtr);
     if (!(result[0] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
 
     const aclTensor *hResult = result[0];

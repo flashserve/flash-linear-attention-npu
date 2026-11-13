@@ -175,7 +175,7 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
                                                  params.chunkSize, params.dhmOut, executorPtr);
     if (!(result != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

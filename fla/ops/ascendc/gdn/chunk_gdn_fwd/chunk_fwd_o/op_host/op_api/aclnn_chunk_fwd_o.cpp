@@ -416,7 +416,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
                                  params.stateVFirst, params.outputLayout, params.oOut, executorPtr);
     if (!(result[0] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.

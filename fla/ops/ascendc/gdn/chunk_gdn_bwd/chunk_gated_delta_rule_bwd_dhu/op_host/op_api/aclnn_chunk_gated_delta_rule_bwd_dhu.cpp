@@ -591,13 +591,13 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
         params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
     if (!(result[0] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[1] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[2] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dhOut, executorPtr);

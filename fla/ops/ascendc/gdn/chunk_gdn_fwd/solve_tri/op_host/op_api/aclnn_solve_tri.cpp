@@ -108,7 +108,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);
      if (!(result != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);

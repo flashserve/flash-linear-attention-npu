@@ -321,7 +321,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
                                                  params.v, params.cuSeqlensOptional, params.chunkSize,
                                                  params.hmOut, executorPtr);
     if (!(result[0] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.hmOut, executorPtr);

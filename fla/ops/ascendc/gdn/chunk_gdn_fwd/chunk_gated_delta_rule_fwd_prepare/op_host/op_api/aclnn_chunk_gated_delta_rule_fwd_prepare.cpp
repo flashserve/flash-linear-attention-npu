@@ -752,16 +752,16 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         compute.gOut, compute.wOut, compute.uOut, compute.aOut, compute.qHatOptional, compute.kHatOptional,
         compute.qRstdOptional, compute.kRstdOptional, compute.betaEffOptional, executorPtr);
     if (!(result[0] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[1] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[2] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[3] != nullptr)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     };
 
     if (!(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS)) {
