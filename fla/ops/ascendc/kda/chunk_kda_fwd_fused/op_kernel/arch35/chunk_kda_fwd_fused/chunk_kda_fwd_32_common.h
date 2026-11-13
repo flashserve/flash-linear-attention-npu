@@ -147,7 +147,7 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(i);
         }
     }
-};
+}
 #elif defined(__DAV_C310_VEC__)
 class SyncCV
 {
@@ -226,5 +226,5 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(i);
         }
     }
-};
+}
 #endif

@@ -511,13 +511,13 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     {
         const aclnnStatus checkStatus = CheckMetadata(params, info.tokens);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     if (params.cuSeqlens != nullptr && info.batch != 1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "B", std::to_string(info.batch), "varlen rank-4 input requires B=1");
@@ -707,7 +707,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
 
     if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;

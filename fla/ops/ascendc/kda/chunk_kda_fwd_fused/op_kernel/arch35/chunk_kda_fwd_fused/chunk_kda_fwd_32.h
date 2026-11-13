@@ -1078,7 +1078,7 @@ public:
 	__aicore__ inline void Process(int dense_group_count);
 
 #endif
-};
+}
 
 #if defined(__DAV_C310_CUBE__)
 #include "chunk_kda_fwd_32_matmul.h"

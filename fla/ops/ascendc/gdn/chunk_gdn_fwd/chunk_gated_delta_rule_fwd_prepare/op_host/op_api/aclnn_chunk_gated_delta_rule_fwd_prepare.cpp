@@ -396,7 +396,7 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
     }
     if (!(vShape.GetDim(0) == B && vShape.GetDim(2) == T)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -668,19 +668,19 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdPrepareParams &params
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     {
         const aclnnStatus checkStatus = CheckDtype(params);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     {
         const aclnnStatus checkStatus = CheckShape(params);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -736,7 +736,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         
         return ACLNN_ERR_PARAM_INVALID;
