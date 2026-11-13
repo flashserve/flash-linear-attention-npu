@@ -2,6 +2,8 @@
 
 ## Python
 
+以下为调用示例，显式传入的参数值不代表接口默认值。
+
 ```python
 from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
 
@@ -26,7 +28,6 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
     g,
     beta,
     scale=1.0,
-    *,
     layout="BNSD",
     chunk_size=64,
     epsilon=1e-6,
@@ -37,7 +38,7 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
     safe_gate=False,
     lower_bound=-5.0,
     use_exp2=False,
-    a_log=None,
+    A_log=None,
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
@@ -47,6 +48,7 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
 
 这是经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare` 的稳定入口，不进入 legacy
 `torch.ops.npu` 注册路径。
+Python 参数名为 `A_log`；算子 IR 和数学说明中记作 `a_log`。
 
 ## aclnn
 

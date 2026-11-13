@@ -7,7 +7,7 @@
 `ChunkKdaFwdPrepare` 完成 KDA 前向中的 Q/K 归一化、gate 前缀和、chunk 内三角系统准备和
 Post-WU 计算。它只负责 Prepare 边界，不计算 chunk 间状态递推和最终 attention 输出。
 
-稳定 Python 入口为：
+稳定 Python 入口的调用示例如下，显式传入的参数值不代表接口默认值：
 
 ```python
 from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
@@ -29,7 +29,7 @@ outputs = chunk_kda_fwd_prepare(
     safe_gate=False,
     lower_bound=-5.0,
     use_exp2=True,
-    a_log=None,
+    A_log=None,
     dt_bias=None,
     cu_seqlens=None,
     chunk_indices=None,
@@ -38,14 +38,15 @@ outputs = chunk_kda_fwd_prepare(
 ```
 
 该入口经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare`，不注册 legacy `torch.ops.npu` 接口。
+Python 参数名为 `A_log`；算子 IR 和数学说明中记作 `a_log`。
 
-`backward_mode` 决定 13 个输出槽中哪些真正分配与写出（`none`/`forward`/`recompute`/`save`，
-与上文“输出保留策略”一一对应；默认 `save` 即“13 项全部返回”的历史行为）。未选中的槽在
-L2 层传 `nullptr`，不参与公开 GM 写回，因此调用方按需取 `q_hat/k_hat/q_rstd/k_rstd/beta_eff`
-即可，不需要关心档位之外的槽位。
+返回值固定为 13 个槽位。`gk/Aqk/w/u/kg/qg_scaled` 六项始终返回；`backward_mode` 控制
+其余七项的分配和公开写回，未保留的槽位返回 `None`。默认 `save` 返回全部 13 项，具体见
+下文“输出保留策略”。
 
-格式要求：本算子的 L2 只拒绝私有（分形）格式，`ND`/`NCHW`/`NCL`/`NHWC` 等非私有拼写均可传入；
-张量需连续（`CheckContiguous`）。
+格式要求：仅支持非私有格式，`ND`/`NCHW`/`NCL`/`NHWC` 等非私有拼写均可传入。
+普通非连续输入由 L2 自动转为连续张量；非空输出必须连续，由 kernel 直接写入。
+连续化不改变轴顺序，输入 shape 仍必须符合指定的 `layout`。
 
 ## 输入输出
 
@@ -59,7 +60,7 @@ BF16 或 FP32，`a_log/dt_bias` 固定为 FP32。
 | `g` | BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]` | NTD `[HV,T,128]`；TND `[T,HV,128]` | BF16/FP32，跟随 layout |
 | `beta` | BNSD `[B,HV,T]`；BSND `[B,T,HV]` | NTD `[HV,T]`；TND `[T,HV]` | BF16/FP32，跟随 layout |
 | `a_log` | `[HV]` | `[HV]` | 仅 kernel 内计算 gate 时必传 |
-| `dt_bias` | `[HV*128]` | `[HV*128]` | 可选，逻辑 shape 为 `[HV,128]` |
+| `dt_bias` | `[HV*128]` | `[HV*128]` | 可选；必须以一维 `[HV*128]` 传入，即将 `[HV,128]` 展平 |
 
 `cu_seqlens` 和 `chunk_indices` 是可选 host int array，不是 tensor。前者 shape 为
 `[sequence_count+1]`；后者若提供，扁平长度必须为 `2*total_chunks`。
@@ -70,7 +71,7 @@ A2 实现的合同范围为：
 
 - `q/k/v` 为 BF16，`K=V=128`，`chunk_size=64`；
 - `g` 和 `beta` 各自支持 BF16/FP32，四种组合独立选择正确的输入加载；其余 dtype 由 host 拒绝；
-- 布局为 BNSD、BSND、NTD 或 TND，输入连续；变长输入使用 `cu_seqlens`，rank-4 变长容器要求 `B=1`；
+- 布局为 BNSD、BSND、NTD 或 TND；变长输入使用 `cu_seqlens`，rank-4 变长容器要求 `B=1`；
 - GVA 要求 `0 < HK <= HV` 且 `HV % HK == 0`；
 - A2 支持 `use_exp2=false/true`，按原接口选择自然对数域或 log2 域；A5 保留原 arch35 入口和原有属性合同；
 - `backward_mode` 为 `none`、`forward`、`recompute` 或 `save`，13 个输出槽位及其返回顺序不变。
@@ -133,8 +134,8 @@ tiling 参数位置不会随策略变化。L2 接口允许未保留的七项传 
 | `backward_mode` | 场景 | 13 个返回槽位中非空的数据 |
 | --- | --- | --- |
 | `"none"` | 完全不需要反向 | `gk/Aqk/w/u/kg/qg_scaled` |
-| `"forward"` | 只要公开必选的 `Akk`，不需要反向重计算中间量 | 上述六项，加 `Akk` |
-| `"recompute"` | 有反向，允许重计算 chunk-local 中间量 | 上述六项，加 `Akk/q_hat/k_hat/q_rstd/k_rstd/beta_eff` |
+| `"forward"` | 需要额外导出 `Akk`，不保存反向重计算辅助量 | `none` 的六项，加 `Akk` |
+| `"recompute"` | 有反向，允许重计算 chunk-local 中间量 | `none` 的六项，加 `Akk/q_hat/k_hat/q_rstd/k_rstd/beta_eff` |
 | `"save"` | 有反向，不重计算 | 全部 13 项；相对 `recompute` 额外保存 `qg` |
 
 默认值为 `"save"`，保持原来 13 项全部返回的兼容行为。各档都执行相同的前向数学计算、
