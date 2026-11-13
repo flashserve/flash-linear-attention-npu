@@ -291,7 +291,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         totalChunks += sequenceChunks;
     }
     if (totalChunks == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "变长输入至少需要一个非空 sequence。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "all empty",
+            "varlen input requires at least one non-empty sequence");
 
         return false;
     }
@@ -349,14 +350,14 @@ bool CheckOptionalInput(gert::TilingContext *context,
 
     if (!useGateInKernel) {
         if (hasALog || hasDtBias || safeGate) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "use_gate_in_kernel=false 时 a_log、dt_bias 必须为空且 safe_gate 必须为 false。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "use_gate_in_kernel", "invalid", "use_gate_in_kernel=false 时 a_log、dt_bias 必须为空且 safe_gate 必须为 false。");
 
             return false;
         }
         return true;
     }
     if (!hasALog) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "use_gate_in_kernel=true 时必须传入 a_log。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "use_gate_in_kernel", "invalid", "use_gate_in_kernel=true 时必须传入 a_log。");
 
         return false;
     }
@@ -416,7 +417,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const auto *betaDesc = context->GetInputDesc(PREPARE_INPUT_BETA);
     if (attrs == nullptr || qDesc == nullptr || kDesc == nullptr ||
         vDesc == nullptr || gDesc == nullptr || betaDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "缺少必选输入 descriptor 或 attrs。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "inputs", "missing",
+            "required input descriptor or attrs is missing");
 
         return ge::GRAPH_FAILED;
     }
@@ -441,7 +443,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         useNormPtr == nullptr || useGatePtr == nullptr || useBetaPtr == nullptr ||
         allowNegPtr == nullptr || safeGatePtr == nullptr || lowerBoundPtr == nullptr ||
         useExp2Ptr == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "算子属性不完整。");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 算子属性不完整。", __func__);
 
         return ge::GRAPH_FAILED;
     }
@@ -464,7 +466,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (*allowNegPtr && !*useBetaPtr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "allow_neg_eigval=true 要求 use_beta_sigmoid_in_kernel=true。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "allow_neg_eigval", "invalid", "allow_neg_eigval=true 要求 use_beta_sigmoid_in_kernel=true。");
 
         return ge::GRAPH_FAILED;
     }
@@ -484,7 +486,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         attrs->GetAttrPointer<int64_t>(PREPARE_ATTR_OUTPUT_MODE);
     if (outputModePtr == nullptr || *outputModePtr < PREPARE_OUTPUT_MODE_NONE ||
         *outputModePtr > PREPARE_OUTPUT_MODE_FORWARD) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "output_mode 只支持 0(none)、1(recompute)、2(save)、3(forward)。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "output_mode", "invalid", "output_mode 只支持 0(none)、1(recompute)、2(save)、3(forward)。");
 
         return ge::GRAPH_FAILED;
     }
@@ -542,7 +544,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     if (!ResolveSequenceInfo(context, shape, seqNum, totalChunks, isVarLen) ||
         seqNum > std::numeric_limits<uint32_t>::max() ||
         totalChunks > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "sequence/chunk 元数据无效或数量超过 uint32 范围。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid",
+            "sequence/chunk metadata invalid or exceeds uint32 range");
 
         return ge::GRAPH_FAILED;
     }
@@ -622,7 +625,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(schedule.usedCoreNum);
     if (context->SetScheduleMode(PREPARE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "设置 MIX AIC/AIV batch 调度模式失败。");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 MIX AIC/AIV batch 调度模式失败。", __func__);
 
         return ge::GRAPH_FAILED;
     }

@@ -574,16 +574,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     if (separateHoWorkspace) {
         size_t oSpanWithReserve = 0;
         if (!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, 0, oSpanWithReserve)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Separate HO O span exceeds int64 range.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Separate HO O span exceeds int64 range.", __func__);
         return ge::GRAPH_FAILED;
     }
         if (hWorkspaceSize > MAX_INT64_AS_SIZE_T - WORKSPACE_ALIGNMENT) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Separate HO O-base offset exceeds int64 range.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Separate HO O-base offset exceeds int64 range.", __func__);
         return ge::GRAPH_FAILED;
     }
         oBase = AlignUp(hWorkspaceSize, WORKSPACE_ALIGNMENT);
         if (oBase > MAX_INT64_AS_SIZE_T - oSpanWithReserve) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Separate HO O region exceeds int64 range.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Separate HO O region exceeds int64 range.", __func__);
         return ge::GRAPH_FAILED;
     }
     }

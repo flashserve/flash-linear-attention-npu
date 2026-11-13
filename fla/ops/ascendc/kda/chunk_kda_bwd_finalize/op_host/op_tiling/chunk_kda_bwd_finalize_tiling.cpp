@@ -15,7 +15,7 @@ ge::graphStatus ValidateFinalize(
     bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout)
 {
     if (allowNegEigval && !useBetaSigmoid) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "value", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "allowNegEigval", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true");
 
         return ge::GRAPH_FAILED;
     }

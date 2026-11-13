@@ -136,7 +136,8 @@ private:
         tiling_.Hk = k.GetDim(1);
         tiling_.Hv = v.GetDim(1);
         if (tiling_.Hv <= 0 || tiling_.Hk <= 0 || tiling_.Hv % tiling_.Hk != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "Invalid GQA head configuration.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv/Hk", std::to_string(tiling_.Hv) + "/" + std::to_string(tiling_.Hk),
+            "Hv must be positive and divisible by Hk");
         return ge::GRAPH_FAILED;
     }
         tiling_.hvPerHk = tiling_.Hv / tiling_.Hk;

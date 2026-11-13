@@ -319,7 +319,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     if (!ResolveSequenceInfo(context, info, seqNum, totalChunks, isVarLen) ||
         seqNum > std::numeric_limits<uint32_t>::max() ||
         totalChunks > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "变长 metadata 无效或 chunk 数超限。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "metadata", "invalid", "变长 metadata 无效或 chunk 数超限。");
 
         return ge::GRAPH_FAILED;
     }

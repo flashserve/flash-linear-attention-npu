@@ -379,7 +379,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t begin = (*cu)[seq], end = (*cu)[seq+1];
             if (!(begin >= 0 && end > begin && end <= T)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Invalid sequence boundaries.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "sequence boundaries are invalid");
         return ACLNN_ERR_PARAM_INVALID;
     }
             for (int64_t c = 0; c < (end - begin + 63) / 64; ++c, ++nc) {

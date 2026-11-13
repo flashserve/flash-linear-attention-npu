@@ -28,7 +28,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     uint64_t ubSize = 0;
     uint32_t coreNum = 0;
     if (GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "GetPlatformInfo error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: GetPlatformInfo error", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -41,7 +41,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
 
     CausalConv1dAttrInfo attrInfo;
     if (GetAttrsInfo(context, attrInfo) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "GetAttrsInfo error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: GetAttrsInfo error", __func__);
         return ge::GRAPH_FAILED;
     }
     bool hasBias = false;
@@ -132,7 +132,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     if (isFn) {
         const int64_t mappedBlockDim = (effectiveGridSize < fnHostPlan.tokenCoreMapping.blockDim) ? effectiveGridSize : fnHostPlan.tokenCoreMapping.blockDim;
         if (mappedBlockDim <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", std::to_string(mappedBlockDim), "invalid mapped blockDim for runMode=0");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: invalid mapped blockDim for runMode=0", __func__);
         return ge::GRAPH_FAILED;
     }
         blockDim = static_cast<uint32_t>(mappedBlockDim);
@@ -165,7 +165,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
         if (context->SetScheduleMode(1) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "SetScheduleMode(1) error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: SetScheduleMode(1) error", __func__);
         return ge::GRAPH_FAILED;
     }
         tiling->hasInitStateWorkspace = 1;

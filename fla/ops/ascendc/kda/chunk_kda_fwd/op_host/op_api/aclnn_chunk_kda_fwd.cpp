@@ -647,7 +647,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(!params.allowNegEigval || params.useBetaSigmoidInKernel)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "allowNegEigval", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.useGateInKernel) {

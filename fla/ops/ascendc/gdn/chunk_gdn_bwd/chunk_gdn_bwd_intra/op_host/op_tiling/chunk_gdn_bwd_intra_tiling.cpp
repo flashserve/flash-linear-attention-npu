@@ -115,7 +115,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                     !IntraCheckedMultiply(tensorBytes, seqlen, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, 128 * sizeof(uint16_t), tensorBytes) ||
                     tensorBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "tensor address range overflow.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: tensor address range overflow.", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -152,7 +152,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto arch = platform.GetCurNpuArch();
     const bool arch22 = arch == NpuArch::DAV_2201;
     if (!arch22 && arch != NpuArch::DAV_3510) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "only DAV_2201 and DAV_3510 are supported.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: only DAV_2201 and DAV_3510 are supported.", __func__);
         return ge::GRAPH_FAILED;
     }
     const uint32_t aicCores = platform.GetCoreNumAic();
@@ -178,7 +178,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                         l0aBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
                         l0bBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
                         l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "insufficient on-chip memory for arch22 schedule.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: insufficient on-chip memory for arch22 schedule.", __func__);
         return ge::GRAPH_FAILED;
     }
     }

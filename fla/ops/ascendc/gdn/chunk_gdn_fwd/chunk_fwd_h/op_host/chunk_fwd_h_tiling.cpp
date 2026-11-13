@@ -177,7 +177,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Platform reports zero AIC cores; cannot build ChunkFwdH tiling.", __func__);
 
         return ge::GRAPH_FAILED;
     }

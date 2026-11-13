@@ -67,7 +67,7 @@ aclnnStatus Check(const Params &p)
         return ACLNN_ERR_PARAM_NULLPTR;
     }
         if (!(IsContiguous(tensor))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", std::to_string(IsContiguous(tensor)), "ChunkGdnBwdIntra only supports contiguous BNSD tensors.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "tensor", "non-contiguous", "ChunkGdnBwdIntra only supports contiguous BNSD tensors");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -208,7 +208,7 @@ aclnnStatus Check(const Params &p)
         return ACLNN_ERR_PARAM_INVALID;
     }
             if (!(seen.emplace(seq, chunk).second)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "duplicate chunk indices would write overlapping outputs.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndices", "duplicate", "duplicate chunk indices would write overlapping outputs.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         }

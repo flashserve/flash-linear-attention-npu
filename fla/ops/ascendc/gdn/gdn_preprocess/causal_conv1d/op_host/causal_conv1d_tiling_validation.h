@@ -70,7 +70,8 @@ inline ge::graphStatus ResolveMetadataPair(gert::TilingContext *context, uint32_
     const bool hasDevice = IsOptionalInputPresent(context, deviceIndex);
     const bool hasCpu = IsOptionalInputPresent(context, cpuIndex);
     if (hasDevice && hasCpu) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "%s and %s are mutually exclusive; provide only one");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "device/cpu input", "both present",
+            "device and cpu inputs are mutually exclusive; provide only one");
         return ge::GRAPH_FAILED;
     }
     useCpu = hasCpu;
@@ -83,25 +84,25 @@ inline ge::graphStatus ResolveMetadataInputs(gert::TilingContext *context, Resol
     if (ResolveMetadataPair(context, QUERY_START_LOC_INDEX, QUERY_START_LOC_CPU_INDEX, "queryStartLoc",
                                     "queryStartLocCpu", inputs.queryStartLocIndex,
                                     inputs.queryStartLocUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "failed to resolve queryStartLoc inputs");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve queryStartLoc inputs", __func__);
         return ge::GRAPH_FAILED;
     }
     if (ResolveMetadataPair(context, CACHE_INDICES_INDEX, CACHE_INDICES_CPU_INDEX, "cacheIndices",
                                     "cacheIndicesCpu", inputs.cacheIndicesIndex,
                                     inputs.cacheIndicesUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "failed to resolve cacheIndices inputs");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve cacheIndices inputs", __func__);
         return ge::GRAPH_FAILED;
     }
     if (ResolveMetadataPair(context, HAS_INITIAL_STATE_INDEX, HAS_INITIAL_STATE_CPU_INDEX, "hasInitialState",
                                     "hasInitialStateCpu", inputs.hasInitialStateIndex,
                                     inputs.hasInitialStateUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "failed to resolve hasInitialState inputs");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve hasInitialState inputs", __func__);
         return ge::GRAPH_FAILED;
     }
     if (ResolveMetadataPair(context, NUM_ACCEPTED_TOKENS_INDEX, NUM_ACCEPTED_TOKENS_CPU_INDEX,
                                     "numAcceptedTokens", "numAcceptedTokensCpu", inputs.numAcceptedTokensIndex,
                                     inputs.numAcceptedTokensUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "failed to resolve numAcceptedTokens inputs");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve numAcceptedTokens inputs", __func__);
         return ge::GRAPH_FAILED;
     }
     if (inputs.queryStartLocUseCpu) {
@@ -202,7 +203,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     const int64_t *runModePtr = attrs->GetAttrPointer<int64_t>(ATTR_RUN_MODE_INDEX);
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;
     if (attrInfo.runMode != 0 && attrInfo.runMode != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "runMode only supports 0/1");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "runMode", "invalid", "runMode only supports 0/1");
         return ge::GRAPH_FAILED;
     }
 
@@ -238,7 +239,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const bool isDecodeMode = (attrInfo.runMode == 1);
     ResolvedMetadataInputs metadataInputs;
     if (ResolveMetadataInputs(context, metadataInputs) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "ResolveMetadataInputs error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: ResolveMetadataInputs error", __func__);
         return ge::GRAPH_FAILED;
     }
     tiling.activationMode = attrInfo.activationMode;
@@ -308,7 +309,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
     if (tiling.headNum > 0) {
         if (isDecodeMode) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", std::to_string(isDecodeMode), "headNum > 0 is only supported when runMode=0");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", std::to_string(tiling.headNum), "headNum > 0 is only supported when runMode=0");
         return ge::GRAPH_FAILED;
     }
         if (tiling.headNum > dim || dim % tiling.headNum != 0) {
@@ -377,7 +378,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             const int64_t stride1 = inputStride->GetStride(1);
             const int64_t stride2 = inputStride->GetStride(2);
             if (stride0 <= 0 || stride1 <= 0 || stride2 != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "convStates only supports non-contiguous outer dimensions with contiguous dim;");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "convStates", "invalid", "convStates only supports non-contiguous outer dimensions with contiguous dim;");
         return ge::GRAPH_FAILED;
     }
             tiling.convStateStride0 = stride0;
@@ -442,7 +443,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         qslDataVisible = HasVisibleMetadataData(qslTensor, tiling.queryStartLocDtype);
         if (qslDataVisible) {
             if (ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, 0) != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "queryStartLoc[0] must be 0");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc", "invalid", "queryStartLoc[0] must be 0");
         return ge::GRAPH_FAILED;
     }
             const int64_t qslLast = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, qslSize - 1);

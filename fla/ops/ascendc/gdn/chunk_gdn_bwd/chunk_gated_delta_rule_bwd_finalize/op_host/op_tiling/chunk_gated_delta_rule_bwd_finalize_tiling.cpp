@@ -205,7 +205,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         return ge::GRAPH_FAILED;
     }
     if (useGateValue) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", std::to_string(useGateValue), "use_gate_in_kernel only supports false.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "use_gate_in_kernel", std::to_string(useGateValue), "use_gate_in_kernel only supports false.");
         return ge::GRAPH_FAILED;
     }
     const auto cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS_IDX);

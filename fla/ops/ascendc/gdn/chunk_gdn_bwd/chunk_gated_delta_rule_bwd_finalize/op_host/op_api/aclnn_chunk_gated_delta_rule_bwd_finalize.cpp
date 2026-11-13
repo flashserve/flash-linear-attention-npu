@@ -122,7 +122,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Failed to create an executor.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to create an executor.", __func__);
 
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -156,7 +156,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < result.size(); ++index) {
         const aclTensor *copied = l0op::ViewCopy(result[index], outputs[index], executorPtr);
         if (copied == nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", std::to_string(index), "Failed to copy output[%zu] to the output view.");
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to copy output[%%zu] to the output view.", __func__);
 
             return ACLNN_ERR_INNER_NULLPTR;
         }

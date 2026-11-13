@@ -417,7 +417,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     if (need > ubSize) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "UB overflow: need > available u");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: UB overflow: need > available u", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -441,7 +441,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(mainCoreNum);
     if (context->SetScheduleMode(1) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "SetScheduleMode(1) error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: SetScheduleMode(1) error", __func__);
         return ge::GRAPH_FAILED;
     }
 

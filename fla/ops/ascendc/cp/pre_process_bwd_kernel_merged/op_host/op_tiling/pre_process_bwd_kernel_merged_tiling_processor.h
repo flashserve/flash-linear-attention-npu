@@ -280,7 +280,7 @@ public:
         const uint64_t totalCore = static_cast<uint64_t>(ctx_.totalCoreNum);
 
         if (totalCore == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", std::to_string(totalCore), "platform reported 0 AIC cores.");
+        OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: platform reported 0 AIC cores.", __func__);
         return ge::GRAPH_FAILED;
     }
 
