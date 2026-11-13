@@ -68,7 +68,9 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
             if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
             if (input->GetStorageShape() != expected) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", std::to_string(static_cast<int>(input->GetStorageShape())), "Invalid mixed-layout Recompute input.");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout",
+            std::to_string(input->GetStorageShape().GetDimNum()),
+            "invalid mixed-layout input shape");
         return ge::GRAPH_FAILED;
     }
         }

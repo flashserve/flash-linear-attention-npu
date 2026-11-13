@@ -214,7 +214,10 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     if (context->GetRawTilingData() == nullptr ||
                     context->GetRawTilingData()->GetCapacity() <
                         sizeof(GDN::PreProcessFwdKernelMergedTilingData)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", std::to_string(context->GetRawTilingData()), "tiling buffer too small for tcube tiling");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: tiling buffer too small for tcube, capacity=%zu bytes, need=%zu bytes", __func__,
+            context->GetRawTilingData() == nullptr ? 0U : context->GetRawTilingData()->GetCapacity(),
+            sizeof(GDN::PreProcessFwdKernelMergedTilingData));
         return ge::GRAPH_FAILED;
     }
     if (!BuildCubeTiling(ascendcPlatform, tiling)) {

@@ -161,7 +161,8 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
         const int64_t workspaceSize =
             ASCENDC_RESERVED_WORKSPACE_SIZE + syncWorkspaceSize + snapshotWorkspaceSize;
         if (SetWorkspaceSize(context, static_cast<size_t>(workspaceSize)) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(size_t), "SetWorkspaceSize error");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace",
+            std::to_string(workspaceSize), "SetWorkspaceSize failed");
         return ge::GRAPH_FAILED;
     }
         if (context->SetScheduleMode(1) != ge::GRAPH_SUCCESS) {

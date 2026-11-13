@@ -299,7 +299,8 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
             if (!((*chunkIndices)[offset] == static_cast<int64_t>(seq) &&
                            (*chunkIndices)[offset + 1] == chunk)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndicesOptional", std::to_string(int64_t), "chunkIndicesOptional must use canonical sequence-major chunk order.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndicesOptional", "non-canonical",
+            "chunkIndicesOptional must use canonical sequence-major chunk order.");
         return ACLNN_ERR_PARAM_INVALID;
     }
             offset += 2;
@@ -630,11 +631,13 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         }
     };
     if (!(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", std::to_string(params.cuSeqlensOptional), "rank4 varlen input with cuSeqlensOptional requires B=1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", std::to_string(info.batch),
+            "rank4 varlen input with cuSeqlensOptional requires B=1.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", std::to_string(params.cuSeqlensOptional), "varlen input supports at most 1024 sequences.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", std::to_string(info.seqNum),
+            "varlen input supports at most 1024 sequences.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     {
