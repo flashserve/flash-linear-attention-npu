@@ -108,6 +108,9 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);
      if (!(result != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
  

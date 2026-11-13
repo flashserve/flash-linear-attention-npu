@@ -416,6 +416,9 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
                                  params.stateVFirst, params.outputLayout, params.oOut, executorPtr);
     if (!(result[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
 

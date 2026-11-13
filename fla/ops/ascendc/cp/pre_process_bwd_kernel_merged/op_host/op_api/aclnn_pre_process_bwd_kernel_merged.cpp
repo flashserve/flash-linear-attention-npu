@@ -175,6 +175,9 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
                                                  params.chunkSize, params.dhmOut, executorPtr);
     if (!(result != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

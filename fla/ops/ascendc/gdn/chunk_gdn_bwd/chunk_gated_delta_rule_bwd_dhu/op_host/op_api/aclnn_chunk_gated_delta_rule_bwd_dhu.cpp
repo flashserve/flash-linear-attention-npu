@@ -591,12 +591,21 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
         params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
     if (!(result[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[1] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[2] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
 

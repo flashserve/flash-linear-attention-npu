@@ -752,15 +752,27 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         compute.gOut, compute.wOut, compute.uOut, compute.aOut, compute.qHatOptional, compute.kHatOptional,
         compute.qRstdOptional, compute.kRstdOptional, compute.betaEffOptional, executorPtr);
     if (!(result[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[1] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[2] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(result[3] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
         return ACLNN_ERR_PARAM_INVALID;
     };
 
