@@ -1,6 +1,6 @@
 # ChunkKdaFwdPrepare
 
-[A5设计文档](docs/design.md) | [A2设计文档](docs/design_a2.md) | [API 文档](docs/api.md)
+[统一设计文档](docs/design.md) | [API 文档](docs/api.md)
 
 ## 功能
 
@@ -176,7 +176,7 @@ A2 使用 value-head pair：一个 AIC 配两个 AIV，每个 AIV 准备一个�
 两个 lane 映射到不同 Q/K head 时分别准备 Q/K；奇数 head 的 inactive lane 仍参与事件协议。
 六个 Norm/Gate 数学策略及其普通/GVA key 共用 BF16 resident relay、W/U inverse 复用、
 paired L0 和两代 GM workspace。
-普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见 [A2 设计](docs/design_a2.md)。
+普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见统一设计文档中的 [A2 专项章节](docs/design.md#92-stage-完整详设)。
 
 A5 保留原有 MIX AIC/AIV 八阶段流水及 [A5 设计](docs/design.md)：
 
@@ -210,24 +210,9 @@ A5/A2≥0.5，case1/case3 分别为 0.4884/0.4937，整体性能目标尚未全�
 不宣称零警告验收。逐例数据、源码/包身份及运行命令维护在
 [独立 ATK 交付件](https://gitcode.com/chen-linxin4/work_tool/pull/32)，不在本 PR 重复提交测试工程。
 
-### A2 Precomputed 行内复用优化（2026-11-12）
-
-`LeafInverse64` 的第k步源行与后续目标行不重叠，现直接从 `work_` 读取源行，
-删除每步64个FP32元素的冗余复制及复制后的PIPE_V屏障；更新顺序和每步写后屏障保持不变。
-在同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
-
-|典型case|布局与规模|优化前（us）|优化后（us）|耗时降低|
-|---|---|---:|---:|---:|
-|198|BNSD，B=1，T=11264，HK=16，HV=128，G=8|10998.53|10037.25|8.74%|
-|199|TND变长，T=16384，16×1024，HK=16，HV=128，G=8|15863.48|14557.19|8.23%|
-
-优化后使用 `/data/yqw/requirement/prepare/kda_bwd_prepare/atk标杆` 完成精度20/20、
-确定性3/3。按本轮要求未重新采集msprof；上述NPU Event只用于同环境回归对比，
-不替代统一的msprof Task Duration性能结论。
-
 ### A2 满块与Gather索引优化（2026-11-12）
 
-在上述行内复用提交基础上，Precomputed路径进一步复用16步Gather索引模式，后续批次只对整批
+在既有实现基础上，Precomputed路径进一步复用16步Gather索引模式，后续批次只对整批
 索引增加64字节；满64行work跳过Q/K/G/beta、RHS和V输入缓冲区的冗余预清零，尾块保持补零；
 无消费者的Norm关闭rstd初始化及Precomputed Lower写回一并删除。数学分支、tiling key和输出合同不变。
 同一A2 910B3环境、同一输入与安装包流程下，以warmup5/repeat20的NPU Event中位数比较：
