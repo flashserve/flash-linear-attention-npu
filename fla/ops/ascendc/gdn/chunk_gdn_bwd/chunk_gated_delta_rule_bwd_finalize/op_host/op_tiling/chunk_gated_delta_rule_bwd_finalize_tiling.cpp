@@ -163,7 +163,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                     dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
                     dh.GetDim(4) != stateDim4) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "h/dh",
-            "state_v_first=" + std::to_string(stateVFirstValue),
+            "state_v_first=" + std::to_string(static_cast<int>(stateVFirst)),
             "h and dh state dimensions do not match for the given state_v_first");
         return ge::GRAPH_FAILED;
     }
