@@ -716,14 +716,14 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
             "chunkSize=32 requires positive B/H/T, Hv divisible by Hk, and K=V=128");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(sequenceMajor
+    if (!((sequenceMajor
                ? (HasShape(params.k, {batch, tokens, keyHeads, keyDim}) &&
                   HasShape(params.v, {batch, tokens, valueHeads, valueDim}))
                : (HasShape(params.k, {batch, keyHeads, tokens, keyDim}) &&
                   HasShape(params.v, {batch, valueHeads, tokens, valueDim}))) &&
           HasShape(params.g, {batch, tokens, valueHeads}) &&
           HasShape(params.beta, {batch, tokens, valueHeads}) &&
-          HasShape(params.oOut, {batch, tokens, valueHeads, valueDim})) {
+          HasShape(params.oOut, {batch, tokens, valueHeads, valueDim}))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "k,v,g,beta,oOut",
             "k=" + std::string(op::ToString(params.k->GetViewShape()).GetString()) +
@@ -1084,8 +1084,8 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
             "q/k/v/oOut/aOutOptional must have the same dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
-          (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == dtype)) {
+    if (!((params.beta->GetDataType() == DataType::DT_FLOAT || params.beta->GetDataType() == dtype) &&
+          (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == dtype))) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "g,beta",
             std::string("g=") + ge::TypeUtils::DataTypeToSerialString(params.g->GetDataType()) +
@@ -1101,17 +1101,17 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
             "gCumsumOutOptional must be float32");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(params.qHatOutOptional == nullptr || params.qHatOutOptional->GetDataType() == dtype) &&
+    if (!((params.qHatOutOptional == nullptr || params.qHatOutOptional->GetDataType() == dtype) &&
           (params.kHatOutOptional == nullptr || params.kHatOutOptional->GetDataType() == dtype) &&
-          (params.hOutOptional == nullptr || params.hOutOptional->GetDataType() == dtype)) {
+          (params.hOutOptional == nullptr || params.hOutOptional->GetDataType() == dtype))) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "qHatOut,kHatOut,hOut", "mismatch",
             "qHatOutOptional/kHatOutOptional/hOutOptional must match q dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(params.qRstdOutOptional == nullptr || params.qRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
+    if (!((params.qRstdOutOptional == nullptr || params.qRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
           (params.kRstdOutOptional == nullptr || params.kRstdOutOptional->GetDataType() == DataType::DT_FLOAT) &&
-          (params.betaEffOutOptional == nullptr || params.betaEffOutOptional->GetDataType() == DataType::DT_FLOAT)) {
+          (params.betaEffOutOptional == nullptr || params.betaEffOutOptional->GetDataType() == DataType::DT_FLOAT))) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "qRstdOut,kRstdOut,betaEffOut", "mismatch",
             "qRstdOutOptional/kRstdOutOptional/betaEffOutOptional must be float32");
