@@ -57,19 +57,19 @@ public:
         }
         if (ctx_.chunkSize != 64 || !ctx_.safeGate || !ctx_.useGateInKernel ||
             !ctx_.useExp2 || ctx_.stateVFirst) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "A5 v1 requires chunk_size=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize), "A5 v1 requires chunk_size=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
 
             return ge::GRAPH_FAILED;
         }
         const bool hasRstd = ctx_.qRstd != nullptr || ctx_.kRstd != nullptr;
         if ((ctx_.qRstd == nullptr) != (ctx_.kRstd == nullptr)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "k_rstd", "invalid", "q_rstd and k_rstd must appear together");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "k_rstd", std::to_string(ctx_.qRstd), "q_rstd and k_rstd must appear together");
 
             return ge::GRAPH_FAILED;
         }
         const bool variable = ctx_.cuSeqlens != nullptr || ctx_.chunkIndices != nullptr;
         if ((ctx_.cuSeqlens == nullptr) != (ctx_.chunkIndices == nullptr)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "cu_seqlens", "invalid", "cu_seqlens and chunk_indices must appear together");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(ctx_.cuSeqlens), "cu_seqlens and chunk_indices must appear together");
 
             return ge::GRAPH_FAILED;
         }
@@ -89,7 +89,7 @@ public:
             v.GetDimNum() != tokenRank || gk.GetDimNum() != tokenRank ||
             akk.GetDimNum() != tokenRank || beta.GetDimNum() != scalarRank ||
             h.GetDimNum() != stateRank || dh.GetDimNum() != stateRank) {
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "rank", "invalid", "dense/varlen rank does not match KernelC contract");
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "rank", std::to_string(tokenRank), "dense/varlen rank does not match KernelC contract");
 
             return ge::GRAPH_FAILED;
         }
@@ -122,7 +122,7 @@ public:
         if (tiling_.B <= 0 || tiling_.NQ != tiling_.NV || tiling_.NV <= 0 ||
             tiling_.T <= 0 || tiling_.K != 128 || tiling_.V != 128 ||
             tiling_.totalChunkNum <= 0) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "K", "invalid", "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "K", std::to_string(tiling_.NQ), "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
 
             return ge::GRAPH_FAILED;
         }

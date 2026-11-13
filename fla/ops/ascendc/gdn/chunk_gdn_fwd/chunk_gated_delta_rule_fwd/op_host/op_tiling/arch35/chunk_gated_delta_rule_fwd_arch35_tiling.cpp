@@ -286,7 +286,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
     if (workspaceSizes[0] < systemWorkspace) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Phase 5 workspace is smaller than system workspace.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", std::to_string(workspaceSizes[0]), "Phase 5 workspace is smaller than system workspace.");
         return ge::GRAPH_FAILED;
     }
 
@@ -372,13 +372,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     const uint64_t rawTilingSize = phase6TrailerOffset + sizeof(trailer);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Phase 6 combined tiling exceeds raw tiling capacity.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", std::to_string(rawTilingSize), "Phase 6 combined tiling exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }
     if (memcpy_s(static_cast<uint8_t *>(rawTiling->GetData()) + phase6TrailerOffset,
                          rawTiling->GetCapacity() - phase6TrailerOffset,
                          &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "trailer", "invalid", "Serialize Phase 6 coefficient trailer failed.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "trailer", std::to_string(static_cast), "Serialize Phase 6 coefficient trailer failed.");
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);

@@ -127,18 +127,18 @@ public:
     ge::graphStatus Process()
     {
         if (PreCheck() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "PreCheck", "invalid", "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "PreCheck", std::to_string(PreCheck()), "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
 
             return ge::GRAPH_FAILED;
         }
         if (CommonTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "CommonTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "CommonTiling", std::to_string(CommonTiling()), "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
 
             return ge::GRAPH_FAILED;
         }
         if (IsVariableLength()) {
             if (VariableLenTiling() != ge::GRAPH_SUCCESS) {
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "VariableLenTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "VariableLenTiling", std::to_string(VariableLenTiling()), "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
 
                 return ge::GRAPH_FAILED;
             }
@@ -151,7 +151,7 @@ public:
             tiling_.isVariable = 0;
         }
         if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "WorkspaceTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "WorkspaceTiling", std::to_string(WorkspaceTiling()), "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
 
             return ge::GRAPH_FAILED;
         }

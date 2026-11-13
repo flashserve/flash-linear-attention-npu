@@ -164,7 +164,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
     if (!std::isfinite(static_cast<float>(*scale)) || !std::isfinite(static_cast<float>(*lowerBound)) ||
         *lowerBound < -5.0 || static_cast<float>(*lowerBound) >= 0.0f) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "scale", "invalid", "scale/lower_bound must be finite");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "scale", std::to_string(float), "scale/lower_bound must be finite");
 
         return ge::GRAPH_FAILED;
     }

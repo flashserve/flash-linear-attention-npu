@@ -473,7 +473,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     GdnArch22RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
     if (recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "RecomputeWUFwd tiling failed.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", std::to_string(recomputeProcessor.Process()), "RecomputeWUFwd tiling failed.");
         return ge::GRAPH_FAILED;
     }
 
@@ -562,7 +562,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     ShiftHWorkspace(hTiling);
     hWorkspaceSize += hoShift;
     if (ownerLocalWorkspace && hWorkspaceSize != expectedOwner.shiftedEnd) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Owner-local shifted H workspace differs from the checked end.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", std::to_string(hWorkspaceSize), "Owner-local shifted H workspace differs from the checked end.");
         return ge::GRAPH_FAILED;
     }
     // 只扩静态 prepared BT64/V128 的专用 H 区，后续 O 区及完整 reserve 原大小顺延。
@@ -657,7 +657,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Combined tiling data exceeds raw tiling capacity.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", std::to_string(rawTilingSize), "Combined tiling data exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }
     void *rawData = rawTiling->GetData();
@@ -670,7 +670,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                          rawTiling->GetCapacity() - oTilingOffset, &oTiling, sizeof(oTiling)) != EOK ||
                     memcpy_s(static_cast<uint8_t *>(rawData) + trailerOffset,
                              rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "invalid", "Serialize combined tiling data failed.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", std::to_string(static_cast), "Serialize combined tiling data failed.");
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);

@@ -170,7 +170,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
     }
     if (!(chunkSize == 64 && safeGate && useExp2 && !stateVFirst)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "A5 V2 requires C=64, safe_gate=true, use_exp2=true and K-first state.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", std::to_string(chunkSize), "A5 V2 requires C=64, safe_gate=true, use_exp2=true and K-first state.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (initialStateOptional != nullptr || dhtOptional != nullptr || dh0OutOptional != nullptr) {
@@ -372,14 +372,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         const auto *indices = chunkIndicesOptional;
         if (!(cu->Size() >= 2 &&
                        (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "Invalid cu_seqlens.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(cu->Size()), "Invalid cu_seqlens.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         nc = 0;
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t begin = (*cu)[seq], end = (*cu)[seq+1];
             if (!(begin >= 0 && end > begin && end <= T)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "sequence boundaries are invalid");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(begin), "sequence boundaries are invalid");
         return ACLNN_ERR_PARAM_INVALID;
     }
             for (int64_t c = 0; c < (end - begin + 63) / 64; ++c, ++nc) {
