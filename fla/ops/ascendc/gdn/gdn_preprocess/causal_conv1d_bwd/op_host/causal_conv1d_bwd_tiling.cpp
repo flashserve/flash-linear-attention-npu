@@ -78,49 +78,21 @@ static std::string ShapeToString(const gert::Shape &shape)
     return result + "]";
 }
 
-static ge::graphStatus ReportDtypeError(const char *parameter, ge::DataType actual, ge::DataType expected)
-{
-    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, parameter, std::to_string(static_cast<int>(actual)),
-                             std::to_string(static_cast<int>(expected)));
-    return ge::GRAPH_FAILED;
-}
-
-static ge::graphStatus ReportShapeError(const char *parameter, const std::string &actual, const std::string &reason)
-{
-    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, parameter, actual, reason);
-    return ge::GRAPH_FAILED;
-}
-
-static ge::graphStatus ReportValueError(const char *parameter, const std::string &actual, const std::string &reason)
-{
-    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, parameter, actual, reason);
-    return ge::GRAPH_FAILED;
-}
-
-static ge::graphStatus ReportMissingInput(const char *parameter, const std::string &reason)
-{
-    const std::string detail = std::string(parameter) + "; expected=present; " + reason;
-    OP_LOGE_WITH_INVALID_INPUT(OP_NAME, detail);
-    return ge::GRAPH_FAILED;
-}
-
-static ge::graphStatus ReportTilingError(const std::string &reason)
-{
-    OP_LOGE(OP_NAME, "%s", reason.c_str());
-    return ge::GRAPH_FAILED;
-}
-
 static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xDtype)
 {
     const uint32_t requiredInputIndices[] = {WEIGHT_INPUT_INDEX, DY_INPUT_INDEX};
     const char *requiredInputNames[] = {"weight", "dy"};
     for (size_t i = 0; i < sizeof(requiredInputIndices) / sizeof(requiredInputIndices[0]); i++) {
         const auto *desc = context->GetInputDesc(requiredInputIndices[i]);
-        OP_CHECK_IF(desc == nullptr,
-                    ReportMissingInput(requiredInputNames[i], "required tensor descriptor is unavailable"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            desc == nullptr,
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, std::string(requiredInputNames[i]) +
+                                                    "; expected=present; required tensor descriptor is unavailable"),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(desc->GetDataType() != xDtype,
-                    ReportDtypeError(requiredInputNames[i], desc->GetDataType(), xDtype),
+                    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, requiredInputNames[i],
+                                              std::to_string(static_cast<int>(desc->GetDataType())),
+                                              std::to_string(static_cast<int>(xDtype))),
                     return ge::GRAPH_FAILED);
     }
 
@@ -129,7 +101,9 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
     for (size_t i = 0; i < sizeof(optionalInputIndices) / sizeof(optionalInputIndices[0]); i++) {
         const auto *desc = context->GetOptionalInputDesc(optionalInputIndices[i]);
         OP_CHECK_IF(desc != nullptr && desc->GetDataType() != xDtype,
-                    ReportDtypeError(optionalInputNames[i], desc->GetDataType(), xDtype),
+                    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, optionalInputNames[i],
+                                              std::to_string(static_cast<int>(desc->GetDataType())),
+                                              std::to_string(static_cast<int>(xDtype))),
                     return ge::GRAPH_FAILED);
     }
 
@@ -137,7 +111,9 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
     for (size_t i = 0; i < sizeof(outputNames) / sizeof(outputNames[0]); i++) {
         const auto *desc = context->GetOutputDesc(i);
         OP_CHECK_IF(desc != nullptr && desc->IsExist() && desc->GetDataType() != xDtype,
-                    ReportDtypeError(outputNames[i], desc->GetDataType(), xDtype),
+                    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, outputNames[i],
+                                              std::to_string(static_cast<int>(desc->GetDataType())),
+                                              std::to_string(static_cast<int>(xDtype))),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -146,20 +122,25 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
 static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 {
     CausalConv1dBwdTilingData *tiling = context->GetTilingData<CausalConv1dBwdTilingData>();
-    OP_CHECK_IF(tiling == nullptr,
-                ReportTilingError("tiling data: actual=null; expected=valid CausalConv1dBwdTilingData buffer"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        tiling == nullptr,
+        OP_LOGE(OP_NAME, "%s",
+                std::string("tiling data: actual=null; expected=valid CausalConv1dBwdTilingData buffer").c_str()),
+        return ge::GRAPH_FAILED);
     const auto memsetRc = memset_s(tiling, sizeof(CausalConv1dBwdTilingData), 0, sizeof(CausalConv1dBwdTilingData));
     OP_CHECK_IF(memsetRc != EOK,
-                ReportTilingError("memset_s(tiling): rc=" + std::to_string(memsetRc) +
-                                  "; expected rc=0 (EOK); failed to initialize tiling data"),
+                OP_LOGE(OP_NAME, "%s",
+                        std::string("memset_s(tiling): rc=" + std::to_string(memsetRc) +
+                                    "; expected rc=0 (EOK); failed to initialize tiling data")
+                            .c_str()),
                 return ge::GRAPH_FAILED);
 
     auto xShape = context->GetInputShape(X_INPUT_INDEX)->GetStorageShape();
     auto dyShape = context->GetInputShape(DY_INPUT_INDEX)->GetStorageShape();
     auto wShape = context->GetInputShape(WEIGHT_INPUT_INDEX)->GetStorageShape();
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
-    OP_CHECK_IF(xDesc == nullptr, ReportMissingInput("x", "required tensor descriptor is unavailable"),
+    OP_CHECK_IF(xDesc == nullptr,
+                OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x; expected=present; required tensor descriptor is unavailable"),
                 return ge::GRAPH_FAILED);
     auto xDtype = xDesc->GetDataType();
     if (CheckDtypes(context, xDtype) != ge::GRAPH_SUCCESS) {
@@ -180,12 +161,13 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
         const int64_t *activationPtr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
         OP_CHECK_IF(activationPtr == nullptr,
-                    ReportMissingInput("activation", "declared activation attribute must have a value"),
+                    OP_LOGE_WITH_INVALID_INPUT(
+                        OP_NAME, "activation; expected=present; declared activation attribute must have a value"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(*activationPtr != ACTIVATION_NONE && *activationPtr != ACTIVATION_SILU &&
                         *activationPtr != ACTIVATION_SWISH,
-                    ReportValueError("activation", std::to_string(*activationPtr),
-                                     "expected 0 (None), 1 (SiLU) or 2 (Swish)"),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "activation", std::to_string(*activationPtr),
+                                                          "expected 0 (None), 1 (SiLU) or 2 (Swish)"),
                     return ge::GRAPH_FAILED);
         activation = static_cast<uint32_t>(*activationPtr);
     }
@@ -205,15 +187,18 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else if (std::strcmp(inputLayoutStr, "BSND") == 0 || std::strcmp(inputLayoutStr, "BSH") == 0) {
         inputLayout = INPUT_LAYOUT_BSND;
     } else {
-        return ReportValueError("inputLayout", inputLayoutStr, "expected BSND/BSH/TND/BNSD/NTD");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "inputLayout", inputLayoutStr, "expected BSND/BSH/TND/BNSD/NTD");
+        return ge::GRAPH_FAILED;
     }
 
     if (inputLayout == INPUT_LAYOUT_BNSD) {
         OP_CHECK_IF(xShape.GetDimNum() != 3,
-                    ReportShapeError("x", ShapeToString(xShape), "expected logical rank 3 [B, T, D] for BNSD"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "x", ShapeToString(xShape),
+                                                          "expected logical rank 3 [B, T, D] for BNSD"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(dyShape.GetDimNum() != 4,
-                    ReportShapeError("dy", ShapeToString(dyShape), "expected rank 4 [B, N, T, Dh] for BNSD"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "dy", ShapeToString(dyShape),
+                                                          "expected rank 4 [B, N, T, Dh] for BNSD"),
                     return ge::GRAPH_FAILED);
         inputMode = 1;
         B = xShape.GetDim(DIM_INDEX0);
@@ -221,52 +206,53 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         D = xShape.GetDim(DIM_INDEX2);
         inputN = dyShape.GetDim(DIM_INDEX1);
         inputHeadDim = dyShape.GetDim(DIM_INDEX3);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
-                static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != T ||
-                inputN * inputHeadDim != D,
-            ReportShapeError("dy", ShapeToString(dyShape),
-                             "expected [B, N, T, Dh] with D=N*Dh for x=" + ShapeToString(xShape) + " (BNSD)"),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
+                        static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != T || inputN * inputHeadDim != D,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        OP_NAME, "dy", ShapeToString(dyShape),
+                        "expected [B, N, T, Dh] with D=N*Dh for x=" + ShapeToString(xShape) + " (BNSD)"),
+                    return ge::GRAPH_FAILED);
         totalTokens = B * T;
     } else if (inputLayout == INPUT_LAYOUT_NTD) {
         OP_CHECK_IF(xShape.GetDimNum() != 2,
-                    ReportShapeError("x", ShapeToString(xShape), "expected logical rank 2 [total_tokens, D] for NTD"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "x", ShapeToString(xShape),
+                                                          "expected logical rank 2 [total_tokens, D] for NTD"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(dyShape.GetDimNum() != 3,
-                    ReportShapeError("dy", ShapeToString(dyShape), "expected rank 3 [N, total_tokens, Dh] for NTD"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "dy", ShapeToString(dyShape),
+                                                          "expected rank 3 [N, total_tokens, Dh] for NTD"),
                     return ge::GRAPH_FAILED);
         inputMode = 0;
         totalTokens = xShape.GetDim(DIM_INDEX0);
         D = xShape.GetDim(DIM_INDEX1);
         inputN = dyShape.GetDim(DIM_INDEX0);
         inputHeadDim = dyShape.GetDim(DIM_INDEX2);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != totalTokens ||
-                inputN * inputHeadDim != D,
-            ReportShapeError("dy", ShapeToString(dyShape),
-                             "expected [N, total_tokens, Dh] with D=N*Dh for x=" + ShapeToString(xShape) + " (NTD)"),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != totalTokens || inputN * inputHeadDim != D,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        OP_NAME, "dy", ShapeToString(dyShape),
+                        "expected [N, total_tokens, Dh] with D=N*Dh for x=" + ShapeToString(xShape) + " (NTD)"),
+                    return ge::GRAPH_FAILED);
     } else if (inputLayout == INPUT_LAYOUT_TND) {
         OP_CHECK_IF(xShape.GetDimNum() != 2 || dyShape.GetDimNum() != 2,
-                    ReportShapeError("x/dy", "x=" + ShapeToString(xShape) + "; dy=" + ShapeToString(dyShape),
-                                     "expected rank 2 [total_tokens, D] for TND"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        OP_NAME, "x/dy", "x=" + ShapeToString(xShape) + "; dy=" + ShapeToString(dyShape),
+                        "expected rank 2 [total_tokens, D] for TND"),
                     return ge::GRAPH_FAILED);
         inputMode = 0;
         totalTokens = xShape.GetDim(DIM_INDEX0);
         D = xShape.GetDim(DIM_INDEX1);
-        OP_CHECK_IF(
-            static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != totalTokens ||
-                static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != D,
-            ReportShapeError("dy", ShapeToString(dyShape),
-                             "expected x shape=" + ShapeToString(xShape) + " for TND"),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != totalTokens ||
+                        static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != D,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "dy", ShapeToString(dyShape),
+                                                          "expected x shape=" + ShapeToString(xShape) + " for TND"),
+                    return ge::GRAPH_FAILED);
         inputN = 1;
         inputHeadDim = D;
     } else if (inputLayout == INPUT_LAYOUT_BSND) {
         OP_CHECK_IF(xShape.GetDimNum() != 3 || dyShape.GetDimNum() != 3,
-                    ReportShapeError("x/dy", "x=" + ShapeToString(xShape) + "; dy=" + ShapeToString(dyShape),
-                                     "expected rank 3 [B, T, D] for BSND/BSH"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        OP_NAME, "x/dy", "x=" + ShapeToString(xShape) + "; dy=" + ShapeToString(dyShape),
+                        "expected rank 3 [B, T, D] for BSND/BSH"),
                     return ge::GRAPH_FAILED);
         inputMode = 1;
         B = xShape.GetDim(DIM_INDEX0);
@@ -276,74 +262,88 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != T ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != D,
-            ReportShapeError("dy", ShapeToString(dyShape),
-                             "expected x shape=" + ShapeToString(xShape) + " for BSND/BSH"),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "dy", ShapeToString(dyShape),
+                                                  "expected x shape=" + ShapeToString(xShape) + " for BSND/BSH"),
             return ge::GRAPH_FAILED);
         totalTokens = B * T;
         inputN = 1;
         inputHeadDim = D;
     } else {
-        return ReportShapeError("x", ShapeToString(xShape),
-                                std::string("expected shape compatible with inputLayout=") + inputLayoutStr);
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "x", ShapeToString(xShape),
+                                              std::string("expected shape compatible with inputLayout=") +
+                                                  inputLayoutStr);
+        return ge::GRAPH_FAILED;
     }
 
     auto yShapePtr = context->GetOptionalInputShape(Y_INPUT_INDEX);
     if (yShapePtr != nullptr && yShapePtr->GetStorageShape().GetDimNum() > 0) {
         auto yShape = yShapePtr->GetStorageShape();
         OP_CHECK_IF(yShape.GetDimNum() != dyShape.GetDimNum(),
-                    ReportShapeError("y", ShapeToString(yShape), "expected dy shape=" + ShapeToString(dyShape)),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "y", ShapeToString(yShape),
+                                                          "expected dy shape=" + ShapeToString(dyShape)),
                     return ge::GRAPH_FAILED);
         for (size_t i = 0; i < dyShape.GetDimNum(); i++) {
             OP_CHECK_IF(yShape.GetDim(i) != dyShape.GetDim(i),
-                        ReportShapeError("y", ShapeToString(yShape), "expected dy shape=" + ShapeToString(dyShape)),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "y", ShapeToString(yShape),
+                                                              "expected dy shape=" + ShapeToString(dyShape)),
                         return ge::GRAPH_FAILED);
         }
     } else {
-        OP_CHECK_IF(activation != ACTIVATION_NONE,
-                    ReportMissingInput("y", "activation=" + std::to_string(activation) +
-                                       "; y with non-empty shape is required when activation is enabled"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            activation != ACTIVATION_NONE,
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "y; expected=present; activation=" + std::to_string(activation) +
+                                                    "; y with non-empty shape is required when activation is enabled"),
+            return ge::GRAPH_FAILED);
     }
     uint32_t W = wShape.GetDim(DIM_INDEX0);
     OP_CHECK_IF(wShape.GetDimNum() != 2 || static_cast<uint32_t>(wShape.GetDim(DIM_INDEX1)) != D,
-                ReportShapeError("weight", ShapeToString(wShape),
-                                 "expected rank 2 [W, D_total] with D_total=" + std::to_string(D)),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "weight", ShapeToString(wShape),
+                                                      "expected rank 2 [W, D_total] with D_total=" + std::to_string(D)),
                 return ge::GRAPH_FAILED);
 
     uint32_t numChunks = 0;
     if (inputMode == 0) {
         auto qslShapePtr = context->GetOptionalInputShape(QUERY_START_LOC_INPUT_INDEX);
-        OP_CHECK_IF(qslShapePtr == nullptr,
-                    ReportMissingInput("queryStartLoc shape", "required in varlen mode"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            qslShapePtr == nullptr,
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "queryStartLoc shape; expected=present; required in varlen mode"),
+            return ge::GRAPH_FAILED);
         auto qslShape = qslShapePtr->GetStorageShape();
         OP_CHECK_IF(qslShape.GetDimNum() != 1 || qslShape.GetDim(0) < 1,
-                    ReportShapeError("queryStartLoc", ShapeToString(qslShape),
-                                     "expected rank 1 and at least one element in varlen mode"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "queryStartLoc", ShapeToString(qslShape),
+                                                          "expected rank 1 and at least one element in varlen mode"),
                     return ge::GRAPH_FAILED);
         B = qslShape.GetDim(0) - 1;
         const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INPUT_INDEX);
-        OP_CHECK_IF(qslDesc == nullptr,
-                    ReportMissingInput("queryStartLoc descriptor", "required in varlen mode"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            qslDesc == nullptr,
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "queryStartLoc descriptor; expected=present; required in varlen mode"),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64,
-                    ReportDtypeError("queryStartLoc (requires int64)", qslDesc->GetDataType(), ge::DT_INT64),
+                    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "queryStartLoc (requires int64)",
+                                              std::to_string(static_cast<int>(qslDesc->GetDataType())),
+                                              std::to_string(static_cast<int>(ge::DT_INT64))),
                     return ge::GRAPH_FAILED);
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
         const int64_t *qslData = (qslTensor != nullptr) ? qslTensor->GetData<int64_t>() : nullptr;
         OP_CHECK_IF(qslData == nullptr,
-                    ReportMissingInput("queryStartLoc data", "host tensor data is required in varlen mode"),
+                    OP_LOGE_WITH_INVALID_INPUT(
+                        OP_NAME, "queryStartLoc data; expected=present; host tensor data is required in varlen mode"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslData[0] != 0 || qslData[B] != static_cast<int64_t>(totalTokens),
-                    ReportValueError("queryStartLoc", "first=" + std::to_string(qslData[0]) +
-                                     "; last=" + std::to_string(qslData[B]),
-                                     "expected first=0 and last=total_tokens=" + std::to_string(totalTokens)),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        OP_NAME, "queryStartLoc",
+                        "first=" + std::to_string(qslData[0]) + "; last=" + std::to_string(qslData[B]),
+                        "expected first=0 and last=total_tokens=" + std::to_string(totalTokens)),
                     return ge::GRAPH_FAILED);
         uint32_t maxSeqLen = 0;
         for (uint32_t i = 0; i < B; i++) {
             OP_CHECK_IF(qslData[i + 1] < qslData[i],
-                        ReportValueError("queryStartLoc", "[" + std::to_string(i) + "]=" + std::to_string(qslData[i]) +
-                                         "; [" + std::to_string(i + 1) + "]=" + std::to_string(qslData[i + 1]),
-                                         "expected non-decreasing sequence offsets"),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            OP_NAME, "queryStartLoc",
+                            "[" + std::to_string(i) + "]=" + std::to_string(qslData[i]) + "; [" +
+                                std::to_string(i + 1) + "]=" + std::to_string(qslData[i + 1]),
+                            "expected non-decreasing sequence offsets"),
                         return ge::GRAPH_FAILED);
             uint32_t seqLen = static_cast<uint32_t>(qslData[i + 1] - qslData[i]);
             maxSeqLen = std::max(maxSeqLen, seqLen);
@@ -358,29 +358,23 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         auto initStateShape = context->GetInputShape(INITIAL_STATE_INPUT_INDEX);
         if (initStateShape != nullptr && initStateShape->GetStorageShape().GetDimNum() > 0) {
             auto shape = initStateShape->GetStorageShape();
-            OP_CHECK_IF(
-                shape.GetDimNum() != 3 ||
-                    static_cast<uint32_t>(shape.GetDim(0)) != B ||
-                    static_cast<uint32_t>(shape.GetDim(1)) != W ||
-                    static_cast<uint32_t>(shape.GetDim(2)) != D,
-                ReportShapeError("initial_state", ShapeToString(shape),
-                                 "expected [B, W, D]=[" + std::to_string(B) + ", " + std::to_string(W) +
-                                 ", " + std::to_string(D) + "]"),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(shape.GetDimNum() != 3 || static_cast<uint32_t>(shape.GetDim(0)) != B ||
+                            static_cast<uint32_t>(shape.GetDim(1)) != W || static_cast<uint32_t>(shape.GetDim(2)) != D,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "initial_state", ShapeToString(shape),
+                                                              "expected [B, W, D]=[" + std::to_string(B) + ", " +
+                                                                  std::to_string(W) + ", " + std::to_string(D) + "]"),
+                        return ge::GRAPH_FAILED);
             useInitialState = true;
         }
         auto dhtShape = context->GetInputShape(DHT_INPUT_INDEX);
         if (dhtShape != nullptr && dhtShape->GetStorageShape().GetDimNum() > 0) {
             auto shape = dhtShape->GetStorageShape();
-            OP_CHECK_IF(
-                shape.GetDimNum() != 3 ||
-                    static_cast<uint32_t>(shape.GetDim(0)) != B ||
-                    static_cast<uint32_t>(shape.GetDim(1)) != W ||
-                    static_cast<uint32_t>(shape.GetDim(2)) != D,
-                ReportShapeError("dht", ShapeToString(shape),
-                                 "expected [B, W, D]=[" + std::to_string(B) + ", " + std::to_string(W) +
-                                 ", " + std::to_string(D) + "]"),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(shape.GetDimNum() != 3 || static_cast<uint32_t>(shape.GetDim(0)) != B ||
+                            static_cast<uint32_t>(shape.GetDim(1)) != W || static_cast<uint32_t>(shape.GetDim(2)) != D,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "dht", ShapeToString(shape),
+                                                              "expected [B, W, D]=[" + std::to_string(B) + ", " +
+                                                                  std::to_string(W) + ", " + std::to_string(D) + "]"),
+                        return ge::GRAPH_FAILED);
             useFinalState = true;
         }
     }
@@ -392,16 +386,25 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     bool isAscend950 = false;
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
-        OP_CHECK_IF(platformInfoPtr == nullptr,
-                    ReportTilingError("platformInfo: actual=null; expected=valid platform metadata for resource queries"),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            platformInfoPtr == nullptr,
+            OP_LOGE(OP_NAME, "%s",
+                    std::string("platformInfo: actual=null; expected=valid platform metadata for resource queries")
+                        .c_str()),
+            return ge::GRAPH_FAILED);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
         isAscend950 = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
         coreNum = ascendcPlatform.GetCoreNumAiv();
-        OP_CHECK_IF(coreNum == 0, ReportTilingError("coreNum: actual=0; expected > 0 AIV cores from platform metadata"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(coreNum == 0,
+                    OP_LOGE(OP_NAME, "%s",
+                            std::string("coreNum: actual=0; expected > 0 AIV cores from platform metadata").c_str()),
+                    return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-        OP_CHECK_IF(ubSize == 0, ReportTilingError("ubSize: actual=0 bytes; expected > 0 bytes from platform metadata"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(ubSize == 0,
+                    OP_LOGE(OP_NAME, "%s",
+                            std::string("ubSize: actual=0 bytes; expected > 0 bytes from platform metadata").c_str()),
+                    return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
 
@@ -409,8 +412,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 
     uint32_t alignDim = (inputLayout == INPUT_LAYOUT_BNSD || inputLayout == INPUT_LAYOUT_NTD) ? inputHeadDim : D;
     OP_CHECK_IF(alignDim % 16 != 0,
-                ReportValueError("D/headDim", std::to_string(alignDim),
-                                 std::string("expected dimension divisible by 16 for inputLayout=") + inputLayoutStr),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "D/headDim", std::to_string(alignDim),
+                    std::string("expected dimension divisible by 16 for inputLayout=") + inputLayoutStr),
                 return ge::GRAPH_FAILED);
     uint32_t BD = (D % 64 == 0) ? 64 : 16;
     bool wideBlockLayoutSupported =
@@ -469,11 +473,13 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else if (T < BT) {
         BT = T;
     }
-    OP_CHECK_IF(BT == 0 || totalTokens == 0,
-                ReportValueError("sequence length", "T=" + std::to_string(T) + "; BT=" + std::to_string(BT) +
-                                 "; totalTokens=" + std::to_string(totalTokens),
-                                 "expected BT > 0 and totalTokens > 0; empty sequence is not supported"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        BT == 0 || totalTokens == 0,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "sequence length",
+                                              "T=" + std::to_string(T) + "; BT=" + std::to_string(BT) +
+                                                  "; totalTokens=" + std::to_string(totalTokens),
+                                              "expected BT > 0 and totalTokens > 0; empty sequence is not supported"),
+        return ge::GRAPH_FAILED);
     if (inputMode == 0) {
         numChunks = 0;
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
@@ -513,9 +519,11 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     OP_CHECK_IF(need > ubSize,
-                ReportTilingError("UB capacity: requiredBytes=" + std::to_string(need) +
-                                  "; availableBytes=" + std::to_string(ubSize) +
-                                  "; expected requiredBytes <= availableBytes for selected tile"),
+                OP_LOGE(OP_NAME, "%s",
+                        std::string("UB capacity: requiredBytes=" + std::to_string(need) +
+                                    "; availableBytes=" + std::to_string(ubSize) +
+                                    "; expected requiredBytes <= availableBytes for selected tile")
+                            .c_str()),
                 return ge::GRAPH_FAILED);
 
     // The kernel entry is not template-specialized by activation. Keep one
@@ -539,8 +547,11 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     context->SetBlockDim(mainCoreNum);
     const auto scheduleRc = context->SetScheduleMode(1);
     OP_CHECK_IF(scheduleRc != ge::GRAPH_SUCCESS,
-                ReportTilingError("SetScheduleMode: mode=1; rc=" + std::to_string(scheduleRc) +
-                                  "; expected rc=0 (GRAPH_SUCCESS)"), return ge::GRAPH_FAILED);
+                OP_LOGE(OP_NAME, "%s",
+                        std::string("SetScheduleMode: mode=1; rc=" + std::to_string(scheduleRc) +
+                                    "; expected rc=0 (GRAPH_SUCCESS)")
+                            .c_str()),
+                return ge::GRAPH_FAILED);
 
     tiling->B = B;
     tiling->T = T;
