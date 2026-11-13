@@ -477,42 +477,34 @@ public:
     ge::graphStatus Process()
     {
         if (PreCheck() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (ShapeCheck() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (CommonTiling() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
         if (LayoutCheck() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
             tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND) {
             if (A5ShapeCheck() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+                return ge::GRAPH_FAILED;
+            }
             if (A5ChunkTiling() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+                return ge::GRAPH_FAILED;
+            }
             if (WorkspaceTilingA5() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+                return ge::GRAPH_FAILED;
+            }
             return ge::GRAPH_SUCCESS;
         }
         if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 };
