@@ -634,7 +634,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     if (!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
             "%s: persistent workspace end limit exceeded, offset=%zu bytes, need=%zu bytes", __func__,
-            workspaceOffset, hIntermediateBytes));;");
+            workspaceOffset, hIntermediateBytes);
         return ge::GRAPH_FAILED;
     }
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);
