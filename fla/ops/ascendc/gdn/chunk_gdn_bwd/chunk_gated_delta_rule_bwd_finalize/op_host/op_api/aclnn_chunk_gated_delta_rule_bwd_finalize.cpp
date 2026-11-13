@@ -106,11 +106,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
 
     if (chunkSize != 64) {
         const std::string actual = std::to_string(chunkSize);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", actual.c_str(), "64");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", actual.c_str(), "chunkSize must be 64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "useGateInKernel", "true", "false");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "useGateInKernel", "true", "use_gate_in_kernel must be false");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {

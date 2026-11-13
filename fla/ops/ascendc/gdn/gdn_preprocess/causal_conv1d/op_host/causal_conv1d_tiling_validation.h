@@ -505,7 +505,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         tiling.maxQueryLen = attrInfo.maxQueryLen;
         if (qslDataVisible) {
             if (attrInfo.maxQueryLen >= 0 && attrInfo.maxQueryLen < observedMaxQueryLen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "max_query_len", std::to_string(attrInfo.maxQueryLen),
+            "max_query_len must be >= observed max query length");
         return ge::GRAPH_FAILED;
     }
             // Preserve raw callers that omit the new attr when deprecated host

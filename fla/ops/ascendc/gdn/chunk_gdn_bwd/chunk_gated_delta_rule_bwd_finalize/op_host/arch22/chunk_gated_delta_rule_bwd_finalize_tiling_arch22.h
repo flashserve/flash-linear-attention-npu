@@ -172,7 +172,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     tiling.headRatio = tiling.HV / tiling.HK;
     if (tiling.headRatio < 1) {
         const std::string actual = std::to_string(tiling.headRatio);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), ">= 1");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "HV/HK must be >= 1");
         return ge::GRAPH_FAILED;
     }
     if (!FitsProduct({tiling.B, tiling.HV, tiling.T, std::max({tiling.K, tiling.V, tiling.chunkSize}), 128})) {
