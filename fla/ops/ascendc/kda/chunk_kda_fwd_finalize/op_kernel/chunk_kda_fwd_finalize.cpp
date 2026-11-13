@@ -34,12 +34,15 @@ __global__ __aicore__ void chunk_kda_fwd_finalize(
     args.tiling.totalChunks = static_cast<uint32_t>(tilingData.totalChunks);
     args.tiling.usedCoreNum = static_cast<uint32_t>(tilingData.usedCoreNum);
     args.tiling.headsPerPartition = static_cast<uint32_t>(tilingData.headsPerPartition);
+    args.tiling.totalWorkItems = static_cast<uint32_t>(tilingData.totalWorkItems);
+    args.tiling.scheduleMode = static_cast<uint32_t>(tilingData.scheduleMode);
+    args.tiling.groupSize = static_cast<uint32_t>(tilingData.groupSize);
     args.tiling.isVarLen = tilingData.isVarLen;
     args.tiling.outputSequenceMajor = tilingData.outputSequenceMajor;
     args.tiling.stateVFirst = tilingData.stateVFirst;
 
     constexpr bool kUseAivInputMover =
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         USE_AIV_INPUT_MOVER;
 #else
         false;

@@ -20,6 +20,9 @@ struct ChunkKdaFwdFinalizeTilingData {
     uint32_t totalChunks;
     uint32_t usedCoreNum;
     uint32_t headsPerPartition;
+    uint32_t totalWorkItems;
+    uint32_t scheduleMode;
+    uint32_t groupSize;
     bool isVarLen;
     bool outputSequenceMajor;
     bool stateVFirst;
@@ -78,10 +81,7 @@ __aicore__ inline uint32_t WorkgroupId()
 
 __aicore__ inline uint32_t TotalWorkItems(const FinalizeArgs &args)
 {
-    const uint32_t chunks = args.tiling.isVarLen
-                                ? args.tiling.totalChunks
-                                : args.tiling.batch * args.tiling.totalChunks;
-    return chunks * CeilDiv(args.tiling.valueHeadNum, args.tiling.headsPerPartition);
+    return args.tiling.totalWorkItems;
 }
 
 __aicore__ inline uint32_t WorkBegin(uint32_t total, uint32_t core, uint32_t cores)

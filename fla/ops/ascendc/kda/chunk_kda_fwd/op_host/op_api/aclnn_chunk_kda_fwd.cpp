@@ -15,6 +15,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
@@ -490,6 +491,9 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0,
                ACLNN_ERR_PARAM_INVALID,
                "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
+    CHECK_COND(params.chunkSize != 64 || info.hvNum / info.hNum <= 16,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunk64 GVA requires HV/HK in [1,16].");
     CHECK_COND(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM,
                ACLNN_ERR_PARAM_INVALID, "H and HV must be less than or equal to 128.");
     // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
@@ -666,6 +670,47 @@ bool IsAscend950()
     const char *socName = aclrtGetSocName();
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
+
+struct AclIntArrayDeleter {
+    void operator()(aclIntArray *array) const
+    {
+        if (array != nullptr) {
+            aclDestroyIntArray(array);
+        }
+    }
+};
+using AclIntArrayPtr = std::unique_ptr<aclIntArray, AclIntArrayDeleter>;
+
+// Empty sequences do not own tokens. Compact their metadata before the legacy
+// A5 split path; this keeps token outputs unchanged and avoids empty slots
+// perturbing gate/state work scheduling. Exported final state/intermediate
+// tensors keep the original sequence contract and therefore bypass this path.
+AclIntArrayPtr CompactEmptyCuSeqlensIfSafe(ChunkKdaFwdParams &params)
+{
+    if (params.cuSeqlensOptional == nullptr || params.finalStateOut != nullptr ||
+        params.hOut != nullptr) {
+        return AclIntArrayPtr(nullptr);
+    }
+    const aclIntArray *source = params.cuSeqlensOptional;
+    std::vector<int64_t> compact;
+    compact.reserve(source->Size());
+    for (size_t i = 0; i < source->Size(); ++i) {
+        const int64_t value = (*source)[i];
+        if (i == 0 || value > (*source)[i - 1]) {
+            compact.push_back(value);
+        }
+    }
+    if (compact.size() == source->Size()) {
+        return AclIntArrayPtr(nullptr);
+    }
+    aclIntArray *array = aclCreateIntArray(compact.data(), compact.size());
+    if (array == nullptr) {
+        return AclIntArrayPtr(nullptr);
+    }
+    params.cuSeqlensOptional = array;
+    params.chunkIndicesOptional = nullptr;
+    return AclIntArrayPtr(array);
+}
 // chunk32 大融合路由实现于 chunk_kda_fwd_chunk32_route.h（body-include，仍属本匿名命名空间）。
 #include "chunk_kda_fwd_chunk32_route.h"
 
@@ -720,6 +765,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+    AclIntArrayPtr compactCuSeqlens = CompactEmptyCuSeqlensIfSafe(params);
     if (params.chunkSize == 32) {
         // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
         // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
@@ -729,8 +775,23 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus checkParamsStatus = CheckParams(params, parsedLayout, info);
+    if (checkParamsStatus != ACLNN_SUCCESS) {
+        return checkParamsStatus;
+    }
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    // The Python work-item threshold was tuned for A2. On A5, eligible small
+    // inputs must also use the native three-stage implementation: the legacy
+    // generic recurrent backend can lose part of the final tail update.
+    if (IsAscend950() && CanUseKdaFwdV2Path(params, info)) {
+        const aclnnStatus status =
+            l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
+        CHECK_RET(status == ACLNN_SUCCESS, status);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+        uniqueExecutor.ReleaseTo(executor);
+        return ACLNN_SUCCESS;
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
@@ -1041,7 +1102,10 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus checkParamsStatus = CheckParams(params, parsedLayout, info);
+    if (checkParamsStatus != ACLNN_SUCCESS) {
+        return checkParamsStatus;
+    }
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
