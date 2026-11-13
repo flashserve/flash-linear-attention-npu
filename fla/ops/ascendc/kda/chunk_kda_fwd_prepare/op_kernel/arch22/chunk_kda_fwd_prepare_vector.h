@@ -76,8 +76,16 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         }
     }
     __aicore__ inline void Prepare() {
-        Duplicate(q_,bfloat16_t(0),8192);Duplicate(k_,bfloat16_t(0),8192);
-        Duplicate(g_,0.0F,8192);Duplicate(beta_,0.0F,64);VBarrier();
+        // DMA/Cast completely defines valid rows before their first consumer.
+        // Only padded rows need neutral initialization for the full64 matrices.
+        // Keep the same UB addresses and V_MTE2/MTE2_V event protocol.
+        if(w_.rows<Rows) {
+            const uint32_t begin=w_.rows*Dim,count=(Rows-w_.rows)*Dim;
+            Duplicate(q_[begin],bfloat16_t(0),count);
+            Duplicate(k_[begin],bfloat16_t(0),count);
+            Duplicate(g_[begin],0.0F,count);
+        }
+        Duplicate(beta_,0.0F,64);VBarrier();
         const auto &t=a_.tiling;uint32_t h=w_.head[lane_],qh=w_.qh[lane_];
         Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
         Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);

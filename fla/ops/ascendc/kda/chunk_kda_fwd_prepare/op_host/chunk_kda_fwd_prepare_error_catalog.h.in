@@ -1,0 +1,24 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * Licensed under the CANN Open Software License Agreement Version 2.0.
+ */
+#ifndef CHUNK_KDA_FWD_PREPARE_ERROR_CATALOG_H
+#define CHUNK_KDA_FWD_PREPARE_ERROR_CATALOG_H
+
+namespace KdaPrepareDfx {
+// Derived from the same official log.cpp registered by this operator.
+inline constexpr bool kHasEz0008 = @PREPARE_DFX_HAS_EZ0008@;
+inline constexpr bool kHasEz0009 = @PREPARE_DFX_HAS_EZ0009@;
+inline constexpr bool kHasEz0010 = @PREPARE_DFX_HAS_EZ0010@;
+inline constexpr bool kHasEz0013 = @PREPARE_DFX_HAS_EZ0013@;
+inline constexpr bool kHasEz0017 = @PREPARE_DFX_HAS_EZ0017@;
+inline constexpr bool kHasEz0018 = @PREPARE_DFX_HAS_EZ0018@;
+inline constexpr bool kHasEz0019 = @PREPARE_DFX_HAS_EZ0019@;
+inline constexpr bool kHasEz0021 = @PREPARE_DFX_HAS_EZ0021@;
+inline constexpr bool kHasEz0024 = @PREPARE_DFX_HAS_EZ0024@;
+inline constexpr bool kHasEz0025 = @PREPARE_DFX_HAS_EZ0025@;
+inline constexpr bool kHasEz0026 = @PREPARE_DFX_HAS_EZ0026@;
+inline constexpr bool kHasEz0027 = @PREPARE_DFX_HAS_EZ0027@;
+inline constexpr bool kHasEz0037 = @PREPARE_DFX_HAS_EZ0037@;
+} // namespace KdaPrepareDfx
+#endif
