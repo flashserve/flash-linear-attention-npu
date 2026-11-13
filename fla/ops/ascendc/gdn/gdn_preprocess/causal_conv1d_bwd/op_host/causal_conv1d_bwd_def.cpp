@@ -78,11 +78,19 @@ public:
 
         this->AICore().AddConfig("ascend910b");
         this->AICore().AddConfig("ascend910_93");
-#ifdef ASCEND_SOC_VERSION
-        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
-            this->AICore().AddConfig("ascend950");
-        }
-#endif
+        OpAICoreConfig aicConfig;
+        aicConfig.DynamicCompileStaticFlag(true)
+            .DynamicFormatFlag(true)
+            .DynamicRankSupportFlag(true)
+            .DynamicShapeSupportFlag(true)
+            .NeedCheckSupportFlag(false)
+            .PrecisionReduceFlag(true)
+            .ExtendCfgInfo("prebuildPattern.value", "Opaque")
+            .ExtendCfgInfo("coreType.value", "AiCore")
+            .ExtendCfgInfo("aclnnSupport.value", "support_aclnn")
+            .ExtendCfgInfo("softsync.flag", "true");
+        this->AICore().AddConfig("ascend950", aicConfig);
+        this->AICore().AddConfig("ascend960dt", aicConfig);
     }
 };
 

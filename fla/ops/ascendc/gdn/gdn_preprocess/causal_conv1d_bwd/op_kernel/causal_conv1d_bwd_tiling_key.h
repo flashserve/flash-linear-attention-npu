@@ -7,17 +7,14 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-/*!
- * \file causal_conv1d_bwd_tiling_key.h
- * \brief Causal Conv1D backward tiling key definition
- */
-
 #ifndef CAUSAL_CONV1D_BWD_TILING_KEY_H_
 #define CAUSAL_CONV1D_BWD_TILING_KEY_H_
 
-#include "causal_conv1d_bwd_tiling_data.h"
+#include "ascendc/host_api/tiling/template_argument.h"
 
-#define CAUSAL_CONV1D_BWD_TPL_ACTIVATION_NONE 0
-#define CAUSAL_CONV1D_BWD_TPL_ACTIVATION_SILU 1
+ASCENDC_TPL_ARGS_DECL(CausalConv1dBwd, ASCENDC_TPL_BOOL_DECL(IS_VARLEN, 0, 1));
+ASCENDC_TPL_SEL(
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(IS_VARLEN, 0)),
+    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(IS_VARLEN, 1)));
 
 #endif // CAUSAL_CONV1D_BWD_TILING_KEY_H_

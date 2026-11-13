@@ -11,12 +11,15 @@
  * \file recurrent_kda.cpp
  * \brief
  */
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/recurrent_kda.h"
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 #include "arch35/recurrent_kda.h"
 #else
 #include "recurrent_kda.h"
 #endif
 #include "recurrent_kda_tiling_data.h"
+#include "recurrent_kda_tiling_key.h"
 
 
 using namespace AscendC;
@@ -24,7 +27,8 @@ using namespace matmul;
 using namespace RecurrentKda;
 
 
-extern "C" __global__ __aicore__ void
+template <bool INPLACE_STATE>
+__global__ __aicore__ void
 recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR beta, GM_ADDR initialState,
               GM_ADDR cuSeqlens, GM_ADDR ssmStateIndices, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR numAcceptedTokens,
               GM_ADDR out, GM_ADDR initialStateOut, GM_ADDR finalState, GM_ADDR workspaceGM, GM_ADDR tilingGM)
@@ -34,7 +38,7 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     TPipe pipe;
     RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
-    GM_ADDR stateOutput = tilingData.inplaceFinalState == 1 ? initialStateOut : finalState;
+    GM_ADDR stateOutput = INPLACE_STATE ? initialStateOut : finalState;
     RKDAInitParams initParams{query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
                               aLog, dtBias, numAcceptedTokens, out, stateOutput};
     op.Init(initParams, &pipe);

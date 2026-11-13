@@ -12,7 +12,7 @@
  * \brief Causal Conv1D backward tiling implementation
  *
  * Tiling keys:
- *   key=0 : Main kernel. Activation is selected by tiling data at runtime.
+ *   IS_VARLEN selects packed sequence offsets or fixed-length chunk indexing.
  */
 
 #include "register/op_def_registry.h"
@@ -23,6 +23,7 @@
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"
+#include "causal_conv1d_bwd_arch92_tiling.h"
 #include <algorithm>
 #include <cstring>
 
@@ -272,17 +273,20 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t sysWorkspaceSize = 0;
     uint32_t coreNum = 0;
     bool isAscend910B = false;
-    bool isAscend950 = false;
+    bool isArch35 = false;
+    bool isArch92 = false;
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-        isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
-        isAscend950 = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
+        const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        isAscend910B = npuArch == NpuArch::DAV_2201;
+        isArch35 = npuArch == NpuArch::DAV_3510;
+        isArch92 = npuArch == NpuArch::DAV_9201;
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-        OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(ubSize <= RESERVED_UB, OP_LOGE(context, "insufficient UB after reservation"), return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
 
@@ -305,7 +309,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t numBlksD = D / BD;
 
-    bool useArch35DirectFast = isAscend950 && isB16Input &&
+    bool useArch35DirectFast = isArch35 && isB16Input &&
                                activation == ACTIVATION_SILU &&
                                !useInitialState && !useFinalState &&
                                W == 4 && BD == 64;
@@ -335,7 +339,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     };
 
     uint32_t BT = 64;
-    if (useArch35DirectFast) {
+    causal_conv_arch92::TimeTile arch92Tile{};
+    if (isArch92) {
+        arch92Tile = causal_conv_arch92::SelectTimeTile(T, totalTokens, coreNum, W, BD, isB16Input, activation,
+                                                    useInitialState || useFinalState, ubSize);
+        BT = arch92Tile.rows;
+    } else if (useArch35DirectFast) {
         BT = std::min(T, DIRECT_FAST_BT_MAX);
         while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT) > ubSize) {
             BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
@@ -369,8 +378,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
     uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
-    uint32_t need = 0;
-    if (useArch35DirectFast) {
+    uint64_t need = 0;
+    if (isArch92) {
+        need = arch92Tile.bytes;
+    } else if (useArch35DirectFast) {
         need = CalcArch35DirectNeed(BT);
     } else if (use910BDirectFast) {
         need = Calc910BDirectNeed(BT);
@@ -391,12 +402,11 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     OP_CHECK_IF(need > ubSize,
-                OP_LOGE(context, "UB overflow: need %u > available %lu", need, ubSize),
+                OP_LOGE(context, "UB overflow: need %llu > available %llu",
+                        static_cast<unsigned long long>(need), static_cast<unsigned long long>(ubSize)),
                 return ge::GRAPH_FAILED);
 
-    // The kernel entry is not template-specialized by activation. Keep one
-    // function entry and let tiling->activation select the runtime path.
-    uint64_t tilingKey = CAUSAL_CONV1D_BWD_TPL_ACTIVATION_NONE;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(inputMode == 0);
 
     // Compute block dimension
     uint32_t chunkPerCore = 0;

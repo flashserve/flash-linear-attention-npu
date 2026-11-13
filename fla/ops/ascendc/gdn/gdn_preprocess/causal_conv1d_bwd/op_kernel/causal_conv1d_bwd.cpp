@@ -14,7 +14,8 @@
 
 #include "causal_conv1d_bwd_input_layout.h"
 
-extern "C" __global__ __aicore__ void causal_conv1d_bwd(
+template <bool IS_VARLEN>
+__global__ __aicore__ void causal_conv1d_bwd(
     GM_ADDR x, GM_ADDR y, GM_ADDR weight, GM_ADDR dy,
     GM_ADDR initial_state, GM_ADDR dht, GM_ADDR query_start_loc,
     GM_ADDR dx, GM_ADDR dw, GM_ADDR db, GM_ADDR dh0,
@@ -30,11 +31,11 @@ extern "C" __global__ __aicore__ void causal_conv1d_bwd(
     }
 
 #if (ORIG_DTYPE_X == DT_FLOAT)
-    CausalConv1dBwdInputLayoutKernel<float, float> op;
+    CausalConv1dBwdInputLayoutKernel<float, float, IS_VARLEN> op;
 #elif (ORIG_DTYPE_X == DT_FLOAT16)
-    CausalConv1dBwdInputLayoutKernel<half, float> op;
+    CausalConv1dBwdInputLayoutKernel<half, float, IS_VARLEN> op;
 #else
-    CausalConv1dBwdInputLayoutKernel<bfloat16_t, float> op;
+    CausalConv1dBwdInputLayoutKernel<bfloat16_t, float, IS_VARLEN> op;
 #endif
     op.InitTilingData(&tilingData, x, y, weight, dy,
                       initial_state, dht, query_start_loc, dx, dw, db, dh0,
