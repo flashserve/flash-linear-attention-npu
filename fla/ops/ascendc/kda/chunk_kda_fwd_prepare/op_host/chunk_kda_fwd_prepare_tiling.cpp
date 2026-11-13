@@ -15,7 +15,6 @@
 #include "chunk_kda_fwd_prepare_tiling_processor.h"
 #include "../op_kernel/chunk_kda_fwd_prepare_tiling_key.h"
 #include "../op_kernel/chunk_kda_fwd_prepare_runtime_key.h"
-#include "../op_kernel/chunk_kda_fwd_prepare_runtime_policy.h"
 #include "../op_kernel/arch22/chunk_kda_fwd_prepare_resource.h"
 #include "platform/soc_spec.h"
 #include "register/op_impl_registry.h"
