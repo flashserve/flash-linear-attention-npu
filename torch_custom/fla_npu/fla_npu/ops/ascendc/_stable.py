@@ -66,7 +66,7 @@ _INCREMENT_VERSION = None
 _LAYOUT_CODES = {"BSND": 0, "BNSD": 1, "TND": 2, "NTD": 3}
 
 _ENUM = {
-    "npu_causal_conv1d_bwd": {"input_layout": _LAYOUT_CODES},
+    "npu_causal_conv1d_bwd": {"input_layout": {"BSND": 0, "BNSD": 1, "TND": 2, "NTD": 3, "BSH": 4}},
     "npu_chunk_fwd_o": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
