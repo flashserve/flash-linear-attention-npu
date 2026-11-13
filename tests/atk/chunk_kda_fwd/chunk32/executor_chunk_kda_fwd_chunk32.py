@@ -391,6 +391,24 @@ def _legacy_normal_quantized(
     return value.to(original_dtype).to(target_dtype).to(device)
 
 
+def _legacy_chunk32_quantized(spec, name, shape, generator, original_dtype, target_dtype, device):
+    distribution = spec["input_distributions"][name]
+    if distribution["kind"] == "uniform":
+        if math.prod(shape) == 1:
+            values = torch.rand(1, generator=generator)
+            values = values * (distribution["high"] - distribution["low"]) + distribution["low"]
+            values = values.reshape(shape)
+        else:
+            values = np.random.uniform(
+                distribution["low"], distribution["high"], size=shape,
+            ).astype(np.float32)
+        return torch.as_tensor(values).to(original_dtype).to(target_dtype).to(device)
+    if distribution["kind"] == "normal":
+        values = torch.normal(distribution["mean"], distribution["std"], shape, generator=generator)
+        return values.to(original_dtype).to(target_dtype).to(device)
+    raise ValueError(f"unsupported chunk32 distribution: {distribution}")
+
+
 def _legacy_layout_from_bsnd(
     tensor: torch.Tensor, layout: str, *, beta: bool = False
 ) -> torch.Tensor:
@@ -427,6 +445,8 @@ def _legacy_inputs(
     v_dim = int(spec["V"])
     layout = str(spec["layout"])
     data_profile = str(spec.get("data_profile", "uniform"))
+    if data_profile == "chunk32_fused":
+        np.random.seed(seed)
 
     q_original = _DTYPES[str(spec["q_dtype"])]
     q_target = _legacy_target_dtype(str(spec["q_dtype"]), high_precision)
@@ -436,14 +456,20 @@ def _legacy_inputs(
     beta_target = _legacy_target_dtype(str(spec["beta_dtype"]), high_precision)
     fp32_target = torch.float64 if high_precision else torch.float32
 
-    if data_profile == "normal":
+    if data_profile == "chunk32_fused":
+        q_bsnd = _legacy_chunk32_quantized(spec, "q", (batch, total_t, h_num, k_dim), generator, q_original, q_target, device)
+        k_bsnd = _legacy_chunk32_quantized(spec, "k", (batch, total_t, h_num, k_dim), generator, q_original, q_target, device)
+        v_bsnd = _legacy_chunk32_quantized(spec, "v", (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device)
+        g_bsnd = _legacy_chunk32_quantized(spec, "g", (batch, total_t, hv_num, k_dim), generator, g_original, g_target, device)
+        beta_bsnd = _legacy_chunk32_quantized(spec, "beta", (batch, total_t, hv_num), generator, beta_original, beta_target, device)
+    elif data_profile in {"normal", "model_h96"}:
         q_bsnd = _legacy_normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
-            std=float(spec["qk_scale"]), l2_normalize=False,
+            std=float(spec["qk_scale"]), l2_normalize=(data_profile == "model_h96"),
         )
         k_bsnd = _legacy_normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
-            std=float(spec["qk_scale"]), l2_normalize=False,
+            std=float(spec["qk_scale"]), l2_normalize=(data_profile == "model_h96"),
         )
         v_bsnd = _legacy_normal_quantized(
             (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device,
@@ -455,7 +481,7 @@ def _legacy_inputs(
         )
         beta_bsnd = _legacy_normal_quantized(
             (batch, total_t, hv_num), generator, beta_original, beta_target, device,
-            mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=False,
+            mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=(data_profile == "model_h96"),
         )
     else:
         data_scale = float(spec["data_scale"])
@@ -488,7 +514,9 @@ def _legacy_inputs(
 
     a_log = None
     if _as_bool(spec["use_gate_in_kernel"]):
-        if data_profile == "normal":
+        if data_profile == "chunk32_fused":
+            a_log = _legacy_chunk32_quantized(spec, "A_log", (hv_num,), generator, torch.float32, fp32_target, device)
+        elif data_profile in {"normal", "model_h96"}:
             a_log = _legacy_normal_quantized(
                 (hv_num,), generator, torch.float32, fp32_target, device,
                 std=float(spec["a_log_scale"]),
@@ -501,7 +529,9 @@ def _legacy_inputs(
 
     dt_bias = None
     if _as_bool(spec["dt_bias"]):
-        if data_profile == "normal":
+        if data_profile == "chunk32_fused":
+            dt_bias = _legacy_chunk32_quantized(spec, "dt_bias", (hv_num * k_dim,), generator, torch.float32, fp32_target, device)
+        elif data_profile in {"normal", "model_h96"}:
             dt_bias = _legacy_normal_quantized(
                 (hv_num * k_dim,), generator, torch.float32, fp32_target, device,
                 mean=float(spec["dt_bias_mean"]), std=float(spec["dt_bias_scale"]),
@@ -521,10 +551,15 @@ def _legacy_inputs(
             if _as_bool(spec["state_v_first"])
             else (seq_num, hv_num, k_dim, v_dim)
         )
-        initial_state = _legacy_random_quantized(
-            state_shape, generator, torch.float32, fp32_target, device,
-            low=-0.02, high=0.02,
-        )
+        if data_profile == "chunk32_fused":
+            initial_state = _legacy_chunk32_quantized(
+                spec, "initial_state", state_shape, generator, torch.float32, fp32_target, device,
+            )
+        else:
+            initial_state = _legacy_random_quantized(
+                state_shape, generator, torch.float32, fp32_target, device,
+                low=-0.02, high=0.02,
+            )
 
     chunk_indices = None
     if _as_bool(spec["explicit_chunk_indices"]):
@@ -1308,8 +1343,8 @@ def _public_kwargs(inputs: _PreparedInputs, spec: dict) -> dict:
         "return_intermediate_states": _as_bool(spec["return_intermediate_states"]),
         "state_v_first": _as_bool(spec["state_v_first"]),
         "epsilon": float(spec.get("epsilon", 1e-6)),
-        "use_qk_l2norm_in_kernel": _as_bool(spec["use_qk_l2norm_in_kernel"]),
-        "use_beta_sigmoid_in_kernel": _as_bool(spec["use_beta_sigmoid_in_kernel"]),
+        "use_qk_l2norm_in_kernel": _as_bool(spec.get("use_qk_l2norm_in_kernel", False)),
+        "use_beta_sigmoid_in_kernel": _as_bool(spec.get("use_beta_sigmoid_in_kernel", False)),
         "allow_neg_eigval": _as_bool(spec.get("allow_neg_eigval", False)),
         "use_exp2": _as_bool(spec.get("use_exp2", True)),
     }
