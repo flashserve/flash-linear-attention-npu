@@ -51,7 +51,8 @@ public:
                 Convert(beta, rawBeta, CHUNK_TOKENS);
                 AscendC::PipeBarrier<PIPE_V>();
                 ScaleInputs(m, hv, part, Record(core, t_->cg, r), gate, beta);
-                const int64_t leader = ChunkGdnBwdIntraLeaderR<G>(m.hvBegin, r);
+                const int64_t leader = ChunkGdnBwdIntraLeaderR<G>(
+                    m.hvBegin, r, t_->groupSize);
                 if (!scoreSeen[leader]) {
                     Wait(static_cast<uint16_t>(leader));
                     scoreSeen[leader] = true;
@@ -78,7 +79,8 @@ private:
         const uint64_t vv = ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv)
             * t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
         if (loadK) {
-            const uint64_t kk = ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / G)
+            const uint64_t kk = ((static_cast<uint64_t>(m.batch) * t_->qkHeads +
+                hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize))
                 * t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
             AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
         }
@@ -143,7 +145,9 @@ private:
             AscendC::Cast(vf, vi, AscendC::RoundMode::CAST_NONE, validRows * HEAD_DIM);
             Fence<AscendC::HardEvent::V_MTE2>();
             if (hv + 1 < m.hvBegin + m.validHeads) {
-                const bool nextHk = (hv + 1) / G != hv / G;
+                const bool nextHk =
+                    (hv + 1) / ChunkGdnBwdIntraGroup<G>(t_->groupSize) !=
+                    hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize);
                 PrefetchRaw(m, hv + 1, part, nextHk);
             }
             Exponent(coeff, gate, CHUNK_TOKENS);

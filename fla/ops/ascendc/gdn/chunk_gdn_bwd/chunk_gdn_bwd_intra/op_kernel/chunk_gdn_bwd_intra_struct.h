@@ -31,6 +31,8 @@ struct ChunkGdnBwdIntraTilingData {
     int64_t isVarlen;
     int64_t useExp2;
     float scale;
+    // G_KEY=0（运行时 G 桶）时生效的 GVA 比例；G_KEY 1~4 时与模板参数一致。
+    int64_t groupSize;
     uint32_t reserved;
 };
 

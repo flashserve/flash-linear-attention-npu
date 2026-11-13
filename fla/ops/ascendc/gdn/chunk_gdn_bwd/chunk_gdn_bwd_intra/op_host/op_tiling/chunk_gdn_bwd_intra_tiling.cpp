@@ -11,7 +11,6 @@
 #include "../chunk_gdn_bwd_intra_schedule.h"
 #include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
-
 namespace optiling {
 namespace {
 
@@ -97,9 +96,21 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     OP_CHECK_IF(batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0,
                 OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
                 return ge::GRAPH_FAILED);
+    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const auto arch = platform.GetCurNpuArch();
+    const bool arch22 = arch == NpuArch::DAV_2201;
+    OP_CHECK_IF(!arch22 && arch != NpuArch::DAV_3510,
+                OP_LOGE(context->GetNodeName(), "only DAV_2201 and DAV_3510 are supported."),
+                return ge::GRAPH_FAILED);
+    // A2/A3 上 G 超过 4 走 G_KEY=0 的运行时 G 桶；A5 维持模板上限 4。
+    // 上限统一取自 schedule.h 的 IntraMaxGvaRatio，与 aclnn 参数校验同源。
+    const int64_t maxRatio = IntraMaxGvaRatio(arch22);
     const int64_t headRatio = valueHeads / qkHeads;
-    OP_CHECK_IF(valueHeads % qkHeads != 0 || headRatio > 4,
-                OP_LOGE(context->GetNodeName(), "unsupported HV/HK head ratio, must be 1/2/3/4."),
+    OP_CHECK_IF(valueHeads % qkHeads != 0 || headRatio < 1 || headRatio > maxRatio,
+                OP_LOGE(context->GetNodeName(),
+                        "unsupported HV/HK head ratio, got HV=%ld, HK=%ld, must be "
+                        "an integer in [1, %d] on this SoC.",
+                        valueHeads, qkHeads, static_cast<int>(maxRatio)),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(keyDim != 128 || valueDim != 128,
                 OP_LOGE(context->GetNodeName(), "K and V dims must be 128."),
@@ -141,16 +152,11 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         chunkCount = matrixMetadata ? metadataShape.GetDim(0) : metadataShape.GetDim(0) / 2;
     }
 
-    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    const auto arch = platform.GetCurNpuArch();
-    const bool arch22 = arch == NpuArch::DAV_2201;
-    OP_CHECK_IF(!arch22 && arch != NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(), "only DAV_2201 and DAV_3510 are supported."),
-                return ge::GRAPH_FAILED);
     const uint32_t aicCores = platform.GetCoreNumAic();
     IntraSchedule schedule;
     OP_CHECK_IF(!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
-                                    arch22, platform.GetLibApiWorkSpaceSize(), schedule),
+                                    arch22, platform.GetLibApiWorkSpaceSize(),
+                                    schedule),
                 OP_LOGE(context->GetNodeName(), "invalid schedule or workspace overflow."),
                 return ge::GRAPH_FAILED);
     if (arch22) {
@@ -188,10 +194,13 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->isVarlen = isVarlen ? 1 : 0;
     tiling->useExp2 = *useExp2 ? 1 : 0;
     tiling->scale = static_cast<float>(*scale);
+    tiling->groupSize = headRatio;
     tiling->reserved = arch22 ? 2201 : 0;
     const uint64_t strategyKey = isVarlen ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
-    const uint64_t gKey = static_cast<uint64_t>(headRatio);
+    // G 1~4 仍走编译期模板；超过 4（仅 arch22 可达）落到 G_KEY=0 的运行时桶。
+    const uint64_t gKey = headRatio <= 4 ?
+        static_cast<uint64_t>(headRatio) : CHUNK_GDN_BWD_INTRA_G_RUNTIME;
     const uint64_t mainKey = mainDtype == ge::DT_BF16 ?
         CHUNK_GDN_BWD_INTRA_MAIN_BF16 : CHUNK_GDN_BWD_INTRA_MAIN_FP16;
     const uint64_t gateKey = DataTypeKey(
