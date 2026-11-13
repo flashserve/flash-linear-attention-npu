@@ -7,6 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_fwd_h.h"
 #include "chunk_fwd_h.h"
 #include <dlfcn.h>
@@ -310,6 +313,7 @@ static aclnnStatus ParamsDataContiguous(ChunkFwdHParams &params, aclOpExecutor *
         if (status != ACLNN_SUCCESS) {
             return status;
         }
+        // bf16 g 不在入口 cast，由 kernel 内 Cast 转 fp32（数值等价）。
     }
     if (params.gkOptional != nullptr) {
         status = DataContiguous(params.gkOptional, executorPtr);
@@ -440,6 +444,8 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
+    // gated 引擎经 STATE_V_FIRST 模板维原生产出 [K,V]/[V,K] state（cube 等价
+    // 转置式，见 arch22/chunk_fwd_h_utils.h），aclnn 层无需布局翻译，参数原样直达。
     auto result = l0op::ChunkFwdH(
         params.k, params.w, params.u, params.gOptional, params.gkOptional, params.initialStateOptional,
         params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
@@ -448,7 +454,6 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     CHECK_RET(result[0] != nullptr && result[1] != nullptr &&
                   (!outputFinalState || result[2] != nullptr),
               ACLNN_ERR_INNER_NULLPTR);
-
     auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
     CHECK_RET(viewCopyResult0 != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);

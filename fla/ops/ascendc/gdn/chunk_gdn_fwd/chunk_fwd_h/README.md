@@ -77,11 +77,15 @@ Stage0 和 Stage2 均使用 BF16 矩阵乘输入、FP32 累加。Stage0 在写�
 
 `state_v_first=false` 时 state 末两维为 `[K,V]`，为 `true` 时为 `[V,K]`。两种布局均由 kernel 原生处理，不依赖外部转置。
 
-当前仅支持 `K=V=128`、`chunk_size=64`、`save_new_value=true`，支持 A2、A3 和 A5。
-
 所有 aclnn tensor descriptor 必须使用非私有 ND storage/view format；输入可以是 ND view，
 host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND。Python 入口只接受标准物理
 布局并创建连续 ND 输出，不支持将私有 NPU format 伪装成 ND。
+
+## 支持范围
+
+- A2、A3、A5。
+- `K=V=128`、`chunk_size=64`、`save_new_value=true`。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`。
 
 ## 变长序列
 
