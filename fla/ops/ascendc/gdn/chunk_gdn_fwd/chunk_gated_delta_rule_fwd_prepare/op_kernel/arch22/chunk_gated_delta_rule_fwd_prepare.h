@@ -143,7 +143,7 @@ public:
         if (!ScaleBytes(c.headBegin, g) || !ScaleBytes(c.headEnd, g)) return false;
         return c.valid != 0;
     }
-}
+};
 
 template <typename InputT, bool Prepared, int V, int BT, int QkvLayout, bool QkNorm = false>
 __aicore__ inline void Run(const Args &args)
