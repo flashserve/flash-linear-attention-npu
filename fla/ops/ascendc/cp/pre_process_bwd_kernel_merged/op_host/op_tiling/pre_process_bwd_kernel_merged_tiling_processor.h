@@ -210,11 +210,11 @@ public:
             const gert::Shape gkShape = ctx_.gkShape->GetStorageShape();
             if (gkShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
                             gkShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
+                            gkShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
+                            gkShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "gk",
             std::to_string(gkShape.GetDim(0)) + "," + std::to_string(gkShape.GetDim(1)) + "," + std::to_string(gkShape.GetDim(2)) + "," + std::to_string(gkShape.GetDim(3)),
             "gk must be [B,Hv,T,K]");
-                            gkShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", std::to_string(int64_t), "gk must be [B,Hv,T,K].");
         return ge::GRAPH_FAILED;
     }
             if (ctx_.gkDtype != ctx_.qDtype) {
@@ -227,13 +227,13 @@ public:
             return ge::GRAPH_SUCCESS;
         }
         if (ctx_.hasG) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "g",
-            std::to_string(gShape.GetDim(0)) + "," + std::to_string(gShape.GetDim(1)) + "," + std::to_string(gShape.GetDim(2)),
-            "g must be [B,Hv,T]");
+            const gert::Shape gShape = ctx_.gShape->GetStorageShape();
             if (gShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
                             gShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
                             gShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", std::to_string(int64_t), "g must be [B,Hv,T].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "g",
+            std::to_string(gShape.GetDim(0)) + "," + std::to_string(gShape.GetDim(1)) + "," + std::to_string(gShape.GetDim(2)),
+            "g must be [B,Hv,T]");
         return ge::GRAPH_FAILED;
     }
             if (ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT) {

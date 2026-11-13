@@ -135,8 +135,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != T ||
                 inputN * inputHeadDim != D) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B",
-            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(2)),
-            "dy must be [B, N, T, Dh] with D=N*Dh for logical x [B, T, D]");
+            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(2)), "dy must be [B, N, T, Dh] with D=N*Dh for logical x [B, T, D]");
         return ge::GRAPH_FAILED;
     }
         totalTokens = B * T;
@@ -154,11 +153,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         D = xShape.GetDim(DIM_INDEX1);
         inputN = dyShape.GetDim(DIM_INDEX0);
         inputHeadDim = dyShape.GetDim(DIM_INDEX2);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d",
-            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(1)),
-            "dy must be [N, total_tokens, Dh] with D=N*Dh for logical x [total_tokens, D]");
+        if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != totalTokens ||
                 inputN * inputHeadDim != D) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", std::to_string(uint32_t), "dy must be [N, total_tokens, Dh] with D=N*Dh for logical x [total_tokens, D]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d",
+            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(1)), "dy must be [N, total_tokens, Dh] with D=N*Dh for logical x [total_tokens, D]");
         return ge::GRAPH_FAILED;
     }
     } else if (inputLayout == INPUT_LAYOUT_TND) {
@@ -167,13 +165,13 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
         inputMode = 0;
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy",
-            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(1)),
-            "dy shape must match x shape when inputLayout is TND");
+        totalTokens = xShape.GetDim(DIM_INDEX0);
         D = xShape.GetDim(DIM_INDEX1);
         if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != totalTokens ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != D) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy", std::to_string(static_cast<int>(uint32_t)), "dy shape must match x shape when inputLayout is TND");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy",
+            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(1)),
+            "dy shape must match x shape when inputLayout is TND");
         return ge::GRAPH_FAILED;
     }
         inputN = 1;
@@ -184,15 +182,15 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
         inputMode = 1;
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy",
-            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(1)) + "," + std::to_string(dyShape.GetDim(2)),
-            "dy shape must match x shape when inputLayout is BSND/BSH");
+        B = xShape.GetDim(DIM_INDEX0);
         T = xShape.GetDim(DIM_INDEX1);
         D = xShape.GetDim(DIM_INDEX2);
         if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != T ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != D) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy", std::to_string(static_cast<int>(uint32_t)), "dy shape must match x shape when inputLayout is BSND/BSH");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy",
+            std::to_string(dyShape.GetDim(0)) + "," + std::to_string(dyShape.GetDim(1)) + "," + std::to_string(dyShape.GetDim(2)),
+            "dy shape must match x shape when inputLayout is BSND/BSH");
         return ge::GRAPH_FAILED;
     }
         totalTokens = B * T;
