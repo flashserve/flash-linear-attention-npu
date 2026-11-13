@@ -634,7 +634,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     if (!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
             "%s: persistent workspace end limit exceeded, offset=%zu bytes, need=%zu bytes", __func__,
-            workspaceOffset, hIntermediateBytes));;");
+            workspaceOffset, hIntermediateBytes);
         return ge::GRAPH_FAILED;
     }
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);
@@ -670,7 +670,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
                          rawTiling->GetCapacity() - oTilingOffset, &oTiling, sizeof(oTiling)) != EOK ||
                     memcpy_s(static_cast<uint8_t *>(rawData) + trailerOffset,
                              rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", std::to_string(static_cast), "Serialize combined tiling data failed.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "failed", "Serialize combined tiling data failed");
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);
