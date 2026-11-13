@@ -5,6 +5,7 @@
 
 #include "chunk_gated_delta_rule_fwd_prepare_tiling.h"
 
+#include "op_common/log/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -162,7 +163,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     }
     const int64_t hRatio = HV / HK;
     if (hRatio < 1 || hRatio > 16) {
-        OP_LOGE(context->GetNodeName(), "Hv/Hk=%ld not in [1,16]", hRatio);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv/Hk", std::to_string(hRatio),
+                                              "Hv/Hk must be in [1,16]");
         return ge::GRAPH_FAILED;
     }
     if (qDtype != ge::DT_BF16) {

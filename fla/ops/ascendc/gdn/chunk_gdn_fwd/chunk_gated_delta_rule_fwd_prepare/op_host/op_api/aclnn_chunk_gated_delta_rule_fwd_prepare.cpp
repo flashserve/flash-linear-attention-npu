@@ -3,6 +3,9 @@
  * BSD 3-Clause License.
  */
 
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_gated_delta_rule_fwd_prepare.h"
 #include "chunk_gated_delta_rule_fwd_prepare.h"
 
@@ -22,6 +25,7 @@
 #include "opdev/tensor_view_utils.h"
 #include <cstring>
 #include <cstdint>
+#include <string>
 
 using namespace op;
 
@@ -30,6 +34,8 @@ extern "C" {
 #endif
 
 namespace {
+
+constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleFwdPrepare";
 
 constexpr int64_t K_SIZE = 128;
 constexpr int64_t CHUNK_SIZE = 64;
@@ -227,8 +233,11 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     CHECK_COND(V == 128 || V == 256, ACLNN_ERR_PARAM_INVALID, "V must be 128 or 256.");
     CHECK_COND(HK > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID, "Hv must be divisible by Hk.");
     const int64_t ratio = HV / HK;
-    CHECK_COND(ratio >= 1 && ratio <= 16, ACLNN_ERR_PARAM_INVALID,
-               "Hv/Hk must be in [1,16].");
+    if (ratio < 1 || ratio > 16) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "Hv/Hk", std::to_string(ratio),
+                                             "Hv/Hk must be in [1,16]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     if (params.aLogOptional != nullptr) {
         const op::Shape aLogShape = params.aLogOptional->GetViewShape();

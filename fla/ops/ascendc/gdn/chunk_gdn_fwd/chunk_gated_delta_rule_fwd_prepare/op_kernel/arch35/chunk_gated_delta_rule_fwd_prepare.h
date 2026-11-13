@@ -488,14 +488,6 @@ public:
         }
     }
 
-    // G>4 sibling sub-pack: it holds no (chunk, hk) owner, so the Cube kkt is
-    // not recomputed. The unit's first sub-pack already dumped that shared
-    // kkt into both AIVs' ubKkt, and the AIV skipped the k' upload + Stage1
-    // notify for these tasks. All that is left is to echo the kkt-ready
-    // notify. Do NOT touch FIX_M / M_FIX / M_MTE1 here: every one of those
-    // is Wait→Set paired per task (see Stage4_PrefillI: Mmad Waits FIX_M(bank)
-    // then Sets it back), and a bare Set would push that event counter past
-    // its depth and stall the Cube core.
     __aicore__ inline void Stage2_AicShareOnly(int64_t taskIdx)
     {
         NotifyAivKktDone(taskIdx);
@@ -822,13 +814,6 @@ public:
                 Stage3_AivOne(PackWorkId(cur.base, cur.nThis, t) % HV, t);
             }
             if (pack != coreIdx) {
-                // A one-element sub-pack (HRatio 5/9/13) has no task for the
-                // odd sub-block, so the kkt-ready chain that normally orders
-                // this drain after the Cube's Stage7 for `prev` does not exist
-                // for AIV1 and the tail case does not cover it either. Take the
-                // S7Done handshake explicitly; the Cube notifies once per
-                // unit-scheduled pack. Kept away from the Stage1 loop on
-                // purpose -- gating Stage1 on Stage7 kills the pack overlap.
                 if (UnitScheduled() && !(PackHasTail(cur) || PackHasTail(prev))) {
                     WaitAicStage7Done();
                 }

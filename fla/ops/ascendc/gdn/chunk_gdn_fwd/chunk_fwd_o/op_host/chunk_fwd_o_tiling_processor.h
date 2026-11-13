@@ -18,6 +18,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include "op_common/log/log.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
@@ -293,10 +295,13 @@ public:
                     OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires g in fp32 or bf16."),
                     return ge::GRAPH_FAILED);
         const int64_t headRatio = tiling_.vNumHead / tiling_.kNumHead;
-        OP_CHECK_IF(headRatio < CHUNK_FWD_O_A5_MIN_GVA_RATIO || headRatio > CHUNK_FWD_O_A5_MAX_GVA_RATIO,
-                    OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires HV/HK in [%ld,%ld], but got %ld.",
-                            CHUNK_FWD_O_A5_MIN_GVA_RATIO, CHUNK_FWD_O_A5_MAX_GVA_RATIO, headRatio),
-                    return ge::GRAPH_FAILED);
+        if (headRatio < CHUNK_FWD_O_A5_MIN_GVA_RATIO || headRatio > CHUNK_FWD_O_A5_MAX_GVA_RATIO) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "HV/HK", std::to_string(headRatio),
+                "A5 chunk_fwd_o requires HV/HK in [" + std::to_string(CHUNK_FWD_O_A5_MIN_GVA_RATIO) + "," +
+                    std::to_string(CHUNK_FWD_O_A5_MAX_GVA_RATIO) + "]");
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -343,6 +348,9 @@ public:
         tiling_.numChunksPerBatch = CeilDiv(tiling_.seqlen, tiling_.chunkSize);
         tiling_.chunkNum = tiling_.shapeBatch * tiling_.numChunksPerBatch;
         tiling_.hvPerHk = tiling_.vNumHead / tiling_.kNumHead;
+        // Tasks group 4 HV (3 when GVA=3 so group edges stay aligned with hk).
+        // GVA>4 splits one hk across ceil(G/4) groups, repeating the Q/K load and
+        // Q @ K^T once per group; cross-group Q/K residency needs an L1 re-plan.
         tiling_.taskGroupSize = tiling_.hvPerHk == 3 ? 3 : 4;
         return ge::GRAPH_SUCCESS;
     }
@@ -356,6 +364,9 @@ public:
         tiling_.chunkNum = chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) / CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE;
         tiling_.numChunksPerBatch = 0;
         tiling_.hvPerHk = tiling_.vNumHead / tiling_.kNumHead;
+        // Tasks group 4 HV (3 when GVA=3 so group edges stay aligned with hk).
+        // GVA>4 splits one hk across ceil(G/4) groups, repeating the Q/K load and
+        // Q @ K^T once per group; cross-group Q/K residency needs an L1 re-plan.
         tiling_.taskGroupSize = tiling_.hvPerHk == 3 ? 3 : 4;
         return ge::GRAPH_SUCCESS;
     }
