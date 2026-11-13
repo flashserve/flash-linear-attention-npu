@@ -588,7 +588,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     auto ret = CheckParams(params);
     if (!(ret == ACLNN_SUCCESS)) {
         return ret;
-    }
+    };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         
         return ACLNN_ERR_PARAM_INVALID;
@@ -642,7 +642,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
         return ACLNN_ERR_PARAM_INVALID;
-    }
+    };
 
     const aclTensor *hResult = result[0];
     if (params.stateVFirst) {
