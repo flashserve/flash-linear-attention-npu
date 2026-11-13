@@ -221,6 +221,7 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     }
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, shape);
     if (processor.Process() != ge::GRAPH_SUCCESS) {
+        ;
         return ge::GRAPH_FAILED;
     }
     shape.qkTokenMajor = modelTm && !ctx.qRstd;

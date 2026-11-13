@@ -100,6 +100,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
 
     ChunkKdaBwdRecomputeTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {
+        ;
         return ge::GRAPH_FAILED;
     }
 
