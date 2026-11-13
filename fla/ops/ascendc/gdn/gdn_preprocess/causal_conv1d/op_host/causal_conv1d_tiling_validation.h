@@ -203,7 +203,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     const int64_t *runModePtr = attrs->GetAttrPointer<int64_t>(ATTR_RUN_MODE_INDEX);
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;
     if (attrInfo.runMode != 0 && attrInfo.runMode != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "runMode", std::to_string(attrInfo.runMode), "runMode only supports 0/1");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "runMode", "invalid", "runMode only supports 0/1");
         return ge::GRAPH_FAILED;
     }
 
@@ -314,7 +314,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         return ge::GRAPH_FAILED;
     }
         if (tiling.headNum > dim || dim % tiling.headNum != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", std::to_string(tiling.headNum), "headNum must be in (0, dim] and divide dim exactlyd,d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", "invalid", "headNum must be in (0, dim] and divide dim exactlyd,d");
         return ge::GRAPH_FAILED;
     }
         tiling.headDim = dim / tiling.headNum;
@@ -611,7 +611,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t v = ReadVisibleMetadataValue(hisTensor, tiling.hasInitialStateDtype, i);
                     if (v != 0 && v != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", std::to_string(v), "hasInitialState[d]d is invalid (only supports 0/1)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "hasInitialState[d]d is invalid (only supports 0/1)");
         return ge::GRAPH_FAILED;
     }
                     hasTrueInitialState = hasTrueInitialState || (v != 0);
@@ -659,7 +659,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 const int64_t effectiveSeqLen = (inputMode == 1) ? seqLen : tiling.maxQueryLen;
                 const int64_t reqStateLen = (width - 1) + ((effectiveSeqLen > 0) ? (effectiveSeqLen - 1) : 0);
                 if (stateLen < reqStateLen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(stateLen), "spec decode requires stateLen >= (width-1) + (max_seqlen-1)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "spec decode requires stateLen >= (width-1) + (max_seqlen-1)");
         return ge::GRAPH_FAILED;
     }
             }
@@ -682,7 +682,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
                     } else if (inputMode == 1) {
                         if (a > seqLen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", std::to_string(a), "numAcceptedTokens[d]d in 3D update");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "numAcceptedTokens[d]d in 3D update");
         return ge::GRAPH_FAILED;
     }
                     } else if (inputMode == 0 && qslDataVisible) {
@@ -690,7 +690,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1) -
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
                         if (a > lenI) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(a), "numAcceptedTokens[d]d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "numAcceptedTokens[d]d");
         return ge::GRAPH_FAILED;
     }
                     }
@@ -727,14 +727,14 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     const ge::DataType xDtype = xDesc->GetDataType();
     if (xDtype != ge::DT_BF16 && xDtype != ge::DT_FLOAT16) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(static_cast<int>(xDtype)), "x dtype only supports bf16/fp16");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "x dtype only supports bf16/fp16");
         return ge::GRAPH_FAILED;
     }
 
     auto wDesc = context->GetInputDesc(WEIGHT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, wDesc);
     if (wDesc->GetDataType() != xDtype) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(static_cast<int>(wDesc->GetDataType())), "weight dtype must equal x dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "weight dtype must equal x dtype");
         return ge::GRAPH_FAILED;
     }
 
@@ -742,7 +742,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         auto biasDesc = context->GetOptionalInputDesc(BIAS_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context, biasDesc);
         if (biasDesc->GetDataType() != xDtype) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(static_cast<int>(biasDesc->GetDataType())), "bias dtype must equal x dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "bias dtype must equal x dtype");
         return ge::GRAPH_FAILED;
     }
     }
@@ -750,7 +750,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const auto *sDesc = context->GetOptionalInputDesc(CONV_STATES_INDEX);
     if (sDesc != nullptr) {
         if (sDesc->GetDataType() != xDtype) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(static_cast<int>(sDesc->GetDataType())), "convStates dtype must equal x dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "convStates dtype must equal x dtype");
         return ge::GRAPH_FAILED;
     }
     }

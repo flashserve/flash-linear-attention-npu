@@ -103,7 +103,7 @@ private:
     ge::graphStatus CheckSpec()
     {
         if (ctx_.chunkSize != 64) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize), "chunk_size must be 64.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be 64.");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.qShape->GetStorageShape().GetDimNum() != 4) {
@@ -125,11 +125,11 @@ private:
         return ge::GRAPH_FAILED;
     }
         if (ctx_.gateDtype != ge::DT_BF16 && ctx_.gateDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", std::to_string(static_cast<int>(ctx_.gateDtype)), "g dtype must be BF16 or FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "g dtype must be BF16 or FP32.");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.betaDtype != ge::DT_BF16 && ctx_.betaDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", std::to_string(static_cast<int>(ctx_.betaDtype)), "beta dtype must be BF16 or FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "beta dtype must be BF16 or FP32.");
         return ge::GRAPH_FAILED;
     }
         tiling_.B = q.GetDim(0);
@@ -183,7 +183,7 @@ private:
     {
         if (ctx_.cuSeqlensShape != nullptr) {
             if (ctx_.chunkIndicesShape == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices", "null", "chunk_indices required for varlen");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices", "invalid", "chunk_indices required for varlen.");
         return ge::GRAPH_FAILED;
     }
             tiling_.chunkNum = ctx_.chunkIndicesShape->GetStorageShape().GetDim(0) / 2;

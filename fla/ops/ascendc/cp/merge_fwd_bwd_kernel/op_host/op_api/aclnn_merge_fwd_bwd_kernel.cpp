@@ -78,11 +78,11 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
 
     const DataType dtype = agHm->GetDataType();
     if (!(dtype == DataType::DT_FLOAT || dtype == DataType::DT_BF16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", std::to_string(static_cast<int>(dtype)), "agHm dtype must be FP32 or BF16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "agHm dtype must be FP32 or BF16.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(h->GetDataType() == dtype)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", std::to_string(static_cast<int>(h->GetDataType())), "h dtype must match agHm.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "h dtype must match agHm.");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -96,11 +96,11 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
     const int64_t k = agView.GetDim(2);
     const int64_t vk = agView.GetDim(3);
     if (!(s >= 1 && s <= kSMax && hv >= 1 && hv <= kHvMax)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(s), "S must be in [1,1024] and HV must be in [1,256].");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "S must be in [1,1024] and HV must be in [1,256].");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(k == kK && vk == kVK)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", std::to_string(k), "K must be 128 and the last dim must be 256.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "K must be 128 and the last dim must be 256.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // Tiling reads the storage shape. Both must be the dense [HV,128,128] buffer.
@@ -110,23 +110,23 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
     }
 
     if (!(preOrPostNumRanks >= 1 && preOrPostNumRanks <= s)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "preOrPostNumRanks", std::to_string(preOrPostNumRanks), "preOrPostNumRanks must be in [1, S].");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "preOrPostNumRanks", "invalid", "preOrPostNumRanks must be in [1, S].");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(rank >= 0 && rank < s)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", std::to_string(rank), "rank must be in [0, S).");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", "invalid", "rank must be in [0, S).");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const bool unitWorld = (s == 1 && preOrPostNumRanks == 1 && rank == 0);
     if (!unitWorld) {
         if (forward) {
             if (!(rank >= preOrPostNumRanks)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", std::to_string(rank), "forward merge requires rank >= N.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", "invalid", "forward merge requires rank >= N.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         } else {
             if (!(rank + preOrPostNumRanks < s)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", std::to_string(preOrPostNumRanks), "backward merge requires rank + N < S.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", "invalid", "backward merge requires rank + N < S.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         }

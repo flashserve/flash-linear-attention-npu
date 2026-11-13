@@ -124,7 +124,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     } else if (storeFinalState) {
         auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
         if (finalStateDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "final_state", "absent", "final_state output descriptor must exist when storeFinalState is true.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "final_state", "invalid", "final_state output descriptor must exist when storeFinalState is true.");
         return ge::GRAPH_FAILED;
     }
         resolvedStateDataType = finalStateDesc->GetDataType();
@@ -183,13 +183,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     }
 
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(logicalBatch), "Logical batch, sequence length and head counts must be positive, but got "
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "Logical batch, sequence length and head counts must be positive, but got "
                 "d,d,d,d.");
 
         return ge::GRAPH_FAILED;
     }
     if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(logicalKDim), "FwdH requires K=128, V=128 and chunk_size=64d,d,d.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "FwdH requires K=128, V=128 and chunk_size=64d,d,d.");
 
         return ge::GRAPH_FAILED;
     }
@@ -199,7 +199,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if ((useG && logicalVHeads % logicalKHeads != 0) || (useGk && logicalKHeads != logicalVHeads)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(logicalKHeads), "g-only requires HV % HK == 0; gk-only requires k/ kg head count equal HV. "
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g-only requires HV % HK == 0; gk-only requires k/ kg head count equal HV. "
                 "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.");
 
         return ge::GRAPH_FAILED;

@@ -46,7 +46,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
         return ge::GRAPH_FAILED;
     }
     if (K != PPFM_FIXED_K || V != PPFM_FIXED_V) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", std::to_string(K), "K/V must be 128d/d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K/V must be 128d/d");
         return ge::GRAPH_FAILED;
     }
     if (chunkSize != PPFM_FIXED_CHUNK) {
@@ -54,7 +54,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
         return ge::GRAPH_FAILED;
     }
     if (Hk <= 0 || Hv <= 0 || Hv % Hk != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", std::to_string(Hk), "GVA requires Hv % Hk == 0d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv % Hk == 0d");
         return ge::GRAPH_FAILED;
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
@@ -75,7 +75,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const bool hasBg = bgTensor != nullptr;
     const bool hasV = context->GetOptionalInputTensor(INPUT_V_IDX) != nullptr;
     if (hasG == hasGk) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "g", std::to_string(hasG), "exactly one of g / gk must be given");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "g", "invalid", "exactly one of g / gk must be given");
         return ge::GRAPH_FAILED;
     }
     if (hasBg) {
@@ -104,7 +104,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, cuData);
     for (int64_t i = 0; i < cuNumel; ++i) {
         if (cuData[i] < 0 || cuData[i] > T) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(cuData[i]), "cu_seqlens[d]d out of range [0,d]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens[d]d out of range [0,d]");
         return ge::GRAPH_FAILED;
     }
         if (i > 0) {
@@ -214,10 +214,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     if (context->GetRawTilingData() == nullptr ||
                     context->GetRawTilingData()->GetCapacity() <
                         sizeof(GDN::PreProcessFwdKernelMergedTilingData)) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-            "%s: tiling buffer too small for tcube, capacity=%zu bytes, need=%zu bytes", __func__,
-            context->GetRawTilingData() == nullptr ? 0U : context->GetRawTilingData()->GetCapacity(),
-            sizeof(GDN::PreProcessFwdKernelMergedTilingData));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "tiling buffer too small for tcube tiling");
         return ge::GRAPH_FAILED;
     }
     if (!BuildCubeTiling(ascendcPlatform, tiling)) {

@@ -417,7 +417,7 @@ public:
     ge::graphStatus A5ChunkTilingVarLen()
     {
         if (tiling_.shapeBatch != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "size", std::to_string(tiling_.shapeBatch), "A5 varlen chunk_fwd_o requires batch=1.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "size", "invalid", "A5 varlen chunk_fwd_o requires batch=1.");
         return ge::GRAPH_FAILED;
     }
         const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();

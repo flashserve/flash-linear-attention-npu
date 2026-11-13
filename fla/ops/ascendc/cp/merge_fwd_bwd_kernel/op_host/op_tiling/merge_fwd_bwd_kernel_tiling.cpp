@@ -45,11 +45,11 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
 
     const ge::DataType dtype = agDesc->GetDataType();
     if (dtype != ge::DT_FLOAT && dtype != ge::DT_BF16) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(static_cast<int>(dtype)), "ag_hm dtype must be FP32 or BF16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "ag_hm dtype must be FP32 or BF16.");
         return ge::GRAPH_FAILED;
     }
     if (hDesc->GetDataType() != dtype || hInDesc->GetDataType() != dtype) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(static_cast<int>(hDesc->GetDataType())), "h dtype must match ag_hm.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "h dtype must match ag_hm.");
         return ge::GRAPH_FAILED;
     }
 
@@ -63,11 +63,11 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
     const int64_t K = ag.GetDim(2);
     const int64_t VK = ag.GetDim(3);
     if (S < 1 || S > 1024 || Hv < 1 || Hv > 256) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(S), "S/HV out of range.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "S/HV out of range.");
         return ge::GRAPH_FAILED;
     }
     if (K != kK || VK != kVK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", std::to_string(K), "K must be 128 and last dim must be 256.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K must be 128 and last dim must be 256.");
         return ge::GRAPH_FAILED;
     }
 
@@ -91,23 +91,23 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
     const bool stateVFirst = stateVFirstPtr != nullptr && *stateVFirstPtr;
     if (N < 1 || N > S) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "preOrPostNumRanks", std::to_string(N), "preOrPostNumRanks must be in [1, S].");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "preOrPostNumRanks", "invalid", "preOrPostNumRanks must be in [1, S].");
         return ge::GRAPH_FAILED;
     }
     if (rank < 0 || rank >= S) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "rank", std::to_string(rank), "rank must be in [0, S).");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "rank", "invalid", "rank must be in [0, S).");
         return ge::GRAPH_FAILED;
     }
     const bool unitWorld = (S == 1 && N == 1 && rank == 0);
     if (!unitWorld) {
         if (forward) {
             if (rank < N) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "rank", std::to_string(rank), "forward merge requires rank >= N.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "rank", "invalid", "forward merge requires rank >= N.");
         return ge::GRAPH_FAILED;
     }
         } else {
             if (rank + N >= S) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "rank", std::to_string(N), "backward merge requires rank + N < S.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "rank", "invalid", "backward merge requires rank + N < S.");
         return ge::GRAPH_FAILED;
     }
         }

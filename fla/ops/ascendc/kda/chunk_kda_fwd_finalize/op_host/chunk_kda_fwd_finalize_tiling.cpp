@@ -183,7 +183,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     isVarLen = cu != nullptr;
     if (!isVarLen) {
         if (indices != nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "present", "chunk_indices 必须和 cu_seqlens 一起传入。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "chunk_indices 必须和 cu_seqlens 一起传入。");
 
             return false;
         }
@@ -245,7 +245,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
             if (pairs[offset] != static_cast<int64_t>(seq) ||
                 pairs[offset + 1] != static_cast<int64_t>(chunk)) {
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_indices", std::to_string(pairs[offset]), "chunk_indices 必须是规范的 sequence-major (seq,chunk) 序列。");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_indices", "invalid", "chunk_indices 必须是规范的 sequence-major (seq,chunk) 序列。");
 
                 return false;
             }
@@ -268,7 +268,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FINALIZE_ATTR_STATE_V_FIRST);
     FinalizeShape info;
     if (stateVFirst == nullptr || !ReadLayout(layout, info)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "output_layout", std::to_string(static_cast<int>(stateVFirst)), "output_layout 只支持 BNSD/BSND/NTD/TND，且 state_v_first 必须提供。");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "output_layout", "invalid", "output_layout 只支持 BNSD/BSND/NTD/TND，且 state_v_first 必须提供。");
 
         return ge::GRAPH_FAILED;
     }
@@ -308,7 +308,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FINALIZE_INPUT_CHUNK_INDICES);
     if ((cuDesc != nullptr && cuDesc->GetDataType() != ge::DT_INT64) ||
         (indexDesc != nullptr && indexDesc->GetDataType() != ge::DT_INT64)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "non-int64", "cu_seqlens/chunk_indices 仅支持 INT64 host 元数据");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens/chunk_indices 仅支持 INT64 host 元数据。");
 
         return ge::GRAPH_FAILED;
     }
@@ -319,7 +319,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     if (!ResolveSequenceInfo(context, info, seqNum, totalChunks, isVarLen) ||
         seqNum > std::numeric_limits<uint32_t>::max() ||
         totalChunks > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "metadata", std::to_string(seqNum), "变长 metadata 无效或 chunk 数超限。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "metadata", "invalid", "变长 metadata 无效或 chunk 数超限。");
 
         return ge::GRAPH_FAILED;
     }

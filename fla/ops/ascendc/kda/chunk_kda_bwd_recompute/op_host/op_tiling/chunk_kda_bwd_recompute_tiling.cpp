@@ -22,7 +22,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
     if (inputLayout == nullptr ||
                     (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "input_layout", inputLayout == nullptr ? "null" : inputLayout, "Recompute input_layout must be BNSD or NTD");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "input_layout", "invalid", "Recompute input_layout must be BNSD or NTD.");
         return ge::GRAPH_FAILED;
     }
 
@@ -68,8 +68,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
             if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
             if (input->GetStorageShape() != expected) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout",
-            std::to_string(input->GetStorageShape().GetDimNum()), "Invalid mixed-layout Recompute input.");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", "invalid", "Invalid mixed-layout Recompute input.");
         return ge::GRAPH_FAILED;
     }
         }

@@ -84,15 +84,15 @@ static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
 {
     const auto bf16 = DataType::DT_BF16;
     if (!(params.k->GetDataType() == bf16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "k", std::to_string(static_cast<int>(params.k->GetDataType())), "k must be BF16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "k", "invalid", "k must be BF16.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.w->GetDataType() == bf16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "w", std::to_string(static_cast<int>(params.w->GetDataType())), "w must be BF16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "w", "invalid", "w must be BF16.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.u->GetDataType() == bf16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", std::to_string(static_cast<int>(params.u->GetDataType())), "u must be BF16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "u must be BF16.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // DPLR 不支持：bg / v 是 DPLR 专用输入。两者留着 ABI 槽位，但必须为空——否则会被带到
@@ -110,11 +110,11 @@ static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
     const bool gkOk = params.gk != nullptr &&
                       (params.gk->GetDataType() == DataType::DT_FLOAT || params.gk->GetDataType() == bf16);
     if (!(gOk != gkOk)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", std::to_string(gOk), "exactly one of g / gk must be given.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", "invalid", "exactly one of g / gk must be given.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.hmOut->GetDataType() == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", std::to_string(static_cast<int>(params.hmOut->GetDataType())), "hm must be FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "hm must be FP32.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -156,15 +156,15 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(K == PPFM_K && V == PPFM_V)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", std::to_string(K), "K and V must be 128.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "K and V must be 128.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.chunkSize == PPFM_CHUNK)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_size", std::to_string(params.chunkSize), "chunk_size must be 64.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_size", "invalid", "chunk_size must be 64.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(HK > 0 && HV > 0 && HV % HK == 0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(HK), "GVA requires HV % HK == 0.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "GVA requires HV % HK == 0.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(wShape.GetDim(0) == 1 && wShape.GetDim(2) == T && wShape.GetDim(3) == K)) {
@@ -193,11 +193,11 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     for (int64_t i = 0; i < cuNumel; ++i) {
         const int64_t cur = cuData[i];
         if (!(cur >= 0 && cur <= T)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(cur), "cu_seqlens must satisfy 0 <= cu[i] <= T (sub-interval windows are allowed).");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must satisfy 0 <= cu[i] <= T (sub-interval windows are allowed).");
         return ACLNN_ERR_PARAM_INVALID;
     }
         if (!(cur > prev)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(cur), "cu_seqlens must be strictly increasing.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be strictly increasing.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         prev = cur;

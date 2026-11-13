@@ -334,7 +334,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
     if (recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", std::to_string(recomputeProcessor.Process()), "RecomputeWUFwd tiling failed.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "RecomputeWUFwd tiling failed.");
         return ge::GRAPH_FAILED;
     }
 
@@ -444,7 +444,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", std::to_string(rawTilingSize), "Combined tiling data exceeds raw tiling capacity.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Combined tiling data exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }
     void *rawData = rawTiling->GetData();
@@ -457,7 +457,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
                          rawTiling->GetCapacity() - oTilingOffset, &oTiling, sizeof(oTiling)) != EOK ||
                     memcpy_s(static_cast<uint8_t *>(rawData) + trailerOffset,
                              rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "failed", "Serialize combined tiling data failed");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "invalid", "Serialize combined tiling data failed.");
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);

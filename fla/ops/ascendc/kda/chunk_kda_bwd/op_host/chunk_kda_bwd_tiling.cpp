@@ -362,7 +362,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
     if (cTotalWorkspace < systemWorkspace) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", std::to_string(cTotalWorkspace), "Kernel C workspace is smaller than system workspace");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Kernel C workspace is smaller than system workspace");
         return ge::GRAPH_FAILED;
     }
     const uint64_t cUserWorkspace = cTotalWorkspace - systemWorkspace;
@@ -417,7 +417,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
     if (cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", std::to_string(cursor), "single-launch private workspace exceeds the 2 TiB limit");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "single-launch private workspace exceeds the 2 TiB");
         return ge::GRAPH_FAILED;
     }
     const uint64_t totalWorkspace = systemWorkspace + cursor;

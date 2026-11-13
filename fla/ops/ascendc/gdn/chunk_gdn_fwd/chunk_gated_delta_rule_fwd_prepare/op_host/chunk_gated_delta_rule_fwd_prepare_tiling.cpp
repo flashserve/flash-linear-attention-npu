@@ -247,7 +247,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t *ws = context->GetWorkspaceSizes(1);
     if (ws == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "buffer", "null", "workspace size buffer is null");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "buffer", "invalid", "workspace size buffer is null");
 
         return ge::GRAPH_FAILED;
     }

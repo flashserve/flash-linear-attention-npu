@@ -299,8 +299,7 @@ aclnnStatus CheckChunkIndices(const aclIntArray *chunkIndices, const aclIntArray
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
             if (!((*chunkIndices)[offset] == static_cast<int64_t>(seq) &&
                            (*chunkIndices)[offset + 1] == chunk)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndicesOptional", "non-canonical",
-            "chunkIndicesOptional must use canonical sequence-major chunk order.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndicesOptional", "invalid", "chunkIndicesOptional must use canonical sequence-major chunk order.");
         return ACLNN_ERR_PARAM_INVALID;
     }
             offset += 2;
@@ -476,7 +475,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                     : HasShape(params.attnOut,
                                                {info.batch, info.seqlen, info.hvNum, info.vDim});
     if (!(attnShapeValid && params.attnOut->GetDataType() == dataType)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", std::to_string(static_cast<int>(params.attnOut->GetDataType())), "attnOut must match q dtype and use fixed sequence-major TND/BSND layout.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "attnOut must match q dtype and use fixed sequence-major TND/BSND layout.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.gkOut != nullptr) {
@@ -485,7 +484,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                : HasShape(params.gkOut,
                                           {info.batch, info.hvNum, info.seqlen, info.kDim});
         if (!(valid && params.gkOut->GetDataType() == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", std::to_string(static_cast<int>(params.gkOut->GetDataType())), "gkOut must be float32 in fixed head-major NTD/BNSD layout.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "gkOut must be float32 in fixed head-major NTD/BNSD layout.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -500,7 +499,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, params.chunkSize});
         if (!(valid && output->GetDataType() == dataType)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", std::to_string(static_cast<int>(output->GetDataType())), "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout when provided.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "Aqk/Akk must match q dtype and use fixed head-major NTD/BNSD layout when provided.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -514,7 +513,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, info.kDim});
         if (!(valid && output->GetDataType() == dataType)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", std::to_string(static_cast<int>(output->GetDataType())), "w/qg/kg must match q dtype and use fixed head-major NTD/BNSD layout.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "w/qg/kg must match q dtype and use fixed head-major NTD/BNSD layout.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -528,7 +527,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                : HasShape(output,
                                           {info.batch, info.hvNum, info.seqlen, info.vDim});
         if (!(valid && output->GetDataType() == dataType)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", std::to_string(static_cast<int>(output->GetDataType())), "u/vNew must match q dtype and use fixed head-major NTD/BNSD layout.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "u/vNew must match q dtype and use fixed head-major NTD/BNSD layout.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -547,7 +546,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
                                                  {info.batch, info.totalChunks, info.hvNum,
                                                   info.kDim, info.vDim}));
         if (!(valid && params.hOut->GetDataType() == dataType)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", std::to_string(static_cast<int>(params.hOut->GetDataType())), "hOut must match q dtype, use fixed sequence-major layout, and follow stateVFirst.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "layout", "invalid", "hOut must match q dtype, use fixed sequence-major layout, and follow stateVFirst.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -557,7 +556,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
     }
     if (params.finalStateOut != nullptr) {
         if (!(params.finalStateOut->GetDataType() == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "finalStateOut", std::to_string(static_cast<int>(params.finalStateOut->GetDataType())), "finalStateOut must be float32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "finalStateOut", "invalid", "finalStateOut must be float32.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
@@ -602,11 +601,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(info.hNum), "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "H and HV must be positive, HV must be greater than or equal to H, and HV must be divisible by H.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.hNum <= MAX_KDA_HEAD_NUM && info.hvNum <= MAX_KDA_HEAD_NUM)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(info.hNum), "H and HV must be less than or equal to 128.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "H and HV must be less than or equal to 128.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
@@ -631,13 +630,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         }
     };
     if (!(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", std::to_string(info.batch),
-            "rank4 varlen input with cuSeqlensOptional requires B=1.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", "invalid", "rank4 varlen input with cuSeqlensOptional requires B=1.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", std::to_string(info.seqNum),
-            "varlen input supports at most 1024 sequences.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", "invalid", "varlen input supports at most 1024 sequences.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     {
@@ -680,7 +677,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         }
         if (params.safeGate) {
             if (!(params.lowerBound >= -5.0 && params.lowerBound < 0.0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "lowerBound", std::to_string(params.lowerBound), "lowerBound must be in [-5, 0) when safeGate is true.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "lowerBound", "invalid", "lowerBound must be in [-5, 0) when safeGate is true.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         }
