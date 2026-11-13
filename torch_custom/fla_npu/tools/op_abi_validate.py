@@ -54,6 +54,8 @@ KNOWN_HEADER_GAPS = {}  # Legacy gaps now have explicit contracts in _op_abi.
 # affects only ABI selection; the scoped build must still compile these targets.
 INTERNAL_OP_ABI_OWNERS = {
     "chunk_kda_fwd_fused": "chunk_kda_fwd",
+    "kda_gate_bwd_post": "chunk_kda_bwd",
+    "kda_gate_bwd_post_varlen": "chunk_kda_bwd",
 }
 
 
