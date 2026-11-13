@@ -97,7 +97,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  
      auto ret = CheckParams(params);
      if (!(ret == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+        return ret;
     };
  
      if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {

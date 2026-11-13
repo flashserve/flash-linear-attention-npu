@@ -1217,7 +1217,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     const aclnnStatus paramStatus =
         useChunk32 ? CheckChunk32Params(params) : CheckParams(params);
     if (!(paramStatus == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+        return paramStatus;
     };
 
     if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
