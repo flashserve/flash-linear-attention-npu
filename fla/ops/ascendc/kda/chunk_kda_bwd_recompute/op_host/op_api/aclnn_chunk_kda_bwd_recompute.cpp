@@ -126,7 +126,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "q,k,v,g,beta,a,wOut,uOut,qgOut,kgOut",
             "required tensors must not be nullptr");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (workspaceSize == nullptr || executor == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(

@@ -95,7 +95,7 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     if ((params.gOptional != nullptr) == (params.gkOptional != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "g,gk", "exactly one of g and gk must be provided");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.gkOptional != nullptr && !params.useExp2) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -104,7 +104,7 @@ static aclnnStatus CheckNotNull(ChunkGatedDeltaRuleBwdDhuParams params)
     }
     if (params.dhOut == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "dhOut", "dhOut must not be nullptr");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.h0Optional != nullptr) {
         if (params.dh0Out == nullptr) {

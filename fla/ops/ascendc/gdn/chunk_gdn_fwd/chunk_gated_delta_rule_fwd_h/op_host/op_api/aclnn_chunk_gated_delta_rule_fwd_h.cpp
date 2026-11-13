@@ -293,7 +293,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
         if (params.finalStateOut == nullptr) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "finalStateOut", "finalStateOut must be provided when outputFinalState is true");
-            return ACLNN_ERR_PARAM_NULLPTR;
+            return ACLNN_ERR_PARAM_INVALID;
         }
         auto stateDtype = params.initialStateOptional != nullptr ? params.initialStateOptional->GetDataType()
                                                                 : DataType::DT_FLOAT;

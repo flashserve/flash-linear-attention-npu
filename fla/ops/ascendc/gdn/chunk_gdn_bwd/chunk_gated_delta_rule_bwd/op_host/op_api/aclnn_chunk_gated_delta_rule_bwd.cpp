@@ -317,7 +317,7 @@ aclnnStatus ResolveShapeInfo(const Params &params, ShapeInfo &info)
 {
     if (params.layout == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout", "layout must not be nullptr");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (std::strcmp(params.layout, "BNSD") == 0) {
         info.layout = Layout::BNSD;

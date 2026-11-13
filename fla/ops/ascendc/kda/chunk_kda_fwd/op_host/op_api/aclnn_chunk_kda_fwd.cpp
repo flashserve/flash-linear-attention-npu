@@ -568,7 +568,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     if (!(params.q != nullptr && params.k != nullptr && params.v != nullptr &&
                    params.g != nullptr && params.beta != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "g", "q, k, v, g and beta must not be nullptr.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.attnOut != nullptr)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "attnOut", "attnOut must not be nullptr.");

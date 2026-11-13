@@ -578,7 +578,7 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
 {
     if (params.layout == nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "layout", "layout must not be nullptr");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (IsDav2201Device()) {
         if (!(params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 ||

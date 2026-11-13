@@ -166,7 +166,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
                 "KDA backward required tensor must not be nullptr");
-            return ACLNN_ERR_PARAM_NULLPTR;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!(chunkSize == 64 && safeGate && useExp2 && !stateVFirst)) {

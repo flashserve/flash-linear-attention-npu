@@ -175,7 +175,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
                 "KDA backward required tensor must not be nullptr");
-            return ACLNN_ERR_PARAM_NULLPTR;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!(chunkSize == 64 && useExp2 && !stateVFirst)) {
@@ -604,7 +604,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 OP_NAME, "q,k,v,beta,gk,aqk,akk,dO,dq,dk,dv,d_beta,d_g",
                 "ChunkKdaBwd required tensor must not be nullptr");
-            return ACLNN_ERR_PARAM_NULLPTR;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (chunkSize != 64) {
@@ -632,7 +632,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "w,qg,kg,v_new,h",
             "w, qg, kg, v_new and h are required when disable_recompute=true");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
