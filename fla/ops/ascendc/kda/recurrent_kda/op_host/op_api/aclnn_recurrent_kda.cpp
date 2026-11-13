@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <utility>
+#include <string>
 
 using namespace op;
 
@@ -38,6 +39,7 @@ extern "C" {
 #endif
 
 namespace {
+static constexpr const char *OP_NAME = "aclnnRecurrentKda";
 constexpr size_t DIM0 = 0;
 constexpr size_t DIM1 = 1;
 constexpr size_t DIM2 = 2;
@@ -479,7 +481,7 @@ bool CheckNotNull(const RecurrentKdaParams &params)
     };
     for (const auto &item : required) {
         if (item.first == nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentKda", item.second);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", item.second, "input argument must not be nullptr");
             return false;
         }
     }

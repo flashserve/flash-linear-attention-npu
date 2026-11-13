@@ -3,14 +3,18 @@
  * BSD 3-Clause License.
  */
 
+#include "graph/utils/type_utils.h"
 #include "chunk_gated_delta_rule_fwd_prepare_tiling.h"
 
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "arch22/chunk_gated_delta_rule_fwd_prepare_tiling_arch22.h"
+#include <string>
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdPrepare";
 
 namespace {
 
@@ -49,15 +53,17 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const gert::StorageShape *gShape = context->GetRequiredInputShape(PREPARE_INPUT_G);
     const gert::StorageShape *betaShape = context->GetRequiredInputShape(PREPARE_INPUT_BETA);
     if (qShape == nullptr || kShape == nullptr || vShape == nullptr || gShape == nullptr || betaShape == nullptr) {
-        OP_LOGE(context->GetNodeName(), "required input shape is null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta");
         return ge::GRAPH_FAILED;
     }
 
     const auto &q = LogicalShape(qShape);
     const auto &v = LogicalShape(vShape);
     if (q.GetDimNum() != 4 || v.GetDimNum() != 4) {
-        OP_LOGE(context->GetNodeName(), "q/v rank must be 4, got q=%zu v=%zu",
-                q.GetDimNum(), v.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            OP_NAME, "q,v",
+            std::to_string(q.GetDimNum()) + "," + std::to_string(v.GetDimNum()),
+            "q/v rank must be 4");
         return ge::GRAPH_FAILED;
     }
 
@@ -143,7 +149,7 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const auto *gDesc = context->GetInputDesc(PREPARE_INPUT_G);
     const auto *betaDesc = context->GetInputDesc(PREPARE_INPUT_BETA);
     if (qDesc == nullptr || gDesc == nullptr || betaDesc == nullptr) {
-        OP_LOGE(context->GetNodeName(), "required input desc is null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType qDtype = qDesc->GetDataType();
@@ -151,42 +157,53 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const ge::DataType betaDtype = betaDesc->GetDataType();
 
     if (K != 128 || (V != 128 && V != 256) || chunkSize != 64) {
-        OP_LOGE(context->GetNodeName(),
-                "unsupported K=%ld V=%ld chunkSize=%ld (need K=128 V=128/256 chunkSize=64)",
-                K, V, chunkSize);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "K,V,chunkSize",
+            std::to_string(K) + "," + std::to_string(V) + "," + std::to_string(chunkSize),
+            "need K=128, V=128/256 and chunkSize=64");
         return ge::GRAPH_FAILED;
     }
     if (HK <= 0 || HV % HK != 0) {
-        OP_LOGE(context->GetNodeName(), "Hv must be divisible by Hk, Hk=%ld Hv=%ld", HK, HV);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "Hk,Hv", std::to_string(HK) + "," + std::to_string(HV),
+            "Hv must be divisible by Hk");
         return ge::GRAPH_FAILED;
     }
     const int64_t hRatio = HV / HK;
     if (hRatio < 1 || hRatio > 4) {
-        OP_LOGE(context->GetNodeName(), "Hv/Hk=%ld not in {1,2,3,4}", hRatio);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "Hv/Hk", std::to_string(hRatio), "Hv/Hk must be in {1,2,3,4}");
         return ge::GRAPH_FAILED;
     }
     if (qDtype != ge::DT_BF16) {
-        OP_LOGE(context->GetNodeName(), "q/k/v must be bf16, got dtype=%d", static_cast<int>(qDtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "q,k,v", ge::TypeUtils::DataTypeToSerialString(qDtype),
+            "q/k/v must be bf16");
         return ge::GRAPH_FAILED;
     }
     if (useGateInKernel && !hasALog) {
-        OP_LOGE(context->GetNodeName(), "use_gate_in_kernel requires a_log");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "a_log", "use_gate_in_kernel requires a_log");
         return ge::GRAPH_FAILED;
     }
     if (hasDtBias && !hasALog) {
-        OP_LOGE(context->GetNodeName(), "dt_bias requires a_log (use_gate_in_kernel)");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "dt_bias", "dt_bias requires a_log (use_gate_in_kernel)");
         return ge::GRAPH_FAILED;
     }
     if (hasCuSeqlens && B != 1) {
-        OP_LOGE(context->GetNodeName(), "varlen requires B=1, got B=%ld", B);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "B", std::to_string(B), "varlen requires B=1");
         return ge::GRAPH_FAILED;
     }
     if (hasCuSeqlens && !hasChunkIndices) {
-        OP_LOGE(context->GetNodeName(), "varlen requires chunk_indices with cu_seqlens");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "chunk_indices", "varlen requires chunk_indices with cu_seqlens");
         return ge::GRAPH_FAILED;
     }
     if (allowNegEigval && !useBetaSigmoid) {
-        OP_LOGE(context->GetNodeName(), "allow_neg_eigval requires use_beta_sigmoid");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "allow_neg_eigval", "allow_neg_eigval requires use_beta_sigmoid");
         return ge::GRAPH_FAILED;
     }
 
@@ -228,7 +245,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t *ws = context->GetWorkspaceSizes(1);
     if (ws == nullptr) {
-        OP_LOGE(context->GetNodeName(), "workspace size buffer is null");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "buffer", "invalid", "workspace size buffer is null");
+
         return ge::GRAPH_FAILED;
     }
     // Per-core user WS: gmWsY 4×16 KiB. Must match kWsPerCoreBytes.

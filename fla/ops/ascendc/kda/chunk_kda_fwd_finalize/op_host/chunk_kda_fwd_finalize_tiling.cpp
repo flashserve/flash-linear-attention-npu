@@ -12,6 +12,7 @@
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include <string>
 
 namespace optiling {
 namespace {
@@ -175,15 +176,15 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         (cu != nullptr) != (cuShape != nullptr) ||
         (indices != nullptr) != (indexDesc != nullptr) ||
         (indices != nullptr) != (indexShape != nullptr)) {
-        OP_LOGE(context->GetNodeName(),
-                "可选 metadata 的 descriptor、shape 与常量值必须同时存在。");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "metadata", "invalid", "可选 metadata 的 descriptor、shape 与常量值必须同时存在。");
+
         return false;
     }
     isVarLen = cu != nullptr;
     if (!isVarLen) {
         if (indices != nullptr) {
-            OP_LOGE(context->GetNodeName(),
-                    "chunk_indices 必须和 cu_seqlens 一起传入。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "chunk_indices 必须和 cu_seqlens 一起传入。");
+
             return false;
         }
         seqNum = info.batch;
@@ -191,9 +192,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         return true;
     }
     if (info.batch != 1) {
-        OP_LOGE(context->GetNodeName(),
-                "变长输入要求 B=1，当前 B=%lu。",
-                static_cast<unsigned long>(info.batch));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "B", std::to_string(info.batch), "变长输入要求 B=1");
         return false;
     }
     const gert::Shape &cuStorageShape = cu->GetStorageShape();
@@ -213,9 +213,9 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
         if (lengths[seq + 1] <= lengths[seq] ||
             lengths[seq + 1] > static_cast<int64_t>(info.seqLen)) {
-            OP_LOGE(context->GetNodeName(),
-                    "cu_seqlens 必须从 0 到 T 严格递增，错误序列=%lu。",
-                    static_cast<unsigned long>(seq));
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "cu_seqlens", std::to_string(seq),
+            "cu_seqlens 必须从 0 到 T 严格递增");
             return false;
         }
         const uint64_t length = static_cast<uint64_t>(
@@ -245,8 +245,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
             if (pairs[offset] != static_cast<int64_t>(seq) ||
                 pairs[offset + 1] != static_cast<int64_t>(chunk)) {
-                OP_LOGE(context->GetNodeName(),
-                        "chunk_indices 必须是规范的 sequence-major (seq,chunk) 序列。");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_indices", "invalid", "chunk_indices 必须是规范的 sequence-major (seq,chunk) 序列。");
+
                 return false;
             }
             offset += 2;
@@ -268,16 +268,15 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FINALIZE_ATTR_STATE_V_FIRST);
     FinalizeShape info;
     if (stateVFirst == nullptr || !ReadLayout(layout, info)) {
-        OP_LOGE(context->GetNodeName(),
-                "output_layout 只支持 BNSD/BSND/NTD/TND，且 state_v_first 必须提供。");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "output_layout", "invalid", "output_layout 只支持 BNSD/BSND/NTD/TND，且 state_v_first 必须提供。");
+
         return ge::GRAPH_FAILED;
     }
     for (size_t index = 0; index <= FINALIZE_INPUT_H; ++index) {
         const auto *desc = context->GetInputDesc(index);
         if (desc == nullptr || desc->GetDataType() != ge::DT_BF16) {
-            OP_LOGE(context->GetNodeName(),
-                    "qg_scaled/Aqk/v_new/h 均必须为 BF16，错误输入编号=%zu。",
-                    index);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(index), "qg_scaled/Aqk/v_new/h 均必须为 BF16，错误输入编号=%zu。");
+
             return ge::GRAPH_FAILED;
         }
     }
@@ -298,10 +297,9 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FormatInputShape(context, FINALIZE_INPUT_V_NEW, vNewBuffer, sizeof(vNewBuffer));
         FormatInputShape(context, FINALIZE_INPUT_H, hBuffer, sizeof(hBuffer));
         FormatOutputShape(context, 0, outBuffer, sizeof(outBuffer));
-        OP_LOGE(context->GetNodeName(),
-                "输入/输出必须匹配 head-major BF16、K=V=128、Aqk 末维 64 与 output_layout。"
-                "当前 layout=%s, qg_scaled=%s, Aqk=%s, v_new=%s, h=%s, attn_out=%s。",
-                layout, qgBuffer, aqkBuffer, vNewBuffer, hBuffer, outBuffer);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "output_layout", "invalid", "输入/输出必须匹配 head-major BF16、K=V=128、Aqk 末维 64 与 output_layout。"
+                "当前,,,,,。");
+
         return ge::GRAPH_FAILED;
     }
     const auto *cuDesc = context->GetOptionalInputDesc(
@@ -310,8 +308,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FINALIZE_INPUT_CHUNK_INDICES);
     if ((cuDesc != nullptr && cuDesc->GetDataType() != ge::DT_INT64) ||
         (indexDesc != nullptr && indexDesc->GetDataType() != ge::DT_INT64)) {
-        OP_LOGE(context->GetNodeName(),
-                "cu_seqlens/chunk_indices 仅支持 INT64 host 元数据。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens/chunk_indices 仅支持 INT64 host 元数据。");
+
         return ge::GRAPH_FAILED;
     }
 
@@ -321,16 +319,17 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     if (!ResolveSequenceInfo(context, info, seqNum, totalChunks, isVarLen) ||
         seqNum > std::numeric_limits<uint32_t>::max() ||
         totalChunks > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE(context->GetNodeName(), "变长 metadata 无效或 chunk 数超限。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "metadata", "invalid", "变长 metadata 无效或 chunk 数超限。");
+
         return ge::GRAPH_FAILED;
     }
     const auto &h = context->GetInputShape(FINALIZE_INPUT_H)->GetStorageShape();
     const int64_t hBatch = static_cast<int64_t>(info.batch);
     if (!HasShape(h, {hBatch, static_cast<int64_t>(totalChunks),
                       static_cast<int64_t>(info.heads), 128, 128})) {
-        OP_LOGE(context->GetNodeName(),
-                "h 必须为 [B,C,HV,128,128]，其中 C=%lu。",
-                static_cast<unsigned long>(totalChunks));
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "h", "C=" + std::to_string(totalChunks),
+            "h 必须为 [B,C,HV,128,128]");
         return ge::GRAPH_FAILED;
     }
 
@@ -349,7 +348,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
-        OP_LOGE(context->GetNodeName(), "chunk-first/head 分核或 workspace 规划失败。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "chunk-first/head 分核或 workspace 规划失败。");
+
         return ge::GRAPH_FAILED;
     }
 
@@ -381,8 +381,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(),
-                "设置 A5 MIX AIC/AIV batch 调度模式失败。");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 A5 MIX AIC/AIV batch 调度模式失败", __func__);
+
         return ge::GRAPH_FAILED;
     }
     size_t *workspace = context->GetWorkspaceSizes(1);

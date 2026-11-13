@@ -15,6 +15,7 @@
 #include "pre_process_bwd_kernel_merged_tiling_processor.h"
 #include "pre_process_bwd_kernel_merged_tiling.h"
 #include "err/ops_err.h"
+#include "op_common/log/log.h"
 
 using namespace CP;
 
@@ -53,14 +54,18 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
 
     auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "attrs is nullptr."), return ge::GRAPH_FAILED);
+    if (attrs == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "attrs");
+        return ge::GRAPH_FAILED;
+    }
     const double *scalePtr = attrs->GetAttrPointer<double>(CDHP_ATTR_SCALE_IDX);
     const uint32_t *chunkSizePtr = attrs->GetAttrPointer<uint32_t>(CDHP_ATTR_CHUNK_SIZE_IDX);
 
     auto platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_IF(platformInfoPtr == nullptr,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "platformInfoPtr is null!"),
-                return ge::GRAPH_FAILED);
+    if (platformInfoPtr == nullptr) {
+        OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "platformInfoPtr is null!");
+        return ge::GRAPH_FAILED;
+    }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     // 1 AIC : 2 AIV（A5 专用）：一个 block 的两个 AIV 各承包一个 head 的整条逆序链，AIV 侧墙时间
     // 近似减半（实测 gva_cp2 34.6 → 17.5 ms）。A5 用 0x4 peer 寻址。
@@ -103,9 +108,10 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     };
 
     PreProcessBwdKernelMergedTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS,
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed"),
-                return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "tiling process failed");
+        return ge::GRAPH_FAILED;
+    }
 
     // TPL tilingKey = 模板参数组合（dtype + gate 模式）：kernel 侧由该 key 选中模板实例，不走 TILING_KEY_IS 分支
     const int dTQ = (qInputDesc->GetDataType() == ge::DT_BF16) ? PRE_PROCESS_BWD_KERNEL_MERGED_TPL_BF16
