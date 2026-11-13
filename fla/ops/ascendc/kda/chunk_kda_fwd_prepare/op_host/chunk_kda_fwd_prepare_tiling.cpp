@@ -491,14 +491,32 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const uint64_t outputMode = static_cast<uint64_t>(*outputModePtr);
+    const auto platform =
+        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const bool isAscend950 =
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool validHeads = isAscend950
+        ? IsValidChunkKdaFwdPrepareLegacyHeads(
+              static_cast<uint64_t>(shape.qkHeadNum),
+              static_cast<uint64_t>(shape.valueHeadNum))
+        : IsValidChunkKdaFwdPrepareGva(
+              static_cast<uint64_t>(shape.qkHeadNum),
+              static_cast<uint64_t>(shape.valueHeadNum));
     if (!FitsUint32(shape.batch) || !FitsUint32(shape.seqLen) ||
         !FitsUint32(shape.qkHeadNum) || !FitsUint32(shape.valueHeadNum) ||
         shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
-        shape.valueHeadNum < shape.qkHeadNum ||
-        shape.valueHeadNum % shape.qkHeadNum != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、HV>=HK 且 HV%HK=0；"
-                "当前d,d,d,d,d,d。");
-
+        !validHeads) {
+        const std::string actualShape =
+            "B=" + std::to_string(shape.batch) +
+            ",T=" + std::to_string(shape.seqLen) +
+            ",HK=" + std::to_string(shape.qkHeadNum) +
+            ",HV=" + std::to_string(shape.valueHeadNum) +
+            ",K=" + std::to_string(shape.kDim) +
+            ",V=" + std::to_string(shape.vDim);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "B/T/HK/HV/K/V", actualShape,
+            "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128；A2/A3 的 GVA "
+            "比例为 1..16，A5 保留整除兼容范围");
         return ge::GRAPH_FAILED;
     }
     if (qDesc->GetDataType() != ge::DT_BF16 ||
@@ -550,11 +568,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const auto platform =
-        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
-    const bool isAscend950 =
-        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     ChunkKdaFwdPrepareScheduleContext scheduleContext;
     scheduleContext.batch = static_cast<uint64_t>(shape.batch);
     scheduleContext.qkHeadNum = static_cast<uint64_t>(shape.qkHeadNum);
@@ -591,14 +605,16 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         : (*safeGatePtr ? CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID
                         : CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS);
     using namespace KdaPrepare;
+    const uint64_t gvaMode = static_cast<uint64_t>(
+        shape.valueHeadNum != shape.qkHeadNum);
     const uint64_t legacyTilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken, betaDtypeToken, normMode, betaMode, gateMode,
         static_cast<uint64_t>(*useExp2Ptr),
         static_cast<uint64_t>(*safeGatePtr),
-        outputMode);
+        outputMode, gvaMode);
     const auto pipeline = PreparePipeline::Generic;
     const uint64_t tilingKey = isAscend950 ? legacyTilingKey
-        : RuntimeKey::Encode(normMode, gateMode);
+        : RuntimeKey::Encode(normMode, gateMode, gvaMode);
 
     ChunkKdaFwdPrepareTilingData tiling;
     tiling.set_batch(static_cast<uint32_t>(shape.batch));

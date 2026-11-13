@@ -57,9 +57,12 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         VBarrier();
     }
     __aicore__ inline void Normalize(LocalTensor<bfloat16_t> src,LocalTensor<float> rstd,bool onesReady=false) {
-        if constexpr(Norm!=1) {Duplicate(rstd,1.0F,64);VBarrier();}
-        else if(w_.rows<64) {Duplicate(rstd,1.0F,64);VBarrier();}
-        if constexpr(Norm==1) {
+        if constexpr(Norm==0) {
+            if(a_.tiling.outputMode==1||a_.tiling.outputMode==2) {
+                Duplicate(rstd,1.0F,64);VBarrier();
+            }
+        } else {
+            if(w_.rows<64) {Duplicate(rstd,1.0F,64);VBarrier();}
             auto values=work_,squares=work_[8192],ones=small_[1536];
             uint32_t rows=w_.rows,count=rows*128;
             Cast(values,src,RoundMode::CAST_NONE,count);VBarrier();
@@ -472,23 +475,27 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         Cast(inverse,v_,RoundMode::CAST_NONE,4096);VBarrier();
         auto indices=small_[InverseGatherIndexSmall].template ReinterpretCast<int32_t>();
         auto batchIndices=work_[4096].template ReinterpretCast<int32_t>();
-        auto gathered=work_[5120],rowCopy=small_[1536];
+        auto gathered=work_[5120];
         DrainStores(); // Retire Lower/Q/K stores before the Q alias is overwritten.
         auto coefficients=ub_.template GetWithOffset<float>((UbK-UbQ)/4,UbQ);
         const uint32_t steps=w_.rows-1;
+        const uint32_t firstCount=steps<16?steps:16;
+        for(uint32_t k=0;k<firstCount;++k)
+            Adds(batchIndices[k*64],indices,static_cast<int32_t>(k*4),64);
+        VBarrier();
         for(uint32_t begin=0;begin<steps;begin+=16) {
             const uint32_t count=steps-begin<16?steps-begin:16;
-            for(uint32_t k=0;k<count;++k)
-                Adds(batchIndices[k*64],indices,static_cast<int32_t>((begin+k)*4),64);
-            VBarrier();
+            if(begin) {
+                Adds(batchIndices,batchIndices,static_cast<int32_t>(16*4),64*count);
+                VBarrier();
+            }
             Gather(gathered,g_,batchIndices.template ReinterpretCast<uint32_t>(),0,64*count);
             VBarrier();
             Brcb(coefficients,gathered,static_cast<uint8_t>(8*count),{1,8});VBarrier();
             for(uint32_t step=0;step<count;++step) {
                 const uint32_t k=begin+step,first=k+1;
-                Adds(rowCopy,inverse[k*64],0.0F,64);VBarrier();
                 BinaryRepeatParams update{1,1,0,8,0,1};
-                MulAddDst(inverse[first*64],rowCopy,coefficients[step*512+first*8],
+                MulAddDst(inverse[first*64],inverse[k*64],coefficients[step*512+first*8],
                           64,63-k,update);VBarrier();
             }
         }

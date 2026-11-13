@@ -79,7 +79,7 @@ Q/K 检查点 owner 仅为 hv%G==0；不同 hk 的两个 AIV 各自准备自己�
 例如模型31 B=1、T=131072、HK=HV=4：Nbase=2048、pairs=2、Nwork=4096。
 实际 blockDim 取平台 AIC 数，尾 wave 使用同一 grid-stride 和完整协议。
 
-六个 tiling key 为：
+六个数学策略为：
 
 |key|norm|gate|
 |---|---|---|
@@ -91,13 +91,14 @@ Q/K 检查点 owner 仅为 hv%G==0；不同 hk 的两个 AIV 各自准备自己�
 |5|L2|SafeSigmoid|
 
 Norm/Gate 为静态策略。Raw/Sigmoid/TwoSigmoid、输出掩码及实际标量是 immutable tiling。
-现有 CANN dtype 注册分别生成 g/beta 四种输入对象，每对象仍只有六个数学 key。
+每个数学策略再按 `GVA_MODE` 分为普通和 GVA 两个 tiling key，因此现有 CANN dtype
+注册生成的 g/beta 四种输入对象各有 12 个实际 key。具体 GVA 比例仍由 tiling 数据读取。
 
 共享 ACLNN/L0 的参数校验和错误处理沿用 main；本优化不重写跨平台诊断。
 不按模型编号、精确 shape、epsilon、scale 或 lower_bound 开优化资格。
 Exp/Exp2 均按原接口支持；每个 Stage 选择一次指数域辅助函数，不增加数学 key。
 A5 保留原模板声明、arch35 实现和字段；下面的资源和协议专指 A2。
-六个静态key同时选择叶内计算组织：Identity或Precomputed保留FP32 Lower；key0/1在UB内完成64阶逆，
+六个数学策略同时选择叶内计算组织：Identity或Precomputed保留FP32 Lower；key0/1在UB内完成64阶逆，
 key2/4在UB内解两个32阶叶块，交接时转BF16。key3/5按每chunk/head的FP32严格下三角系数P选择：
 全部有限且max(abs(P))>1/32时，使用四叶FP32前代及FP32合并；其余保留原Cube计算顺序。
 有限快路径叶块满足无穷范数≤15/32<1；该界限制幂链增长，不保证BF16舍入满足ATK容差，
@@ -130,7 +131,8 @@ sequence-major beta的有界tile按2.4读取，不再每标量启动一行DMA。
 前代Gather索引从Small[2944]即UB0x2ee00开始：key3/5使用128项，其余key使用64项。
 二者与ALog缓存/临时量不重叠，均在现有Small UB内，不增加190KiB分配。
 资源头的static_assert同时检查128项beta、128项叶内索引与Mask边界。
-key2/4及key0/1前代阶段复用Small[1536,1600)为当前行；四16阶前代直接读已完成逆矩阵行。
+key2/4前代阶段复用Small[1536,1600)为当前行；key0/1的64阶前代和四16阶前代
+直接读取已完成逆矩阵行，不占用该区复制当前行。
 key2/4的Lower store经MTE3_V退休后，UB[UbQ,UbG)整64KiB用于最多31列的系数广播；
 work_[2048,4096)为最多1984个int32索引，[4096,6144)为对应FP32系数，
 与前8KiB叶逆及g_中FP32 Lower互不重叠。
@@ -177,7 +179,7 @@ GM workspace 每 lane152KiB，record字段如下；每 slot 两lane=304KiB，每
 
 lane base=core×0x98000+slot×0x4c000+lane×0x26000。
 workspace总量=平台libApiWorkspace+usedCoreNum×0x98000，由host checked multiply/add产生。
-关闭的公开输出不充当 scratch。Norm/Gate 六个key使用相同资源上界和事件集合。
+关闭的公开输出不充当 scratch。Norm/Gate 六个数学策略及其普通/GVA key 使用相同资源上界和事件集合。
 
 ### Stage 0：Vector，输入、norm、gate prefix
 
@@ -199,6 +201,8 @@ work_[8192,11264) 保存三份8×128 FP32临时量，总活跃44KiB，位于既�
 其余 gate/dtype 沿用既有扫描。此处只复用 norm 结束后的 work_，在 factor/RHS 复用前
 完成全部 Vector 读写并执行既有 barrier；没有新增 UB、workspace、key 或跨核事件。
 gk 在仍活跃时写回，checkpoint DMA 的源在 score payload 消费期间保持不变。
+满64行的work由DMA完整覆盖Q/K/G/beta，不执行UB预清零；尾块仍先清零再读取有效行。
+Norm关闭时，只有forward/recompute输出会消费rstd=1，none/save不初始化无消费者的rstd槽。
 
 ### Stage 1：Vector，四个16行 band 的 score payload
 
@@ -223,7 +227,8 @@ Raw实际完成后发布raw-ready，二者职责不同。
 FP32中按既有[-80,80]界计算E(G)；kgRHS先将k_hat×E(G)转BF16，再扩展FP32乘beta，
 最终BF16舍入到RhsK。RhsV由V在FP32乘beta后转BF16。
 qg先BF16舍入，再FP32乘scale并BF16输出qg_scaled；Save在qg活跃时写回。
-kg使用最后有效行G[r-1]，不取补零行。两个RHS的内部64行均零填充，写入独立GM区。
+kg使用最后有效行G[r-1]，不取补零行。尾块的两个RHS内部64行均零填充；满64行由Cast完整覆盖，
+不执行冗余预清零。两者均写入独立GM区。
 最后DMA发布rhs-ready，AIC在scoreReleased后即可提前装入L1。
 
 ### Stage 4：Vector，strict Lower、Aqk与局部FP32叶内逆
@@ -250,8 +255,12 @@ FP32叶内结果一次CAST_RINT为BF16并填回v_对角块。
 Precomputed（key0/1）使用LeafInverse64：完整Eye在work_[0,4096)展开为FP32，
 g_[0,4096)继续保存未量化负Lower；按k=0..r-2执行完整64列行更新。
 每批至多16列系数，work_[4096,5120)存1024个Gather索引，work_[5120,6144)存1024个FP32系数。
-退休Q的32KiB UB别名保存16×64×8广播系数，Small[1536,1600)保存当前64列逆矩阵行。
-每批Gather、广播、每步行复制和MulAddDst之间均有PIPE_V依赖；复用Q前排空MTE3。
+首批逐列生成至多16组索引；后续批次保持行模式不变，对整批索引统一增加64字节，
+避免为每个求解step单独执行Adds。
+退休Q的32KiB UB别名保存16×64×8广播系数。第k步直接以
+work_[k*64,(k+1)*64)的64元素逆矩阵行为只读源，目标从work_[(k+1)*64,...)
+开始，两段不重叠，因此不再复制当前行。每批Gather、广播后建立PIPE_V依赖，
+每步MulAddDst后保留PIPE_V屏障，以维持k顺序并保护下一步源行；复用Q前排空MTE3。
 padding负Lower为0，完整Eye保证无效行对角为1。完成后一次CAST_RINT到BF16，写Payload及完整有效Akk。
 Cube仅将此BF16完整逆载入resident X，不再加载P或执行32+32合并；W/U共用X的路径保持不变。
 该策略只由已有Norm/Gate key选择，g/beta dtype、shape、layout与标量不决定优化资格。
@@ -389,7 +398,7 @@ FP32直接Gather，BF16按uint16位模式Gather后Cast，保持原舍入顺序�
 
 raw g、v提示CACHE_MODE_DISABLE；HK=HV时q/k也使用该提示，GVA的q/k保留默认策略。
 beta、a_log、dt_bias、全部workspace及输出保持原cache策略。
-cache hint仅影响复用策略，不代替ready/release，不改变布局、数学或六key选择。
+cache hint仅影响复用策略，不代替ready/release，不改变布局、数学或 key 选择。
 效果必须由同输入ABBA确认，不能从提示本身推断硬件cache命中率或带宽收益。
 
 ### 2.4.3 每个活跃 lane 的逻辑 GM 搬运量
@@ -428,7 +437,7 @@ key2/4还覆盖写2KiB的32×32合并块；key0/1不再由Cube覆盖Akk。
 
 非 Precomputed gate 的 exp(a_log) 在每个 AIV 开始工作前计算一次。
 HV≤128 时按实际 value-head 索引读取 Small UB 中的缓存，不随 grid-stride
-work 切换而混淆 head；超过容量时仍使用逐 work 读取/计算，数学语义和六个 key 不变。
+work 切换而混淆 head；超过容量时仍使用逐 work 读取/计算，数学语义和 key 选择不变。
 该缓存占用现有 Small UB 内 FP32 索引 [2688,2816)，不增大 UB 分配，
 与 FP32 beta DMA、BF16 pack 及 triangle mask 区域均不重叠。
 缓存初始化经 MTE2→V→S 依赖完成后才可消费，不增加跨核事件。
@@ -439,7 +448,7 @@ Vector/Cube 在构造时绑定同一份只读 PrepareKernelArgs 引用，避免�
 
 |维度|验证原则|
 |---|---|
-|key与dtype|六个可达数学key，各自覆盖g/beta BF16/FP32四对象；不把对象数当新数学key|
+|key与dtype|六个可达数学策略分别使用普通/GVA key，各自覆盖g/beta BF16/FP32四对象|
 |布局/head|BNSD/BSND/NTD/TND、HK=HV、GVA、奇数head、跨QK pair、head tile末列|
 |有效行|1..64、r=1/63/64、多个序列、连续多代slot；chunk_indices与cu_seqlens一致|
 |输出|none/forward/recompute/save，正确比较None及全部启用槽，Save完整13槽|

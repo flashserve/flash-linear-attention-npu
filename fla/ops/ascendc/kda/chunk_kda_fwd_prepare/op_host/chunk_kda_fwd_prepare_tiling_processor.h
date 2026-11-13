@@ -16,6 +16,7 @@
 namespace optiling {
 
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_CHUNK_ROWS = 64;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_MAX_GVA_RATIO = 16;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES = 0x1A400;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP = 4;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES =
@@ -44,6 +45,21 @@ struct ChunkKdaFwdPrepareSchedule {
     uint64_t workspaceBytes = 0;
 };
 
+inline bool IsValidChunkKdaFwdPrepareGva(uint64_t qkHeadNum,
+                                         uint64_t valueHeadNum)
+{
+    return qkHeadNum != 0 && valueHeadNum >= qkHeadNum &&
+        valueHeadNum % qkHeadNum == 0 &&
+        valueHeadNum / qkHeadNum <= CHUNK_KDA_FWD_PREPARE_MAX_GVA_RATIO;
+}
+
+inline bool IsValidChunkKdaFwdPrepareLegacyHeads(uint64_t qkHeadNum,
+                                                 uint64_t valueHeadNum)
+{
+    return qkHeadNum != 0 && valueHeadNum >= qkHeadNum &&
+        valueHeadNum % qkHeadNum == 0;
+}
+
 class ChunkKdaFwdPrepareTilingProcessor {
 public:
     explicit ChunkKdaFwdPrepareTilingProcessor(
@@ -52,10 +68,12 @@ public:
 
     bool Process(ChunkKdaFwdPrepareSchedule &schedule) const
     {
-        if (context_.batch == 0 || context_.qkHeadNum == 0 ||
-            context_.valueHeadNum < context_.qkHeadNum ||
-            context_.valueHeadNum % context_.qkHeadNum != 0 ||
-            context_.aicCoreNum == 0) {
+        const bool validHeads = context_.isArch22
+            ? IsValidChunkKdaFwdPrepareGva(context_.qkHeadNum,
+                                           context_.valueHeadNum)
+            : IsValidChunkKdaFwdPrepareLegacyHeads(context_.qkHeadNum,
+                                                   context_.valueHeadNum);
+        if (context_.batch == 0 || !validHeads || context_.aicCoreNum == 0) {
             return false;
         }
 
