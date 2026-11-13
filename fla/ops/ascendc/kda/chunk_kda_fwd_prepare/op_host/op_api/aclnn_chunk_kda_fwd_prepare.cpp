@@ -337,11 +337,11 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
             continue;
         }
         if (!(output->GetDataType() == DataType::DT_BF16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-            OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
-            "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
+                "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const aclTensor *fp32Outputs[] = {
         params.gkOut, params.qRstdOut, params.kRstdOut, params.betaEffOut};
@@ -350,11 +350,11 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
             continue;
         }
         if (!(output->GetDataType() == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-            OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
-            "gk/qRstd/kRstd/betaEff 输出必须为 FP32");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
+                "gk/qRstd/kRstd/betaEff 输出必须为 FP32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -501,7 +501,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             OP_NAME, "q.K,v.V",
             std::to_string(info.kDim) + "," + std::to_string(info.vDim),
             "K=V=128 is required by the current implementation");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (info.valueHeadNum < info.qkHeadNum || info.valueHeadNum % info.qkHeadNum != 0) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -606,8 +606,10 @@ aclnnStatus CheckVariableLengthInputs(
 {
     if (params.cuSeqlensOptional == nullptr) {
         if (params.chunkIndicesOptional != nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "chunkIndicesOptional");
-            return ACLNN_ERR_PARAM_NULLPTR;
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "chunkIndicesOptional",
+                "cuSeqlensOptional is required when chunkIndicesOptional is given");
+            return ACLNN_ERR_PARAM_INVALID;
         }
         return ACLNN_SUCCESS;
     }

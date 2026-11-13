@@ -304,8 +304,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     if (chunkShape.GetDimNum() != 1 ||
         static_cast<uint64_t>(chunkShape.GetDim(0)) != totalChunks * 2) {
         OP_LOGE_FOR_INVALID_LISTSIZE(
-            context->GetNodeName(), "chunk_indices", std::to_string(totalChunks * 2),
-            std::to_string(totalChunks * 2));
+            context->GetNodeName(), "chunk_indices",
+            std::to_string(chunkShape.GetDim(0)), std::to_string(totalChunks * 2));
         return false;
     }
     const int64_t *indices = chunkTensor->GetData<int64_t>();
@@ -455,7 +455,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (*chunkSizePtr != PREPARE_CHUNK_SIZE) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "chunk_size 仅支持 64d。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "chunk_size 只支持 64。");
 
         return ge::GRAPH_FAILED;
     }
@@ -496,8 +496,12 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
         shape.valueHeadNum < shape.qkHeadNum ||
         shape.valueHeadNum % shape.qkHeadNum != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、HV>=HK 且 HV%HK=0；"
-                "当前d,d,d,d,d,d。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "B,T,HK,HV,K,V",
+            std::to_string(shape.batch) + "," + std::to_string(shape.seqLen) + "," +
+                std::to_string(shape.qkHeadNum) + "," + std::to_string(shape.valueHeadNum) + "," +
+                std::to_string(shape.kDim) + "," + std::to_string(shape.vDim),
+            "require B/T/HK/HV positive and uint32-representable, K=V=128, HV>=HK and HV%HK=0");
 
         return ge::GRAPH_FAILED;
     }

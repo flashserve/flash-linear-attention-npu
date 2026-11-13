@@ -701,7 +701,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
                               useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel,
                               allowNegEigval, safeGate, lowerBound, stateVFirst, attnOut, finalState};
 
-    if (!CheckNotNull(params)) return ACLNN_ERR_PARAM_INVALID;
+    if (!CheckNotNull(params)) return ACLNN_ERR_PARAM_NULLPTR;
     if (!CheckDtypeValid(params)) return ACLNN_ERR_PARAM_INVALID;
     RecurrentKdaLayout parsedLayout = RecurrentKdaLayout::BSND;
     if (params.layout != nullptr && std::strcmp(params.layout, "BSND") != 0) {
