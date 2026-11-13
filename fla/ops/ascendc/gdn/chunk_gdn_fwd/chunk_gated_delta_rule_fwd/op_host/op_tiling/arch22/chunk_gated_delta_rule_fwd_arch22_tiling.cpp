@@ -613,7 +613,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     GdnMegaArch22FwdHTilingData hTiling;
     const uint64_t hTilingSize = hTiling.GetDataSize();
     if (hTilingSize != sizeof(::GdnMegaArch22FwdHTilingData)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "FwdH host/kernel tiling size mismatch:u, kernel=%zu.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: FwdH tiling size mismatch, host=%zu, kernel=%zu", __func__, hTilingSize,
+            sizeof(::GdnMegaArch22FwdHTilingData));
         return ge::GRAPH_FAILED;
     }
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);

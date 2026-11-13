@@ -199,7 +199,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if ((useG && logicalVHeads % logicalKHeads != 0) || (useGk && logicalKHeads != logicalVHeads)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g-only requires HV %% HK == 0; gk-only requires k/ kg head count equal HV. "
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g-only requires HV % HK == 0; gk-only requires k/ kg head count equal HV. "
                 "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.");
 
         return ge::GRAPH_FAILED;

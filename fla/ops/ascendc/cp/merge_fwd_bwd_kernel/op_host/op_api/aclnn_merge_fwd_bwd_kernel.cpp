@@ -145,7 +145,7 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     bool stateVFirst, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
     if (!(agHm != nullptr && h != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "param", "agHm and h must not be nullptr.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "agHm/h", "agHm and h must not be nullptr.");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(workspaceSize != nullptr && executor != nullptr)) {

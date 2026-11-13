@@ -600,7 +600,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
 
     size_t workspaceOffset = 0;
     if (!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "HO workspace alignment limit exceeded: region=HO, hEnd=%zu, oEnd=%zu, alignment=%zu;");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: HO workspace alignment limit exceeded, need=%zu bytes", __func__,
+            std::max(hWorkspaceSize, oWorkspaceSize));
         return ge::GRAPH_FAILED;
     }
     GDN::ChunkRecomputeWUFwdHOTrailer trailer{};
@@ -630,7 +632,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     }
     trailer.hIntermediateOffset = static_cast<int64_t>(workspaceOffset);
     if (!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "Persistent workspace end limit exceeded: region=h, offset=%zu, bytes=%zu, alignment=%zu;");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: persistent workspace end limit exceeded, offset=%zu bytes, need=%zu bytes", __func__,
+            workspaceOffset, hIntermediateBytes));;");
         return ge::GRAPH_FAILED;
     }
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);

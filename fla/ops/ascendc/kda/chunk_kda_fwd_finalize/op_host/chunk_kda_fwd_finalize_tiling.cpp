@@ -176,7 +176,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         (cu != nullptr) != (cuShape != nullptr) ||
         (indices != nullptr) != (indexDesc != nullptr) ||
         (indices != nullptr) != (indexShape != nullptr)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "可选 metadata 的 descriptor、shape 与常量值必须同时存在。");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "metadata", "invalid", "可选 metadata 的 descriptor、shape 与常量值必须同时存在。");
 
         return false;
     }

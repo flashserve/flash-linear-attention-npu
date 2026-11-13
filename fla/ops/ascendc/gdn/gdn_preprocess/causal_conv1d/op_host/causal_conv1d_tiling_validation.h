@@ -277,7 +277,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             seqLen = 1;
             cuSeqlen = batch;
             if (batch <= 0 || dim <= 0) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "invalid x shape for 2D decode mode");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "invalid", "invalid x shape for 2D decode mode");
         return ge::GRAPH_FAILED;
     }
         } else {
@@ -286,7 +286,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             dim = xShape.GetDim(1);
             seqLen = 0;
             if (dim <= 0 || cuSeqlen < 0) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "invalid x shape for 2D varlen mode");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "invalid", "invalid x shape for 2D varlen mode");
         return ge::GRAPH_FAILED;
     }
         }
@@ -297,7 +297,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         dim = xShape.GetDim(2);
         cuSeqlen = batch * seqLen;
         if (batch <= 0 || dim <= 0 || seqLen <= 0) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "invalid x shape for 3D batch mode");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "invalid", "invalid x shape for 3D batch mode");
         return ge::GRAPH_FAILED;
     }
     } else {
@@ -319,7 +319,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
         tiling.headDim = dim / tiling.headNum;
         if (tiling.headDim % DIM_ALIGN_ELEMS != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim", "invalid", "headDim must satisfy headDim %% d == 0 for head-major output");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim", "invalid", "headDim must satisfy headDim % d == 0 for head-major output");
         return ge::GRAPH_FAILED;
     }
     }
@@ -334,7 +334,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const int64_t width = wShape.GetDim(0);
     const int64_t wDim = wShape.GetDim(1);
     if (wDim != dim) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "weight.shape[1] must equal dim");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "weight", "invalid", "weight.shape[1] must equal dim");
         return ge::GRAPH_FAILED;
     }
     if (width < 2 || width > 4) {
@@ -365,11 +365,11 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         return ge::GRAPH_FAILED;
     }
         if (sDim != dim) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "convStates.shape[2] must equal dim");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "convStates", "invalid", "convStates.shape[2] must equal dim");
         return ge::GRAPH_FAILED;
     }
         if (stateLen < (width - 1)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "convStates.shape[1] must be >= width-1");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "convStates", "invalid", "convStates.shape[1] must be >= width-1");
         return ge::GRAPH_FAILED;
     }
 
@@ -481,7 +481,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             batch = batchFromQsl;
             seqLen = 0;
             if (dim <= 0 || cuSeqlen < 0 || batch < 0) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "invalid x/queryStartLoc shapes for 2D varlen decode mode");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x/queryStartLoc", "invalid", "invalid x/queryStartLoc shapes for 2D varlen decode mode");
         return ge::GRAPH_FAILED;
     }
         }

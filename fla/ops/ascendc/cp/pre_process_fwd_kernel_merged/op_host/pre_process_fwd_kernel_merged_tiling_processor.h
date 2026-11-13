@@ -54,7 +54,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
         return ge::GRAPH_FAILED;
     }
     if (Hk <= 0 || Hv <= 0 || Hv % Hk != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv %% Hk == 0d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv % Hk == 0d");
         return ge::GRAPH_FAILED;
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {

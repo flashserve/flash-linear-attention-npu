@@ -167,7 +167,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         D = xShape.GetDim(DIM_INDEX1);
         if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != totalTokens ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != D) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "shape", "invalid", "dy shape must match x shape when inputLayout is TND");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy", "invalid", "dy shape must match x shape when inputLayout is TND");
         return ge::GRAPH_FAILED;
     }
         inputN = 1;
@@ -184,7 +184,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX0)) != B ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != T ||
                 static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX2)) != D) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "shape", "invalid", "dy shape must match x shape when inputLayout is BSND/BSH");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "dy", "invalid", "dy shape must match x shape when inputLayout is BSND/BSH");
         return ge::GRAPH_FAILED;
     }
         totalTokens = B * T;
@@ -200,12 +200,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     if (yShapePtr != nullptr && yShapePtr->GetStorageShape().GetDimNum() > 0) {
         auto yShape = yShapePtr->GetStorageShape();
         if (yShape.GetDimNum() != dyShape.GetDimNum()) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "y and dy must have the same shape");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "y/dy", "invalid", "y and dy must have the same shape");
         return ge::GRAPH_FAILED;
     }
         for (size_t i = 0; i < dyShape.GetDimNum(); i++) {
             if (yShape.GetDim(i) != dyShape.GetDim(i)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "y and dy must have the same shape");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "y/dy", "invalid", "y and dy must have the same shape");
         return ge::GRAPH_FAILED;
     }
         }

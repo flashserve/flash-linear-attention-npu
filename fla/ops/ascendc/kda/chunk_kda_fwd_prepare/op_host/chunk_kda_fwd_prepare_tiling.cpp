@@ -341,7 +341,7 @@ bool CheckOptionalInput(gert::TilingContext *context,
     const auto *dtBiasShape = context->GetOptionalInputShape(PREPARE_INPUT_DT_BIAS);
     if ((aLogDesc == nullptr) != (aLogShape == nullptr) ||
         (dtBiasDesc == nullptr) != (dtBiasShape == nullptr)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "a_log/dt_bias 的 descriptor 与 shape 元数据必须成对存在。");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "a_log/dt_bias", "invalid", "a_log/dt_bias 的 descriptor 与 shape 元数据必须成对存在。");
 
         return false;
     }
@@ -496,7 +496,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
         shape.valueHeadNum < shape.qkHeadNum ||
         shape.valueHeadNum % shape.qkHeadNum != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、HV>=HK 且 HV%%HK=0；"
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、HV>=HK 且 HV%HK=0；"
                 "当前d,d,d,d,d,d。");
 
         return ge::GRAPH_FAILED;

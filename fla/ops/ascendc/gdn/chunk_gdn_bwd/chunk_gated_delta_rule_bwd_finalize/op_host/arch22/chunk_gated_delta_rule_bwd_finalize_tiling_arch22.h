@@ -450,7 +450,8 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
         static_cast<uint64_t>(useExp2Value));
     if (baseTilingKey >= GDN::A2_FINALIZE_MHA_OWNER_KEY_MASK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "a", "invalid", "A2 Finalize base TilingKey overlaps the private MHA-owner bit.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: A2 Finalize base TilingKey %lu overlaps the private MHA-owner bit", __func__, baseTilingKey);
         return ge::GRAPH_FAILED;
     }
     const bool enableMhaOwner = qKey == TPL_BF16 && tiling->K == K_SIZE_128 &&

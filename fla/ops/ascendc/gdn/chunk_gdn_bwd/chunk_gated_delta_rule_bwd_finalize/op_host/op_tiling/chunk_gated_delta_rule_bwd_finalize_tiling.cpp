@@ -162,7 +162,9 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                     dh.GetDim(0) != tiling.B || dh.GetDim(2) != tiling.HV ||
                     dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
                     dh.GetDim(4) != stateDim4) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", ", h shape is");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "h/dh",
+            "state_v_first=" + std::to_string(stateVFirstValue),
+            "h and dh state dimensions do not match for the given state_v_first");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -225,7 +227,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         // aclIntArray 转成的 chunk_indices 是一维扁平数组，按
         // [seqIdx0, chunkIdx0, seqIdx1, chunkIdx1, ...] 两两分组。
         if (cu.GetDim(0) < 2 || chunks.GetDim(0) <= 0 || chunks.GetDim(0) % 2 != 0) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "Invalid varlen index shapes.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "cu_seqlens/chunk_indices", "invalid", "Invalid varlen index shapes.");
         return ge::GRAPH_FAILED;
     }
         tiling->seqNum = cu.GetDim(0) - 1;
@@ -240,7 +242,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
     const int64_t stateChunkNum = tiling->isVariable != 0 ? tiling->totalChunkNum : tiling->chunkNumForT;
     if (hShape->GetStorageShape().GetDim(1) != stateChunkNum) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "h/dh NT does not match the chunk schedule.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "h/dh", "invalid", "h/dh NT does not match the chunk schedule.");
         return ge::GRAPH_FAILED;
     }
 

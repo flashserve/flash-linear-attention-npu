@@ -66,7 +66,7 @@ static aclnnStatus CheckNotNull(PreProcessFwdKernelMergedParams params)
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.u != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "param", "u must not be nullptr.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "u", "u must not be nullptr.");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(params.hmOut != nullptr)) {

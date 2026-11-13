@@ -51,7 +51,7 @@ public:
         if (ctx_.q == nullptr || ctx_.k == nullptr || ctx_.v == nullptr ||
             ctx_.gk == nullptr || ctx_.beta == nullptr || ctx_.akk == nullptr ||
             ctx_.h == nullptr || ctx_.dh == nullptr || ctx_.dvScan == nullptr) {
-            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "shape", "invalid", "required Stage0--2 input shape is null");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "inputs", "invalid", "required Stage0--2 input shape is null");
 
             return ge::GRAPH_FAILED;
         }
@@ -109,7 +109,7 @@ public:
             const gert::Shape indices = ctx_.chunkIndices->GetStorageShape();
             if (cu.GetDimNum() != 1 || indices.GetDimNum() != 1 || cu.GetDim(0) < 2 ||
                 indices.GetDim(0) != 2 * tiling_.totalChunkNum) {
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "shape", "invalid", "invalid varlen metadata shape");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "metadata", "invalid", "invalid varlen metadata shape");
 
                 return ge::GRAPH_FAILED;
             }
