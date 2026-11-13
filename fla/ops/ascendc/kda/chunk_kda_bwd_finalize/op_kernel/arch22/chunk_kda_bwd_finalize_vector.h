@@ -134,7 +134,7 @@ public:
             const uint32_t activeRows = row < rows ? (rows - row < TILE_ROWS ? rows - row : TILE_ROWS) : 0;
             const uint32_t count = activeRows * HEAD_DIM;
             auto gate = ub_[UB_WORK + slot * 2 * UB_WORK_SLOT_BYTES].ReinterpretCast<float>();
-            auto kEBf16 = ub_[UB_WORK + 8 * UB_WORK_SLOT_BYTES + slot * TILE_ELEMENTS * sizeof(float)]
+            auto kEOutput = ub_[UB_WORK + 8 * UB_WORK_SLOT_BYTES + slot * TILE_ELEMENTS * sizeof(float)]
                               .ReinterpretCast<float>();
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(inputReady_[slot]);
             if (count != 0) {
@@ -154,21 +154,21 @@ public:
             }
             // Only the same output slot waits for its preceding MTE3 consumer.
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
-            AscendC::Duplicate(kEBf16, 0.0f, TILE_ELEMENTS);
+            AscendC::Duplicate(kEOutput, 0.0f, TILE_ELEMENTS);
             if (count != 0) {
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Exp(expSaved[row * HEAD_DIM], expSaved[row * HEAD_DIM], count);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::Mul(kEFloat, kFloat, expSaved[row * HEAD_DIM], count);
                 AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Adds(kEBf16, kEFloat, 0.0f, count);
+                AscendC::Adds(kEOutput, kEFloat, 0.0f, count);
             }
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
-            AscendC::DataCopy(kEOut[row * HEAD_DIM], kEBf16, TILE_ELEMENTS);
+            AscendC::DataCopy(kEOut[row * HEAD_DIM], kEOutput, TILE_ELEMENTS);
             if constexpr (CAPTURE) {
-                AscendC::DataCopy(snapshot[CAPTURE_KE + row * HEAD_DIM * sizeof(bfloat16_t)],
-                                  kEBf16.ReinterpretCast<uint8_t>(), TILE_ELEMENTS * sizeof(bfloat16_t));
+                AscendC::DataCopy(snapshot[CAPTURE_KE + row * HEAD_DIM * sizeof(float)],
+                                  kEOutput.ReinterpretCast<uint8_t>(), TILE_ELEMENTS * sizeof(float));
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
         }
@@ -334,8 +334,8 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(outputReady_[slot]);
             AscendC::DataCopy(zbOut[offset], output, ROWS * CHUNK_SIZE);
             if constexpr (CAPTURE) {
-                AscendC::DataCopy(snapshot[CAPTURE_ZB + offset * 2], output.ReinterpretCast<uint8_t>(),
-                                  ROWS * CHUNK_SIZE * 2);
+                AscendC::DataCopy(snapshot[CAPTURE_ZB + offset * sizeof(float)], output.ReinterpretCast<uint8_t>(),
+                                  ROWS * CHUNK_SIZE * sizeof(float));
             }
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(outputFree_[slot]);
         }
