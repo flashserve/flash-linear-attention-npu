@@ -1,0 +1,7 @@
+  --install-path=<absolute-path>    Install into an isolated empty directory (required)
+                                   The parent directory must already exist.
+  --quiet                          Suppress the success message
+  --help                           Show experimental installer usage
+  For incremental installation into an experimental base, use:
+    python -m fla_npu_experimental_manage --source <this.run>
+  Direct installation requires an empty root; default CANN paths are unsupported.

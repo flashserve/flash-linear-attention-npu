@@ -1,13 +1,15 @@
 """Stable-ABI backend (Phase 1).
 
 Loads ``libfla_npu_stable.so`` (a plain shared object registered through
-``STABLE_TORCH_LIBRARY``) and exposes the public Python operator contract.  This module contains no ABI-sensitive code: the only tensor objects
+explicit Stable dispatcher registration) and exposes the public Python operator contract. This module contains no ABI-sensitive code: the only tensor objects
 crossing the boundary are handled by torch's own dispatcher.
 
 The mutation contract (version bump / requires_grad rejection) is *not*
 provided by the dispatcher for these ops -- measured in Phase 1 -- so the
 dispatch layer applies ``_wrap_mutable_direct_op`` unless a hot wrapper
 already enforces the contract in its own frame.
+RecurrentGDN delegates validation to the native operator and only bumps the
+State version after a successful call.
 """
 
 from __future__ import annotations
@@ -18,6 +20,18 @@ import warnings
 
 
 _LIB_ENV = "FLA_NPU_STABLE_LIB"
+
+
+def _layer_context():
+    root = sys.modules.get(__name__.split(".")[0])
+    return getattr(root, "_WHEEL_LAYER_CONTEXT", None)
+
+
+def _dispatcher():
+    import torch
+    context = _layer_context()
+    return getattr(torch.ops, context["namespace"] if context else "fla_npu_stable")
+
 # Lowest torch whose stable runtime symbols the launcher was verified against.
 # Keep in sync with MIN_TORCH in scripts/npu_compat.py.
 _MIN_TORCH = "2.7.1"
@@ -65,7 +79,7 @@ _INCREMENT_VERSION = None
 _LAYOUT_CODES = {"BSND": 0, "BNSD": 1, "TND": 2, "NTD": 3}
 
 _ENUM = {
-    "npu_causal_conv1d_bwd": {"input_layout": _LAYOUT_CODES},
+    "npu_causal_conv1d_bwd": {"input_layout": {"BSND": 0, "BNSD": 1, "TND": 2, "NTD": 3, "BSH": 4}},
     "npu_chunk_fwd_o": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
@@ -87,7 +101,7 @@ _ENUM = {
 
 
 def _lib_path() -> str:
-    path = os.environ.get(_LIB_ENV)
+    path = os.environ.get(_LIB_ENV) if not _layer_context() else None
     if path:
         return path
     # Wheels that ship the ABI-free launcher place it next to this module.
@@ -399,7 +413,30 @@ def load() -> None:
             f"Original error: {exc}") from exc
     _check_build_stamp(path)
     _check_overlay_order_capability(path)
+    _register_launcher(path)
     _loaded_path = path
+
+
+def _register_launcher(path):
+    import ctypes
+    from . import _stable_hash
+    context = _layer_context()
+    if getattr(_stable_hash, "LAYER_PROTOCOL", 0) != 1:
+        if context:
+            raise RuntimeError("Wheel layers require a launcher with explicit registration support")
+        return
+    library = ctypes.CDLL(path)
+    register = getattr(library, "fla_npu_stable_register", None)
+    if register is None:
+        raise RuntimeError("Launcher declares layer protocol but has no registration entry")
+    register.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    register.restype = ctypes.c_char_p
+    namespace = context["namespace"] if context else "fla_npu_stable"
+    paths = (os.pathsep.join(context["libraries"]) if context else
+             os.environ.get("FLA_NPU_OP_API_LIBS") or os.environ.get("FLA_NPU_OP_API_LIB", ""))
+    error = register(namespace.encode(), paths.encode())
+    if error:
+        raise RuntimeError("Stable registration failed: " + error.decode("utf-8", "replace"))
 
 
 def _check_overlay_order_capability(path: str) -> None:
@@ -499,7 +536,7 @@ def available() -> bool:
         load()
         import torch
 
-        return hasattr(torch.ops.fla_npu_stable, "npu_recurrent_gated_delta_rule")
+        return hasattr(_dispatcher(), "npu_recurrent_gated_delta_rule")
     except Exception:
         return False
 
@@ -513,7 +550,7 @@ def _op(name: str):
         import torch
 
         try:
-            op = getattr(torch.ops.fla_npu_stable, name)
+            op = getattr(_dispatcher(), name)
         except AttributeError as exc:
             raise RuntimeError(
                 f"The loaded Stable-ABI launcher {_loaded_path} does not register "
@@ -564,19 +601,6 @@ def npu_recurrent_gated_delta_rule(
     Fusion flags select arithmetic only; disabling them never selects the
     historical kernel. The two ACLNN host ABIs share arch22 on A2/A3.
     """
-    if gk is not None:
-        raise ValueError("gk is reserved; only scalar gate g is supported.")
-    from ._recurrent_gdn import validate_recurrent_gdn
-
-    scale = validate_recurrent_gdn(query, key, value, state, beta=beta, scale=scale,
-        actual_seq_lengths=actual_seq_lengths, ssm_state_indices=ssm_state_indices,
-        num_accepted_tokens=num_accepted_tokens, g=g, gk=gk, A_log=A_log,
-        dt_bias=dt_bias, use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-        use_gate_in_kernel=use_gate_in_kernel,
-        use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-        allow_neg_eigval=allow_neg_eigval)
-    if state.requires_grad:
-        _refuse_grad_state("npu_recurrent_gated_delta_rule", state)
     result = _op("npu_recurrent_gated_delta_rule")(
         query, key, value, state, beta, actual_seq_lengths, ssm_state_indices,
         num_accepted_tokens, g, gk, A_log, dt_bias, scale,
@@ -1268,6 +1292,19 @@ def npu_causal_conv1d(x, weight, bias=None, conv_states=None, *,
 # ---------------------------------------------------------------------------
 
 
+def _normalize_chunk_metadata(cu_seqlens, chunk_indices):
+    """Make tensor metadata safe for Python truth tests and chunk generation.
+
+    Match the GDN prepare convention: copy device metadata to the host once,
+    then use plain integers. Keep None and list/tuple inputs unchanged.
+    """
+    if cu_seqlens is not None and hasattr(cu_seqlens, "detach"):
+        cu_seqlens = [int(x) for x in cu_seqlens.detach().cpu().reshape(-1).tolist()]
+    if chunk_indices is not None and hasattr(chunk_indices, "detach"):
+        chunk_indices = [int(x) for x in chunk_indices.detach().cpu().reshape(-1).tolist()]
+    return cu_seqlens, chunk_indices
+
+
 def _canonical_chunk_indices(cu_seqlens, chunk_size):
     """Fill in the chunk_indices a varlen caller left out.
 
@@ -1290,6 +1327,7 @@ def npu_chunk_fwd_h(k, w, u, *, g=None, gk=None, initial_state=None,
                     use_exp2=False, state_v_first=False):
     """Chunk-local states h, the recomputed v, and optionally the final state."""
 
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     return _op("npu_chunk_fwd_h")(
@@ -1308,6 +1346,7 @@ def npu_chunk_gated_delta_rule_fwd_h(k, w, u, g=None, *, gk=None,
     """chunk_fwd_h without the GDN recompute flags."""
 
     chunk_size = 64 if chunk_size is None else chunk_size
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     return _op("npu_chunk_gated_delta_rule_fwd_h")(
@@ -1465,6 +1504,7 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                 "the three-stage scenario (bfloat16 q/k/v, K=V=128, "
                 "chunk_size=64).")
 
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     # dense batch:chunk32 融合 kernel 原生支持——
     # 单次启动内按任务(task = batch*HV + value_head)循环,替代逐 batch 递归+cat。
     # (历史:python 逐 b 拆分曾用于规避 kernel 只认 B=1 与图内多 launch 的
@@ -1592,6 +1632,7 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
         if A_log is not None:
             raise ValueError("pass only one of a_log and A_log")
         A_log = a_log
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     # L2 的档位契约要求 gk/aqk/w/u/kg/qg_scaled 六个槽
@@ -1704,6 +1745,7 @@ def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
     轴）。``cu_seqlens`` 传了就按 canonical 顺序生成 ``chunk_indices``。
     """
 
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, 64)
     return _op("npu_chunk_kda_fwd_finalize")(
@@ -1836,11 +1878,7 @@ def npu_chunk_gated_delta_rule_fwd_prepare(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_fwd_prepare: a_log and dt_bias "
             "require use_gate_in_kernel=True.")
-    # ATK/NPU may pass cu_seqlens as a Tensor; bool(Tensor) is ambiguous.
-    if cu_seqlens is not None and hasattr(cu_seqlens, "detach"):
-        cu_seqlens = [int(x) for x in cu_seqlens.detach().cpu().reshape(-1).tolist()]
-    if chunk_indices is not None and hasattr(chunk_indices, "detach"):
-        chunk_indices = [int(x) for x in chunk_indices.detach().cpu().reshape(-1).tolist()]
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     (q_hat, k_hat, q_rstd, k_rstd, beta_out, g_cumsum, w, u, a) = _op(
@@ -1956,6 +1994,7 @@ def npu_chunk_gated_delta_rule_bwd(
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd: use_gate_in_kernel=True is not "
             "supported.")
+    cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
     if cu_seqlens and not chunk_indices:
         chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
     return _op("npu_chunk_gated_delta_rule_bwd")(

@@ -1,4 +1,4 @@
-"""Build the root wheel and print its exact installation command.
+"""Build a formal or experimental wheel and print its exact installation command.
 
 默认给"一键编包"加一条进度条：编包是一串阶段（pip 读元数据 → 环境预检 →
 生成算子 OPP run 包 → 安装 run 包 → 组装 wheel），编译算子阶段占绝大部分
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import nullcontext
 import hashlib
 import os
 import queue
@@ -317,12 +318,14 @@ def _run_with_progress(
     env: dict,
     progress: _BuildProgress,
     follow_path: "Path | None" = None,
+    log_path: "Path | None" = None,
 ) -> int:
     """运行子进程，逐行回显 stdout 并驱动进度条。
 
     ``follow_path`` 指向 pip ``--log`` 写入的日志：pip 默认只把构建后端
     （setup.py / build.sh / make）的输出写进该文件，不打到终端，所以编译
     阶段的进度信号只能从这里读。
+    ``log_path`` 将直接构建子进程的输出保存到日志，只在控制台推进进度。
     """
 
     process = subprocess.Popen(
@@ -371,15 +374,21 @@ def _run_with_progress(
             target=_follow, name="fla-npu-pip-log", daemon=True)
         follower.start()
 
-    while True:
-        try:
-            line = lines.get(timeout=0.2)
-        except queue.Empty:
-            progress.tick()
-            continue
-        if line is None:
-            break
-        progress.echo(line)
+    with log_path.open("w", encoding="utf-8") if log_path else nullcontext() as log:
+        while True:
+            try:
+                line = lines.get(timeout=0.2)
+            except queue.Empty:
+                progress.tick()
+                continue
+            if line is None:
+                break
+            if log is not None:
+                log.write(line)
+                log.flush()
+                progress.feed(line)
+            else:
+                progress.echo(line)
     reader.join(timeout=1.0)
     returncode = process.wait()
     if follower is not None:
@@ -572,6 +581,10 @@ def _assemble_build_args(args: argparse.Namespace) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--experimental", action="store_true",
+        help="Build only experimental operators using the isolated experimental wheel builder.",
+    )
+    parser.add_argument(
         "--wheel-dir",
         default="dist",
         help="wheel output directory relative to the repository root (default: dist)",
@@ -612,9 +625,8 @@ def main() -> int:
         metavar="ARGS",
         help=(
             "extra arguments forwarded to build.sh (e.g. "
-            "--build-args='-O3'). build.sh parses option values "
-            "space-separated, so do not use '=' between an option and its "
-            "value. May be repeated or space-separated within one value. "
+            "--build-args='-O3 -j8'). Use build.sh's native option syntax "
+            "(e.g. --ops=op_a,op_b). May be repeated or space-separated within one value. "
             "Also honored via the FLA_NPU_BUILD_ARGS environment variable."
         ),
     )
@@ -627,6 +639,9 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+    build_args = _assemble_build_args(args)
+    if not args.experimental and "--experimental" in shlex.split(build_args):
+        parser.error("Use the top-level --experimental option, not --build-args/FLA_NPU_BUILD_ARGS, to select experimental packaging")
 
     wheel_dir = _resolve_output_dir(args.wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
@@ -638,8 +653,9 @@ def main() -> int:
         f"[fla-npu build] 一键编包开始（soc="
         f"{os.getenv('FLA_NPU_SOC', '<default>')}, wheel 目录 {wheel_dir}）"
     )
-    _prepare_abi_free_launcher()
-    build_log = wheel_dir / _BUILD_LOG_NAME
+    if not args.experimental:
+        _prepare_abi_free_launcher()
+    build_log = wheel_dir / ("fla-npu-experimental-build.log" if args.experimental else _BUILD_LOG_NAME)
     # 只检查本次构建的产物，避免选中输出目录中残留的旧 wheel。
     # 临时目录与输出目录位于同一文件系统，确保完整 wheel 可以原子替换目标文件。
     with tempfile.TemporaryDirectory(prefix=".fla-wheel-", dir=wheel_dir) as tmp:
@@ -659,23 +675,30 @@ def main() -> int:
         ]
 
         env = os.environ.copy()
-        build_args = _assemble_build_args(args)
         if build_args:
             env["FLA_NPU_BUILD_ARGS"] = build_args
-        returncode = _run_with_progress(command, env, progress, follow_path=build_log)
+        if args.experimental:
+            command = [sys.executable, "experimental/_framework/build.py", "package",
+                       "--output", str(staging_dir)]
+            env.update(FLA_NPU_DISABLE_PTH="1", TORCH_DEVICE_BACKEND_AUTOLOAD="0")
+            returncode = _run_with_progress(command, env, progress, log_path=build_log)
+        else:
+            returncode = _run_with_progress(command, env, progress, follow_path=build_log)
         progress.close(returncode == 0)
         if returncode != 0:
             _report_build_log(build_log)
             raise subprocess.CalledProcessError(returncode, command)
 
-        wheel_files = list(staging_dir.glob(f"{get_wheel_dist_name()}-*.whl"))
+        pattern = "flash_linear_attention_npu_experimental_*-*.whl" if args.experimental else f"{get_wheel_dist_name()}-*.whl"
+        wheel_files = list(staging_dir.glob(pattern))
         if len(wheel_files) != 1:
             raise RuntimeError(
                 f"Expected exactly one wheel from this build, found {len(wheel_files)}: "
                 f"{[path.name for path in wheel_files]}"
             )
         staged_wheel = wheel_files[0]
-        _inject_runtime_pins(staged_wheel)
+        if not args.experimental:
+            _inject_runtime_pins(staged_wheel)
         wheel_path = wheel_dir / staged_wheel.name
         staged_wheel.replace(wheel_path)
 

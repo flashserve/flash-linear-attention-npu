@@ -95,7 +95,11 @@ dotted_line="-------------------------------------------------------------------
 ########################################################################################################################
 
 function list_supported_ops() {
-    python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
+    local checker="${CURRENT_DIR}/scripts/check_build_ops.py"
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        checker="${CURRENT_DIR}/experimental/scripts/check_build_ops.py"
+    fi
+    python3 "${checker}" \
         --repo-root "${CURRENT_DIR}" \
         --list "$@"
 }
@@ -105,7 +109,11 @@ function check_ops_filter() {
     if [ -z "${OPS_FILTER_VALUE}" ]; then
         return 0
     fi
-    if ! python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
+    local checker="${CURRENT_DIR}/scripts/check_build_ops.py"
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        checker="${CURRENT_DIR}/experimental/scripts/check_build_ops.py"
+    fi
+    if ! python3 "${checker}" \
         --repo-root="${CURRENT_DIR}" \
         --ops="${OPS_FILTER_VALUE}" \
         --source="${OPS_FILTER_SOURCE}" \
@@ -692,6 +700,13 @@ function check_stable_aclnn_abi(){
             ;;
     esac
 
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        python3 "${CURRENT_DIR}/experimental/_framework/build.py" check \
+            --manifest "${BUILD_DIR}/experimental-build-manifest.json" \
+            --build-dir "${BUILD_DIR}"
+        return $?
+    fi
+
     local opp_include
     opp_include=$(find "${BUILD_DIR}" "${BUILD_OUT_DIR}" -type d \
         -path '*/vendors/fla_npu_transformer/op_api/include/aclnnop' \
@@ -1237,11 +1252,7 @@ while [[ $# -gt 0 ]]; do
         ;;
     --PR_PKG)
         PR_CHANGED_FILES="$2"
-        if [[ "$ENABLE_EXPERIMENTAL" == "TRUE" ]]; then
-            parse_changed_files
-        else
-            ops_names=$(python3 "$CURRENT_DIR"/cmake/scripts/parse_changed_files.py -c "$CURRENT_DIR"/tests/test_config.yaml -f "$PR_CHANGED_FILES" get_related_examples)
-        fi
+        ops_names=$(python3 "$CURRENT_DIR"/cmake/scripts/parse_changed_files.py -c "$CURRENT_DIR"/tests/test_config.yaml -f "$PR_CHANGED_FILES" get_related_examples)
         echo "Operators that need custom package compilation:$ops_names"
         if [ -z "${ops_names}" ]; then
             log "Info: No custom packages to build for this PR."
@@ -1441,11 +1452,16 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
-# vendor_name 固定为 fla_npu：不启用自定义 vendor，忽略 --vendor_name 传入值。
-if [ -n "${vendor_name}" ] && [ "${vendor_name}" != "fla_npu" ]; then
-    echo "[INFO] --vendor_name is not supported; forcing vendor_name=fla_npu (ignored: ${vendor_name})"
+# Experimental packages have their own vendor even when a caller forwards the
+# stable vendor explicitly. Stable builds retain the existing fixed vendor.
+fixed_vendor_name="fla_npu"
+if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+    fixed_vendor_name="fla_npu_experimental"
 fi
-vendor_name="fla_npu"
+if [ -n "${vendor_name}" ] && [ "${vendor_name}" != "${fixed_vendor_name}" ]; then
+    echo "[INFO] --vendor_name is not supported; forcing vendor_name=${fixed_vendor_name} (ignored: ${vendor_name})"
+fi
+vendor_name="${fixed_vendor_name}"
 # 前置校验 --ops/-n 中的算子名，避免非法名称在 CMake 配置后才以
 # OpFileNotExistsError（aic-*-ops-info.ini 缺失）的形式暴露（issue #482）。
 check_ops_filter

@@ -83,14 +83,9 @@ host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND�
 
 ## 支持范围
 
-- A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
-- `K=V=128`、`chunk_size=64`、`save_new_value=true`；其它取值在参数校验阶段返回
-  `ACLNN_ERR_PARAM_INVALID`，不下沉到 tiling。
-- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`，gk-only 要求 `HK == HV`。
-- dtype：`k/w/u` 为 BF16；`g/gk`、`initial_state/final_state` 支持 BF16/FP32。
-- 变长（BNSD）要求 `B=1`；`cu_seqlens` 从 0 开始、以 `T` 结束且非递减，相邻两项相等
-  表示零长度序列。
-- `state_v_first` 两值均支持。
+- A2、A3、A5。
+- `K=V=128`、`chunk_size=64`、`save_new_value=true`。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`。
 
 ## 变长序列
 

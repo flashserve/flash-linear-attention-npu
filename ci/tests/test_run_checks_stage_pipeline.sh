@@ -72,7 +72,11 @@ python3() {
         printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
         chmod +x build_out/fla_npu_linux-stage-test.run
     fi
-    if [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
+    if [[ "$entrypoint" == "-" && "$#" -gt 1 ]]; then
+        # Managed-path query is separately tested with a real layer. This
+        # orchestration fixture retains the legacy base-only fallback.
+        return 0
+    elif [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
     elif [[ "$entrypoint" == "ci/run_example_st_cases.py" ]]; then
         mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")"
@@ -136,6 +140,7 @@ run_case() {
     local fail_stage="${8:-}"
     local fail_manager_init="${9:-false}"
     local fail_stable_coverage="${10:-false}"
+    local scope="${11:-full}"
     local case_dir="$test_root/$name"
     local case_repo="$case_dir/repo"
     local report_file="${case_repo#"$repo_dir"/}/.ci-tmp/stage-report.json"
@@ -168,6 +173,8 @@ run_case() {
         CI_TEST_FAIL_STABLE_COVERAGE="$fail_stable_coverage" \
         CI_TEST_FAKE_PACKAGE_DIR="$fake_package_dir" \
         CI_MODE=quick \
+        CI_CHANGE_SCOPE="$scope" \
+        CI_CHANGE_OPS=chunk_fwd_o \
         CI_SOC=ascend910b \
         CI_RUN_EXAMPLE_ST="$run_example_st" \
         CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=false \
@@ -204,7 +211,16 @@ run_case() {
             "$command_log"
     fi
 
-    if [[ "$name" == "scoped" ]]; then
+    if [[ "$name" == "partial" ]]; then
+        grep -Fq 'bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o -j1' "$command_log"
+        grep -Fq 'python3 -m pip install --pre' "$command_log"
+        grep -Fq 'python3 -m fla_npu_opp_manage --overlay --source' "$command_log"
+        grep -Fq 'python3 ci/run_example_st_cases.py' "$command_log"
+        if grep -Eq '^python3 scripts/build_wheel.py|^bash build.sh$' "$command_log"; then
+            echo "Partial compilation rebuilt the full OPP/adapter instead of preserving base." >&2
+            return 1
+        fi
+    elif [[ "$name" == "scoped" ]]; then
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
         grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
     elif [[ "$name" == "prerequisite-failure" ]]; then
@@ -303,5 +319,7 @@ run_case \
     false \
     '' \
     true
+
+run_case partial all false 0 success success,success,success,success,success true '' false false partial
 
 echo "run_checks stage pipeline integration tests passed"

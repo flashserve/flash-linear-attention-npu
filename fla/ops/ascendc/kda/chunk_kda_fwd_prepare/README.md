@@ -1,6 +1,6 @@
 # ChunkKdaFwdPrepare
 
-[统一设计文档](docs/design.md) | [API 文档](docs/api.md)
+[A5设计文档](docs/design.md) | [A2设计文档](docs/design_a2.md) | [API 文档](docs/api.md)
 
 ## 功能
 
@@ -176,7 +176,7 @@ A2 使用 value-head pair：一个 AIC 配两个 AIV，每个 AIV 准备一个�
 两个 lane 映射到不同 Q/K head 时分别准备 Q/K；奇数 head 的 inactive lane 仍参与事件协议。
 六个 Norm/Gate 数学策略及其普通/GVA key 共用 BF16 resident relay、W/U inverse 复用、
 paired L0 和两代 GM workspace。
-普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见统一设计文档中的 [A2 专项章节](docs/design.md#92-stage-完整详设)。
+普通/GVA、四布局及变长尾块使用同一计算流水。具体资源和事件见 [A2 设计](docs/design_a2.md)。
 
 A5 保留原有 MIX AIC/AIV 八阶段流水及 [A5 设计](docs/design.md)：
 

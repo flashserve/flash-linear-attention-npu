@@ -13,20 +13,8 @@ if (( ${#wheels[@]} != 1 )); then
 fi
 python3 -m pip install "${wheels[0]}" --force-reinstall --no-deps --no-cache-dir
 
-# ASCEND_CUSTOM_OPP_PATH：CANN 在初始化时注册自定义 OPP；若 Python/ATK/Celery 等进程
-# 会先初始化 CANN，需要在进程启动前设置该变量，否则可能出现 SelectBin 找不到 kernel
-# （如 aclnnStatus=561103）。
-_fla_npu_site="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-_fla_npu_vendor="${_fla_npu_site}/fla_npu/opp/vendors/fla_npu_transformer"
-echo ""
-echo "[fla-npu] 若使用 fla_npu 的进程会先初始化 CANN（Python/ATK/Celery 等），请在启动前执行："
-echo "[fla-npu]   export ASCEND_CUSTOM_OPP_PATH=\"${_fla_npu_vendor}:\${ASCEND_CUSTOM_OPP_PATH:-}\""
-
-# The fla_npu runtime loads libcust_opapi.so from the OPP tree embedded in the
-# installed package (fla_npu/opp/vendors/fla_npu_transformer). The standalone
-# wheel only ships the OPP skeleton, so overlay the compiled custom OPP from the
-# just-built run package into the installed package and refresh the wheel RECORD
-# before any consumer imports fla_npu.
+# Install compiled OPP as a managed layer over the standalone adapter wheel.
+# The base wheel and its RECORD remain unchanged.
 run_pkg=""
 shopt -s nullglob
 for cand in ../../build_out/fla_npu_linux-*.run ../../build/fla_npu_linux-*.run; do
@@ -43,6 +31,6 @@ fi
 chmod +x "$run_pkg"
 "$run_pkg" --install --quiet
 echo ""
-echo "[fla-npu] run 包 OPP 已安装到：${_fla_npu_vendor}"
-echo "[fla-npu]   若进程会先初始化 CANN（Python/ATK/Celery 等），请在启动前执行："
-echo "[fla-npu]   export ASCEND_CUSTOM_OPP_PATH=\"${_fla_npu_vendor}:\${ASCEND_CUSTOM_OPP_PATH:-}\""
+echo "[fla-npu] OPP submitted to the overlay manager; see activation state above. Restart Python processes."
+echo "[fla-npu] The default .pth configures selected OPP paths before CANN initialization."
+echo "[fla-npu] Inspect selection: python3 -m fla_npu_opp_manage --status"
