@@ -303,6 +303,10 @@ private:
         auto sum = ub_.GetWithOffset<float>(kHeadDim, kDeltaOffset);
         auto inverse = ub_.GetWithOffset<float>(kHeadDim, kReductionOffset);
         auto correction = ub_.GetWithOffset<float>(kWindowTokens, kTemp0Offset);
+        // Vector normalization and Brcb consume a complete eight-scalar block,
+        // including the unused lanes of a partial token window.
+        Duplicate(sum, 0.0f, kWindowTokens);
+        PipeBarrier<PIPE_V>();
         Mul(product, vector, vector, rows * kHeadDim);
         PipeBarrier<PIPE_V>();
         for (uint32_t row = 0; row < rows; ++row) {
