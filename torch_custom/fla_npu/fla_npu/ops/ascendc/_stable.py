@@ -70,6 +70,10 @@ _ENUM = {
     "npu_chunk_fwd_o": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_gated_delta_rule_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_bwd_intra": {"layout": {"BSND": 0, "BNSD": 1, "TND": 2}},
+    "npu_chunk_kda_bwd_prepare": {"layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd": {"layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd_recompute": {"input_layout": _LAYOUT_CODES},
+    "npu_chunk_kda_bwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_finalize": {"output_layout": _LAYOUT_CODES},
     "npu_chunk_kda_fwd_prepare": {"layout": _LAYOUT_CODES},
@@ -592,45 +596,18 @@ def npu_recurrent_kda(
     """Recurrent KDA forward via the Stable-ABI launcher.
 
     ``layout`` is mapped to an int code (BSND=0, TND=1) because the stable
-    argument conversions do not carry strings.  Mutates ``initial_state`` in
-    place when ``inplace_final_state`` is true, exactly like the ctypes path.
+    argument conversions do not carry strings. Non-inplace calls read the
+    input state and return a separate pool when ``output_final_state`` is true.
     """
 
     layout_code = _char_code("npu_recurrent_kda", "layout", layout)
 
-    # The contract only covers the in-place form: with
-    # `inplace_final_state=False` the caller's tensor is not written (the
-    # recursion below runs the kernel on a scratch state instead), which is the
-    # same split the dispatch layer's MUTATION_FLAGS entry declares.
-    if (inplace_final_state and initial_state is not None
-            and initial_state.requires_grad):
-        _refuse_grad_state("npu_recurrent_kda", initial_state)
-    if not inplace_final_state:
-        # ctypes drives the same kernel with a scratch state and returns it,
-        # leaving the caller's tensor untouched.  The stable launcher only
-        # exposes the inplace form (handing the caller's handle back as a second
-        # output trips over shared ownership), so build the scratch here -- which
-        # is also what keeps the mutation contract honest: the caller's tensor is
-        # genuinely not written, and the dispatch layer's MUTATION_FLAGS entry
-        # already skips the version bump for this case.
-        if initial_state is None:
-            raise RuntimeError(
-                "npu_recurrent_kda: inplace_final_state=False requires "
-                "initial_state (no shape to build the scratch from)")
-        import torch
-
-        scratch = torch.empty_like(initial_state)
-        out, _ = npu_recurrent_kda(
-            q, k, v, g, beta, scratch, cu_seqlens=cu_seqlens,
-            ssm_state_indices=ssm_state_indices, A_log=A_log, dt_bias=dt_bias,
-            num_accepted_tokens=num_accepted_tokens, layout=layout, scale=scale,
-            output_final_state=False, inplace_final_state=True,
-            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-            use_gate_in_kernel=use_gate_in_kernel,
-            use_beta_sigmoid_in_kernel=use_beta_sigmoid_in_kernel,
-            allow_neg_eigval=allow_neg_eigval, safe_gate=safe_gate,
-            lower_bound=lower_bound, state_v_first=state_v_first)
-        return out, (scratch if output_final_state else None)
+    if initial_state is None:
+        raise RuntimeError("npu_recurrent_kda: initial_state must not be None")
+    if initial_state.requires_grad:
+        if inplace_final_state:
+            _refuse_grad_state("npu_recurrent_kda", initial_state)
+        initial_state = initial_state.detach()
 
     scale_value = (128.0 ** -0.5) if scale is None else float(scale)
     lower = -5.0 if lower_bound is None else float(lower_bound)
@@ -664,19 +641,13 @@ def npu_recurrent_kda(
         bool(state_v_first),
         stream,
     )
-    if not output_final_state:
-        final_state = None
-    elif inplace_final_state and final_state is None:
-        # The launcher returns the inplace result implicitly (the kernel writes
-        # the caller's tensor); the stable ABI cannot hand that handle back as a
-        # second output without a double ownership release, so mirror ctypes
-        # here, which also returns the caller's object.
-        final_state = initial_state
-    if initial_state is not None:
+    if inplace_final_state and initial_state is not None:
         bump = _INC_VERSION
         if bump is None:
             bump = _increment_version()
         bump((initial_state,))
+    if inplace_final_state and output_final_state:
+        final_state = initial_state
     return out, final_state
 
 
@@ -1253,7 +1224,8 @@ def npu_chunk_gated_delta_rule_bwd_dhu(
 def npu_chunk_kda_bwd_recompute(q, k, v, g, beta, a, chunk_size, *,
                                 A_log=None, dt_bias=None, cu_seqlens=None,
                                 chunk_indices=None, use_gate_in_kernel=True,
-                                use_exp2=True, lower_bound=-5.0):
+                                use_exp2=True, lower_bound=-5.0,
+                                input_layout="BNSD"):
     """Recompute the KDA saved tensors (`gk`, `w`, `u`, `qg`, `kg`).
 
     The declared order starts with the gate cumsum because that is the tensor
@@ -1261,12 +1233,16 @@ def npu_chunk_kda_bwd_recompute(q, k, v, g, beta, a, chunk_size, *,
     so the adapter reorders the results before returning them.
     """
 
+    from ._kda_policy import _validate_kda_recompute_layout
+
+    _validate_kda_recompute_layout(input_layout)
     return _op("npu_chunk_kda_bwd_recompute")(
         q, k, v, g, beta, a, A_log, dt_bias,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
         chunk_size,
         True if use_exp2 is None else bool(use_exp2),
         -5.0 if lower_bound is None else float(lower_bound),
+        _char_code("npu_chunk_kda_bwd_recompute", "input_layout", input_layout),
         bool(use_gate_in_kernel),
         _current_stream_ptr(),
     )
@@ -1352,6 +1328,61 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
     return (*result, initial_state)
 
 
+def npu_chunk_kda_bwd_finalize(
+    q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
+    dv_scan, d_aqk, dq_raw, *, scale, lower_bound=-5.0, chunk_size=64,
+    safe_gate=True, use_gate_in_kernel=True, use_exp2=True, state_v_first=False,
+    q_rstd=None, k_rstd=None, cu_seqlens=None, chunk_indices=None,
+    use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, output_layout=None,
+):
+    """Finalize KDA gradients; output_layout controls dq/dk/dv/dBeta/dG.
+
+    raw_g/beta accept BF16/FP32; their gradients match each input.
+    a_log/dt_bias and their gradients are FP32.
+    Gate computation and parameter reductions remain FP32.
+    On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
+    """
+    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
+        raise ValueError(
+            "npu_chunk_kda_bwd_finalize: allow_neg_eigval=True requires "
+            "use_beta_sigmoid_in_kernel=True.")
+    if q.ndim not in (3, 4):
+        raise ValueError("q must have rank 3 or 4")
+    rank3 = q.ndim == 3
+    if output_layout is None:
+        output_layout = "NTD" if rank3 else "BNSD"
+    valid_layouts = ("NTD", "TND") if rank3 else ("BNSD", "BSND")
+    if output_layout not in valid_layouts:
+        raise ValueError("output_layout does not match input rank")
+    if cu_seqlens is None and chunk_indices is not None:
+        raise ValueError("chunk_indices requires cu_seqlens")
+    if (q_rstd is None) != (k_rstd is None):
+        raise ValueError("q_rstd and k_rstd must appear together")
+    return _op("npu_chunk_kda_bwd_finalize")(
+        q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
+        dv_scan, d_aqk, dq_raw, q_rstd, k_rstd,
+        _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        float(scale), float(lower_bound), int(chunk_size), bool(safe_gate),
+        bool(use_gate_in_kernel), bool(use_exp2), bool(state_v_first),
+        bool(use_beta_sigmoid_in_kernel), bool(allow_neg_eigval),
+        _char_code("npu_chunk_kda_bwd_finalize", "output_layout", output_layout),
+        _current_stream_ptr(),
+    )
+
+
+def npu_chunk_kda_bwd_prepare(
+    aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+):
+    """Partial KDA gradients with contiguous head-major outputs."""
+    return _op("npu_chunk_kda_bwd_prepare")(
+        aqk, v_new, d_o, h, _host_ints(cu_seqlens), _host_ints(chunk_indices),
+        _char_code("npu_chunk_kda_bwd_prepare", "layout", layout),
+        float(scale), int(chunk_size), bool(state_v_first),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
                               layout="BSND", cu_seqlens=None, chunk_indices=None,
                               safe_gate=False, lower_bound=None,
@@ -1374,7 +1405,11 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
 
     rank3 = layout in ("TND", "NTD")
     sequence_major = layout in ("BSND", "TND")
-    if rank3:
+    if rank3 and not sequence_major:
+        qk_heads, seq_len, key_dim = q.shape
+        value_heads, value_dim = v.shape[0], v.shape[2]
+        batch = 1
+    elif rank3:
         seq_len, qk_heads, key_dim = q.shape
         value_heads, value_dim = v.shape[1], v.shape[2]
         batch = 1
@@ -1759,25 +1794,33 @@ def _kda_bwd_single_launch(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h,
         True,  # disable_recompute is the only supported spelling
         True,  # use_exp2 likewise
         False,  # state_v_first likewise
-        False, None, None,  # legacy implementation, no norm backward
+        False, None, None, None,  # legacy implementation, no norm/beta cache
+        3 if cu_seqlens is not None else 1,
+        False, False,
         _current_stream_ptr(),
     )
 
 
 def _kda_bwd_optimized_launch(args):
-    """Share input policy with the reference, but launch V2 through Stable ABI."""
-    from ._kda_policy import _prepare_kda_bwd_optimized
+    return _kda_bwd_arch22_launch(args, optimized=True)
+
+
+def _kda_bwd_arch22_launch(args, optimized=False):
+    """Share argument assembly; select original L2 on A2/A3 or V2 on A5."""
+    from ._kda_policy import _prepare_kda_bwd_arch22, _prepare_kda_bwd_optimized
 
     bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    a = _prepare_kda_bwd_optimized(args)
+    a = (_prepare_kda_bwd_optimized if optimized else _prepare_kda_bwd_arch22)(args)
     outputs = _op("npu_chunk_kda_bwd")(
         a["q"], a["k"], a["v"], a["beta"], a["gk"], a["Aqk"], a["Akk"],
         a["w"], a["qg"], a["kg"], a["v_new"], a["h"], a["d_o"],
         a["raw_g"], a["A_log"], a["dt_bias"],
         _host_ints(a["cu_seqlens"]), _host_ints(a["chunk_indices"]),
-        float(a["scale"]), int(a["chunk_size"]), a["safe_gate"],
-        a["use_gate_in_kernel"], a["lower_bound"], a["disable_recompute"],
-        a["use_exp2"], a["state_v_first"], True, a["q_rstd"], a["k_rstd"],
+        a["scale"], a["chunk_size"], a["safe_gate"], a["use_gate_in_kernel"],
+        a["lower_bound"], a["disable_recompute"], a["use_exp2"], a["state_v_first"],
+        optimized, a["q_rstd"], a["k_rstd"], a["beta_eff"],
+        _char_code("npu_chunk_kda_bwd", "layout", a["layout"]),
+        a["use_beta_sigmoid_in_kernel"], a["allow_neg_eigval"],
         _current_stream_ptr(),
     )
     if bias_shape is not None:
@@ -1789,38 +1832,37 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                       scale, *, raw_g=None, A_log=None, dt_bias=None,
                       initial_state=None, dht=None, cu_seqlens=None,
                       chunk_indices=None, chunk_size=64, safe_gate=True,
-                      lower_bound=-5.0, use_gate_in_kernel=False,
+                      lower_bound=-5.0, use_gate_in_kernel=True,
                       disable_recompute=True, use_exp2=True,
                       state_v_first=False, implementation="auto",
-                      q_rstd=None, k_rstd=None):
-    """Fused KDA backward, returning `(dq, dk, dv, db, dg, dh0, dA, dbias)`.
+                      q_rstd=None, k_rstd=None, layout="BNSD", use_beta_sigmoid_in_kernel=False,
+                      allow_neg_eigval=False, beta_eff=None):
+    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), on A2/A3 and A5 V2.
 
-    Three shape-specific workarounds sit on top of the single launch, and they
-    are the reason this wrapper is longer than the others:
-
-    * a packed sequence whose last chunk is short on Atlas A2/A5 (or a packed
-      V=256 call on Atlas A2) is split into independent dense calls, because
-      the fused pipeline produces stale or non-finite values for those; Atlas
-      A3 keeps the fused packed launch, where its gradients match the split
-      path bitwise and the split costs about twice the runtime;
-    * a single packed sequence with a short tail is instead padded inside its
-      last chunk and the token gradients sliced back;
-    * on A2 an odd head count gets a duplicated partner head, because the
-      Intra pipeline processes heads in pairs.
-
-    The split/padding rules are the launcher's port of the reference strategy:
-    Atlas A5 splits every packed tail, Atlas A2 additionally splits packed
-    tails and V=256 calls and pads odd head counts, and Atlas A3 keeps the
-    fused packed launch, where its gradients already match the split path
-    bitwise.  The only other difference from the reference is that the dense
-    call goes to the launcher instead of to ctypes.
+    layout controls q/k/v and dq/dk/dv (BNSD/BSND/NTD/TND).
+    With q_rstd/k_rstd, q/k are saved head-major normalized tensors.
+    do/raw_g/beta and dg/db are always token-major. With fused sigmoid,
+    beta is original logits and beta_eff is required FP32 head-major cache.
+    Without fused sigmoid beta is effective beta and beta_eff must be None.
+    A5 V2 reserves fused sigmoid: beta_eff=None and both sigmoid flags False.
+    All saved Token caches are head-major. 4D varlen calls require B=1.
+    dg/db follow raw_g/beta dtypes; A_log/dt_bias and dA/dbias are FP32.
     """
 
     import torch
 
     from ._runtime import optional_bool as _optional_bool
-    from ._kda_policy import _select_kda_bwd_optimized
+    from ._kda_policy import (
+        _select_kda_bwd_optimized, _is_kda_bwd_arch22, _validate_kda_bwd_a5_options,
+    )
 
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, True)
+    if not use_gate_in_kernel:
+        raise ValueError("npu_chunk_kda_bwd: use_gate_in_kernel must be True.")
+
+    if _is_kda_bwd_arch22(q):
+        return _kda_bwd_arch22_launch(locals())
+    _validate_kda_bwd_a5_options(locals())
     if _select_kda_bwd_optimized(
             implementation, q_rstd, k_rstd,
             _optional_bool(disable_recompute, True)):
@@ -1861,7 +1903,6 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
                else tuple(int(x) for x in chunk_indices))
     if indices is None and cu is not None:
         indices = _canonical_chunk_indices(cu, chunk_size)
-    use_gate_in_kernel = bool(use_gate_in_kernel)
     safe_gate = bool(safe_gate)
     lower_bound = -5.0 if lower_bound is None else float(lower_bound)
     scale = float(scale)

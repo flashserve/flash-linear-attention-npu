@@ -11,22 +11,32 @@
 namespace KDA {
 using namespace AscendC::MicroAPI;
 
-template <typename LogT>
+template <typename T>
+__simd_callee__ inline void LoadGatePair(RegTensor<float> &even, RegTensor<float> &odd,
+                                        __ubuf__ T *input, MaskReg &mask)
+{
+    if constexpr (AscendC::IsSameType<T, float>::value) {
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(even, odd, input);
+    } else {
+        RegTensor<bfloat16_t> packed;
+        LoadIn(packed, input);
+        // Cast both interleaved BF16 halves; a float mask covers only half
+        // the BF16 lanes and silently zeros part of raw_g.
+        MaskReg bf16Mask = CreateMask<bfloat16_t, MaskPattern::ALL>();
+        CastHalf2Float(even, odd, packed, bf16Mask);
+    }
+}
+
+template <typename RawT>
 __simd_vf__ inline void FinalizeStage11VF(
-    __ubuf__ float *dg, __ubuf__ float *raw, __ubuf__ float *bias,
-    __ubuf__ LogT *aLog, __ubuf__ float *da, __ubuf__ float *db,
+    __ubuf__ float *dg, __ubuf__ RawT *raw, __ubuf__ float *bias,
+    __ubuf__ float *aLog, __ubuf__ float *da, __ubuf__ float *db,
     uint16_t rows, float lowerBound)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     RegTensor<float> e;
-    if constexpr (AscendC::IsSameType<LogT, float>::value) {
-        LoadIn<float, true>(e, aLog);
-    } else {
-        RegTensor<bfloat16_t> packed;
-        LoadIn<bfloat16_t, true>(packed, aLog);
-        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(e, packed, mask);
-    }
+    LoadIn<float, true>(e, aLog);
     Exp(e, e, mask);
     RegTensor<float> one, sum0, sum1, da0, da1, db0, db1, bias0, bias1;
     Duplicate(one, 1.0f, mask);
@@ -44,7 +54,7 @@ __simd_vf__ inline void FinalizeStage11VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, dg + offset);
         Add(sum0, sum0, g0, mask);
         Add(sum1, sum1, g1, mask);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(x0, x1, raw + offset);
+        LoadGatePair(x0, x1, raw + offset, mask);
         Add(x0, x0, bias0, mask);
         Add(x1, x1, bias1, mask);
         Mul(s0, x0, e, mask);
