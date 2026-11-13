@@ -22,7 +22,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
     if (inputLayout == nullptr ||
                     (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "input_layout", std::to_string(static_cast<int>(inputLayout)), "Recompute input_layout must be BNSD or NTD.");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "input_layout", inputLayout == nullptr ? "null" : inputLayout, "Recompute input_layout must be BNSD or NTD");
         return ge::GRAPH_FAILED;
     }
 

@@ -417,7 +417,7 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
     if (cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", std::to_string(KDA_BWD_WORKSPACE_ALIGN), "single-launch private workspace exceeds the 2 TiB");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", std::to_string(cursor), "single-launch private workspace exceeds the 2 TiB limit");
         return ge::GRAPH_FAILED;
     }
     const uint64_t totalWorkspace = systemWorkspace + cursor;
