@@ -428,7 +428,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.oOut, executorPtr);

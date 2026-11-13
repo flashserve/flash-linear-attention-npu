@@ -875,7 +875,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     GdnShapeInfo info;
     if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     const size_t qkvRank = 4;
     const size_t scalarRank = 3;
     {
@@ -1057,13 +1057,13 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     if (!(CheckStateShape(params.initialStateOptional, "initialState", seqNum, info.hv, stateDim0, stateDim1) ==
                   ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (params.finalStateOutOptional != nullptr) {
         if (!(CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum, info.hv,
                                   stateDim0, stateDim1) ==
                       ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     }
 
     const DataType dtype = params.q->GetDataType();
@@ -1234,7 +1234,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     }
     if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_NULLPTR;
-    };
+    }
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME,
@@ -1252,26 +1252,26 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         useChunk32 ? CheckChunk32Params(params) : CheckParams(params);
     if (!(paramStatus == ACLNN_SUCCESS)) {
         return paramStatus;
-    };
+    }
 
     if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     if (useChunk32) {
         // The kernel consumes head-major q/k/v and [B,Hv,T] g/beta, and writes
@@ -1398,7 +1398,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
     GdnShapeInfo info;
     if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     const int64_t batch = info.batch;
     const int64_t hq = info.hq;
     const int64_t hv = info.hv;
@@ -1499,10 +1499,10 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         if (IsDav2201Device()) {
             if (!(MakeContiguous(aLog, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
             if (!(MakeContiguous(dtBias, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
             if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT) {
                 aLog = l0op::Cast(aLog, DataType::DT_FLOAT, executorPtr);
             }

@@ -553,7 +553,7 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
     if (!(CheckStateShape(params.finalStateOut, "finalStateOut", info, params.stateVFirst) ==
                   ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (params.finalStateOut != nullptr) {
         if (!(params.finalStateOut->GetDataType() == DataType::DT_FLOAT)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "finalStateOut", "invalid", "finalStateOut must be float32.");
@@ -586,10 +586,10 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     }
     if (!(ParseLayout(params.layout, layout) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(ResolveShapeInfo(params, layout, info) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
     if (!(info.batch > 0)) {
@@ -695,28 +695,28 @@ aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
 {
     if (!(MakeContiguous(params.q, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.k, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.v, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.g, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.initialStateOptional, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -907,7 +907,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     };
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
@@ -1263,7 +1263,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     };
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到
     // aclnnChunkKdaFwd，因此这里直接返回参数错误并说明要求。

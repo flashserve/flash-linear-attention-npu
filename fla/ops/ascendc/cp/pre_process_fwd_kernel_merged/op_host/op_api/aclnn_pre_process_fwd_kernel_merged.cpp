@@ -301,7 +301,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
 
     if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_NULLPTR;
-    };
+    }
     {
         const aclnnStatus checkStatus = CheckDtype(params);
         if (checkStatus != ACLNN_SUCCESS) {
@@ -330,7 +330,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.hmOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {

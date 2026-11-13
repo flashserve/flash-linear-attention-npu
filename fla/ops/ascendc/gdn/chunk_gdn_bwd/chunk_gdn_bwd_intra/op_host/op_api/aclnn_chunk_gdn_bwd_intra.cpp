@@ -239,7 +239,7 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
                         wOut, uOut, dvLocalOut};
     if (!(Check(params) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {

@@ -485,7 +485,7 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
     }
     if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(info.batch > 0 && info.hk > 0 && info.hv > 0 && info.tokens > 0)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "B,HK,HV,T",
@@ -690,7 +690,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                   dALogOutOptional, dDtBiasOutOptional};
     if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_NULLPTR;
-    };
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
@@ -714,40 +714,40 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
 
     if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.a, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.initialState, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.dht, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.qRstd, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.kRstd, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(MakeContiguous(params.betaRaw, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;

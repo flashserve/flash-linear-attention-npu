@@ -59,43 +59,43 @@ static aclnnStatus ParamsDataContiguous(ChunkKdaBwdRecomputeParams &params, aclO
 {
     if (!(DataContiguous(params.q, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.k, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.v, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.g, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.a, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.wOut, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.uOut, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     if (!(DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -144,7 +144,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
 
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
-    };
+    }
     const bool useGateInKernel = params.gkOutOptional != nullptr;
     const aclTensor *gkBuffer = params.gkOutOptional;
     if (gkBuffer == nullptr) {
