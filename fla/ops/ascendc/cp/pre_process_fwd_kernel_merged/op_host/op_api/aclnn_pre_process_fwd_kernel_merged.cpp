@@ -313,7 +313,7 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(ParamsGateToFp32(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "ParamsGateToFp32", "invalid", "ParamsGateToFp32 failed.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gate data type conversion to fp32 failed", __func__);
         return ACLNN_ERR_PARAM_INVALID;
     }
 
