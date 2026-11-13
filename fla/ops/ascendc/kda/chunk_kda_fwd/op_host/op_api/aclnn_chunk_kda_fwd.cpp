@@ -9,6 +9,7 @@
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
 #include "chunk_kda_fwd_v2.h"
+#include "../../../common/kda_chunk_indices.h"
 #include "../../../chunk_kda_fwd_fused/op_host/op_api/chunk_kda_fwd_fused.h"
 
 #include <algorithm>
@@ -730,6 +731,11 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus indicesStatus = Kda::EnsureChunkIndices(
+        params.cuSeqlensOptional, params.chunkSize, params.chunkIndicesOptional, executorPtr);
+    if (indicesStatus != ACLNN_SUCCESS) {
+        return indicesStatus;
+    }
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     const aclTensor *qHead = params.q;
@@ -1049,6 +1055,11 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     CHECK_COND(CanUseKdaFwdV2Path(params, info), ACLNN_ERR_PARAM_INVALID,
                "ChunkKdaFwdV2 只支持三算子组合场景：q/k/v 为 BF16、K=V=128、chunk_size=64、"
                "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd。");
+    const aclnnStatus indicesStatus = Kda::EnsureChunkIndices(
+        params.cuSeqlensOptional, params.chunkSize, params.chunkIndicesOptional, executorPtr);
+    if (indicesStatus != ACLNN_SUCCESS) {
+        return indicesStatus;
+    }
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
     CHECK_RET(kdaFwdV2Status == ACLNN_SUCCESS, kdaFwdV2Status);

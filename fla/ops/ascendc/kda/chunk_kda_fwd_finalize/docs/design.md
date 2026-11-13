@@ -401,6 +401,10 @@ KDA V2 直接传入共享 FwdH 的 NT-first h，无额外 chunk/head 转置。
 始终保持输入 token 的相对顺序；`BSND/BNSD` 交换 rank-4 的
 token/head 轴，`TND/NTD` 交换 rank-3 的 token/head 轴。
 
+缺省 `chunk_indices` 由 aclnn host 在参数校验后调用 `Kda::EnsureChunkIndices`
+生成并由 executor 持有，因此公开入口的变长 kernel 始终走查表分支。
+V2 组合复用顶层生成的表。详见 [Fwd 的变长元数据设计](../../chunk_kda_fwd/docs/design.md#chunk64-变长元数据)。
+
 ## 兼容边界
 
 独立算子不接收 HK；GVA 复用发生在 Prepare，Finalize 只能验证

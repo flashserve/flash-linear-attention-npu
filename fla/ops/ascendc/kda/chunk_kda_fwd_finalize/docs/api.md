@@ -58,6 +58,8 @@ ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
 有变长元数据时 rank-4 输入要求 `B=1`；`chunkIndicesOptional`
 若提供必须与 `cuSeqlensOptional` 同时存在，且为规范的
 sequence-major `(sequence_id,local_chunk_id)` 列表。
+省略 `chunkIndicesOptional` 时，aclnn host 自动生成该规范表并由 executor 持有，
+C/C++ 调用者也无需自行构造。
 
 唯一输出 `attnOut` 是 BF16。`BSND/TND` 按 token 优先写出，
 `BNSD/NTD` 按 value head 优先写出；三个 token 输入仍然按 value head

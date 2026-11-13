@@ -25,6 +25,22 @@ A2/A3 和单 chunk 场景仍使用单次物理 L0。阶段选择仅使用私有 
 
 ## 阶段职责
 
+### chunk64 变长元数据
+
+四个公开 aclnn workspace 入口（Fwd V1/V2、Prepare、Finalize）先按原有规则校验参数，
+再统一调用 KDA host 公共函数 `EnsureChunkIndices`：只有 `cu_seqlens` 非空且
+`chunk_indices` 为空时，才按 sequence-major 顺序生成 `(sequence_id, local_chunk_id)`。
+每个序列生成 `ceil(sequence_length / chunk_size)` 对，空序列不生成记录。
+显式提供的表仍须通过原有 canonical 顺序校验，不会被自动表覆盖；dense 调用不建表。
+
+表由 `aclOpExecutor::AllocIntArray` 复制并持有，生命周期覆盖异步执行。
+V2 组合入口只生成一次，并把同一张表传给 Prepare、FwdH 和 Finalize。
+因此通过这些公开 aclnn 入口执行的 chunk64 变长 kernel 均走已有查表分支，
+无需每个 chunk 从序列 0 重扫边界，也不依赖核内任务的访问顺序。
+生成过程为 `O(sequence_count + chunk_count)`，表占用 `2 * chunk_count * sizeof(int64_t)`。
+kernel 中无表扫描分支保留，作为内部 L0 调用的兼容兜底。
+chunk32 使用独立的融合路由，不属于该查表路径。
+
 ### KdaGateCumsum
 
 将 raw/已激活 gate 转为 FP32 chunk-local log2 累计值：

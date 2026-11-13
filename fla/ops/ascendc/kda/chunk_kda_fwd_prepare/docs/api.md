@@ -106,7 +106,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `a_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
 | `dt_bias` | FP32 | 可空；shape `[HV*128]` |
 | `cu_seqlens` | host int array | 可空；变长模式为 `[sequence_count+1]`，首元素为 0，末元素为 T，且非递减 |
-| `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列 |
+| `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列；省略时 aclnn host 自动生成并由 executor 持有 |
 | `layout` | string | 描述 q/k/v/g/beta：`BNSD`、`BSND`、`NTD` 或 `TND`，区分大小写 |
 | `scale` | float | 转为 FP32 后为有限值 |
 | `chunk_size` | int | 固定为 64 |
