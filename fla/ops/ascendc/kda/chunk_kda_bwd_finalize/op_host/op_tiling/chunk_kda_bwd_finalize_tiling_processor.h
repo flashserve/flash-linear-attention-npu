@@ -63,13 +63,13 @@ public:
         }
         const bool hasRstd = ctx_.qRstd != nullptr || ctx_.kRstd != nullptr;
         if ((ctx_.qRstd == nullptr) != (ctx_.kRstd == nullptr)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "k_rstd", std::to_string(ctx_.qRstd), "q_rstd and k_rstd must appear together");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "k_rstd", (ctx_.qRstd != nullptr ? "q_rstd present" : "q_rstd absent"), "q_rstd and k_rstd must appear together");
 
             return ge::GRAPH_FAILED;
         }
         const bool variable = ctx_.cuSeqlens != nullptr || ctx_.chunkIndices != nullptr;
         if ((ctx_.cuSeqlens == nullptr) != (ctx_.chunkIndices == nullptr)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(ctx_.cuSeqlens), "cu_seqlens and chunk_indices must appear together");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "cu_seqlens", (ctx_.cuSeqlens != nullptr ? "cu_seqlens present" : "cu_seqlens absent"), "cu_seqlens and chunk_indices must appear together");
 
             return ge::GRAPH_FAILED;
         }
