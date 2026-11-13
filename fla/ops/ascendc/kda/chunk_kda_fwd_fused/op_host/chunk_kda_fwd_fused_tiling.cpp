@@ -51,7 +51,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
     const auto qDesc = context->GetInputDesc(INPUT_Q_IDX);
     const auto attrs = context->GetAttrs();
     if (qDesc == nullptr || attrs == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), qDesc == nullptr ? "q" : "attrs", "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), qDesc == nullptr ? "q" : "attrs");
         return ge::GRAPH_FAILED;
     }
     const float scale = static_cast<float>(*attrs->GetAttrPointer<double>(ATTR_SCALE_IDX));
