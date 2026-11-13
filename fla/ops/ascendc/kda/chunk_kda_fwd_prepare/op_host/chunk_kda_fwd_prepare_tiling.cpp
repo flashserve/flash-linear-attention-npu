@@ -269,7 +269,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
     seqNum = static_cast<uint64_t>(cuShape.GetDim(0) - 1);
     if (cu[0] != 0 || cu[seqNum] != shape.seqLen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(shape.seqLen), std::string("cu_seqlens 首元素必须为 0，末元素必须等于 T=") + std::to_string(shape.seqLen) + "d。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(shape.seqLen), std::string("cu_seqlens 首元素必须为 0，末元素必须等于 T=") + std::to_string(shape.seqLen) + "。");
 
         return false;
     }
@@ -448,7 +448,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
 
     PrepareLayout parsedLayout;
     if (!ParseLayout(layout, parsedLayout)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", "invalid", std::string("layout 必须为 BNSD、BSND、NTD 或 TND，当前值=") + layout == nullptr ? "<null>" : layout + "。");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", "invalid", std::string("layout 必须为 BNSD、BSND、NTD 或 TND，当前值=") + (layout == nullptr ? "<null>" : layout) + "。");
 
         return ge::GRAPH_FAILED;
     }
@@ -469,7 +469,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (*safeGatePtr && (*lowerBoundPtr < -5.0F || *lowerBoundPtr >= 0.0F)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", std::string("safe_gate=true 时 lower_bound 必须在 [-5, 0) 内，当前值=") + std::to_string(*lowerBoundPtr) + "。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "lower_bound", std::to_string(*lowerBoundPtr), "safe_gate=true 时 lower_bound 必须在 [-5, 0) 内");
 
         return ge::GRAPH_FAILED;
     }
