@@ -49,6 +49,7 @@ from fla_npu.ops.ascendc import chunk_kda_fwd_prepare
 这是经 Stable-ABI 适配层调用 `aclnnChunkKdaFwdPrepare` 的稳定入口，不进入 legacy
 `torch.ops.npu` 注册路径。
 Python 参数名为 `A_log`；算子 IR 和数学说明中记作 `a_log`。
+Python 入口默认 `layout="BSND"`、`use_exp2=True`；`scale` 为必传参数。
 
 ## aclnn
 
@@ -106,7 +107,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `g` | BF16/FP32 | 跟随 layout：BNSD `[B,HV,T,128]`；BSND `[B,T,HV,128]`；NTD `[HV,T,128]`；TND `[T,HV,128]` |
 | `beta` | BF16/FP32 | 跟随 layout：BNSD `[B,HV,T]`；BSND `[B,T,HV]`；NTD `[HV,T]`；TND `[T,HV]` |
 | `a_log` | FP32 | kernel 内 gate 模式必传，shape `[HV]` |
-| `dt_bias` | FP32 | 可空；shape `[HV*128]` |
+| `dt_bias` | FP32 | 可空；必须为一维 `[HV*128]`，即将 `[HV,128]` 展平 |
 | `cu_seqlens` | host int array | 可空；变长模式为 `[sequence_count+1]`，首元素为 0，末元素为 T，且非递减 |
 | `chunk_indices` | host int array | 可空；仅能与 `cu_seqlens` 同时传入，内容为规范的 sequence-major `(sequence_id, local_chunk_id)` 序列 |
 | `layout` | string | 描述 q/k/v/g/beta：`BNSD`、`BSND`、`NTD` 或 `TND`，区分大小写 |
@@ -114,7 +115,7 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
 | `chunk_size` | int | 固定为 64 |
 | `epsilon` | float | 转为 FP32 后有限且大于 0 |
 | `lower_bound` | float | 转为 FP32 后有限；SafeSigmoid 模式要求 `[-5,0)` |
-| `backward_mode` | string | Python 层输出策略：`"none"`、`"forward"`、`"recompute"` 或 `"save"`；默认 `"save"` |
+| `backward_mode` | string | Python 层输出档位：`"none"`、`"forward"`、`"recompute"` 或 `"save"`；默认 `"save"` |
 
 `B/T/HK/HV` 必须为正数且可由 `uint32_t` 表示；GVA 要求 `0 < HK <= HV` 且
 `HV % HK == 0`。tensor descriptor 必须使用标准、
@@ -143,9 +144,9 @@ BF16: Aqk, Akk, w, u, qg, kg, qg_scaled, q_hat, k_hat
 指针必须非空。其余七项可由 L2 用空指针表示不导出，L0 会为 launcher 补充不写入的
 descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/save` 四档之一，
 否则 L2 返回 `ACLNN_ERR_PARAM_INVALID`。稳定 Python 入口按下表分配输出，并在未分配的
-固定槽位返回 `None`：
+固定输出槽位返回 `None`：
 
-| 模式 | `gk` | `Aqk` | `Akk` | `w` | `u` | `qg` | `kg` | `qg_scaled` | `q_hat` | `k_hat` | `q_rstd` | `k_rstd` | `beta_eff` |
+| 档位 | `gk` | `Aqk` | `Akk` | `w` | `u` | `qg` | `kg` | `qg_scaled` | `q_hat` | `k_hat` | `q_rstd` | `k_rstd` | `beta_eff` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `none` | Y | Y | - | Y | Y | - | Y | Y | - | - | - | - | - |
 | `forward` | Y | Y | Y | Y | Y | - | Y | Y | - | - | - | - | - |
