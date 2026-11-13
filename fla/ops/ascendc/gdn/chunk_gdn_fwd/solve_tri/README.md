@@ -16,7 +16,7 @@ $$Y = (I + A)^{-1}$$
 - **TND**: `[total_T, Head, chunkSize]`，变长序列模式，单 chunk 内数据不连续
 - **NTD**: `[Head, total_T, chunkSize]`，变长序列模式，单 chunk 内数据连续（TND 的转置）
 
-> BNSD/NTD 由于单 chunk 内数据连续，DataCopy 可使用 blockCount=1 实现连续搬运，效率高于 BSND/TND。
+`bhtd` 是 ACLNN 中 `bnsd` 的兼容别名。实际性能取决于设备和输入形状。
 
 ---
 
@@ -61,8 +61,8 @@ torch.ops.npu.npu_solve_tri(
 | 参数 | 数据类型 | 是否必须 | 描述 |
 |------|----------|----------|------|
 | x | FLOAT16/BFLOAT16 | 是 | 输入下三角矩阵 |
-| cu_seqlens | INT64 | TND 模式必须 | 累积序列长度 |
-| chunk_indices | INT64 | TND 模式必须 | chunk 索引数组 |
+| cu_seqlens | INT64 | TND/NTD 模式必须 | 累积序列长度 |
+| chunk_indices | INT64 | TND/NTD 模式必须 | 展平的 `(seq_id, chunk_id)` 对 |
 | layout | string | 否 | 数据布局，支持 "bsnd"、"bnsd"、"tnd"、"ntd"，默认 "bsnd" |
 
 ---
@@ -70,15 +70,14 @@ torch.ops.npu.npu_solve_tri(
 ## 4. 输入约束
 
 1. **数据类型**：输入 x 仅支持 FLOAT16 和 BFLOAT16
-2. **chunkSize**：最后一维（矩阵大小）仅支持 64 或 128
-   - 在 Atlas A2（910 机器）上：
-     - `chunkSize=64`：高精度分支，全程使用 FP32 计算
-     - `chunkSize=128`：低精度分支，中间计算会 cast 成 FP16 或 BF16，且需满足 `H * chunkSize * 16 + 16 < 65536`
-   - 在 Ascend 950 系列上：64 和 128 均正常计算
-3. **数据布局**：
-   - `bsnd`: 输入 shape 为 `[B, S, H, chunkSize]`，单 chunk 内数据不连续
-   - `tnd`: 输入 shape 为 `[total_T, H, chunkSize]`，需配合 cu_seqlens 和 chunk_indices 使用，单 chunk 内数据不连续
-4. **变长模式**：当 layout 为 "tnd" 时，cu_seqlens 和 chunk_indices 必须提供，数据类型为 INT64
+2. **chunkSize**：最后一维支持 16、32、64 和 128；批次、head 和 token 维度均须为正。
+3. **变长模式**：`tnd` 和 `ntd` 必须同时提供 `cu_seqlens` 和 `chunk_indices`；定长布局不得提供这两个参数。`cu_seqlens` 从 0 开始、以 `total_T` 结束且非递减，相邻相等表示空序列；目前不支持所有序列均为空。
+4. **chunk 索引**：展平数组中的每对为原始序列编号和该序列内从 0 开始的 chunk 编号，每个非空 chunk 必须恰好出现一次。各对可按任意顺序排列。尾部不足一个 chunk 时只计算有效矩阵区域。
+5. **输出**：ACLNN 的 `xOut` 必须与 `x` 的 shape 和 dtype 一致且连续。Python 包装层返回新分配的同 shape、同 dtype 输出。
+
+完整接口约束参见 [docs/api.md](docs/api.md)，实现概述参见 [docs/design.md](docs/design.md)。
+
+本次新增的 shape、dtype、layout、输出及变长元数据校验和结构化错误仅用于 A2/A3。A5 保留 `546859c7` 的原有检查行为，调用方仍须满足其原有输入约束；不能将 A2/A3 的非法输入拦截结果视作 A5 的保证。
 
 ---
 
@@ -94,18 +93,18 @@ torch.ops.npu.npu_solve_tri(
 
 ### 6.1 算法原理
 
-使用 **MCH (Matrix Chain Halving) + MBH (Matrix Block Halving)** 算法高效计算下三角矩阵的逆：
+A2/A3 的 chunk 64 路径使用 AIC/AIV 协同求解，chunk 16/32/128 使用 FP32 Vector 前向替代。A5 按 chunk size 分发到对应实现。FP32 是内部计算或中间存储精度，不表示公开接口接受 FP32 输入。
 
-1. 将矩阵分块为 $2 \times 2$ 块矩阵
-2. 利用下三角矩阵的结构特性递归求解
-3. 通过 AIC 核执行 CUBE 矩阵乘法，AIV 核生成辅助矩阵
+新增 workspace 计算和 kernel 优化仅用于 A2/A3。A5 的 workspace 计算、kernel 入口及 `arch35` 实现保持上述基线行为；本次不对其原有 workspace 容量作新的验证结论。注册配置按平台分开，A2/A3 使用 `PrecisionReduceFlag(false)`，A5 保留基线的 `true`；该字段控制混合精度类型选择，不改变 kernel 内部的 FP32 运算。
 
 ## 7. 目录结构
 
 ```
 solve_tri/
 ├── docs/
-│   └── aclnnSolveTri.md
+│   ├── aclnnSolveTri.md
+│   ├── api.md
+│   └── design.md
 ├── op_host/
 │   ├── op_api/
 │   │   ├── aclnn_solve_tri.cpp
@@ -123,7 +122,9 @@ solve_tri/
 │   ├── solve_tri.cpp
 │   ├── solve_tri_common.h
 │   ├── solve_tri_cube.h
-│   └── solve_tri_vector.h
+│   ├── solve_tri_fp32.h
+│   ├── solve_tri_vector.h
+│   └── solve_tri_vector_fp32.h
 ├── test/
 │   └── test.py
 ├── CMakeLists.txt

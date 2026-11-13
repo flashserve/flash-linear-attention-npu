@@ -15,7 +15,7 @@
              .DataType({ge::DT_FLOAT16, ge::DT_BF16})
              .FormatList({ge::FORMAT_ND})
              .AutoContiguous();
- 
+
          this->Input("cu_seqlens")
              .ParamType(OPTIONAL)
              .DataTypeList({ge::DT_INT64})
@@ -47,12 +47,21 @@
              .PrecisionReduceFlag(true)
              .ExtendCfgInfo("opFile.value", "solve_tri")
              .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
+
+         OpAICoreConfig arch22_config;
+         arch22_config.DynamicCompileStaticFlag(true)
+             .DynamicFormatFlag(true)
+             .DynamicRankSupportFlag(false)
+             .DynamicShapeSupportFlag(true)
+             .NeedCheckSupportFlag(false)
+             .PrecisionReduceFlag(false)
+             .ExtendCfgInfo("opFile.value", "solve_tri")
+             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
  
-        this->AICore().AddConfig("ascend910b", aicore_config);
-        this->AICore().AddConfig("ascend910_93", aicore_config);
+        this->AICore().AddConfig("ascend910b", arch22_config);
+        this->AICore().AddConfig("ascend910_93", arch22_config);
         this->AICore().AddConfig("ascend950", aicore_config);
     }
 };
  OP_ADD(SolveTri);
  }  // namespace ops
- 

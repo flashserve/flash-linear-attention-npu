@@ -1,0 +1,1026 @@
+[
+  {
+    "id": 0,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_fp32_input",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "fp32_input"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_output_dtype",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "output_dtype"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_rank_two",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "rank_two"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_output_shape",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "output_shape"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_output_stride",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "output_stride"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_chunk_48",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "chunk_48"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_unknown_layout",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "unknown_layout"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_layout_rank",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "layout_rank"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_zero_batch",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "zero_batch"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_zero_tokens_dense",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "zero_tokens_dense"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_zero_heads_dense",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "zero_heads_dense"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_zero_tokens_tnd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "zero_tokens_tnd"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_zero_tokens_ntd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "zero_tokens_ntd"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 13,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_zero_heads_tnd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "zero_heads_tnd"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 14,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_missing_indices",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "missing_indices"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 15,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_missing_cu",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "missing_cu"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 16,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_missing_both",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "missing_both"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 17,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_dense_metadata",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense_metadata"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 18,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_cu_size",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "cu_size"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 19,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_cu_first",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "cu_first"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 20,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_cu_last",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "cu_last"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 21,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_cu_decreasing",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "cu_decreasing"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 22,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_cu_negative",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "cu_negative"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 23,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_cu_out_of_range",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "cu_out_of_range"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 24,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_odd",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_odd"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 25,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_missing",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_missing"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 26,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_duplicate",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_duplicate"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 27,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_sequence_out_of_range",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_sequence_out_of_range"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 28,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_chunk_out_of_range",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_chunk_out_of_range"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 29,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_negative_sequence",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_negative_sequence"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 30,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_indices_negative_chunk",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "indices_negative_chunk"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 161002
+      }
+    ]
+  },
+  {
+    "id": 31,
+    "default_seed": 20261109,
+    "name": "solve_tri_contract_valid_empty_and_reordered",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_solve_tri_a2_contract",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": "single_bm",
+      "perf": "not_key"
+    },
+    "inputs": [
+      {
+        "name": "contract_case",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "valid_empty_and_reordered"
+      },
+      {
+        "name": "expected_return_code",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 0
+      }
+    ]
+  }
+]

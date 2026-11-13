@@ -8,6 +8,8 @@
 |Atlas A3 训练系列产品/Atlas A3 推理系列产品|      √     |
 |Atlas A2 训练系列产品/Atlas A2 推理系列产品|      √     |
 
+本次新增的输入及变长元数据校验、结构化错误、workspace 计算和 kernel 优化仅用于 A2/A3。A5 保留 `546859c7` 的原有 host 检查、workspace 计算、注册配置和 kernel 行为；调用方仍须遵守原有输入约束，本次不增加 A5 的非法输入防御，也不对其原有 workspace 容量作新的验证结论。平台隔离说明见 [api.md](api.md#平台隔离)。
+
 ## 功能说明
 
 - 接口功能：计算下三角矩阵求逆 $(I + A)^{-1}$，其中 $A$ 是严格下三角矩阵。
@@ -54,10 +56,10 @@ aclnnStatus aclnnSolveTri(
 | 参数名 | 输入/输出 | 描述 |
 |--------|-----------|------|
 | x | 输入 | 公式中的输入矩阵 A，Device 侧的 aclTensor，数据类型支持 FLOAT16、BFLOAT16 |
-| cuSeqlens | 输入 | 变长序列模式下的累积序列长度，可选参数。Device 侧的 aclIntArray，数据类型为 INT64 |
-| chunkIndices | 输入 | 变长序列模式下的 chunk 索引，可选参数。Device 侧的 aclIntArray，数据类型为 INT64 |
-| layout | 输入 | 数据布局模式，支持 "bsnd"、"tnd"，默认 "bsnd" |
-| xOut | 输出 | 公式中的输出矩阵 Y，Device 侧的 aclTensor，数据类型与 x 一致 |
+| cuSeqlens | 输入 | TND/NTD 变长序列的累积长度；`aclIntArray`，INT64，定长模式为 null |
+| chunkIndices | 输入 | TND/NTD 的展平 chunk 索引对；`aclIntArray`，INT64，定长模式为 null |
+| layout | 输入 | `bsnd`、`bnsd`、`bhtd`、`tnd` 或 `ntd`，null 默认 `bsnd`；`bhtd` 为 `bnsd` 别名 |
+| xOut | 输出 | Device 侧连续 aclTensor，shape 和数据类型与 x 一致 |
 | workspaceSize | 输出 | 返回执行该算子所需的 workspace 大小 |
 | executor | 输出 | 返回算子执行器 |
 
@@ -72,16 +74,11 @@ aclnnStatus aclnnSolveTri(
 
 ## 输入约束
 
-1. **数据类型**：输入 x 仅支持 FLOAT16 和 BFLOAT16
-2. **chunkSize**：最后一维（矩阵大小）仅支持 64 或 128
-   - 在 Atlas A2（910 机器）上：
-     - `chunkSize=64`：高精度分支，全程使用 FP32 计算
-     - `chunkSize=128`：低精度分支，中间计算会 cast 成 FP16 或 BF16，且需满足 `H * chunkSize * 16 + 16 < 65536`
-   - 在 Ascend 950 系列上：64 和 128 均正常计算
-3. **数据布局**：
-   - `bsnd`: 输入 shape 为 `[B, S, H, chunkSize]`，单 chunk 内数据不连续
-   - `tnd`: 输入 shape 为 `[total_T, H, chunkSize]`，需配合 cu_seqlens 和 chunk_indices 使用，单 chunk 内数据不连续
-4. **变长模式**：当 layout 为 "tnd" 时，cu_seqlens 和 chunk_indices 必须提供，数据类型为 INT64
+1. 输入 x 支持 FLOAT16 和 BFLOAT16，最后一维 `chunkSize` 支持 16、32、64 和 128。
+2. `bsnd` 使用 `[B, T, H, chunkSize]`；`bnsd` / `bhtd` 使用 `[B, H, T, chunkSize]`；`tnd` 使用 `[total_T, H, chunkSize]`；`ntd` 使用 `[H, total_T, chunkSize]`。B、H、T 和 total_T 均须为正。
+3. `tnd` / `ntd` 必须同时提供 `cuSeqlens` 和 `chunkIndices`；定长布局不得提供。`cuSeqlens` 从 0 开始、以 total_T 结束且非递减，相邻相等表示空序列。当前不支持全部为空的序列集合。
+4. `chunkIndices` 按 `(seq_id, chunk_id)` 对展平，序列编号保留 `cuSeqlens` 的原始下标，chunk 编号从 0 开始。每个非空 chunk 恰好出现一次，顺序不限；末尾不足一个 chunk 时只处理有效区域。
+5. 详细契约参见 [api.md](api.md)。A2/A3 的 chunk 128 路径使用 FP32 Vector 中间计算，公开输入和输出仍为 FLOAT16/BFLOAT16。
 
 ## 输出说明
 
@@ -95,6 +92,8 @@ aclnnStatus aclnnSolveTri(
 |--------|------|
 | ACLNN_SUCCESS | 成功 |
 | 其他 | 失败 |
+
+A2/A3 在调度前执行本次新增校验，并对参数错误返回相应状态与结构化上下文。A5 保持基线检查和错误映射，不能以 A2/A3 负向测试推断 A5 的非法输入行为。
 
 ## PyTorch 接口
 
@@ -111,10 +110,10 @@ torch.ops.npu.npu_solve_tri(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| x | Tensor | 输入下三角矩阵，shape 为 `[B, T, H, chunkSize]` (bsnd) 或 `[total_T, H, chunkSize]` (tnd) |
+| x | Tensor | 输入下三角矩阵，shape 由上述四种布局确定 |
 | cu_seqlens | Optional[List[int]] | 变长模式下的累积序列长度，如 `[0, 100, 200]` 表示两个序列长度分别为 100 和 100 |
 | chunk_indices | Optional[List[int]] | 变长模式下的 chunk 索引，格式为 `[seq_id_0, chunk_id_0, seq_id_1, chunk_id_1, ...]` |
-| layout | str | 数据布局，可选 "bsnd"、"tnd"，默认 "bsnd" |
+| layout | str | 数据布局，可选 "bsnd"、"bnsd"、"tnd"、"ntd"，默认 "bsnd" |
 
 ### 返回值
 
@@ -128,11 +127,18 @@ torch.ops.npu.npu_solve_tri(
 import torch
 import torch_npu
 import fla_npu
+from fla_npu.ops import ascendc
 
 # 基本用法 (BSND layout)
 B, T, H, chunkSize = 2, 128, 4, 64
-x = torch.randn(B, T, H, chunkSize, dtype=torch.float16, device="npu")
-y = torch.ops.npu.npu_solve_tri(x, layout="bsnd")
+x = torch.zeros(B, T, H, chunkSize, dtype=torch.float16, device="npu")
+for start in range(0, T, chunkSize):
+    block = torch.tril(
+        torch.randn(B, H, chunkSize, chunkSize, dtype=x.dtype, device=x.device),
+        diagonal=-1,
+    )
+    x[:, start:start + chunkSize, :, :] = block.permute(0, 2, 1, 3)
+y = ascendc.npu_solve_tri(x, layout="bsnd")
 
 
 # 变长序列模式 (TND layout)
@@ -146,8 +152,17 @@ for seq_idx, seq_len in enumerate(seq_lens):
     for chunk_id in range(num_chunks):
         chunk_indices.extend([seq_idx, chunk_id])
 
-x_tnd = torch.randn(total_T, H, chunkSize, dtype=torch.float16, device="npu")
-y_tnd = torch.ops.npu.npu_solve_tri(
+x_tnd = torch.zeros(total_T, H, chunkSize, dtype=torch.float16, device="npu")
+for seq_idx, seq_len in enumerate(seq_lens):
+    for offset in range(0, seq_len, chunkSize):
+        valid = min(chunkSize, seq_len - offset)
+        start = cu_seqlens[seq_idx] + offset
+        block = torch.tril(
+            torch.randn(H, valid, valid, dtype=x_tnd.dtype, device=x_tnd.device),
+            diagonal=-1,
+        )
+        x_tnd[start:start + valid, :, :valid] = block.permute(1, 0, 2)
+y_tnd = ascendc.npu_solve_tri(
     x_tnd,
     cu_seqlens=cu_seqlens,
     chunk_indices=chunk_indices,
