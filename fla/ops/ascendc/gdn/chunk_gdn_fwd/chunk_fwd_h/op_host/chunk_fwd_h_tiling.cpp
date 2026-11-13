@@ -93,17 +93,19 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     auto gkTensor = context->GetOptionalInputTensor(INPUT_GK_IDX);
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
-    if (useG == useGk) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "g", "Exactly one of g and gk must be provided.");
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(useG == useGk,
+                OP_LOGE(context->GetNodeName(), "Exactly one of g and gk must be provided."),
+                return ge::GRAPH_FAILED);
     auto gateTensor = useGk ? gkTensor : gTensor;
 
     uint64_t gateDtypeToken = 0;
-    if (!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "g/gk dtype must be BF16 or FP32");
-        return ge::GRAPH_FAILED;
-    }
+    // g/gk 仅支持 BF16/FP32，本处是唯一 dtype 校验门；
+    // 扩展 dtype 时需同步评估 gated 复用支持面。
+    OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken),
+                OP_LOGE(context->GetNodeName(),
+                        "g/gk dtype must be BF16 or FP32, but got dtype=%d.",
+                        static_cast<int>(gateTensor->GetDataType())),
+                return ge::GRAPH_FAILED);
 
     auto attrPtr = context->GetAttrs();
     bool storeFinalState = *(attrPtr->GetAttrPointer<bool>(ATTR_STORE_FINAL_STATE_IDX));
@@ -123,17 +125,18 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         resolvedStateDataType = initialStateTensor->GetDataType();
     } else if (storeFinalState) {
         auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
-        if (finalStateDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "final_state", "invalid", "final_state output descriptor must exist when storeFinalState is true.");
-        return ge::GRAPH_FAILED;
-    }
+        OP_CHECK_IF(finalStateDesc == nullptr,
+                    OP_LOGE(context->GetNodeName(),
+                            "final_state output descriptor must exist when storeFinalState is true."),
+                    return ge::GRAPH_FAILED);
         resolvedStateDataType = finalStateDesc->GetDataType();
     }
     uint64_t stateDtypeToken = 0;
-    if (!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "Resolved state dtype must be BF16 or FP32");
-        return ge::GRAPH_FAILED;
-    }
+    OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken),
+                OP_LOGE(context->GetNodeName(),
+                        "Resolved state dtype must be BF16 or FP32, but got dtype=%d.",
+                        static_cast<int>(resolvedStateDataType)),
+                return ge::GRAPH_FAILED);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
 
@@ -153,8 +156,11 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
     // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
-    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
-        (gateDtypeToken == CHUNK_FWD_H_TPL_FP32 || gateDtypeToken == CHUNK_FWD_H_TPL_BF16) &&
+    // 域不限（2026-11-10 exp 域复用释放）：useExp2 true/false 均可（域随 tiling
+    // key 的 USE_EXP2 维选实例，epilogue 内 LN2 换算按域取舍）。
+    // vfirst 不限：state 布局经 STATE_V_FIRST 模板维进 kernel，aclnn 层免翻译；
+    // dtype 此处不判，唯一门为函数头部入口校验。
+    tilingCtx.gatedEligible = useG &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -177,31 +183,32 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Platform reports zero AIC cores; cannot build ChunkFwdH tiling.", __func__);
-
+        OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
         return ge::GRAPH_FAILED;
     }
 
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "Logical batch, sequence length and head counts must be positive, but got "
-                "d,d,d,d.");
-
+        OP_LOGE(context->GetNodeName(),
+                "Logical batch, sequence length and head counts must be positive, but got "
+                "batch=%ld, seqlen=%ld, HK=%ld, HV=%ld.",
+                logicalBatch, logicalSeqlen, logicalKHeads, logicalVHeads);
         return ge::GRAPH_FAILED;
     }
     if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "FwdH requires K=128, V=128 and chunk_size=64d,d,d.");
-
+        OP_LOGE(context->GetNodeName(),
+                "FwdH requires K=128, V=128 and chunk_size=64, but got K=%ld, V=%ld, chunk_size=%ld.",
+                logicalKDim, logicalVDim, chunkSize);
         return ge::GRAPH_FAILED;
     }
     if (!saveNewValue) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "save_new_value", "invalid", "save_new_value must be true.");
-
+        OP_LOGE(context->GetNodeName(), "save_new_value must be true.");
         return ge::GRAPH_FAILED;
     }
     if ((useG && logicalVHeads % logicalKHeads != 0) || (useGk && logicalKHeads != logicalVHeads)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g-only requires HV % HK == 0; gk-only requires k/ kg head count equal HV. "
-                "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.");
-
+        OP_LOGE(context->GetNodeName(),
+                "g-only requires HV %% HK == 0; gk-only requires k/ kg head count equal HV. "
+                "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.",
+                useG, useGk, logicalKHeads, logicalVHeads);
         return ge::GRAPH_FAILED;
     }
 
