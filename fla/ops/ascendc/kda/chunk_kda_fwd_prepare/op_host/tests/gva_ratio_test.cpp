@@ -26,4 +26,10 @@ int main()
     assert(!IsValidChunkKdaFwdPrepareGva(3, 2));
     assert(!IsValidChunkKdaFwdPrepareGva(3, 8));
     assert(!IsValidChunkKdaFwdPrepareGva(3, 51));
+    assert(IsValidChunkKdaFwdPrepareLegacyHeads(3, 51));
+    assert(!IsValidChunkKdaFwdPrepareLegacyHeads(3, 2));
+    const ChunkKdaFwdPrepareScheduleContext a5Context{
+        1, 3, 51, 1, 0, 24, 0, false, false};
+    ChunkKdaFwdPrepareSchedule a5Schedule;
+    assert(ChunkKdaFwdPrepareTilingProcessor(a5Context).Process(a5Schedule));
 }

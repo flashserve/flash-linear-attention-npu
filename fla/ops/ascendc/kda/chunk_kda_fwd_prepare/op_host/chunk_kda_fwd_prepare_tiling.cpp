@@ -487,14 +487,23 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const uint64_t outputMode = static_cast<uint64_t>(*outputModePtr);
+    const auto platform =
+        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const bool isAscend950 =
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool validHeads = isAscend950
+        ? IsValidChunkKdaFwdPrepareLegacyHeads(
+              static_cast<uint64_t>(shape.qkHeadNum),
+              static_cast<uint64_t>(shape.valueHeadNum))
+        : IsValidChunkKdaFwdPrepareGva(
+              static_cast<uint64_t>(shape.qkHeadNum),
+              static_cast<uint64_t>(shape.valueHeadNum));
     if (!FitsUint32(shape.batch) || !FitsUint32(shape.seqLen) ||
         !FitsUint32(shape.qkHeadNum) || !FitsUint32(shape.valueHeadNum) ||
         shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
-        !IsValidChunkKdaFwdPrepareGva(
-            static_cast<uint64_t>(shape.qkHeadNum),
-            static_cast<uint64_t>(shape.valueHeadNum))) {
+        !validHeads) {
         OP_LOGE(context->GetNodeName(),
-                "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、1<=HV/HK<=16 且 HV%%HK=0；"
+                "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128；A2/A3 的 GVA 比例为 1..16，A5 保留整除兼容范围；"
                 "当前 B=%ld,T=%ld,HK=%ld,HV=%ld,K=%ld,V=%ld。",
                 shape.batch, shape.seqLen, shape.qkHeadNum, shape.valueHeadNum,
                 shape.kDim, shape.vDim);
@@ -553,11 +562,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const auto platform =
-        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
-    const bool isAscend950 =
-        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     ChunkKdaFwdPrepareScheduleContext scheduleContext;
     scheduleContext.batch = static_cast<uint64_t>(shape.batch);
     scheduleContext.qkHeadNum = static_cast<uint64_t>(shape.qkHeadNum);

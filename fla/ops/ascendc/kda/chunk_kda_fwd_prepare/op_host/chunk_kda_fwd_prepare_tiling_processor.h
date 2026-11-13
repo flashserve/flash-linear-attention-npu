@@ -53,6 +53,13 @@ inline bool IsValidChunkKdaFwdPrepareGva(uint64_t qkHeadNum,
         valueHeadNum / qkHeadNum <= CHUNK_KDA_FWD_PREPARE_MAX_GVA_RATIO;
 }
 
+inline bool IsValidChunkKdaFwdPrepareLegacyHeads(uint64_t qkHeadNum,
+                                                 uint64_t valueHeadNum)
+{
+    return qkHeadNum != 0 && valueHeadNum >= qkHeadNum &&
+        valueHeadNum % qkHeadNum == 0;
+}
+
 class ChunkKdaFwdPrepareTilingProcessor {
 public:
     explicit ChunkKdaFwdPrepareTilingProcessor(
@@ -61,10 +68,12 @@ public:
 
     bool Process(ChunkKdaFwdPrepareSchedule &schedule) const
     {
-        if (context_.batch == 0 ||
-            !IsValidChunkKdaFwdPrepareGva(context_.qkHeadNum,
-                                          context_.valueHeadNum) ||
-            context_.aicCoreNum == 0) {
+        const bool validHeads = context_.isArch22
+            ? IsValidChunkKdaFwdPrepareGva(context_.qkHeadNum,
+                                           context_.valueHeadNum)
+            : IsValidChunkKdaFwdPrepareLegacyHeads(context_.qkHeadNum,
+                                                   context_.valueHeadNum);
+        if (context_.batch == 0 || !validHeads || context_.aicCoreNum == 0) {
             return false;
         }
 
