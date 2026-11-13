@@ -10,8 +10,11 @@
 - `cu_seqlens` 可选；传入时为同设备 `INT32/INT64` tensor，shape 为 `[seq_num+1]`，首项为 `0`，末项不超过 token capacity，offset 单调不减。
 - `q/k/v/out` 仅支持 `BFLOAT16`；`g/beta` 支持 `FLOAT/BFLOAT16/FLOAT16`，`A_log/dt_bias` 支持 `FLOAT`。
 - `HV % H == 0`，`H/HV <= 256`；当前支持 `K=128,V=128` 或 `K=128,V=256`。
-- A2/A3 支持多时间窗口长序列；A5 每段仍不超过 8；显式 `ssm_state_indices` 可使 `state_capacity > seq_num`。
+- A2/A3/A5/A6 的 Q/K/V view 使用相同输入约束：直接读取仅支持 token-major，BSND `B>1` 时要求 `batchStride == T*tokenStride`；可连续化的 feature-gap、zero-stride、batch-gap view 由公开入口先连续化，head-major view 按 [API 文档](../../../fla/ops/ascendc/kda/recurrent_kda/docs/api.md)的校验规则拒绝。
+- A2/A3 支持多时间窗口长序列；A5 的 V=128/V=256 路径均支持长序列，内部按最多四个 token 的窗口递推；A6（`ascend960dt`）的 V=128/V=256 同样按 token 直接递推，不限制每段长度；显式 `ssm_state_indices` 可使 `state_capacity > seq_num`。
 - 当前 ATK 用例遵循上述约束，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
+
+A5 验收须按 [API 文档的模板选择说明](../../../fla/ops/ascendc/kda/recurrent_kda/docs/api.md)覆盖 V-first/K-first 的通用与常用融合四种模板模式，并分别验证 FP32/BF16 State、V=128/V=256、长序列和 indexed State。默认小用例只用于基础检查，不能作为全部 A5 TilingKey 的覆盖证据；compat 模式仅用于 A2/A3。
 
 ## 标杆来源
 
@@ -21,7 +24,7 @@ CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的
 
 ## SOC 支持
 
-YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950` 使用。
+YAML 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950` 和 `ascend960dt`，可配合统一脚本的 `-soc=ascend910b|ascend910_93|ascend950|ascend960dt` 使用。
 
 ## 默认用例
 
