@@ -221,7 +221,7 @@ recurrent_kda<RKDA_TPL_V_FIRST><<<blockDim, nullptr, stream>>>(
 - state 支持 V-first 与 K-first，支持 FP32/BF16，以及原位/非原位 final state。
 - 非连续 state 仅允许 slot/head 外层维存在间隔，最后两维必须为行主序稠密矩阵，且外层地址区间不得重叠。
 - A2/A3 支持超过 8 token 的 dense/varlen 序列，内部以最多 8 token 的窗口顺序递推；A5 的 V=128/V=256 路径均支持长序列，内部以最多 4 token 的窗口顺序递推。Token 容量和元数据宽度须能由现有 uint32 tiling 字段表示，地址计算使用 64 位并保留容量校验。
-- 仅支持 `layout="BSND"` 和 `layout="TND"`。
+- 仅支持 `layout="BSND"` 和 `layout="TND"`。 ACLNN `layout=nullptr` 返回 `161002`（`ACLNN_ERR_PARAM_INVALID`）。
 - `use_gate_in_kernel=false` 时 `A_log/dt_bias/safe_gate` 必须为空或 false。
 
 ## 8. 异常与返回码
