@@ -824,7 +824,7 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
 
     const int64_t seqNum = SeqNum(params, batch);
     const int64_t stateDim0 = params.stateVFirst ? valueDim : keyDim;
@@ -834,13 +834,13 @@ static aclnnStatus CheckChunk32Params(const ChunkGatedDeltaRuleFwdParams &params
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckStateShape(params.finalStateOutOptional, "finalStateOut", seqNum, valueHeads, stateDim0, stateDim1);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     if (params.initialStateOptional != nullptr) {
         const DataType stateDtype = params.initialStateOptional->GetDataType();
         if (!(stateDtype == DataType::DT_BF16 || stateDtype == DataType::DT_FLOAT)) {
@@ -882,49 +882,49 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.aOutOptional, qkvRank, "aOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.qHatOutOptional, qkvRank, "qHatOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.kHatOutOptional, qkvRank, "kHatOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.qRstdOutOptional, scalarRank, "qRstdOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.kRstdOutOptional, scalarRank, "kRstdOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.betaEffOutOptional, scalarRank, "betaEffOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckOptionalRank(params.hOutOptional, 5, "hOutOptional");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
 
     const int64_t chunks = ExpectedChunks(params, info.seqlen);
     if (!(info.batch > 0 && info.hq > 0 && info.hv > 0 && info.seqlen > 0)) {
@@ -1048,7 +1048,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
 
     const int64_t seqNum = SeqNum(params, info.batch);
     const int64_t stateDim0 = params.stateVFirst ? info.vDim : info.kDim;

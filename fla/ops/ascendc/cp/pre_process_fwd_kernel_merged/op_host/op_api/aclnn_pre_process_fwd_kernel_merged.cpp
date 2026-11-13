@@ -307,13 +307,13 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckShape(params);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_INNER_NULLPTR;
     }

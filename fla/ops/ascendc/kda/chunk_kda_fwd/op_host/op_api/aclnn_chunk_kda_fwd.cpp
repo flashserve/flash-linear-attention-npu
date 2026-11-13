@@ -620,13 +620,13 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckCuSeqlens(params.cuSeqlensOptional, info.seqlen);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     if (!(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1)) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", "invalid", "rank4 varlen input with cuSeqlensOptional requires B=1.");
         return ACLNN_ERR_PARAM_INVALID;
@@ -640,13 +640,13 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     {
         const aclnnStatus checkStatus = CheckStateShape(params.initialStateOptional, "initialStateOptional", info, params.stateVFirst);
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     // 归一化 / gate 开关约束：epsilon 只在 in-kernel L2 norm 时参与计算，
     // allowNegEigval 依赖 in-kernel beta sigmoid。
     const float epsilonFp32 = static_cast<float>(params.epsilon);
@@ -685,7 +685,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     return ACLNN_SUCCESS;
 }
 
@@ -902,7 +902,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -1258,7 +1258,7 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    }
+    };
     if (!(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_INVALID;
     }
