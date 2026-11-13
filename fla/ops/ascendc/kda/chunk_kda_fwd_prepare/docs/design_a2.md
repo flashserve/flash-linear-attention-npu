@@ -115,9 +115,9 @@ key2/4在UB内解两个32阶叶块，交接时转BF16。key3/5按每chunk/head�
 |半开字节区间|物理用途|活跃与复用条件|
 |---|---|---|
 |[0,0x8000)|q_：低16KiB Q，另16KiB临时|Q checkpoint、score payload、RHS 完成消费后用于 Lower|
-|[0x8000,0x10000)|k_：低16KiB K，另16KiB临时|同上；不能在 MTE3 未排空前改写|
+|[0x8000,0x10000)|k_：低16KiB K，另16KiB临时|同上；key3/5在RHS store退休后分别预取下一work的Q/K|
 |[0x10000,0x18000)|g_ FP32 64×128|prefix/RHS及gk store退休后，前16KiB保存未量化负Lower；key3/5风险分支用上8KiB暂存提前写回的P|
-|[0x18000,0x28000)|work_ FP32 64KiB|gate暂存→norm/factor/raw；key2/4前8KiB为两份32阶逆；key3/5回退前4.5KiB为四份16阶逆（物理行距72float）；key0/1前16KiB为64阶逆|
+|[0x18000,0x28000)|work_ FP32 64KiB|gate暂存→norm/factor/raw；key2/4前8KiB为两份32阶逆；key3/5回退前4.5KiB为四份16阶逆（物理行距72float），[0x20000,0x24000)在风险检查退休后预取下一work的BF16 gate；key0/1前16KiB为64阶逆|
 |[0x28000,0x2c000)|v_ BF16 16KiB|Kminus→qg_scaled/kg→Aqk，按末次 DMA 消费复用|
 |[0x2c000,0x2f000)|small_ 12KiB|rstd、beta、bias、广播量和 scalar DMA 分区|
 |[0x2f000,0x2f800)|mask 2KiB|[0,640)为三角mask，[640,672)为零选择值，[1024,1504)为前代步长索引；初始化一次，只读|
@@ -141,6 +141,14 @@ BF16 beta每work在DMA之前将原始/打包转换区Small[2048,2592)初始化�
 Eye DMA只覆盖其前8KiB，其余转换非活跃区域保持定义值；公开写回仍仅有效行。
 持久UB tensor通过同一TBuf分配派生有界TBuffAddr，逐字段初始化并显式落栈，
 ShapeInfo置零；地址、容量与账本一致，不依赖未初始化的描述符字节。
+
+key3/5缓存下一work描述符，沿用原head-pair轮转和grid-stride。仅下一lane有效且有完整64行时预取：
+当前RHS写回经DrainStores退休后，k_的两个16KiB区域分别接收下一Q/K；风险检查结束后，
+work_[8192,12288)接收下一BF16 gate，与LeafInverse16使用的work_[0,6016)互斥。
+下一Prepare先等待MTE2，再用int32 Adds(+0)逐位搬回Q/K，并将gate别名Cast到g_；
+Cast后的VBarrier先于Normalize复用work_。gate与Q/K使用同一就绪状态，不新增持久标记。
+尾块、inactive lane、非key3/5保持原读取；FP32 gate保持原DMA路径。末work不发起预取，
+不增加UB、workspace、跨核事件或数学key，原风险判据和求逆计算顺序不变。
 
 每 AIC 的 L1 为192KiB，两 lane 各96KiB。每 lane 相对地址：
 
