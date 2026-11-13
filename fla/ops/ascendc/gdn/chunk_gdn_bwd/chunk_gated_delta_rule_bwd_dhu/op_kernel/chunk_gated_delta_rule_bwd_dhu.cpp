@@ -20,7 +20,7 @@
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
 #include "arch92/chunk_gated_delta_rule_bwd_dhu_cube.h"
 #include "arch92/chunk_gated_delta_rule_bwd_dhu_vector.h"
-#elif defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_cube.h"
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_vector.h"
