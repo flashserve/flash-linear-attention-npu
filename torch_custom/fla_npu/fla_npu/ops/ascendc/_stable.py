@@ -1736,8 +1736,8 @@ def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
     """KDA chunked forward 的 finalize 段（唯一的公开输出是 ``attn_out``）。
 
     ``output_layout`` 只描述输出的拼写：BSND/TND 是 sequence-major，
-    BNSD/NTD 是 head-major；四个输入始终是 head-major（packed 拼写没有 batch
-    轴）。``cu_seqlens`` 传了就按 canonical 顺序生成 ``chunk_indices``。
+    BNSD/NTD 是 head-major；三个 token 输入始终是 head-major（packed 拼写没有 batch
+    轴），h 沿用 FwdH 的 chunk-major [B,C,HV,128,128]。``cu_seqlens`` 传了就按 canonical 顺序生成 ``chunk_indices``。
     """
 
     cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
