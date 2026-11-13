@@ -15,7 +15,7 @@
 namespace Catlass::Epilogue {
 
 struct EpilogueAtlasGDNFwdOQkmask {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;
@@ -23,7 +23,7 @@ struct EpilogueAtlasGDNFwdOQkmask {
 };
 
 struct EpilogueAtlasGDNFwdOOutput {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;

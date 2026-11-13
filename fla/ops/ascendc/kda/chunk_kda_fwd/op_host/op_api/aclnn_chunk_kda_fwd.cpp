@@ -826,8 +826,7 @@ l0op::KdaFwdV2Args MakeKdaFwdV2Args(const ChunkKdaFwdParams &params,
 
 bool IsAscend950()
 {
-    const char *socName = aclrtGetSocName();
-    return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
 }
 // chunk32 大融合路由实现于 chunk_kda_fwd_chunk32_route.h（body-include，仍属本匿名命名空间）。
 #include "chunk_kda_fwd_chunk32_route.h"

@@ -9,7 +9,7 @@
 
 #include "merge_fwd_bwd_kernel_struct.h"
 #include "merge_fwd_bwd_kernel_tiling_key.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/merge_fwd_bwd_kernel_cube.h"
 #include "arch35/merge_fwd_bwd_kernel_vector.h"
 #else
@@ -69,7 +69,7 @@ __global__ __aicore__ void merge_fwd_bwd_kernel(
     REGISTER_TILING_DEFAULT(MergeFwBwd::MergeFwdBwdKernelTilingData);
     MergeFwBwd::MergeFwdBwdKernelTilingData tilingData;
     CopyTilingFromGm(reinterpret_cast<__gm__ MergeFwBwd::MergeFwdBwdKernelTilingData *>(tiling), tilingData);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // 3510 GetUserWorkspace() uses __get_kfc_workspace_addr() and is not shared
     // AIC/AIV. Adding sysWorkspaceSize here OOBs because `workspace` is already
     // the launch user pointer. Use the kernel argument as-is.

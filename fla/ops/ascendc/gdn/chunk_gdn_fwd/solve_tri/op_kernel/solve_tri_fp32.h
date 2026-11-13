@@ -273,7 +273,7 @@ public:
         // Native FP32 only. Do not enable the A2/A3 HF32 multiply mode.
         SetHF32Mode(false);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ArchTag = Catlass::Arch::Ascend950;
 #else
         using ArchTag = Catlass::Arch::AtlasA2;

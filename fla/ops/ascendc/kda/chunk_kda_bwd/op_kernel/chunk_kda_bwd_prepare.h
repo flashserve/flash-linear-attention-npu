@@ -3,7 +3,7 @@
 
 #include "chunk_kda_bwd_common.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_kda_bwd_prepare.h"
 #endif
 
@@ -123,7 +123,7 @@ __aicore__ inline uint64_t KdaBwdAChunkHeadOffset(
 #define CHUNK_KDA_BWD_A_CUBE_H
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -144,7 +144,7 @@ namespace KDA {
 template <typename T, uint32_t V_DIM>
 class ChunkKdaBwdACube {
 private:
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Catlass::Arch::Ascend950;
 #else
     using ArchTag = Catlass::Arch::AtlasA2;
@@ -167,14 +167,14 @@ private:
         ArchTag, T, typename DACopy::LayoutTagL1A>;
 
     static constexpr uint32_t DO_BYTES = KDA_BWD_A_C * V_DIM * sizeof(T);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     static constexpr uint32_t DO_SLOT_COUNT = 2;
 #else
     static constexpr uint32_t DO_SLOT_COUNT = 1;
 #endif
     static constexpr uint32_t RIGHT0_BYTES =
         V_DIM * KDA_BWD_A_K * sizeof(T);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     static constexpr uint32_t AQK_BYTES =
         KDA_BWD_A_C * KDA_BWD_A_C * sizeof(T);
     static constexpr uint32_t OWNER_DO_OFFSET = 0;
@@ -245,19 +245,19 @@ public:
         tiling_ = tiling;
         AscendC::SetHF32Mode(false);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
 #else
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
 #endif
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A1);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B1);
 #endif
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
 #endif
     }
@@ -267,7 +267,7 @@ public:
         const uint32_t core = AscendC::GetBlockIdx();
         const uint64_t ownerCount =
             static_cast<uint64_t>(tiling_.chunkNum) * tiling_.headNum;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // PR190-style two-head windows.  Two adjacent heads use slots 0/1,
         // the next window uses 2/3, then the producer waits for the matching
         // AIV free credit before reusing the same pair.
@@ -378,19 +378,19 @@ public:
         // reusable L1/L0 credits set; consuming them before kernel return is
         // required for all outstanding MTE1/MMAD/Fixpipe work to retire.
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
 #else
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
 #endif
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A1);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B1);
 #endif
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C1);
 #endif
 
@@ -399,7 +399,7 @@ public:
 private:
     __aicore__ inline void WaitDoWritable(uint32_t slot)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (slot != 0) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
             return;
@@ -412,7 +412,7 @@ private:
 
     __aicore__ inline void SetDoReady(uint32_t slot)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (slot != 0) {
             AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO1);
             return;
@@ -425,7 +425,7 @@ private:
 
     __aicore__ inline void WaitDoReady(uint32_t slot)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (slot != 0) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_DO1);
             return;
@@ -438,7 +438,7 @@ private:
 
     __aicore__ inline void SetDoWritable(uint32_t slot)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (slot != 0) {
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DO1);
             return;
@@ -475,7 +475,7 @@ private:
         SetDoReady(slot);
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void LoadOwner(
         const ChunkKdaBwdATask &task, uint32_t taskIdx,
         uint32_t head, uint32_t slot)
@@ -580,7 +580,7 @@ private:
     {
         (void)taskIdx;
         Catlass::Arch::Resource<ArchTag> resource;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         const uint32_t ownerBase = doSlot * OWNER_SLOT_BYTES;
         auto l1A = resource.l1Buf.template GetBufferByByte<T>(
             ownerBase + OWNER_AQK_OFFSET);
@@ -595,7 +595,7 @@ private:
         auto l0B = resource.l0BBuf.template GetBufferByByte<T>(0);
         auto l0C = resource.l0CBuf.template GetBufferByByte<float>(0);
 
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         AscendC::GlobalTensor<T> gmA;
         const uint64_t aOffset =
             KdaBwdAHeadTokenOffset(tiling_, task, head, KDA_BWD_A_C);
@@ -647,7 +647,7 @@ private:
             tla::MakeShape(task.validC, V_DIM));
         typename DvCopy::CopyL1ToL0A copyA;
         typename DvCopy::CopyL1ToL0B copyB;
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_SCRATCH);
 #endif
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A);
@@ -657,7 +657,7 @@ private:
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B);
         copyB(l0BTensor, tileL1B);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_SCRATCH);
 #endif
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_L0_READY);
@@ -877,7 +877,7 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C);
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // A5-local two-output path for the two contractions that share do as
     // their complete left operand:
     //   dq_raw = do @ h^T, dAqk = do @ v_new^T.
@@ -1091,7 +1091,7 @@ private:
 
 namespace KDA {
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 template <typename T>
 class ChunkKdaBwdAVector {
 public:
@@ -1241,7 +1241,7 @@ __aicore__ inline void RunChunkKdaBwdA(
         cube.Init(tiling);
         cube.Process();
     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
         ChunkKdaBwdAVector<T> vector(

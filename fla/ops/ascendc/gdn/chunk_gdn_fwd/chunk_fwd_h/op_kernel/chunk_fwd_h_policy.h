@@ -73,7 +73,7 @@ constexpr uint32_t FWD_H_UB_SHARE_BASE = 226 * 1024;
 // ready/free 使用同一 ID 的双向计数器，且复用前必须由上一代 wait 消费。
 // 目标 CANN 9.1 的 A5 mode=0x4 仅支持 AIV 本地 ID 0..10；AIC 侧通过 16-ID
 // 步长选择 AIV0/AIV1。各协议使用互不重叠的本地 ID，最大 ID 为 8。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 16;
 #else
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 0;
@@ -197,7 +197,7 @@ struct FwdHKernelArgs {
 // 集合同步，同一 localSlot 的两个 AIV 必须使用同一 ID。
 __aicore__ inline uint32_t FwdHAicPeerFlag(uint32_t base, uint32_t localSlot, uint32_t aiv)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     return base + localSlot + aiv * FWD_H_AIV_FLAG_STRIDE;
 #else
     (void)aiv;

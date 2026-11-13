@@ -302,7 +302,7 @@ abs/ULP 失败 0，保留输入、DUT 和 golden。
 trace 插桩未修改正式版本的 34 个同步语句，所有事件 credit/Wait 与退出 drain 检查通过。
 trace 仅存在于独立工作区，正式源码及正常性能包无 trace、额外 workspace 或同步。
 
-A5 的 `__CCE_AICORE__=310` 预处理 token 与基线完全一致（2787 tokens，
+A5 的 `__NPU_ARCH__=3510` 预处理 token 与基线完全一致（2787 tokens，
 SHA256 `3aac387caee64ec560cb6518c9cb44e7b344c6db1e70ea02f6f7b7858b3c3637`）；
 Host 默认 `headGroupSize=0` 的 60,480 个参数组合与原版五项调度结果一致，
 其中 18,016 个合法、42,464 个拒绝输入。新增 HostUT 用

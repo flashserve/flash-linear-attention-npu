@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 
 #include "catlass/arch/arch.hpp"
@@ -90,7 +90,7 @@ template<
 class GDNFwdOKernel {
 public:
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;
@@ -133,7 +133,7 @@ public:
     using BlockMmadAttenVNEW128 = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
     using BlockMmadAttenVNEW256 = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     // varlen 重叠路径类型（仅 A2/arch22）：每个 Cube 实例独占一段 L1 和一对 event id，
     // 装载可以和上一个 Cube 的计算重叠；L0C 分槽见 ProcessOverlapVarlen。V256 不走本路径。
     using DispatchPolicyTlaOvl = Gemm::MmadPingpongTlaGdnFwdO<
@@ -271,7 +271,7 @@ public:
         }
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     /// varlen 专属重叠路径：Cube1 处理当前 task，Cube2/Cube3 处理上一个 task，
     /// 三组装载与计算交错重叠（相位见下方 Phase 标注），数值路径与串行版本一致。
     template <typename BlockQKT, typename BlockQHT, typename BlockAVT, uint32_t PART_BYTES,
@@ -407,7 +407,7 @@ public:
             uint32_t coreIdx = AscendC::GetBlockIdx();
             uint32_t coreNum = AscendC::GetBlockNum();
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
             // 重叠路径守卫：仅 chunkSize 64/128、vHeadDim/kHeadDim<=128、序列数达标的
             // varlen 启用；定长和单序列 varlen 无重叠收益，走原串行路径
             constexpr uint32_t OVERLAP_MIN_VARLEN_SEQS = 4;
@@ -455,7 +455,7 @@ public:
             // 仅在 DAV_2201 上验证过，其他架构一律关闭。
             // FORM_DENSITY_MIN_HVxB 与 qkmask epilogue 的同名常量是同一阈值，需同步修改。
             constexpr uint32_t FORM_DENSITY_MIN_HVxB = 16;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
             const bool enableQReuse = (vNumHead * shapeBatch >= FORM_DENSITY_MIN_HVxB);
 #else
             const bool enableQReuse = false;
@@ -582,7 +582,7 @@ public:
             uint32_t pingpongFlag = 0;
             // 掩码守卫变量 HV×B（varlen 时取 tokenBatch）：epilogue 按其是否 >=16 选择
             // 掩码实现。tile 化掩码仅在 DAV_2201 验证过，其他架构传 0 回退旧带状。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
             const uint32_t hvTimesBatch = static_cast<uint32_t>(
                 vNumHead * ((isVariedLen != 0) ? tokenBatch : shapeBatch));
 #else

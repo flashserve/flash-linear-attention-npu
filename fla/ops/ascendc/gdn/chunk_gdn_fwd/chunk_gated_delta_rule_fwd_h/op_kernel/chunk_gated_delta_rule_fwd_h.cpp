@@ -12,7 +12,7 @@
  * \brief
  */
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #include "arch35/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
 #else

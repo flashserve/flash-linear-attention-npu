@@ -145,7 +145,7 @@
 - 分支条件写成包含关系（`<=` 与 `<` 混用）导致边界档位被前一个分支吃掉。
 - Host 使用 `GetSocVersion() == SocVersion::ASCEND950`，而不是
   `GetCurNpuArch() == NpuArch::DAV_3510`，导致 SoC 枚举扩展或混合目标构建时平台判据失真。
-- Kernel 使用 `#if __CCE_AICORE__ == 310`，而不是
+- Kernel 使用 `__CCE_AICORE__`、`__DAV_C310__` 等架构别名，而不是
   `#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)`，导致编译期架构选择与目标 NPU 架构不一致。
 - 使用 `GDN_BWD_ENABLE_ARCH22` 一类自造 `ENABLE_ARCHxx`/`USE_ARCHxx` 宏替代 host 运行期架构判断，
   导致同一生成物被复用到不同设备时选错分支。

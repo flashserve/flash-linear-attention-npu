@@ -15,7 +15,6 @@
 #include "chunk_kda_fwd_prepare_tiling_processor.h"
 #include "../op_kernel/chunk_kda_fwd_prepare_tiling_key.h"
 #include "../op_kernel/chunk_kda_fwd_prepare_runtime_key.h"
-#include "../op_kernel/chunk_kda_fwd_prepare_runtime_policy.h"
 #include "../op_kernel/arch22/chunk_kda_fwd_prepare_resource.h"
 #include "platform/soc_spec.h"
 #include "register/op_impl_registry.h"
@@ -596,7 +595,6 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         static_cast<uint64_t>(*useExp2Ptr),
         static_cast<uint64_t>(*safeGatePtr),
         outputMode);
-    const auto pipeline = PreparePipeline::Generic;
     const uint64_t tilingKey = isAscend950 ? legacyTilingKey
         : RuntimeKey::Encode(normMode, gateMode);
 
@@ -619,7 +617,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     tiling.set_betaMode(betaMode);
     tiling.set_gateMode(gateMode);
     tiling.set_outputMode(outputMode);
-    tiling.set_pipelineVariant(static_cast<uint32_t>(pipeline));
+    // 当前只有通用流水线；字段保留在 TilingData 中，不改变既有布局。
+    tiling.set_pipelineVariant(0U);
     tiling.set_useExp2(*useExp2Ptr);
 
     context->SetTilingKey(tilingKey);

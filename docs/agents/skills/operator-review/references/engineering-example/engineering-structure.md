@@ -322,7 +322,7 @@ add_ops_compile_options(
    ```
 
    参考 `chunk_fwd_h/op_kernel/chunk_fwd_h.cpp` 与 `chunk_kda_fwd/op_kernel/chunk_kda_fwd.cpp`。
-   禁止使用 `#if __CCE_AICORE__ == 310`。不得用 `GDN_BWD_ENABLE_ARCH22` 一类构建期
+   禁止使用 `__CCE_AICORE__`、`__DAV_C310__` 等架构别名。不得用 `GDN_BWD_ENABLE_ARCH22` 一类构建期
    `ENABLE_ARCHxx`/`USE_ARCHxx` 宏代替 host 的运行期架构判断或 kernel 的
    `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)` 判断。
 4. 差异只放在被拆分的实现头里；两份内容相同的文件（TilingData 结构、策略头等）保留在根目录一份，

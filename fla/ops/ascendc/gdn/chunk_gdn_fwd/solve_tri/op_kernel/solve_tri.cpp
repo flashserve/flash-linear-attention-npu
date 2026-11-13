@@ -5,14 +5,14 @@
 #include "kernel_operator.h"
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
 #endif
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/solve_tri_ascend950_16.h"
 #include "arch35/solve_tri_ascend950_32.h"
 #include "arch35/solve_tri_ascend950_64.h"
@@ -26,7 +26,7 @@
 
 using namespace AscendC;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
                                      GM_ADDR workspace, GM_ADDR tiling)
 {

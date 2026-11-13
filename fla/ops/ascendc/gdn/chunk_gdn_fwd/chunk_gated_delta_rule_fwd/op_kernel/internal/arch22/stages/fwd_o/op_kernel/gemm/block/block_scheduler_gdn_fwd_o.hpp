@@ -25,7 +25,7 @@ struct GDNFwdOOffsets {
     int64_t gOffset;
     int64_t attnWorkOffset;
     int64_t hvWorkOffset;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     int64_t hWorkOffset;
 #endif
     uint32_t vBlockOffset;
@@ -77,7 +77,7 @@ struct BlockSchedulerGdnFwdO {
     uint32_t taskIdx;
     uint32_t cubeCoreIdx;
     uint32_t cubeCoreNum;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     uint32_t hWorkStages{GDN_FWD_O_PING_PONG_STAGES};
     uint32_t hWorkSlotMask{GDN_FWD_O_PING_PONG_STAGES - 1};
     CATLASS_DEVICE
@@ -297,7 +297,7 @@ struct BlockSchedulerGdnFwdO {
         offsets[currStage].gOffset = ovRowOffset;
         offsets[currStage].attnWorkOffset = workStageOffset * ChunkSize() * ChunkSize();
         offsets[currStage].hvWorkOffset = workStageOffset * ChunkSize() * vBlockSize;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         // 原 owner 的连续 pair 每次跨 2*C；两 AIV 用相同 task ordinal 寻址。
         // mask=1 保持原两槽地址，mask=3 才启用每 core 独立四槽。
         if constexpr (kStaticBT == 64 && kStaticV == 128) {

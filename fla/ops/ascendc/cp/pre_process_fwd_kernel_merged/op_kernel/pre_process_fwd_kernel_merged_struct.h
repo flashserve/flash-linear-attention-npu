@@ -22,7 +22,7 @@
 // 而仓内其它算子（chunk_gated_delta_rule_fwd arch35、chunk_scaled_dot_kkt）用的
 // `GetTiling(AscendC::tiling::TCubeTiling&)` 正常。
 #include "kernel_tiling/kernel_tiling.h"
-#if !defined(__CCE_AICORE__) && !defined(__DAV_C220_CUBE__) && !defined(__DAV_C220_VEC__)
+#if !defined(__NPU_ARCH__) && !defined(__DAV_C220_CUBE__) && !defined(__DAV_C220_VEC__)
 #include "tiling/tiling_api.h"   // host 侧：matmul_tiling::MatmulApiTiling
 #endif
 using PpFwdCubeTiling = AscendC::tiling::TCubeTiling;

@@ -53,7 +53,7 @@ public:
     using HUpdateElementInput = typename HUpdateInputType_::Element;
     using FinalStateElement = typename FinalStateType_::Element;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     static constexpr bool kSharedLowResident = !kGated && scalarGated &&
         std::is_same<FinalStateElement, float>::value &&
         (std::is_same<HElementInput, half>::value || std::is_same<HElementInput, bfloat16_t>::value) &&
@@ -116,7 +116,7 @@ public:
     CATLASS_DEVICE
     ~BlockEpilogue() {}
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     CATLASS_DEVICE void ConfigureOwnerLocal(Arch::Resource<ArchTag> &resource)
     {
         static_assert(kSharedLowResident, "Owner-local HV2 preserves the original shared-low recurrence");

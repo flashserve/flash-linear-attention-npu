@@ -17,7 +17,7 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/prepare_wy_repr_bwd_full_tiling_data_apt.h"
 #include "arch35/prepare_wy_repr_bwd_full_common.h"
 #include "arch35/prepare_wy_repr_bwd_full_cube.h"
@@ -32,7 +32,7 @@ using namespace GDN;
 
 using namespace AscendC;
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 namespace GDN {
 
 template <typename KType, typename BetaType>
@@ -68,7 +68,7 @@ extern "C" __global__ __aicore__ void prepare_wy_repr_bwd_full(
 {
     AscendC::AscendCUtils::SetOverflow(1);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     REGISTER_TILING_DEFAULT(PrepareWyReprBwdFullTilingDataA5);
     GET_TILING_DATA(tilingData, tiling);
     if (TILING_KEY_IS(1)) {

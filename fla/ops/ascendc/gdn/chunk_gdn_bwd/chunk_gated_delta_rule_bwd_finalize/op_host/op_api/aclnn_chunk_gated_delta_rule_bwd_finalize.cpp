@@ -1,24 +1,16 @@
-#ifndef GDN_FINALIZE_ENABLE_ARCH22
-#define GDN_FINALIZE_ENABLE_ARCH22 0
-#endif
-
 #include "aclnn_chunk_gated_delta_rule_bwd_finalize.h"
 #include "chunk_gated_delta_rule_bwd_finalize.h"
 
 #include <string>
 
 #include "aclnn_kernels/contiguous.h"
-#if GDN_FINALIZE_ENABLE_ARCH22
 #include "external/aclnn_kernels/aclnn_platform.h"
-#endif
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
 
-#if GDN_FINALIZE_ENABLE_ARCH22
 #include "../arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_arch22.h"
-#endif
 #include "op_common/log/log.h"
 
 using namespace op;
@@ -84,7 +76,6 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-#if GDN_FINALIZE_ENABLE_ARCH22
     // A2/A3 使用私有 Host 路径；A5 保留原有校验条件、连续化和 executor 流程。
     if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
         return gdn_finalize_arch22::GetWorkspaceSize(
@@ -102,7 +93,6 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
             OP_NAME, "npuArch", actual.c_str(), "DAV_2201 or DAV_3510");
         return ACLNN_ERR_PARAM_INVALID;
     }
-#endif
 
     if (chunkSize != 64) {
         const std::string actual = std::to_string(chunkSize);
