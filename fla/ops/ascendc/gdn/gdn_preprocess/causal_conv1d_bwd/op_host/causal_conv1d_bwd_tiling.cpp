@@ -479,6 +479,21 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
     }
 
+    // BT=64→32 的两档选择（仅 ascend950 正常路径，非 idSplit / 非快路径）：
+    // BT=64 时若 chunk 并行度凑不满 AIV（numChunks < coreNum），历史实现会退到 chunk × i_d 的二维
+    // 切分（splitG）来凑核数。实测在 SILU/SWISH 正常路径上，这条 2D 路径的单算子耗时明显偏高；
+    // 而当 BT 降到 32 恰好使 chunk 数正好铺满全部 AIV（numChunks == coreNum）时，会回到
+    // 「每核 1 个 chunk、每核串行遍历 i_d」的 1D 形态，单算子 TD 相对 BT=64 的 2D 形态提升 30%+。
+    // 其余情形（BT=32 仍凑不满核、或 BT=64 本就已铺满核）保持 BT=64，实测无收益甚至回归，故不改。
+    if (isAscend950 && !useIdSplit && !useArch35DirectFast && !use910BDirectFast && numBlksD >= 2 &&
+        BT == 64U && numChunks < coreNum) {
+        uint32_t numChunksHalf = CalcNumChunks(BT >> 1U);
+        if (numChunksHalf == coreNum) {
+            BT >>= 1U;
+            numChunks = numChunksHalf;
+        }
+    }
+
     // UB 预算兜底：普通路径的 BT 上限固定为 64，极端 shape（超大卷积核宽度 W、或 b16 的 cast/
     // 输出 staging 叠加）即使 BT=64 也放不下。BT 越小每份 buffer 越小，故逐级减半直到预算满足，
     // 保证算子仍能正常执行而不是在 tiling 阶段直接报错。BT 减半只会增加 chunk 数，需同步刷新
@@ -601,8 +616,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint64_t redBytes =
             static_cast<uint64_t>(CeilAlign(redStageRows * W * BD, BLOCK_ALIGN_NUM)) * FP32_DTYPE_SIZE;
         OP_CHECK_IF(redBytes > RESERVED_UB,
-                    OP_LOGE(context, "partial-reduce staging %lu B exceeds reserved UB %u B",
-                            redBytes, RESERVED_UB),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "ubSize", std::to_string(redBytes).c_str(),
+                        "the partial-reduce staging buffer exceeds the reserved UB region"),
                     return ge::GRAPH_FAILED);
     }
 
