@@ -231,15 +231,11 @@ class WheelEnvironmentTest(unittest.TestCase):
         self.assertIn("FLA_NPU_OPS", setup_source)
         self.assertIn("--ops=", setup_source)
 
-    def test_scoped_package_build_runs_stable_aclnn_abi_gate(self) -> None:
+    def test_package_build_does_not_run_stable_aclnn_abi_gate(self) -> None:
         build_source = (REPO_ROOT / "build.sh").read_text(encoding="utf-8")
         ci_source = (REPO_ROOT / "ci" / "run_checks.sh").read_text(encoding="utf-8")
-        self.assertIn("function check_stable_aclnn_abi", build_source)
-        self.assertIn('include_args+=(--ops "${OPS_FILTER_VALUE}")', build_source)
-        self.assertIn("check_stable_aclnn_abi", build_source)
-        gate_source = build_source.split("function check_stable_aclnn_abi(){", 1)[1].split(
-            "function build_package(){", 1)[0]
-        self.assertIn("cannot disable the mandatory Stable-ABI launcher", gate_source)
+        self.assertNotIn("check_stable_aclnn_abi", build_source)
+        self.assertNotIn("op_abi_validate.py", build_source)
         self.assertNotIn("ENFORCE_OVERLAY_ABI", build_source)
         self.assertNotIn("--enforce-overlay-abi", build_source)
         self.assertNotIn("check_stable_aclnn_abi", ci_source)
