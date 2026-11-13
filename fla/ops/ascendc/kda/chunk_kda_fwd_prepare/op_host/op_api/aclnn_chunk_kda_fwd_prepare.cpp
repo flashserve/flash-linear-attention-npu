@@ -903,11 +903,11 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     aclOpExecutor **executor)
 {
     if (workspaceSize == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "workspaceSize", "workspaceSize 不能为 nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (executor == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "executor", "executor 不能为 nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 

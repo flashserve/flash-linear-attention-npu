@@ -346,7 +346,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const bool hasConvStates =
         (sShapePtr != nullptr) && (sShapePtr->GetStorageShape().GetShapeSize() != 0);
     if (!hasConvStates && isDecodeMode) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "convStates", "convStates must be provided and non-empty when runMode=1 (update/decode)");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "convStates");
         return ge::GRAPH_FAILED;
     }
     int64_t numCacheLines = 0;

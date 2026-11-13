@@ -68,8 +68,7 @@ bool IsShape(const gert::StorageShape *shape, std::initializer_list<int64_t> dim
 ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *context)
 {
     if (context == nullptr || context->GetAttrs() == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "context", "chunk32 tiling context and attrs must not be null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "context");
         return ge::GRAPH_FAILED;
     }
 

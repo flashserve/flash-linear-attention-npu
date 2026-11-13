@@ -179,8 +179,7 @@ ge::graphStatus BuildAbcCubeTiling(uint64_t bt, uint64_t k, ge::DataType dtype,
 ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context)
 {
     if (context == nullptr || context->GetAttrs() == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "context", "tiling context and attrs must not be null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "context");
         return ge::GRAPH_FAILED;
     }
     const auto *qShape = context->GetOptionalInputShape(INPUT_Q);
@@ -211,8 +210,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
     if (qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
                     aDesc == nullptr || gDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                    OP_NAME, "q,k,v,A,beta,raw_g", "input descriptors must not be null");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,A,beta,raw_g");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType inputDtype = qDesc->GetDataType();
