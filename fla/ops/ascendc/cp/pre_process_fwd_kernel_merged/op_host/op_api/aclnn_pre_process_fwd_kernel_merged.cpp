@@ -26,6 +26,10 @@
 #include "opdev/platform.h"
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
+#include "op_common/log/log.h"
+#include <string>
+
+static constexpr const char *OP_NAME = "aclnnPreProcessFwdKernelMerged";
 
 using namespace op;
 
@@ -53,33 +57,66 @@ struct PreProcessFwdKernelMergedParams {
 
 static aclnnStatus CheckNotNull(PreProcessFwdKernelMergedParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w must not be nullptr.");
-    CHECK_COND(params.u != nullptr, ACLNN_ERR_PARAM_NULLPTR, "u must not be nullptr.");
-    CHECK_COND(params.hmOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "hmOut must not be nullptr.");
-    CHECK_COND(params.cuSeqlensOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "cuSeqlensOptional must not be nullptr (this operator is varlen only).");
+    if (!(params.k != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.w != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.u != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "u");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.hmOut != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "hmOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.cuSeqlensOptional != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "cuSeqlensOptional");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckDtype(PreProcessFwdKernelMergedParams params)
 {
     const auto bf16 = DataType::DT_BF16;
-    CHECK_COND(params.k->GetDataType() == bf16, ACLNN_ERR_PARAM_INVALID, "k must be BF16.");
-    CHECK_COND(params.w->GetDataType() == bf16, ACLNN_ERR_PARAM_INVALID, "w must be BF16.");
-    CHECK_COND(params.u->GetDataType() == bf16, ACLNN_ERR_PARAM_INVALID, "u must be BF16.");
+    if (!(params.k->GetDataType() == bf16)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "k", "invalid", "k must be BF16.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.w->GetDataType() == bf16)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "w", "invalid", "w must be BF16.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.u->GetDataType() == bf16)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "u must be BF16.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // DPLR 不支持：bg / v 是 DPLR 专用输入。两者留着 ABI 槽位，但必须为空——否则会被带到
     // 只注册未实现的 USE_BG 分派上，或者被静默当成 GDN/KDA 算错。host 侧显式拒绝。
-    CHECK_COND(params.bg == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "bg must be nullptr: DPLR is not implemented in this release (GDN/KDA only).");
-    CHECK_COND(params.v == nullptr, ACLNN_ERR_PARAM_INVALID,
-               "v must be nullptr: it is DPLR-only; GDN/KDA takes the values from u.");
+    if (!(params.bg == nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "DPLR", "bg must be nullptr: DPLR is not implemented in this release (GDN/KDA only).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.v == nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "v", "v must be nullptr: it is DPLR-only; GDN/KDA takes the values from u.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const bool gOk = params.g != nullptr &&
                      (params.g->GetDataType() == DataType::DT_FLOAT || params.g->GetDataType() == bf16);
     const bool gkOk = params.gk != nullptr &&
                       (params.gk->GetDataType() == DataType::DT_FLOAT || params.gk->GetDataType() == bf16);
-    CHECK_COND(gOk != gkOk, ACLNN_ERR_PARAM_INVALID, "exactly one of g / gk must be given.");
-    CHECK_COND(params.hmOut->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID, "hm must be FP32.");
+    if (!(gOk != gkOk)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", "invalid", "exactly one of g / gk must be given.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.hmOut->GetDataType() == DataType::DT_FLOAT)) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "hm must be FP32.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -90,10 +127,22 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     const auto uShape = params.u->GetViewShape();
     const auto hmShape = params.hmOut->GetViewShape();
 
-    CHECK_COND(kShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "k must be [1, HK, T, K].");
-    CHECK_COND(wShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "w must be [1, HV, T, K].");
-    CHECK_COND(uShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "u must be [1, HV, T, V].");
-    CHECK_COND(hmShape.GetDimNum() == 4, ACLNN_ERR_PARAM_INVALID, "hm must be [Nseq, HV, K, V+K].");
+    if (!(kShape.GetDimNum() == 4)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HK", std::to_string(kShape.GetDimNum()), "k must be [1, HK, T, K].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(wShape.GetDimNum() == 4)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(wShape.GetDimNum()), "w must be [1, HV, T, K].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(uShape.GetDimNum() == 4)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(uShape.GetDimNum()), "u must be [1, HV, T, V].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(hmShape.GetDimNum() == 4)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", std::to_string(hmShape.GetDimNum()), "hm must be [Nseq, HV, K, V+K].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const int64_t B = kShape.GetDim(0);
     const int64_t HK = kShape.GetDim(1);
@@ -102,29 +151,55 @@ static aclnnStatus CheckShape(PreProcessFwdKernelMergedParams params)
     const int64_t HV = uShape.GetDim(1);
     const int64_t V = uShape.GetDim(3);
 
-    CHECK_COND(B == 1, ACLNN_ERR_PARAM_INVALID, "B must be 1 (varlen packed); pack a dense batch first.");
-    CHECK_COND(K == PPFM_K && V == PPFM_V, ACLNN_ERR_PARAM_INVALID, "K and V must be 128.");
-    CHECK_COND(params.chunkSize == PPFM_CHUNK, ACLNN_ERR_PARAM_INVALID, "chunk_size must be 64.");
-    CHECK_COND(HK > 0 && HV > 0 && HV % HK == 0, ACLNN_ERR_PARAM_INVALID, "GVA requires HV % HK == 0.");
-    CHECK_COND(wShape.GetDim(0) == 1 && wShape.GetDim(2) == T && wShape.GetDim(3) == K,
-               ACLNN_ERR_PARAM_INVALID, "w must be [1, HV, T, K] matching k.");
-    CHECK_COND(uShape.GetDim(0) == 1 && uShape.GetDim(2) == T,
-               ACLNN_ERR_PARAM_INVALID, "u must be [1, HV, T, V] matching k.");
+    if (!(B == 1)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", std::to_string(B), "B must be 1 (varlen packed); pack a dense batch first.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(K == PPFM_K && V == PPFM_V)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "K and V must be 128.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(params.chunkSize == PPFM_CHUNK)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_size", "invalid", "chunk_size must be 64.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(HK > 0 && HV > 0 && HV % HK == 0)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "GVA requires HV % HK == 0.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(wShape.GetDim(0) == 1 && wShape.GetDim(2) == T && wShape.GetDim(3) == K)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "w must be [1, HV, T, K] matching k.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(uShape.GetDim(0) == 1 && uShape.GetDim(2) == T)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "u must be [1, HV, T, V] matching k.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const int64_t cuNumel = params.cuSeqlensOptional->Size();
-    CHECK_COND(cuNumel >= 2, ACLNN_ERR_PARAM_INVALID, "cu_seqlens must have >= 2 elements.");
+    if (!(cuNumel >= 2)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(cuNumel), "cu_seqlens must have >= 2 elements.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const int64_t Nseq = cuNumel - 1;
-    CHECK_COND(hmShape.GetDim(0) == Nseq && hmShape.GetDim(1) == HV && hmShape.GetDim(2) == K &&
-               hmShape.GetDim(3) == V + K,
-               ACLNN_ERR_PARAM_INVALID, "hm must be [Nseq, HV, K, V+K].");
+    if (!(hmShape.GetDim(0) == Nseq && hmShape.GetDim(1) == HV && hmShape.GetDim(2) == K &&
+               hmShape.GetDim(3) == V + K)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "hm must be [Nseq, HV, K, V+K].");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     const int64_t *cuData = params.cuSeqlensOptional->GetData();
     int64_t prev = -1;
     for (int64_t i = 0; i < cuNumel; ++i) {
         const int64_t cur = cuData[i];
-        CHECK_COND(cur >= 0 && cur <= T, ACLNN_ERR_PARAM_INVALID,
-                   "cu_seqlens must satisfy 0 <= cu[i] <= T (sub-interval windows are allowed).");
-        CHECK_COND(cur > prev, ACLNN_ERR_PARAM_INVALID, "cu_seqlens must be strictly increasing.");
+        if (!(cur >= 0 && cur <= T)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must satisfy 0 <= cu[i] <= T (sub-interval windows are allowed).");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+        if (!(cur > prev)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be strictly increasing.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
         prev = cur;
     }
     return ACLNN_SUCCESS;
@@ -136,19 +211,43 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus ParamsDataContiguous(PreProcessFwdKernelMergedParams &params, aclOpExecutor *executor)
 {
-    CHECK_COND(DataContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.w, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous w failed.");
-    CHECK_COND(DataContiguous(params.u, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous u failed.");
-    CHECK_COND(DataContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous g failed.");
-    CHECK_COND(DataContiguous(params.gk, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous gk failed.");
-    CHECK_COND(DataContiguous(params.bg, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous bg failed.");
-    CHECK_COND(DataContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID, "Contiguous v failed.");
+    if (!(DataContiguous(params.k, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.w, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous w failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.u, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous u failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.g, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.gk, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous gk failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.bg, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous bg failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.v, executor) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous v failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -157,11 +256,17 @@ static aclnnStatus ParamsGateToFp32(PreProcessFwdKernelMergedParams &params, acl
 {
     if (params.g != nullptr && params.g->GetDataType() != DataType::DT_FLOAT) {
         params.g = l0op::Cast(params.g, DataType::DT_FLOAT, executor);
-        CHECK_RET(params.g != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(params.g != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: params.g != nullptr failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     if (params.gk != nullptr && params.gk->GetDataType() != DataType::DT_FLOAT) {
         params.gk = l0op::Cast(params.gk, DataType::DT_FLOAT, executor);
-        CHECK_RET(params.gk != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(params.gk != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: params.gk != nullptr failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -187,24 +292,51 @@ aclnnStatus aclnnPreProcessFwdKernelMergedGetWorkspaceSize(
                    DFX_IN(k, w, u, gOptional, gkOptional, bgOptional, vOptional, cuSeqlensOptional, chunkSize),
                    DFX_OUT(hmOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
-    CHECK_COND(ParamsGateToFp32(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsGateToFp32 failed.");
+    if (!(CheckNotNull(params) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    {
+        const aclnnStatus checkStatus = CheckDtype(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
+    };
+    {
+        const aclnnStatus checkStatus = CheckShape(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
+    };
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(ParamsGateToFp32(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gate data type conversion to fp32 failed", __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     auto result = l0op::PreProcessFwdKernelMerged(params.k, params.w, params.u, params.g, params.gk, params.bg,
                                                  params.v, params.cuSeqlensOptional, params.chunkSize,
                                                  params.hmOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result[0] != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.hmOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (!(viewCopyResult != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -215,8 +347,10 @@ aclnnStatus aclnnPreProcessFwdKernelMerged(void *workspace, uint64_t workspaceSi
                                            aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnPreProcessFwdKernelMerged);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in PreProcessFwdKernelMerged launch aicore.");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in PreProcessFwdKernelMerged launch aicore.", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 
