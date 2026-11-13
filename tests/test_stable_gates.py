@@ -492,6 +492,52 @@ class HeaderKindGateTest(unittest.TestCase):
         self.assertNotEqual(tool.header_kind("double value"), tool.header_kind("double *value"))
         self.assertNotEqual(tool.header_kind("aclTensor *x"), tool.header_kind("aclTensor **x"))
 
+    def test_internal_operator_selects_public_owner_adapters(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = tool.adapter_calls(SRC_DIR)
+        expected = {"aclnnChunkKdaFwd", "aclnnChunkKdaFwdV2"}
+        for ops in ("chunk_kda_fwd_fused", "npu_chunk_kda_fwd_fused",
+                    "chunk_kda_fwd_fused,chunk_kda_fwd"):
+            with self.subTest(ops=ops):
+                self.assertEqual(set(tool.filter_adapters(adapters, ops)), expected)
+        self.assertEqual(
+            set(tool.filter_adapters(adapters, "chunk_kda_fwd_fused,solve_tri")),
+            expected | {"aclnnSolveTri"},
+        )
+
+    def test_internal_operator_does_not_bypass_missing_adapters(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        with self.assertRaisesRegex(RuntimeError, "chunk_kda_fwd_fused"):
+            tool.filter_adapters({}, "chunk_kda_fwd_fused")
+        with self.assertRaisesRegex(RuntimeError, "unknown_operator"):
+            tool.filter_adapters(tool.adapter_calls(SRC_DIR),
+                                 "chunk_kda_fwd_fused,unknown_operator")
+
+    def test_internal_operator_cli_validates_owner_header(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "stable_chunk_kda_fwd.cpp").write_text(
+                "void run(Tensor x, int64_t mode) {\n"
+                '  FLA_STABLE_EXEC("aclnnChunkKdaFwd", meta, stream, '
+                "tensor(x), scalar(mode));\n}\n", encoding="utf-8",
+            )
+            header = root / "aclnn_chunk_kda_fwd.h"
+            argv = ["op_abi_validate.py", "--src-dir", str(root),
+                    "--opp-include", str(root), "--ops", "chunk_kda_fwd_fused"]
+            for kind, expected in (("int64_t", 0), ("bool", 1)):
+                with self.subTest(kind=kind):
+                    header.write_text(
+                        "aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(\n"
+                        f"    const aclTensor *x, {kind} mode, uint64_t *workspaceSize,\n"
+                        "    aclOpExecutor **executor);\n", encoding="utf-8",
+                    )
+                    with mock.patch.object(sys, "argv", argv):
+                        self.assertEqual(tool.main(), expected)
+            header.unlink()
+            with mock.patch.object(sys, "argv", argv):
+                self.assertEqual(tool.main(), 1)
+
     def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         with tempfile.TemporaryDirectory() as temp_dir:
