@@ -444,7 +444,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Combined tiling data exceeds raw tiling capacity.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Combined tiling data exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }
     void *rawData = rawTiling->GetData();

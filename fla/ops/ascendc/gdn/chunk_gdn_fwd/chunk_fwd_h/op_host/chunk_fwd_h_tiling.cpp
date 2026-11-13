@@ -101,7 +101,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
 
     uint64_t gateDtypeToken = 0;
     if (!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "g/gk dtype must be BF16 or FP32, but got dtype=%d.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "g/gk dtype must be BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
 
@@ -131,7 +131,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     }
     uint64_t stateDtypeToken = 0;
     if (!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "Resolved state dtype must be BF16 or FP32, but got dtype=%d.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "Resolved state dtype must be BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
 
@@ -184,12 +184,12 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
 
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "Logical batch, sequence length and head counts must be positive, but got "
-                "batch=%ld, seqlen=%ld, HK=%ld, HV=%ld.");
+                "d,d,d,d.");
 
         return ge::GRAPH_FAILED;
     }
     if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "FwdH requires K=128, V=128 and chunk_size=64, but got K=%ld, V=%ld, chunk_size=%ld.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "FwdH requires K=128, V=128 and chunk_size=64d,d,d.");
 
         return ge::GRAPH_FAILED;
     }

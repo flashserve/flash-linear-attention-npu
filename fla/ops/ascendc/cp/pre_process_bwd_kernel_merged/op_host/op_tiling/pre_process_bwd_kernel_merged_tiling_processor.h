@@ -182,7 +182,7 @@ public:
         return ge::GRAPH_FAILED;
     }
         if (static_cast<uint64_t>(ctx_.chunkSize) != CP::PRE_PROCESS_BWD_KERNEL_MERGED_CHUNK_SIZE) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be %u, but got %d.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be");
         return ge::GRAPH_FAILED;
     }
 
@@ -247,7 +247,7 @@ public:
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
             const int64_t seqNum = cuSeqlensShape.GetDim(CDHP_DIM_0) - 1;
             if (seqNum < 1) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), "cu_seqlens must contain at least 2 entries, but got shape dim0=%ld.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), "cu_seqlens must contain at least 2 entries, but got shape dim0d.");
         return ge::GRAPH_FAILED;
     }
             if (B_ != 1) {

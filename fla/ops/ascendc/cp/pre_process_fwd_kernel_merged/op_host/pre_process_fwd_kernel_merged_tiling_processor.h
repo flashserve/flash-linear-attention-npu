@@ -42,19 +42,19 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
 
     if (B != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B", std::to_string(B), "B must be 1 (varlen packed), got %ld");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B", std::to_string(B), "B must be 1 (varlen packed)d");
         return ge::GRAPH_FAILED;
     }
     if (K != PPFM_FIXED_K || V != PPFM_FIXED_V) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K/V must be 128, got %ld/%ld");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K/V must be 128d/d");
         return ge::GRAPH_FAILED;
     }
     if (chunkSize != PPFM_FIXED_CHUNK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(chunkSize), "chunk_size must be 64, got %ld");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(chunkSize), "chunk_size must be 64d");
         return ge::GRAPH_FAILED;
     }
     if (Hk <= 0 || Hv <= 0 || Hv % Hk != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv %% Hk == 0, got Hk=%ld Hv=%ld");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv %% Hk == 0d");
         return ge::GRAPH_FAILED;
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
@@ -104,12 +104,12 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, cuData);
     for (int64_t i = 0; i < cuNumel; ++i) {
         if (cuData[i] < 0 || cuData[i] > T) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens[%ld]=%ld out of range [0,%ld]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens[d]d out of range [0,d]");
         return ge::GRAPH_FAILED;
     }
         if (i > 0) {
             if (cuData[i] <= cuData[i - 1]) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(i), "cu_seqlens must be strictly increasing at %ld");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(i), "cu_seqlens must be strictly increasing at d");
         return ge::GRAPH_FAILED;
     }
         }
@@ -214,7 +214,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     if (context->GetRawTilingData() == nullptr ||
                     context->GetRawTilingData()->GetCapacity() <
                         sizeof(GDN::PreProcessFwdKernelMergedTilingData)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "tiling buffer too small for tcube tiling");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "tiling buffer too small for tcube tiling");
         return ge::GRAPH_FAILED;
     }
     if (!BuildCubeTiling(ascendcPlatform, tiling)) {

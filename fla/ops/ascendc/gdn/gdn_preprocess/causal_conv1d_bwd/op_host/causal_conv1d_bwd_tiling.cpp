@@ -70,7 +70,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     CausalConv1dBwdTilingData *tiling = context->GetTilingData<CausalConv1dBwdTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     if (memset_s(tiling, sizeof(CausalConv1dBwdTilingData), 0, sizeof(CausalConv1dBwdTilingData)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "set tiling data error");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "set tiling data error");
         return ge::GRAPH_FAILED;
     }
 
@@ -154,7 +154,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         inputHeadDim = dyShape.GetDim(DIM_INDEX2);
         if (static_cast<uint32_t>(dyShape.GetDim(DIM_INDEX1)) != totalTokens ||
                 inputN * inputHeadDim != D) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "dy must be [N, total_tokens, Dh] with D=N*Dh for logical x [total_tokens, D]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "dy must be [N, total_tokens, Dh] with D=N*Dh for logical x [total_tokens, D]");
         return ge::GRAPH_FAILED;
     }
     } else if (inputLayout == INPUT_LAYOUT_TND) {
@@ -217,7 +217,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t W = wShape.GetDim(DIM_INDEX0);
     if (wShape.GetDimNum() != 2 || static_cast<uint32_t>(wShape.GetDim(DIM_INDEX1)) != D) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "weight", "invalid", "weight must be [W, D_total], got dim1 %ld expect %u");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "weight", "invalid", "weight must be [W, D_total], got dim1 d expect");
         return ge::GRAPH_FAILED;
     }
 
@@ -267,7 +267,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     static_cast<uint32_t>(shape.GetDim(0)) != B ||
                     static_cast<uint32_t>(shape.GetDim(1)) != W ||
                     static_cast<uint32_t>(shape.GetDim(2)) != D) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "initial_state", "invalid", "initial_state must be [B, W, D]=[%u, %u, %u]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "initial_state", "invalid", "initial_state must be [B, W, D]=[, , ]");
         return ge::GRAPH_FAILED;
     }
             useInitialState = true;
@@ -279,7 +279,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     static_cast<uint32_t>(shape.GetDim(0)) != B ||
                     static_cast<uint32_t>(shape.GetDim(1)) != W ||
                     static_cast<uint32_t>(shape.GetDim(2)) != D) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dht", "invalid", "dht must be [B, W, D]=[%u, %u, %u]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dht", "invalid", "dht must be [B, W, D]=[, , ]");
         return ge::GRAPH_FAILED;
     }
             useFinalState = true;
@@ -314,7 +314,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 
     uint32_t alignDim = (inputLayout == INPUT_LAYOUT_BNSD || inputLayout == INPUT_LAYOUT_NTD) ? inputHeadDim : D;
     if (alignDim % 16 != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", std::to_string(alignDim), "%s D %u must be divisible by 16");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", std::to_string(alignDim), "D must be divisible by 16");
         return ge::GRAPH_FAILED;
     }
     uint32_t BD = (D % 64 == 0) ? 64 : 16;
@@ -375,7 +375,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         BT = T;
     }
     if (BT == 0 || totalTokens == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "T", "invalid", "empty sequence is not supported: T %u totalTokens %u");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "T", "invalid", "empty sequence is not supported: T totalTokens");
         return ge::GRAPH_FAILED;
     }
     if (inputMode == 0) {
@@ -417,7 +417,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     if (need > ubSize) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "UB overflow: need %u > available %lu");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "UB overflow: need > available u");
         return ge::GRAPH_FAILED;
     }
 

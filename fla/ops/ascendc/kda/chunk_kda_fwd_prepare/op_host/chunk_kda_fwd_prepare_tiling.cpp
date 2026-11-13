@@ -251,7 +251,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
 
     if (!shape.packed && shape.batch != 1) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "B", std::to_string(shape.batch), "rank-4 变长输入要求 B=1，当前 B=%ld。");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "B", std::to_string(shape.batch), "rank-4 变长输入要求 B=1，当前d。");
 
         return false;
     }
@@ -368,14 +368,14 @@ bool CheckOptionalInput(gert::TilingContext *context,
     }
     const auto &aLog = aLogShape->GetStorageShape();
     if (!HasShape(aLog, {shape.valueHeadNum})) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(shape.valueHeadNum), "a_log 必须为 [HV]，当前 HV=%ld。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(shape.valueHeadNum), "a_log 必须为 [HV]，当前d。");
 
         return false;
     }
     if (hasDtBias) {
         const auto &dtBias = dtBiasShape->GetStorageShape();
         if (!HasShape(dtBias, {shape.valueHeadNum * shape.kDim})) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "dt_bias 必须为展平的 [HV*K]，当前 HV=%ld，K=%ld。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "dt_bias 必须为展平的 [HV*K]，当前d，d。");
 
             return false;
         }
@@ -453,7 +453,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     if (*chunkSizePtr != PREPARE_CHUNK_SIZE) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "chunk_size 仅支持 64，当前值=%ld。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "chunk_size 仅支持 64d。");
 
         return ge::GRAPH_FAILED;
     }
@@ -495,7 +495,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         shape.valueHeadNum < shape.qkHeadNum ||
         shape.valueHeadNum % shape.qkHeadNum != 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "要求 B/T/HK/HV 为正且可用 uint32 表示、K=V=128、HV>=HK 且 HV%%HK=0；"
-                "当前 B=%ld,T=%ld,HK=%ld,HV=%ld,K=%ld,V=%ld。");
+                "当前d,d,d,d,d,d。");
 
         return ge::GRAPH_FAILED;
     }
@@ -524,7 +524,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
             FitsDmaSourceStride(shape.valueHeadNum, betaElementBytes);
         if (!strideValid) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "sequence-major 输入的跨 head DMA stride 超过 uint32 范围，"
-                    "当前 HK=%ld,HV=%ld。");
+                    "当前d,d。");
 
             return ge::GRAPH_FAILED;
         }

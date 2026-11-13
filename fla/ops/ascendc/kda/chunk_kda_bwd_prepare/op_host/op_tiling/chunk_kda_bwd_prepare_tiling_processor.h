@@ -123,7 +123,7 @@ public:
 private:
     ge::graphStatus Fail(const char *reason)
     {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(ctx_.nodeName, "layout", "invalid", "invalid KernelA %s: layout=%s scale=%g chunk=%ld cores=%u cu=%u indices=%u");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(ctx_.nodeName, "layout", "invalid", "invalid KernelA :");
 
         return ge::GRAPH_FAILED;
     }

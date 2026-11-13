@@ -545,7 +545,7 @@ static aclnnStatus CheckGkParams(const ChunkFwdHParams &params)
     if (params.gkOptional != nullptr) {
         auto gkShape = params.gkOptional->GetViewShape();
         if (!(gkShape.GetDimNum() == 4)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", std::to_string(gkShape.GetDimNum()), "gk must have rank 4 when provided, got rank %ld.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", std::to_string(gkShape.GetDimNum()), "gk must have rank 4 when provided, got rank d.");
         return ACLNN_ERR_PARAM_INVALID;
     }
         if (!(gkShape.GetDim(3) == params.k->GetViewShape().GetDim(3))) {
@@ -579,7 +579,7 @@ static aclnnStatus CheckParams(ChunkFwdHParams params)
         return status;
     }
     if (!(params.chunkSize == 64)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64, but got %ld.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64d.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(params.saveNewValue)) {

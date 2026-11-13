@@ -35,7 +35,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     CausalConv1dTilingData *tiling = context->GetTilingData<CausalConv1dTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     if (memset_s(tiling, sizeof(CausalConv1dTilingData), 0, sizeof(CausalConv1dTilingData)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "set tiling data error");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "set tiling data error");
         return ge::GRAPH_FAILED;
     }
 
@@ -53,7 +53,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     const int64_t &dim = tiling->dim;
     const int64_t &batch = tiling->batch;
     if (dim <= 0 || batch <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "dim/batch must be positive");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", "invalid", "dim/batch must be positive");
         return ge::GRAPH_FAILED;
     }
 
@@ -92,7 +92,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
                         !fnHostPlan.tokenBlockChoice.enabled || fnHostPlan.tokenBlockChoice.tokenBlockSize <= 0 ||
                         fnHostPlan.tokenBlockChoice.tokenBlockCnt <= 0 || fnHostPlan.tokenBlockChoice.gridSize <= 0 ||
                         fnHostPlan.tokenCoreMapping.tokenCoreBudget <= 0 || fnHostPlan.tokenCoreMapping.blockDim <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "runMode=0 must resolve a valid unified token tiling plan");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "runMode=0 must resolve a valid unified token tiling plan");
         return ge::GRAPH_FAILED;
     }
 

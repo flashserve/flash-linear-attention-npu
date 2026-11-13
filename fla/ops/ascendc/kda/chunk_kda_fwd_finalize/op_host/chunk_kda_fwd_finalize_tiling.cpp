@@ -298,7 +298,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FormatInputShape(context, FINALIZE_INPUT_H, hBuffer, sizeof(hBuffer));
         FormatOutputShape(context, 0, outBuffer, sizeof(outBuffer));
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "output_layout", "invalid", "输入/输出必须匹配 head-major BF16、K=V=128、Aqk 末维 64 与 output_layout。"
-                "当前 layout=%s, qg_scaled=%s, Aqk=%s, v_new=%s, h=%s, attn_out=%s。");
+                "当前,,,,,。");
 
         return ge::GRAPH_FAILED;
     }
@@ -348,7 +348,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "chunk-first/head 分核或 workspace 规划失败。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "chunk-first/head 分核或 workspace 规划失败。");
 
         return ge::GRAPH_FAILED;
     }
@@ -381,7 +381,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "设置 A5 MIX AIC/AIV batch 调度模式失败。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "a", "invalid", "设置 A5 MIX AIC/AIV batch 调度模式失败。");
 
         return ge::GRAPH_FAILED;
     }

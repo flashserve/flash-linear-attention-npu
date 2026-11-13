@@ -134,7 +134,7 @@ public:
             dh.GetDim(base + 3) == tiling_.V &&
             (variable || chunks == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize);
         if (!validStates) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "expected NT-first h and dh");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "h", "invalid", "expected NT-first h and dh");
 
             return ge::GRAPH_FAILED;
         }

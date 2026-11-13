@@ -509,7 +509,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     abc.totalTokens = isVarlen ? tokens : 0;
     if (BuildAbcCubeTiling(abc.BT, abc.K, inputDtype,
                                    abc.cubeTilingData) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Failed to build the Phase 6 KKT Matmul tiling.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Failed to build the Phase 6 KKT Matmul tiling.");
         return ge::GRAPH_FAILED;
     }
     uint64_t workspaceOffset = AlignUp(workspaceSizes[0] - systemWorkspace, WORKSPACE_ALIGNMENT);
@@ -613,7 +613,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     GdnMegaArch22FwdHTilingData hTiling;
     const uint64_t hTilingSize = hTiling.GetDataSize();
     if (hTilingSize != sizeof(::GdnMegaArch22FwdHTilingData)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "FwdH host/kernel tiling size mismatch: host=%lu, kernel=%zu.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "FwdH host/kernel tiling size mismatch:u, kernel=%zu.");
         return ge::GRAPH_FAILED;
     }
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
@@ -624,7 +624,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     const uint64_t rawTilingSize = phase6TrailerOffset + sizeof(trailer);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Phase 6 combined tiling exceeds raw tiling capacity.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Phase 6 combined tiling exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }
     if (memcpy_s(static_cast<uint8_t *>(rawTiling->GetData()) + phase6TrailerOffset,

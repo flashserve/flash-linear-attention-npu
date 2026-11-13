@@ -159,7 +159,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     IntraSchedule schedule;
     if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
                                     arch22, platform.GetLibApiWorkSpaceSize(), schedule)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "invalid schedule or workspace overflow.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "invalid schedule or workspace overflow.");
         return ge::GRAPH_FAILED;
     }
     if (arch22) {

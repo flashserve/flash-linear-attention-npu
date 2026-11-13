@@ -146,7 +146,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         executorPtr);
     for (const aclTensor *tensor : result) {
         if (tensor == nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Failed to create a Finalize output.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "a", "invalid", "Failed to create a Finalize output.");
 
             return ACLNN_ERR_INNER_NULLPTR;
         }

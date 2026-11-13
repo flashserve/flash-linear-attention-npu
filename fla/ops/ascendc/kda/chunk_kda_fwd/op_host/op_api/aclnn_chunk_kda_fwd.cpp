@@ -593,11 +593,11 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     // 空 tensor（batch 或序列长度为 0）无法构成可执行的计算规模。host 侧在进入 tiling
     // 之前拦截并说明是哪个逻辑维为 0，避免只向调用方回传无上下文的 561103。
     if (!(info.batch > 0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", std::to_string(info.batch), "batch dimension must be greater than 0, but got B=%ld.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", std::to_string(info.batch), "batch dimension must be greater than 0d.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.seqlen > 0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "T", std::to_string(info.seqlen), "sequence length must be greater than 0, but got T=%ld.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "T", std::to_string(info.seqlen), "sequence length must be greater than 0d.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(info.hNum > 0 && info.hvNum >= info.hNum && info.hvNum % info.hNum == 0)) {
@@ -643,7 +643,7 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     // allowNegEigval 依赖 in-kernel beta sigmoid。
     const float epsilonFp32 = static_cast<float>(params.epsilon);
     if (!(std::isfinite(epsilonFp32) && epsilonFp32 > 0.0F)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "epsilon", std::to_string(params.epsilon), "epsilon must be a positive finite number, but got %f.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "epsilon", std::to_string(params.epsilon), "epsilon must be a positive finite number");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(!params.allowNegEigval || params.useBetaSigmoidInKernel)) {

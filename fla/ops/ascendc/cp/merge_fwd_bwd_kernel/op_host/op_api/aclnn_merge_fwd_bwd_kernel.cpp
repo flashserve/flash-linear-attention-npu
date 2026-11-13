@@ -52,7 +52,7 @@ aclnnStatus CheckPublicFormat(const aclTensor *tensor, const char *name)
     const auto viewFormat = tensor->GetViewFormat();
     // ND/NCHW/NCL/NHWC name the same packed layout. NZ and other private formats do not.
     if (!(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "%s must use a non-private format, but got storage=%d and view=%d.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "a", "invalid", "must use a non-.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;

@@ -162,7 +162,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                     dh.GetDim(0) != tiling.B || dh.GetDim(2) != tiling.HV ||
                     dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
                     dh.GetDim(4) != stateDim4) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", "h and dh state dimensions do not match state_v_first=%d, h shape is");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", "invalid", ", h shape is");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

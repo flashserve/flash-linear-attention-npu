@@ -562,7 +562,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     ShiftHWorkspace(hTiling);
     hWorkspaceSize += hoShift;
     if (ownerLocalWorkspace && hWorkspaceSize != expectedOwner.shiftedEnd) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Owner-local shifted H workspace differs from the checked end.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Owner-local shifted H workspace differs from the checked end.");
         return ge::GRAPH_FAILED;
     }
     // 只扩静态 prepared BT64/V128 的专用 H 区，后续 O 区及完整 reserve 原大小顺延。
@@ -653,7 +653,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "value", "invalid", "Combined tiling data exceeds raw tiling capacity.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Combined tiling data exceeds raw tiling capacity.");
         return ge::GRAPH_FAILED;
     }
     void *rawData = rawTiling->GetData();
