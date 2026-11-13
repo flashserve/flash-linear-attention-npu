@@ -40,7 +40,7 @@ public:
     explicit RecurrentKdaTiling(gert::TilingContext *context) : Ops::Transformer::OpTiling::TilingBaseClass(context)
     {
         InitCompileInfo();
-    };
+    }
     ~RecurrentKdaTiling() override = default;
 
 protected:

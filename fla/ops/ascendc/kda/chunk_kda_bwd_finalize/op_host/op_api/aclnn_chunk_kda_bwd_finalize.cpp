@@ -85,7 +85,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
     }
     if (beta == nullptr) {
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "beta");
@@ -102,13 +102,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     {
         const aclnnStatus checkStatus = CheckRequired(dBetaOut, beta->GetDataType(), "d_beta");
         if (checkStatus != ACLNN_SUCCESS) {
             return checkStatus;
         }
-    };
+    }
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(gk, "gk"),
              {dAqk, "d_aqk"}, {dqRaw, "dq_raw"}, {aLog, "a_log"},
@@ -118,7 +118,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
     }
     for (const auto &item : {
              std::pair<const aclTensor *, const aclTensor *>(rawG, dGOut)}) {
@@ -136,13 +136,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
         {
             const aclnnStatus checkStatus = CheckRequired(item.second, item.first->GetDataType(), "gate gradient");
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
     }
     if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -158,13 +158,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
         {
             const aclnnStatus checkStatus = CheckRequired(kRstdOptional, DataType::DT_FLOAT, "k_rstd");
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
-        };
+        }
     }
     if (cuSeqlensOptional == nullptr && chunkIndicesOptional != nullptr) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(

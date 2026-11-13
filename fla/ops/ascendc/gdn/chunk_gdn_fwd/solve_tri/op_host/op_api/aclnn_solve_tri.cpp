@@ -54,7 +54,7 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
          if (checkStatus != ACLNN_SUCCESS) {
              return checkStatus;
          }
-     };
+     }
      return ACLNN_SUCCESS;
  }
  

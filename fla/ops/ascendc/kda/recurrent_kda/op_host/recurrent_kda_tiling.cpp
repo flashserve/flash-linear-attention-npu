@@ -177,7 +177,7 @@ RecurrentKdaTilingContext RecurrentKdaTiling::BuildProcessorContext() const
 ge::graphStatus RecurrentKdaTiling::GetPlatformInfo()
 {
     return ge::GRAPH_SUCCESS;
-};
+}
 
 ge::graphStatus RecurrentKdaTiling::GetShapeAttrsInfo()
 {
@@ -232,18 +232,18 @@ ge::graphStatus RecurrentKdaTiling::DoLibApiTiling()
     }
     tilingKey_ = GET_TPL_TILING_KEY(kernelMode);
     return ge::GRAPH_SUCCESS;
-};
+}
 
 uint64_t RecurrentKdaTiling::GetTilingKey() const
 {
     return tilingKey_;
-};
+}
 
 ge::graphStatus RecurrentKdaTiling::GetWorkspaceSize()
 {
     workspaceSize_ = static_cast<int64_t>(RKDA_SYS_WORKSPACE_SIZE);
     return ge::GRAPH_SUCCESS;
-};
+}
 
 ge::graphStatus RecurrentKdaTiling::PostTiling()
 {
