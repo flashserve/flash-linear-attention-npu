@@ -263,19 +263,10 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
     dyRows_ = BT_ + W_ - 1;
     dyBdCount_ = dyRows_ * BD_;
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-    // 仅「非 idSplit / 非 2D 且多核」时才走 partial 归约；此时按 UB 上限确定每批能聚多少行。
-    // 8KB staging（2048 个 fp32）足够覆盖小 shape；放不下 2 行则退化为逐行归约。
-    if (blockNum_ > 1U && useIdSplit_ == 0U && use2DSplit_ == 0U && wBdCount_ > 0U) {
-        constexpr uint32_t RED_STAGE_ELEMS = 2048U;
-        uint32_t rowsCap = RED_STAGE_ELEMS / wBdCount_;
-        if (rowsCap < 1U) {
-            rowsCap = 1U;
-        }
-        redStageRows_ = (blockNum_ < rowsCap) ? blockNum_ : rowsCap;
-        if (redStageRows_ < 2U) {
-            redStageRows_ = 0U;
-        }
-    }
+    // partial 归约 staging 行数由 host 统一推导下发（tiling 侧 redStageRows），使 host 的 UB
+    // 预算与这里的 buffer 分配共用同一口径，避免两套公式漂移；0 表示不启用（退化为逐行归约）。
+    // 是否分配该 buffer 见 InitBuffer。
+    redStageRows_ = static_cast<uint32_t>(tilingData->redStageRows);
 #endif
 
     srcStrideBytes_ = static_cast<uint32_t>(D_ * sizeof(inputT));
@@ -1249,6 +1240,13 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReduceRowsToInplace(
     while (remainRows > targetRows) {
         uint32_t upperRows = (remainRows + 1) >> 1;
         uint32_t pairRows = remainRows >> 1;
+        if (upperRows < targetRows) {
+            // 收尾：再对折一次会降到 targetRows 以下，改为保留 targetRows 行、
+            // 把多出的 remainRows - targetRows 行折叠进前 targetRows 行，
+            // 保证退出时恰好剩 targetRows 行（调用方按 targetRows 行整块累加）。
+            upperRows = targetRows;
+            pairRows = remainRows - targetRows;
+        }
         Add(tensor, tensor, tensor[upperRows * cols], pairRows * cols);
         PipeBarrier<PIPE_V>();
         remainRows = upperRows;
@@ -1787,23 +1785,14 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
         SetFlag<HardEvent::MTE3_V>(evMte3V);
         WaitFlag<HardEvent::MTE3_V>(evMte3V);
     } else {
-        // A5（310）用独占 staging，从而省掉 store 后为保护 buffer 复用而做的 MTE3_V 排空；
-        // 其它平台（含 220/910B）完全沿用原有实现，行为与改动前逐字一致。
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+        // A5（310）用 dx 独占 staging（dxOutBuf_），dx 与 dw/db 的输出 staging 不再别名；
+        // 但 dxOutBuf_ 仍会在同一 i_d 内被逐个 chunk 复用，故 Cast 覆写前必须先等上一轮
+        // store 的 MTE3 把该 buffer 读完（本算子 --cce-auto-sync=off，无隐式同步）。
+        // 排空放在 Cast 之前而非 store 之后，MTE3 仍可与 chunk 内的向量计算重叠。
         LocalTensor<inputT> dlIn = dxOutBuf_.Get<inputT>();
-        constexpr bool kKeepPostStoreDrain = false;
-#else
-        LocalTensor<inputT> dlIn;
-        if (Arch32UseDirectVector()) {
-            dlIn = yBuf_.Get<inputT>();
-        } else {
-            dlIn = castBuf_.Get<inputT>();
-        }
-        constexpr bool kKeepPostStoreDrain = true;
-        event_t evPre = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-        SetFlag<HardEvent::V_MTE3>(evPre);
-        WaitFlag<HardEvent::V_MTE3>(evPre);
-#endif
+        event_t evReuse = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+        SetFlag<HardEvent::MTE3_V>(evReuse);
+        WaitFlag<HardEvent::MTE3_V>(evReuse);
         DataCopyExtParams outParams{
             static_cast<uint16_t>(validRows),
             static_cast<uint32_t>(BD_ * sizeof(inputT)),
@@ -1811,16 +1800,13 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
             rowStrideBytes,
             0};
         Cast(dlIn, dl, RoundMode::CAST_RINT, validRows * BD_);
-#if !CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-        PipeBarrier<PIPE_V>();
-#endif
         event_t evMte3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
         SetFlag<HardEvent::V_MTE3>(evMte3);
         WaitFlag<HardEvent::V_MTE3>(evMte3);
         DataCopyPad(dxGm_[off], dlIn, outParams);
-        if (kKeepPostStoreDrain || (!hasWeight_ && !hasBias_)) {
-            // kKeepPostStoreDrain: A5 之外的平台沿用原有排空；
-            // A5 上仅当本轮没有 dw/db store（CopyOutDwDb 提前返回）时在此兜底。
+        if (!hasWeight_ && !hasBias_) {
+            // 本轮没有 dw/db store（CopyOutDwDb 提前返回）时在此兜底排空，
+            // 保证下一轮 Cast 覆写 dxOutBuf_ 前 MTE3 已读完。
             event_t evMte3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
             SetFlag<HardEvent::MTE3_V>(evMte3V);
             WaitFlag<HardEvent::MTE3_V>(evMte3V);
@@ -2147,24 +2133,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
         SetFlag<HardEvent::MTE3_V>(mte3ToV);
         WaitFlag<HardEvent::MTE3_V>(mte3ToV);
     } else {
-        // A5（310）dw/db 使用各自独占 staging，两次 store 之间无需排空；
-        // 其它平台（含 220/910B）完全沿用原有实现，行为与改动前逐字一致。
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-        constexpr bool kKeepInterStoreDrain = false;
-#else
-        constexpr bool kKeepInterStoreDrain = true;
-#endif
+        // A5（310）dw/db 使用各自独占 staging（dw→castBuf_、db→dbOutBuf_），两次 store 目标
+        // 不同 buffer，之间无需排空；i_d 末一次排空即可覆盖本轮全部输出。
         if (hasWeight_) {
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
             LocalTensor<inputT> dwOut = castBuf_.Get<inputT>();
-#else
-            LocalTensor<inputT> dwOut = Arch32UseDirectVector() ? yBuf_.Get<inputT>()
-                                                               : castBuf_.Get<inputT>();
-#endif
             Cast(dwOut, dwBuf_.Get<float>(), RoundMode::CAST_RINT, wBdCount_);
-#if !CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-            PipeBarrier<PIPE_V>();
-#endif
             event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
             SetFlag<HardEvent::V_MTE3>(ev);
             WaitFlag<HardEvent::V_MTE3>(ev);
@@ -2177,25 +2150,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
                 0};
             uint64_t dstOff = static_cast<uint64_t>(i_d) * BD_;
             DataCopyPad(dwGm_[dstOff], dwOut, dwOutParams);
-
-            if (kKeepInterStoreDrain) {
-                event_t mte3ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-                SetFlag<HardEvent::MTE3_V>(mte3ToV);
-                WaitFlag<HardEvent::MTE3_V>(mte3ToV);
-            }
         }
 
         if (hasBias_) {
-#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
             LocalTensor<inputT> dbOut = dbOutBuf_.Get<inputT>();
-#else
-            LocalTensor<inputT> dbOut = Arch32UseDirectVector() ? yBuf_.Get<inputT>()
-                                                               : castBuf_.Get<inputT>();
-#endif
             Cast(dbOut, dbBuf_.Get<float>(), RoundMode::CAST_RINT, BD_);
-#if !CAUSAL_CONV1D_BWD_ARCH35_REGBASE
-            PipeBarrier<PIPE_V>();
-#endif
             event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
             SetFlag<HardEvent::V_MTE3>(ev);
             WaitFlag<HardEvent::V_MTE3>(ev);

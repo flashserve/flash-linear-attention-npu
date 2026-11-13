@@ -324,11 +324,6 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     // activation 侧的 W 门控：NONE 变体直接读 dy、无额外物化，W∈[1,8] 均快于普通路径。
     // SILU/SWISH 变体需要先把 dy/y 读进来算 silu'(y) 并把 dyAct(fp32) 物化回 UB，dx/dw 再按 fp32
     // 读回，这份额外 UB 往返只在 i_d 方向并行度不足或已铺满时才被快路径的并行收益覆盖。
-    // 100 例 A/B 实测的盈亏边界按 i_d 方向块数 numBlksD 划分：
-    //   numBlksD ∈ [8,32]（D=512~2048，BD=64）：快路径比普通路径慢 9%~36%，退回普通路径；
-    //   numBlksD <= 4（D<=256）：D 方向并行度本来就低，快路径低时延更优，仍启用；
-    //   useIdSplit（D>=8192，i_d 已铺满，BD=16）：快路径仍快 4%~30%，仍启用；
-    //   W == 4：维持基线的快路径行为。
     bool arch35WOk = (W >= 1 && W <= ARCH35_DIRECT_W_MAX);
     if (activation != ACTIVATION_NONE) {
         arch35WOk = arch35WOk && (W == 4 || numBlksD <= 4 || useIdSplit);
@@ -586,6 +581,31 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         tailChunk = totalChunks % mainCoreNum;
     }
 
+    // partial 归约 staging（kernel 侧 redBuf_）：仅在「非 i_d 切分 / 非 2D 且多核」时分配，
+    // 用于把多个 chunk 的 partial dw 分批归约。该 buffer 从 RESERVED_UB 余量中划出、不计入上面的
+    // 静态 need，此前行数也由 kernel 侧独立推导——既存在预算少算、又存在 host/kernel 两套公式漂移的
+    // 隐患。现统一由 host 推导并下发，并显式校验它不超过所依赖的 RESERVED_UB，避免后续调整上限时静默溢出。
+    constexpr uint32_t RED_STAGE_ELEMS = 2048U; // 2048 个 fp32 = 8KB，与 kernel 侧同一上限
+    uint32_t redStageRows = 0;
+    if (isAscend950 && mainCoreNum > 1U && !useIdSplit && !use2DSplit) {
+        uint32_t rowsCap = RED_STAGE_ELEMS / (W * BD);
+        if (rowsCap < 1U) {
+            rowsCap = 1U;
+        }
+        redStageRows = (mainCoreNum < rowsCap) ? mainCoreNum : rowsCap;
+        if (redStageRows < 2U) {
+            redStageRows = 0U;
+        }
+    }
+    if (redStageRows >= 2U) {
+        uint64_t redBytes =
+            static_cast<uint64_t>(CeilAlign(redStageRows * W * BD, BLOCK_ALIGN_NUM)) * FP32_DTYPE_SIZE;
+        OP_CHECK_IF(redBytes > RESERVED_UB,
+                    OP_LOGE(context, "partial-reduce staging %lu B exceeds reserved UB %u B",
+                            redBytes, RESERVED_UB),
+                    return ge::GRAPH_FAILED);
+    }
+
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(mainCoreNum);
     OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
@@ -617,6 +637,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     tiling->useIdSplit = useIdSplit ? 1 : 0;
     tiling->use2DSplit = use2DSplit ? 1 : 0;
     tiling->dwStageRows = dwStageRows;
+    tiling->redStageRows = redStageRows;
 
     // useIdSplit 时每个核独占 i_d 并直接写回 dw/db，不再需要 partial 归约缓冲。
     uint64_t partialDwBytes = useIdSplit ? 0ULL
@@ -633,12 +654,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             "Tiling result: B[%ld] T[%ld] totalTokens[%ld] D[%ld] W[%ld] inputMode[%ld] activation[%ld] "
             "inputLayout[%ld] inputN[%ld] inputHeadDim[%ld] "
             "BT[%ld] BD[%ld] numBlksD[%ld] numChunks[%ld] "
-            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld] idSplit[%d] split2D[%d] dwStageRows[%u]",
+            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld] idSplit[%d] split2D[%d] dwStageRows[%u] redStageRows[%u]",
             B, T, totalTokens, D, W, inputMode, activation,
             inputLayout, inputN, inputHeadDim,
             BT, BD, numBlksD, numChunks,
             mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize,
-            useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows);
+            useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows, redStageRows);
 
     return ge::GRAPH_SUCCESS;
 }

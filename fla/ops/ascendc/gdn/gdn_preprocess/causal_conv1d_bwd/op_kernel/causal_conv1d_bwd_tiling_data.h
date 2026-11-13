@@ -54,6 +54,11 @@ struct CausalConv1dBwdTilingData {
     // numBlksD * numChunks），消除"每核串行遍历全部 i_d"的固定开销；0 表示沿用按 chunk 切分。
     // 仅 ascend950 且全部 (i_d, chunk) 工作单元数不超过 AIV 核数时置 1。
     int64_t use2DSplit;
+    // 追加字段（保持前序字段偏移不变）：partial 归约 staging（kernel 侧 redBuf_）的每批行数。
+    // 仅「非 i_d 切分 / 非 2D 且多核」时 > 0，用于把多个 chunk 的 partial dw 归约；0 表示不启用
+    // （退化为逐行归约）。由 host 统一推导下发，使 host 的 UB 预算与 kernel 的 buffer 分配共用
+    // 同一份口径，避免两处公式漂移。
+    int64_t redStageRows;
 };
 
 #endif // CAUSAL_CONV1D_BWD_TILING_DATA_H_
