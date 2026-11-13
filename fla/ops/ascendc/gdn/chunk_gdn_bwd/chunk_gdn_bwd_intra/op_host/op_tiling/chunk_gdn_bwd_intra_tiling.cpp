@@ -2,6 +2,9 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "../../op_kernel/chunk_gdn_bwd_intra_struct.h"
+#include <cstring>
+
 #include "chunk_gdn_bwd_intra_tiling.h"
 
 #include <algorithm>
@@ -50,6 +53,19 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto *scale = attrs->GetAttrPointer<double>(INTRA_SCALE_ATTR_IDX);
     const auto *chunkSize = attrs->GetAttrPointer<int64_t>(INTRA_CHUNK_SIZE_ATTR_IDX);
     const auto *useExp2 = attrs->GetAttrPointer<bool>(INTRA_USE_EXP2_ATTR_IDX);
+    const char *qkvLayout = attrs->GetStr(INTRA_LAYOUT_ATTR_IDX);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
+                return ge::GRAPH_FAILED);
+    const int64_t layoutValue =
+        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::IntraLayout::BNSD :
+        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::IntraLayout::BSND :
+        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::IntraLayout::NTD : GDN::IntraLayout::TND;
+    tiling->layout = layoutValue;
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
@@ -68,31 +84,35 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const ge::DataType gDtype = gDesc->GetDataType();
     const ge::DataType betaDtype = betaDesc->GetDataType();
     OP_CHECK_IF(mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16,
-                OP_LOGE(context->GetNodeName(),
-                        "mainDtype dtype is %s, expect dtype is bf16 or fp16.",
-                        DtypeName(mainDtype)),
+                OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), "q", DtypeName(mainDtype), "bf16 or fp16"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "gDtype dtype is %s, expect dtype is bf16 or fp32.",
-                        DtypeName(gDtype)),
+                OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), "g", DtypeName(gDtype), "bf16 or fp32"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "betaDtype dtype is %s, expect dtype is bf16 or fp32.",
-                        DtypeName(betaDtype)),
+                OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), "beta", DtypeName(betaDtype), "bf16 or fp32"),
                 return ge::GRAPH_FAILED);
 
     const auto qStorage = qShape->GetStorageShape();
     const auto vStorage = vShape->GetStorageShape();
-    OP_CHECK_IF(qStorage.GetDimNum() != 4 || vStorage.GetDimNum() != 4 || *chunkSize != 64,
-                OP_LOGE(context->GetNodeName(), "q/v rank must be 4 and chunk_size must be 64."),
+    if (qStorage.GetDimNum() != 4) {
+        OP_LOGE_WITH_INVALID_INPUT_SHAPESIZE(context->GetNodeName(), INTRA_Q_IDX, std::to_string(qStorage.GetDimNum()),
+                                             "4");
+        return ge::GRAPH_FAILED;
+    }
+    if (vStorage.GetDimNum() != 4) {
+        OP_LOGE_WITH_INVALID_INPUT_SHAPESIZE(context->GetNodeName(), INTRA_V_IDX, std::to_string(vStorage.GetDimNum()),
+                                             "4");
+        return ge::GRAPH_FAILED;
+    }
+    OP_CHECK_IF(*chunkSize != 64,
+                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "chunk_size", std::to_string(*chunkSize), "64"),
                 return ge::GRAPH_FAILED);
     const int64_t batch = qStorage.GetDim(0);
-    const int64_t qkHeads = qStorage.GetDim(1);
-    const int64_t seqlen = qStorage.GetDim(2);
+    const int64_t qkHeads = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 2 : 1);
+    const int64_t seqlen = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 1 : 2);
     const int64_t keyDim = qStorage.GetDim(3);
-    const int64_t valueHeads = vStorage.GetDim(1);
+    const int64_t valueHeads = vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 2 : 1);
     const int64_t valueDim = vStorage.GetDim(3);
     OP_CHECK_IF(batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0,
                 OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
@@ -104,9 +124,18 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     OP_CHECK_IF(keyDim != 128 || valueDim != 128,
                 OP_LOGE(context->GetNodeName(), "K and V dims must be 128."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vStorage.GetDim(0) != batch || vStorage.GetDim(2) != seqlen,
-                OP_LOGE(context->GetNodeName(), "v batch and T dims must match q."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        vStorage.GetDim(0) != batch ||
+            vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 1 : 2) !=
+                seqlen,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "q/v",
+            std::string("q.B=") + std::to_string(batch) + ", q.T=" + std::to_string(seqlen) +
+                ", v.B=" + std::to_string(vStorage.GetDim(0)) + ", v.T=" +
+                std::to_string(vStorage.GetDim(
+                    (layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 1 : 2)),
+            std::string("v.B and v.T must match q under layout=") + qkvLayout),
+        return ge::GRAPH_FAILED);
     uint64_t tensorBytes = 0;
     OP_CHECK_IF(!IntraCheckedMultiply(batch, valueHeads, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, seqlen, tensorBytes) ||

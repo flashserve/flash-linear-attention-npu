@@ -1,11 +1,14 @@
 #ifndef GDN_BWD_FINALIZE_A2_H
 #define GDN_BWD_FINALIZE_A2_H
 
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_finalize_workspace.h"
 
 // 私有适配结构，不复用其它算子的生成 tiling ABI。
 struct ChunkBwdDqkwgTilingData {
+    int64_t layout;
     uint64_t B, HV, HK, T, K, V, BT, numChunks;
     float scale;
     uint32_t mul0RowNum, aicCoreNum, hkPartitions;
@@ -85,6 +88,7 @@ __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
     ChunkBwdDqkwgTilingData d{};
+    d.layout = t.layout;
     d.B = t.B; d.HV = t.HV; d.HK = t.HK; d.T = t.T;
     d.K = t.K; d.V = t.V; d.BT = t.chunkSize;
     d.numChunks = t.isVariable != 0 ? t.totalChunkNum : t.chunkNumForT;
@@ -127,6 +131,7 @@ __aicore__ inline PrepareWyReprBwdTilingData A2FinalizeWyTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
     PrepareWyReprBwdTilingData w{};
+    w.layout = t.layout;
     w.B = t.B; w.HV = t.HV; w.HK = t.HK; w.groupSize = t.headRatio;
     w.T = t.T; w.K = t.K; w.V = t.V; w.chunkSize = t.chunkSize;
     w.chunkNum = t.totalChunkNum;
@@ -569,9 +574,25 @@ __aicore__ inline void A2FinalizeQkTail(
             AscendC::DataCopy(dqInput, dq1Gm[offset], count);
             AscendC::DataCopy(dkInput, dk1Gm[offset], count);
             AscendC::DataCopy(dkWyInput, dk2Gm[offset], count);
+            uint64_t qkPublicOffset = static_cast<uint64_t>(offset);
+            if ((t.layout == GDN::FinalizeLayout::BSND || t.layout == GDN::FinalizeLayout::TND)) {
+                const uint64_t headTokens = static_cast<uint64_t>(t.HK) * t.T;
+                const uint64_t batch = (cuSeqlens == nullptr) ? task.keyBos / headTokens : 0;
+                const uint64_t token = (cuSeqlens == nullptr) ? task.keyBos % headTokens : task.keyBos;
+                qkPublicOffset = ((batch * t.T + token + row) * t.HK + hk) * K;
+            }
             if constexpr (USE_QK_L2NORM) {
-                AscendC::DataCopy(qInput, qGm[offset], count);
-                AscendC::DataCopy(kInput, kGm[offset], count);
+                if ((t.layout == GDN::FinalizeLayout::BSND || t.layout == GDN::FinalizeLayout::TND)) {
+                    const DataCopyExtParams qkCopy{
+                        static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)),
+                        static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0, 0};
+                    const AscendC::DataCopyPadExtParams<QT> qkPad{false, 0, 0, 0};
+                    AscendC::DataCopyPad(qInput, qGm[qkPublicOffset], qkCopy, qkPad);
+                    AscendC::DataCopyPad(kInput, kGm[qkPublicOffset], qkCopy, qkPad);
+                } else {
+                    AscendC::DataCopy(qInput, qGm[offset], count);
+                    AscendC::DataCopy(kInput, kGm[offset], count);
+                }
             }
             AscendC::PipeBarrier<PIPE_ALL>();
             AscendC::Cast(gradK, dkInput, AscendC::RoundMode::CAST_NONE, count);
@@ -596,8 +617,16 @@ __aicore__ inline void A2FinalizeQkTail(
             }
             // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
             AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::DataCopy(dqGm[offset], dqInput, count);
-            AscendC::DataCopy(dkGm[offset], dkInput, count);
+            if ((t.layout == GDN::FinalizeLayout::BSND || t.layout == GDN::FinalizeLayout::TND)) {
+                const DataCopyExtParams outputCopy{
+                    static_cast<uint16_t>(rows), static_cast<uint32_t>(K * sizeof(QT)), 0,
+                    static_cast<uint32_t>((t.HK - 1) * K * sizeof(QT)), 0};
+                AscendC::DataCopyPad(dqGm[qkPublicOffset], dqInput, outputCopy);
+                AscendC::DataCopyPad(dkGm[qkPublicOffset], dkInput, outputCopy);
+            } else {
+                AscendC::DataCopy(dqGm[offset], dqInput, count);
+                AscendC::DataCopy(dkGm[offset], dkInput, count);
+            }
             AscendC::PipeBarrier<PIPE_ALL>();
         }
     }

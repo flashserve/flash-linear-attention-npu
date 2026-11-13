@@ -70,6 +70,7 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
     __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
     {
+        gtiling->layout = args.tiling.layout;
         gtiling->batch = args.tiling.batch;
         gtiling->seqlen = args.tiling.seqlen;
         gtiling->kNumHead = args.tiling.kNumHead;
@@ -187,6 +188,7 @@ __global__ __aicore__ void chunk_fwd_h(
     args.tiling.useInitialState = tilingData->useInitialState;
     args.tiling.storeFinalState = tilingData->storeFinalState;
     args.tiling.isVariedLen = tilingData->isVariedLen;
+    args.tiling.layout = tilingData->layout;
     args.tiling.shapeBatch = static_cast<uint32_t>(tilingData->shapeBatch);
     args.tiling.tokenBatch = static_cast<uint32_t>(tilingData->tokenBatch);
     args.tiling.vWorkspaceOffset = static_cast<uint64_t>(tilingData->vWorkspaceOffset);

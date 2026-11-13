@@ -21,7 +21,8 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
     const aclTensor *wOut,
     const aclTensor *uOut,
     const aclTensor *dvLocalOut,
-    aclOpExecutor *executor);
+    aclOpExecutor *executor,
+    const char *layout = "BNSD");
 } // namespace l0op
 
 #endif

@@ -17,6 +17,8 @@
 #ifndef CHUNK_BWD_DQKWG_CUBE_H
 #define CHUNK_BWD_DQKWG_CUBE_H
 
+#include "../chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #include "chunk_bwd_dqkwg_schedule.h"
 
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
@@ -136,6 +138,7 @@ public:
         uint64_t wsDsTempOffset;
 
         // 形状参数 (GVA: H 拆为 HV/HK, HV = n_ratio * HK)
+        int64_t layout;
         uint64_t B;              // = CONST_B;
         uint64_t HV;             // value 侧 head 数 (v/g/h/do/dh/dv/dw/dg), == 原 H
         uint64_t HK;             // key/query 侧 head 数 (q/k), HV = n_ratio * HK
@@ -242,10 +245,16 @@ public:
         }
 
         // Layout 创建
-        auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.K);
-        auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(params.K, params.BT);
+        const uint64_t qkStride = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND) ? params.HK * params.K : params.K;
+        // gmV is vNew from FwdH and always remains head-major.
+        auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, qkStride);
+        auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(qkStride, params.BT);
         auto layoutBTxV = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.V);
         auto layoutVxBT = LayoutColMajor::MakeLayout<ElementA>(params.V, params.BT);
+        // dO, dV-local and dW are internal head-major tensors even when the
+        // public q/k/v tensors use sequence-major layout.
+        auto layoutBTxKHead = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.K);
+        auto layoutBTxVHead = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.V);
         auto layoutBTxBT = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutBTxBT_T = LayoutColMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutVxK = LayoutColMajor::MakeLayout<ElementA>(params.V, params.K);
@@ -280,6 +289,8 @@ public:
             uint32_t chunkIdx = loopIdx % scheduleNumChunks;
             uint64_t bos_hk =
                         bos - static_cast<uint64_t>(bIdx) * static_cast<uint64_t>(params.HV - params.HK) * params.T;
+            const uint64_t token = params.isVarLen ? bos : bos - static_cast<uint64_t>(bIdx) * params.HV * params.T;
+            const uint64_t batchToken = params.isVarLen ? token : static_cast<uint64_t>(bIdx) * params.T + token;
 
             GemmCoord actualBlockShape1{actual_chunk_len, K, V};                    // [BT, V] @ [V, K]
             GemmCoord actualBlockShape2{actual_chunk_len, actual_chunk_len, K};     // [BT, K] @ [K, BT]
@@ -297,9 +308,9 @@ public:
                     uint64_t hOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t dwOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.K;
 
-                    auto tensorDv = tla::MakeTensor(gmDv[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                    auto tensorDv = tla::MakeTensor(gmDv[dvOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[hOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{}); // h^T
-                    auto tensorDw = tla::MakeTensor(gmDw[dwOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                    auto tensorDw = tla::MakeTensor(gmDw[dwOffset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
 
                     auto tensorBlockDv = GetTile(tensorDv, tla::MakeCoord(0, 0),
                                                     tla::MakeShape(actualBlockShape1.m(), actualBlockShape1.k()));
@@ -322,7 +333,9 @@ public:
                     }
                     // GVA: q/k 为 HK 头; hv_idx=h -> hk_idx=h/n_ratio, 并把 HV-based bos 修正为 HK-based
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t qkOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
+                    uint64_t qkOffset = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND)
+                        ? (batchToken * params.HK + hk_idx) * params.K
+                        : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
 
                     auto tensorQ = tla::MakeTensor(gmQ[qkOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
@@ -343,11 +356,14 @@ public:
             {
                 BlockMmadPart3 blockMmadPart3(resource);
                 for (uint32_t h = hBegin; h < hEnd; h++) {
-                    uint64_t dvOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
+                    // dO and vNew are kept in the internal head-major layout by the
+                    // composite launcher.
+                    uint64_t doOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
+                    uint64_t vOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
 
-                    auto tensorDo = tla::MakeTensor(gmDo[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
-                    auto tensorV = tla::MakeTensor(gmV[dvOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
+                    auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
+                    auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
                     auto tensorDs = tla::MakeTensor(gmDs[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
 
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
@@ -369,9 +385,9 @@ public:
                     uint64_t hOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
-                    auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
+                    auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[hOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
-                    auto tensorMm4 = tla::MakeTensor(gmMm4[mm4Offset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                    auto tensorMm4 = tla::MakeTensor(gmMm4[mm4Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
 
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape4.m(), actualBlockShape4.k()));
@@ -390,12 +406,14 @@ public:
                     // GVA: k 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t kOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
+                    uint64_t kOffset = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND)
+                        ? (batchToken * params.HK + hk_idx) * params.K
+                        : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
                     auto tensorDsTemp = tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK[kOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-                    auto tensorMm6 = tla::MakeTensor(gmMm6[mm6Offset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                    auto tensorMm6 = tla::MakeTensor(gmMm6[mm6Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
 
                     auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
                                                     tla::MakeShape(actualBlockShape6.m(), actualBlockShape6.k()));
@@ -419,7 +437,7 @@ public:
 
                     auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorDh = tla::MakeTensor(gmDh[dhOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
-                    auto tensorMm5 = tla::MakeTensor(gmMm5[mm5Offset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                    auto tensorMm5 = tla::MakeTensor(gmMm5[mm5Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
 
                     auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape5.m(), actualBlockShape5.k()));
@@ -437,12 +455,14 @@ public:
                     // GVA: q 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
-                    uint64_t qOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
+                    uint64_t qOffset = (params.layout == GDN::FinalizeLayout::BSND || params.layout == GDN::FinalizeLayout::TND)
+                        ? (batchToken * params.HK + hk_idx) * params.K
+                        : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
                     auto tensorDsTemp =tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
                     auto tensorQ = tla::MakeTensor(gmQ[qOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-                    auto tensorMm7 = tla::MakeTensor(gmMm7[mm7Offset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
+                    auto tensorMm7 = tla::MakeTensor(gmMm7[mm7Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
 
                     auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
                                                         tla::MakeShape(actualBlockShape7.m(), actualBlockShape7.k()));
@@ -500,6 +520,7 @@ private:
     GM_ADDR ptrWorkspace;
 
     // Tiling 参数
+    int64_t layout_;
     uint64_t B;
     uint64_t HV;
     uint64_t HK;
@@ -525,6 +546,7 @@ private:
 template <typename DataType, typename GType>
 __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const ChunkBwdDqkwgTilingData &tiling)
 {
+    layout_ = tiling.layout;
     B = tiling.B;
     HV = tiling.HV;
     HK = tiling.HK;
@@ -606,6 +628,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
                                                 ptrChunkIndices, ptrDq, ptrDk, ptrDw, ptrWorkspace, B, HV, HK, T, K, V, BT,
                                                 numChunks, n_ratio, isVarLen, wsMm3Offset, wsMm4Offset, wsMm6Offset,
                                                 wsMm5Offset, wsMm7Offset, wsDsTempOffset);
+    params.layout = layout_;
     params.aicCoreNum = aicCoreNum;
     params.hkPartitions = hkPartitions;
     kernel(params);

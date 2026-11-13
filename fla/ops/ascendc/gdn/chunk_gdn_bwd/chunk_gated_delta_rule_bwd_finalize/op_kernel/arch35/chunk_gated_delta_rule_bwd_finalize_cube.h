@@ -1,6 +1,8 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -386,6 +388,13 @@ private:
 
     static constexpr auto GM_DU_LAYOUT = tla::MakeLayout<DT, LayoutRowMajor>(
         tla::Int<CHUNK_SIZE_64>{}, tla::Int<V_SIZE_128>{});
+    __aicore__ inline auto MakePublicQkLayout() const
+    {
+        const int64_t rowStride =
+            (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
+                ? tiling_->HK * K_SIZE_128 : K_SIZE_128;
+        return tla::MakeLayoutFromTag(LayoutRowMajor(CHUNK_SIZE_64, K_SIZE_128, rowStride));
+    }
     // h/dh are physically [K,V] row-major. Reinterpret the same bytes as a
     // [V,K] column-major view so Cube consumes h.T/dh.T without a copy.
     static constexpr auto GM_STATE_TRANSPOSE_LAYOUT = tla::MakeLayout<DT, LayoutColumnMajor>(
@@ -848,8 +857,9 @@ private:
         const uint32_t localHv = static_cast<uint32_t>(headOffset / AIV_COUNT_2);
         const uint32_t l1Event = static_cast<uint32_t>(headOffset);
         const int64_t hk = hv / tiling_->headRatio;
-        const int64_t kBase =
-            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
+        const int64_t kBase = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
 
         AscendC::GlobalTensor<DT> gmDA0;
         AscendC::GlobalTensor<DT> gmK;
@@ -857,7 +867,10 @@ private:
             reinterpret_cast<__gm__ DT *>(dA0_) + WorkspaceHeadOffset(headOffset));
         gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
         auto tensorGmDA0 = tla::MakeTensor(gmDA0, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
-        auto tensorGmK = tla::MakeTensor(gmK, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmK = tla::MakeTensor(
+            gmK,
+            MakePublicQkLayout(),
+            Catlass::Arch::PositionGM{});
         auto blockGmDA0 = tla::GetTile(
             tensorGmDA0, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
         auto blockGmK = tla::GetTile(
@@ -1402,8 +1415,9 @@ private:
         const uint32_t doGEvent = L1_RESIDENT_HEAD_COUNT_4 +
             (static_cast<uint32_t>(headOffset) & 1U);
         const uint32_t dhEvent = L1_RESIDENT_HEAD_COUNT_4 + BANK_COUNT_2 + dhSlot;
-        const int64_t qBase =
-            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
+        const int64_t qBase = (tiling_->layout == GDN::FinalizeLayout::BSND || tiling_->layout == GDN::FinalizeLayout::TND)
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * K_SIZE_128
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
         const int64_t workspaceBase = WorkspaceHeadOffset(headOffset);
         const int64_t stateBase =
             ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
@@ -1419,7 +1433,10 @@ private:
         gmDs.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dsIn_) + workspaceBase);
         gmDoG.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(doGIn_) + workspaceBase);
         gmVDecay.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vDecayIn_) + workspaceBase);
-        auto tensorGmQ = tla::MakeTensor(gmQ, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmQ = tla::MakeTensor(
+            gmQ,
+            MakePublicQkLayout(),
+            Catlass::Arch::PositionGM{});
         auto tensorGmDs = tla::MakeTensor(gmDs, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDoG = tla::MakeTensor(gmDoG, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmVDecay = tla::MakeTensor(gmVDecay, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});

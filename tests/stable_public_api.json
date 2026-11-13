@@ -1210,5 +1210,23 @@
     "kda_gate_cumsum": "(g, chunk_size, *, A_log=None, dt_bias=None, cu_seqlens=None, use_gate_in_kernel=False, safe_gate=False, lower_bound=None)",
     "npu_recurrent_kda": "(q, k, v, g, beta, initial_state=None, *, cu_seqlens=None, ssm_state_indices=None, A_log=None, dt_bias=None, num_accepted_tokens=None, layout='BSND', scale=None, output_final_state=False, inplace_final_state=True, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, safe_gate=False, lower_bound=None, state_v_first=False)",
     "recurrent_kda": "(q, k, v, g, beta, initial_state=None, *, cu_seqlens=None, ssm_state_indices=None, A_log=None, dt_bias=None, num_accepted_tokens=None, layout='BSND', scale=None, output_final_state=False, inplace_final_state=True, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False, use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False, safe_gate=False, lower_bound=None, state_v_first=False)"
+  },
+  "internal_l0_signatures": {
+    "ChunkGdnBwdIntra": {
+      "header": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_intra/op_host/op_api/chunk_gdn_bwd_intra.h",
+      "declaration": "const std::array<const aclTensor *, 3> ChunkGdnBwdIntra( const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta, const aclTensor *a, const aclTensor *dO, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize, bool useExp2, const aclTensor *wOut, const aclTensor *uOut, const aclTensor *dvLocalOut, aclOpExecutor *executor, const char *layout = \"BNSD\");"
+    },
+    "ChunkFwdH": {
+      "header": "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h",
+      "declaration": "const std::array<const aclTensor *, 3> ChunkFwdH( const aclTensor *k, const aclTensor *w, const aclTensor *u, const aclTensor *g, const aclTensor *gkOptional, const aclTensor *initialStateOptional, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, bool outputFinalState, int64_t chunkSize, bool saveNewValue, bool useExp2, bool stateVFirst, const aclTensor *hOut, const aclTensor *vNewOut, const aclTensor *finalStateOut, aclOpExecutor *executor, const char *layout = \"BNSD\");"
+    },
+    "ChunkGatedDeltaRuleBwdDhu": {
+      "header": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h",
+      "declaration": "const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu( const aclTensor *q, const aclTensor *k, const aclTensor *w, const aclTensor *dO, const aclTensor *dv, const aclTensor *gOptional, const aclTensor *gkOptional, const aclTensor *h0Optional, const aclTensor *dhtOptional, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize, bool useExp2, bool stateVFirst, const aclTensor *dhOut, const aclTensor *dh0Out, const aclTensor *dv2Out, aclOpExecutor *executor, const char *layout = \"BNSD\");"
+    },
+    "ChunkGatedDeltaRuleBwdFinalize": {
+      "header": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize/op_host/op_api/chunk_gated_delta_rule_bwd_finalize.h",
+      "declaration": "const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize( const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *vNew, const aclTensor *dO, const aclTensor *du, const aclTensor *g, const aclTensor *beta, const aclTensor *h, const aclTensor *dh, const aclTensor *a, const aclTensor *qRstdOptional, const aclTensor *kRstdOptional, const aclTensor *betaRawOptional, const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, double scale, int64_t chunkSize, bool useQkL2NormInKernel, bool useBetaSigmoidInKernel, bool useGateInKernel, bool stateVFirst, bool useExp2, const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut, const aclTensor *dbetaOut, const aclTensor *dgOut, aclOpExecutor *executor, const char *layout = \"BNSD\");"
+    }
   }
 }

@@ -637,6 +637,30 @@ class StableOnlyCoverageTest(unittest.TestCase):
             self.assertEqual(self.tool.main(), 1)
 
 
+class InternalL0ContractTest(unittest.TestCase):
+    def test_default_return_order_and_overloads_are_checked(self):
+        tool = _load_tool("stable_coverage.py")
+        declaration = 'const aclTensor *Example(const aclTensor *q, aclOpExecutor *executor, const char *layout = "BNSD");'
+        contract = {"internal_l0_signatures": {"Example": {"header": "example.h", "declaration": declaration}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            header = root / "example.h"
+            header.write_text("namespace l0op {\n" + declaration + "\n}\n", encoding="utf-8")
+            self.assertEqual(tool.l0_contract_problems(contract, root), [])
+            for changed in (
+                declaration.replace(' = "BNSD"', ''),
+                declaration.replace(' = "BNSD"', ' = "NTD"'),
+                declaration.replace('const aclTensor *Example', 'aclTensor *Example'),
+                declaration.replace('const aclTensor *q, aclOpExecutor *executor', 'aclOpExecutor *executor, const aclTensor *q'),
+                declaration + "\n" + declaration,
+            ):
+                with self.subTest(declaration=changed):
+                    header.write_text("namespace l0op {\n" + changed + "\n}\n", encoding="utf-8")
+                    self.assertTrue(tool.l0_contract_problems(contract, root))
+            header.unlink()
+            self.assertTrue(tool.l0_contract_problems(contract, root))
+
+
 class TranslationUnitTest(unittest.TestCase):
     """The gates and the build have to agree on what gets compiled.
 

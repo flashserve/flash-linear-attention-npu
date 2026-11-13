@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include "../../../chunk_fwd_h_struct.h"
 #define CATLASS_ARCH 2201
 
 #include "catlass/arch/arch.hpp"
@@ -99,6 +100,7 @@ public:
     using LayoutK = Catlass::layout::ColumnMajor;
 
     
+    int64_t layout_;
     uint32_t batch{0};
     uint32_t seqlen{0};
     uint32_t kNumHead{0};
@@ -146,6 +148,7 @@ public:
         
         __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
+        layout_ = gdnFwdHTilingData->layout;
         batch = gdnFwdHTilingData->batch;
         seqlen = gdnFwdHTilingData->seqlen;
         kNumHead = gdnFwdHTilingData->kNumHead;
@@ -202,7 +205,9 @@ public:
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(shapeBatch * vNumHead * cubeBlockScheduler.totalChunks * kHeadDim, vHeadDim);
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
+            auto kLayout = tla::MakeLayoutFromTag(LayoutK(
+                kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens,
+                (layout_ == GDN::FwdHLayout::BSND || layout_ == GDN::FwdHLayout::TND) ? kNumHead * kHeadDim : kHeadDim));
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             auto hworkLayout = tla::MakeLayout<ElementHWork, LayoutH>(coreNum * kHeadDim * PING_PONG_STAGES, vHeadDim);
             AscendC::SyncAll<false>();    
@@ -244,6 +249,12 @@ public:
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            if ((layout_ == GDN::FwdHLayout::BSND || layout_ == GDN::FwdHLayout::TND)) {
+                                const uint64_t token = static_cast<uint64_t>(stream.shapeBatchIdx) *
+                                    cubeBlockScheduler.totalTokens + stream.tokenOffset +
+                                    static_cast<uint64_t>(stream.chunkIdx) * chunkSize;
+                                cube2OffsetK = (token * kNumHead + stream.kHeadIdx) * kHeadDim;
+                            }
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
                             auto tensorK = tla::MakeTensor(gmK[cube2OffsetK], kLayout, Catlass::Arch::PositionGM{});
