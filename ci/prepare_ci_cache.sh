@@ -17,7 +17,7 @@ hash_file_list() {
     local path
 
     : >"$list_file"
-    printf '%s\n' "ci-cache-signature-v1" >>"$list_file"
+    printf '%s\n' "ci-cache-signature-v2" >>"$list_file"
     printf 'cann=%s\n' "${ASCEND_HOME_PATH:-${ASCEND_TOOLKIT_HOME:-unknown}}" >>"$list_file"
     if [[ -f /usr/local/Ascend/ascend-toolkit/latest/version.info ]]; then
         sha256sum /usr/local/Ascend/ascend-toolkit/latest/version.info >>"$list_file"
@@ -56,7 +56,15 @@ seed_third_party() {
     fi
 
     echo "[CI] Seeding third_party cache from $seed_dir"
-    cp -an "$seed_dir"/. "$third_party_dir"/
+    local entry target
+    while IFS= read -r -d '' entry; do
+        target="$third_party_dir/${entry##*/}"
+        # Seed whole dependencies only; never merge into an existing cache entry.
+        if [[ -e "$target" || -L "$target" ]]; then
+            continue
+        fi
+        cp -a "$entry" "$target"
+    done < <(find "$seed_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
 remove_known_partial_cache() {
