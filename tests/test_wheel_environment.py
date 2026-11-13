@@ -1158,9 +1158,8 @@ source {set_env!s}
                 checker["_manifest_from_directory"](package_dir),
             )
 
-    def test_both_run_package_installers_finalize_wheel_overlay(self) -> None:
+    def test_builtin_run_installer_keeps_legacy_finalizer(self) -> None:
         installers = (
-            REPO_ROOT / "cmake" / "scripts" / "custom" / "install.sh",
             REPO_ROOT
             / "scripts"
             / "package"
@@ -1473,6 +1472,73 @@ source {set_env!s}
                     r"packaged FLA NPU op_api library",
                 ):
                     _load_runtime(runtime_path)
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "run installer requires Linux/bash")
+class DefaultRunInstallTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="run installer ")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.stage = self.root / "payload"
+        self.site = self.root / "site"
+        self.source = self.stage / "packages/vendors/fla_npu_transformer"
+        self.base = self.site / "fla_npu/opp/vendors/fla_npu_transformer"
+        for vendor, content in ((self.source, b"new scoped library"), (self.base, b"old full library")):
+            _create_minimal_vendor(vendor)
+            (vendor / "op_api/lib/libcust_opapi.so").write_bytes(content)
+        (self.site / "fla_npu/__init__.py").write_text("raise RuntimeError('installer must not import runtime')\n")
+        self.manager = self.site / "fla_npu_opp_manage.py"
+        self.manager.write_text(
+            "import json,os,sys\nfrom pathlib import Path\n"
+            "Path(os.environ['RUN_CALL_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+            "raise SystemExit(int(os.environ.get('RUN_MANAGER_EXIT','0')))\n")
+        installer = REPO_ROOT / "cmake/scripts/custom/install.sh"
+        self.script = self.stage / "install.sh"
+        self.script.write_text(installer.read_text(encoding="utf-8").replace(
+            "vendor_name=customize", "vendor_name=fla_npu_transformer"))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python").symlink_to(sys.executable)
+        self.log = self.root / "manager.json"
+        self.env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                        PYTHONPATH=str(self.site), RUN_CALL_LOG=str(self.log), FLA_NPU_DISABLE_PTH="1")
+
+    def run_installer(self, *args):
+        return subprocess.run(["bash", str(self.script), *args], cwd=self.stage,
+                              env=self.env, capture_output=True, text=True, timeout=30)
+
+    def test_no_options_and_install_delegate_without_touching_base(self):
+        for args in ((), ("--install",), ("--quiet",), ("--full", "--install"), ("--install", "--full")):
+            with self.subTest(args=args):
+                result = self.run_installer(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(self.log.read_text()),
+                                 ["--overlay", "--source", str(self.source)])
+                self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
+    def test_failed_manager_does_not_fall_back_to_base_replacement(self):
+        self.env["RUN_MANAGER_EXIT"] = "42"
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
+    def test_missing_manager_does_not_fall_back_to_base_replacement(self):
+        self.manager.write_text("raise ModuleNotFoundError('fla_npu_opp_manage unavailable')\n")
+        result = self.run_installer("--install")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the base was not overwritten", result.stdout)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
+    def test_explicit_full_is_incremental_and_keeps_base(self):
+        result = self.run_installer("--full")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(self.log.read_text()), ["--overlay", "--source", str(self.source)])
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+        self.env["RUN_MANAGER_EXIT"] = "42"
+        result = self.run_installer("--full")
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
+
 
 if __name__ == "__main__":
     unittest.main()

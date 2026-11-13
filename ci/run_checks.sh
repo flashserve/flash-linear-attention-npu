@@ -553,34 +553,33 @@ install_custom_opp_package() {
         "${run_file}" --quiet
     fi
 
-    local vendor_name="fla_npu"
-    local vendor_dir="fla_npu_transformer"
-    local op_api_lib=""
-    local package_dir=""
-    package_dir="$(python3 - <<'PY'
+    # Full builds install the run before building their first wheel. Only that
+    # bootstrap may use CANN paths; never hide an installed wheel's errors.
+    local installed_package
+    installed_package="$(python3 - <<'PY'
 import importlib.util
-from pathlib import Path
 
-spec = importlib.util.find_spec("fla_npu")
-if spec is not None and spec.origin is not None:
-    print(Path(spec.origin).resolve().parent)
+if importlib.util.find_spec("fla_npu") is not None:
+    print("installed")
 PY
-)"
-    for candidate in \
-        "${package_dir}/opp/vendors/${vendor_dir}/op_api/lib" \
-        "${ASCEND_OPP_PATH:-}/vendors/${vendor_dir}/op_api/lib" \
-        "/usr/local/Ascend/vendors/${vendor_dir}/op_api/lib"; do
-        if [[ -d "$candidate" ]]; then
-            op_api_lib="$candidate"
-            break
+)" || return
+    if [[ -n "$installed_package" || "$change_scope" == "partial" ]]; then
+        configure_installed_fla_npu_opp
+        return
+    fi
+
+    local op_api_lib
+    for op_api_lib in \
+        "${ASCEND_OPP_PATH:-}/vendors/fla_npu_transformer/op_api/lib" \
+        "/usr/local/Ascend/vendors/fla_npu_transformer/op_api/lib"; do
+        if [[ -d "$op_api_lib" ]]; then
+            export LD_LIBRARY_PATH="${op_api_lib}:${LD_LIBRARY_PATH:-}"
+            echo "[CI] Custom OPP op_api lib before wheel installation: ${op_api_lib}"
+            return 0
         fi
     done
-    if [[ -z "$op_api_lib" ]]; then
-        echo "[CI][ERROR] Custom OPP op_api lib path not found for vendor ${vendor_name}." >&2
-        exit 1
-    fi
-    export LD_LIBRARY_PATH="${op_api_lib}:${LD_LIBRARY_PATH:-}"
-    echo "[CI] Custom OPP op_api lib: ${op_api_lib}"
+    echo "[CI][ERROR] Custom OPP op_api lib path not found before wheel installation." >&2
+    return 1
 }
 
 check_example_python_deps() {
@@ -613,6 +612,7 @@ configure_installed_fla_npu_opp() {
     local package_dir
     local vendor_dir
     local env_script
+    local layer_environment
     package_dir="$(python3 - <<'PY'
 import importlib.util
 from pathlib import Path
@@ -624,6 +624,43 @@ print(Path(spec.origin).resolve().parent)
 PY
 )"
     vendor_dir="${package_dir}/opp/vendors/fla_npu_transformer"
+    # A standalone wheel can have an empty base vendor and an active OPP layer.
+    # Do not test an older active/base composition when the requested run is pending.
+    layer_environment="$(python3 - "$package_dir" <<'PY'
+import importlib.util
+import os
+from pathlib import Path
+import shlex
+import sys
+
+package = Path(sys.argv[1]).resolve()
+if importlib.util.find_spec("fla_npu_wheel_overlay") is not None:
+    import fla_npu_wheel_overlay as layers
+    if layers.state(package).get("pending"):
+        raise SystemExit("[CI][ERROR] Requested OPP is pending; CI must not test an older active/base version")
+    vendors = layers.environment_vendors(package)
+    if vendors is not None:
+        if not vendors or not layers.enabled():
+            raise SystemExit("[CI][ERROR] Selected OPP is missing or disabled")
+        layers.runtime_plan(package)  # Revalidate the selected adapter/OPP contract.
+        for vendor in vendors:
+            if not (vendor / layers.LIBRARY).is_file():
+                raise SystemExit(f"[CI][ERROR] Missing selected OPP library: {vendor}")
+        print(layers.shell_environment(package))
+        base = package / "opp/vendors" / layers.BASE / layers.LIBRARY
+        single = base if base.is_file() else vendors[0] / layers.LIBRARY
+        print("export FLA_NPU_OP_API_LIB=" + shlex.quote(str(single)))
+        library_path = os.pathsep.join([str(v / "op_api/lib") for v in vendors]
+                                      + [os.environ.get("LD_LIBRARY_PATH", "")])
+        print("export LD_LIBRARY_PATH=" + shlex.quote(library_path))
+PY
+)" || return
+    if [[ -n "$layer_environment" ]]; then
+        eval "$layer_environment"
+        export FLA_NPU_OPP_PATH="${package_dir}/opp"
+        echo "[CI] Selected OPP libraries: ${FLA_NPU_OP_API_LIBS}"
+        return
+    fi
     if [[ ! -f "${vendor_dir}/op_api/lib/libcust_opapi.so" ]]; then
         echo "[CI][ERROR] Installed fla_npu OPP is incomplete." >&2
         return 1
