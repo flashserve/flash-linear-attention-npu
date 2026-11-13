@@ -11,20 +11,21 @@
  * \file recurrent_kda.cpp
  * \brief
  */
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/recurrent_kda.h"
 #else
 #include "recurrent_kda.h"
 #endif
 #include "recurrent_kda_tiling_data.h"
+#include "recurrent_kda_tiling_key.h"
 
 
 using namespace AscendC;
-using namespace matmul;
 using namespace RecurrentKda;
 
 
-extern "C" __global__ __aicore__ void
+template <uint32_t KERNEL_MODE>
+__global__ __aicore__ void
 recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR beta, GM_ADDR initialState,
               GM_ADDR cuSeqlens, GM_ADDR ssmStateIndices, GM_ADDR aLog, GM_ADDR dtBias, GM_ADDR numAcceptedTokens,
               GM_ADDR out, GM_ADDR initialStateOut, GM_ADDR finalState, GM_ADDR workspaceGM, GM_ADDR tilingGM)
@@ -32,11 +33,25 @@ recurrent_kda(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR gate, GM_ADDR b
     REGISTER_TILING_DEFAULT(RecurrentKdaTilingData);
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
-    TPipe pipe;
-    RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
     GM_ADDR stateOutput = tilingData.inplaceFinalState == 1 ? initialStateOut : finalState;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+    {
+        // Static Tensor programming owns UB and synchronization without a TPipe.
+        InitSocState();
+        constexpr bool stateVFirst = KERNEL_MODE != RKDA_TPL_K_FIRST && KERNEL_MODE != RKDA_TPL_K_FIRST_FUSED;
+        constexpr bool fusedMode = KERNEL_MODE == RKDA_TPL_V_FIRST_FUSED || KERNEL_MODE == RKDA_TPL_K_FIRST_FUSED;
+        RecurrentKdaStand::RecurrentKdaEngine<DTYPE_INITIAL_STATE, DTYPE_GATE, DTYPE_BETA,
+            stateVFirst, fusedMode> op(&tilingData);
+        op.Init(query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
+            aLog, dtBias, numAcceptedTokens, out, stateOutput);
+        op.Process();
+    }
+#else
     RKDAInitParams initParams{query, key, value, gate, beta, initialState, cuSeqlens, ssmStateIndices,
                               aLog, dtBias, numAcceptedTokens, out, stateOutput};
+    TPipe pipe;
+    RKDA<bfloat16_t, bfloat16_t, DTYPE_INITIAL_STATE> op(&tilingData);
     op.Init(initParams, &pipe);
     op.Process();
+#endif
 }

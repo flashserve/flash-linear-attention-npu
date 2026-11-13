@@ -71,7 +71,7 @@ protected:
     bool CheckFormat(ge::Format format, const std::string &Desc);
 
     RecurrentKdaCompileInfo compileInfo_;
-    RecurrentKdaTilingData tilingData_;
+    RecurrentKdaTilingData tilingData_{};
     RecurrentKdaInfo inputParams_;
 };
 

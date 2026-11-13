@@ -59,7 +59,7 @@ def specifications():
              state_v_first=False, state_dtype="bf16", metadata_dtype="int32"),
         dict(T=17, output=False, inplace=True, norm=True),
         dict(T=17, output=False, inplace=False),
-        dict(T=17, initial_none=True, norm=True),
+        dict(T=17, initial_zero=True, norm=True),
     ]
     # Append new structures so the original 123 case IDs remain stable.
     for i, tokens in enumerate([63, 65, 127, 129, 255, 257, 511, 513, 1023]):
@@ -93,7 +93,7 @@ def specifications():
         dict(T=257, H=2, HV=8, V=256, state_v_first=False, state_dtype="bf16",
              strided=True, norm=True, raw_gate=True, beta_sigmoid=True,
              negative=True, gate_dtype="fp16", beta_dtype="bf16"),
-        dict(T=513, layout="TND", V=256, initial_none=True, norm=True,
+        dict(T=513, layout="TND", V=256, initial_zero=True, norm=True,
              raw_gate=True, safe_gate=True, beta_sigmoid=True,
              gate_dtype="bf16", beta_dtype="fp16"),
     ]
@@ -159,8 +159,10 @@ def make_inputs(spec, device):
             [min(spec.get("accepted", 1), n) if n else 0 for n in lengths], dtype=meta_dtype)
     tail = (vdim, 128) if spec["state_v_first"] else (128, vdim)
     state = normal((state_capacity, hv, *tail), 0.02).to(DTYPES[spec["state_dtype"]])
-    if spec.get("initial_none"):
-        state = None
+    if spec.get("initial_zero"):
+        # The public API requires an explicit state in every output mode.
+        # Missing-state rejection is covered by regression_mutation_contract.py.
+        state.zero_()
     x = dict(q=q, k=k, v=v, g=g.to(DTYPES[spec["gate_dtype"]]),
              beta=beta.to(DTYPES[spec["beta_dtype"]]), initial_state=state,
              cu_seqlens=torch.tensor(offsets, dtype=meta_dtype) if spec["cu"] else None,

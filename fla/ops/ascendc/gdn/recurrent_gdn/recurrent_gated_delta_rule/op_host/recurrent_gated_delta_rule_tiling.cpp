@@ -77,8 +77,6 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetShapeAttrsInfo()
 {
     if (CheckContext() != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
 
-    if (GetVersion() != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
-
     if (AnalyzeDtype() != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
 
     if (AnalyzeShapes() != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
@@ -106,14 +104,19 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
 {
     const auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     const uint64_t stateDtypeKey = stateDtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
-    if (tilingData_.useV2) {
-        tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey, tilingData_.betaDtype, tilingData_.gDtype);
-    } else {
-        // V1 keeps its original beta/g dtypes (BF16/FP32); the extra template
-        // parameters are only present because the shared kernel entry now also
-        // supports V2.
-        tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey, RGDR_TPL_BF16, RGDR_TPL_FP32);
-    }
+    const uint64_t betaKey = tilingData_.betaDtype;
+    const uint64_t gateKey = tilingData_.gDtype;
+    const uint64_t betaSigmoid = tilingData_.useBetaSigmoidInKernel != 0;
+    tilingKey_ = GET_TPL_TILING_KEY(
+        stateDtypeKey, gateKey, betaKey, tilingData_.useQkL2NormInKernel != 0,
+        tilingData_.useGateInKernel != 0, betaSigmoid,
+        betaSigmoid && tilingData_.allowNegEigval != 0);
+    OP_LOGD(context_->GetNodeName(),
+            "RGDR_TILING_KEY key=%llu state=%llu g=%llu beta=%llu norm=%u gate=%u sigmoid=%u neg=%u",
+            static_cast<unsigned long long>(tilingKey_), static_cast<unsigned long long>(stateDtypeKey),
+            static_cast<unsigned long long>(gateKey), static_cast<unsigned long long>(betaKey),
+            tilingData_.useQkL2NormInKernel != 0, tilingData_.useGateInKernel != 0,
+            betaSigmoid != 0, betaSigmoid && tilingData_.allowNegEigval != 0);
     return ge::GRAPH_SUCCESS;
 };
 
@@ -161,17 +164,6 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CheckContext()
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus RecurrentGatedDeltaRuleTiling::GetVersion()
-{
-    auto attrs = context_->GetAttrs();
-    if (attrs == nullptr) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attributes", rgdn_error::Format("attrs is null")); return ge::GRAPH_FAILED; };
-    const bool *useV2 = attrs->GetAttrPointer<bool>(5);
-    // The V1 schema predates this hidden attribute.  Missing means the legacy
-    // entry point and is intentionally equivalent to false.
-    tilingData_.useV2 = useV2 != nullptr && *useV2;
-    return ge::GRAPH_SUCCESS;
-}
-
 ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
 {
     struct DtypeRule { size_t index; const char *name; ge::DataType first; ge::DataType second; const char *expected; };
@@ -179,8 +171,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
         {QUERY_INDEX,"query",ge::DT_BF16,ge::DT_BF16,"[bfloat16]"},
         {KEY_INDEX,"key",ge::DT_BF16,ge::DT_BF16,"[bfloat16]"},
         {VALUE_INDEX,"value",ge::DT_BF16,ge::DT_BF16,"[bfloat16]"},
-        {BETA_INDEX,"beta",ge::DT_BF16,tilingData_.useV2 ? ge::DT_FLOAT : ge::DT_BF16,
-            tilingData_.useV2 ? "[bfloat16,float32]" : "[bfloat16]"},
+        {BETA_INDEX,"beta",ge::DT_BF16,ge::DT_FLOAT,"[bfloat16,float32]"},
         {STATE_INDEX,"state",ge::DT_BF16,ge::DT_FLOAT,"[bfloat16,float32]"},
         {CUSEQLENS_INDEX,"actual_seq_lengths",ge::DT_INT32,ge::DT_INT32,"[int32]"},
         {SSM_STATE_INDICES_INDEX,"ssm_state_indices",ge::DT_INT32,ge::DT_INT32,"[int32]"}};
@@ -195,8 +186,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
     const auto beta = context_->GetInputDesc(BETA_INDEX)->GetDataType();
     tilingData_.betaDtype = beta == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
     const DtypeRule optional[] = {
-        {G_INDEX,"g",ge::DT_FLOAT,tilingData_.useV2 ? ge::DT_BF16 : ge::DT_FLOAT,
-            tilingData_.useV2 ? "[bfloat16,float32]" : "[float32]"},
+        {G_INDEX,"g",ge::DT_FLOAT,ge::DT_BF16,"[bfloat16,float32]"},
         {ACC_TO_INDEX,"num_accepted_tokens",ge::DT_INT32,ge::DT_INT32,"[int32]"},
         {A_LOG_INDEX,"A_log",ge::DT_FLOAT,ge::DT_FLOAT,"[float32]"},
         {DT_BIAS_INDEX,"dt_bias",ge::DT_FLOAT,ge::DT_FLOAT,"[float32]"}};
@@ -406,11 +396,6 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetOptionalInput()
         }
         if (!valid) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), index==G_INDEX ? "g" : index==ACC_TO_INDEX ? "num_accepted_tokens" : index==A_LOG_INDEX ? "A_log" : "dt_bias", "actual shape="+rgdn_error::ShapeText(shape)+"; expected "+(index==G_INDEX ? "[T,HV]" : index==ACC_TO_INDEX ? "[B]" : "[HV] FP32")); return ge::GRAPH_FAILED; };
     }
-    if (!tilingData_.useV2 && (tilingData_.useQkL2NormInKernel || tilingData_.useGateInKernel ||
-                                       tilingData_.useBetaSigmoidInKernel || tilingData_.allowNegEigval ||
-                                       tilingData_.hasALog || tilingData_.hasDtBias ||
-                                       tilingData_.betaDtype != RGDR_TPL_BF16 ||
-                                       (tilingData_.hasGama && tilingData_.gDtype != RGDR_TPL_FP32))) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input dtype", rgdn_error::Format("V1 does not accept V2 attributes or dtypes")); return ge::GRAPH_FAILED; };
     return ge::GRAPH_SUCCESS;
 }
 
@@ -431,7 +416,6 @@ void RecurrentGatedDeltaRuleTiling::PrintTilingData()
     OP_LOGD(context_->GetNodeName(), "attnOutBufferNum: [%u]", tilingData_.attnOutBufferNum);
     OP_LOGD(context_->GetNodeName(), "scale: [%f]", tilingData_.scale);
     OP_LOGD(context_->GetNodeName(), "hasGama: [%u]", tilingData_.hasGama);
-    OP_LOGD(context_->GetNodeName(), "useV2: [%u]", tilingData_.useV2);
     OP_LOGD(context_->GetNodeName(), "hasAcceptedTokens: [%u]", tilingData_.hasAcceptedTokens);
 }
 
@@ -446,15 +430,13 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CalUbSize()
         constexpr uint64_t fp32Bytes = 4;
         constexpr uint64_t dataBlockBytes = 32;
         constexpr uint64_t ubGuardBytes = 4U * 1024U;
-        const bool stateFp32 = context_->GetInputDesc(STATE_INDEX)->GetDataType() == ge::DT_FLOAT;
         const uint64_t pipelineBytes =
             stateBanks * dim * dim * fp32Bytes +
-            (stateFp32 ? 0U : dim * dim * bf16Bytes) +
             inputBuffers * tokenTile * 3U * dim * bf16Bytes +
             inputBuffers * tokenTile * dataBlockBytes +
             inputBuffers * tokenTile * dataBlockBytes +
             inputBuffers * tokenTile * dim * bf16Bytes +
-            dim * fp32Bytes + dim * dataBlockBytes + dim * sizeof(uint32_t);
+            dim * fp32Bytes;
         if (pipelineBytes + ubGuardBytes > compileInfo_.ubSize ||
             pipelineBytes > std::numeric_limits<uint32_t>::max()) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(

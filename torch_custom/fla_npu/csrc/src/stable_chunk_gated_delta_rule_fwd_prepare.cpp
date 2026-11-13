@@ -104,8 +104,6 @@ run_npu_chunk_gated_delta_rule_fwd_prepare(
                                 k_meta.scalar_type, k_meta);
 
   FLA_STABLE_EXEC(
-      // ND descriptors: this operator's reference passes
-      // `acl_format_override=ACL_FORMAT_ND` for every argument.
       "aclnnChunkGatedDeltaRuleFwdPrepare", q_meta, stream, nd_tensor(q_meta),
       nd_tensor(k_meta), nd_tensor(v_meta), nd_tensor(meta_of(g)),
       nd_tensor(meta_of(beta)),
