@@ -114,7 +114,7 @@ def _case(index, profile, layout, state_v_first):
     vector_shape = ([batch, heads, tokens, 128] if not packed else [heads, tokens, 128])
     score_shape = vector_shape[:-1] + [64]
     value_shape = [batch, heads, tokens, 128]
-    state_shape = [batch, heads, chunks, 128, 128]
+    state_shape = [batch, chunks, heads, 128, 128]
     name = "%s_%04d_%s_%s_%s" % (
         OP_NAME, index, profile["name"], layout.lower(),
         "vk" if state_v_first else "kv",
