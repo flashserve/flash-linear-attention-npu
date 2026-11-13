@@ -1,4 +1,5 @@
 #include "op_common/log/log.h"
+#include "base/err_msg.h"
 #include "graph/utils/type_utils.h"
 #include "aclnn_chunk_kda_bwd.h"
 
@@ -174,6 +175,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
+    }
+    if (!safeGate) {
+        const std::vector<const char *> keys = {"param_name", "op_name", "incorrect_value", "correct_value"};
+        const std::vector<const char *> values = {"safe_gate", "aclnnChunkKdaBwd", "false", "true on A2/A3"};
+        REPORT_PREDEFINED_ERR_MSG("EZ0024", keys, values);
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(chunkSize == 64 && useExp2 && !stateVFirst)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
