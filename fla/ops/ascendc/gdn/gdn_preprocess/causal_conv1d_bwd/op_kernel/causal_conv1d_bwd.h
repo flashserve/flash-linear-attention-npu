@@ -159,6 +159,9 @@ private:
     __aicore__ inline void CopyOutDwDb(uint32_t i_d);
     __aicore__ inline void CopyOutPartialDwDb(uint32_t coreIdx, uint32_t i_d);
     __aicore__ inline void ReducePartialDwDb(uint32_t i_d);
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    __aicore__ inline void ReducePartialDwDbStaged(uint32_t i_d);
+#endif
     __aicore__ inline void ReducePartialDwDb2D(uint32_t i_d);
     __aicore__ inline void ReduceRowsInplace(LocalTensor<float> tensor, uint32_t rows, uint32_t cols);
     __aicore__ inline void ReduceRowsToInplace(LocalTensor<float> tensor, uint32_t rows, uint32_t cols,
@@ -189,6 +192,9 @@ private:
     TBuf<TPosition::VECCALC> dbStageBuf_;
     TBuf<TPosition::VECCALC> sigmoidBuf_;
     TBuf<TPosition::VECCALC> dh0Buf_;
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    TBuf<TPosition::VECCALC> redBuf_;
+#endif
 
     uint32_t B_ = 0, T_ = 0, D_ = 0, W_ = 0;
     uint32_t activation_ = ACTIVATION_NONE;
@@ -207,6 +213,10 @@ private:
     uint32_t dwStageRows_ = 0;
     uint32_t btBdCount_ = 0, wBdCount_ = 0;
     uint32_t dyRows_ = 0, dyBdCount_ = 0;
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    // 批量 dw/db 归约：每批聚到 UB 的 partial 行数（0 表示退化为逐行归约）。
+    uint32_t redStageRows_ = 0;
+#endif
 
     GlobalTensor<inputT> xGm_, yGm_, weightGm_, dyGm_, initialStateGm_, dhtGm_;
     GlobalTensor<inputT> dxGm_, dwGm_, dbGm_, dh0Gm_;
@@ -252,6 +262,21 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
     wBdCount_ = W_ * BD_;
     dyRows_ = BT_ + W_ - 1;
     dyBdCount_ = dyRows_ * BD_;
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    // 仅「非 idSplit / 非 2D 且多核」时才走 partial 归约；此时按 UB 上限确定每批能聚多少行。
+    // 8KB staging（2048 个 fp32）足够覆盖小 shape；放不下 2 行则退化为逐行归约。
+    if (blockNum_ > 1U && useIdSplit_ == 0U && use2DSplit_ == 0U && wBdCount_ > 0U) {
+        constexpr uint32_t RED_STAGE_ELEMS = 2048U;
+        uint32_t rowsCap = RED_STAGE_ELEMS / wBdCount_;
+        if (rowsCap < 1U) {
+            rowsCap = 1U;
+        }
+        redStageRows_ = (blockNum_ < rowsCap) ? blockNum_ : rowsCap;
+        if (redStageRows_ < 2U) {
+            redStageRows_ = 0U;
+        }
+    }
+#endif
 
     srcStrideBytes_ = static_cast<uint32_t>(D_ * sizeof(inputT));
     dstStrideBytes_ = static_cast<uint32_t>(BD_ * sizeof(calT));
@@ -285,6 +310,11 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *inputPipe)
 {
     pipe_ = inputPipe;
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    if (redStageRows_ >= 2U) {
+        pipe_->InitBuffer(redBuf_, redStageRows_ * wBdCount_ * FP32_DTYPE_SIZE);
+    }
+#endif
     if (Arch32UseDirectVector()) {
         pipe_->InitBuffer(xBuf_, btBdCount_ * FP32_DTYPE_SIZE);
         pipe_->InitBuffer(dyBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
@@ -2285,9 +2315,85 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutPartialDwDb(u
     WaitFlag<HardEvent::MTE3_V>(mte3ToV);
 }
 
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDbStaged(uint32_t i_d)
+{
+    // 批量归约：把固定 i_d 的 blockNum_ 份 partial 用「一次带 stride 的 DataCopy」搬进 UB，
+    // 再用向量连续 Add 做行间归约。相比逐份 DataCopy+等待，省掉了 blockNum_-1 次串行 GM 往返。
+    // partial 布局为 [core][numBlksD][wBdCount]，同一 i_d 的相邻 core 间隔 numBlksD_ 行。
+    LocalTensor<float> stage = redBuf_.Get<float>();
+    const uint32_t rows = redStageRows_;
+    // DataCopyParams 的 blockLen / stride 均以 32B 为单位；fp32 下 32B = BLOCK_ALIGN_NUM 个元素。
+    if (hasWeight_) {
+        LocalTensor<float> dwLocal = dwBuf_.Get<float>();
+        Duplicate(dwLocal, float(0), wBdCount_);
+        PipeBarrier<PIPE_V>();
+        const uint16_t blkLen = static_cast<uint16_t>(wBdCount_ / BLOCK_ALIGN_NUM);
+        const uint16_t srcGap = static_cast<uint16_t>((numBlksD_ - 1U) * wBdCount_ / BLOCK_ALIGN_NUM);
+        for (uint32_t base = 0; base < blockNum_; base += rows) {
+            uint32_t n = blockNum_ - base;
+            if (n > rows) {
+                n = rows;
+            }
+            event_t vToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+            SetFlag<HardEvent::V_MTE2>(vToMte2);
+            WaitFlag<HardEvent::V_MTE2>(vToMte2);
+            DataCopyParams params{static_cast<uint16_t>(n), blkLen, srcGap, 0};
+            DataCopy(stage, partialDwGm_[(static_cast<uint64_t>(base) * numBlksD_ + i_d) * wBdCount_],
+                     params);
+            event_t mte2ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+            SetFlag<HardEvent::MTE2_V>(mte2ToV);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+            for (uint32_t k = 1U; k < n; k++) {
+                Add(stage, stage, stage[k * wBdCount_], wBdCount_);
+            }
+            Add(dwLocal, dwLocal, stage, wBdCount_);
+            PipeBarrier<PIPE_V>();
+        }
+    }
+
+    if (hasBias_) {
+        LocalTensor<float> dbLocal = dbBuf_.Get<float>();
+        Duplicate(dbLocal, float(0), BD_);
+        PipeBarrier<PIPE_V>();
+        const uint16_t blkLen = static_cast<uint16_t>(BD_ / BLOCK_ALIGN_NUM);
+        const uint16_t srcGap = static_cast<uint16_t>((numBlksD_ - 1U) * BD_ / BLOCK_ALIGN_NUM);
+        for (uint32_t base = 0; base < blockNum_; base += rows) {
+            uint32_t n = blockNum_ - base;
+            if (n > rows) {
+                n = rows;
+            }
+            event_t vToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+            SetFlag<HardEvent::V_MTE2>(vToMte2);
+            WaitFlag<HardEvent::V_MTE2>(vToMte2);
+            DataCopyParams params{static_cast<uint16_t>(n), blkLen, srcGap, 0};
+            DataCopy(stage, partialDbGm_[(static_cast<uint64_t>(base) * numBlksD_ + i_d) * BD_],
+                     params);
+            event_t mte2ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+            SetFlag<HardEvent::MTE2_V>(mte2ToV);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+            for (uint32_t k = 1U; k < n; k++) {
+                Add(stage, stage, stage[k * BD_], BD_);
+            }
+            Add(dbLocal, dbLocal, stage, BD_);
+            PipeBarrier<PIPE_V>();
+        }
+    }
+
+    CopyOutDwDb(i_d);
+}
+#endif
+
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb(uint32_t i_d)
 {
+#if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    if (redStageRows_ >= 2U) {
+        ReducePartialDwDbStaged(i_d);
+        return;
+    }
+#endif
     LocalTensor<float> tmp;
     if (Arch32UseDirectVector()) {
         tmp = yBuf_.Get<float>();
