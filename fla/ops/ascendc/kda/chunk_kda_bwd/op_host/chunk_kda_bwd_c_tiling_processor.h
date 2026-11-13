@@ -346,9 +346,8 @@ public:
         tiling_.usedCoreNum = blockDim_;
 
         if (BuildWorkspace() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         workspaceSize_ = ctx_.systemWorkspaceSize +
             static_cast<size_t>(blockDim_) *
                 static_cast<size_t>(tiling_.workspaceCoreSize);

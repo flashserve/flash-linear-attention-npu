@@ -297,7 +297,6 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     KDA::ChunkKdaBwdATilingData aTiling{};
     ChunkKdaBwdATilingProcessor aProcessor(aCtx, aTiling);
     if (aProcessor.Process() != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
 
@@ -355,7 +354,6 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     cCtx.systemWorkspaceSize = systemWorkspace;
     ChunkKdaBwdCTilingProcessor cProcessor(cCtx, tiling->kernelC);
     if (cProcessor.Process() != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
     tiling->kernelC.deferGatePost = *deferGatePost ? 1 : 0;

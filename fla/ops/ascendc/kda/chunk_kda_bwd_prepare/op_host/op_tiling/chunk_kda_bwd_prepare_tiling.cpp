@@ -60,7 +60,6 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(processor.GetTilingKey());

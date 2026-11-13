@@ -108,7 +108,6 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 
     ChunkFwdOTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
     using namespace GDN;

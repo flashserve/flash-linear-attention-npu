@@ -129,7 +129,6 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
 
     ChunkGatedDeltaRuleBwdDhuTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
 

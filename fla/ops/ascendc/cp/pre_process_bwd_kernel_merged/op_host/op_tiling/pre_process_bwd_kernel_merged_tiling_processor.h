@@ -442,25 +442,20 @@ public:
     ge::graphStatus Process()
     {
         if (Init() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (ResolveGateMode() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (ResolveSegment() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (PlanCorePartition() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
         if (PlanWorkspace() != ge::GRAPH_SUCCESS) {
-        ;
-        return ge::GRAPH_FAILED;
-    }
+            return ge::GRAPH_FAILED;
+        }
 
         const bool isScale = ctx_.hasScaleAttr;
         tiling_.B = B_;
