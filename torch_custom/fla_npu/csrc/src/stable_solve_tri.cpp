@@ -38,7 +38,9 @@ using fla_npu_stable::stable::tensor;
 // The kernel takes the layout as a `char*`.  Its lowercase spelling is what
 // the reference sends, so the table keeps it; a caller passing anything else
 // gets an error from `cstr` rather than a string handed straight to aclnn.
-constexpr const char* kSolveTriLayoutNames[] = {"bsnd", "bnsd", "tnd", "ntd"};
+// "bhtd" is appended as the bnsd compat alias the host accepts; existing
+// indices 0-3 are ABI and must not move.
+constexpr const char* kSolveTriLayoutNames[] = {"bsnd", "bnsd", "tnd", "ntd", "bhtd"};
 
 constexpr const char* kSchema_solve_tri =
     "npu_solve_tri(Tensor x, Tensor? cu_seqlens, Tensor? chunk_indices, "
