@@ -308,7 +308,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         FINALIZE_INPUT_CHUNK_INDICES);
     if ((cuDesc != nullptr && cuDesc->GetDataType() != ge::DT_INT64) ||
         (indexDesc != nullptr && indexDesc->GetDataType() != ge::DT_INT64)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(cuDesc), "cu_seqlens/chunk_indices 仅支持 INT64 host 元数据。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "non-int64", "cu_seqlens/chunk_indices 仅支持 INT64 host 元数据");
 
         return ge::GRAPH_FAILED;
     }

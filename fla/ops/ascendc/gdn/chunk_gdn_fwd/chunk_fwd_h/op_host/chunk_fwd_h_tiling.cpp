@@ -124,7 +124,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     } else if (storeFinalState) {
         auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
         if (finalStateDesc == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "final_state", std::to_string(finalStateDesc), "final_state output descriptor must exist when storeFinalState is true.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "final_state", "absent", "final_state output descriptor must exist when storeFinalState is true.");
         return ge::GRAPH_FAILED;
     }
         resolvedStateDataType = finalStateDesc->GetDataType();
