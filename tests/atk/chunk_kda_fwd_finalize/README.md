@@ -723,3 +723,37 @@ this cleanup does not rerun or extend the historical full-chain validation above
 A5 package rebuild and Finalize kernel hash verification are recorded under
 validation_pr1179_a5/remove_prepare/. Existing Finalize-only numerical and timing
 results refer to the same compiled A5 kernel; no extra performance shapes are run.
+
+
+## 2026-11-13 Fresh Finalize-only revalidation after Prepare removal
+
+Validated source commit:8d79b973455a8e28c45fc637ad4cfd60791a42a5. Per user scope,
+this round rebuilds and tests Finalize only; the720 GVA full-chain cases and
+performance measurements are excluded. No previous pass is substituted for
+current test execution. Frozen inputs, CPU references and dual-benchmark
+precision thresholds remain unchanged.
+
+| Check | Coverage | Result |
+|---|---|---|
+| Accuracy |216 frozen cases|Pass216/216|
+| Determinism |12 cases,50 repeats each|Pass12/12|
+| mssanitizer memcheck |12 cases|Pass12/12|
+| mssanitizer racecheck |12 cases|Pass12/12|
+| Extra allocation |12 supplied shapes|Pass12/12|
+
+Maximum extra allocation17,768,960 bytes (16.95MiB), below200MiB; existing inputs
+and returned output are excluded. These twelve shapes are memory audits using
+ATK run, not performance benchmarks. Both sanitizer logs contain12 target
+Finalize starts and12 completed instrumented executions with no errors.
+
+Fresh normal and instrumented builds use isolated conda environments
+pr1179-finalize-recheck and pr1179-finalize-recheck-san. Installed Finalize kernel
+and op_api hashes match their respective newly built scoped packages. This
+integrity claim covers Finalize only, not other copied environment operators.
+Ordinary tests use NPU3 and sanitizer NPU5, Ascend950PR/CANN9.2/Torch-NPU2.12.
+
+Evidence: validation_pr1179_a5/revalidation_8d79b973/REVALIDATION_REPORT.md,
+acceptance.json, exact command arrays, XLSX reports, memory.jsonl, raw sanitizer
+logs and integrity_normal.json/integrity_sanitizer.json. Archive:
+Finalize_8d79b973_revalidation_evidence.zip. Finalize implementation is unchanged
+by this documentation update; full-chain validation remains outside this round.
