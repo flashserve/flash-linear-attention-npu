@@ -11,7 +11,7 @@
 // 这段 #if 必须保留：CATLASS_ARCH 是给 catlass 头文件（arch.hpp 等）用的预处理宏，
 // catlass 按宏在预处理期选平台、无法用 C++ trait 表驱动。平台分支统一用 __NPU_ARCH__
 // 展开判断（9201/3510/2201，非 2201 即跨核 MIX 路径）。
-// 平台差异的 C++ 侧收敛统一走 chunk_kda_fwd_finalize_platform.h 的 FinalizePlatform。
+// 平台差异的 C++ 侧收敛统一走 chunk_kda_fwd_finalize_struct.h 的 FinalizePlatform。
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 9201

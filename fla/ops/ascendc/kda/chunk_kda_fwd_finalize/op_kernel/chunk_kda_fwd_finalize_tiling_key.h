@@ -8,7 +8,6 @@
 #define CHUNK_KDA_FWD_FINALIZE_TILING_KEY_H
 
 #include "ascendc/host_api/tiling/template_argument.h"
-#include "chunk_kda_fwd_finalize_platform.h"
 
 namespace KdaFinalize {
 
