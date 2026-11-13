@@ -183,7 +183,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     isVarLen = cu != nullptr;
     if (!isVarLen) {
         if (indices != nullptr) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(indices), "chunk_indices 必须和 cu_seqlens 一起传入。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "present", "chunk_indices 必须和 cu_seqlens 一起传入。");
 
             return false;
         }
