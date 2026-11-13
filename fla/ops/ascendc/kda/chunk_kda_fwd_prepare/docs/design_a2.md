@@ -498,7 +498,8 @@ Target的normSum不能与尚未读取的同址gate共存。V6通过inputReady/re
 - Target：`arch22/*vec_target.h`、`arch22/*cube_target.h`、`*target_config.h`。
 - 路由、coarse条件、六key和真实CANN序列化已通过独立开发期合同测试；
   新增测试与原始证据保留在独立验证归档，不随本优化PR提交。
-  上游已有`op_host/tests`保持原样；ATK交付件维护于work_tool。
+  本仓测试仅在根目录 `tests/atk` 看护，算子目录不保留 `op_host/tests`；
+  ATK交付件维护于work_tool。
 
 V2映射/分核整改、跨GVA Q/K复用、Generic双bank/双L0、mask设置复用、
 侧线锚点因子复用和packed-leaf均不属于本冻结版本。记录这些差异用于后续设计评审，

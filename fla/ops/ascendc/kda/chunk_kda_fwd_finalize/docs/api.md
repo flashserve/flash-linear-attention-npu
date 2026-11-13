@@ -21,6 +21,10 @@ attn_out = chunk_kda_fwd_finalize(
 legacy `torch.ops.npu` 接口。输入、输出和变长元数据的形状与约束
 见下文及[算子 README](../README.md#输入输出)。
 
+返回：单个 BF16 张量 `attn_out`，布局由 `output_layout` 决定，形状见
+[算子 README](../README.md#输入输出)。dtype、layout 与变长约束见 `## aclnn`
+和[算子 README](../README.md#支持范围)；平台支持范围为 A2/A3/A5/A6。
+
 ## aclnn
 
 ```cpp
@@ -46,7 +50,8 @@ aclnnStatus aclnnChunkKdaFwdFinalize(
 
 四个 tensor 输入和 `attnOut` 必传，且 descriptor 必须为非私有
 ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
-均为 BF16，`K=V=128`，`Aqk` 的列数为 64；支持 A2/A3/A5。
+均为 BF16，`K=V=128`，`Aqk` 的列数为 64；支持 A2/A3/A5/A6
+（A6 为 Ascend960DT、`__NPU_ARCH__=9201`，单 AIV 串行搬移）。
 `outputLayout` 对 rank-4 `qgScaled/Aqk` 只接受 `BSND/BNSD`，
 对 rank-3 `qgScaled/Aqk` 只接受 `TND/NTD`；packed 场景的
 `vNew` 可为 FwdH 的 `[1,HV,T,128]` 或独立调用的

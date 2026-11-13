@@ -19,7 +19,6 @@ namespace {
 constexpr uint32_t FINALIZE_MIX_BATCH_MODE = 1;
 constexpr uint64_t FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE = 4;
 constexpr uint64_t FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE = 8;
-constexpr uint64_t FINALIZE_A2A3_HEAD_GROUP_SIZE = 1;
 
 struct FinalizeShape {
     uint64_t batch = 0;
@@ -336,8 +335,30 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
-    const bool isA5 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    // host 侧按 NpuArch 显式平台分支，替代 tier 表；kernel 侧仍按编译期架构宏 +
+    // 独立实现目录分派。
+    uint64_t headGroupSize = 0;
+    bool allowAivInputMover = false;
+    switch (platform.GetCurNpuArch()) {
+    case NpuArch::DAV_2201: // A2/A3 用 bounded head group（headGroupSize=1）
+        headGroupSize = 1;
+        allowAivInputMover = false;
+        break;
+    case NpuArch::DAV_3510: // A5 chunk-first 全 head，允许 AIV input mover
+        headGroupSize = 0;
+        allowAivInputMover = true;
+        break;
+    case NpuArch::DAV_9201: // A6 chunk-first 全 head，允许 AIV input mover
+        headGroupSize = 0;
+        allowAivInputMover = true;
+        break;
+    default:
+        OP_LOGE(context->GetNodeName(),
+                "chunk_kda_fwd_finalize 不支持的 NPU 架构 id=%u，"
+                "期望 DAV_2201(A2/A3)、DAV_3510(A5)、DAV_9201(A6) 之一。",
+                static_cast<uint32_t>(platform.GetCurNpuArch()));
+        return ge::GRAPH_FAILED;
+    }
     ChunkKdaFwdFinalizeScheduleContext scheduleContext;
     scheduleContext.batch = info.batch;
     scheduleContext.valueHeadNum = info.heads;
@@ -345,7 +366,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
-    scheduleContext.headGroupSize = isA5 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
+    scheduleContext.headGroupSize = headGroupSize;
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
@@ -370,7 +391,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
         : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
     const bool useAivInputMover =
-        isA5 && schedule.headsPerPartition == info.heads &&
+        allowAivInputMover && schedule.headsPerPartition == info.heads &&
         minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
@@ -382,7 +403,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
         OP_LOGE(context->GetNodeName(),
-                "设置 A5 MIX AIC/AIV batch 调度模式失败。");
+                "设置 A5/A6 MIX AIC/AIV batch 调度模式失败。");
         return ge::GRAPH_FAILED;
     }
     size_t *workspace = context->GetWorkspaceSizes(1);

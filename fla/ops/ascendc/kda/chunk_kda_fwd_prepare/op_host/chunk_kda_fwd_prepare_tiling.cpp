@@ -553,20 +553,43 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const auto platform =
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
-    const bool isAscend950 =
-        platform.GetCurNpuArch() == NpuArch::DAV_3510;
-    const bool isAscend9201 =
-        platform.GetCurNpuArch() == NpuArch::DAV_9201;
-    // 3510 与 9201 都不走 arch22 target 变体；Matches 的 arch35 参数语义是
-    // "非 arch22 新架构"，按并集传入，避免 9201 误命中 arch22 快速路径。
-    const bool isNonArch22 = isAscend950 || isAscend9201;
+    // host 侧按 NpuArch 显式平台分支，替代 tier 表；kernel 侧仍按编译期架构宏 +
+    // 独立实现目录分派，TilingKey 仅表达场景族，三者互不耦合。
+    bool useLegacyTilingKey = false;
+    uint64_t workspaceSlotBytes = 0;
+    uint64_t slotsPerWorkgroup = 0;
+    switch (platform.GetCurNpuArch()) {
+    case NpuArch::DAV_2201: // A2/A3
+        useLegacyTilingKey = false;
+        workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
+        slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+        break;
+    case NpuArch::DAV_3510: // A5
+        useLegacyTilingKey = true;
+        workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES;
+        slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+        break;
+    case NpuArch::DAV_9201: // A6
+        useLegacyTilingKey = true;
+        workspaceSlotBytes = CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES;
+        slotsPerWorkgroup = CHUNK_KDA_FWD_PREPARE_ARCH92_SLOTS_PER_WORKGROUP;
+        break;
+    default:
+        OP_LOGE(context->GetNodeName(),
+                "chunk_kda_fwd_prepare 不支持的 NPU 架构 id=%u，"
+                "期望 DAV_2201(A2/A3)、DAV_3510(A5)、DAV_9201(A6) 之一。",
+                static_cast<uint32_t>(platform.GetCurNpuArch()));
+        return ge::GRAPH_FAILED;
+    }
+    // 仅 Arch22 评估 target 变体；A5/A6 恒走通用路径，不会再误命中 arch22 快速路径。
     const bool useArch22TargetVariant =
+        platform.GetCurNpuArch() == NpuArch::DAV_2201 &&
         KdaPrepare::Arch22TargetConfig::Matches({
             static_cast<uint64_t>(shape.batch),
             static_cast<uint64_t>(shape.seqLen),
             static_cast<uint64_t>(shape.qkHeadNum),
-            static_cast<uint64_t>(shape.valueHeadNum), totalChunks,
-            isNonArch22, isVarLen, shape.sequenceMajor,
+            static_cast<uint64_t>(shape.valueHeadNum), totalChunks, false,
+            isVarLen, shape.sequenceMajor,
             betaDesc->GetDataType() == ge::DT_BF16,
             *useNormPtr, *useBetaPtr && !*allowNegPtr, !*useGatePtr,
             *useExp2Ptr, outputMode == CHUNK_KDA_FWD_PREPARE_OUTPUT_SAVE});
@@ -581,13 +604,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.isVarLen = isVarLen;
     scheduleContext.targetPipeline = useArch22TargetVariant;
     scheduleContext.workspaceSlotBytes =
-        isAscend9201 ? CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES
-        : isAscend950 ? CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES
-        : (useArch22TargetVariant
-               ? KdaPrepare::Arch22TargetConfig::kSlotBytes
-               : CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES);
-    scheduleContext.slotsPerWorkgroup =
-        isAscend9201 ? 3 : CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+        useArch22TargetVariant ? KdaPrepare::Arch22TargetConfig::kSlotBytes
+                              : workspaceSlotBytes;
+    scheduleContext.slotsPerWorkgroup = slotsPerWorkgroup;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),
@@ -622,7 +641,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         outputMode);
     const auto pipeline = useArch22TargetVariant
         ? PreparePipeline::Target : PreparePipeline::Generic;
-    const uint64_t tilingKey = isNonArch22 ? legacyTilingKey
+    const uint64_t tilingKey = useLegacyTilingKey ? legacyTilingKey
         : RuntimeKey::Encode(gateDtypeToken, betaDtypeToken, pipeline);
 
     ChunkKdaFwdPrepareTilingData tiling;

@@ -22,6 +22,9 @@ constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES = 0x1A400;
 // 但语义独立：A6 为 3 槽、arch35 为 4 槽。单独成常量，避免 host 侧用 isAscend950
 // 笼统包含 DAV_9201 产生架构歧义。
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES = 0x1A400;
+// A6 每 workgroup 只 3 个在途 head，必须与 kernel 侧
+// Workspace::kArch92SlotCount 保持一致。
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH92_SLOTS_PER_WORKGROUP = 3;
 // Arch22：105 KiB 公共区 + 20 KiB Cube relay + 64 KiB FP32 RHS + 16 KiB FP32 Akk。
 // 该值必须与 kernel 侧 Workspace::kArch22SlotStride 保持一致。
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES =
