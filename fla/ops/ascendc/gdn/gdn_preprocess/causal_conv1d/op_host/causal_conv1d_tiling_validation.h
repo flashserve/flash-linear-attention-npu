@@ -361,7 +361,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         stateLen = sShape.GetDim(1);
         const int64_t sDim = sShape.GetDim(2);
         if (numCacheLines <= 0) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "shape", std::to_string(numCacheLines), "convStates.shape[0] (num_cache_lines) must be > 0");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "convStates", std::to_string(numCacheLines), "convStates.shape[0] (num_cache_lines) must be > 0");
         return ge::GRAPH_FAILED;
     }
         if (sDim != dim) {

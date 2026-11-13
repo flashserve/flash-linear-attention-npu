@@ -67,7 +67,7 @@ aclnnStatus Check(const Params &p)
         return ACLNN_ERR_PARAM_NULLPTR;
     }
         if (!(IsContiguous(tensor))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "tensor", "non-contiguous", "ChunkGdnBwdIntra only supports contiguous BNSD tensors");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "input tensors", "non-contiguous", "ChunkGdnBwdIntra only supports contiguous BNSD tensors");
         return ACLNN_ERR_PARAM_INVALID;
     }
     }

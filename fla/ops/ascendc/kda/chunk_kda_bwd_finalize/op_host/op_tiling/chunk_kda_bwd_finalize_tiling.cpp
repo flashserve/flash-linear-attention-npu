@@ -20,7 +20,7 @@ ge::graphStatus ValidateFinalize(
         return ge::GRAPH_FAILED;
     }
     if (!arch22 && useBetaSigmoid) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "a", "invalid", "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "use_beta_sigmoid_in_kernel", "true", "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
 
         return ge::GRAPH_FAILED;
     }

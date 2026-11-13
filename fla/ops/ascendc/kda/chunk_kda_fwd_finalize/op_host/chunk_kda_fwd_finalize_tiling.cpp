@@ -381,7 +381,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "a", "invalid", "设置 A5 MIX AIC/AIV batch 调度模式失败。");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 A5 MIX AIC/AIV batch 调度模式失败", __func__);
 
         return ge::GRAPH_FAILED;
     }
