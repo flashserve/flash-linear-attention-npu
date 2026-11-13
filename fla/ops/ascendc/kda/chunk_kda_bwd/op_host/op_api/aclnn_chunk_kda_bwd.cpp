@@ -1,3 +1,4 @@
+#include "base/err_msg.h"
 #include "aclnn_chunk_kda_bwd.h"
 
 #include "chunk_kda_bwd.h"
@@ -163,6 +164,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
 #ifdef KDA_BWD_STAGES_ARCH22
     for (const auto *tensor : {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut}) {
         CHECK_COND(tensor, ACLNN_ERR_PARAM_NULLPTR, "KDA backward required tensor is null.");
+    }
+    if (!safeGate) {
+        const std::vector<const char *> keys = {"param_name", "op_name", "incorrect_value", "correct_value"};
+        const std::vector<const char *> values = {"safe_gate", "aclnnChunkKdaBwd", "false", "true on A2/A3"};
+        REPORT_PREDEFINED_ERR_MSG("EZ0024", keys, values);
+        return ACLNN_ERR_PARAM_INVALID;
     }
     CHECK_COND(chunkSize == 64 && useExp2 && !stateVFirst,
                ACLNN_ERR_PARAM_INVALID, "A2/A3 requires C=64, use_exp2=true and K-first state.");
