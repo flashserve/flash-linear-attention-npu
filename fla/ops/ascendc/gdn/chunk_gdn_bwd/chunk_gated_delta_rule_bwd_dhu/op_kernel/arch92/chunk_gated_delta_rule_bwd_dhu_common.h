@@ -56,6 +56,12 @@ __aicore__ inline uint32_t DhuNextSlot(uint32_t slot)
     return slot + 1U == DhuArch92::SLOT_COUNT ? 0U : slot + 1U;
 }
 
+__aicore__ inline uint32_t DhuAlignCubeK(uint32_t tokens)
+{
+    constexpr uint32_t CUBE_K_ALIGN = 16;
+    return (tokens + CUBE_K_ALIGN - 1) / CUBE_K_ALIGN * CUBE_K_ALIGN;
+}
+
 struct ChunkInfo {
     int64_t seqIdx = 0;
     int64_t chunkIdx = 0;

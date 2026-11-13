@@ -524,6 +524,7 @@ public:
                         produceQG = headOffset == 0 || hq != (hv - 1) / HRatio_;
                     }
                     if (produceQG) {
+                        const int64_t reductionTokens = DhuAlignCubeK(static_cast<uint32_t>(chunkInfo.chunkLen));
                         AscendC::LocalTensor<DT> qgL1 = qgL1Scratch[qgScratchSlot];
                         for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                             const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
@@ -543,12 +544,18 @@ public:
                             }
                             const uint32_t outputIdx = curOutputPingPong_;
                             AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[outputIdx]);
-                            AscendC::Cast(outputBuf_[outputIdx], qFp32, AscendC::RoundMode::CAST_RINT,
-                                          static_cast<uint32_t>(curRows * K_));
+                            const uint32_t validElements = static_cast<uint32_t>(curRows * K_);
+                            AscendC::Cast(outputBuf_[outputIdx], qFp32, AscendC::RoundMode::CAST_RINT, validElements);
+                            const int64_t copyRows = rowOffset + curRows == chunkInfo.chunkLen
+                                ? reductionTokens - rowOffset : curRows;
+                            if (copyRows > curRows) {
+                                AscendC::Duplicate(outputBuf_[outputIdx][validElements], static_cast<DT>(0),
+                                                   static_cast<uint32_t>((copyRows - curRows) * K_));
+                            }
                             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx]);
                             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx]);
                             const AscendC::DataCopyParams qgCopyParams{
-                                static_cast<uint16_t>(curRows), 1,
+                                static_cast<uint16_t>(copyRows), 1,
                                 static_cast<uint16_t>(K_ / c0Elems - 1), 0};
                             for (int64_t colOffset = 0; colOffset < K_; colOffset += c0Elems) {
                                 const int64_t l1Offset =

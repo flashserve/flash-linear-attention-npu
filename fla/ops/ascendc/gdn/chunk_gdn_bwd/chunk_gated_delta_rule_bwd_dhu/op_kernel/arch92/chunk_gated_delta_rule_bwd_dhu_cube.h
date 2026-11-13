@@ -165,6 +165,8 @@ public:
                     continue;
                 }
 
+                const uint32_t validTokens = static_cast<uint32_t>(chunkInfo.chunkLen);
+                const uint32_t reductionTokens = DhuAlignCubeK(validTokens);
                 cachedKResidentValid_ = false;
                 nextKResidentSlot_ = 0;
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
@@ -248,6 +250,9 @@ public:
                     auto tensorL1DO =
                         tla::MakeTensor(l1BScratch[doScratchSlot], L1B_LAYOUT_DO, Catlass::Arch::PositionL1{});
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(doScratchEvent);
+                    if (validTokens != reductionTokens) {
+                        ClearL1(l1BScratch[doScratchSlot], L1B_SCRATCH_TILE_BYTES);
+                    }
                     copyGmToL1B_DO(tensorL1DO, blockDO);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(doScratchEvent);
 
@@ -275,6 +280,9 @@ public:
                         auto tensorL1WT =
                             tla::MakeTensor(wResident[residentSlot], L1A_LAYOUT_WT, Catlass::Arch::PositionL1{});
                         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(wEvent);
+                        if (validTokens != reductionTokens) {
+                            ClearL1(wResident[residentSlot], W_RESIDENT_TILE_BYTES);
+                        }
                         copyGmToL1A_WT(tensorL1WT, blockWT);
                         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(wEvent);
                     }
@@ -340,8 +348,7 @@ public:
                         copyL1ToL0A_TermQ, copyL1ToL0B_TermQ, tileMmadTermQ, copyL0CToGm_TermQ,
                         tensorL1QGT, tensorL1DO, blockTermQ, l0A, l0B, l0C,
                         false, false, 0, true, true, doScratchEvent,
-                        static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
-                        static_cast<uint32_t>(chunkInfo.chunkLen));
+                        static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM), reductionTokens);
                 }
                 for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
                     const int64_t hv = hvBase + headOffset;
@@ -394,6 +401,9 @@ public:
                                            static_cast<uint32_t>(chunkInfo.chunkLen)));
                         CopyGmToL1A_TermW<decltype(blockWT)> copyGmToL1A_WT;
                         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(wEvent);
+                        if (validTokens != reductionTokens) {
+                            ClearL1(wResident[residentSlot], W_RESIDENT_TILE_BYTES);
+                        }
                         copyGmToL1A_WT(tensorL1WT, blockWT);
                         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(wEvent);
                     }
@@ -406,6 +416,9 @@ public:
                     auto tensorL1Dv2 =
                         tla::MakeTensor(l1BScratch[dv2ScratchSlot], L1B_LAYOUT_DV2, Catlass::Arch::PositionL1{});
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(dv2ScratchEvent);
+                    if (validTokens != reductionTokens) {
+                        ClearL1(l1BScratch[dv2ScratchSlot], L1B_SCRATCH_TILE_BYTES);
+                    }
                     copyGmToL1B_Dv2(tensorL1Dv2, blockDv2);
                     AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dv2ScratchEvent);
 
@@ -414,8 +427,7 @@ public:
                         copyL1ToL0A_TermW, copyL1ToL0B_TermW, tileMmadTermW, copyL0CToGm_TermW,
                         tensorL1WT, tensorL1Dv2, blockTermW, l0A, l0B, l0C,
                         true, true, wEvent, true, true, dv2ScratchEvent,
-                        static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM),
-                        static_cast<uint32_t>(chunkInfo.chunkLen));
+                        static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM), reductionTokens);
                 }
             }
         }
@@ -424,6 +436,13 @@ public:
     }
 
 private:
+    __aicore__ inline void ClearL1(AscendC::LocalTensor<DT> tensor, uint32_t bytes) const
+    {
+        AscendC::InitConstValue(tensor, AscendC::InitConstValueParams<DT>(
+            1, static_cast<uint16_t>(bytes / 32U), 0, static_cast<DT>(0)));
+        AscendC::PipeBarrier<PIPE_MTE2>();
+    }
+
     using ArchTag = Catlass::Arch::Ascend960DT;
     using LayoutTagK = Catlass::layout::RowMajor;
     using LayoutTagState = Catlass::layout::RowMajor;
