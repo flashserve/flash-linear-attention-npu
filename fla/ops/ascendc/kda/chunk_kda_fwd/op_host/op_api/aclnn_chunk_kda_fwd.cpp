@@ -729,7 +729,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus paramStatus = CheckParams(params, parsedLayout, info);
+    CHECK_RET(paramStatus == ACLNN_SUCCESS, paramStatus);
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     const aclTensor *qHead = params.q;
@@ -1041,7 +1042,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     }
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
-    CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const aclnnStatus paramStatus = CheckParams(params, parsedLayout, info);
+    CHECK_RET(paramStatus == ACLNN_SUCCESS, paramStatus);
     CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     // V2 只实现三个独立算子的组合路径；场景不满足时由 Python 入口回落到

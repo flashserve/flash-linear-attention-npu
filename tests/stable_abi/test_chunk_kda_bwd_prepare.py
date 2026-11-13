@@ -10,8 +10,26 @@ the original random input ranges and native accuracy criteria.
 """
 import argparse
 import itertools
+import os
 
 import torch
+
+
+LAYOUTS = ("BNSD", "BSND", "NTD", "TND")
+A5_UNSUPPORTED_MESSAGE = "A5 currently supports fixed BNSD and variable NTD only"
+
+
+def is_a5_device(device):
+    """Use the real device name, with the build SOC as a fallback."""
+    try:
+        name = torch.npu.get_device_name(device)
+    except (AttributeError, RuntimeError):
+        name = os.environ.get("FLA_NPU_SOC", "")
+    return "950" in str(name).replace("_", "").lower()
+
+
+def a5_supports(layout, variable):
+    return (layout == "BNSD" and not variable) or (layout == "NTD" and variable)
 
 
 def make_case(layout, tokens, state_v_first=False, *, batch=1, heads=3, variable=None, random=False, seed=0, high_precision=False,
@@ -82,20 +100,26 @@ def main():
     args = parser.parse_args()
     torch.set_num_threads(1)
     torch.npu.set_device(args.device)
+    a5 = is_a5_device(args.device)
+    device_name = torch.npu.get_device_name(args.device)
+    print(f"DEVICE {device_name}; A5={a5}", flush=True)
     count = 0
-    matrix = list(itertools.product(("BNSD", "BSND", "NTD", "TND"),
-                                    (1, 64, 65), (False, True)))
-    matrix += [(layout, 129, flag) for layout in ("BNSD", "BSND", "NTD", "TND")
+    rejected = 0
+    matrix = list(itertools.product(LAYOUTS, (1, 64, 65), (False, True)))
+    matrix += [(layout, 129, flag) for layout in LAYOUTS
                for flag in (False, True)]
     cases = [(layout, tokens, flag, 2 if tokens == 129 else 1, 5 if tokens == 129 else 3)
              for layout, tokens, flag in matrix]
     if args.extended:
         cases += [(layout, tokens, flag, 1, heads)
-                  for layout in ("BNSD", "BSND", "NTD", "TND")
+                  for layout in LAYOUTS
                   for tokens, heads in ((15, 1), (16, 2), (17, 5), (63, 3),
                                         (513, 3), (17, 513), (8193, 1))
                   for flag in (False, True)]
     for layout, tokens, flag, batch, heads in cases:
+        variable = layout in {"NTD", "TND"}
+        if a5 and not a5_supports(layout, variable):
+            continue
         inputs, kwargs, expected = make_case(layout, tokens, flag, batch=batch, heads=heads)
         print(f"RUN {layout} B={batch} H={heads} T={tokens} state={flag}", flush=True)
         actual = ascendc.chunk_kda_bwd_prepare(*(x.npu() for x in inputs), **kwargs)
@@ -107,7 +131,9 @@ def main():
         count += 1
         print(f"PASS {layout} B={batch} H={heads} T={tokens} state_v_first={flag}", flush=True)
     for layout, variable, flag, omit_indices, tokens in itertools.product(
-            ("BNSD", "BSND", "NTD", "TND"), (False, True), (False, True), (False, True), (64, 129)):
+            LAYOUTS, (False, True), (False, True), (False, True), (64, 129)):
+        if a5 and not a5_supports(layout, variable):
+            continue
         inputs, kwargs, expected = make_case(layout, tokens, flag, heads=5, variable=variable)
         if omit_indices:
             kwargs["chunk_indices"] = None
@@ -118,9 +144,31 @@ def main():
             torch.testing.assert_close(got.cpu(), want, rtol=0, atol=0)
         count += 1
         print(f"PASS {layout} T={tokens} variable={variable} state={flag} auto_indices={omit_indices}", flush=True)
-    print(f"PASS {count} cases, {3 * count} exact output comparisons; backend=stable, fallback=0")
+
+    if a5:
+        for layout, variable in itertools.product(LAYOUTS, (False, True)):
+            if a5_supports(layout, variable):
+                continue
+            inputs, kwargs, _ = make_case(
+                layout, 65, heads=3, variable=variable, compute_expected=False)
+            print(f"RUN unsupported A5 layout={layout} variable={variable}", flush=True)
+            try:
+                ascendc.chunk_kda_bwd_prepare(*(x.npu() for x in inputs), **kwargs)
+            except RuntimeError as error:
+                assert A5_UNSUPPORTED_MESSAGE in str(error), str(error)
+            else:
+                raise AssertionError(
+                    f"A5 unexpectedly accepted layout={layout} variable={variable}")
+            rejected += 1
+            print(f"PASS rejected A5 layout={layout} variable={variable}", flush=True)
+
+    print(f"PASS {count} supported cases, {3 * count} exact output comparisons; "
+          f"rejected={rejected}; backend=stable, fallback=0")
     if args.extended:
-        for layout in ("BNSD", "BSND", "NTD", "TND"):
+        for layout in LAYOUTS:
+            variable = layout in {"NTD", "TND"}
+            if a5 and not a5_supports(layout, variable):
+                continue
             # One dense chunk even for packed layouts: the invalid upper
             # triangle contains 0 * Inf, which must be selected out, not
             # multiplied by a zero mask. H=1 makes both input orders equal.
@@ -134,7 +182,8 @@ def main():
             rows = d_aqk.cpu().reshape(2, 64)
             assert torch.count_nonzero(rows[0, 1:]).item() == 0
             assert torch.count_nonzero(rows[1, 2:]).item() == 0
-        print("PASS 4 nonfinite upper-triangle/tail masking cases", flush=True)
+        nonfinite_count = 2 if a5 else 4
+        print(f"PASS {nonfinite_count} nonfinite upper-triangle/tail masking cases", flush=True)
 
 
 if __name__ == "__main__":
