@@ -166,15 +166,15 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
 
     // ag_hm is read-only, so a contiguous copy is safe. h is not copied.
     const aclTensor *agContig = l0op::Contiguous(agHm, executorPtr);
-    if (!(agContig != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((agContig != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (agContig != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto outputs = l0op::MergeFwdBwdKernel(
         h, agContig, preOrPostNumRanks, rank, forward, stateVFirst, executorPtr);
     if (!(outputs[0] != nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "launch", "invalid", "MergeFwdBwdKernel launch failed.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: MergeFwdBwdKernel launch failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

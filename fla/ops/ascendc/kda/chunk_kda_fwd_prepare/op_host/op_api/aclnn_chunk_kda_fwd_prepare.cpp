@@ -841,8 +841,8 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((tensor != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -966,10 +966,8 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
         params.qgOut, params.kgOut, params.qgScaledOut, params.qHatOut,
         params.kHatOut, params.qRstdOut, params.kRstdOut, params.betaEffOut,
         GetOutputMode(params), executorPtr);
-    if (!(result[0] != nullptr && result[1] != nullptr &&
-                  result[3] != nullptr && result[4] != nullptr &&
-                  result[6] != nullptr && result[7] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

@@ -58,18 +58,18 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
  static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
  {
      tensor = l0op::Contiguous(tensor, executor);
-     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+     if (!((tensor != nullptr))) {
+         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+         return ACLNN_ERR_INNER_NULLPTR;
+     }
      return ACLNN_SUCCESS;
  }
  
  static aclnnStatus ParamsDataContiguous(SolveTriParams &params, aclOpExecutor *executorPtr)
  {
      if (!(DataContiguous(params.x, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Contiguous x failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous x failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
      return ACLNN_SUCCESS;
  }
@@ -101,8 +101,8 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
     };
  
      if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ParamsDataContiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
  
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
@@ -115,10 +115,10 @@ static constexpr const char *OP_NAME = "aclnnSolveTri";
     };
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
-     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+     if (!((viewCopyResult != nullptr))) {
+         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
+         return ACLNN_ERR_INNER_NULLPTR;
+     }
  
      *workspaceSize = uniqueExecutor->GetWorkspaceSize();
      uniqueExecutor.ReleaseTo(executor);

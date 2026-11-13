@@ -384,10 +384,10 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
             cuVals[b] = b * info.seqlen;
         }
         aclIntArray *cuArr = aclCreateIntArray(cuVals.data(), cuVals.size());
-        if (!(cuArr != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((cuArr != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (cuArr != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         ChunkKdaFwdParams ps = params;
         const int64_t totalTok = info.batch * info.seqlen;
         ps.q = l0op::Reshape(params.q, MakeShape({totalTok, info.hNum, info.kDim}), executor);
@@ -441,11 +441,10 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
             OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout/rank", params.layout, "a supported chunkSize=32 layout/rank combination");
             return ACLNN_ERR_PARAM_INVALID;
         }
-        if (!(qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr &&
-                      betaNtd != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr && betaNtd != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr && betaNtd != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         if (!info.isRank3) {
             // [B,H,T,*] → [B*H,T,*](batch 拍平进头维;转置后物理布局 batch-outer 头连续,
             // flatten 合法;kernel 任务号 fh = batch*HV + head 与此布局一一对应)
@@ -454,11 +453,10 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
             vNtd = l0op::Reshape(vNtd, MakeShape({info.batch * info.hvNum, info.seqlen, info.vDim}), executor);
             gNtd = l0op::Reshape(gNtd, MakeShape({info.batch * info.hvNum, info.seqlen, info.kDim}), executor);
             betaNtd = l0op::Reshape(betaNtd, MakeShape({info.batch * info.hvNum, info.seqlen}), executor);
-            if (!(qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr &&
-                          betaNtd != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+            if (!((qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr && betaNtd != nullptr))) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (qNtd != nullptr && kNtd != nullptr && vNtd != nullptr && gNtd != nullptr && betaNtd != nullptr) failed", __func__);
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
         }
     }
 
@@ -470,25 +468,25 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
     const DataType gateDt = gateFp32 ? DataType::DT_FLOAT : DataType::DT_BF16;
     if (gNtd->GetDataType() != gateDt) {
         gNtd = l0op::Cast(gNtd, gateDt, executor);
-        if (!(gNtd != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((gNtd != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (gNtd != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     if (betaNtd->GetDataType() != gateDt) {
         betaNtd = l0op::Cast(betaNtd, gateDt, executor);
-        if (!(betaNtd != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((betaNtd != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (betaNtd != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     // 输出:attnOut 恒定序列主序(TND/BSND,见 CheckOutputShapes),kernel 产出
     // [H,T,V] 头连续,统一写临时张量再转置回写。
     const aclTensor *oTmp = AllocTensor(executor, MakeShape({info.batch * info.hvNum, info.seqlen, info.vDim}),
                                         params.q->GetDataType());
-    if (!(oTmp != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((oTmp != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (oTmp != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -499,36 +497,36 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
     if (params.initialStateOptional != nullptr) {
         initialStateHead = l0op::Reshape(params.initialStateOptional,
                                          MakeShape({stateHeads, info.kDim, info.vDim}), executor);
-        if (!(initialStateHead != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((initialStateHead != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (initialStateHead != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     const aclTensor *finalStateTmp = nullptr;
     if (params.finalStateOut != nullptr) {
         finalStateTmp = AllocTensor(executor, MakeShape({stateHeads, info.kDim, info.vDim}),
                                     DataType::DT_FLOAT);
-        if (!(finalStateTmp != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((finalStateTmp != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateTmp != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     } else {
         // optional 输出缺省时本框架不生成 placeholder,kernel 参数
         // 序列少一个指针,tiling 指针错位 → AICore 异常(507015)。始终给一个真实张量:
         // [1,1,1] 在 tiling 侧按"未请求"处理(ShapeSize==1),kernel 不会写它。
         finalStateTmp = AllocTensor(executor, MakeShape({1, 1, 1}), DataType::DT_FLOAT);
-        if (!(finalStateTmp != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((finalStateTmp != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateTmp != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     const aclTensor *fused = l0op::KdaChunkForwardFused(
         qNtd, kNtd, vNtd, gNtd, betaNtd, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTmp, finalStateTmp,
         nullptr /* dense 无 cu_seqlens */, executor);
-    if (!(fused != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((fused != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (fused != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -538,33 +536,33 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
     } else {             // BSND/BNSD:[B*HV,S,V] → [B,HV,S,V] → [B,S,HV,V]
         const aclTensor *oRank4 =
             l0op::Reshape(oTmp, MakeShape({info.batch, info.hvNum, info.seqlen, info.vDim}), executor);
-        if (!(oRank4 != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((oRank4 != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (oRank4 != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         oBack = Transpose(oRank4, {0, 2, 1, 3}, executor);
     }
-    if (!(oBack != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((oBack != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (oBack != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto copied = l0op::ViewCopy(oBack, params.attnOut, executor);
-    if (!(copied != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((copied != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (copied != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.finalStateOut != nullptr) {
         const aclTensor *fsBack = l0op::Reshape(
             finalStateTmp, MakeShape({info.seqNum, info.hvNum, info.kDim, info.vDim}), executor);
-        if (!(fsBack != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((fsBack != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (fsBack != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         auto fsCopied = l0op::ViewCopy(fsBack, params.finalStateOut, executor);
-        if (!(fsCopied != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((fsCopied != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (fsCopied != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -597,11 +595,10 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         gTok = l0op::Reshape(params.g, MakeShape({info.seqlen, info.hvNum, info.kDim}), executor);
         betaTok = l0op::Reshape(params.beta, MakeShape({info.seqlen, info.hvNum}), executor);
         oTok = l0op::Reshape(params.attnOut, MakeShape({info.seqlen, info.hvNum, info.vDim}), executor);
-        if (!(qTok != nullptr && kTok != nullptr && vTok != nullptr && gTok != nullptr &&
-                      betaTok != nullptr && oTok != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((qTok != nullptr && kTok != nullptr && vTok != nullptr && gTok != nullptr && betaTok != nullptr && oTok != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (qTok != nullptr && kTok != nullptr && vTok != nullptr && gTok != nullptr && betaTok != nullptr && oTok != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     // g/beta dtype 规则同 dense 路径:任一 fp32 → 两者无损上转 fp32(组合 1),否则 bf16
     const bool gateFp32 = (gTok->GetDataType() == DataType::DT_FLOAT) ||
@@ -609,25 +606,25 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
     const DataType gateDt = gateFp32 ? DataType::DT_FLOAT : DataType::DT_BF16;
     if (gTok->GetDataType() != gateDt) {
         gTok = l0op::Cast(gTok, gateDt, executor);
-        if (!(gTok != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((gTok != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (gTok != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     if (betaTok->GetDataType() != gateDt) {
         betaTok = l0op::Cast(betaTok, gateDt, executor);
-        if (!(betaTok != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((betaTok != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (betaTok != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     // beta 仅 token-major 需要转置为头连续 [HV,T]；NTD 输入已是该布局。
     if (std::strcmp(params.layout, "NTD") != 0) {
         betaTok = Transpose(betaTok, {1, 0}, executor);
-        if (!(betaTok != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((betaTok != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (betaTok != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     // state:[nSeq,HV,K,V] 拍平 [nSeq*HV,K,V](kernel 按任务号 fh = seq*HV+head 寻址)
@@ -636,10 +633,10 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
     if (params.initialStateOptional != nullptr) {
         initialStateHead = l0op::Reshape(params.initialStateOptional,
                                          MakeShape({stateHeads, info.kDim, info.vDim}), executor);
-        if (!(initialStateHead != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((initialStateHead != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (initialStateHead != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     // final_state:直写调用方输出的拍平视图(少一次回拷);空序列契约 final=initial
     // 由整体预填兜住(kernel 只写非空序列;无 initial 时空序列由 kernel 清零)。
@@ -647,25 +644,25 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
     if (params.finalStateOut != nullptr) {
         finalStateTmp = l0op::Reshape(params.finalStateOut,
                                       MakeShape({stateHeads, info.kDim, info.vDim}), executor);
-        if (!(finalStateTmp != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((finalStateTmp != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateTmp != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
         if (initialStateHead != nullptr) {
             // 核内 istate 直通实测不稳定(见 kernel WriteEmptyFinalState 注释);
             // ViewCopy 的 dst 不能是 workspace 张量,故预填直接落在调用方输出上
             auto pre = l0op::ViewCopy(params.initialStateOptional, params.finalStateOut, executor);
-            if (!(pre != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+            if (!((pre != nullptr))) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (pre != nullptr) failed", __func__);
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
         }
     } else {
         finalStateTmp = AllocTensor(executor, MakeShape({1, 1, 1}), DataType::DT_FLOAT);
-        if (!(finalStateTmp != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((finalStateTmp != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (finalStateTmp != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
 
     const aclTensor *fused = l0op::KdaChunkForwardFused(
@@ -673,8 +670,8 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         initialStateHead, params.scale, params.lowerBound, oTok, finalStateTmp,
         params.cuSeqlensOptional, executor,
         std::strcmp(params.layout, "NTD") == 0 ? "NTD" : "TND");
-    if (!(fused != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((fused != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (fused != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;

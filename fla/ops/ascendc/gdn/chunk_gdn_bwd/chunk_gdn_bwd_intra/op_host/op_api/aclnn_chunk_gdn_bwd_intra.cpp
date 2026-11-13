@@ -252,10 +252,10 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
         q, k, v, g, beta, a, dO, cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useExp2, wOut, uOut, dvLocalOut, executorPtr);
     for (const aclTensor *tensor : result) {
-        if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((tensor != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

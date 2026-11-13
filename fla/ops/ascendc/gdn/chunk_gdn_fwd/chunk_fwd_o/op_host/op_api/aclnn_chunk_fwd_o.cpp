@@ -271,8 +271,8 @@ static aclnnStatus CheckShape(ChunkFwdOParams params)
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((tensor != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -281,24 +281,24 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(ChunkFwdOParams &params, aclOpExecutor *executorPtr)
 {
     if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "Contiguous q failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous q failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "k", "invalid", "Contiguous k failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "v", "invalid", "Contiguous v failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous v failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.h, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Contiguous h failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous h failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", "invalid", "Contiguous g failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
 
     return ACLNN_SUCCESS;
@@ -409,8 +409,8 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
         return ret;
     }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ParamsDataContiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::ChunkFwdO(params.q, params.k, params.v, params.h, params.g, params.cuSeqlensOptional,
                                  params.chunkOffsetsOptional, params.scale, params.chunkSize, params.useExp2,
@@ -424,8 +424,8 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.oOut, executorPtr);
-    if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((viewCopyResult != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (viewCopyResult != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

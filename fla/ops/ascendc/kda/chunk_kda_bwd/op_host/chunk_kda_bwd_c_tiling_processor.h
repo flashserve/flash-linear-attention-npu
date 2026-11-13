@@ -438,9 +438,11 @@ private:
                     64U * 64U * sizeof(uint16_t)),
             240U * 1024U + 2U * 128U * sizeof(float));
         if (wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "derived WY slot exceeds the shared 256 KiB slot");
-        return ge::GRAPH_FAILED;
-    }
+            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName,
+                "%s: derived WY slot needs %lu bytes, exceeds the shared %lu bytes slot",
+                __func__, wyEnd, static_cast<uint64_t>(KDA_C_SLOT_BYTES));
+            return ge::GRAPH_FAILED;
+        }
 
         const uint64_t c = 64;
         const uint64_t k = 128;
@@ -475,9 +477,11 @@ private:
                          tiling_.intraResultDkUpperOffset) +
                      bc * k * sizeof(float));
         if (intraEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "value", "invalid", "derived Intra slot exceeds the shared 256 KiB slot");
-        return ge::GRAPH_FAILED;
-    }
+            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName,
+                "%s: derived Intra slot needs %lu bytes, exceeds the shared %lu bytes slot",
+                __func__, intraEnd, static_cast<uint64_t>(KDA_C_SLOT_BYTES));
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 

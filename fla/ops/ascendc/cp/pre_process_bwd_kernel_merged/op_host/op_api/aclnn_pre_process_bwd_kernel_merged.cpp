@@ -83,8 +83,8 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 {
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "Contiguous", "invalid", "Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
 }
@@ -92,35 +92,35 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(PreProcessBwdKernelMergedParams &params, aclOpExecutor *executorPtr)
 {
     if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "q Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: q Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "k", "invalid", "k Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: k Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "w", "invalid", "w Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: w Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "Contiguous", "invalid", "d_o Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: d_o Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "dv", "invalid", "dv Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dv Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.gOptional != nullptr) {
         if (!(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "g", "invalid", "g Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: g Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     }
     if (params.gkOptional != nullptr) {
         if (!(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "Contiguous", "invalid", "gk Contiguous failed.");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gk Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     }
     return ACLNN_SUCCESS;
@@ -168,8 +168,8 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     };
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "ParamsDataContiguous", "invalid", "ParamsDataContiguous failed.");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ParamsDataContiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,

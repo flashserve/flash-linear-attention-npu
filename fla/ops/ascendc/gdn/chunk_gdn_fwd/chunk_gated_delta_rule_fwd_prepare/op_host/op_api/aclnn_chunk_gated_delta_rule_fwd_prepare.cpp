@@ -538,8 +538,8 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
         return ACLNN_SUCCESS;
     }
     tensor = l0op::Contiguous(tensor, executor);
-    if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((tensor != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -642,13 +642,8 @@ static aclnnStatus MakeA2PrepareCompute(const ChunkGatedDeltaRuleFwdPrepareParam
     compute.qHatOptional = shadow(params.qHatOptional); compute.kHatOptional = shadow(params.kHatOptional);
     compute.qRstdOptional = shadow(params.qRstdOptional); compute.kRstdOptional = shadow(params.kRstdOptional);
     compute.betaEffOptional = shadow(params.betaEffOptional);
-    if (!(compute.q && compute.k && compute.v && compute.g && compute.beta &&
-                  compute.gOut && compute.wOut && compute.uOut && compute.aOut &&
-                  (!params.aLogOptional || compute.aLogOptional) && (!params.dtBiasOptional || compute.dtBiasOptional) &&
-                  (!params.qHatOptional || (compute.qHatOptional && compute.kHatOptional &&
-                                            compute.qRstdOptional && compute.kRstdOptional)) &&
-                  (!params.betaEffOptional || compute.betaEffOptional))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((compute.q && compute.k && compute.v && compute.g && compute.beta && compute.gOut && compute.wOut && compute.uOut && compute.aOut && (!params.aLogOptional || compute.aLogOptional) && (!params.dtBiasOptional || compute.dtBiasOptional) && (!params.qHatOptional || (compute.qHatOptional && compute.kHatOptional && compute.qRstdOptional && compute.kRstdOptional)) && (!params.betaEffOptional || compute.betaEffOptional)))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (compute.q && compute.k && compute.v && compute.g && compute.beta && compute.gOut && compute.wOut && compute.uOut && compute.aOut && (!params.aLogOptional || compute.aLogOptional) && (!params.dtBiasOptional || compute.dtBiasOptional) && (!params.qHatOptional || (compute.qHatOptional && compute.kHatOptional && compute.qRstdOptional && compute.kRstdOptional)) && (!params.betaEffOptional || compute.betaEffOptional)) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -660,8 +655,8 @@ static aclnnStatus ViewCopyIfPresent(const aclTensor *src, const aclTensor *dst,
         return ACLNN_SUCCESS;
     }
     auto copied = l0op::ViewCopy(src, dst, executor);
-    if (!(copied != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((copied != nullptr))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (copied != nullptr) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -739,10 +734,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
     const bool a2 = IsA2PrepareSoc();
     auto compute = params;
     if (a2) {
-        if (!(MakeA2PrepareCompute(params, compute, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((MakeA2PrepareCompute(params, compute, executorPtr) == ACLNN_SUCCESS))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (MakeA2PrepareCompute(params, compute, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     auto result = l0op::ChunkGatedDeltaRuleFwdPrepare(
         compute.q, compute.k, compute.v, compute.g, compute.beta, compute.aLogOptional, compute.dtBiasOptional,
@@ -776,42 +771,42 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     };
 
-    if (!(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    if (!(ViewCopyIfPresent(result[1], params.wOut, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[1], params.wOut, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[1], params.wOut, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    if (!(ViewCopyIfPresent(result[2], params.uOut, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[2], params.uOut, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[2], params.uOut, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!a2 || params.outputA) {
-        if (!(ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+        if (!((ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[3], params.aOut, executorPtr) == ACLNN_SUCCESS) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
+    }
+    if (!((ViewCopyIfPresent(result[4], params.qHatOptional, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[4], params.qHatOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    }
-    if (!(ViewCopyIfPresent(result[4], params.qHatOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[5], params.kHatOptional, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[5], params.kHatOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    if (!(ViewCopyIfPresent(result[5], params.kHatOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[6], params.qRstdOptional, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[6], params.qRstdOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    if (!(ViewCopyIfPresent(result[6], params.qRstdOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[7], params.kRstdOptional, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[7], params.kRstdOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    if (!(ViewCopyIfPresent(result[7], params.kRstdOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
-    if (!(ViewCopyIfPresent(result[8], params.betaEffOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
+    if (!((ViewCopyIfPresent(result[8], params.betaEffOptional, executorPtr) == ACLNN_SUCCESS))) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (ViewCopyIfPresent(result[8], params.betaEffOptional, executorPtr) == ACLNN_SUCCESS) failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

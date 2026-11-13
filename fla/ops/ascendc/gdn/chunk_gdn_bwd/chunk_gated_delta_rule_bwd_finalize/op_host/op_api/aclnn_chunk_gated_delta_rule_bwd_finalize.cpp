@@ -34,8 +34,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "value", "invalid", "Failed to create a contiguous input.");
-
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to create a contiguous input.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -174,9 +173,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdFinalize);
     if (CommonOpExecutorRun(workspace, workspaceSize, executor, stream) != ACLNN_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "launch", "invalid", "ChunkGatedDeltaRuleBwdFinalize launch failed.");
-
-        return ACLNN_ERR_INNER;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkGatedDeltaRuleBwdFinalize launch failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
 }

@@ -88,7 +88,7 @@ aclnnStatus CheckTensor(const aclTensor *tensor, DataType dtype, const char *nam
 #else
         const auto actual = ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType());
         const auto expected = ge::TypeUtils::DataTypeToSerialString(dtype);
-        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, name, actual.c_str(), expected.c_str());
+        OP_LOGE_WITH_INVALID_INPUT_DTYPE(OP_NAME, name, actual.c_str(), expected.c_str());
 #endif
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -248,10 +248,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
         layout, scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CHECK_RET failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
+        if (!((tensor != nullptr))) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: (tensor != nullptr) failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
