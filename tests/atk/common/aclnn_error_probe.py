@@ -96,8 +96,8 @@ class _CallContext:
         self.keepalive.clear()
 
 
-def reject_workspace(symbol, build_args, outputs=None, *, expect_success=False):
-    """Run only workspace validation; optionally check acceptance without launching."""
+def reject_workspace(symbol, build_args, outputs=None):
+    """Run only the first phase; success is a test failure, never a launch."""
     api = runtime()
     context = _CallContext(api)
     workspace, executor = ctypes.c_uint64(), ctypes.c_void_p()
@@ -112,15 +112,6 @@ def reject_workspace(symbol, build_args, outputs=None, *, expect_success=False):
         api._recent_error_message()
         status = function(*args, ctypes.byref(workspace), ctypes.byref(executor))
         message = api._recent_error_message()
-        if status == 0 and expect_success:
-            if not executor.value:
-                raise AssertionError("accepted ACLNN call did not return an executor")
-            destroy = api.symbol("aclDestroyAclOpExecutor")
-            destroy.argtypes, destroy.restype = [ctypes.c_void_p], ctypes.c_int
-            ret = destroy(executor)
-            if ret != 0:
-                raise RuntimeError(f"aclDestroyAclOpExecutor returned {ret}")
-            return
         if status == 0:
             raise AssertionError("raw negative ABI probe unexpectedly succeeded; no kernel was launched")
         if executor.value or workspace.value:
