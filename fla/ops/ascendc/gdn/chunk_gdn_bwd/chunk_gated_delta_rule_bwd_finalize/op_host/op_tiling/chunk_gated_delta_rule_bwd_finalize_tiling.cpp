@@ -86,7 +86,19 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                     !CheckRank(vNewShape, 4) || !CheckRank(dOShape, 4) || !CheckRank(duShape, 4) ||
                     !CheckRank(gShape, 3) || !CheckRank(betaShape, 3) || !CheckRank(hShape, 5) ||
                     !CheckRank(dhShape, 5) || !CheckRank(aShape, 4)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "check", "invalid", "Required input rank check failed.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "input ranks",
+            std::to_string(qShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(kShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(vShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(vNewShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(dOShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(duShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(gShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(betaShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(hShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(dhShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(aShape->GetStorageShape().GetDimNum()),
+            "Required input rank check failed.");
         return ge::GRAPH_FAILED;
     }
 
@@ -107,30 +119,42 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "B, HK, HV and T must be positive.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B,HK,HV,T",
+            std::to_string(tiling.B) + "," + std::to_string(tiling.HK) + "," +
+                std::to_string(tiling.HV) + "," + std::to_string(tiling.T),
+            "B, HK, HV and T must be positive.");
         return ge::GRAPH_FAILED;
     }
     if (tiling.K != K_SIZE_128 || tiling.V != V_SIZE_128) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K and V must both be 128.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K,V",
+            std::to_string(tiling.K) + "," + std::to_string(tiling.V),
+            "K and V must both be 128.");
         return ge::GRAPH_FAILED;
     }
     if (tiling.chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "A", "invalid", "BT derived from A must be 64.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "A.chunkSize",
+            std::to_string(tiling.chunkSize), "BT derived from A must be 64.");
         return ge::GRAPH_FAILED;
     }
     if (tiling.HV % tiling.HK != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "HV must be divisible by HK.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV,HK",
+            std::to_string(tiling.HV) + "," + std::to_string(tiling.HK),
+            "HV must be divisible by HK.");
         return ge::GRAPH_FAILED;
     }
     tiling.headRatio = tiling.HV / tiling.HK;
     if (tiling.headRatio < 1 || tiling.headRatio > 4) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "G=HV/HK must be in [1, 4].");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV/HK",
+            std::to_string(tiling.headRatio), "G=HV/HK must be in [1, 4].");
         return ge::GRAPH_FAILED;
     }
 
     if (k.GetDim(0) != tiling.B || k.GetDim(1) != tiling.HK ||
                     k.GetDim(2) != tiling.T || k.GetDim(3) != tiling.K) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "q", "invalid", "k must have the same shape as q.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "k",
+            std::to_string(k.GetDim(0)) + "," + std::to_string(k.GetDim(1)) + "," +
+                std::to_string(k.GetDim(2)) + "," + std::to_string(k.GetDim(3)),
+            "k must have the same shape as q.");
         return ge::GRAPH_FAILED;
     }
     if (v.GetDim(0) != tiling.B || v.GetDim(2) != tiling.T ||
@@ -140,7 +164,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                     dO.GetDim(2) != tiling.T || dO.GetDim(3) != tiling.V ||
                     du.GetDim(0) != tiling.B || du.GetDim(1) != tiling.HV ||
                     du.GetDim(2) != tiling.T || du.GetDim(3) != tiling.V) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "v, v_new, do and du must have shape [B, HV, T, V].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "v",
+            std::to_string(v.GetDim(0)) + "," + std::to_string(v.GetDim(1)) + "," +
+                std::to_string(v.GetDim(2)) + "," + std::to_string(v.GetDim(3)),
+            "v, v_new, do and du must have shape [B, HV, T, V].");
         return ge::GRAPH_FAILED;
     }
 
@@ -148,11 +175,18 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape beta = betaShape->GetStorageShape();
     if (g.GetDim(0) != tiling.B || g.GetDim(1) != tiling.HV || g.GetDim(2) != tiling.T ||
                     beta.GetDim(0) != tiling.B || beta.GetDim(1) != tiling.HV || beta.GetDim(2) != tiling.T) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "g and beta must have shape [B, HV, T].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "g,beta",
+            std::to_string(g.GetDim(0)) + "," + std::to_string(g.GetDim(1)) + "," +
+                std::to_string(g.GetDim(2)) + "," + std::to_string(beta.GetDim(0)) + "," +
+                std::to_string(beta.GetDim(1)) + "," + std::to_string(beta.GetDim(2)),
+            "g and beta must have shape [B, HV, T].");
         return ge::GRAPH_FAILED;
     }
     if (a.GetDim(0) != tiling.B || a.GetDim(1) != tiling.HV || a.GetDim(2) != tiling.T) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "A must have shape [B, HV, T, 64].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "A",
+            std::to_string(a.GetDim(0)) + "," + std::to_string(a.GetDim(1)) + "," +
+                std::to_string(a.GetDim(2)) + "," + std::to_string(a.GetDim(3)),
+            "A must have shape [B, HV, T, 64].");
         return ge::GRAPH_FAILED;
     }
     const int64_t stateDim3 = stateVFirst ? tiling.V : tiling.K;
@@ -203,7 +237,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const bool useExp2Value = useExp2 == nullptr ? true : *useExp2;
     const int64_t actualChunkSize = chunkSize == nullptr ? tiling->chunkSize : *chunkSize;
     if (actualChunkSize != tiling->chunkSize) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "chunk_size only supports 64.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size",
+            std::to_string(actualChunkSize), "chunk_size only supports 64.");
         return ge::GRAPH_FAILED;
     }
     if (useGateValue) {
@@ -213,13 +248,20 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const auto cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS_IDX);
     const auto chunkIndicesShape = context->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX);
     if ((cuShape == nullptr) != (chunkIndicesShape == nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens and chunk_indices must be both present or absent.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens,chunk_indices",
+            std::string("cu=") + (cuShape == nullptr ? "absent" : "present") + ",chunk=" +
+                (chunkIndicesShape == nullptr ? "absent" : "present"),
+            "cu_seqlens and chunk_indices must be both present or absent.");
         return ge::GRAPH_FAILED;
     }
     tiling->isVariable = cuShape != nullptr ? 1 : 0;
     if (tiling->isVariable != 0) {
         if (!CheckRank(cuShape, 1) || !CheckRank(chunkIndicesShape, 1) || tiling->B != 1) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "Varlen requires B=1 and rank-1 cu_seqlens/chunk_indices.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "B,cu_seqlens,chunk_indices",
+            std::to_string(tiling->B) + "," +
+                std::to_string(cuShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(chunkIndicesShape->GetStorageShape().GetDimNum()),
+            "Varlen requires B=1 and rank-1 cu_seqlens/chunk_indices.");
         return ge::GRAPH_FAILED;
     }
         const gert::Shape cu = cuShape->GetStorageShape();
