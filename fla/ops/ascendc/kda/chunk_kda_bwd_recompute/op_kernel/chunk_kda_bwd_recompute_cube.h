@@ -47,17 +47,13 @@ public:
     using ElementW = typename BlockMmadW::ElementC;
     using LayoutW = typename BlockMmadW::LayoutC;
 
-    Arch::CrossCoreFlagWithReverse<> flagAivFinishStore{
-        KDA_BWD_RECOMPUTE_SYNC_AIC_AIV_FLAG, KDA_BWD_RECOMPUTE_SYNC_AIV_AIC_FLAG};
-
     struct Params {
         GM_ADDR ptrA;
         LayoutA layoutA;
-        GM_ADDR ptrVb;
+        GM_ADDR workspace;
         LayoutVb layoutVb;
         GM_ADDR ptrU;
         LayoutU layoutU;
-        GM_ADDR ptrKbg;
         LayoutKbg layoutKbg;
         GM_ADDR ptrW;
         LayoutW layoutW;
@@ -81,27 +77,37 @@ public:
     {
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
+        const uint32_t coreNumAic = params.usedAic > 0 ? static_cast<uint32_t>(params.usedAic)
+                                                        : AscendC::GetBlockNum();
+        if (coreIdx >= coreNumAic) return;
         uint32_t bos = 0;
         uint32_t eos = 0;
-        {
-            BlockMmadU blockMmadU(resource);
-            AscendC::GlobalTensor<ElementA> gmA;
-            AscendC::GlobalTensor<ElementVb> gmVb;
-            AscendC::GlobalTensor<ElementU> gmU;
-            for (uint32_t loopIdx = coreIdx; loopIdx < params.chunkNum; loopIdx += AscendC::GetBlockNum()) {
-                KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
-                                              params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
-                uint32_t curChunkSize = eos - bos;
-                for (uint64_t h = 0; h < params.Hv; ++h) {
+        const uint64_t groupsPerChunk = (params.Hv + RECOMPUTE_HEADS_PER_GROUP - 1) / RECOMPUTE_HEADS_PER_GROUP;
+        const uint64_t groupCount = params.chunkNum * groupsPerChunk;
+        for (uint64_t group = coreIdx; group < groupCount; group += coreNumAic) {
+            const uint32_t loopIdx = group / groupsPerChunk;
+            const uint64_t firstHead = group % groupsPerChunk * RECOMPUTE_HEADS_PER_GROUP;
+            const uint32_t page = (group / coreNumAic) % RECOMPUTE_PAGE_COUNT;
+            const uint64_t slotElements = params.chunkSize * (params.V + params.K);
+            auto pageBase = (__gm__ ElementVb *)params.workspace + KdaRecomputePageOffset(coreIdx, page, slotElements);
+            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE + page);
+            {
+                BlockMmadU blockMmadU(resource);
+                AscendC::GlobalTensor<ElementA> gmA;
+                AscendC::GlobalTensor<ElementVb> gmVb;
+                AscendC::GlobalTensor<ElementU> gmU;
+                for (uint64_t slot = 0; slot < RECOMPUTE_HEADS_PER_GROUP && firstHead + slot < params.Hv; ++slot) {
+                    const uint64_t h = firstHead + slot;
+                    KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
+                                                  params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
+                    uint32_t curChunkSize = eos - bos;
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
                     auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
                     uint32_t tileN = tla::get<1>(typename BlockMmadU::L1TileShape{});
                     for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
                         uint32_t curN = (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
                         GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
-                        gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb +
-                                             (h * params.T + bos) * params.V + nOffset);
+                        gmVb.SetGlobalBuffer(pageBase + slot * slotElements + nOffset);
                         gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V + nOffset);
                         auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
                         auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
@@ -115,34 +121,35 @@ public:
                     }
                 }
             }
-        }
-        AscendC::SyncAll<false>();
-        {
-            BlockMmadW blockMmadW(resource);
-            AscendC::GlobalTensor<ElementA> gmA;
-            AscendC::GlobalTensor<ElementKbg> gmKbg;
-            AscendC::GlobalTensor<ElementW> gmW;
-            for (uint32_t loopIdx = coreIdx; loopIdx < params.chunkNum; loopIdx += AscendC::GetBlockNum()) {
-                KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
-                                              params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
-                uint32_t curChunkSize = eos - bos;
-                GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (uint64_t h = 0; h < params.Hv; ++h) {
+            {
+                BlockMmadW blockMmadW(resource);
+                AscendC::GlobalTensor<ElementA> gmA;
+                AscendC::GlobalTensor<ElementKbg> gmKbg;
+                AscendC::GlobalTensor<ElementW> gmW;
+                for (uint64_t slot = 0; slot < RECOMPUTE_HEADS_PER_GROUP && firstHead + slot < params.Hv; ++slot) {
+                    const uint64_t h = firstHead + slot;
+                    KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
+                                                  params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
+                    uint32_t curChunkSize = eos - bos;
+                    GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
                     gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    gmKbg.SetGlobalBuffer((__gm__ ElementKbg *)params.ptrKbg + (h * params.T + bos) * params.K);
+                    gmKbg.SetGlobalBuffer(pageBase + slot * slotElements + params.chunkSize * params.V);
                     gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
                     auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
                     auto tensorKbg = tla::MakeTensor(gmKbg, params.layoutKbg, Arch::PositionGM{});
                     auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
-                    auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockA =
+                        GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
                     auto tensorBlockKbg = GetTile(tensorKbg, tla::MakeCoord(0, 0),
                                                   tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    auto tensorBlockW =
+                        GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                     blockMmadW(tensorBlockA, tensorBlockKbg, tensorBlockW, actualBlockShape);
                 }
+            }
+            if (group + static_cast<uint64_t>(RECOMPUTE_PAGE_COUNT) * coreNumAic < groupCount) {
+                AscendC::PipeBarrier<PIPE_ALL>();
+                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE + page);
             }
         }
     }
@@ -175,7 +182,6 @@ public:
         chunkNum_ = static_cast<uint64_t>(tiling->chunkNum);
         chunkSize_ = static_cast<uint64_t>(tiling->chunkSize);
         isVariable_ = tiling->isVariable;
-        kbgBytes_ = static_cast<uint64_t>(B_) * Hv_ * T_ * K_ * sizeof(QkType);
     }
 
     __aicore__ inline void Process()
@@ -213,12 +219,10 @@ public:
         using MatmulKernel = ChunkKdaBwdRecomputeTla<BlockMmadU, BlockMmadW>;
 
         MatmulKernel kernel;
-        GM_ADDR kbg = workspace_;
-        GM_ADDR vb = workspace_ + kbgBytes_;
         typename MatmulKernel::Params param{
-            a_, MakeLayoutFromTag(tagA), vb, MakeLayoutFromTag(tagVb), u_, MakeLayoutFromTag(tagU),
-            kbg, MakeLayoutFromTag(tagKbg), w_, MakeLayoutFromTag(tagW),
-            cuSeqlens_, chunkIndices_, chunkNum_, B_, Hv_, T_, K_, V_, chunkSize_, isVariable_};
+            a_, MakeLayoutFromTag(tagA), workspace_, MakeLayoutFromTag(tagVb), u_, MakeLayoutFromTag(tagU),
+            MakeLayoutFromTag(tagKbg), w_, MakeLayoutFromTag(tagW),
+            cuSeqlens_, chunkIndices_, chunkNum_, B_, Hv_, T_, K_, V_, chunkSize_, usedAic_, isVariable_};
         kernel(param);
     }
 
@@ -237,7 +241,6 @@ private:
     uint64_t chunkNum_ = 0;
     uint64_t chunkSize_ = 0;
     int64_t isVariable_ = 0;
-    uint64_t kbgBytes_ = 0;
 };
 
 } // namespace KDA

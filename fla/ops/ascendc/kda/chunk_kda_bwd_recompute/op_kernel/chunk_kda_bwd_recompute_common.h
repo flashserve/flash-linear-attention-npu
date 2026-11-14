@@ -6,9 +6,12 @@
 #define CHUNK_KDA_BWD_RECOMPUTE_COMMON_H
 
 #include "kernel_operator.h"
+#include "chunk_kda_bwd_recompute_struct.h"
 
 constexpr uint64_t KDA_BWD_RECOMPUTE_SYNC_AIV_AIC_FLAG = 3;
 constexpr uint64_t KDA_BWD_RECOMPUTE_SYNC_AIC_AIV_FLAG = 5;
+constexpr uint16_t KDA_BWD_RECOMPUTE_PAGE_READY_BASE = 4;
+constexpr uint16_t KDA_BWD_RECOMPUTE_PAGE_FREE_BASE = 6;
 constexpr uint64_t KDA_BWD_RECOMPUTE_ONE_BLOCK_32 = 32;
 constexpr uint32_t KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64 = 64;
 constexpr float KDA_BWD_RECOMPUTE_RCP_LN2 = 1.4426950408889634f;
@@ -16,6 +19,13 @@ constexpr float KDA_BWD_RECOMPUTE_LN2 = 0.69314718055994530942f;
 constexpr uint32_t KDA_BWD_RECOMPUTE_BT = 64;
 constexpr uint32_t KDA_BWD_RECOMPUTE_K = 128;
 constexpr uint32_t KDA_BWD_RECOMPUTE_V = 128;
+
+// Offset in QkType elements. Each page has four adjacent [vb | kbg] slots.
+__aicore__ inline uint64_t KdaRecomputePageOffset(uint32_t core, uint32_t page, uint64_t slotElements)
+{
+    return (static_cast<uint64_t>(core) * KDA::RECOMPUTE_PAGE_COUNT + page) *
+           KDA::RECOMPUTE_HEADS_PER_GROUP * slotElements;
+}
 
 __aicore__ inline float KdaBwdRecomputeBitsToFloat(uint32_t bits)
 {

@@ -70,10 +70,15 @@ public:
 
     ge::graphStatus Process()
     {
-        OP_CHECK_IF(CheckSpec() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ComputeChunkNum() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(SetVecRow() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        workspaceSize_ = ctx_.sysWorkspaceSize + userWorkspaceSize_;
+        if (CheckSpec() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ComputeChunkNum() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (SetVecRow() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         tilingKey_ = ComputeTilingKey();
         return ge::GRAPH_SUCCESS;
     }
@@ -83,9 +88,9 @@ public:
         return tilingKey_;
     }
 
-    size_t GetWorkspaceSize() const
+    size_t GetWorkspaceSize(uint32_t usedAic) const
     {
-        return workspaceSize_;
+        return ctx_.sysWorkspaceSize + usedAic * workspaceBytesPerCore_;
     }
 
 private:
@@ -221,9 +226,10 @@ private:
         }
 
         tiling_.vecRow = static_cast<int64_t>(rowNum);
-        // A5 L1 path keeps kbg/vb on-chip (design §6.1). GM workspace is only the sys buffer.
-        userWorkspaceSize_ = 0;
-        workspaceSize_ = ctx_.sysWorkspaceSize;
+        if (!ctx_.enableCompactWorkspace) {
+            workspaceBytesPerCore_ = KDA::RECOMPUTE_PAGE_COUNT * KDA::RECOMPUTE_HEADS_PER_GROUP * chunkSize_ *
+                (kDim + static_cast<uint64_t>(tiling_.V)) * sizeofQk;
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -244,8 +250,7 @@ private:
 
     ChunkKdaBwdRecomputeTilingContext &ctx_;
     ChunkKdaBwdRecomputeTilingData &tiling_;
-    size_t workspaceSize_ = 0;
-    size_t userWorkspaceSize_ = 0;
+    size_t workspaceBytesPerCore_ = 0;
     uint64_t tilingKey_ = 1;
     uint64_t chunkSize_ = 64;
 };

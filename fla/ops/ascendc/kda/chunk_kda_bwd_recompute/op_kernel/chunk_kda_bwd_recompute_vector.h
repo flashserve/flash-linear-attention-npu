@@ -7,7 +7,6 @@
 
 #include "chunk_kda_bwd_recompute_struct.h"
 #include "chunk_kda_bwd_recompute_common.h"
-#include "catlass/arch/cross_core_sync.hpp"
 
 using namespace AscendC;
 
@@ -64,20 +63,54 @@ public:
         hasDtBias_ = tiling_->hasDtBias != 0;
         lowerBound_ = KdaBwdRecomputeBitsToFloat(static_cast<uint32_t>(tiling_->lowerBoundBits));
         gateScale_ = lowerBound_ * (useExp2_ ? KDA_BWD_RECOMPUTE_RCP_LN2 : 1.0f);
-        kbgBytes_ = B_ * Hv_ * T_ * K_ * sizeof(QkType);
-        kbgTensor_.SetGlobalBuffer((__gm__ QkType *)workspace_);
-        vbTensor_.SetGlobalBuffer((__gm__ QkType *)(workspace_ + kbgBytes_));
     }
 
     __aicore__ inline void Process()
     {
-        ProcessVb();
-        pipe_->Reset();
-        AscendC::SyncAll<false>();
-        ProcessGateAndK();
+        const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
+        const uint32_t coreNumAic = tiling_->usedAic;
+        if (coreIdx >= coreNumAic) return;
+        const uint64_t groupsPerChunk = (Hv_ + RECOMPUTE_HEADS_PER_GROUP - 1) / RECOMPUTE_HEADS_PER_GROUP;
+        const uint64_t groupCount = chunkNum_ * groupsPerChunk;
+        for (uint64_t group = coreIdx; group < groupCount; group += coreNumAic) {
+            const uint32_t loopIdx = group / groupsPerChunk;
+            const uint64_t firstHead = group % groupsPerChunk * RECOMPUTE_HEADS_PER_GROUP;
+            const uint64_t round = group / coreNumAic;
+            const uint32_t page = round % RECOMPUTE_PAGE_COUNT;
+            if (round >= RECOMPUTE_PAGE_COUNT) {
+                CrossCoreWaitFlag<0x2, PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE + page);
+            }
+            auto pageBase = (__gm__ QkType *)workspace_ +
+                KdaRecomputePageOffset(coreIdx, page, chunkSize_ * (V_ + K_));
+            vbTensor_.SetGlobalBuffer(pageBase);
+            kbgTensor_.SetGlobalBuffer(pageBase + chunkSize_ * V_);
+            ProcessVb(loopIdx, firstHead);
+            PipeBarrier<PIPE_ALL>();
+            pipe_->Reset();
+            ProcessGateAndK(loopIdx, firstHead);
+            PipeBarrier<PIPE_ALL>();
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE + page);
+            pipe_->Reset();
+        }
     }
 
 private:
+    // flags: raw gate=1, q/k=2, v=4.
+    template <typename T>
+    __aicore__ inline void LoadModel(LocalTensor<T> dst, GlobalTensor<T> src,
+        uint64_t offset, uint32_t rows, uint64_t width, uint64_t heads, int64_t flag)
+    {
+        if (!(tiling_->reserved & flag)) { DataCopy(dst, src[offset], rows * width); return; }
+        const uint64_t token = offset / width;
+        const uint64_t bh = token / T_;
+        const uint64_t pos = token % T_;
+        const uint64_t base = ((bh / heads * T_ + pos) * heads + bh % heads) * width;
+        DataCopyPad(dst, src[base],
+            {static_cast<uint16_t>(rows), static_cast<uint32_t>(width * sizeof(T)),
+             static_cast<uint32_t>((heads - 1) * width * sizeof(T)), 0, 0},
+            {false, 0, 0, T(0)});
+    }
+
     __aicore__ inline void AllocAuxEvents()
     {
         auxMte2ToVEvent_ = pipe_->AllocEventID<HardEvent::MTE2_V>();
@@ -90,11 +123,8 @@ private:
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
     }
 
-    __aicore__ inline void ProcessGateAndK()
+    __aicore__ inline void ProcessGateAndK(uint32_t loopIdx, uint64_t firstHead)
     {
-        uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        uint32_t coreNumAic = GetBlockNum();
-        uint32_t vecTaskIdx = 0;
         uint32_t bos = 0;
         uint32_t eos = 0;
 
@@ -136,129 +166,21 @@ private:
         auto dtBias = dtBiasBuf_.Get<float>();
         auto expAVec = expABuf_.Get<float>();
 
-        for (uint32_t loopIdx = coreIdx; loopIdx < chunkNum_; loopIdx += coreNumAic) {
-            KdaBwdRecomputeGetChunkOffset(
-                cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos, isVariable_);
+        for (uint64_t slot = GetSubBlockIdx(); slot < RECOMPUTE_HEADS_PER_GROUP;
+             slot += GetSubBlockNum()) {
+            const uint64_t h = firstHead + slot;
+            if (h >= Hv_) break;
+            KdaBwdRecomputeGetChunkOffset(cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos,
+                                          isVariable_);
             uint32_t curChunkSize = eos - bos;
-            for (uint64_t h = 0; h < Hv_; ++h) {
-                ++vecTaskIdx;
-                uint64_t hk = h / hvPerHk_;
-                if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                    Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
-                    continue;
-                }
-                uint64_t coreLoopsInB = (T_ + chunkSize_ - 1) / chunkSize_;
-                uint64_t bIdx = isVariable_ ? 0 : (loopIdx / coreLoopsInB);
-                uint64_t bosK = isVariable_ ? bos : (bos - bIdx * (Hv_ - Hk_) * T_);
-                uint64_t gBase = (h * T_ + bos) * K_;
-                uint64_t qkBase = (hk * T_ + bosK) * K_;
-                uint64_t outBase = (h * T_ + bos) * K_;
-                uint64_t betaBase = h * T_ + bos;
-
-                if (hasDtBias_) {
-                    DataCopy(dtBias, dtBiasTensor_[h * K_], K_);
-                    SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-                    WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-                }
-                if (hasALog_) {
-                    Duplicate(expAVec, aLogTensor_.GetValue(h), K_);
-                    PipeBarrier<PIPE_V>();
-                    Exp(expAVec, expAVec, K_);
-                    PipeBarrier<PIPE_V>();
-                }
-                Duplicate(accFp32, 0.0f, K_);
-                Duplicate(gkLast, 0.0f, K_);
-                PipeBarrier<PIPE_V>();
-
-                for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
-                    uint32_t curRowNum =
-                        (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
-                    {
-                        auto gIn = gInQue_.AllocTensor<GateType>();
-                        auto betaIn = betaInQue_.AllocTensor<BetaType>();
-                        DataCopy(gIn, gTensor_[gBase + rowOffset * K_], K_ * curRowNum);
-                        DataCopyPad(betaIn, betaTensor_[betaBase + rowOffset],
-                                    {1, curRowNum * static_cast<uint32_t>(sizeof(BetaType)), 0, 0, 0},
-                                    {false, 0, 0, 0});
-                        gInQue_.EnQue(gIn);
-                        betaInQue_.EnQue(betaIn);
-                    }
-                    {
-                        auto gIn = gInQue_.DeQue<GateType>();
-                        auto betaIn = betaInQue_.DeQue<BetaType>();
-                        if constexpr (std::is_same<GateType, float>::value) {
-                            DataCopy(gFp32, gIn, K_ * curRowNum);
-                        } else {
-                            Cast(gFp32, gIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                        }
-                        if constexpr (std::is_same<BetaType, float>::value) {
-                            DataCopy(betaFp32, betaIn, curRowNum);
-                        } else {
-                            Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
-                        }
-                        gInQue_.FreeTensor(gIn);
-                        betaInQue_.FreeTensor(betaIn);
-                    }
-                    PipeBarrier<PIPE_V>();
-                    if (useGate_) {
-                        ApplySafeGate(gFp32, curRowNum);
-                    }
-                    CumsumRows(gFp32, accFp32, curRowNum);
-                    PipeBarrier<PIPE_V>();
-                    if (rowOffset + curRowNum == curChunkSize) {
-                        DataCopy(gkLast, gFp32[(curRowNum - 1) * K_], K_);
-                        PipeBarrier<PIPE_V>();
-                    }
-                    {
-                        auto gkOut = gkOutQue_.AllocTensor<float>();
-                        DataCopy(gkOut, gFp32, K_ * curRowNum);
-                        gkOutQue_.EnQue(gkOut);
-                    }
-                    ExpGate(gFp32, tmpFp32, curRowNum);
-                    PipeBarrier<PIPE_V>();
-                    {
-                        auto qIn = qInQue_.AllocTensor<QkType>();
-                        auto kIn = kInQue_.AllocTensor<QkType>();
-                        DataCopy(qIn, qTensor_[qkBase + rowOffset * K_], K_ * curRowNum);
-                        DataCopy(kIn, kTensor_[qkBase + rowOffset * K_], K_ * curRowNum);
-                        qInQue_.EnQue(qIn);
-                        kInQue_.EnQue(kIn);
-                    }
-                    {
-                        auto qIn = qInQue_.DeQue<QkType>();
-                        auto kIn = kInQue_.DeQue<QkType>();
-                        Cast(qFp32, qIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                        Cast(kRawFp32, kIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                        qInQue_.FreeTensor(qIn);
-                        kInQue_.FreeTensor(kIn);
-                    }
-                    PipeBarrier<PIPE_V>();
-                    Mul(qFp32, qFp32, tmpFp32, K_ * curRowNum);
-                    DataCopy(kFp32, kRawFp32, K_ * curRowNum);
-                    Brcb(betaBrcb, betaFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
-                    PipeBarrier<PIPE_V>();
-                    MulKByBetaExp(kbgFp32, kFp32, betaBrcb, tmpFp32, curRowNum);
-                    {
-                        auto gkOut = gkOutQue_.DeQue<float>();
-                        DataCopy(gkTensor_[outBase + rowOffset * K_], gkOut, K_ * curRowNum);
-                        gkOutQue_.FreeTensor(gkOut);
-                        auto qgOut = qgOutQue_.AllocTensor<QkType>();
-                        auto kbgOut = kbgOutQue_.AllocTensor<QkType>();
-                        Cast(qgOut, qFp32, RoundMode::CAST_RINT, K_ * curRowNum);
-                        Cast(kbgOut, kbgFp32, RoundMode::CAST_RINT, K_ * curRowNum);
-                        qgOutQue_.EnQue(qgOut);
-                        kbgOutQue_.EnQue(kbgOut);
-                    }
-                    {
-                        auto qgOut = qgOutQue_.DeQue<QkType>();
-                        auto kbgOut = kbgOutQue_.DeQue<QkType>();
-                        DataCopy(qgTensor_[outBase + rowOffset * K_], qgOut, K_ * curRowNum);
-                        DataCopy(kbgTensor_[outBase + rowOffset * K_], kbgOut, K_ * curRowNum);
-                        qgOutQue_.FreeTensor(qgOut);
-                        kbgOutQue_.FreeTensor(kbgOut);
-                    }
-                }
-                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
+            uint64_t hk = h / hvPerHk_;
+            uint64_t coreLoopsInB = (T_ + chunkSize_ - 1) / chunkSize_;
+            uint64_t bIdx = isVariable_ ? 0 : (loopIdx / coreLoopsInB);
+            uint64_t bosK = isVariable_ ? bos : (bos - bIdx * (Hv_ - Hk_) * T_);
+            uint64_t gBase = (h * T_ + bos) * K_;
+            uint64_t qkBase = (hk * T_ + bosK) * K_;
+            uint64_t outBase = (h * T_ + bos) * K_;
+            uint64_t betaBase = h * T_ + bos;
 
                 SetFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
                 WaitFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
@@ -283,27 +205,93 @@ private:
                         gkInQue_.FreeTensor(gkIn);
                     }
                     PipeBarrier<PIPE_V>();
-                    {
-                        auto kgOut = kgOutQue_.AllocTensor<QkType>();
-                        Cast(kgOut, kFp32, RoundMode::CAST_RINT, K_ * curRowNum);
-                        kgOutQue_.EnQue(kgOut);
-                    }
-                    {
-                        auto kgOut = kgOutQue_.DeQue<QkType>();
-                        DataCopy(kgTensor_[outBase + rowOffset * K_], kgOut, K_ * curRowNum);
-                        kgOutQue_.FreeTensor(kgOut);
-                    }
+                }
+                CumsumRows(gFp32, accFp32, curRowNum);
+                {
+                    auto gkOut = gkOutQue_.AllocTensor<float>();
+                    DataCopy(gkOut, gFp32, K_ * curRowNum);
+                    gkOutQue_.EnQue(gkOut);
+                }
+                ExpGate(gFp32, tmpFp32, curRowNum);
+                PipeBarrier<PIPE_V>();
+                {
+                    auto qIn = qInQue_.AllocTensor<QkType>();
+                    auto kIn = kInQue_.AllocTensor<QkType>();
+                    LoadModel(qIn, qTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
+                    LoadModel(kIn, kTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
+                    qInQue_.EnQue(qIn);
+                    kInQue_.EnQue(kIn);
+                }
+                {
+                    auto qIn = qInQue_.DeQue<QkType>();
+                    auto kIn = kInQue_.DeQue<QkType>();
+                    Cast(qFp32, qIn, RoundMode::CAST_NONE, K_ * curRowNum);
+                    Cast(kRawFp32, kIn, RoundMode::CAST_NONE, K_ * curRowNum);
+                    qInQue_.FreeTensor(qIn);
+                    kInQue_.FreeTensor(kIn);
+                }
+                PipeBarrier<PIPE_V>();
+                Mul(qFp32, qFp32, tmpFp32, K_ * curRowNum);
+                Brcb(betaBrcb, betaFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
+                PipeBarrier<PIPE_V>();
+                MulKByBetaExp(kFp32, kRawFp32, betaBrcb, tmpFp32, curRowNum);
+                {
+                    auto gkOut = gkOutQue_.DeQue<float>();
+                    DataCopy(gkTensor_[outBase + rowOffset * K_], gkOut, K_ * curRowNum);
+                    gkOutQue_.FreeTensor(gkOut);
+                    auto qgOut = qgOutQue_.AllocTensor<QkType>();
+                    auto kbgOut = kbgOutQue_.AllocTensor<QkType>();
+                    Cast(qgOut, qFp32, RoundMode::CAST_RINT, K_ * curRowNum);
+                    Cast(kbgOut, kFp32, RoundMode::CAST_RINT, K_ * curRowNum);
+                    qgOutQue_.EnQue(qgOut);
+                    kbgOutQue_.EnQue(kbgOut);
+                }
+                {
+                    auto qgOut = qgOutQue_.DeQue<QkType>();
+                    auto kbgOut = kbgOutQue_.DeQue<QkType>();
+                    DataCopy(qgTensor_[outBase + rowOffset * K_], qgOut, K_ * curRowNum);
+                    DataCopy(kbgTensor_[slot * chunkSize_ * (V_ + K_) + rowOffset * K_], kbgOut, K_ * curRowNum);
+                    qgOutQue_.FreeTensor(qgOut);
+                    kbgOutQue_.FreeTensor(kbgOut);
+                }
+            }
+            SetFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
+            WaitFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
+            for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
+                uint32_t curRowNum = (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
+                {
+                    auto kIn = kInQue_.AllocTensor<QkType>();
+                    DataCopy(gFp32, gkTensor_[outBase + rowOffset * K_], K_ * curRowNum);
+                    LoadModel(kIn, kTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
+                    kInQue_.EnQue(kIn);
+                }
+                SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
+                WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
+                {
+                    auto kIn = kInQue_.DeQue<QkType>();
+                    Cast(kRawFp32, kIn, RoundMode::CAST_NONE, K_ * curRowNum);
+                    kInQue_.FreeTensor(kIn);
+                    PipeBarrier<PIPE_V>();
+                    ComputeKg(kFp32, kRawFp32, gFp32, accFp32, curRowNum);
+                }
+                PipeBarrier<PIPE_V>();
+                {
+                    auto kgOut = kgOutQue_.AllocTensor<QkType>();
+                    Cast(kgOut, kFp32, RoundMode::CAST_RINT, K_ * curRowNum);
+                    kgOutQue_.EnQue(kgOut);
+                }
+                {
+                    auto kgOut = kgOutQue_.DeQue<QkType>();
+                    DataCopy(kgTensor_[outBase + rowOffset * K_], kgOut, K_ * curRowNum);
+                    kgOutQue_.FreeTensor(kgOut);
                 }
             }
         }
         ReleaseAuxEvents();
     }
 
-    __aicore__ inline void ProcessVb()
+    __aicore__ inline void ProcessVb(uint32_t loopIdx, uint64_t firstHead)
     {
-        uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        uint32_t coreNumAic = GetBlockNum();
-        uint32_t vecTaskIdx = 0;
         uint32_t bos = 0;
         uint32_t eos = 0;
 
@@ -318,15 +306,25 @@ private:
         auto betaFp32 = betaFp32Buf_.Get<float>();
         auto betaBrcb = betaBrcbBuf_.Get<float>();
 
-        for (uint32_t loopIdx = coreIdx; loopIdx < chunkNum_; loopIdx += coreNumAic) {
-            KdaBwdRecomputeGetChunkOffset(
-                cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos, isVariable_);
+        for (uint64_t slot = GetSubBlockIdx(); slot < RECOMPUTE_HEADS_PER_GROUP;
+             slot += GetSubBlockNum()) {
+            const uint64_t h = firstHead + slot;
+            if (h >= Hv_) break;
+            KdaBwdRecomputeGetChunkOffset(cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos,
+                                          isVariable_);
             uint32_t curChunkSize = eos - bos;
-            for (uint64_t h = 0; h < Hv_; ++h) {
-                ++vecTaskIdx;
-                if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                    Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
-                    continue;
+            for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
+                uint32_t curRowNum = (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
+                uint64_t vOffset = (h * T_ + bos + rowOffset) * V_;
+                uint64_t betaOffset = h * T_ + bos + rowOffset;
+                {
+                    auto vIn = vInQue_.AllocTensor<QkType>();
+                    auto betaIn = betaInQue_.AllocTensor<BetaType>();
+                    LoadModel(vIn, vTensor_, vOffset, curRowNum, V_, Hv_, 4);
+                    DataCopyPad(betaIn, betaTensor_[betaOffset],
+                                {1, curRowNum * static_cast<uint32_t>(sizeof(BetaType)), 0, 0, 0}, {false, 0, 0, 0});
+                    vInQue_.EnQue(vIn);
+                    betaInQue_.EnQue(betaIn);
                 }
                 for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
                     uint32_t curRowNum =
@@ -377,6 +375,29 @@ private:
                         DataCopy(vbTensor_[vOffset], vbOut, V_ * curRowNum);
                         vbOutQue_.FreeTensor(vbOut);
                     }
+                    vInQue_.FreeTensor(vIn);
+                    betaInQue_.FreeTensor(betaIn);
+                }
+                PipeBarrier<PIPE_V>();
+                Brcb(betaBrcb, betaFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
+                PipeBarrier<PIPE_V>();
+                uint64_t perchannelResOffset = 0;
+                uint8_t repeatStride = V_ * sizeof(float) / KDA_BWD_RECOMPUTE_ONE_BLOCK_32;
+                while (perchannelResOffset < V_) {
+                    Mul(vFp32[perchannelResOffset], vFp32[perchannelResOffset], betaBrcb,
+                        KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64, curRowNum, {1, 1, 0, repeatStride, repeatStride, 1});
+                    perchannelResOffset += KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64;
+                }
+                PipeBarrier<PIPE_V>();
+                {
+                    auto vbOut = vbOutQue_.AllocTensor<QkType>();
+                    Cast(vbOut, vFp32, RoundMode::CAST_RINT, V_ * curRowNum);
+                    vbOutQue_.EnQue(vbOut);
+                }
+                {
+                    auto vbOut = vbOutQue_.DeQue<QkType>();
+                    DataCopy(vbTensor_[slot * chunkSize_ * (V_ + K_) + rowOffset * V_], vbOut, V_ * curRowNum);
+                    vbOutQue_.FreeTensor(vbOut);
                 }
                 Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
             }
@@ -522,7 +543,6 @@ private:
     uint64_t chunkNum_ = 0;
     uint64_t chunkSize_ = 64;
     int64_t isVariable_ = 0;
-    uint64_t kbgBytes_ = 0;
     uint32_t rowNum_ = 64;
     bool useGate_ = true;
     bool useExp2_ = true;
@@ -531,8 +551,6 @@ private:
     float lowerBound_ = -5.0f;
     float gateScale_ = 0.0f;
 
-    Catlass::Arch::CrossCoreFlagWithReverse<> flagAivFinishStore_{
-        KDA_BWD_RECOMPUTE_SYNC_AIC_AIV_FLAG, KDA_BWD_RECOMPUTE_SYNC_AIV_AIC_FLAG};
     TEventID auxMte2ToVEvent_;
     TEventID auxMte3ToMte2Event_;
 
