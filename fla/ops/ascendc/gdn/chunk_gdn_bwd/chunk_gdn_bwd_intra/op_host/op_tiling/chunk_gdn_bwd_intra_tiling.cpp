@@ -6,12 +6,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "../chunk_gdn_bwd_intra_schedule.h"
 #include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
-#include <string>
+#include "op_common/log/log.h"
 
 namespace optiling {
 namespace {
@@ -98,10 +99,6 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const int64_t headRatio = valueHeads / qkHeads;
-    if (valueHeads % qkHeads != 0 || headRatio > 4) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "unsupported HV/HK head ratio, must be 1/2/3/4.");
-        return ge::GRAPH_FAILED;
-    }
     if (keyDim != 128 || valueDim != 128) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K and V dims must be 128.");
         return ge::GRAPH_FAILED;
@@ -155,6 +152,19 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: only DAV_2201 and DAV_3510 are supported.", __func__);
         return ge::GRAPH_FAILED;
     }
+    if (valueHeads % qkHeads != 0 || headRatio > (arch22 ? 4 : kA5PublishedMaxG)) {
+        const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV/HK", actual,
+                                            arch22 ? "integer in [1, 4] on A2/A3" : "integer in [1, 16] on A5");
+        return ge::GRAPH_FAILED;
+    }
+    if (headRatio > 4 && mainDtype != ge::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads) +
+            ", q dtype=" + DtypeName(mainDtype);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "q dtype", actual, "BF16 for HV/HK > 4 on A5");
+        return ge::GRAPH_FAILED;
+    }
     const uint32_t aicCores = platform.GetCoreNumAic();
     IntraSchedule schedule;
     if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
@@ -199,9 +209,9 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->useExp2 = *useExp2 ? 1 : 0;
     tiling->scale = static_cast<float>(*scale);
     tiling->reserved = arch22 ? 2201 : 0;
-    const uint64_t strategyKey = isVarlen ?
+    const uint64_t strategyKey = headRatio <= 4 && isVarlen ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
-    const uint64_t gKey = static_cast<uint64_t>(headRatio);
+    const uint64_t gKey = headRatio <= 4 ? static_cast<uint64_t>(headRatio) : G_KEY_GT4;
     const uint64_t mainKey = mainDtype == ge::DT_BF16 ?
         CHUNK_GDN_BWD_INTRA_MAIN_BF16 : CHUNK_GDN_BWD_INTRA_MAIN_FP16;
     const uint64_t gateKey = DataTypeKey(

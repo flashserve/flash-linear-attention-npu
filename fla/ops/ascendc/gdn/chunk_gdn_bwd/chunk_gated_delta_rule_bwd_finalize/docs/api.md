@@ -1,5 +1,9 @@
 # ChunkGatedDeltaRuleBwdFinalize API
 
+A5 G>4 保留 S0～S14 的 BF16 partial，按 GVA 组内偶/奇 HV 各自以 FP32
+顺序累加，最后固定相加并一次转 BF16，再执行可选 Q/K norm。
+G≤4 和 A2/A3 的既有数值契约保持。
+
 ## Python
 
 ```python
@@ -93,7 +97,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 | 平台 | V | BT（chunk_size） | HV/HK | g/beta dtype |
 | --- | --- | --- | --- | --- |
 | A2 / A3 | 128、256 | 64、128 | 正整数 | 同为 BF16 或同为 FP32 |
-| A5 | 128 | 64 | 1 到 4 | 同为 BF16 或同为 FP32 |
+| A5 | 128 | 64 | 1 到 16 | 同为 BF16 或同为 FP32 |
 
 定长模式下 `NT=ceil(T/BT)`；变长模式下 `B=1`，`NT` 为所有序列的 chunk 总数。
 两种模式均支持不满一个 chunk 的尾块。
@@ -104,12 +108,13 @@ host 同时检查内部地址乘积和 workspace 大小，溢出时返回参数�
 定长总 chunk 数 `B*ceil(T/BT)` 不得超过 `UINT32_MAX`；变长 pair 数不得超过
 `2^31`，以保证展平访问 `2*taskIdx+1` 仍能由 uint32 表示。
 
-A2/A3 在启动前检查变长元数据的内容：`cu_seqlens` 首项为 0、末项为 T，
+公开入口在创建 executor 前检查变长元数据的内容。`cu_seqlens` 首项为 0、末项为 T，
 各项在 `[0,T]` 内且非递减。允许长度为 0 的序列，但它不产生 chunk。
 `chunk_indices` 必须完整、唯一地列出所有非空序列的 chunk；每个 pair 的序列编号
 及该序列内 chunk 编号均须有效。pair 顺序可以打乱，`h/dh` 的 NT 轴须与此顺序一致，
 不能只打乱 pair 而沿用旧顺序的 state。重复、缺漏、越界或指向空序列的 pair 返回
-`ACLNN_ERR_PARAM_INVALID`，不进入设备 kernel。
+`ACLNN_ERR_PARAM_INVALID`，不进入设备 kernel。A5 的 `HV/HK` 非整数或超过 16 时也返回该错误码，
+消息包含实际 `HK/HV` 和允许范围。
 
 `cu_seqlens` 和 `chunk_indices` 必须同时为空或同时提供。普通稠密格式的非连续输入
 view 会由 aclnn 层连续化。A2/A3 输出必须连续，并分别保持 q/k/v/beta/g 的 shape 和 dtype；

@@ -6,7 +6,10 @@
 #include "chunk_gdn_bwd_intra.h"
 
 #include <array>
+#include "external/aclnn_kernels/aclnn_platform.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
 #include <set>
+#include <string>
 #include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
@@ -16,7 +19,6 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "op_common/log/log.h"
-#include <string>
 
 static constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
 
@@ -116,8 +118,12 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "q/k and value tensors must share B and T.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(hv % hk == 0 && hv / hk <= 4)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "HV/HK must be an integer in [1, 4].");
+    const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
+    const int64_t ratio = hv / hk;
+    if (hv % hk != 0 || ratio > (isA5 ? optiling::kA5PublishedMaxG : 4)) {
+        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "HV/HK", actual, isA5 ? "integer in [1, 16] on A5" : "integer in [1, 4] on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t)) {
@@ -138,6 +144,12 @@ aclnnStatus Check(const Params &p)
     }
 
     const DataType mainType = p.q->GetDataType();
+    if (ratio > 4 && mainType != DataType::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv) +
+            ", q dtype=" + (mainType == DataType::DT_FLOAT16 ? "FP16" : std::to_string(static_cast<int>(mainType)));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q dtype", actual, "BF16 for HV/HK > 4 on A5");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (!(mainType == DataType::DT_BF16 || mainType == DataType::DT_FLOAT16)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q", "invalid", "q/k/v/A/d_o must be BF16 or FP16.");
         return ACLNN_ERR_PARAM_INVALID;

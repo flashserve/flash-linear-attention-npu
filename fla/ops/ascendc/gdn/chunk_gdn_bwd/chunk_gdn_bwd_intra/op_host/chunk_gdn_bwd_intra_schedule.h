@@ -12,6 +12,8 @@
 
 namespace optiling {
 
+constexpr int64_t kA5PublishedMaxG = 16;
+
 struct IntraSchedule {
     int64_t cg = 0;
     int64_t hvSlices = 0;
@@ -33,7 +35,7 @@ inline bool BuildIntraSchedule(int64_t chunks, int64_t hv, int64_t hk,
                               uint32_t cores, bool arch22, size_t systemBytes,
                               IntraSchedule &result)
 {
-    if (chunks <= 0 || hv <= 0 || hk <= 0 || cores == 0 || hv % hk != 0 || hv / hk > 4) {
+    if (chunks <= 0 || hv <= 0 || hk <= 0 || cores == 0 || hv % hk != 0 || hv / hk > (arch22 ? 4 : kA5PublishedMaxG)) {
         return false;
     }
     IntraSchedule candidate;

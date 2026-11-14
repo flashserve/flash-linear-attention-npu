@@ -99,6 +99,22 @@ __aicore__ inline int64_t ChunkGdnBwdIntraLeaderR(int64_t hvBegin, int64_t r)
     return 0;
 }
 
+// Runtime overloads are used only by the A5 generic group. A slice can start
+// in the middle of a GVA group, so leaders must be derived from global heads.
+__aicore__ inline bool ChunkGdnBwdIntraScoreLeader(int64_t hvBegin, int64_t r, int64_t headRatio)
+{
+    return r == 0 || (hvBegin + r) / headRatio != (hvBegin + r - 1) / headRatio;
+}
+
+__aicore__ inline int64_t ChunkGdnBwdIntraLeaderR(int64_t hvBegin, int64_t r, int64_t headRatio)
+{
+    const int64_t hk = (hvBegin + r) / headRatio;
+    while (r > 0 && (hvBegin + r - 1) / headRatio == hk) {
+        --r;
+    }
+    return r;
+}
+
 } // namespace GDN
 
 #endif // CHUNK_GDN_BWD_INTRA_COMMON_H

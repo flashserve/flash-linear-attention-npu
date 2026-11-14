@@ -110,6 +110,11 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
                  kbgDoGWorkspace,
                  beta_raw, dbeta, dsWorkspace, dqStage12Workspace, dv,
                  dk0Workspace, dk0Workspace, &tilingData, &pipe);
+        if (tilingData.headRatio > 4) {
+            GM_ADDR ws0 = userWorkspace + 7 * workspaceRegionBytes;
+            GM_ADDR ws1 = ws0 + static_cast<int64_t>(AscendC::GetBlockNum()) * GDN::GVA_ACC_CORE_BYTES;
+            vec.SetGvaAccumulators(ws0, ws1);
+        }
         vec.Process();
     }
 #endif

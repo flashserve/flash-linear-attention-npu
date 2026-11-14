@@ -141,28 +141,22 @@ __simd_vf__ inline void ChunkGdnBwdIntraPackMatrixVF(
     using namespace AscendC;
     using namespace AscendC::MicroAPI;
     constexpr uint32_t ROW_ELEMENTS = 128;
-    constexpr uint32_t REG_ELEMENTS = 64;
-    constexpr uint32_t COL_BLOCKS_PER_REG = 4;
     constexpr uint32_t NZ_ROWS = 32;
+    static_assert(ROW_ELEMENTS * sizeof(MainT) == 256);
     RegTensor<MainT> dataReg;
     MaskReg mask = CreateMask<MainT, MaskPattern::ALL>();
 
-    // 每个 AIV 将自己负责的 32 行从 ND 重排为 Cube 可直接读取的 NZ 半片。
+    // A5 的 256B 寄存器恰好容纳一整行，按八个 32B 列块写入 NZ 半片。
     for (uint16_t row = 0; row < rows; ++row) {
         const uint32_t ndRow = static_cast<uint32_t>(row) * ROW_ELEMENTS;
         const uint32_t nzRow = static_cast<uint32_t>(row) * 16;
-        for (uint32_t colPart = 0; colPart < 2; ++colPart) {
-            const uint32_t ndOffset = ndRow + colPart * REG_ELEMENTS;
-            const uint32_t nzOffset =
-                nzRow + colPart * COL_BLOCKS_PER_REG * NZ_ROWS * 16;
-            LoadIn<MainT, false>(dataReg, ndIn + ndOffset);
-            StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(
-                nzOut + nzOffset, dataReg, NZ_ROWS, mask);
-        }
+        LoadIn<MainT, false>(dataReg, ndIn + ndRow);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(
+            nzOut + nzRow, dataReg, NZ_ROWS, mask);
     }
 }
 
-template <typename MainT, typename GateT, typename BetaT, uint32_t G>
+template <typename MainT, typename GateT, typename BetaT, uint32_t G_GROUP_KEY>
 class ChunkGdnBwdIntraVector {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -183,6 +177,7 @@ public:
         (void)workspace;
         mapper_.Init(cuSeqlens, chunkIndices, tiling);
         tiling_ = tiling;
+        headRatio_ = tiling->valueHeads / tiling->qkHeads;
         const int64_t subblocks = static_cast<int64_t>(AscendC::GetSubBlockNum());
         coreIdx_ = static_cast<int64_t>(AscendC::GetBlockIdx()) / subblocks;
         part_ = static_cast<int64_t>(AscendC::GetSubBlockIdx());
@@ -232,6 +227,35 @@ public:
     }
 
 private:
+    __aicore__ inline int64_t HeadIndex(int64_t hv) const
+    {
+        if constexpr (G_GROUP_KEY <= 4) {
+            return hv / G_GROUP_KEY;
+        } else {
+            return hv / headRatio_;
+        }
+    }
+
+    __aicore__ inline bool ScoreLeader(int64_t hvBegin, int64_t r) const
+    {
+        if constexpr (G_GROUP_KEY <= 4) {
+            return ChunkGdnBwdIntraScoreLeader<G_GROUP_KEY>(hvBegin, r);
+        } else {
+            return ChunkGdnBwdIntraScoreLeader(hvBegin, r, headRatio_);
+        }
+    }
+
+    __aicore__ inline int64_t LeaderR(int64_t hvBegin, int64_t r) const
+    {
+        if constexpr (G_GROUP_KEY <= 4) {
+            return ChunkGdnBwdIntraLeaderR<G_GROUP_KEY>(hvBegin, r);
+        } else {
+            return ChunkGdnBwdIntraLeaderR(hvBegin, r, headRatio_);
+        }
+    }
+
+    int64_t headRatio_ = 1;
+
     // 编译期布局常量放在函数前，保证函数签名和函数体都可直接使用。
     static constexpr uint32_t INTRA_A_UB_BASE = 32 * 1024;
     static constexpr uint32_t INTRA_WORKSPACE_UB_BASE = 48 * 1024;
@@ -358,7 +382,7 @@ private:
                 PrefetchStage1Input(meta, r + 1);
             }
             const int64_t leader =
-                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r);
+                LeaderR(meta.hvBegin, r);
             if (r == leader) {
                 // AIC 只为每个唯一 hk 发布一次 Score；同一 hk 的后续 hv 直接复用该槽。
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
@@ -376,7 +400,7 @@ private:
             vdoSlotUsed[vdoSlot] = true;
             RunStage1(meta, r, leader, pairInputs);
             const bool lastConsumer = r + 1 == meta.validHeads ||
-                (meta.hvBegin + r) / G != (meta.hvBegin + r + 1) / G;
+                HeadIndex(meta.hvBegin + r) != HeadIndex(meta.hvBegin + r + 1);
             if (lastConsumer) {
                 // 当前 hk 的最后一个 hv 已读完 Score，向 AIC 归还本 AIV 的半片槽。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(

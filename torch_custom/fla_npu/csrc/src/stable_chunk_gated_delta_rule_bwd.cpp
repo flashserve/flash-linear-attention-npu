@@ -96,8 +96,8 @@ run_npu_chunk_gated_delta_rule_bwd(
                              meta_of(*initial_state));
   }
 
+  // Logical storage shape (this reference's `logical_tensor`).
   FLA_STABLE_EXEC(
-      // Logical storage shape (this reference's `logical_tensor`).
       "aclnnChunkGatedDeltaRuleBwd", q_meta, stream, logical_tensor(q_meta),
       logical_tensor(meta_of(k)), logical_tensor(v_meta),
       logical_tensor(meta_of(g)), logical_tensor(meta_of(beta)),

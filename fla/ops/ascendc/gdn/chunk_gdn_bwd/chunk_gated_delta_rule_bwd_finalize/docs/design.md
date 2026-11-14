@@ -1,6 +1,38 @@
 # GDN backward finalize 全融合 Ascend C 算子设计
 
-方案设计规则版本：`V1`
+方案设计规则版本：`V2`（#810 增量沿用评审确认的完整 HV owner 映射）
+
+## A5 G>4 增量（#810）
+
+接口范围以 [api.md](api.md) 为准。下文旧分组/partial/S15 描述适用于 G≤4；
+A2/A3 保持第 6 节。新增路径仅改变调度和 S14 后归约，不改变 S0～S14 数学边界。
+
+- 逻辑任务 (chunk,hk)，N=Nc×HK，C=min(availableAic,N)，grid-stride 领取。
+  每任务 ceil(G/4) 个窗口；hvBase=hk×G+4w，taskCount=min(4,G−4w)。
+  r%2 选择 AIV，r/2 选择本轮槽；每个 Cube stage 连续处理本轮所有 r。
+- bank 每个有效物理窗口切换，跨 HK 连续；S14 每轮重新载入 q 槽0，
+  同 AIV 的第二个 HV 复用。Q/K 使用真实 int64_t G。
+- 原七区 R=C×8×64×128×2 字节保留。WS0=U+7R，
+  WS1=WS0+C×65536；各 AIV/core 各有 dq、dk 两份 FP32 [64,128]。
+  用户 workspace=7R+2C×65536；G≤4 仍为7R，无公开 ABI 变化。
+- 每任务由 AIV0 普通写零四份矩阵；两 AIV 用 mode-1 ID 8～10 汇合。
+  phase 每次汇合模3递增，不按 G 或 HK 重置。每窗口 S14 后再次汇合，
+  随后按原 mode-2 归还 AIC 的组末 token。
+- S14 BF16 dq_hv/dk_raw 扩为 FP32 后分别 atomic 到本 AIV 区，立即
+  Set/Wait MTE3_V，确保每笔 atomic 完成才复用 scratch 和发下一笔。
+  dg 按原 dtype 普通写出。没有同地址多写入者。
+- scratch=UB[176,208) KiB，仅 S12 的 MTE3 完成后使用；
+  mergeAcc=[0,32)，dqFinal=[64,80)，dkFinal=[112,128)。
+  末轮 AIV0 先合并 dq 再 dk，固定 FP32(WS0+WS1) 后一次 BF16 舍入。
+  可选 norm 在独立 V_MTE2 Wait/Set 内重新载入 q/k/rstd。
+- 原 stateVToMte2 两份整组周期保持；stage12Mte3ToMte2 只归还本轮活跃槽。
+  AIV1 无 head 的尾窗仍参加握手。最终输出有 MTE3_V 完成等待，才允许新任务清零。
+  原 L1/L0 轮转及全部物理地址不变。
+
+典型任务：B=1,HK=16,HV=128,T=11264 时 N=2816、物理窗=5632；
+变长16×1024时 N=4096、物理窗=8192。C=28 时用户 workspace=28 MiB，
+其中显式新增3.5 MiB；此数不是父链峰值增量实测值。性能以父链完整调用
+t_FLAU≤1.25×t_FLA 为目标，子算子独立耗时用于定位。
 
 ## 1. 目标
 

@@ -1340,6 +1340,49 @@ __simd_vf__ inline void Stage15AccumulateVF(
     }
 }
 
+// G>4 uses these temporary views only after all S12 MTE3 sources are released.
+__simd_vf__ inline void ZeroGvaScratchVF(__ubuf__ float *scratch)
+{
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> zero;
+    Duplicate(zero, 0.0f, mask);
+    for (uint16_t i = 0; i < 128; ++i) {
+        StoreAlign(scratch + static_cast<uint32_t>(i) * 64, zero, mask);
+    }
+}
+
+template <typename DT>
+__simd_vf__ inline void CastBf16ToFp32VF(
+    __ubuf__ float *dst, __ubuf__ DT *src, uint16_t validRows)
+{
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<DT> input;
+    RegTensor<float> value;
+    for (uint16_t i = 0; i < validRows * 2; ++i) {
+        const uint32_t offset = static_cast<uint32_t>(i) * 64;
+        DataCopy<DT, LoadDist::DIST_UNPACK_B16>(input, src + offset);
+        Cast<float, DT, B16_TO_FP32>(value, input, mask);
+        StoreAlign(dst + offset, value, mask);
+    }
+}
+
+template <typename DT>
+__simd_vf__ inline void MergeFp32ToBf16VF(
+    __ubuf__ DT *dst, __ubuf__ float *a, __ubuf__ float *b, uint16_t validRows)
+{
+    MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> lhs, rhs;
+    RegTensor<DT> result;
+    for (uint16_t i = 0; i < validRows * 2; ++i) {
+        const uint32_t offset = static_cast<uint32_t>(i) * 64;
+        DataCopy(lhs, a + offset);
+        DataCopy(rhs, b + offset);
+        Add(lhs, lhs, rhs, mask);
+        Cast<DT, float, FP32_TO_B16_PACK>(result, lhs, mask);
+        StoreAlign<DT, StoreDist::DIST_PACK_B32>(dst + offset, result, mask);
+    }
+}
+
 // Stage 15 对一个完整 HK accumulator 执行 Q/K norm backward。
 template <typename DT>
 __simd_vf__ inline void Stage15NormVF(
@@ -1616,12 +1659,31 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
 
+    __aicore__ inline void SetGvaAccumulators(GM_ADDR ws0, GM_ADDR ws1)
+    {
+        gvaAcc_[0].SetGlobalBuffer(reinterpret_cast<__gm__ float *>(ws0 + coreIdx_ * GVA_ACC_CORE_BYTES));
+        gvaAcc_[1].SetGlobalBuffer(reinterpret_cast<__gm__ float *>(ws1 + coreIdx_ * GVA_ACC_CORE_BYTES));
+        scratch_ = ubBuf_.GetWithOffset<float>(VECTOR_ELEMS, STAGE15_DK_PARTIAL_OFFSET);
+        mergeAcc_ = ubBuf_.GetWithOffset<float>(VECTOR_ELEMS, STAGE15_DQ_ACC_OFFSET);
+    }
+
     __aicore__ inline void Process()
+    {
+        if (tiling_->headRatio > 4) {
+            ProcessImpl<true>();
+        } else {
+            ProcessImpl<false>();
+        }
+    }
+
+    template <bool GVA_GT4>
+    __aicore__ inline void ProcessImpl()
     {
         int64_t taskIdx = 0;
         int64_t chunkTaskIdx = 0;
         int64_t headGroupIdx = 0;
         int64_t taskRound = 0;
+        int64_t windowBank = 0;
         int64_t hvBase = 0;
         int64_t taskCount = 0;
         int64_t headOffset = 0;
@@ -1686,10 +1748,22 @@ public:
                 static_cast<uint32_t>((K_SIZE_128 - chunk.chunkLen) * sizeof(DT)), 0};
             scalarCopyParams = {
                 1, static_cast<uint32_t>(chunk.chunkLen * sizeof(float)), 0, 0, 0};
-            hvBase = headGroupIdx * tiling_->taskGroupSize;
-            taskCount = Min(tiling_->taskGroupSize, tiling_->HV - hvBase);
-            taskRound = (taskIdx - coreIdx_) / coreNum_;
-            workspaceGroupRound = taskRound;
+            if constexpr (GVA_GT4) {
+                InitializeGvaAccumulators();
+            }
+            const int64_t windowCount = GVA_GT4 ?
+                tiling_->headRatio / 4 + (tiling_->headRatio % 4 != 0) : 1;
+            for (int64_t window = 0; window < windowCount; ++window) {
+                if constexpr (GVA_GT4) {
+                    hvBase = headGroupIdx * tiling_->headRatio + window * 4;
+                    taskCount = Min(int64_t(4), tiling_->headRatio - window * 4);
+                    workspaceGroupRound = windowBank;
+                } else {
+                    hvBase = headGroupIdx * tiling_->taskGroupSize;
+                    taskCount = Min(tiling_->taskGroupSize, tiling_->HV - hvBase);
+                    taskRound = (taskIdx - coreIdx_) / coreNum_;
+                    workspaceGroupRound = taskRound;
+                }
 
                 // 唯一 streamSlot 在本 AIV 承包的 HV 之间轮转。
                 // 每轮只搬入并计算当前 owner HV。
@@ -2054,7 +2128,7 @@ public:
                     // G=3/4 时同一 AIV 会处理同一 HK 的两个 HV，第二个 HV
                     // 直接复用本 AIV 在 slot0 中已经驻留的 q，不重复读 GM。
                     qSlot = tiling_->headRatio >= 3 ? 0U : streamSlot_;
-                    if (tiling_->headRatio < 3 || localHv < AIV_COUNT_2) {
+                    if (tiling_->headRatio < 3 || (GVA_GT4 ? headOffset : localHv) < AIV_COUNT_2) {
                         AscendC::DataCopy(
                             qStage14_[qSlot], qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
                         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[qSlot]);
@@ -2073,14 +2147,19 @@ public:
                         static_cast<uint16_t>(chunk.chunkLen));
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[streamSlot_]);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[streamSlot_]);
-                    workspaceVectorOffset = GetWorkspaceHeadOffset(
-                        coreIdx_, workspaceGroupRound, headOffset);
-                    AscendC::DataCopyPad(
-                        dqStage12OutGm_[workspaceVectorOffset],
-                        dqIntraStage13_[streamSlot_], vectorCopyParams);
-                    AscendC::DataCopyPad(
-                        a2OutGm_[workspaceVectorOffset],
-                        dk0Stage13_[streamSlot_], vectorCopyParams);
+                    if constexpr (GVA_GT4) {
+                        AccumulateGva(dqIntraStage13_[streamSlot_], 0, chunk.chunkLen);
+                        AccumulateGva(dk0Stage13_[streamSlot_], VECTOR_ELEMS, chunk.chunkLen);
+                    } else {
+                        workspaceVectorOffset = GetWorkspaceHeadOffset(
+                            coreIdx_, workspaceGroupRound, headOffset);
+                        AscendC::DataCopyPad(
+                            dqStage12OutGm_[workspaceVectorOffset],
+                            dqIntraStage13_[streamSlot_], vectorCopyParams);
+                        AscendC::DataCopyPad(
+                            a2OutGm_[workspaceVectorOffset],
+                            dk0Stage13_[streamSlot_], vectorCopyParams);
+                    }
                     AscendC::DataCopyPad(
                         dgOutGm_[gOffset],
                         decay_[streamSlot_].template ReinterpretCast<GT>(),
@@ -2098,101 +2177,111 @@ public:
                 // 等待同一 AI Core 内两个 AIV 的全部 W14 MTE3 完成，Stage 15
                 // 才能读取由另一 AIV 生产的 HV partial。三个普通 EventID 按组
                 // 轮转，避免大 HV case 在同一 ID 上超过普通计数上限。
-                stage14To15Flag = static_cast<uint16_t>(8 + taskRound % 3);
-                AscendC::CrossCoreSetFlag<0x1, PIPE_MTE3>(stage14To15Flag);
-                AscendC::CrossCoreWaitFlag(stage14To15Flag);
+                if constexpr (GVA_GT4) {
+                    JoinAIVsAfterMTE3();
+                } else {
+                    stage14To15Flag = static_cast<uint16_t>(8 + taskRound % 3);
+                    AscendC::CrossCoreSetFlag<0x1, PIPE_MTE3>(stage14To15Flag);
+                    AscendC::CrossCoreWaitFlag(stage14To15Flag);
+                }
                 // 两个 AIV 的 S14 已完成对 S13 Fixpipe 目标的末次消费。
                 // S15 使用与这三份目标不重叠的 UB，在此立即释放 AIC。
                 Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[0]);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[1]);
 
-                // G=1/2 时两个 AIV 各承包 task group 中连续两个 HV；G=3/4
-                // 仅 AIV0 承包全部 HV。这里的分工只用于 Stage 15，不改变
-                // Stage 0--14 的交错 owner 规则。
-                if (tiling_->headRatio <= 2) {
-                    stage15Begin = subBlockIdx_ * AIV_COUNT_2;
-                    stage15End = Min(stage15Begin + AIV_COUNT_2, taskCount);
+                if constexpr (GVA_GT4) {
+                    if (window + 1 == windowCount && subBlockIdx_ == 0) {
+                        MergeGvaAccumulators(chunk, headGroupIdx);
+                    }
                 } else {
-                    stage15Begin = 0;
-                    stage15End = subBlockIdx_ == 0 ? taskCount : 0;
-                }
-                stage15OutputCount = 0;
-                stage15AccId = 0;
-                stage15FirstHead = stage15Begin;
-                for (stage15Head = stage15Begin; stage15Head < stage15End; ++stage15Head) {
-                    stage15AccId = (stage15Head - stage15Begin) / tiling_->headRatio;
-                    hv = hvBase + stage15Head;
-                    gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T +
-                        chunk.tokenStart;
-                    workspaceVectorOffset = GetWorkspaceHeadOffset(
-                        coreIdx_, workspaceGroupRound, stage15Head);
-                    if ((stage15Head - stage15Begin) % tiling_->headRatio == 0) {
-                        AscendC::DataCopy(
-                            dqAcc_[stage15AccId], dqStage12OutGm_[workspaceVectorOffset],
-                            chunk.chunkLen * K_SIZE_128);
-                        AscendC::DataCopy(
-                            dkAcc_[stage15AccId], a2OutGm_[workspaceVectorOffset],
-                            chunk.chunkLen * K_SIZE_128);
-                        stage15OutputCount = stage15AccId + 1;
+                    // G=1/2 时两个 AIV 各承包 task group 中连续两个 HV；G=3/4
+                    // 仅 AIV0 承包全部 HV。这里的分工只用于 Stage 15，不改变
+                    // Stage 0--14 的交错 owner 规则。
+                    if (tiling_->headRatio <= 2) {
+                        stage15Begin = subBlockIdx_ * AIV_COUNT_2;
+                        stage15End = Min(stage15Begin + AIV_COUNT_2, taskCount);
                     } else {
+                        stage15Begin = 0;
+                        stage15End = subBlockIdx_ == 0 ? taskCount : 0;
+                    }
+                    stage15OutputCount = 0;
+                    stage15AccId = 0;
+                    stage15FirstHead = stage15Begin;
+                    for (stage15Head = stage15Begin; stage15Head < stage15End; ++stage15Head) {
+                        stage15AccId = (stage15Head - stage15Begin) / tiling_->headRatio;
+                        hv = hvBase + stage15Head;
+                        gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T +
+                            chunk.tokenStart;
+                        workspaceVectorOffset = GetWorkspaceHeadOffset(
+                            coreIdx_, workspaceGroupRound, stage15Head);
+                        if ((stage15Head - stage15Begin) % tiling_->headRatio == 0) {
+                            AscendC::DataCopy(
+                                dqAcc_[stage15AccId], dqStage12OutGm_[workspaceVectorOffset],
+                                chunk.chunkLen * K_SIZE_128);
+                            AscendC::DataCopy(
+                                dkAcc_[stage15AccId], a2OutGm_[workspaceVectorOffset],
+                                chunk.chunkLen * K_SIZE_128);
+                            stage15OutputCount = stage15AccId + 1;
+                        } else {
+                            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+                            AscendC::DataCopy(
+                                dqPartialInput_, dqStage12OutGm_[workspaceVectorOffset],
+                                chunk.chunkLen * K_SIZE_128);
+                            AscendC::DataCopy(
+                                dkPartialInput_, a2OutGm_[workspaceVectorOffset],
+                                chunk.chunkLen * K_SIZE_128);
+                            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+                            Stage15AccumulateVF<DT>(
+                                reinterpret_cast<__ubuf__ DT *>(dqAcc_[stage15AccId].GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(dkAcc_[stage15AccId].GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(dqPartialInput_.GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(dkPartialInput_.GetPhyAddr()),
+                                static_cast<uint16_t>(chunk.chunkLen));
+                            // 当前 VF 已完成对共享 partial 输入槽的读取，下一份
+                            // MTE2 覆盖该槽之前必须等待这条反向事件。
+                            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+                        }
+                    }
+
+                    // 每个活跃 AIV 按 accumulator 顺序写自己承包的最终 HK。
+                    for (stage15Output = 0; stage15Output < stage15OutputCount; ++stage15Output) {
+                        stage15FirstHead = stage15Begin + stage15Output * tiling_->headRatio;
+                        stage15Hk = (hvBase + stage15FirstHead) / tiling_->headRatio;
+                        qOffset = ((chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T +
+                            chunk.tokenStart) * tiling_->K;
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
-                        AscendC::DataCopy(
-                            dqPartialInput_, dqStage12OutGm_[workspaceVectorOffset],
-                            chunk.chunkLen * K_SIZE_128);
-                        AscendC::DataCopy(
-                            dkPartialInput_, a2OutGm_[workspaceVectorOffset],
-                            chunk.chunkLen * K_SIZE_128);
+                        if constexpr (USE_QK_L2NORM) {
+                            AscendC::DataCopy(
+                                qStage15_, qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                            AscendC::DataCopy(
+                                kStage15_, kGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+                            AscendC::DataCopyPad(qRstdStage15_,
+                                qRstdGm_[qOffset / K_SIZE_128], scalarCopyParams,
+                                {false, 0, 0, 0});
+                            AscendC::DataCopyPad(kRstdStage15_,
+                                kRstdGm_[qOffset / K_SIZE_128], scalarCopyParams,
+                                {false, 0, 0, 0});
+                        }
                         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
                         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-                        Stage15AccumulateVF<DT>(
-                            reinterpret_cast<__ubuf__ DT *>(dqAcc_[stage15AccId].GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ DT *>(dkAcc_[stage15AccId].GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ DT *>(dqPartialInput_.GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ DT *>(dkPartialInput_.GetPhyAddr()),
-                            static_cast<uint16_t>(chunk.chunkLen));
-                        // 当前 VF 已完成对共享 partial 输入槽的读取，下一份
-                        // MTE2 覆盖该槽之前必须等待这条反向事件。
+                        if constexpr (USE_QK_L2NORM) {
+                            Stage15NormVF<DT>(
+                                reinterpret_cast<__ubuf__ DT *>(dqAcc_[stage15Output].GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(dkAcc_[stage15Output].GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(qStage15_.GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ DT *>(kStage15_.GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ float *>(qRstdStage15_.GetPhyAddr()),
+                                reinterpret_cast<__ubuf__ float *>(kRstdStage15_.GetPhyAddr()),
+                                static_cast<uint16_t>(chunk.chunkLen));
+                        }
                         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+                        AscendC::DataCopyPad(dqOutGm_[qOffset], dqAcc_[stage15Output], vectorCopyParams);
+                        AscendC::DataCopyPad(dkOutGm_[qOffset], dkAcc_[stage15Output], vectorCopyParams);
                     }
-                }
-
-                // 每个活跃 AIV 按 accumulator 顺序写自己承包的最终 HK。
-                for (stage15Output = 0; stage15Output < stage15OutputCount; ++stage15Output) {
-                    stage15FirstHead = stage15Begin + stage15Output * tiling_->headRatio;
-                    stage15Hk = (hvBase + stage15FirstHead) / tiling_->headRatio;
-                    qOffset = ((chunk.bIdx * tiling_->HK + stage15Hk) * tiling_->T +
-                        chunk.tokenStart) * tiling_->K;
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
-                    if constexpr (USE_QK_L2NORM) {
-                        AscendC::DataCopy(
-                            qStage15_, qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
-                        AscendC::DataCopy(
-                            kStage15_, kGm_[qOffset], chunk.chunkLen * K_SIZE_128);
-                        AscendC::DataCopyPad(qRstdStage15_,
-                            qRstdGm_[qOffset / K_SIZE_128], scalarCopyParams,
-                            {false, 0, 0, 0});
-                        AscendC::DataCopyPad(kRstdStage15_,
-                            kRstdGm_[qOffset / K_SIZE_128], scalarCopyParams,
-                            {false, 0, 0, 0});
-                    }
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-                    if constexpr (USE_QK_L2NORM) {
-                        Stage15NormVF<DT>(
-                            reinterpret_cast<__ubuf__ DT *>(dqAcc_[stage15Output].GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ DT *>(dkAcc_[stage15Output].GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ DT *>(qStage15_.GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ DT *>(kStage15_.GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ float *>(qRstdStage15_.GetPhyAddr()),
-                            reinterpret_cast<__ubuf__ float *>(kRstdStage15_.GetPhyAddr()),
-                            static_cast<uint16_t>(chunk.chunkLen));
-                    }
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
-                    AscendC::DataCopyPad(dqOutGm_[qOffset], dqAcc_[stage15Output], vectorCopyParams);
-                    AscendC::DataCopyPad(dkOutGm_[qOffset], dkAcc_[stage15Output], vectorCopyParams);
                 }
                 // 所有 Stage 14/15 MTE3 已发射，下一任务组 Stage 0 才能
                 // 覆盖 Stage 12/13/14 共用的两份大 UB slot。
@@ -2211,6 +2300,8 @@ public:
                 // 本 AIV 完成本组全部 Stage 4 后自然进入下一组 Stage 0。
                 // 下一组 AIC Stage 1 仍逐 HEAD等待 Vector->Cube 有序链，
                 // 因此无需额外发送任务组边界 flag。
+                windowBank ^= 1;
+            }
         }
         // 事件在 kernel 退出前按 slot 闭环并释放，不留单独的小函数。
         uint32_t eventIndex = 0;
@@ -2232,6 +2323,103 @@ public:
     }
 
 private:
+    __aicore__ inline void JoinAIVsAfterMTE3()
+    {
+        const uint16_t flag = static_cast<uint16_t>(8 + joinPhase_);
+        AscendC::CrossCoreSetFlag<0x1, PIPE_MTE3>(flag);
+        AscendC::CrossCoreWaitFlag(flag);
+        joinPhase_ = (joinPhase_ + 1) % 3;
+    }
+
+    __aicore__ inline void InitializeGvaAccumulators()
+    {
+        if (subBlockIdx_ == 0) {
+            ZeroGvaScratchVF(reinterpret_cast<__ubuf__ float *>(scratch_.GetPhyAddr()));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+            AscendC::DisableDmaAtomic();
+            for (uint32_t aiv = 0; aiv < AIV_COUNT_2; ++aiv) {
+                AscendC::DataCopy(gvaAcc_[aiv], scratch_, VECTOR_ELEMS);
+                AscendC::DataCopy(gvaAcc_[aiv][VECTOR_ELEMS], scratch_, VECTOR_ELEMS);
+            }
+        }
+        // Both AIVs see all four initial matrices before publishing S0 ready.
+        JoinAIVsAfterMTE3();
+    }
+
+    __aicore__ inline void AccumulateGva(
+        const AscendC::LocalTensor<DT> &partial, uint32_t offset, int64_t rows)
+    {
+        CastBf16ToFp32VF<DT>(
+            reinterpret_cast<__ubuf__ float *>(scratch_.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ DT *>(partial.GetPhyAddr()), static_cast<uint16_t>(rows));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+        AscendC::SetAtomicAdd<float>();
+        AscendC::DataCopy(gvaAcc_[subBlockIdx_][offset], scratch_, rows * K_SIZE_128);
+        AscendC::DisableDmaAtomic();
+        // Complete each update before the next cast or atomic: this fixes both
+        // the FP32 addition order and the lifetime of the single scratch source.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
+    }
+
+    __aicore__ inline void MergeGvaGradient(
+        const AscendC::LocalTensor<DT> &output, uint32_t offset, int64_t rows)
+    {
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+        AscendC::DataCopy(mergeAcc_, gvaAcc_[0][offset], rows * K_SIZE_128);
+        AscendC::DataCopy(scratch_, gvaAcc_[1][offset], rows * K_SIZE_128);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+        MergeFp32ToBf16VF<DT>(
+            reinterpret_cast<__ubuf__ DT *>(output.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(mergeAcc_.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(scratch_.GetPhyAddr()),
+            static_cast<uint16_t>(rows));
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+    }
+
+    __aicore__ inline void MergeGvaAccumulators(const ChunkInfo &chunk, int64_t hk)
+    {
+        // dq must survive the subsequent FP32 dk read into UB[0,32).
+        auto dqFinal = dqPartialInput_;
+        auto dkFinal = dkAcc_[0];
+        MergeGvaGradient(dqFinal, 0, chunk.chunkLen);
+        MergeGvaGradient(dkFinal, VECTOR_ELEMS, chunk.chunkLen);
+        const int64_t qOffset =
+            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
+        if constexpr (USE_QK_L2NORM) {
+            // q overlaps the high half of scratch; wait for both merge VFs.
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+            AscendC::DataCopy(qStage15_, qGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+            AscendC::DataCopy(kStage15_, kGm_[qOffset], chunk.chunkLen * K_SIZE_128);
+            AscendC::DataCopyExtParams scalarParams = {
+                1, static_cast<uint32_t>(chunk.chunkLen * sizeof(float)), 0, 0, 0};
+            AscendC::DataCopyPad(qRstdStage15_, qRstdGm_[qOffset / K_SIZE_128],
+                                scalarParams, {false, 0, 0, 0});
+            AscendC::DataCopyPad(kRstdStage15_, kRstdGm_[qOffset / K_SIZE_128],
+                                scalarParams, {false, 0, 0, 0});
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
+            Stage15NormVF<DT>(
+                reinterpret_cast<__ubuf__ DT *>(dqFinal.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ DT *>(dkFinal.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ DT *>(qStage15_.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ DT *>(kStage15_.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(qRstdStage15_.GetPhyAddr()),
+                reinterpret_cast<__ubuf__ float *>(kRstdStage15_.GetPhyAddr()),
+                static_cast<uint16_t>(chunk.chunkLen));
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
+        AscendC::DataCopy(dqOutGm_[qOffset], dqFinal, chunk.chunkLen * K_SIZE_128);
+        AscendC::DataCopy(dkOutGm_[qOffset], dkFinal, chunk.chunkLen * K_SIZE_128);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
+    }
+
     static constexpr uint32_t VECTOR_ELEMS = CHUNK_SIZE_64 * K_SIZE_128;
     static constexpr uint32_t MATRIX_ELEMS = CHUNK_SIZE_64 * CHUNK_SIZE_64;
     static constexpr uint32_t STATE_ELEMS = K_SIZE_128 * V_SIZE_128;
@@ -2323,6 +2511,19 @@ private:
     static_assert(BG_OFFSET + 2 * SMALL_PAIR_SLOT_BYTES == UB_TOTAL_BYTES,
                   "Stage 0 small resident must end at UB 248 KiB.");
     static_assert(UB_TOTAL_BYTES == 248 * 1024, "Stage 0 UB layout must use exactly 248 KiB.");
+
+    static_assert(VECTOR_ELEMS * sizeof(float) == 32 * 1024, "FP32 view must occupy 32 KiB.");
+    static_assert(STAGE15_DK_PARTIAL_OFFSET + VECTOR_ELEMS * sizeof(float) == DKBG0_OFFSET,
+                  "Scratch must end before the live S14 dk_prepare slots.");
+    static_assert(STAGE15_DQ_ACC_OFFSET + VECTOR_ELEMS * sizeof(float) <= STAGE15_DQ_PARTIAL_OFFSET &&
+                  STAGE15_DQ_PARTIAL_OFFSET + VECTOR_BYTES <= STAGE15_DK_ACC_OFFSET &&
+                  STAGE15_DK_ACC_OFFSET + VECTOR_BYTES <= STAGE15_DK_PARTIAL_OFFSET &&
+                  STAGE15_DK_PARTIAL_OFFSET + VECTOR_ELEMS * sizeof(float) <= UB_TOTAL_BYTES,
+                  "Merge inputs, final gradients and scratch must not overlap.");
+    AscendC::GlobalTensor<float> gvaAcc_[AIV_COUNT_2];
+    AscendC::LocalTensor<float> scratch_;
+    AscendC::LocalTensor<float> mergeAcc_;
+    uint32_t joinPhase_ = 0;
 
     const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling_ = nullptr;
     AscendC::TPipe *pipe_ = nullptr;
