@@ -81,7 +81,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_bwd_finalize -scope=ge
 
 ## A2/A3 新增回归（原 A5 路径保留）
 
-上方 200/64/8 条为原 A5 资产，ID、seed、payload 和原 CPU 标杆未改动。
+上方 200/64/8 条为原 A5 资产，ID、seed 和 payload 未改动；A5 CPU 标杆更新了 Stage 13/14 门控点积的 FP32 精度边界。
 原三个 JSON 保持原始文件内容；`formal_payloads` 与默认 `Generator` 只生成这些 A5 用例，
 旧 `run_test_cpu.sh` 的 accuracy/MSS/DC 入口仍读取原文件，不会混入 arch22 矩阵。
 新增 `executor_chunk_gated_delta_rule_bwd_finalize_arch22` 独立注册，使用真实公开输入与属性，
@@ -111,7 +111,7 @@ ATK 在 `before_call` 过滤该通道之前，先调用 executor 的 `init_by_in
 
 ### CPU 两路与输入边界
 
-原 A5 CPU 函数和调用路径保持原样。A2/A3 的 `scripts/arch22_cpu.py` 只依赖 NumPy，
+A5 CPU 函数保留原调用路径，仅门控点积改用 FP32 partial。A2/A3 的 `scripts/arch22_cpu.py` 只依赖 NumPy，
 抽取已验证外部标杆的纯函数，原件 SHA256 为
 `891b42da51150735eb4306ebfd6b573d8fa58f21950a8febab33a5cc1386a340`；不导入其 ATK
 执行器或 fixture 脚手架。调整仅为公开 `scale` 入参、合法零长度序列和公开状态 bank
