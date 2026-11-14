@@ -275,7 +275,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     for (size_t index = 0; index <= FINALIZE_INPUT_H; ++index) {
         const auto *desc = context->GetInputDesc(index);
         if (desc == nullptr || desc->GetDataType() != ge::DT_BF16) {
-            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(index), "qg_scaled/Aqk/v_new/h 均必须为 BF16，错误输入编号=%zu。");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", std::to_string(index), "qg_scaled/Aqk/v_new/h 均必须为 BF16");
 
             return ge::GRAPH_FAILED;
         }

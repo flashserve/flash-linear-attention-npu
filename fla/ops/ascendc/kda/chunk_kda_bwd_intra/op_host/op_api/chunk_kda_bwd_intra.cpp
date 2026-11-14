@@ -123,8 +123,7 @@ const std::array<const aclTensor *, 4> ChunkKdaBwdIntra(
         OP_OUTPUT(dqOut, dkOut, dbOut, dgOut),
         OP_ATTR(chunkSize, safeGate, layoutMode, totalChunks));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdIntra failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdIntra failed.");
         return {nullptr, nullptr, nullptr, nullptr};
     }
     return {dqOut, dkOut, dbOut, dgOut};

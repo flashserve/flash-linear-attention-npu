@@ -63,7 +63,7 @@ const aclTensor *ChunkLocalCumsum(
         OP_OUTPUT(out),
         OP_ATTR(chunkSize, reverse, scaleFloat, headFirst, outputDtypeStr));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     return out;

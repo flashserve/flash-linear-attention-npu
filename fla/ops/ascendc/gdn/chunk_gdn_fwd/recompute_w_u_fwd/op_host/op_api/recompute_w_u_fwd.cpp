@@ -58,7 +58,7 @@ const std::array<const aclTensor *, 2> RecomputeWUFwd(
         OP_OUTPUT(wOut, uOut),
         OP_ATTR(chunkSize));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr};
     }
     return {wOut, uOut};

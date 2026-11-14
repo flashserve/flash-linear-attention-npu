@@ -53,7 +53,7 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
         OP_OUTPUT(wOut, uOut, dvLocalOut),
         OP_ATTR(scale, chunkSize, useExp2));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGdnBwdIntra failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGdnBwdIntra failed.");
         return {nullptr, nullptr, nullptr};
     }
     return {wOut, uOut, dvLocalOut};

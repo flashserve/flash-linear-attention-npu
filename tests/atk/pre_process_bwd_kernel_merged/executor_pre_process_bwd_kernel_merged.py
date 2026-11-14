@@ -118,8 +118,8 @@ def _validate_outputs(outputs, spec: dict, tensors: dict) -> None:
 
 
 _ACLNN_CODES = {
-    "ACLNN_ERR_PARAM_INVALID": 161001,
-    "ACLNN_ERR_PARAM_NULLPTR": 161002,
+    "ACLNN_ERR_PARAM_NULLPTR": 161001,
+    "ACLNN_ERR_PARAM_INVALID": 161002,
 }
 
 
@@ -134,7 +134,7 @@ def _negative_expected_code(spec: dict):
             raise RuntimeError(f"{OP_NAME}: unknown expected_return_code {text!r}")
         return _ACLNN_CODES[text]
     # 期望码缺失时用 case_key 兜底识别反向用例（本算子的反向用例统一以 neg_ 命名，
-    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161001）；避免依赖 ATK 传递哪些字段。
+    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161002）；避免依赖 ATK 传递哪些字段。
     if "neg_" in str(spec.get("case_key", "")):
         return _ACLNN_CODES["ACLNN_ERR_PARAM_INVALID"]
     return None
@@ -191,7 +191,8 @@ def run_npu(spec: dict, input_data: InputDataset):
         try:
             _call_op(tensors, spec, npu=True)
         except Exception as exc:  # aclnn 抛 RuntimeError，取其中的 aclnnStatus
-            match = re.search(r"aclnnStatus=(\d+)", str(exc))
+            # stable 包装层是 "... failed: <code>"，raw probe 是 "aclnnStatus=<code>"，两种都认。
+            match = re.search(r"(?:aclnnStatus=|failed:\s*)(\d+)", str(exc))
             got = int(match.group(1)) if match else None
             if got != want:
                 raise RuntimeError(

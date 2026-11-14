@@ -655,7 +655,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     }
     if (useGateInKernel && (rawGOptional == nullptr || aLogOptional == nullptr || dAOutOptional == nullptr)) {
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g,a_log,dA");
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!useGateInKernel &&
         (rawGOptional != nullptr || aLogOptional != nullptr || dtBiasOptional != nullptr ||

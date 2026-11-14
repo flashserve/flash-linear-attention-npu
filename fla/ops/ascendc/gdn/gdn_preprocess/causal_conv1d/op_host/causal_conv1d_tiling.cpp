@@ -35,7 +35,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     CausalConv1dTilingData *tiling = context->GetTilingData<CausalConv1dTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     if (memset_s(tiling, sizeof(CausalConv1dTilingData), 0, sizeof(CausalConv1dTilingData)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "set tiling data error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: memset_s on tiling data failed.", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -46,14 +46,15 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     }
     bool hasBias = false;
     if (GetShapeDtypeInfo(context, attrInfo, *tiling, hasBias) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "GetShapeDtypeInfo error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: GetShapeDtypeInfo failed.", __func__);
         return ge::GRAPH_FAILED;
     }
 
     const int64_t &dim = tiling->dim;
     const int64_t &batch = tiling->batch;
     if (dim <= 0 || batch <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", "invalid", "dim/batch must be positive");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim,batch",
+            std::to_string(dim) + "," + std::to_string(batch), "dim/batch must be positive");
         return ge::GRAPH_FAILED;
     }
 
@@ -81,7 +82,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
     }
 
     if (baseDimChoice.baseDim <= 0 || baseDimChoice.baseDimCnt <= 0 || baseDimChoice.gridSize <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "invalid dim tile size selection");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: invalid dim tile size selection.", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -92,7 +93,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
                         !fnHostPlan.tokenBlockChoice.enabled || fnHostPlan.tokenBlockChoice.tokenBlockSize <= 0 ||
                         fnHostPlan.tokenBlockChoice.tokenBlockCnt <= 0 || fnHostPlan.tokenBlockChoice.gridSize <= 0 ||
                         fnHostPlan.tokenCoreMapping.tokenCoreBudget <= 0 || fnHostPlan.tokenCoreMapping.blockDim <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "runMode=0 must resolve a valid unified token tiling plan");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: runMode=0 must resolve a valid unified token tiling plan.", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -161,7 +162,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
         const int64_t workspaceSize =
             ASCENDC_RESERVED_WORKSPACE_SIZE + syncWorkspaceSize + snapshotWorkspaceSize;
         if (SetWorkspaceSize(context, static_cast<size_t>(workspaceSize)) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "SetWorkspaceSize error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: SetWorkspaceSize failed.", __func__);
         return ge::GRAPH_FAILED;
     }
         if (context->SetScheduleMode(1) != ge::GRAPH_SUCCESS) {
@@ -171,7 +172,7 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
         tiling->hasInitStateWorkspace = 1;
     } else {
         if (SetWorkspaceSize(context, 0) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "SetWorkspaceSize error");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: SetWorkspaceSize failed.", __func__);
         return ge::GRAPH_FAILED;
     }
         tiling->hasInitStateWorkspace = 0;

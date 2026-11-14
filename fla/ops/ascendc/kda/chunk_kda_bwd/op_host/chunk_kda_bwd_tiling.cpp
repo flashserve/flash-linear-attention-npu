@@ -305,7 +305,6 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
                     context, aTiling, ubSize, blockDim,
                     tiling->kernelB, bUserWorkspace, *scale) !=
                     ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
 
