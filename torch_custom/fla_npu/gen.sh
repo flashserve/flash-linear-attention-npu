@@ -1,12 +1,38 @@
 #!/bin/bash
+set -e
 
 # the first parameter is the yaml file
 YAML_FILE="$1"
 DERIVATIVES_YAML_FILE="npu_custom_derivatives.yaml"
 
 CDIR="$(cd "$(dirname "$0")" ; pwd -P)"
+PY="${FLA_NPU_PYTHON:-${PYTHON:-python3}}"
 
-cd $CDIR
+run_torchnpugen() {
+    "$PY" -c '
+import runpy
+import sys
+from torchnpugen.api import cpp
+from torchnpugen.api.types import OptionalCType
+from torchnpugen.model import BaseTy, BaseType, OptionalType
+
+original_returntype_type = cpp.returntype_type
+
+def returntype_type(t, *, mutable, symint=False):
+    if isinstance(t, OptionalType) and isinstance(t.elem, BaseType) and t.elem.name == BaseTy.Tensor:
+        if mutable:
+            raise ValueError("Native functions should never return a mutable optional tensor.")
+        return OptionalCType(original_returntype_type(t.elem, mutable=False, symint=symint))
+    return original_returntype_type(t, mutable=mutable, symint=symint)
+
+cpp.returntype_type = returntype_type
+module = sys.argv.pop(1)
+sys.argv[0] = module
+runpy.run_module(module, run_name="__main__")
+' "$@"
+}
+
+cd "$CDIR"
 
 # check if the file exists
 if [ ! -f "$YAML_FILE" ]; then
@@ -15,7 +41,7 @@ if [ ! -f "$YAML_FILE" ]; then
 fi
 
 # get the torch version
-PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])")
+PYTORCH_VERSION=$("$PY" -c "import torch; print(torch.__version__.split('+')[0])")
 
 IFS='.' read -ra version_parts <<< "$PYTORCH_VERSION"
 PYTORCH_VERSION_DIR="v${version_parts[0]}r${version_parts[1]}"
@@ -46,26 +72,26 @@ if [ ! -d "$OPAPI_OUTPUT_DIR" ]; then
     mkdir -p "$OPAPI_OUTPUT_DIR"
 fi
 
-python3 -m torchnpugen.gen_op_plugin_functions \
+run_torchnpugen torchnpugen.gen_op_plugin_functions \
   --version="$PYTORCH_VERSION" \
   --output_dir="$OUTPUT_DIR/" \
   --source_yaml="$CDIR/$YAML_FILE"
 
 # check if the second parameter is passed
 if [ -n "$DERIVATIVES_YAML_FILE" ]; then
-    python3 -m torchnpugen.gen_derivatives \
+    run_torchnpugen torchnpugen.gen_derivatives \
       --version="$PYTORCH_VERSION" \
       --output_dir="$OUTPUT_DIR/" \
       --source_yaml="$CDIR/$DERIVATIVES_YAML_FILE"
 fi
 
-python3 -m torchnpugen.gen_op_backend  \
+run_torchnpugen torchnpugen.gen_op_backend  \
   --version="$PYTORCH_VERSION" \
   --output_dir="$CDIR/op_plugin/" \
   --source_yaml="$OUTPUT_DIR/op_plugin_functions.yaml" \
   --deprecate_yaml="$CDIR/deprecated.yaml"
 
-python3 -m torchnpugen.struct.gen_struct_opapi \
+run_torchnpugen torchnpugen.struct.gen_struct_opapi \
   --output_dir="$OPAPI_OUTPUT_DIR/" \
   --native_yaml="$OUTPUT_DIR/op_plugin_functions.yaml" \
   --struct_yaml="$CDIR/$YAML_FILE"
@@ -73,7 +99,7 @@ python3 -m torchnpugen.struct.gen_struct_opapi \
 
 #################### torch_npu torchnpugen ####################
 
-python3 -m torchnpugen.gen_backend_stubs  \
+run_torchnpugen torchnpugen.gen_backend_stubs  \
   --output_dir="$CDIR/torch_npu/csrc/aten" \
   --source_yaml="./test_native_functions.yaml" \
   --impl_path="$CDIR/torch_npu/csrc/aten" \
