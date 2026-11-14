@@ -21,6 +21,26 @@ namespace RecurrentKda {
 
 constexpr uint32_t RKDA_A5_WINDOW_TOKENS = 8;
 
+// A6（DAV_9201）静态 UB 引擎的布局常量，host tiling 与 kernel 共用。
+constexpr int64_t RKDA_A6_DIM = 128;
+constexpr int64_t RKDA_A6_TOKEN_TILE = 32;
+constexpr int64_t RKDA_A6_INPUT_BUFFERS = 2;
+constexpr int64_t RKDA_A6_PARAMETER_BUFFERS = 2;
+constexpr int64_t RKDA_A6_FP32_STATE_BANKS = 4;
+constexpr int64_t RKDA_A6_BF16_STATE_BANKS = 4;
+
+constexpr int64_t RkdaA6UbBytes(int64_t stateBanks, int64_t tokenTile, int64_t stateBytes)
+{
+    const int64_t bankBytes = RKDA_A6_DIM * RKDA_A6_DIM * stateBytes;
+    const int64_t slotBytes = 4 * tokenTile * RKDA_A6_DIM * 2 + // q/k/v/out bf16
+                              tokenTile * RKDA_A6_DIM * 4 +     // gate fp32
+                              tokenTile * 32;                   // beta 与标量
+    return stateBanks * bankBytes + RKDA_A6_INPUT_BUFFERS * slotBytes +
+           RKDA_A6_PARAMETER_BUFFERS * RKDA_A6_DIM * 4 +
+           RKDA_A6_DIM * 4 +  // prediction scratch
+           RKDA_A6_DIM * 4;   // V-first out 的 FP32 staging
+}
+
 // A5 static VF configuration, built once by host tiling. Runtime bank/slot
 // ownership remains in the kernel and is never encoded by the host.
 enum RecurrentKdaVfFlags : uint32_t {

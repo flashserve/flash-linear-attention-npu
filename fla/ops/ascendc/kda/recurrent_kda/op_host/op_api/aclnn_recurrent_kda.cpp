@@ -290,7 +290,7 @@ bool CheckCuSeqlensShape(const aclTensor *cuSeqlens, const char *opName)
     return true;
 }
 
-bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, bool isA5)
+bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, bool extendedContract)
 {
     if (!SameShape(params.query, params.key)) {
         ReportInvalid(params, "query/key/value/gate/beta", "npu_recurrent_kda: query and key must have identical shape.");
@@ -389,7 +389,7 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, boo
         ReportInvalid(params, "finalState", "npu_recurrent_kda: finalState shape must match initialStateRef.");
         return false;
     }
-    if (isA5) {
+    if (extendedContract) {
         // Reject invalid public State views before enqueueing a copy or reaching
         // tiling. A bad stride is a parameter error, not an internal L0 failure.
         const aclTensor *stateViews[] = {params.initialStateRef, params.finalState};
@@ -424,12 +424,13 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, boo
             return false;
         }
     }
-    if (isA5 && params.ssmStateIndicesOptional == nullptr && params.numAcceptedTokensOptional != nullptr) {
+    if (extendedContract && params.ssmStateIndicesOptional == nullptr &&
+        params.numAcceptedTokensOptional != nullptr) {
         ReportInvalid(params, "num_accepted_tokens",
                 "npu_recurrent_kda: num_accepted_tokens requires ssm_state_indices.");
         return false;
     }
-    if (isA5 && !params.inplaceFinalState && params.outputFinalState &&
+    if (extendedContract && !params.inplaceFinalState && params.outputFinalState &&
         SameTensorStorage(params.initialStateRef, params.finalState)) {
         ReportInvalid(params, "finalState",
                 "non-inplace output must use storage independent from initialStateRef");
@@ -463,7 +464,7 @@ bool CheckShape(const RecurrentKdaParams &params, RecurrentKdaLayout layout, boo
             return false;
         }
     }
-    if (params.safeGate && (isA5 ? !(params.lowerBound >= -5.0 && params.lowerBound < 0.0) :
+    if (params.safeGate && (extendedContract ? !(params.lowerBound >= -5.0 && params.lowerBound < 0.0) :
                                       (params.lowerBound < -5.0 || params.lowerBound >= 0.0))) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRecurrentKda", "lower_bound",
             std::to_string(params.lowerBound), "must be in [-5, 0) when safe_gate=True");
@@ -716,7 +717,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
         parsedLayout = RecurrentKdaLayout::TND;
     }
     const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
-    if (!CheckShape(params, parsedLayout, isA5)) return ACLNN_ERR_PARAM_INVALID;
+    const bool isA6 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201;
+    const bool extendedContract = isA5 || isA6;
+    if (!CheckShape(params, parsedLayout, extendedContract)) return ACLNN_ERR_PARAM_INVALID;
     bool querySupportsDirect = false, keySupportsDirect = false, valueSupportsDirect = false;
     if (!CheckQkvMaterializationSafety(params.query, parsedLayout, "query", querySupportsDirect) ||
         !CheckQkvMaterializationSafety(params.key, parsedLayout, "key", keySupportsDirect) ||
@@ -731,7 +734,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     const aclnnStatus preprocessStatus =
         PreProcess(params, queryNeedsContiguous, keyNeedsContiguous, valueNeedsContiguous, executorPtr);
     if (preprocessStatus != ACLNN_SUCCESS) {
-        return isA5 ? preprocessStatus : ACLNN_ERR_PARAM_INVALID;
+        return extendedContract ? preprocessStatus : ACLNN_ERR_PARAM_INVALID;
     }
     if (queryUsesDirectView) {
         if (CreateViewIfNonContiguous(params.query, executorPtr) != ACLNN_SUCCESS) {
@@ -792,7 +795,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     }
     if (params.inplaceFinalState && params.outputFinalState &&
         !SameTensorView(params.finalState, params.initialStateRef)) {
-        const bool copyFailed = isA5 ?
+        const bool copyFailed = extendedContract ?
             CopyStateView(result[1], finalStateForKernel, executorPtr) != ACLNN_SUCCESS :
             l0op::ViewCopy(result[1], params.finalState, executorPtr) == nullptr;
         if (copyFailed) {

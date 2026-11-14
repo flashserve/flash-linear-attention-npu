@@ -29,6 +29,15 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
     )
 endif()
 
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
+    add_ops_compile_options(
+        OP_NAME RecurrentKda
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-auto-sync=off
+                --cce-no-dcache-flush
+    )
+endif()
+
 if (BUILD_OPS_RTY_KERNEL) # 回黄kernel
     add_ops_compile_options(
         OP_NAME RecurrentKda
