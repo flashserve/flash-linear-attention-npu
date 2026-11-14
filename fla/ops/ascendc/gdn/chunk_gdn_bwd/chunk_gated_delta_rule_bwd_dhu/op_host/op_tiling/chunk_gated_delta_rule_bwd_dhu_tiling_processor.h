@@ -396,14 +396,6 @@ private:
         tiling_.HV = static_cast<int64_t>(dvShape.GetDim(DIM_1));
         tiling_.V = static_cast<int64_t>(dvShape.GetDim(DIM_3));
         tiling_.scale = static_cast<float>(ctx_.scale);
-        if (doTokenMajor_ && tiling_.V > 0 &&
-            tiling_.HV > std::numeric_limits<uint32_t>::max() / tiling_.V) {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                ctx_.nodeName, "HV,V",
-                std::to_string(tiling_.HV) + "," + std::to_string(tiling_.V),
-                "token-major row stride must fit in uint32_t (HV*V)");
-            return ge::GRAPH_FAILED;
-        }
 
         if (CompareDim(qShape, wShape, CGDR_BWD_DHU_INPUT_Q_NAME,
                        CGDR_BWD_DHU_INPUT_W_NAME, DIM_0) != ge::GRAPH_SUCCESS) {

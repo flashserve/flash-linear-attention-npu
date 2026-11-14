@@ -28,7 +28,6 @@
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
-#include "op_common/log/log.h"
 
 using namespace op;
 
@@ -37,7 +36,6 @@ extern "C" {
 #endif
 
 namespace {
-static constexpr const char *OP_NAME = "aclnnRecurrentGatedDeltaRule";
 constexpr size_t QUERY_DIM_NUM = 3;
 constexpr size_t KEY_DIM_NUM = 3;
 constexpr size_t VALUE_DIM_NUM = 3;
@@ -153,8 +151,8 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                               "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE(ACLNN_ERR_INNER_CREATE_EXECUTOR,
+                "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
 

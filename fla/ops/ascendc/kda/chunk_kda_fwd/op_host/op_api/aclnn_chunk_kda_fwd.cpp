@@ -5,6 +5,7 @@
  */
 
 #include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "aclnn_chunk_kda_fwd.h"
 #include "chunk_kda_fwd.h"
 #include "aclnn_chunk_kda_fwd_v2.h"
