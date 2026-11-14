@@ -67,7 +67,9 @@ void RecurrentKdaTiling::InitCompileInfo()
     compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
 
     if (compileInfo_.aivNum <= 0) {
-        OP_LOGE(context_->GetNodeName(), "aivNum <= 0");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+            "%s: platform reported no AIV core; UB bytes=%llu.", __func__,
+            static_cast<unsigned long long>(compileInfo_.ubSize));
         return;
     }
     tilingData_.vectorCoreNum = static_cast<uint32_t>(compileInfo_.aivNum);

@@ -33,7 +33,7 @@ inline ge::graphStatus GetPlatformInfo(gert::TilingContext *context, uint64_t &u
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
     coreNum = platformInfoPtr->GetCoreNum();
     if (coreNum == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "coreNum", std::to_string(coreNum), "coreNum is 0");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: platform reported 0 AIC cores.", __func__);
         return ge::GRAPH_FAILED;
     }
     platformInfoPtr->GetLocalMemSize(fe::LocalMemType::UB, ubSize);
@@ -314,12 +314,16 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         return ge::GRAPH_FAILED;
     }
         if (tiling.headNum > dim || dim % tiling.headNum != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", "invalid", "headNum must be in (0, dim] and divide dim exactlyd,d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum",
+            std::to_string(tiling.headNum) + "," + std::to_string(dim),
+            "headNum must be in (0, dim] and divide dim exactly");
         return ge::GRAPH_FAILED;
     }
         tiling.headDim = dim / tiling.headNum;
         if (tiling.headDim % DIM_ALIGN_ELEMS != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim", "invalid", "headDim must satisfy headDim % d == 0 for head-major output");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim",
+            std::to_string(tiling.headDim) + "," + std::to_string(DIM_ALIGN_ELEMS),
+            "headDim must be a multiple of the element alignment for head-major output");
         return ge::GRAPH_FAILED;
     }
     }
@@ -456,15 +460,21 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 const int64_t cur = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
                 const int64_t nxt = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1);
                 if (cur < 0 || cur > cuSeqlen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "out", "invalid", "queryStartLoc[d] out of range: d (d)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc",
+            std::to_string(i) + "," + std::to_string(cur) + "," + std::to_string(cuSeqlen),
+            "queryStartLoc[i] out of range: cur (0..cuSeqlen)");
         return ge::GRAPH_FAILED;
     }
                 if (nxt < 0 || nxt > cuSeqlen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "out", "invalid", "queryStartLoc[d] out of range: d (d)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc",
+            std::to_string(i) + "," + std::to_string(nxt) + "," + std::to_string(cuSeqlen),
+            "queryStartLoc[i] out of range: nxt (0..cuSeqlen)");
         return ge::GRAPH_FAILED;
     }
                 if (nxt < cur) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc", "invalid", "queryStartLoc must be non-decreasing, got queryStartLoc[d]d queryStartLoc[d]d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc",
+            std::to_string(i) + "," + std::to_string(cur) + "," + std::to_string(nxt),
+            "queryStartLoc must be non-decreasing");
         return ge::GRAPH_FAILED;
     }
                 const int64_t segmentLen = nxt - cur;
@@ -557,11 +567,14 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                     }
                     if (hasConvStates) {
                         if (v > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "cacheIndices[d]d exceeds int32 range");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cacheIndices",
+            std::to_string(i) + "," + std::to_string(v), "cacheIndices[i] exceeds int32 range");
         return ge::GRAPH_FAILED;
     }
                         if (v < 0 || v >= numCacheLines) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "out", "invalid", "cacheIndices[d]d out of range [0,d)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cacheIndices",
+            std::to_string(i) + "," + std::to_string(v) + "," + std::to_string(numCacheLines),
+            "cacheIndices[i] out of range [0, numCacheLines)");
         return ge::GRAPH_FAILED;
     }
                     }
@@ -611,7 +624,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t v = ReadVisibleMetadataValue(hisTensor, tiling.hasInitialStateDtype, i);
                     if (v != 0 && v != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "hasInitialState[d]d is invalid (only supports 0/1)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "hasInitialState",
+            std::to_string(i) + "," + std::to_string(v), "hasInitialState[i] only supports 0/1");
         return ge::GRAPH_FAILED;
     }
                     hasTrueInitialState = hasTrueInitialState || (v != 0);
@@ -671,18 +685,23 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t a = ReadVisibleMetadataValue(natTensor, tiling.numAcceptedTokensDtype, i);
                     if (a < 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", std::to_string(a), "numAcceptedTokens[d]d is invalid (must be >= 0)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens",
+            std::to_string(i) + "," + std::to_string(a), "numAcceptedTokens[i] must be >= 0");
         return ge::GRAPH_FAILED;
     }
 
                     if (inputMode == 2) {
                         if (a > 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(a), "numAcceptedTokens[d]d exceeds decode 2D token count (1)");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens",
+            std::to_string(i) + "," + std::to_string(a),
+            "numAcceptedTokens[i] exceeds decode 2D token count (max 1)");
         return ge::GRAPH_FAILED;
     }
                     } else if (inputMode == 1) {
                         if (a > seqLen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "numAcceptedTokens[d]d in 3D update");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens",
+            std::to_string(i) + "," + std::to_string(a) + "," + std::to_string(seqLen),
+            "numAcceptedTokens[i] exceeds seqLen in 3D update");
         return ge::GRAPH_FAILED;
     }
                     } else if (inputMode == 0 && qslDataVisible) {
@@ -690,7 +709,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1) -
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
                         if (a > lenI) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "numAcceptedTokens[d]d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens",
+            std::to_string(i) + "," + std::to_string(a) + "," + std::to_string(lenI),
+            "numAcceptedTokens[i] exceeds segment length");
         return ge::GRAPH_FAILED;
     }
                     }

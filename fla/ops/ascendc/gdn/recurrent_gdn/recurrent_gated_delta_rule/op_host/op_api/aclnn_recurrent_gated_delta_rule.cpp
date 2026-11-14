@@ -160,7 +160,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
-    if (!(CheckNotNull(params))) { return ACLNN_ERR_PARAM_INVALID; };
+    if (!(CheckNotNull(params))) { return ACLNN_ERR_PARAM_NULLPTR; };
     {
         const aclnnStatus checkStatus = CheckParams(params);
         if (checkStatus != ACLNN_SUCCESS) {
