@@ -39,6 +39,15 @@ class Vector {
     static_assert(Local::kArena + KktBatchRows * BT * (2 * sizeof(float) + sizeof(InputT)) +
         KktBatchRows * 8 * sizeof(float) <= Local::kUbBytes, "KKT rows exceed UB");
     static constexpr uint32_t RhsKCache = Local::kUbBytes - 64 * 128 * sizeof(float);
+    static constexpr bool RetainD32 = BT == 64 && V == 128;
+    static constexpr uint32_t D32HeadBytes = BT * 32 * sizeof(float);
+    static constexpr uint32_t D32SlotBytes = Half * D32HeadBytes;
+    // 两槽 KKT 全部结束后复用 typed/brcb 区，保留至各槽 Final 的最后一次读取。
+    static constexpr uint32_t D32Cache = RhsKCache - 2 * D32SlotBytes;
+    static_assert(!RetainD32 || (Local::kArena + BT * BT * sizeof(float) <= D32Cache &&
+        D32Cache + 2 * D32SlotBytes <= RhsKCache), "Final overlaps retained D32");
+    static_assert(!RetainD32 || Local::kLeaf + 64 * V * (2 * sizeof(InputT) + sizeof(float)) +
+        64 * 8 * sizeof(float) <= D32Cache, "RHS broadcast overlaps retained D32");
     static_assert(Local::kArena + KktBatchRows * BT * (2 * sizeof(float) + sizeof(InputT)) +
         KktBatchRows * 8 * sizeof(float) <= RhsKCache, "KKT overlaps retained K cache");
     static_assert(Local::kLeaf + BT * BT * sizeof(InputT) <= Local::kArena &&
@@ -870,6 +879,12 @@ public:
                     if (n1 > 0) Copy(out[2 * S * S + S], leaves[(h * Leaves + row / 16 + 1) * 256],
                         n1, static_cast<uint8_t>(n1), {1, 1, 4, 2});
                     PipeBarrier<PIPE_V>();
+                } else if constexpr (RetainD32 && Final) {
+                    auto d32 = r_.template UB<float>(D32Cache + slot * D32SlotBytes + h * D32HeadBytes);
+                    Copy(out, d32[row * S], n0, static_cast<uint8_t>(n0), {1, 1, 8, 4});
+                    if (n1 > 0) Copy(out[2 * S * S + S], d32[(row + S) * S],
+                        n1, static_cast<uint8_t>(n1), {1, 1, 8, 4});
+                    PipeBarrier<PIPE_V>();
                 } else {
                     LoadRect(out, diag[row * S], n0, n0, S, 2 * S);
                     if (n1 > 0) LoadRect(out[2 * S * S + S], diag[(row + S) * S], n1, n1, S, 2 * S);
@@ -895,6 +910,11 @@ public:
                     DataCopyExtParams cp{static_cast<uint16_t>(n0 + n1), 2 * S * sizeof(InputT), 0, 0, 0};
                     DataCopyPad(publicA[HeadOffset(a_, c, headBegin + local, BT) + row * BT], typed, cp);
                 } else {
+                    if constexpr (RetainD32 && S == 16) {
+                        auto d32 = r_.template UB<float>(D32Cache + slot * D32SlotBytes + h * D32HeadBytes);
+                        Copy(d32[row * 2 * S], out, 64, static_cast<uint8_t>(4 * S * S / 64), {1, 1, 8, 8});
+                    }
+                    // 原 V→MTE3 同时关闭缓存 Copy，随后仍按原样写 GM 供 Cube 消费。
                     r_.template Fence<HardEvent::V_MTE3>();
                     DataCopyExtParams cp{static_cast<uint16_t>(n0 + n1), 2 * S * 4, 0, 0, 0};
                     DataCopyPad(next[row * 2 * S], out, cp);
