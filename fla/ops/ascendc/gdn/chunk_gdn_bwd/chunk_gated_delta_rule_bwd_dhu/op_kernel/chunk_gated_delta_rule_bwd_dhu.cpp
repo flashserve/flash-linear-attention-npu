@@ -37,8 +37,7 @@ __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
 {
     if ASCEND_IS_AIC {
         ChunkGatedDeltaRuleBwdDhuCube<DT, V_DIM> cube;
-        cube.Init(q, k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, workspace, tilingData,
-                  DO_TOKEN_MAJOR);
+        cube.Init(q, k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, workspace, tilingData, DO_TOKEN_MAJOR);
         cube.Process();
     }
     if ASCEND_IS_AIV {
