@@ -57,7 +57,7 @@ public:
         const bool fourHeadGroupPreservesGva =
             headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
         const bool balanceDenseTail =
-            !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
+            HeadPartitionCount(args_.tiling) == 1 &&
             fourHeadGroupPreservesGva && chunkWork >= coreCount &&
             chunkWork % coreCount != 0;
         if (!balanceDenseTail) {
