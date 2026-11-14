@@ -56,7 +56,7 @@
 7. Host 判 A5 必须使用 `GetCurNpuArch() == NpuArch::DAV_3510`，禁止
    `GetSocVersion() == SocVersion::ASCEND950`；Kernel 判 A5 必须使用
    `#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)`，禁止
-   `#if __CCE_AICORE__ == 310`。自造
+   `__CCE_AICORE__`、`__DAV_C310__` 等架构别名。自造
    `GDN_BWD_ENABLE_ARCH22` 一类平台别名宏同样不能作为替代判据。
 
 ## 5. 公开接口兼容性

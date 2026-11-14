@@ -1,7 +1,7 @@
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define KDA_COMPILE_CHUNK32_FUSED 1
 #include "arch35/chunk_kda_fwd_fused/chunk_kda_fwd_32.h"
 #else

@@ -37,6 +37,10 @@ metadata:
 时必须同时检查 host 与 kernel 两侧；错误判据可能把错误实现编入或路由到非目标平台，不能只按命名
 风格问题放过。
 
+静态检查覆盖所有 `GetSocVersion()`、`SocVersion::ASCEND950`、`aclrtGetSocName()`、
+`__CCE_AICORE__`、`__DAV_C310__` 和自定义 `ENABLE/USE/IS_ARCHxx` 平台判据；表中表达式只是 A5
+分支的规范写法，A2/A3 分支使用对应的 `DAV_2201` / `2201`。
+
 ## 四层检查
 
 ### 1. 功能正确性

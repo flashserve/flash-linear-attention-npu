@@ -14,7 +14,7 @@
 
 #ifndef PREPARE_WY_REPR_BWD_FULL_CUBE_H
 #define PREPARE_WY_REPR_BWD_FULL_CUBE_H
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -930,7 +930,7 @@ __aicore__ void inline PrepareWyReprBwdFullProcess<kType, betaType>::ProcessImpl
     // Output dk is written directly to GM after AIV adds all dk terms.
     using LayoutTagDk = layout::RowMajor;
     LayoutTagDk tagDk = LayoutTagDk::MakeLayout<kType>(chunkSize, K);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;

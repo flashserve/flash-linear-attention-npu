@@ -144,7 +144,7 @@ FLA_NPU_ENV=<custom opp>/bin/set_env.bash ATK_OUTPUT_ROOT=<output root> \
 
 - Catlass 的架构实现由 **`CATLASS_ARCH`** 选择（`2201` = atlasa2/A2，`3510` = ascend950/A5）。不定义该宏时
   `gemm/tile/tile_copy.hpp` 里 `ScaleGranularity` / `CopyToGM` 会直接编译失败；定义成与
-  `__CCE_AICORE__` 不匹配的值会把两个架构实现同时拉进来，报重定义。
+  `__NPU_ARCH__` 不匹配的值会把两个架构实现同时拉进来，报重定义。
 - **不要引用仓内 `common/kernel_utils/block/block_mmad_pingpong_tla.hpp`**：它经由
   `kernel_utils/tile/copy_l0c_to_ub.hpp` 无条件包含 `catlass/gemm/tile/ascend950/copy_l0c_to_dst.hpp`，
   在 A2（910b）构建里必然报 950 实现重定义。本算子改用 catlass 原生 `BlockMmadTla`。

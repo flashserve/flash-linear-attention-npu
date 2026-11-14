@@ -63,7 +63,7 @@ __aicore__ inline uint64_t ScratchMElemOff(uint64_t hv, uint64_t h, uint32_t mBa
 // owned head per rank-step (plus prologue); Cube Waits VC then Sets CV.
 __aicore__ inline uint16_t MixFlag(uint8_t flag, uint64_t odd)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     return static_cast<uint16_t>(flag + (odd ? kSubBlockFlagOffset : 0U));
 #else
     (void)odd;

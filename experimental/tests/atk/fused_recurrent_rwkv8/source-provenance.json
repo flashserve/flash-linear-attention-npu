@@ -1,0 +1,25 @@
+{
+  "source_commit": "103490da248c81b6a77824fc13c153ad3a0931d2",
+  "upstream_sha256": {
+    "tests/atk/fused_recurrent_rwkv8/README.md": "d898fcd6ad43d1d871d21f831534c3e8123d0285c0eb7c2fb8271f25f17ac5f2",
+    "tests/atk/fused_recurrent_rwkv8/atk_fused_recurrent_rwkv8.json": "a1abb7cfeddb17be2277bfe1e1300fde6ccb548150939147a3a6f11e2a19d1a7",
+    "tests/atk/fused_recurrent_rwkv8/atk_fused_recurrent_rwkv8_mss.json": "34e3302f82b3146d9bbf23e8225d482c6f97b9f806ae27bf0a28a6894b33efe9",
+    "tests/atk/fused_recurrent_rwkv8/atk_fused_recurrent_rwkv8_perf.json": "71d69b322402c61789924b621b3faa655ed6e8c32512c002057619e492b36e94",
+    "tests/atk/fused_recurrent_rwkv8/executor_fused_recurrent_rwkv8.py": "34804c2dd4f4e8f8b4f52e5aaca7da9d36252b9a020bbf3b95f3dabc7debcf6b",
+    "tests/atk/fused_recurrent_rwkv8/fused_recurrent_rwkv8.yaml": "5fa6367a83f51263c025f59d2b47b6fd773de17a0ac48095f4988356f9bd14ec",
+    "tests/atk/fused_recurrent_rwkv8/gen_fused_recurrent_rwkv8.py": "0401548de76fef9e0bc18d7f9e8ca774092e1faa79477fbd98ae1cfc9d175e39",
+    "tests/atk/fused_recurrent_rwkv8/scripts/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/atk/fused_recurrent_rwkv8/scripts/build_acceptance_cases.py": "595c54073967e9046e2e0b57c00b670c8b361b0107eb75f878ce7e2dff4d5ef3"
+  },
+  "cpu_functions_ast_unchanged": true,
+  "npu_runtime_executed": true,
+  "validation": {
+    "date": "2026-11-03",
+    "soc": "ascend910b",
+    "cann": "9.0.0",
+    "accuracy_passed": 209,
+    "accuracy_total": 209,
+    "report": "../../../validation.md",
+    "scope": "scoped integration; not full operator acceptance"
+  }
+}

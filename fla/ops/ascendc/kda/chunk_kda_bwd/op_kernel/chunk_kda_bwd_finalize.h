@@ -91,7 +91,7 @@ __aicore__ inline void RunChunkKdaBwdC(
     // write as a stale cross-shape generation.
     bool needsFinalSync =
         tiling->seqlen < static_cast<int32_t>(kA5SharedGateMinSeqlen);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     needsFinalSync = needsFinalSync ||
         (tiling->useGateInKernel != 0 &&
          !CanUseA5SharedGateAnchor(*tiling));

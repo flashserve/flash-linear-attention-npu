@@ -71,6 +71,8 @@ Python 和 ACLNN 层拒绝。前反向须配套：A5 若需要 sigmoid，应在�
 
 ## 保存与重计算
 
+- A2/A3 两条路径均要求 `safe_gate=True`；传入 `False` 时，总接口在
+  `GetWorkspaceSize` 的前置校验阶段返回 `ACLNN_ERR_PARAM_INVALID (161002)`。
 - `disable_recompute=True`：传入前向保存的 gk/w/qg/kg/v_new/h。
 - `disable_recompute=False`：以上六个缓存必须为 None，仍传 Aqk/Akk。
   Recompute/FwdH 恢复缓存，再执行 Prepare → Dhu → Finalize。

@@ -17,7 +17,7 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/prepare_wy_repr_bwd_struct.h"
 #include "arch35/prepare_wy_repr_bwd_tiling_key.h"
 #include "arch35/prepare_wy_repr_bwd_common.h"
@@ -60,7 +60,7 @@ PrepareWyReprBwdKernelImpl(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADD
                            GM_ADDR workspace, const PrepareWyReprBwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ::PrepareWyReprBwdCubeProcess<KType, GType, V_DIM, CHUNK_SIZE> cubeProcess(
             k, A, dw, du, cuSeqlens, chunkIndices, dv, workspace);
 #else

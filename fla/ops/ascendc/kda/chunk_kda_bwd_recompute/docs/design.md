@@ -151,7 +151,7 @@ OpDef 输出登记顺序为 `w/u/qg/kg/gk(optional)`。属性：
 | `op_host/` | OpDef、tiling、手写 aclnn / L0 |
 | `op_kernel/arch35/` | A5 Vector RegBase、Cube Catlass MMAD、跨核 flag |
 | `op_kernel/*.h`（非 arch35） | A2/A3 Vector/Cube 与 GM workspace 路径 |
-| `op_kernel/chunk_kda_bwd_recompute.cpp` | Mix 入口按 `__CCE_AICORE__` 选择实现 |
+| `op_kernel/chunk_kda_bwd_recompute.cpp` | Mix 入口按 `__NPU_ARCH__` 选择实现 |
 
 验收与性能数字维护在
 [`tests/atk/chunk_kda_bwd_recompute/README.md`](../../../../../../tests/atk/chunk_kda_bwd_recompute/README.md)。

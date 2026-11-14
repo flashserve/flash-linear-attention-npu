@@ -9,7 +9,7 @@
 
 namespace GdnRawFront {
 using namespace AscendC;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using Resource = Catlass::Arch::Resource<Catlass::Arch::Ascend950>;
 #else
 using Resource = Catlass::Arch::Resource<Catlass::Arch::AtlasA2>;

@@ -59,7 +59,7 @@ void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
     compileInfo_.aivNum = ascendcPlatform.GetCoreNumAiv();
-    compileInfo_.isA5 = ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+    compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
 
     if (compileInfo_.aivNum <= 0) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "platform.aivNum", "actual="+std::to_string(compileInfo_.aivNum)+"; expected >0");
@@ -138,7 +138,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::PostTiling()
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            reinterpret_cast<void *>(&tilingData_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "runtime", rgdn_error::Format("memcpy_s failed, ret=%d", ret));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "runtime", rgdn_error::Format("memcpy_s failed", ret));
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
@@ -157,7 +157,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CheckContext()
         {STATE_INDEX,"state"},{CUSEQLENS_INDEX,"actual_seq_lengths"},{SSM_STATE_INDICES_INDEX,"ssm_state_indices"}};
     for (const auto &input : inputs) {
         if (!context_->GetInputShape(input.first) || !context_->GetInputDesc(input.first)) {
-            OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(),input.second);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), input.second, "input argument must not be nullptr");
             return ge::GRAPH_FAILED;
         }
     }
@@ -178,8 +178,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
     for (const auto &rule : required) {
         const auto dtype = context_->GetInputDesc(rule.index)->GetDataType();
         if (dtype != rule.first && dtype != rule.second) {
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(context_->GetNodeName(),rule.name,
-                ge::TypeUtils::DataTypeToSerialString(dtype),rule.expected);
+            OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), rule.name, ge::TypeUtils::DataTypeToSerialString(dtype), rule.expected);
             return ge::GRAPH_FAILED;
         }
     }
@@ -194,8 +193,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeDtype()
         if (!HasOptionalTensor(context_,rule.index)) continue;
         const auto dtype = context_->GetOptionalInputDesc(rule.index)->GetDataType();
         if (dtype != rule.first && dtype != rule.second) {
-            OP_LOGE_WITH_INVALID_INPUT_DTYPE(context_->GetNodeName(),rule.name,
-                ge::TypeUtils::DataTypeToSerialString(dtype),rule.expected);
+            OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), rule.name, ge::TypeUtils::DataTypeToSerialString(dtype), rule.expected);
             return ge::GRAPH_FAILED;
         }
         if (rule.index == G_INDEX) tilingData_.gDtype = dtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
@@ -276,7 +274,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
 bool RecurrentGatedDeltaRuleTiling::CheckFormat(ge::Format format, const std::string &Desc)
 {
     if (format == ge::FORMAT_FRACTAL_NZ) {
-        OP_LOGE_WITH_INVALID_INPUT_FORMAT(context_->GetNodeName(),Desc,ge::TypeUtils::FormatToSerialString(format),"any format except FRACTAL_NZ");
+        OP_LOGE_FOR_INVALID_FORMAT(context_->GetNodeName(), Desc, ge::TypeUtils::FormatToSerialString(format), "any format except FRACTAL_NZ");
         return false;
     }
     return true;

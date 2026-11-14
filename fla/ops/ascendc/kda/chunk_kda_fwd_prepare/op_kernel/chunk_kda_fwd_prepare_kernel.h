@@ -11,7 +11,6 @@
 #include "lib/matmul_intf.h"
 
 #include "chunk_kda_fwd_prepare_policy.h"
-#include "chunk_kda_fwd_prepare_runtime_policy.h"
 #include "chunk_kda_fwd_prepare_struct.h"
 
 // A2 is dispatched directly through its six-key entry in the .cpp file.

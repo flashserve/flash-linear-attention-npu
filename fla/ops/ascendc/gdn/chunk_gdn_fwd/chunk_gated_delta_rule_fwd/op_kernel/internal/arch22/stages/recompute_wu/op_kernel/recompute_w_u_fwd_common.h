@@ -63,7 +63,7 @@ __aicore__ inline void DecodeRecomputeTask(
         hEnd = hBegin + 1;
         return;
     } else {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         const int64_t chunks = cuSeqlens != nullptr ? static_cast<int64_t>(chunkNum)
             : static_cast<int64_t>((T + chunkSize - 1) / chunkSize);
         const auto parent = GdnFrontTaskOrder::Decode(loopIdx, H, headsPerKey, chunks);

@@ -18,7 +18,7 @@
 namespace GDN {
 
 // ---------------- 目标 arch 分档 ----------------
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define PPFM_ARCH_IS_950 1
 // 950：有 L0C→UB 直连通道（A2 优化方案可用）
 #ifndef PPFM_VTMP_UB

@@ -217,7 +217,7 @@ namespace KDA {
 // one place so the shared A/C kernels can use the same implementation.
 template <class TileCopy, class TensorC>
 struct KdaBwdCopyL0CToDstSelector {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using Type = typename TileCopy::template CopyL0CToDst<TensorC>;
 #else
     using Type = typename TileCopy::template CopyL0CToGm<TensorC>;

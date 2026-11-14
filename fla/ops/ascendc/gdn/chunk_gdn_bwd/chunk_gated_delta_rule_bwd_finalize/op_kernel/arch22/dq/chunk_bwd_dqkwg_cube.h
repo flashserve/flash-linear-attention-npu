@@ -19,7 +19,7 @@
 
 #include "chunk_bwd_dqkwg_schedule.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #include "chunk_bwd_dqkwg_common.h"
 #include "catlass/arch/arch.hpp"
@@ -557,7 +557,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
     using LayoutColMajor = layout::ColumnMajor;
 
     // 架构和策略定义
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;

@@ -33,7 +33,7 @@ __global__ __aicore__ void pre_process_bwd_kernel_merged(
     // A2/A3（arch22）：仍 1:1 —— 910B 的 0x2 是集合同步语义，三次接 1:2 都在 smoke 用例上挂死
     // （详见 design.md §17/§21 与 policy.h 注释）。
     // 三处必须一起切：这里的 KERNEL_TASK_TYPE、op_host 的 aivPerBlock、policy.h 的 flag 寻址口径。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 #else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);

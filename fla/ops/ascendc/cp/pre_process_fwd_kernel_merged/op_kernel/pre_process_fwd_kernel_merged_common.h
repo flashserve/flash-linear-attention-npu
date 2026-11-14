@@ -38,7 +38,7 @@
 
 // CATLASS 的 arch 选择必须在包含 catlass 头之前给出（同 chunk_scaled_dot_kkt 的写法）
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201

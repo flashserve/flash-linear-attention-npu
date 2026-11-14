@@ -21,6 +21,8 @@
 
 namespace optiling {
 
+static constexpr const char *OP_NAME = "ChunkFwdO";
+
 static void ChunkFwdOTilingDataPrint(gert::TilingContext *context, const ChunkFwdOTilingData &tiling)
 {
     auto nodeName = context->GetNodeName();
@@ -77,9 +79,11 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CHUNK_FWD_O_ATTR_STATE_V_FIRST_IDX);
     const bool stateVFirst = stateVFirstPtr != nullptr ? *stateVFirstPtr : false;
     const char *outputLayout = attrPtr->GetStr(CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX);
-    OP_CHECK_IF(useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(), "use_exp2=true is supported only on A5."),
-                return ge::GRAPH_FAILED);
+    if (useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "use_exp2", "true", "use_exp2=true is supported only on A5");
+        return ge::GRAPH_FAILED;
+    }
 
     ChunkFwdOTilingContext ctx{
         context->GetNodeName(),
@@ -103,7 +107,9 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     };
 
     ChunkFwdOTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(static_cast<uint64_t>(useExp2 ? 1 : 0),
                                                   processor.GetOutputTokenFirst());

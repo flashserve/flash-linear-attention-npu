@@ -2,7 +2,7 @@
 
 公开接口、shape、属性和支持范围以 [api.md](api.md) 为准。本文只记录计算怎么拆、数据放在哪、A2/A3 与 A5 的流水差在哪里。
 
-A3 是 `ascend910_93` 和 A2（`ascend910b`）走 `__CCE_AICORE__ != 310` 的同一套 Cube/Vector。A5（`ascend950`）走 `arch35` Cube，并把 GEMM 结果直接 Fixpipe 进 Vector UB。
+A3 是 `ascend910_93` 和 A2（`ascend910b`）走 `__NPU_ARCH__ == 2201` 的同一套 Cube/Vector。A5（`ascend950`）走 `__NPU_ARCH__ == 3510` 的 `arch35` Cube，并把 GEMM 结果直接 Fixpipe 进 Vector UB。
 
 ## 1. 目标
 

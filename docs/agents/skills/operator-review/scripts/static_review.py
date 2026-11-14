@@ -40,19 +40,37 @@ ARCHITECTURE_PATTERNS = (
     (
         "host",
         "ARCH-HOST-SOC",
-        re.compile(
-            r"(?:GetSocVersion\s*\(\s*\)\s*==\s*(?:\w+::)?SocVersion::ASCEND950"
-            r"|(?:\w+::)?SocVersion::ASCEND950\s*==\s*[\w.>()-]*GetSocVersion\s*\()"
-        ),
-        "host architecture check compares GetSocVersion() with SocVersion::ASCEND950",
+        re.compile(r"\bGetSocVersion\s*\(|\bSocVersion::ASCEND950\b"),
+        "host architecture check uses SoC version instead of NpuArch",
         "use GetCurNpuArch() == NpuArch::DAV_3510 for the A5 host branch",
+    ),
+    (
+        "host",
+        "ARCH-HOST-SOC-NAME",
+        re.compile(r"\baclrtGetSocName\s*\("),
+        "host architecture check parses the SoC product name",
+        "use GetCurrentPlatformInfo().GetCurNpuArch() and compare NpuArch values",
+    ),
+    (
+        "host",
+        "ARCH-HOST-KERNEL-MACRO",
+        re.compile(r"\b__NPU_ARCH__\b"),
+        "host source uses the kernel-only __NPU_ARCH__ compile macro",
+        "use GetCurNpuArch() from the platform API in host code",
     ),
     (
         "kernel",
         "ARCH-KERNEL-CCE",
-        re.compile(r"\b(?:__)?CCE_AICORE(?:__)?\s*==\s*310\b"),
-        "kernel architecture check uses CCE_AICORE instead of __NPU_ARCH__",
+        re.compile(r"\b__CCE_AICORE__\b"),
+        "kernel architecture check uses __CCE_AICORE__ instead of __NPU_ARCH__",
         "use #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510) for the A5 kernel branch",
+    ),
+    (
+        "kernel",
+        "ARCH-KERNEL-DAV-MACRO",
+        re.compile(r"\b__DAV_C310__\b"),
+        "kernel architecture check uses the __DAV_C310__ alias",
+        "use defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)",
     ),
     (
         "kernel",
@@ -224,10 +242,11 @@ def check_architecture(
         stripped = text.lstrip()
         if stripped.startswith(("//", "/*", "*", "# ")):
             continue
+        normalized_path = f"/{path}"
         surface = (
-            "host"
-            if "/op_host/" in f"/{path}"
-            else "kernel" if "/op_kernel/" in f"/{path}" else "neither"
+            "kernel"
+            if "/op_kernel/" in normalized_path
+            else "host" if "/op_host/" in normalized_path else "neither"
         )
         for expected_surface, rule, pattern, message, suggestion in ARCHITECTURE_PATTERNS:
             if expected_surface not in (surface, "either") or not pattern.search(text):

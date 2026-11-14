@@ -181,7 +181,7 @@ __aicore__ inline void RecomputeWUFwdVectorProcess<kType, betaType,
     kFlattenHeadTasks, kAbcTaskOrder, kRawFront, kStaticV, kStaticBT, kQkvLayout>::ProcessInterleaved()
 {
     if (taskRange->fullyPrepared) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         // 整批 RHS 独占 GM；保留一次 MTE3 发布，末 done7 保护下一批复用。
         if (taskRange->begin < taskRange->end) {
             CrossCoreSetFlag<0x2, PIPE_MTE3>(SYNC_AIV_AIC_FLAG_3);

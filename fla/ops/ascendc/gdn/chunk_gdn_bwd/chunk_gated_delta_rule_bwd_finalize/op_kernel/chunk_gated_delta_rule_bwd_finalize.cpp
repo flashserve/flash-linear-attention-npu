@@ -1,5 +1,5 @@
 #include "kernel_operator.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #ifndef TORCH_MODE
 #include "lib/matmul_intf.h"
 #endif
@@ -23,7 +23,7 @@ struct DTypeTraits<TPL_FP32> { using type = float; };
 } // namespace GDN
 
 #ifndef TORCH_MODE
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
           bool ENABLE_MHA_OWNER>
 #else
@@ -48,7 +48,7 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
     using QType = typename GDN::DTypeTraits<D_T_Q>::type;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     using GType = typename GDN::DTypeTraits<D_T_G>::type;
     if constexpr (ENABLE_MHA_OWNER) {
         GDN::A2FinalizeRun<QType, GType, 128, 64, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, true>(

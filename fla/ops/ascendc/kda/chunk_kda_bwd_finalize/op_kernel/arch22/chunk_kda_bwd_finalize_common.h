@@ -53,8 +53,10 @@ constexpr uint32_t UB_WORK_SLOT_BYTES = 8 * 1024;
 constexpr uint32_t WS_BANK_BYTES = 512 * 1024;
 constexpr uint32_t WS_HEAD_BYTES = 2 * WS_BANK_BYTES;
 constexpr uint32_t WS_CORE_BYTES = HEADS_PER_WORK * WS_HEAD_BYTES;
-constexpr uint32_t WS_DK_STATE_RAW = 0;
-constexpr uint32_t WS_DV_B = 32 * 1024;
+// Keep Cube and Vector writers in separate regions. Stage 8 reuses these
+// Cube slots only after Stage 3/5 have consumed the raw values.
+constexpr uint32_t WS_DK_STATE_RAW = 256 * 1024;
+constexpr uint32_t WS_DV_B = 288 * 1024;
 constexpr uint32_t WS_ZV = 64 * 1024;
 constexpr uint32_t WS_DKGB_RAW = 80 * 1024;
 constexpr uint32_t WS_ZW = 112 * 1024;
@@ -62,13 +64,14 @@ constexpr uint32_t WS_KE = 384 * 1024;
 constexpr uint32_t WS_ZB = 416 * 1024;
 constexpr uint32_t WS_DW_FP32 = 448 * 1024;
 constexpr uint32_t WS_TZA_FP32 = 480 * 1024;
-// Stage 5 replaces consumed raw slots within each workspace generation.
+// Stage 5 bases have Vector-only writers throughout a workspace generation.
 constexpr uint32_t WS_DK_BASE = 0;
 constexpr uint32_t WS_DQ_BASE = 32 * 1024;
 constexpr uint32_t WS_DG_BASE = 168 * 1024;
 constexpr uint32_t WS_DB_BASE = 200 * 1024;
 constexpr uint32_t WS_RH = 208 * 1024;
-constexpr uint32_t WS_DAKK_RAW = 216 * 1024;
+// Stage 3 consumes zW before VECTOR_ACK permits Stage 4/6 to run.
+constexpr uint32_t WS_DAKK_RAW = WS_ZW;
 
 // Stage 7 reuses dead raw slots after Stage 5 and Stage 6. Bases remain intact.
 constexpr uint32_t WS_DAQK_LOWER = 64 * 1024;
@@ -198,7 +201,11 @@ static_assert(WS_TZA_FP32 + 16 * 1024 <= WS_BANK_BYTES);
 static_assert(L1_AKK_FP32 + 2 * 16 * 1024 <= L1_HEAD_BYTES);
 static_assert(L1_STAGE8 + HEADS_PER_WORK * L1_STAGE8_HEAD_BYTES <= L1_BYTES);
 
-static_assert(WS_RH + HEAD_DIM * 4 <= WS_DAKK_RAW);
+static_assert(WS_DB_BASE + CHUNK_SIZE * sizeof(float) <= WS_RH);
+static_assert(WS_RH + HEAD_DIM * 32 * sizeof(float) <= WS_BKPOS);
+static_assert(WS_DK_STATE_RAW == WS_DQ_LOCAL);
+static_assert(WS_DV_B == WS_LEFT);
+static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * sizeof(float) <= WS_QPOS);
 static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_BANK_BYTES);
 static_assert(CAPTURE_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= CAPTURE_BYTES);
 static_assert(sizeof(ChunkInfo) == 32);

@@ -428,6 +428,12 @@ class RemovedBackendGateTest(unittest.TestCase):
 class HeaderKindGateTest(unittest.TestCase):
     """`op_abi_validate` reads the OPP header, the only source of truth left."""
 
+    INTERNAL_OP_CASES = (
+        ("chunk_kda_fwd_fused", "chunk_kda_fwd", "aclnnChunkKdaFwd"),
+        ("kda_gate_bwd_post", "chunk_kda_bwd", "aclnnChunkKdaBwd"),
+        ("kda_gate_bwd_post_varlen", "chunk_kda_bwd", "aclnnChunkKdaBwd"),
+    )
+
     def test_header_kinds_are_recognised(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         self.assertEqual(tool.header_kind("const aclTensor *q"), tool.TENSOR)
@@ -491,6 +497,61 @@ class HeaderKindGateTest(unittest.TestCase):
         tool = _load_tool("op_abi_validate.py")
         self.assertNotEqual(tool.header_kind("double value"), tool.header_kind("double *value"))
         self.assertNotEqual(tool.header_kind("aclTensor *x"), tool.header_kind("aclTensor **x"))
+
+    def test_internal_operator_selects_public_owner_adapters(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = tool.adapter_calls(SRC_DIR)
+        for op, owner, symbol in self.INTERNAL_OP_CASES:
+            expected = {symbol, symbol + "V2"}
+            for ops in (op, "npu_" + op, f"{op},{owner}"):
+                with self.subTest(ops=ops):
+                    self.assertEqual(set(tool.filter_adapters(adapters, ops)), expected)
+            with self.subTest(ops=f"{op},solve_tri"):
+                self.assertEqual(
+                    set(tool.filter_adapters(adapters, f"{op},solve_tri")),
+                    expected | {"aclnnSolveTri"},
+                )
+        self.assertEqual(
+            set(tool.filter_adapters(
+                adapters, "kda_gate_bwd_post,kda_gate_bwd_post_varlen,chunk_kda_bwd")),
+            {"aclnnChunkKdaBwd", "aclnnChunkKdaBwdV2"},
+        )
+
+    def test_internal_operator_does_not_bypass_missing_adapters(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        adapters = tool.adapter_calls(SRC_DIR)
+        for op, _, _ in self.INTERNAL_OP_CASES:
+            with self.subTest(op=op):
+                with self.assertRaisesRegex(RuntimeError, op):
+                    tool.filter_adapters({}, op)
+                with self.assertRaisesRegex(RuntimeError, "unknown_operator"):
+                    tool.filter_adapters(adapters, f"{op},unknown_operator")
+
+    def test_internal_operator_cli_validates_owner_header(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        for op, owner, symbol in self.INTERNAL_OP_CASES:
+            with self.subTest(op=op), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                (root / f"stable_{owner}.cpp").write_text(
+                    "void run(Tensor x, int64_t mode) {\n"
+                    f'  FLA_STABLE_EXEC("{symbol}", meta, stream, '
+                    "tensor(x), scalar(mode));\n}\n", encoding="utf-8",
+                )
+                header = root / f"aclnn_{owner}.h"
+                argv = ["op_abi_validate.py", "--src-dir", str(root),
+                        "--opp-include", str(root), "--ops", op]
+                for kind, expected in (("int64_t", 0), ("bool", 1)):
+                    with self.subTest(kind=kind):
+                        header.write_text(
+                            f"aclnnStatus {symbol}GetWorkspaceSize(\n"
+                            f"    const aclTensor *x, {kind} mode, uint64_t *workspaceSize,\n"
+                            "    aclOpExecutor **executor);\n", encoding="utf-8",
+                        )
+                        with mock.patch.object(sys, "argv", argv):
+                            self.assertEqual(tool.main(), expected)
+                header.unlink()
+                with mock.patch.object(sys, "argv", argv):
+                    self.assertEqual(tool.main(), 1)
 
     def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
         tool = _load_tool("op_abi_validate.py")

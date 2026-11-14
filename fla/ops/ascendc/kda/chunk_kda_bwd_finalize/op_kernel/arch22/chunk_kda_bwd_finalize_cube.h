@@ -188,7 +188,7 @@ public:
                 auto dots = Multiply(32, 32, HEAD_DIM, slot);
                 AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(resultReady_[slot]);
                 AscendC::Fixpipe<float, float, AscendC::CFG_ROW_MAJOR>(
-                    output[WS_DQ_LOCAL / sizeof(float) + block * 4 * FRACTAL_ELEMENTS], dots, rhFix);
+                    output[WS_RH / sizeof(float) + block * 4 * FRACTAL_ELEMENTS], dots, rhFix);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(resultFree_[slot]);
             }
             // Next-work h/dh preload may start only after the final operand read.

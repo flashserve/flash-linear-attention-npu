@@ -42,7 +42,7 @@ struct Layout {
     static constexpr uint32_t HV1_SCRATCH = 121 * KIB;
 };
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 __aicore__ inline bool Add(uint64_t a, uint64_t b, uint64_t &out)
 {
     constexpr uint64_t LIMIT = 0x7fffffffffffffffULL;

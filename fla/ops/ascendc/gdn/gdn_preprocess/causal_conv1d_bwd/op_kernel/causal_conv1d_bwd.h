@@ -41,14 +41,14 @@
 #include "causal_conv1d_bwd_tiling_data.h"
 #include "causal_conv1d_bwd_tiling_key.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #include "arch32/causal_conv1d_bwd_vector.h"
 #define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 1
 #else
 #define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 0
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/causal_conv1d_bwd_regbase.h"
 #define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 1
 #else

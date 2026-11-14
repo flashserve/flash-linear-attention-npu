@@ -30,6 +30,7 @@
 #include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
 #include "recurrent_gated_delta_rule_check.h"
+#include "op_common/log/log.h"
 
 using namespace op;
 
@@ -38,6 +39,7 @@ extern "C" {
 #endif
 
 namespace {
+static constexpr const char *OP_NAME = "aclnnRecurrentGatedDeltaRule";
 constexpr size_t QUERY_DIM_NUM = 3;
 constexpr size_t KEY_DIM_NUM = 3;
 constexpr size_t VALUE_DIM_NUM = 3;
@@ -169,7 +171,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
     if (!(CheckNotNull(params))) { return ACLNN_ERR_PARAM_INVALID; };
-    if (!(CheckParams(params) == ACLNN_SUCCESS)) { return ACLNN_ERR_PARAM_INVALID; };
+    {
+        const aclnnStatus checkStatus = CheckParams(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
+    };
     auto ret = PreProcess(params);
     if (!(ret == ACLNN_SUCCESS)) { return ret; };
 
@@ -289,7 +296,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
         queryView, keyView, valueView, betaContiguous, stateView, lengthsContiguous, indicesContiguous,
         gContiguous, nullptr, acceptedContiguous, aLogContiguous, biasContiguous, scaleValue,
         useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, uniqueExecutor.get());
-    if (!(outRet != nullptr)) { return ACLNN_ERR_INNER_NULLPTR; };
+    if (outRet == nullptr) { return ACLNN_ERR_INNER_NULLPTR; }
     if (l0op::ViewCopy(outRet, out, uniqueExecutor.get()) == nullptr) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRuleV2: output ViewCopy failed"); return ACLNN_ERR_INNER_NULLPTR; }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

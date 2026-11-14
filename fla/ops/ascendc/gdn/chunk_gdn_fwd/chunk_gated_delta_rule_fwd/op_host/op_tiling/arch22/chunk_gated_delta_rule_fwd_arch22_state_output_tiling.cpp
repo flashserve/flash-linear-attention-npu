@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "graph/utils/type_utils.h"
 #include "../../../op_kernel/internal/arch22/pipeline/wu_ho/chunk_recompute_wu_fwd_ho_tiling.h"
 
 #include "../../../op_kernel/internal/arch22/stages/fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling.h"
@@ -17,8 +18,11 @@
 #include <cinttypes>
 #include <initializer_list>
 #include <register/op_impl_registry.h>
+#include <string>
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdStateOutputArch22";
 namespace {
 
 constexpr size_t INPUT_Q = 0;
@@ -242,24 +246,37 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const auto *gShapePtr = context->GetOptionalInputShape(INPUT_G);
     const auto *cuShapePtr = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
     const auto *chunkShapePtr = context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
-    OP_CHECK_IF(!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
-                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3),
-                OP_LOGE(context->GetNodeName(), "q/k/v/A must be rank 4 and beta/g rank 3."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((cuShapePtr == nullptr) != (chunkShapePtr == nullptr),
-                OP_LOGE(context->GetNodeName(),
-                        "cu_seqlens and chunk_indices must be both present or both absent."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(cuShapePtr != nullptr && (!IsRank(cuShapePtr, 1) || !IsRank(chunkShapePtr, 1)),
-                OP_LOGE(context->GetNodeName(), "cu_seqlens and chunk_indices must be rank 1."),
-                return ge::GRAPH_FAILED);
+    if (!IsRank(qShapePtr, 4) || !IsRank(kShapePtr, 4) || !IsRank(vShapePtr, 4) ||
+                    !IsRank(betaShapePtr, 3) || !IsRank(aShapePtr, 4) || !IsRank(gShapePtr, 3)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    OP_NAME, "q,k,v,A,beta,g", "rank mismatch",
+                    "q/k/v/A must be rank 4 and beta/g rank 3");
+        return ge::GRAPH_FAILED;
+    }
+    if ((cuShapePtr == nullptr) != (chunkShapePtr == nullptr)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "cu_seqlens,chunk_indices",
+                    std::string(cuShapePtr == nullptr ? "cu_seqlens=absent" : "cu_seqlens=present") + "," +
+                        (chunkShapePtr == nullptr ? "chunk_indices=absent" : "chunk_indices=present"),
+                    "cu_seqlens and chunk_indices must be both present or both absent");
+        return ge::GRAPH_FAILED;
+    }
+    if (cuShapePtr != nullptr && (!IsRank(cuShapePtr, 1) || !IsRank(chunkShapePtr, 1))) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    OP_NAME, "cu_seqlens,chunk_indices", "rank mismatch",
+                    "cu_seqlens and chunk_indices must be rank 1");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const int64_t *qkvLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_QKV_LAYOUT);
     const int64_t qkvLayout = qkvLayoutAttr == nullptr ? 0 : *qkvLayoutAttr;
-    OP_CHECK_IF(qkvLayout != 0 && qkvLayout != 1,
-                OP_LOGE(context->GetNodeName(), "qkv_layout must be 0 or 1."), return ge::GRAPH_FAILED);
+    if (qkvLayout != 0 && qkvLayout != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "qkv_layout", std::to_string(qkvLayout), "qkv_layout must be 0 or 1");
+        return ge::GRAPH_FAILED;
+    }
     auto LogicalQkvShape = [qkvLayout](const gert::StorageShape *input) {
         gert::StorageShape logical = *input;
         if (qkvLayout == 1) {
@@ -287,66 +304,104 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const int64_t vHeadDim = vShape.GetDim(DIM_CHANNEL);
     const int64_t *rawGLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_RAW_G_LAYOUT);
     const int64_t rawGLayout = rawGLayoutAttr == nullptr ? 0 : *rawGLayoutAttr;
-    OP_CHECK_IF(rawGLayout != 0 && rawGLayout != 1,
-                OP_LOGE(context->GetNodeName(), "raw_g_layout must be 0 (BHT) or 1 (BTH)."),
-                return ge::GRAPH_FAILED);
+    if (rawGLayout != 0 && rawGLayout != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "raw_g_layout", std::to_string(rawGLayout),
+                    "raw_g_layout must be 0 (BHT) or 1 (BTH)");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t *oLayoutAttr = attrs->GetAttrPointer<int64_t>(ATTR_O_LAYOUT);
     const int64_t oLayout = oLayoutAttr == nullptr ? 0 : *oLayoutAttr;
-    OP_CHECK_IF(oLayout != 0 && oLayout != 1,
-                OP_LOGE(context->GetNodeName(), "o_layout must be 0 or 1."), return ge::GRAPH_FAILED);
+    if (oLayout != 0 && oLayout != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "o_layout", std::to_string(oLayout), "o_layout must be 0 or 1");
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(batch <= 0 || kNumHead <= 0 || vNumHead <= 0 || seqlen <= 0,
-                OP_LOGE(context->GetNodeName(), "B/H/T dimensions must be positive."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kShape.GetDim(DIM_BATCH) != batch || kShape.GetDim(DIM_HEAD) != kNumHead ||
-                    kShape.GetDim(DIM_TOKEN) != seqlen || kShape.GetDim(DIM_CHANNEL) != kHeadDim,
-                OP_LOGE(context->GetNodeName(), "q and k must have the same shape."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vShape.GetDim(DIM_BATCH) != batch || vShape.GetDim(DIM_TOKEN) != seqlen ||
+    if (batch <= 0 || kNumHead <= 0 || vNumHead <= 0 || seqlen <= 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "B,Hk,Hv,T",
+                    std::to_string(batch) + "," + std::to_string(kNumHead) + "," +
+                        std::to_string(vNumHead) + "," + std::to_string(seqlen),
+                    "B/Hk/Hv/T dimensions must be positive");
+        return ge::GRAPH_FAILED;
+    }
+    if (kShape.GetDim(DIM_BATCH) != batch || kShape.GetDim(DIM_HEAD) != kNumHead ||
+                    kShape.GetDim(DIM_TOKEN) != seqlen || kShape.GetDim(DIM_CHANNEL) != kHeadDim) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    OP_NAME, "q,k", "shape mismatch", "q and k must have the same shape");
+        return ge::GRAPH_FAILED;
+    }
+    if (vShape.GetDim(DIM_BATCH) != batch || vShape.GetDim(DIM_TOKEN) != seqlen ||
                     betaShape.GetDim(0) != batch || betaShape.GetDim(1) != vNumHead ||
                     betaShape.GetDim(2) != seqlen || aShape.GetDim(DIM_BATCH) != batch ||
                     aShape.GetDim(DIM_HEAD) != vNumHead || aShape.GetDim(DIM_TOKEN) != seqlen ||
-                    aShape.GetDim(DIM_CHANNEL) <= 0,
-                OP_LOGE(context->GetNodeName(), "v/beta/A must match q/k in B/T and value heads."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((rawGLayout == 0 &&
+                    aShape.GetDim(DIM_CHANNEL) <= 0) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    OP_NAME, "v,beta,A", "shape mismatch",
+                    "v/beta/A must match q/k in B/T and value heads");
+        return ge::GRAPH_FAILED;
+    }
+    if ((rawGLayout == 0 &&
                  (gShape.GetDim(0) != batch || gShape.GetDim(1) != vNumHead || gShape.GetDim(2) != seqlen)) ||
                     (rawGLayout == 1 &&
                      (gShape.GetDim(0) != batch || gShape.GetDim(1) != seqlen ||
-                      gShape.GetDim(2) != vNumHead)),
-                OP_LOGE(context->GetNodeName(),
-                        "g layout contract is 0:[B,HV,T] or 1:[B,T,HV]."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vNumHead % kNumHead != 0,
-                OP_LOGE(context->GetNodeName(), "vNumHead must be divisible by kNumHead."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kHeadDim != SUPPORTED_K ||
-                    (vHeadDim != SUPPORTED_V128 && vHeadDim != SUPPORTED_V256),
-                OP_LOGE(context->GetNodeName(), "Phase 5 fused path supports K=128 and V=128/256."),
-                return ge::GRAPH_FAILED);
+                      gShape.GetDim(2) != vNumHead))) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_NAME, "g", "layout=" + std::to_string(rawGLayout),
+                    "g layout contract is 0:[B,HV,T] or 1:[B,T,HV]");
+        return ge::GRAPH_FAILED;
+    }
+    if (vNumHead % kNumHead != 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "kNumHead,vNumHead",
+                    std::to_string(kNumHead) + "," + std::to_string(vNumHead),
+                    "vNumHead must be divisible by kNumHead");
+        return ge::GRAPH_FAILED;
+    }
+    if (kHeadDim != SUPPORTED_K ||
+                    (vHeadDim != SUPPORTED_V128 && vHeadDim != SUPPORTED_V256)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "K,V", std::to_string(kHeadDim) + "," + std::to_string(vHeadDim),
+                    "Phase 5 fused path supports K=128 and V=128/256");
+        return ge::GRAPH_FAILED;
+    }
 
     const bool outputFinalState = *(attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE));
     const int64_t chunkSize = *(attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE));
     const double scale = *(attrs->GetAttrPointer<double>(ATTR_SCALE));
-    OP_CHECK_IF(chunkSize != CHUNK_64 && chunkSize != CHUNK_128,
-                OP_LOGE(context->GetNodeName(), "chunk_size must be 64 or 128."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(aShape.GetDim(DIM_CHANNEL) != chunkSize,
-                OP_LOGE(context->GetNodeName(), "A last dimension must equal chunk_size."),
-                return ge::GRAPH_FAILED);
+    if (chunkSize != CHUNK_64 && chunkSize != CHUNK_128) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "chunk_size", std::to_string(chunkSize), "chunk_size must be 64 or 128");
+        return ge::GRAPH_FAILED;
+    }
+    if (aShape.GetDim(DIM_CHANNEL) != chunkSize) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "A.chunk_size", std::to_string(aShape.GetDim(DIM_CHANNEL)),
+                    "A last dimension must equal chunk_size=" + std::to_string(chunkSize));
+        return ge::GRAPH_FAILED;
+    }
 
     const bool isVarlen = cuShapePtr != nullptr;
     const int64_t tokenBatch = isVarlen ? cuShapePtr->GetStorageShape().GetDim(0) - 1 : 1;
-    OP_CHECK_IF(tokenBatch <= 0 || (isVarlen && batch != 1),
-                OP_LOGE(context->GetNodeName(), "Varlen input requires physical B=1 and at least one sequence."),
-                return ge::GRAPH_FAILED);
+    if (tokenBatch <= 0 || (isVarlen && batch != 1)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "B,tokenBatch",
+                    std::to_string(batch) + "," + std::to_string(tokenBatch),
+                    "varlen input requires physical B=1 and at least one sequence");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t totalChunks = isVarlen
                                     ? chunkShapePtr->GetStorageShape().GetDim(0) / 2
                                     : (seqlen + chunkSize - 1) / chunkSize;
-    OP_CHECK_IF(totalChunks <= 0 ||
-                    (isVarlen && chunkShapePtr->GetStorageShape().GetDim(0) % 2 != 0),
-                OP_LOGE(context->GetNodeName(), "chunk_indices must contain (seq,chunk) pairs."),
-                return ge::GRAPH_FAILED);
+    if (totalChunks <= 0 ||
+                    (isVarlen && chunkShapePtr->GetStorageShape().GetDim(0) % 2 != 0)) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(
+                    OP_NAME, "chunk_indices",
+                    std::to_string(isVarlen ? chunkShapePtr->GetStorageShape().GetDim(0) : 0),
+                    "2 * chunk count");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t aicCoreNum = platform.GetCoreNumAic();
@@ -363,17 +418,29 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     OP_CHECK_NULL_WITH_CONTEXT(context, betaDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, aDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
-    OP_CHECK_IF(qDesc->GetDataType() != ge::DT_FLOAT16 && qDesc->GetDataType() != ge::DT_BF16,
-                OP_LOGE(context->GetNodeName(), "q/k/v must be float16 or bfloat16."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(kDesc->GetDataType() != qDesc->GetDataType() ||
+    if (qDesc->GetDataType() != ge::DT_FLOAT16 && qDesc->GetDataType() != ge::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    OP_NAME, "q", ge::TypeUtils::DataTypeToSerialString(qDesc->GetDataType()),
+                    "q/k/v must be float16 or bfloat16");
+        return ge::GRAPH_FAILED;
+    }
+    if (kDesc->GetDataType() != qDesc->GetDataType() ||
                     vDesc->GetDataType() != qDesc->GetDataType() ||
-                    aDesc->GetDataType() != qDesc->GetDataType(),
-                OP_LOGE(context->GetNodeName(), "q/k/v/A must use the same dtype."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(betaDesc->GetDataType() != ge::DT_FLOAT || gDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(), "Phase 5 fused path requires float32 beta and g."),
-                return ge::GRAPH_FAILED);
+                    aDesc->GetDataType() != qDesc->GetDataType()) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    OP_NAME, "q,k,v,A",
+                    ge::TypeUtils::DataTypeToSerialString(qDesc->GetDataType()),
+                    "q/k/v/A must use the same dtype");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDesc->GetDataType() != ge::DT_FLOAT || gDesc->GetDataType() != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    OP_NAME, "beta,g",
+                    std::string("beta=") + ge::TypeUtils::DataTypeToSerialString(betaDesc->GetDataType()) +
+                        ",g=" + ge::TypeUtils::DataTypeToSerialString(gDesc->GetDataType()),
+                    "Phase 5 fused path requires float32 beta and g");
+        return ge::GRAPH_FAILED;
+    }
     const auto *initialDesc = context->GetOptionalInputDesc(INPUT_INITIAL_STATE);
     const bool useInitialState = initialDesc != nullptr;
     const bool useGk = context->GetOptionalInputDesc(INPUT_GK) != nullptr;
@@ -405,9 +472,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     platform_ascendc::PlatformAscendC ascendcPlatform(context->GetPlatformInfo());
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     GdnArch22RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
-    OP_CHECK_IF(recomputeProcessor.Process() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "RecomputeWUFwd tiling failed."),
-                return ge::GRAPH_FAILED);
+    if (recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "RecomputeWUFwd tiling failed.");
+        return ge::GRAPH_FAILED;
+    }
 
     ChunkGatedDeltaRuleFwdHTilingContext hContext{};
     hContext.seqlen = seqlen;
@@ -430,31 +498,33 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
 
     const size_t elementSize = qDesc->GetDataType() == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
     OwnerHWorkspace expectedOwner{};
-    OP_CHECK_IF(ownerLocalWorkspace &&
-                    !CheckOwnerHBeforeProcessor(hContext, recomputeProcessor.GetWorkspaceSize(), elementSize, expectedOwner),
-                OP_LOGE(context->GetNodeName(),
+    if (ownerLocalWorkspace &&
+                    !CheckOwnerHBeforeProcessor(hContext, recomputeProcessor.GetWorkspaceSize(), elementSize, expectedOwner)) {
+        OP_LOGE(context->GetNodeName(),
                         "Owner-local H/WU workspace precheck failed: region=H/WU, B=%" PRId64 ", Hv=%" PRId64
                         ", T=%" PRId64 ", N=%" PRId64 ", K=%" PRId64 ", V=%" PRId64 ", BT=%" PRId64
                         ", cores=%u, elementBytes=%zu, sysBytes=%zu, recomputeBytes=%zu; require K=V=128, BT=64,"
                         " no gk, sysBytes<=recomputeBytes and each size/offset <= INT64_MAX=%zu.",
                         batch, vNumHead, seqlen, tokenBatch, kHeadDim, vHeadDim, chunkSize, aicCoreNum,
-                        elementSize, sysWorkspaceSize, recomputeProcessor.GetWorkspaceSize(), MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        elementSize, sysWorkspaceSize, recomputeProcessor.GetWorkspaceSize(), MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
     ::GdnMegaArch22FwdHTilingData hPlain{};
     uint32_t hBlockDim = 0;
     size_t hWorkspaceSize = 0;
     ChunkGatedDeltaRuleFwdHTilingProcessor hProcessor(hContext);
     hProcessor.Process(hPlain, hBlockDim, hWorkspaceSize);
-    OP_CHECK_IF(ownerLocalWorkspace &&
+    if (ownerLocalWorkspace &&
                     (hPlain.vWorkspaceOffset != static_cast<int64_t>(expectedOwner.v) ||
                      hPlain.vUpdateWorkspaceOffset != static_cast<int64_t>(expectedOwner.decay) ||
                      hPlain.kDecayWorkspaceOffset != static_cast<int64_t>(expectedOwner.kDecay) ||
                      hPlain.hWorkspaceOffset != static_cast<int64_t>(expectedOwner.h) ||
                      hPlain.numSeqWorkspaceOffset != static_cast<int64_t>(expectedOwner.numSeq) ||
                      hPlain.numChunksWorkspaceOffset != static_cast<int64_t>(expectedOwner.numChunks) ||
-                     hWorkspaceSize != expectedOwner.end),
-                OP_LOGE(context->GetNodeName(), "Owner-local H workspace differs from the checked original layout."),
-                return ge::GRAPH_FAILED);
+                     hWorkspaceSize != expectedOwner.end)) {
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", "invalid", "Owner-local H workspace differs from the checked original layout.");
+        return ge::GRAPH_FAILED;
+    }
 
     GdnMegaArch22FwdHTilingData hTiling;
     FillHMacroTiling(hPlain, hTiling);
@@ -491,9 +561,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     };
     ShiftHWorkspace(hTiling);
     hWorkspaceSize += hoShift;
-    OP_CHECK_IF(ownerLocalWorkspace && hWorkspaceSize != expectedOwner.shiftedEnd,
-                OP_LOGE(context->GetNodeName(), "Owner-local shifted H workspace differs from the checked end."),
-                return ge::GRAPH_FAILED);
+    if (ownerLocalWorkspace && hWorkspaceSize != expectedOwner.shiftedEnd) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Owner-local shifted H workspace differs from the checked end.");
+        return ge::GRAPH_FAILED;
+    }
     // 只扩静态 prepared BT64/V128 的专用 H 区，后续 O 区及完整 reserve 原大小顺延。
     // Device 仍以实际 H/attn offset 间距决定 H4；旧路径可继续使用前两槽。
     const size_t oHWorkStages = platform.GetCurNpuArch() == NpuArch::DAV_2201 &&
@@ -502,34 +573,38 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     size_t oBase = hoBase;
     if (separateHoWorkspace) {
         size_t oSpanWithReserve = 0;
-        OP_CHECK_IF(!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, 0, oSpanWithReserve),
-                    OP_LOGE(context->GetNodeName(), "Separate HO O span exceeds int64 range."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(hWorkspaceSize > MAX_INT64_AS_SIZE_T - WORKSPACE_ALIGNMENT,
-                    OP_LOGE(context->GetNodeName(), "Separate HO O-base offset exceeds int64 range."),
-                    return ge::GRAPH_FAILED);
+        if (!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, 0, oSpanWithReserve)) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Separate HO O span exceeds int64 range.", __func__);
+        return ge::GRAPH_FAILED;
+    }
+        if (hWorkspaceSize > MAX_INT64_AS_SIZE_T - WORKSPACE_ALIGNMENT) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Separate HO O-base offset exceeds int64 range.", __func__);
+        return ge::GRAPH_FAILED;
+    }
         oBase = AlignUp(hWorkspaceSize, WORKSPACE_ALIGNMENT);
-        OP_CHECK_IF(oBase > MAX_INT64_AS_SIZE_T - oSpanWithReserve,
-                    OP_LOGE(context->GetNodeName(), "Separate HO O region exceeds int64 range."),
-                    return ge::GRAPH_FAILED);
+        if (oBase > MAX_INT64_AS_SIZE_T - oSpanWithReserve) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Separate HO O region exceeds int64 range.", __func__);
+        return ge::GRAPH_FAILED;
+    }
     }
     size_t oWorkspaceSize = 0;
-    OP_CHECK_IF(!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, oBase, oWorkspaceSize),
-                OP_LOGE(context->GetNodeName(),
+    if (!FillOTilingWorkspace(oTiling, aicCoreNum, oHWorkStages, oBase, oWorkspaceSize)) {
+        OP_LOGE(context->GetNodeName(),
                         "O workspace limit exceeded: region=O, base=%zu, cores=%u, BT=%" PRId64 ", V=%" PRId64
                         ", hStages=%zu, pingPongStages=%" PRId64 ", elementBytes=%zu, alignment=%zu, reserveBytes=%zu;"
                         " require base+aligned(v,h,attn,aftermask,mask,reserve) <= INT64_MAX=%zu.",
                         oBase, aicCoreNum, chunkSize, vHeadDim, oHWorkStages, PING_PONG_STAGES,
-                        sizeof(float), WORKSPACE_ALIGNMENT, WORKSPACE_RESERVE, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        sizeof(float), WORKSPACE_ALIGNMENT, WORKSPACE_RESERVE, MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
 
     size_t workspaceOffset = 0;
-    OP_CHECK_IF(!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset),
-                OP_LOGE(context->GetNodeName(),
-                        "HO workspace alignment limit exceeded: region=HO, hEnd=%zu, oEnd=%zu, alignment=%zu;"
-                        " require AlignUp(max(hEnd,oEnd),alignment) <= INT64_MAX=%zu.",
-                        hWorkspaceSize, oWorkspaceSize, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+    if (!AppendWorkspace(std::max(hWorkspaceSize, oWorkspaceSize), workspaceOffset)) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: HO workspace alignment limit exceeded, need=%zu bytes", __func__,
+            std::max(hWorkspaceSize, oWorkspaceSize));
+        return ge::GRAPH_FAILED;
+    }
     GDN::ChunkRecomputeWUFwdHOTrailer trailer{};
     trailer.recompute = recomputeTiling;
     trailer.recomputeWorkspaceOffset = 0;
@@ -539,39 +614,41 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     trailer.betaDataType = DtypeToEnum(betaDesc->GetDataType());
     size_t hIntermediateBytes = 0;
     size_t vNewIntermediateBytes = 0;
-    OP_CHECK_IF(!CheckedWorkspaceBytes({static_cast<size_t>(isVarlen ? 1 : batch),
+    if (!CheckedWorkspaceBytes({static_cast<size_t>(isVarlen ? 1 : batch),
                                         static_cast<size_t>(vNumHead), static_cast<size_t>(totalChunks),
                                         static_cast<size_t>(kHeadDim), static_cast<size_t>(vHeadDim), elementSize},
                                        hIntermediateBytes) ||
                     !CheckedWorkspaceBytes({static_cast<size_t>(batch), static_cast<size_t>(vNumHead),
                                             static_cast<size_t>(seqlen), static_cast<size_t>(vHeadDim), elementSize},
-                                           vNewIntermediateBytes),
-                OP_LOGE(context->GetNodeName(),
+                                           vNewIntermediateBytes)) {
+        OP_LOGE(context->GetNodeName(),
                         "HO persistent workspace size limit exceeded: region=%s, B=%" PRId64 ", hBatch=%" PRId64
                         ", Hv=%" PRId64 ", T=%" PRId64 ", NT=%" PRId64 ", K=%" PRId64 ", V=%" PRId64
                         ", elementBytes=%zu; require hBatch*Hv*NT*K*V*elementBytes and B*Hv*T*V*elementBytes"
                         " <= INT64_MAX=%zu.",
                         vNewIntermediateBytes == 0 ? "h" : "vNew", batch, isVarlen ? int64_t{1} : batch,
-                        vNumHead, seqlen, totalChunks, kHeadDim, vHeadDim, elementSize, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        vNumHead, seqlen, totalChunks, kHeadDim, vHeadDim, elementSize, MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
     trailer.hIntermediateOffset = static_cast<int64_t>(workspaceOffset);
-    OP_CHECK_IF(!AppendWorkspace(hIntermediateBytes, workspaceOffset),
-                OP_LOGE(context->GetNodeName(),
-                        "Persistent workspace end limit exceeded: region=h, offset=%zu, bytes=%zu, alignment=%zu;"
-                        " require bytes<=INT64_MAX-(alignment-1) and offset+AlignUp(bytes,alignment) <= INT64_MAX=%zu.",
-                        workspaceOffset, hIntermediateBytes, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+    if (!AppendWorkspace(hIntermediateBytes, workspaceOffset)) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: persistent workspace end limit exceeded, offset=%zu bytes, need=%zu bytes", __func__,
+            workspaceOffset, hIntermediateBytes);
+        return ge::GRAPH_FAILED;
+    }
     trailer.vNewIntermediateOffset = static_cast<int64_t>(workspaceOffset);
-    OP_CHECK_IF(!AppendWorkspace(vNewIntermediateBytes, workspaceOffset) ||
-                    !AppendWorkspace(WORKSPACE_RESERVE, workspaceOffset),
-                OP_LOGE(context->GetNodeName(),
+    if (!AppendWorkspace(vNewIntermediateBytes, workspaceOffset) ||
+                    !AppendWorkspace(WORKSPACE_RESERVE, workspaceOffset)) {
+        OP_LOGE(context->GetNodeName(),
                         "Persistent workspace end limit exceeded: region=%s, offset=%zu, vNewBase=%" PRId64
                         ", vNewBytes=%zu, reserveBytes=%zu, alignment=%zu; require each appended bytes"
                         " <= INT64_MAX-(alignment-1) and offset+AlignUp(bytes,alignment) <= INT64_MAX=%zu.",
                         workspaceOffset == static_cast<size_t>(trailer.vNewIntermediateOffset) ? "vNew" : "reserve",
                         workspaceOffset, trailer.vNewIntermediateOffset, vNewIntermediateBytes,
-                        WORKSPACE_RESERVE, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T),
-                return ge::GRAPH_FAILED);
+                        WORKSPACE_RESERVE, WORKSPACE_ALIGNMENT, MAX_INT64_AS_SIZE_T);
+        return ge::GRAPH_FAILED;
+    }
 
     const size_t hTilingSize = hTiling.GetDataSize();
     const size_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
@@ -579,20 +656,23 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(gert::TilingConte
     const size_t rawTilingSize = trailerOffset + sizeof(trailer);
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
-    OP_CHECK_IF(rawTilingSize > rawTiling->GetCapacity(),
-                OP_LOGE(context->GetNodeName(), "Combined tiling data exceeds raw tiling capacity."),
-                return ge::GRAPH_FAILED);
+    if (rawTilingSize > rawTiling->GetCapacity()) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Combined tiling data exceeds raw tiling capacity.");
+        return ge::GRAPH_FAILED;
+    }
     void *rawData = rawTiling->GetData();
-    OP_CHECK_IF(memset_s(rawData, rawTiling->GetCapacity(), 0, rawTilingSize) != EOK,
-                OP_LOGE(context->GetNodeName(), "Clear raw tiling data failed."),
-                return ge::GRAPH_FAILED);
+    if (memset_s(rawData, rawTiling->GetCapacity(), 0, rawTilingSize) != EOK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "invalid", "Clear raw tiling data failed.");
+        return ge::GRAPH_FAILED;
+    }
     hTiling.SaveToBuffer(rawData, rawTiling->GetCapacity());
-    OP_CHECK_IF(memcpy_s(static_cast<uint8_t *>(rawData) + oTilingOffset,
+    if (memcpy_s(static_cast<uint8_t *>(rawData) + oTilingOffset,
                          rawTiling->GetCapacity() - oTilingOffset, &oTiling, sizeof(oTiling)) != EOK ||
                     memcpy_s(static_cast<uint8_t *>(rawData) + trailerOffset,
-                             rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK,
-                OP_LOGE(context->GetNodeName(), "Serialize combined tiling data failed."),
-                return ge::GRAPH_FAILED);
+                             rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "data", "invalid", "Serialize combined tiling data failed.");
+        return ge::GRAPH_FAILED;
+    }
     rawTiling->SetDataSize(rawTilingSize);
 
     context->SetTilingKey(vHeadDim > SUPPORTED_V128 ? TILING_KEY_V256 : TILING_KEY_V128);
