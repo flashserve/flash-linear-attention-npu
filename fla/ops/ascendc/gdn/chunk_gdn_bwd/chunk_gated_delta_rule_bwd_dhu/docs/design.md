@@ -303,6 +303,17 @@ for headOffset = 0; headOffset < headCnt; ++headOffset:
 
 当前实现按 chunk 倒序处理，A2/A5 中每个 head 由 `headOffset % subBlockNum` 选中的 AIV 负责完整 `dH` row tile，fp32 state 在 workspace state 段和 `stateFp32` ping/pong UB 之间流转。这样 state 本身不经过 q dtype round-trip，同时 row tile 的计算写法继续贴近 `prepare_wy_repr_bwd`。
 
+### 4.6 A6 arch92 调度
+
+A6（`ascend960dt`、`DAV_9201`）由 `__NPU_ARCH__ == 9201` 选择
+`op_kernel/arch92/` 的独立 Cube/Vector 实现，kernel 使用 MIX AIC 1:1。A6 每个
+task 最多处理 3 个 head，并在 UB 中保留 3 个 head slot，避免 A5 双 AIV 与
+4-head window 的 `+16` flag 偏移。
+
+A6 只支持 `K=128、V=128`。`dh0` 清零由 arch92 task 路径自行处理，Host 不再
+额外生成 A2/A5 的 distributed clear 参数。A6 不支持主分支新增的 token-major
+`DO_TOKEN_MAJOR=true` 实例，Host 仅选择非 token-major tiling key。
+
 ## 5. 阶段划分与依赖关系
 
 本节先描述完整递推版本的目标阶段划分；当前代码已经推进到三阶段递推首版，具体已实现范围见本节后面的“当前代码 stage 对齐状态”。
