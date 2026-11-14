@@ -89,3 +89,13 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
 - V=128/256，chunk_size=64/128。
 - dense 与 `cu_seqlens/chunk_indices` 变长模式。
 - `state_v_first` true/false。
+
+## 返回码约定（v26.10.0 同步 #1182 后）
+
+本算子在本分支同步上游 #1182 后，下列返回码发生了**可观测变化**（仅错误分类，成功路径与入参契约不变）：
+
+| 旧返回码 | 新返回码 | 处数 | 说明 |
+|---|---|---|---|
+| `ACLNN_ERR_PARAM_NULLPTR` | `ACLNN_ERR_PARAM_INVALID` | 2 | 非空指针约束（取值 / 形状 / 组合不合法）改报参数非法 |
+
+判定规则：调用方参数为空指针 → `ACLNN_ERR_PARAM_NULLPTR`（161001）；取值 / 形状 / 布局 / 跨参数约束不合法 → `ACLNN_ERR_PARAM_INVALID`（161002）；执行器或 l0op 内部失败 → `ACLNN_ERR_INNER_*`。
