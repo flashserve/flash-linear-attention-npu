@@ -15,7 +15,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include <memory>
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"
@@ -670,47 +669,6 @@ bool IsAscend950()
     const char *socName = aclrtGetSocName();
     return socName != nullptr && std::strstr(socName, "Ascend950") != nullptr;
 }
-
-struct AclIntArrayDeleter {
-    void operator()(aclIntArray *array) const
-    {
-        if (array != nullptr) {
-            aclDestroyIntArray(array);
-        }
-    }
-};
-using AclIntArrayPtr = std::unique_ptr<aclIntArray, AclIntArrayDeleter>;
-
-// Empty sequences do not own tokens. Compact their metadata before the legacy
-// A5 split path; this keeps token outputs unchanged and avoids empty slots
-// perturbing gate/state work scheduling. Exported final state/intermediate
-// tensors keep the original sequence contract and therefore bypass this path.
-AclIntArrayPtr CompactEmptyCuSeqlensIfSafe(ChunkKdaFwdParams &params)
-{
-    if (params.cuSeqlensOptional == nullptr || params.finalStateOut != nullptr ||
-        params.hOut != nullptr) {
-        return AclIntArrayPtr(nullptr);
-    }
-    const aclIntArray *source = params.cuSeqlensOptional;
-    std::vector<int64_t> compact;
-    compact.reserve(source->Size());
-    for (size_t i = 0; i < source->Size(); ++i) {
-        const int64_t value = (*source)[i];
-        if (i == 0 || value > (*source)[i - 1]) {
-            compact.push_back(value);
-        }
-    }
-    if (compact.size() == source->Size()) {
-        return AclIntArrayPtr(nullptr);
-    }
-    aclIntArray *array = aclCreateIntArray(compact.data(), compact.size());
-    if (array == nullptr) {
-        return AclIntArrayPtr(nullptr);
-    }
-    params.cuSeqlensOptional = array;
-    params.chunkIndicesOptional = nullptr;
-    return AclIntArrayPtr(array);
-}
 // chunk32 大融合路由实现于 chunk_kda_fwd_chunk32_route.h（body-include，仍属本匿名命名空间）。
 #include "chunk_kda_fwd_chunk32_route.h"
 
@@ -765,7 +723,6 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
-    AclIntArrayPtr compactCuSeqlens = CompactEmptyCuSeqlensIfSafe(params);
     if (params.chunkSize == 32) {
         // chunk32 大融合已迁至独立 L0 算子 ChunkKdaFwdFused，仅由
         // aclnnChunkKdaFwdV2 路由；V1 不再接受 chunk_size=32。
