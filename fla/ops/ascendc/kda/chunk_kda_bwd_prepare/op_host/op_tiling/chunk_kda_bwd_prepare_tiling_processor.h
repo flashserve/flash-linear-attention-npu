@@ -102,9 +102,8 @@ public:
 private:
     ge::graphStatus Fail(const char *reason)
     {
-        OP_LOGE(ctx_.nodeName, "invalid KernelA %s: layout=%s scale=%g chunk=%ld cores=%u cu=%u indices=%u",
-                reason, ctx_.layout ? ctx_.layout : "null", ctx_.scale, ctx_.chunkSize,
-                ctx_.aicCoreNum, ctx_.cuSeqlensShape != nullptr, ctx_.chunkIndicesShape != nullptr);
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(ctx_.nodeName, "layout", "invalid", "invalid KernelA :");
+
         return ge::GRAPH_FAILED;
     }
     ChunkKdaBwdPrepareTilingContext &ctx_;

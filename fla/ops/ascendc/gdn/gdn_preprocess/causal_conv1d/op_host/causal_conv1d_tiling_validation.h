@@ -21,6 +21,7 @@
 #include "platform/platform_infos_def.h"
 #include "causal_conv1d_tiling_utils.h"
 #include "../op_kernel/causal_conv1d_tiling_data.h"
+#include <string>
 
 namespace optiling::causal_conv1d_host {
 
@@ -31,9 +32,15 @@ inline ge::graphStatus GetPlatformInfo(gert::TilingContext *context, uint64_t &u
     fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
     coreNum = platformInfoPtr->GetCoreNum();
-    OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
+    if (coreNum == 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "coreNum", std::to_string(coreNum), "coreNum is 0");
+        return ge::GRAPH_FAILED;
+    }
     platformInfoPtr->GetLocalMemSize(fe::LocalMemType::UB, ubSize);
-    OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
+    if (ubSize == 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ubSize", std::to_string(ubSize), "ubSize is 0");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -62,9 +69,11 @@ inline ge::graphStatus ResolveMetadataPair(gert::TilingContext *context, uint32_
 {
     const bool hasDevice = IsOptionalInputPresent(context, deviceIndex);
     const bool hasCpu = IsOptionalInputPresent(context, cpuIndex);
-    OP_CHECK_IF(hasDevice && hasCpu,
-                OP_LOGE(context, "%s and %s are mutually exclusive; provide only one", deviceName, cpuName),
-                return ge::GRAPH_FAILED);
+    if (hasDevice && hasCpu) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "device/cpu input", "both present",
+            "device and cpu inputs are mutually exclusive; provide only one");
+        return ge::GRAPH_FAILED;
+    }
     useCpu = hasCpu;
     resolvedIndex = hasCpu ? cpuIndex : deviceIndex;
     return ge::GRAPH_SUCCESS;
@@ -72,22 +81,30 @@ inline ge::graphStatus ResolveMetadataPair(gert::TilingContext *context, uint32_
 
 inline ge::graphStatus ResolveMetadataInputs(gert::TilingContext *context, ResolvedMetadataInputs &inputs)
 {
-    OP_CHECK_IF(ResolveMetadataPair(context, QUERY_START_LOC_INDEX, QUERY_START_LOC_CPU_INDEX, "queryStartLoc",
+    if (ResolveMetadataPair(context, QUERY_START_LOC_INDEX, QUERY_START_LOC_CPU_INDEX, "queryStartLoc",
                                     "queryStartLocCpu", inputs.queryStartLocIndex,
-                                    inputs.queryStartLocUseCpu) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "failed to resolve queryStartLoc inputs"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ResolveMetadataPair(context, CACHE_INDICES_INDEX, CACHE_INDICES_CPU_INDEX, "cacheIndices",
+                                    inputs.queryStartLocUseCpu) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve queryStartLoc inputs", __func__);
+        return ge::GRAPH_FAILED;
+    }
+    if (ResolveMetadataPair(context, CACHE_INDICES_INDEX, CACHE_INDICES_CPU_INDEX, "cacheIndices",
                                     "cacheIndicesCpu", inputs.cacheIndicesIndex,
-                                    inputs.cacheIndicesUseCpu) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "failed to resolve cacheIndices inputs"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ResolveMetadataPair(context, HAS_INITIAL_STATE_INDEX, HAS_INITIAL_STATE_CPU_INDEX, "hasInitialState",
+                                    inputs.cacheIndicesUseCpu) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve cacheIndices inputs", __func__);
+        return ge::GRAPH_FAILED;
+    }
+    if (ResolveMetadataPair(context, HAS_INITIAL_STATE_INDEX, HAS_INITIAL_STATE_CPU_INDEX, "hasInitialState",
                                     "hasInitialStateCpu", inputs.hasInitialStateIndex,
-                                    inputs.hasInitialStateUseCpu) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "failed to resolve hasInitialState inputs"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ResolveMetadataPair(context, NUM_ACCEPTED_TOKENS_INDEX, NUM_ACCEPTED_TOKENS_CPU_INDEX,
+                                    inputs.hasInitialStateUseCpu) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve hasInitialState inputs", __func__);
+        return ge::GRAPH_FAILED;
+    }
+    if (ResolveMetadataPair(context, NUM_ACCEPTED_TOKENS_INDEX, NUM_ACCEPTED_TOKENS_CPU_INDEX,
                                     "numAcceptedTokens", "numAcceptedTokensCpu", inputs.numAcceptedTokensIndex,
-                                    inputs.numAcceptedTokensUseCpu) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "failed to resolve numAcceptedTokens inputs"), return ge::GRAPH_FAILED);
+                                    inputs.numAcceptedTokensUseCpu) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve numAcceptedTokens inputs", __func__);
+        return ge::GRAPH_FAILED;
+    }
     if (inputs.queryStartLocUseCpu) {
         OP_LOGW(context,
                 "CausalConv1d host-array input queryStartLocCpu is deprecated and will be removed after "
@@ -122,7 +139,7 @@ inline ge::graphStatus EncodeMetadataDtype(gert::TilingContext *context, uint32_
             encoded = METADATA_DTYPE_INT64;
             return ge::GRAPH_SUCCESS;
         }
-        OP_LOGE(context, "%sCpu dtype must be int64", inputName);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), inputName, "cpu dtype", "dtype must be int64");
         return ge::GRAPH_FAILED;
     }
     if (dtype == ge::DT_INT32) {
@@ -133,7 +150,7 @@ inline ge::graphStatus EncodeMetadataDtype(gert::TilingContext *context, uint32_
         encoded = METADATA_DTYPE_BOOL;
         return ge::GRAPH_SUCCESS;
     }
-    OP_LOGE(context, "%s device Tensor dtype must be %s", inputName, allowBool ? "bool/int32" : "int32");
+    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), inputName, "device dtype", allowBool ? "device Tensor dtype must be bool/int32" : "device Tensor dtype must be int32");
     return ge::GRAPH_FAILED;
 }
 
@@ -174,7 +191,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     } else if (std::strcmp(activationPtr, "silu") == 0 || std::strcmp(activationPtr, "swish") == 0) {
         attrInfo.activationMode = 1;
     } else {
-        OP_LOGE(context, "activation only supports 'none', 'silu', or 'swish', got '%s'", activationPtr);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "activation", activationPtr, "activation only supports 'none', 'silu', or 'swish'");
         return ge::GRAPH_FAILED;
     }
 
@@ -185,32 +202,35 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
 
     const int64_t *runModePtr = attrs->GetAttrPointer<int64_t>(ATTR_RUN_MODE_INDEX);
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;
-    OP_CHECK_IF(attrInfo.runMode != 0 && attrInfo.runMode != 1, OP_LOGE(context, "runMode only supports 0/1"),
-                return ge::GRAPH_FAILED);
+    if (attrInfo.runMode != 0 && attrInfo.runMode != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "runMode", "invalid", "runMode only supports 0/1");
+        return ge::GRAPH_FAILED;
+    }
 
     const int64_t *headNumPtr = attrs->GetAttrPointer<int64_t>(ATTR_HEAD_NUM_INDEX);
     attrInfo.headNum = (headNumPtr == nullptr) ? 0 : *headNumPtr;
-    OP_CHECK_IF(attrInfo.headNum < 0, OP_LOGE(context, "headNum must be >= 0"),
-                return ge::GRAPH_FAILED);
+    if (attrInfo.headNum < 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", std::to_string(attrInfo.headNum), "headNum must be >= 0");
+        return ge::GRAPH_FAILED;
+    }
 
     const int64_t *maxQueryLenPtr = attrs->GetAttrPointer<int64_t>(ATTR_MAX_QUERY_LEN_INDEX);
     attrInfo.maxQueryLen = (maxQueryLenPtr == nullptr) ? -1 : *maxQueryLenPtr;
-    OP_CHECK_IF(attrInfo.maxQueryLen < -1 ||
-                    attrInfo.maxQueryLen > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
-                OP_LOGE(context, "maxQueryLen must be -1 or in int32 range, got %ld", attrInfo.maxQueryLen),
-                return ge::GRAPH_FAILED);
+    if (attrInfo.maxQueryLen < -1 ||
+                    attrInfo.maxQueryLen > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "maxQueryLen", std::to_string(attrInfo.maxQueryLen), "maxQueryLen must be -1 or in int32 ranged");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
 inline ge::graphStatus ValidateAlignedDim(gert::TilingContext *context, int64_t dim)
 {
-    OP_CHECK_IF(dim % DIM_ALIGN_ELEMS != 0,
-                OP_LOGE(context,
-                        "dim must satisfy dim %% %ld == 0 for causal_conv1d; "
-                        "x/weight/convStates last dimension and bias length must all use the same aligned dim, "
-                        "got dim=%ld.",
-                        DIM_ALIGN_ELEMS, dim),
-                return ge::GRAPH_FAILED);
+    if (dim % DIM_ALIGN_ELEMS != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "dim", std::to_string(dim),
+            "dim must be a multiple of " + std::to_string(DIM_ALIGN_ELEMS) + " for causal_conv1d");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -219,8 +239,10 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
 {
     const bool isDecodeMode = (attrInfo.runMode == 1);
     ResolvedMetadataInputs metadataInputs;
-    OP_CHECK_IF(ResolveMetadataInputs(context, metadataInputs) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ResolveMetadataInputs error"), return ge::GRAPH_FAILED);
+    if (ResolveMetadataInputs(context, metadataInputs) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: ResolveMetadataInputs error", __func__);
+        return ge::GRAPH_FAILED;
+    }
     tiling.activationMode = attrInfo.activationMode;
     tiling.padSlotId = attrInfo.padSlotId;
     tiling.hasNullBlock = (attrInfo.nullBlockId >= 0) ? 1 : 0;
@@ -254,15 +276,19 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             dim = xShape.GetDim(1);
             seqLen = 1;
             cuSeqlen = batch;
-            OP_CHECK_IF(batch <= 0 || dim <= 0, OP_LOGE(context, "invalid x shape for 2D decode mode"),
-                        return ge::GRAPH_FAILED);
+            if (batch <= 0 || dim <= 0) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "invalid", "invalid x shape for 2D decode mode");
+        return ge::GRAPH_FAILED;
+    }
         } else {
             inputMode = 0;
             cuSeqlen = xShape.GetDim(0);
             dim = xShape.GetDim(1);
             seqLen = 0;
-            OP_CHECK_IF(dim <= 0 || cuSeqlen < 0, OP_LOGE(context, "invalid x shape for 2D varlen mode"),
-                        return ge::GRAPH_FAILED);
+            if (dim <= 0 || cuSeqlen < 0) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "invalid", "invalid x shape for 2D varlen mode");
+        return ge::GRAPH_FAILED;
+    }
         }
     } else if (xShape.GetDimNum() == 3) {
         inputMode = 1;
@@ -270,77 +296,92 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         seqLen = xShape.GetDim(1);
         dim = xShape.GetDim(2);
         cuSeqlen = batch * seqLen;
-        OP_CHECK_IF(batch <= 0 || dim <= 0 || seqLen <= 0, OP_LOGE(context, "invalid x shape for 3D batch mode"),
-                    return ge::GRAPH_FAILED);
-    } else {
-        OP_LOGE(context, "x must be 2D (cu_seqlen, dim) or 3D (batch, seqlen, dim)");
+        if (batch <= 0 || dim <= 0 || seqLen <= 0) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "invalid", "invalid x shape for 3D batch mode");
         return ge::GRAPH_FAILED;
     }
-    OP_CHECK_IF(ValidateAlignedDim(context, dim) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "dim alignment validation failed"),
-                return ge::GRAPH_FAILED);
+    } else {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", "rank mismatch", "x must be 2D (cu_seqlen, dim) or 3D (batch, seqlen, dim)");
+        return ge::GRAPH_FAILED;
+    }
+    if (ValidateAlignedDim(context, dim) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "validation", "invalid", "dim alignment validation failed");
+        return ge::GRAPH_FAILED;
+    }
     if (tiling.headNum > 0) {
-        OP_CHECK_IF(isDecodeMode,
-                    OP_LOGE(context, "headNum > 0 is only supported when runMode=0"),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(tiling.headNum > dim || dim % tiling.headNum != 0,
-                    OP_LOGE(context,
-                            "headNum must be in (0, dim] and divide dim exactly, got headNum=%ld, dim=%ld",
-                            tiling.headNum, dim),
-                    return ge::GRAPH_FAILED);
+        if (isDecodeMode) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", std::to_string(tiling.headNum), "headNum > 0 is only supported when runMode=0");
+        return ge::GRAPH_FAILED;
+    }
+        if (tiling.headNum > dim || dim % tiling.headNum != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", "invalid", "headNum must be in (0, dim] and divide dim exactlyd,d");
+        return ge::GRAPH_FAILED;
+    }
         tiling.headDim = dim / tiling.headNum;
-        OP_CHECK_IF(tiling.headDim % DIM_ALIGN_ELEMS != 0,
-                    OP_LOGE(context,
-                            "headDim must satisfy headDim %% %ld == 0 for head-major output, "
-                            "got headNum=%ld, dim=%ld, headDim=%ld",
-                            DIM_ALIGN_ELEMS, tiling.headNum, dim, tiling.headDim),
-                    return ge::GRAPH_FAILED);
+        if (tiling.headDim % DIM_ALIGN_ELEMS != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim", "invalid", "headDim must satisfy headDim % d == 0 for head-major output");
+        return ge::GRAPH_FAILED;
+    }
     }
 
     auto wShapePtr = context->GetInputShape(WEIGHT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, wShapePtr);
     auto wShape = EnsureNotScalar(wShapePtr->GetStorageShape());
-    OP_CHECK_IF(wShape.GetDimNum() != 2, OP_LOGE(context, "weight must be 2D: (width, dim)"), return ge::GRAPH_FAILED);
+    if (wShape.GetDimNum() != 2) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "weight", std::to_string(wShape.GetDimNum()), "weight must be 2D: (width, dim)");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t width = wShape.GetDim(0);
     const int64_t wDim = wShape.GetDim(1);
-    OP_CHECK_IF(wDim != dim, OP_LOGE(context, "weight.shape[1] must equal dim"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(width < 2 || width > 4, OP_LOGE(context, "Only support width in [2,4] now, actually is %ld.", width),
-                return ge::GRAPH_FAILED);
+    if (wDim != dim) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "weight", "invalid", "weight.shape[1] must equal dim");
+        return ge::GRAPH_FAILED;
+    }
+    if (width < 2 || width > 4) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "actually", std::to_string(width), "Only support width in [2,4] now, actually is d.");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *sShapePtr = context->GetOptionalInputShape(CONV_STATES_INDEX);
     const bool hasConvStates =
         (sShapePtr != nullptr) && (sShapePtr->GetStorageShape().GetShapeSize() != 0);
-    OP_CHECK_IF(!hasConvStates && isDecodeMode,
-                OP_LOGE(context,
-                        "convStates must be provided and non-empty when runMode=1 (update/decode)"),
-                return ge::GRAPH_FAILED);
+    if (!hasConvStates && isDecodeMode) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "convStates");
+        return ge::GRAPH_FAILED;
+    }
     int64_t numCacheLines = 0;
     int64_t stateLen = width - 1;
     if (hasConvStates) {
         auto sShape = EnsureNotScalar(sShapePtr->GetStorageShape());
-        OP_CHECK_IF(sShape.GetDimNum() != 3,
-                    OP_LOGE(context, "non-empty convStates must be 3D: (num_cache_lines, state_len, dim)"),
-                    return ge::GRAPH_FAILED);
+        if (sShape.GetDimNum() != 3) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "convStates", std::to_string(sShape.GetDimNum()), "non-empty convStates must be 3D: (num_cache_lines, state_len, dim)");
+        return ge::GRAPH_FAILED;
+    }
         numCacheLines = sShape.GetDim(0);
         stateLen = sShape.GetDim(1);
         const int64_t sDim = sShape.GetDim(2);
-        OP_CHECK_IF(numCacheLines <= 0, OP_LOGE(context, "convStates.shape[0] (num_cache_lines) must be > 0"),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(sDim != dim, OP_LOGE(context, "convStates.shape[2] must equal dim"), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(stateLen < (width - 1), OP_LOGE(context, "convStates.shape[1] must be >= width-1"),
-                    return ge::GRAPH_FAILED);
+        if (numCacheLines <= 0) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "convStates", std::to_string(numCacheLines), "convStates.shape[0] (num_cache_lines) must be > 0");
+        return ge::GRAPH_FAILED;
+    }
+        if (sDim != dim) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "convStates", "invalid", "convStates.shape[2] must equal dim");
+        return ge::GRAPH_FAILED;
+    }
+        if (stateLen < (width - 1)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "convStates", "invalid", "convStates.shape[1] must be >= width-1");
+        return ge::GRAPH_FAILED;
+    }
 
         const auto inputStride = context->GetOptionalInputStride(CONV_STATES_INDEX);
         if (inputStride != nullptr && inputStride->GetDimNum() == 3) {
             const int64_t stride0 = inputStride->GetStride(0);
             const int64_t stride1 = inputStride->GetStride(1);
             const int64_t stride2 = inputStride->GetStride(2);
-            OP_CHECK_IF(stride0 <= 0 || stride1 <= 0 || stride2 != 1,
-                        OP_LOGE(context,
-                                "convStates only supports non-contiguous outer dimensions with contiguous dim; "
-                                "expected positive stride0/stride1 and stride2=1, got [%ld, %ld, %ld]",
-                                stride0, stride1, stride2),
-                        return ge::GRAPH_FAILED);
+            if (stride0 <= 0 || stride1 <= 0 || stride2 != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "convStates", "invalid", "convStates only supports non-contiguous outer dimensions with contiguous dim;");
+        return ge::GRAPH_FAILED;
+    }
             tiling.convStateStride0 = stride0;
             tiling.convStateStride1 = stride1;
         } else {
@@ -363,27 +404,37 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         qslAbsent = (qslDimNum == 0) || (qslDimNum == 1 && qslStorageShape.GetDim(0) <= 0);
         if (!qslAbsent) {
             auto qslShape = EnsureNotScalar(qslStorageShape);
-            OP_CHECK_IF(qslShape.GetDimNum() != 1, OP_LOGE(context, "queryStartLoc must be 1D"),
-                        return ge::GRAPH_FAILED);
+            if (qslShape.GetDimNum() != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc", std::to_string(qslShape.GetDimNum()), "queryStartLoc must be 1D");
+        return ge::GRAPH_FAILED;
+    }
             qslSize = qslShape.GetDim(0);
-            OP_CHECK_IF(qslSize < 1, OP_LOGE(context, "queryStartLoc.size must be >= 1"), return ge::GRAPH_FAILED);
+            if (qslSize < 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(qslSize), "queryStartLoc.size must be >= 1");
+        return ge::GRAPH_FAILED;
+    }
             OP_CHECK_NULL_WITH_CONTEXT(context, qslDesc);
-            OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.queryStartLocIndex, "queryStartLoc", false,
+            if (EncodeMetadataDtype(context, metadataInputs.queryStartLocIndex, "queryStartLoc", false,
                                             metadataInputs.queryStartLocUseCpu,
-                                            tiling.queryStartLocDtype) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(context, "invalid queryStartLoc dtype"), return ge::GRAPH_FAILED);
+                                            tiling.queryStartLocDtype) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "invalid queryStartLoc dtype");
+        return ge::GRAPH_FAILED;
+    }
         }
     }
 
     if (qslAbsent) {
-        OP_CHECK_IF(inputMode == 0, OP_LOGE(context, "queryStartLoc is required in 2D varlen mode (inputMode=0)"),
-                    return ge::GRAPH_FAILED);
+        if (inputMode == 0) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "queryStartLoc");
+        return ge::GRAPH_FAILED;
+    }
         qslSize = batch + 1;
     }
 
-    OP_CHECK_IF(cuSeqlen > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
-                OP_LOGE(context, "cuSeqlen is too large for int32 indexing, got %ld", cuSeqlen),
-                return ge::GRAPH_FAILED);
+    if (cuSeqlen > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cuSeqlen", std::to_string(cuSeqlen), "cuSeqlen is too large for int32 indexingd");
+        return ge::GRAPH_FAILED;
+    }
 
     const gert::Tensor *qslTensor = nullptr;
     bool qslDataVisible = false;
@@ -392,29 +443,30 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         qslTensor = context->GetOptionalInputTensor(metadataInputs.queryStartLocIndex);
         qslDataVisible = HasVisibleMetadataData(qslTensor, tiling.queryStartLocDtype);
         if (qslDataVisible) {
-            OP_CHECK_IF(ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, 0) != 0,
-                        OP_LOGE(context, "queryStartLoc[0] must be 0"), return ge::GRAPH_FAILED);
+            if (ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, 0) != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc", "invalid", "queryStartLoc[0] must be 0");
+        return ge::GRAPH_FAILED;
+    }
             const int64_t qslLast = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, qslSize - 1);
-            OP_CHECK_IF(qslLast != cuSeqlen,
-                        OP_LOGE(context, "queryStartLoc[last] must equal cuSeqlen, got %ld vs %ld",
-                                qslLast, cuSeqlen),
-                        return ge::GRAPH_FAILED);
+            if (qslLast != cuSeqlen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "queryStartLoc[last] must equal cuSeqlend vs d");
+        return ge::GRAPH_FAILED;
+    }
             for (int64_t i = 0; i + 1 < qslSize; ++i) {
                 const int64_t cur = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
                 const int64_t nxt = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1);
-                OP_CHECK_IF(cur < 0 || cur > cuSeqlen,
-                            OP_LOGE(context, "queryStartLoc[%ld] out of range: %ld (cuSeqlen=%ld)", i, cur, cuSeqlen),
-                            return ge::GRAPH_FAILED);
-                OP_CHECK_IF(
-                    nxt < 0 || nxt > cuSeqlen,
-                    OP_LOGE(context, "queryStartLoc[%ld] out of range: %ld (cuSeqlen=%ld)", i + 1, nxt, cuSeqlen),
-                    return ge::GRAPH_FAILED);
-                OP_CHECK_IF(
-                    nxt < cur,
-                    OP_LOGE(context,
-                            "queryStartLoc must be non-decreasing, got queryStartLoc[%ld]=%ld queryStartLoc[%ld]=%ld",
-                            i, cur, i + 1, nxt),
-                    return ge::GRAPH_FAILED);
+                if (cur < 0 || cur > cuSeqlen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "out", "invalid", "queryStartLoc[d] out of range: d (d)");
+        return ge::GRAPH_FAILED;
+    }
+                if (nxt < 0 || nxt > cuSeqlen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "out", "invalid", "queryStartLoc[d] out of range: d (d)");
+        return ge::GRAPH_FAILED;
+    }
+                if (nxt < cur) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc", "invalid", "queryStartLoc must be non-decreasing, got queryStartLoc[d]d queryStartLoc[d]d");
+        return ge::GRAPH_FAILED;
+    }
                 const int64_t segmentLen = nxt - cur;
                 observedMaxQueryLen = (segmentLen > observedMaxQueryLen) ? segmentLen : observedMaxQueryLen;
             }
@@ -428,9 +480,10 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             cuSeqlen = xShape.GetDim(0);
             batch = batchFromQsl;
             seqLen = 0;
-            OP_CHECK_IF(dim <= 0 || cuSeqlen < 0 || batch < 0,
-                        OP_LOGE(context, "invalid x/queryStartLoc shapes for 2D varlen decode mode"),
-                        return ge::GRAPH_FAILED);
+            if (dim <= 0 || cuSeqlen < 0 || batch < 0) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x/queryStartLoc", "invalid", "invalid x/queryStartLoc shapes for 2D varlen decode mode");
+        return ge::GRAPH_FAILED;
+    }
         }
     }
 
@@ -438,22 +491,26 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         batch = qslSize - 1;
     }
     if (!qslAbsent && (inputMode == 1 || inputMode == 2)) {
-        OP_CHECK_IF(qslSize != batch + 1, OP_LOGE(context, "queryStartLoc.size must equal batch + 1"),
-                    return ge::GRAPH_FAILED);
+        if (qslSize != batch + 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "queryStartLoc.size must equal batch + 1");
+        return ge::GRAPH_FAILED;
+    }
     }
     if (isDecodeMode) {
         const int64_t decodeSeqLen = (inputMode == 1) ? seqLen : 1;
-        OP_CHECK_IF(decodeSeqLen < 1, OP_LOGE(context, "decode mode requires seqlen >= 1, actual is %ld", decodeSeqLen),
-                    return ge::GRAPH_FAILED);
+        if (decodeSeqLen < 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "actual", std::to_string(decodeSeqLen), "decode mode requires seqlen >= 1, actual is d");
+        return ge::GRAPH_FAILED;
+    }
     }
     if (isDecodeMode && inputMode == 0) {
         tiling.maxQueryLen = attrInfo.maxQueryLen;
         if (qslDataVisible) {
-            OP_CHECK_IF(attrInfo.maxQueryLen >= 0 && attrInfo.maxQueryLen < observedMaxQueryLen,
-                        OP_LOGE(context,
-                                "maxQueryLen=%ld is smaller than the observed maximum varlen segment length=%ld",
-                                attrInfo.maxQueryLen, observedMaxQueryLen),
-                        return ge::GRAPH_FAILED);
+            if (attrInfo.maxQueryLen >= 0 && attrInfo.maxQueryLen < observedMaxQueryLen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "max_query_len", std::to_string(attrInfo.maxQueryLen),
+            "max_query_len must be >= observed max query length");
+        return ge::GRAPH_FAILED;
+    }
             // Preserve raw callers that omit the new attr when deprecated host
             // metadata exposes the exact upper bound at tiling time.
             if (tiling.maxQueryLen < 0) {
@@ -471,13 +528,20 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         ciAbsent = (ciDimNum == 0) || (ciDimNum == 1 && ciStorageShape.GetDim(0) <= 0);
         if (!ciAbsent) {
             auto ciShape = EnsureNotScalar(ciStorageShape);
-            OP_CHECK_IF(ciShape.GetDimNum() != 1, OP_LOGE(context, "cacheIndices must be 1D"), return ge::GRAPH_FAILED);
-            OP_CHECK_IF(ciShape.GetDim(0) != batch, OP_LOGE(context, "cacheIndices.size must equal batch"),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.cacheIndicesIndex, "cacheIndices", false,
+            if (ciShape.GetDimNum() != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cacheIndices", std::to_string(ciShape.GetDimNum()), "cacheIndices must be 1D");
+        return ge::GRAPH_FAILED;
+    }
+            if (ciShape.GetDim(0) != batch) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "cacheIndices.size must equal batch");
+        return ge::GRAPH_FAILED;
+    }
+            if (EncodeMetadataDtype(context, metadataInputs.cacheIndicesIndex, "cacheIndices", false,
                                             metadataInputs.cacheIndicesUseCpu,
-                                            tiling.cacheIndicesDtype) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(context, "invalid cacheIndices dtype"), return ge::GRAPH_FAILED);
+                                            tiling.cacheIndicesDtype) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "invalid cacheIndices dtype");
+        return ge::GRAPH_FAILED;
+    }
             tiling.hasCacheIndices = 1;
 
             const gert::Tensor *ciTensor = metadataInputs.cacheIndicesUseCpu
@@ -492,28 +556,24 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                         continue;
                     }
                     if (hasConvStates) {
-                        OP_CHECK_IF(v > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
-                                    OP_LOGE(context, "cacheIndices[%ld]=%ld exceeds int32 range", i, v),
-                                    return ge::GRAPH_FAILED);
-                        OP_CHECK_IF(v < 0 || v >= numCacheLines,
-                                    OP_LOGE(context,
-                                            "cacheIndices[%ld]=%ld out of range [0, num_cache_lines=%ld), "
-                                            "padSlotId=%ld, nullBlockId=%ld (enabled=%ld)",
-                                            i, v, numCacheLines, tiling.padSlotId, tiling.nullBlockId,
-                                            tiling.hasNullBlock),
-                                    return ge::GRAPH_FAILED);
+                        if (v > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "cacheIndices[d]d exceeds int32 range");
+        return ge::GRAPH_FAILED;
+    }
+                        if (v < 0 || v >= numCacheLines) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "out", "invalid", "cacheIndices[d]d out of range [0,d)");
+        return ge::GRAPH_FAILED;
+    }
                     }
                 }
             }
         }
     }
     if (ciAbsent) {
-        OP_CHECK_IF(hasConvStates && numCacheLines < batch,
-                    OP_LOGE(context,
-                            "cacheIndices is absent, requires convStates.shape[0] (num_cache_lines) >= batch for "
-                            "identity mapping, got num_cache_lines=%ld batch=%ld",
-                            numCacheLines, batch),
-                    return ge::GRAPH_FAILED);
+        if (hasConvStates && numCacheLines < batch) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "cacheIndices", "invalid", "cacheIndices is absent, requires convStates.shape[0] (num_cache_lines) >= batch for");
+        return ge::GRAPH_FAILED;
+    }
     }
 
     tiling.hasInitialState = 0;
@@ -523,18 +583,25 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         const int64_t hisDimNum = hisStorageShape.GetDimNum();
         const bool hisAbsent = (hisDimNum == 0) || (hisDimNum == 1 && hisStorageShape.GetDim(0) <= 0);
         if (!hisAbsent) {
-            OP_CHECK_IF(isDecodeMode,
-                        OP_LOGE(context, "hasInitialState is only supported in runMode=0 (fn/prefill)"),
-                        return ge::GRAPH_FAILED);
+            if (isDecodeMode) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "hasInitialState", std::to_string(isDecodeMode), "hasInitialState is only supported in runMode=0 (fn/prefill)");
+        return ge::GRAPH_FAILED;
+    }
             auto hisShape = EnsureNotScalar(hisStorageShape);
-            OP_CHECK_IF(hisShape.GetDimNum() != 1, OP_LOGE(context, "hasInitialState must be 1D"),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(hisShape.GetDim(0) != batch, OP_LOGE(context, "hasInitialState.size must equal batch"),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.hasInitialStateIndex, "hasInitialState", true,
+            if (hisShape.GetDimNum() != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "hasInitialState", std::to_string(hisShape.GetDimNum()), "hasInitialState must be 1D");
+        return ge::GRAPH_FAILED;
+    }
+            if (hisShape.GetDim(0) != batch) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "hasInitialState.size must equal batch");
+        return ge::GRAPH_FAILED;
+    }
+            if (EncodeMetadataDtype(context, metadataInputs.hasInitialStateIndex, "hasInitialState", true,
                                             metadataInputs.hasInitialStateUseCpu,
-                                            tiling.hasInitialStateDtype) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(context, "invalid hasInitialState dtype"), return ge::GRAPH_FAILED);
+                                            tiling.hasInitialStateDtype) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "invalid hasInitialState dtype");
+        return ge::GRAPH_FAILED;
+    }
 
             const gert::Tensor *hisTensor = metadataInputs.hasInitialStateUseCpu
                                                 ? context->GetOptionalInputTensor(metadataInputs.hasInitialStateIndex)
@@ -543,9 +610,10 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
                 bool hasTrueInitialState = false;
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t v = ReadVisibleMetadataValue(hisTensor, tiling.hasInitialStateDtype, i);
-                    OP_CHECK_IF(v != 0 && v != 1,
-                                OP_LOGE(context, "hasInitialState[%ld]=%ld is invalid (only supports 0/1)", i, v),
-                                return ge::GRAPH_FAILED);
+                    if (v != 0 && v != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "hasInitialState[d]d is invalid (only supports 0/1)");
+        return ge::GRAPH_FAILED;
+    }
                     hasTrueInitialState = hasTrueInitialState || (v != 0);
                 }
                 tiling.hasInitialState = hasTrueInitialState ? 1 : 0;
@@ -567,28 +635,33 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         const int64_t natDimNum = natStorageShape.GetDimNum();
         const bool natAbsent = (natDimNum == 0) || (natDimNum == 1 && natStorageShape.GetDim(0) <= 0);
         if (!natAbsent) {
-            OP_CHECK_IF(!isDecodeMode,
-                        OP_LOGE(context, "numAcceptedTokens is only supported in runMode=1 (decode/update)"),
-                        return ge::GRAPH_FAILED);
+            if (!isDecodeMode) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens", std::to_string(isDecodeMode), "numAcceptedTokens is only supported in runMode=1 (decode/update)");
+        return ge::GRAPH_FAILED;
+    }
             auto natShape = EnsureNotScalar(natStorageShape);
-            OP_CHECK_IF(natShape.GetDimNum() != 1, OP_LOGE(context, "numAcceptedTokens must be 1D"),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(natShape.GetDim(0) != batch, OP_LOGE(context, "numAcceptedTokens.size must equal batch"),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(EncodeMetadataDtype(context, metadataInputs.numAcceptedTokensIndex, "numAcceptedTokens", false,
+            if (natShape.GetDimNum() != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens", std::to_string(natShape.GetDimNum()), "numAcceptedTokens must be 1D");
+        return ge::GRAPH_FAILED;
+    }
+            if (natShape.GetDim(0) != batch) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "numAcceptedTokens.size must equal batch");
+        return ge::GRAPH_FAILED;
+    }
+            if (EncodeMetadataDtype(context, metadataInputs.numAcceptedTokensIndex, "numAcceptedTokens", false,
                                             metadataInputs.numAcceptedTokensUseCpu,
-                                            tiling.numAcceptedTokensDtype) != ge::GRAPH_SUCCESS,
-                        OP_LOGE(context, "invalid numAcceptedTokens dtype"), return ge::GRAPH_FAILED);
+                                            tiling.numAcceptedTokensDtype) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "invalid numAcceptedTokens dtype");
+        return ge::GRAPH_FAILED;
+    }
 
             if (inputMode == 1 || (inputMode == 0 && tiling.maxQueryLen >= 0)) {
                 const int64_t effectiveSeqLen = (inputMode == 1) ? seqLen : tiling.maxQueryLen;
                 const int64_t reqStateLen = (width - 1) + ((effectiveSeqLen > 0) ? (effectiveSeqLen - 1) : 0);
-                OP_CHECK_IF(stateLen < reqStateLen,
-                            OP_LOGE(context,
-                                    "spec decode requires stateLen >= (width-1) + (max_seqlen-1), "
-                                    "got stateLen=%ld req=%ld max_seqlen=%ld",
-                                    stateLen, reqStateLen, effectiveSeqLen),
-                            return ge::GRAPH_FAILED);
+                if (stateLen < reqStateLen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "spec decode requires stateLen >= (width-1) + (max_seqlen-1)");
+        return ge::GRAPH_FAILED;
+    }
             }
 
             const gert::Tensor *natTensor = metadataInputs.numAcceptedTokensUseCpu
@@ -597,27 +670,29 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
             if (HasVisibleMetadataData(natTensor, tiling.numAcceptedTokensDtype)) {
                 for (int64_t i = 0; i < batch; ++i) {
                     const int64_t a = ReadVisibleMetadataValue(natTensor, tiling.numAcceptedTokensDtype, i);
-                    OP_CHECK_IF(a < 0, OP_LOGE(context, "numAcceptedTokens[%ld]=%ld is invalid (must be >= 0)", i, a),
-                                return ge::GRAPH_FAILED);
+                    if (a < 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", std::to_string(a), "numAcceptedTokens[d]d is invalid (must be >= 0)");
+        return ge::GRAPH_FAILED;
+    }
 
                     if (inputMode == 2) {
-                        OP_CHECK_IF(
-                            a > 1,
-                            OP_LOGE(context, "numAcceptedTokens[%ld]=%ld exceeds decode 2D token count (1)", i, a),
-                            return ge::GRAPH_FAILED);
+                        if (a > 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", std::to_string(a), "numAcceptedTokens[d]d exceeds decode 2D token count (1)");
+        return ge::GRAPH_FAILED;
+    }
                     } else if (inputMode == 1) {
-                        OP_CHECK_IF(a > seqLen,
-                                    OP_LOGE(context, "numAcceptedTokens[%ld]=%ld exceeds seqlen=%ld in 3D update", i, a,
-                                            seqLen),
-                                    return ge::GRAPH_FAILED);
+                        if (a > seqLen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "numAcceptedTokens[d]d in 3D update");
+        return ge::GRAPH_FAILED;
+    }
                     } else if (inputMode == 0 && qslDataVisible) {
                         const int64_t lenI =
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i + 1) -
                             ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, i);
-                        OP_CHECK_IF(a > lenI,
-                                    OP_LOGE(context, "numAcceptedTokens[%ld]=%ld exceeds varlen segment length=%ld", i,
-                                            a, lenI),
-                                    return ge::GRAPH_FAILED);
+                        if (a > lenI) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "numAcceptedTokens[d]d");
+        return ge::GRAPH_FAILED;
+    }
                     }
                 }
             }
@@ -635,10 +710,14 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         const bool biasAbsent = (biasDimNum == 0) || (biasDimNum == 1 && biasStorageShape.GetDim(0) <= 0);
         if (!biasAbsent) {
             auto biasShape = EnsureNotScalar(biasStorageShape);
-            OP_CHECK_IF(biasShape.GetDimNum() != 1, OP_LOGE(context, "bias must be 1D: (dim,)"),
-                        return ge::GRAPH_FAILED);
-            OP_CHECK_IF(biasShape.GetDim(0) != dim, OP_LOGE(context, "bias.size must equal dim"),
-                        return ge::GRAPH_FAILED);
+            if (biasShape.GetDimNum() != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "bias", std::to_string(biasShape.GetDimNum()), "bias must be 1D: (dim,)");
+        return ge::GRAPH_FAILED;
+    }
+            if (biasShape.GetDim(0) != dim) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "bias.size must equal dim");
+        return ge::GRAPH_FAILED;
+    }
             tiling.hasBias = 1;
             hasBias = true;
         }
@@ -647,31 +726,40 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     auto xDesc = context->GetInputDesc(X_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     const ge::DataType xDtype = xDesc->GetDataType();
-    OP_CHECK_IF(xDtype != ge::DT_BF16 && xDtype != ge::DT_FLOAT16,
-                OP_LOGE(context, "x dtype only supports bf16/fp16"),
-                return ge::GRAPH_FAILED);
+    if (xDtype != ge::DT_BF16 && xDtype != ge::DT_FLOAT16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "x dtype only supports bf16/fp16");
+        return ge::GRAPH_FAILED;
+    }
 
     auto wDesc = context->GetInputDesc(WEIGHT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, wDesc);
-    OP_CHECK_IF(wDesc->GetDataType() != xDtype, OP_LOGE(context, "weight dtype must equal x dtype"),
-                return ge::GRAPH_FAILED);
+    if (wDesc->GetDataType() != xDtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "weight dtype must equal x dtype");
+        return ge::GRAPH_FAILED;
+    }
 
     if (hasBias) {
         auto biasDesc = context->GetOptionalInputDesc(BIAS_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context, biasDesc);
-        OP_CHECK_IF(biasDesc->GetDataType() != xDtype, OP_LOGE(context, "bias dtype must equal x dtype"),
-                    return ge::GRAPH_FAILED);
+        if (biasDesc->GetDataType() != xDtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "bias dtype must equal x dtype");
+        return ge::GRAPH_FAILED;
+    }
     }
 
     const auto *sDesc = context->GetOptionalInputDesc(CONV_STATES_INDEX);
     if (sDesc != nullptr) {
-        OP_CHECK_IF(sDesc->GetDataType() != xDtype, OP_LOGE(context, "convStates dtype must equal x dtype"),
-                    return ge::GRAPH_FAILED);
+        if (sDesc->GetDataType() != xDtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", "invalid", "convStates dtype must equal x dtype");
+        return ge::GRAPH_FAILED;
+    }
     }
 
     if (tiling.hasNumAcceptedTokens == 1) {
-        OP_CHECK_IF(width != 4, OP_LOGE(context, "numAcceptedTokens is only supported for width=4 currently"),
-                    return ge::GRAPH_FAILED);
+        if (width != 4) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "numAcceptedTokens", std::to_string(width), "numAcceptedTokens is only supported for width=4 currently");
+        return ge::GRAPH_FAILED;
+    }
     }
 
     tiling.dim = dim;
