@@ -136,7 +136,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     const aclTensor *chunkIndices = ConvertIntArray(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && chunkIndices == nullptr)) {
-        OP_LOGE(OP_NAME, "Convert varlen index array failed.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "Convert varlen index array failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 
@@ -155,7 +155,7 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
                 kernelOutputs[index] = executor->AllocTensor(
                     outputs[index]->GetViewShape(), outputs[index]->GetDataType(), Format::FORMAT_ND);
                 if (kernelOutputs[index] == nullptr) {
-                    OP_LOGE(OP_NAME, "Failed to allocate a temporary Finalize output[%zu].", index);
+                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to allocate a temporary Finalize output[%zu].", index);
                     return {nullptr, nullptr, nullptr, nullptr, nullptr};
                 }
             }
@@ -171,14 +171,14 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
         OP_ATTR(scale, chunkSize, useQkL2NormInKernel,
                 useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(OP_NAME, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     for (size_t index = 0; index < outputs.size(); ++index) {
         if (kernelOutputs[index] != outputs[index] &&
             op::CopyNpuToNpu(kernelOutputs[index], outputs[index], executor) != ACLNN_SUCCESS) {
             // 显式 copy 保留临时存储，连续 ViewCopy 会把 kernel 输出重新绑定到原输入。
-            OP_LOGE(OP_NAME, "Failed to copy a temporary Finalize output[%zu].", index);
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to copy a temporary Finalize output[%zu].", index);
             return {nullptr, nullptr, nullptr, nullptr, nullptr};
         }
     }

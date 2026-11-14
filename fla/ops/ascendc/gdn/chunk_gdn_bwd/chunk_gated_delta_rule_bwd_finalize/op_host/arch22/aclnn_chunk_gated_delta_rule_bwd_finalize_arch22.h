@@ -64,7 +64,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     // 连续 view 也需由 Contiguous 规范化 storage shape，并保留 view offset。
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
-        OP_LOGE(OP_NAME, "Failed to create a contiguous input.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to create a contiguous input.");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -331,7 +331,7 @@ aclnnStatus GetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE(OP_NAME, "Failed to create the operator executor.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to create the operator executor.");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto *executorPtr = uniqueExecutor.get();
@@ -355,7 +355,7 @@ aclnnStatus GetWorkspaceSize(
         executorPtr, outputTemporaryMask);
     for (const aclTensor *tensor : result) {
         if (tensor == nullptr) {
-            OP_LOGE(OP_NAME, "Failed to create a Finalize output.");
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to create a Finalize output.");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -363,7 +363,7 @@ aclnnStatus GetWorkspaceSize(
     for (size_t index = 0; index < result.size(); ++index) {
         const aclTensor *copied = l0op::ViewCopy(result[index], outputs[index], executorPtr);
         if (copied == nullptr) {
-            OP_LOGE(OP_NAME, "Failed to copy output[%zu] to the output view.", index);
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to copy output[%zu] to the output view.", index);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
