@@ -29,16 +29,27 @@ namespace RecurrentGatedDeltaRule {
 #ifndef TORCH_MODE
 ASCENDC_TPL_ARGS_DECL(RecurrentGatedDeltaRule,
     ASCENDC_TPL_DTYPE_DECL(D_T_STATE, RGDR_TPL_BF16, RGDR_TPL_FP32),
+    ASCENDC_TPL_DTYPE_DECL(D_T_BETA, RGDR_TPL_BF16, RGDR_TPL_FP32),
+    ASCENDC_TPL_DTYPE_DECL(D_T_G, RGDR_TPL_BF16, RGDR_TPL_FP32),
 );
 
+#define RGDR_DTYPE_SELECTION(STATE_TYPE, BETA_TYPE, G_TYPE) \
+    ASCENDC_TPL_ARGS_SEL( \
+        ASCENDC_TPL_DTYPE_SEL(D_T_STATE, STATE_TYPE), \
+        ASCENDC_TPL_DTYPE_SEL(D_T_BETA, BETA_TYPE), \
+        ASCENDC_TPL_DTYPE_SEL(D_T_G, G_TYPE))
+
 ASCENDC_TPL_SEL(
-    ASCENDC_TPL_ARGS_SEL(
-        ASCENDC_TPL_DTYPE_SEL(D_T_STATE, RGDR_TPL_BF16),
-    ),
-    ASCENDC_TPL_ARGS_SEL(
-        ASCENDC_TPL_DTYPE_SEL(D_T_STATE, RGDR_TPL_FP32),
-    ),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_BF16, RGDR_TPL_BF16),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_BF16, RGDR_TPL_FP32),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_FP32, RGDR_TPL_BF16),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_BF16, RGDR_TPL_FP32, RGDR_TPL_FP32),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_BF16, RGDR_TPL_BF16),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_BF16, RGDR_TPL_FP32),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_FP32, RGDR_TPL_BF16),
+    RGDR_DTYPE_SELECTION(RGDR_TPL_FP32, RGDR_TPL_FP32, RGDR_TPL_FP32),
 );
+#undef RGDR_DTYPE_SELECTION
 #endif
 
 #pragma pack(push, 8)
@@ -58,11 +69,32 @@ struct alignas(8) RecurrentGatedDeltaRuleTilingData {
     uint32_t attnOutBufferNum;
     float scale;
     uint32_t hasGama;
-    uint32_t hasGamaK;
     uint32_t hasAcceptedTokens;
     uint32_t stateStride0;
  	uint32_t stateStride1;
  	uint32_t stateStride2;
+    uint64_t queryStrides[3] = {};
+    uint64_t keyStrides[3] = {};
+    uint64_t valueStrides[3] = {};
+    uint64_t stateStrides[4] = {};
+    uint32_t stateIndicesWidth = 0;
+    uint32_t useQkL2NormInKernel = 0;
+    uint32_t useGateInKernel = 0;
+    uint32_t useBetaSigmoidInKernel = 0;
+    uint32_t allowNegEigval = 0;
+    // Host ABI contract selector only. Both A2/A3 interfaces use arch22.
+    uint32_t useV2 = 0;
+    uint32_t hasDtBias = 0;
+    uint32_t hasALog = 0;
+    uint32_t betaDtype = RGDR_TPL_BF16;
+    uint32_t gDtype = RGDR_TPL_FP32;
+    uint64_t taskCount = 0;
+    uint64_t totalTokens = 0;
+    uint64_t keyHeads = 0;
+    uint64_t valueHeads = 0;
+    uint64_t stateSlots = 0;
+    uint64_t batchSize = 0;
+    uint64_t checkpointWidth = 0;
 };
 #pragma pack(pop)
 

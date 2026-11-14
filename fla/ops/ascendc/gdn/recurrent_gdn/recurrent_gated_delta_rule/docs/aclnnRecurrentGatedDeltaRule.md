@@ -6,12 +6,15 @@
 
 |产品      | 是否支持 |
 |:----------------------------|:-----------:|
+|<term>Ascend 960DT</term>|      √     |
 |<term>Ascend 950PR/Ascend 950DT</term>|      √     |
 |<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|      √     |
 |<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|      √     |
 |<term>Atlas 200I/500 A2 推理产品</term>|      ×     |
 |<term>Atlas 推理系列产品</term>|      ×     |
 |<term>Atlas 训练系列产品</term>|      ×     |
+
+> **架构差异说明**：Ascend 950PR/950DT（A5，DAV_3510）使用 arch35 VF kernel；Ascend 960DT（A6，DAV_9201）使用 arch92 VF kernel。Host 侧 tiling 通过 `GetCurNpuArch()` 区分架构，选择不同的 vStep coeff（VF kernel 消除了 baseline 的 `deltaInUb`/`broadTmpInUb` 中间缓冲）。
 
 ## 功能说明
 
@@ -145,7 +148,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>actualSeqLengths</td>
       <td>输入</td>
       <td>无效前缀长度及不同 batch 的有效序列长度。</td>
-      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, 8]，全部元素之和等于 T。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, +∞)，全部元素之和等于 T。当序列长度大于 8 时，算子内部按 MAX_MTP=8 窗口拆分处理，state 通过 GM 逐 token 写回传递。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
       <td>(B+1,)</td>
@@ -174,12 +177,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     <tr>
       <td>gk</td>
       <td>输入</td>
-      <td>衰减系数，公式中的αk=e^gk</td>
-      <td><ul><li>不支持空Tensor。</li><li>如果传入nullptr，则表示全0的tensor。</li></td>
-      <td>FLOAT32</td>
-      <td>ND</td>
-      <td>(T, Nv, Dk)</td>
-      <td>√</td>
+      <td>ABI 保留参数。</td>
+      <td>必须传入 nullptr，非空值返回参数错误。</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>numAcceptedTokens</td>
@@ -311,7 +314,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ## 约束说明
 - 确定性计算：
   - aclnnRecurrentGatedDeltaRule默认确定性实现。
-- 输入 shape 大小需满足约束： $L_i \le 8$， $N_k \le 256$， $N_v \le 256$，$D_k = 128$，$D_v = 128$，且 $N_v$ 是 $N_k$ 的整数倍。
+- 输入 shape 大小需满足约束： $N_k \le 256$， $N_v \le 256$，$D_k = 128$，$D_v = 128$，且 $N_v$ 是 $N_k$ 的整数倍。$L_i$ 无上限约束——当 $L_i > 8$ 时，算子内部按 MAX_MTP=8 窗口拆分处理，state 通过 GM 逐 token 写回传递。
 
 
 ## 调用示例
