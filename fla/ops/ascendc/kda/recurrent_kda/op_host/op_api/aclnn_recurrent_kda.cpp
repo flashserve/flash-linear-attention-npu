@@ -109,7 +109,7 @@ void ReportInvalid(const RecurrentKdaParams &params, const char *name, const cha
         "; ssm_state_indices " + TensorDescription(params.ssmStateIndicesOptional) +
         "; num_accepted_tokens " + TensorDescription(params.numAcceptedTokensOptional) +
         "; A_log " + TensorDescription(params.aLogOptional) + "; dt_bias " + TensorDescription(params.dtBiasOptional) +
-        "; layout=" + (params.layout == nullptr ? std::string("BSND (default)") : std::string(params.layout)) +
+        "; layout=" + (params.layout == nullptr ? std::string("nullptr") : std::string(params.layout)) +
         "; scale=" + std::to_string(params.scale) +
         "; output_final_state=" + std::to_string(params.outputFinalState) +
         "; inplace_final_state=" + std::to_string(params.inplaceFinalState) +
@@ -703,8 +703,12 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
 
     if (!CheckNotNull(params)) return ACLNN_ERR_PARAM_INVALID;
     if (!CheckDtypeValid(params)) return ACLNN_ERR_PARAM_INVALID;
+    if (params.layout == nullptr) {
+        ReportInvalid(params, "layout", "layout must be BSND or TND.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     RecurrentKdaLayout parsedLayout = RecurrentKdaLayout::BSND;
-    if (params.layout != nullptr && std::strcmp(params.layout, "BSND") != 0) {
+    if (std::strcmp(params.layout, "BSND") != 0) {
         if (std::strcmp(params.layout, "TND") != 0) {
             ReportInvalid(params, "layout", "layout must be BSND or TND.");
             return ACLNN_ERR_PARAM_INVALID;
@@ -776,8 +780,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     auto result = l0op::RecurrentKda(
         params.query, params.key, params.value, params.gate, params.beta, initialStateForKernel,
         params.cuSeqlensOptional, params.ssmStateIndicesOptional, params.aLogOptional,
-        params.dtBiasOptional, params.numAcceptedTokensOptional,
-        isA5 && params.layout == nullptr ? "BSND" : params.layout, params.scale,
+        params.dtBiasOptional, params.numAcceptedTokensOptional, params.layout, params.scale,
         params.outputFinalState, params.inplaceFinalState, params.useQkL2normInKernel,
         params.useGateInKernel, params.useBetaSigmoidInKernel, params.allowNegEigval,
         params.safeGate, params.lowerBound, params.stateVFirst, params.attnOut,
