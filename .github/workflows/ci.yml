@@ -876,7 +876,9 @@ jobs:
           PY
 
       - name: 上传 ${{ matrix.name }} 结果
+        id: upload_platform_result_1
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -889,6 +891,71 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
+
+      - name: 等待 15 秒后重试上传 ${{ matrix.name }} 结果（1/3）
+        if: always() && steps.upload_platform_result_1.outcome == 'failure'
+        run: sleep 15
+
+      - name: 重试上传 ${{ matrix.name }} 结果（1/3）
+        id: upload_platform_result_2
+        if: always() && steps.upload_platform_result_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
+            repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+            repo/${{ env.CI_STAGE_REPORT_FILE }}
+            repo/${{ env.CI_DIAGNOSTIC_FILE }}
+            repo/${{ env.CI_SUMMARY_FILE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
+
+      - name: 等待 15 秒后重试上传 ${{ matrix.name }} 结果（2/3）
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure'
+        run: sleep 15
+
+      - name: 重试上传 ${{ matrix.name }} 结果（2/3）
+        id: upload_platform_result_3
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
+            repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+            repo/${{ env.CI_STAGE_REPORT_FILE }}
+            repo/${{ env.CI_DIAGNOSTIC_FILE }}
+            repo/${{ env.CI_SUMMARY_FILE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
+
+      - name: 等待 15 秒后重试上传 ${{ matrix.name }} 结果（3/3）
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure' && steps.upload_platform_result_3.outcome == 'failure'
+        run: sleep 15
+
+      - name: 重试上传 ${{ matrix.name }} 结果（3/3）
+        id: upload_platform_result_4
+        if: always() && steps.upload_platform_result_1.outcome == 'failure' && steps.upload_platform_result_2.outcome == 'failure' && steps.upload_platform_result_3.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
+            repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+            repo/${{ env.CI_STAGE_REPORT_FILE }}
+            repo/${{ env.CI_DIAGNOSTIC_FILE }}
+            repo/${{ env.CI_SUMMARY_FILE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+          overwrite: true
 
   finalize:
     name: 校验并发布 A2 + A5 分项状态
