@@ -1,0 +1,6 @@
+{
+  "llvm_ir": "examples/catlass_compile_walkthrough/build/dsl/backend-temps/recompiled.ll",
+  "original_sha256": "3b47e867bad2c8fc86460fee0a312f1c2f383fea6d4c462814dc055e11ef0a18",
+  "recompiled_sha256": "3b47e867bad2c8fc86460fee0a312f1c2f383fea6d4c462814dc055e11ef0a18",
+  "binary_identical": true
+}
