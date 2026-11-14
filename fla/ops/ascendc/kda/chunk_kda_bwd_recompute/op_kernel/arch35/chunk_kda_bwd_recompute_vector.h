@@ -299,8 +299,8 @@ private:
         CopyALogOnce(mte2ToVEvent_[0]);
 
         const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        const uint32_t coreNumAic = tiling_->vecRow > 0 ? static_cast<uint32_t>(tiling_->vecRow)
-                                                        : GetBlockNum();
+        const uint32_t coreNumAic = tiling_->usedAic > 0 ? static_cast<uint32_t>(tiling_->usedAic)
+                                                         : GetBlockNum();
         const uint32_t subIdx = GetSubBlockIdx();
         const uint64_t hv = (Hv_ == 0) ? 1 : Hv_;
         const uint64_t totalTasks = chunkNum_ * hv;
@@ -419,8 +419,8 @@ private:
         CopyALogOnce(mte2ToVEvent_[0]);
 
         const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        const uint32_t coreNumAic = tiling_->vecRow > 0 ? static_cast<uint32_t>(tiling_->vecRow)
-                                                        : GetBlockNum();
+        const uint32_t coreNumAic = tiling_->usedAic > 0 ? static_cast<uint32_t>(tiling_->usedAic)
+                                                         : GetBlockNum();
         const uint32_t subIdx = GetSubBlockIdx();
         const uint64_t hv = (Hv_ == 0) ? 1 : Hv_;
         const uint64_t totalTasks = chunkNum_ * hv;

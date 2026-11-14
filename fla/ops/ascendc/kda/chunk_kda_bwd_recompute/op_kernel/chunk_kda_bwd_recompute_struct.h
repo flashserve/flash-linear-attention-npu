@@ -30,12 +30,16 @@ struct ChunkKdaBwdRecomputeTilingData {
     int64_t hasALog;
     int64_t hasDtBias;
     int64_t lowerBoundBits;
-    // arch35: launched AIC count (SetBlockDim). Generic path uses this as UB rows.
+    // Vector row tile selected from the target UB budget.
     int64_t vecRow;
+    // Logical AIC count selected by host tiling.
+    int64_t usedAic;
+    // Reserved for layout flags; v26.10.0 always initializes this to zero.
+    int64_t reserved;
 };
 
-static_assert(sizeof(ChunkKdaBwdRecomputeTilingData) == 128,
-              "TilingData is 16 int64 fields");
+static_assert(sizeof(ChunkKdaBwdRecomputeTilingData) == 144,
+              "TilingData is 18 int64 fields");
 
 } // namespace KDA
 

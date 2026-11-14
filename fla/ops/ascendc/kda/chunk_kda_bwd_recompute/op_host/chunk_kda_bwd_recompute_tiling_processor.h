@@ -58,6 +58,7 @@ struct ChunkKdaBwdRecomputeTilingContext {
     float lowerBound;
     uint64_t ubSize;
     size_t sysWorkspaceSize;
+    bool enableCompactWorkspace;
 };
 
 class ChunkKdaBwdRecomputeTilingProcessor {

@@ -33,6 +33,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const int64_t *chunkIndicesData =
         chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
 
+    const bool isAscend950 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     ChunkKdaBwdRecomputeTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_RECOMPUTE_Q_IDX),
@@ -55,6 +56,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         *(attrPtr->GetAttrPointer<float>(KDA_RECOMPUTE_LOWER_BOUND_ATTR)),
         ubSize,
         ascendcPlatform.GetLibApiWorkSpaceSize(),
+        isAscend950,
     };
 
     ChunkKdaBwdRecomputeTilingProcessor processor(ctx, *tiling);
@@ -97,6 +99,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     uint32_t usedAic = static_cast<uint32_t>(
         std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
     tiling->usedAic = static_cast<int64_t>(usedAic);
+    tiling->reserved = 0;
     uint32_t blockDim = usedAic;
     if (isAscend950) {
         blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * aivPerBlock, aicNum, aivNum);
