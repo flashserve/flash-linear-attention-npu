@@ -84,7 +84,7 @@ aclnnStatus GetWorkspaceSize(
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
-    uint64_t *workspaceSize, aclOpExecutor **executor)
+    uint64_t *workspaceSize, aclOpExecutor **executor, uint64_t outputTemporaryMask)
 {
     if (!SameShape(q, k)) {
         const std::string actualValue = "k.shape=" + ShapeString(k->GetViewShape());
@@ -352,7 +352,7 @@ aclnnStatus GetWorkspaceSize(
         scale, chunkSize, useQkL2NormInKernel,
         useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
         dqOut, dkOut, dvOut, dbetaOut, dgOut,
-        executorPtr);
+        executorPtr, outputTemporaryMask);
     for (const aclTensor *tensor : result) {
         if (tensor == nullptr) {
             OP_LOGE(OP_NAME, "Failed to create a Finalize output.");

@@ -206,6 +206,8 @@ public:
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
         uint32_t coreNum = params.aicCoreNum; // CV 深融合 blockDim (cube/vector 共用)
+        const uint64_t workspaceHeads = params.wsMm4Offset /
+            (uint64_t{2} * coreNum * params.BT * params.BT);
         using ScheduleIndex = typename DqkwgScheduleIndex<WIDE_SCHEDULE>::Type;
         const ScheduleIndex scheduleNumChunks = static_cast<ScheduleIndex>(params.numChunks);
         const ScheduleIndex scheduleRatio = static_cast<ScheduleIndex>(params.n_ratio);
@@ -273,6 +275,7 @@ public:
                 hBegin = 0;
                 hEnd = static_cast<uint32_t>(params.HV);
             }
+            const uint32_t workspaceHeadBase = workspaceHeads < params.HV ? hBegin : 0;
             GetChunkOffset(cuSeqlensTensor, chunkIndicesTensor, params.B, params.HV, params.T, params.BT,
                             loopIdx, bos, eos, params.isVarLen);
             uint32_t actual_chunk_len = eos - bos;
@@ -323,7 +326,7 @@ public:
                     // GVA: q/k 为 HK 头; hv_idx=h -> hk_idx=h/n_ratio, 并把 HV-based bos 修正为 HK-based
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t qkOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
-                    uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
+                    uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
 
                     auto tensorQ = tla::MakeTensor(gmQ[qkOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK[qkOffset], MakeLayoutFromTag(layoutKxBT), Arch::PositionGM{}); // k^T
@@ -344,7 +347,7 @@ public:
                 BlockMmadPart3 blockMmadPart3(resource);
                 for (uint32_t h = hBegin; h < hEnd; h++) {
                     uint64_t dvOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
-                    uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
+                    uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
 
                     auto tensorDo = tla::MakeTensor(gmDo[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorV = tla::MakeTensor(gmV[dvOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
@@ -367,7 +370,7 @@ public:
                     // --- Part4: dq_inner = do @ h^T ---
                     uint64_t doOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t hOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
-                    uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
+                    uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT, params.K);
 
                     auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[hOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
@@ -389,9 +392,9 @@ public:
                     // --- Part6: mm6 = ds_temp @ k -> wsMm6 ---
                     // GVA: k 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
+                    uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
                     uint64_t kOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
-                    uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
+                    uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT, params.K);
 
                     auto tensorDsTemp = tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK[kOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
@@ -415,7 +418,7 @@ public:
                     // --- Part5: dk_inner = v @ dh ---
                     uint64_t vOffset = (static_cast<uint64_t>(h) * params.T + bos) * params.V;
                     uint64_t dhOffset = ((static_cast<uint64_t>(bIdx) * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
-                    uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
+                    uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT, params.K);
 
                     auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorDh = tla::MakeTensor(gmDh[dhOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
@@ -436,9 +439,9 @@ public:
                     // --- Part7: mm7 = ds_temp^T @ q -> wsMm7 ---
                     // GVA: q 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, params.HV, params.BT);
+                    uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
                     uint64_t qOffset = (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
-                    uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
+                    uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT, params.K);
 
                     auto tensorDsTemp =tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
                     auto tensorQ = tla::MakeTensor(gmQ[qOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});

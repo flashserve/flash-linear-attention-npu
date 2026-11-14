@@ -434,7 +434,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "state/workspace factors", actual.c_str(), "positive factors with product <= INT64_MAX on A2/A3");
         return ge::GRAPH_FAILED;
     }
-    const GDN::A2FinalizeWorkspaceLayout layout(*tiling, blockDim);
+    const GDN::A2FinalizeWorkspaceLayout layout(*tiling, blockDim, gKey == TPL_FP32);
     const uint64_t systemWorkspace = platform.GetLibApiWorkSpaceSize();
     if (layout.totalBytes > std::numeric_limits<size_t>::max() - systemWorkspace) {
         const std::string actual = "operator=" + std::to_string(layout.totalBytes) +

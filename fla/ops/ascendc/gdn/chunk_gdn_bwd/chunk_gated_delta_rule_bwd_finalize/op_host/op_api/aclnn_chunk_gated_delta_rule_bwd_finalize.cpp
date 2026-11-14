@@ -53,10 +53,19 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const aclTensor *dbetaOut, const aclTensor *dgOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    uint64_t outputAliasMask = 0;
+    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
+        outputAliasMask = l0op::GetFinalizeOutputAliasMask(
+            {q, k, v, vNew, dO, du, g, beta, h, dh, a,
+             qRstdOptional, kRstdOptional, betaRawOptional, nullptr, nullptr},
+            {dqOut, dkOut, dvOut, dbetaOut, dgOut});
+    }
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdFinalize,
         DFX_IN(q, k, v, vNew, dO, du, g, beta, h, dh, a,
                qRstdOptional, kRstdOptional, betaRawOptional,
-               cuSeqlensOptional, chunkIndicesOptional),
+               cuSeqlensOptional, chunkIndicesOptional,
+               scale, chunkSize, useQkL2NormInKernel, useBetaSigmoidInKernel,
+               useGateInKernel, stateVFirst, useExp2, outputAliasMask),
         DFX_OUT(dqOut, dkOut, dvOut, dbetaOut, dgOut));
 
     const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
@@ -84,7 +93,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
             cuSeqlensOptional, chunkIndicesOptional,
             scale, chunkSize, useQkL2NormInKernel,
             useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
-            dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor);
+            dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor, outputAliasMask);
     }
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
     if (npuArch != NpuArch::DAV_3510) {

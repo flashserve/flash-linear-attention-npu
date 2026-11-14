@@ -20,6 +20,7 @@
 #include <type_traits>
 
 #include "prepare_wy_repr_bwd_common.h"
+#include "../chunk_gated_delta_rule_bwd_finalize_qk_tail.h"
 #include "catlass/arch/cross_core_sync.hpp"
 
 using namespace AscendC;
@@ -32,8 +33,8 @@ public:
                                                     GM_ADDR chunkIndices, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta,
                                                     GM_ADDR dg, GM_ADDR workspace);
     __aicore__ inline void Init(const GDN::PrepareWyReprBwdTilingData &tiling, AscendC::TPipe *pipe,
-                                uint64_t seqNum);
-    __aicore__ inline void Process();
+                                uint64_t seqNum, int64_t chunkDkBytes = 0, uint32_t chunkDkSlots = 0);
+    __aicore__ inline void Process(const GDN::A2FinalizeQkTailArgs &qkTailArgs);
 
 private:
     __aicore__ inline bool CanUseKktFp32Resident(const PrepareWyReprBwdTaskInfo &task,
@@ -139,9 +140,10 @@ private:
             }
             const uint64_t stageBytes = static_cast<uint64_t>(blockNum) *
                 static_cast<uint32_t>(tiling_.workspaceCoreSize);
+            const uint64_t dkBytes = chunkDkBytes_ != 0 ? chunkDkBytes_ : keyBytes;
             OutputAddressSpan outputs[4];
             OutputAddressSpan inputs[7];
-            if (!MakeOutputAddressSpan(dk_, keyBytes, outputs[0]) ||
+            if (!MakeOutputAddressSpan(dk_, dkBytes, outputs[0]) ||
                 !MakeOutputAddressSpan(dv_, valueBytes, outputs[1]) ||
                 !MakeOutputAddressSpan(dbeta_, scalarBytes, outputs[2]) ||
                 !MakeOutputAddressSpan(dg_, scalarBytes, outputs[3]) ||
@@ -228,9 +230,15 @@ private:
     __aicore__ inline void ProcessOutputTask(const PrepareWyReprBwdTaskInfo &task, uint64_t hv, uint64_t hk,
                                              uint64_t groupSize, GM_ADDR slotBase);
 
+    __aicore__ inline void ProcessChunkQkTail(const PrepareWyReprBwdTaskInfo &task, uint32_t coreIdx, uint32_t slot,
+                                             const GDN::A2FinalizeQkTailArgs &args);
+
 private:
     GDN::PrepareWyReprBwdTilingData tiling_{};
     bool useOutputFullRows_ = false;
+    uint64_t chunkDkBytes_ = 0;
+    uint32_t chunkDkSlots_ = 0;
+    uint32_t curChunkDkSlot_ = 0;
     uint32_t curSlot_ = 0;
     uint32_t curInputPingPong_ = 0;
     uint32_t curBetaGInputPingPong_ = 0;
@@ -365,9 +373,12 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool ENABLE_MHA_OWNER>
 __aicore__ inline void
 PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::Init(const GDN::PrepareWyReprBwdTilingData &tiling,
-                                                                     AscendC::TPipe *pipe, uint64_t seqNum)
+                                                                     AscendC::TPipe *pipe, uint64_t seqNum, int64_t chunkDkBytes,
+                                                                     uint32_t chunkDkSlots)
 {
     tiling_ = tiling;
+    chunkDkBytes_ = static_cast<uint64_t>(chunkDkBytes);
+    chunkDkSlots_ = chunkDkSlots;
     pipe_ = pipe;
     kTensor_.SetGlobalBuffer((__gm__ kType *)k_);
     vTensor_.SetGlobalBuffer((__gm__ kType *)v_);
@@ -664,11 +675,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
     rowTaskIdx_ = 0;
 
-    for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.kVecRow)) {
-        localRowTask_ = rowTaskIdx_++;
-        if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
-            continue;
-        }
+    for (rowOffset_ = subBlockIdx_ * static_cast<uint32_t>(tiling_.kVecRow);
+         rowOffset_ < task.curChunkSize;
+         rowOffset_ += subBlockNum_ * static_cast<uint32_t>(tiling_.kVecRow)) {
         curRow_ = rowOffset_ + static_cast<uint32_t>(tiling_.kVecRow) > task.curChunkSize ?
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.kVecRow);
@@ -704,11 +713,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     }
 
     rowTaskIdx_ = 0;
-    for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.vVecRow)) {
-        localRowTask_ = rowTaskIdx_++;
-        if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
-            continue;
-        }
+    for (rowOffset_ = subBlockIdx_ * static_cast<uint32_t>(tiling_.vVecRow);
+         rowOffset_ < task.curChunkSize;
+         rowOffset_ += subBlockNum_ * static_cast<uint32_t>(tiling_.vVecRow)) {
         curRow_ = rowOffset_ + static_cast<uint32_t>(tiling_.vVecRow) > task.curChunkSize ?
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.vVecRow);
@@ -746,11 +753,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     subBlockIdx_ = AscendC::GetSubBlockIdx();
     rowTaskIdx_ = 0;
     WaitCubeToVec();
-    for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.mVecRow)) {
-        localRowTask_ = rowTaskIdx_++;
-        if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
-            continue;
-        }
+    for (rowOffset_ = subBlockIdx_ * static_cast<uint32_t>(tiling_.mVecRow);
+         rowOffset_ < task.curChunkSize;
+         rowOffset_ += subBlockNum_ * static_cast<uint32_t>(tiling_.mVecRow)) {
         curRow_ = rowOffset_ + static_cast<uint32_t>(tiling_.mVecRow) > task.curChunkSize ?
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.mVecRow);
@@ -793,11 +798,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     subBlockIdx_ = AscendC::GetSubBlockIdx();
     rowTaskIdx_ = 0;
     WaitCubeToVec();
-    for (rowOffset_ = 0; rowOffset_ < task.curChunkSize; rowOffset_ += static_cast<uint32_t>(tiling_.mVecRow)) {
-        localRowTask_ = rowTaskIdx_++;
-        if (localRowTask_ % subBlockNum_ != subBlockIdx_) {
-            continue;
-        }
+    for (rowOffset_ = subBlockIdx_ * static_cast<uint32_t>(tiling_.mVecRow);
+         rowOffset_ < task.curChunkSize;
+         rowOffset_ += subBlockNum_ * static_cast<uint32_t>(tiling_.mVecRow)) {
         curRow_ = rowOffset_ + static_cast<uint32_t>(tiling_.mVecRow) > task.curChunkSize ?
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.mVecRow);
@@ -862,6 +865,10 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     gmKKT_.SetGlobalBuffer((__gm__ kType *)kktBase);
 
     keyBase_ = hk * tiling_.T + task.keyBos;
+    const uint64_t dkBase = chunkDkBytes_ != 0 ?
+        ((static_cast<uint64_t>(AscendC::GetBlockIdx() / AscendC::GetSubBlockNum()) * chunkDkSlots_ +
+          curChunkDkSlot_) * tiling_.HK + hk) * CHUNK_SIZE :
+        keyBase_;
     valueBase_ = hv * tiling_.T + task.valueBos;
     bool isFirstValueHeadInGroup = (hv % groupSize) == 0;
     uint32_t rowOwned = static_cast<uint32_t>(tiling_.kVecRow < tiling_.vVecRow ? tiling_.kVecRow : tiling_.vVecRow);
@@ -953,7 +960,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         if (!isFirstValueHeadInGroup) {
             inputIdxD_ = CopyInRows<kType>(dkTensor_, matrixInputBuf_[curInputPingPong_],
-                                          (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+                                          (dkBase + rowOffset_) * K_DIM, curRow_ * K_DIM);
         }
         if constexpr (CHUNK_SIZE == 64 && V_DIM == 128) {
             WholeReduceSum(scaleFp32Tensor_, calcFp32ATensor_,
@@ -996,7 +1003,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             PipeBarrier<PIPE_V>();
         }
         CastOutputRows(calcFp32ATensor_, curRow_ * K_DIM);
-        CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        CopyOutRows(dkTensor_, outputBuf_[outputIdx_], (dkBase + rowOffset_) * K_DIM, curRow_ * K_DIM);
     }
     if constexpr (HEAD_OWNER) {
         if (subBlockIdx_ == 0) {
@@ -1241,16 +1248,61 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::Process()
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessChunkQkTail(
+    const PrepareWyReprBwdTaskInfo &task, uint32_t coreIdx, uint32_t slot, const GDN::A2FinalizeQkTailArgs &args)
+{
+    constexpr uint32_t ROWS = 32;
+    constexpr uint32_t ELEMS = ROWS * K_DIM;
+    constexpr uint32_t NORM_ROWS = 2 * ROWS;
+    constexpr uint32_t NORM_ELEMS = 2 * ELEMS;
+    // 借用前已完成整批 chunk 的所有 Output/DG。只建 views，不申请/消费/重发任何 ping 事件。
+    GDN::A2FinalizeQkTailViews<kType> views{
+        inputPing_.GetWithOffset<kType>(ELEMS, 0),
+        inputPing_.GetWithOffset<kType>(ELEMS, 8192),
+        calcFp32C_.GetWithOffset<kType>(ELEMS, 0),
+        calcFp32C_.GetWithOffset<kType>(ELEMS, 8192),
+        calcFp32C_.GetWithOffset<kType>(ELEMS, 16384),
+        calcFp32A_.GetWithOffset<float>(NORM_ELEMS, 0),
+        calcFp32A_.GetWithOffset<float>(ELEMS, 16384),
+        calcFp32B_.GetWithOffset<float>(NORM_ELEMS, 0),
+        calcFp32C_.GetWithOffset<float>(NORM_ELEMS, 0),
+        inputPong_.GetWithOffset<float>(NORM_ROWS, 0),
+        inputPong_.GetWithOffset<float>(NORM_ROWS * 8, 256),
+        inputPong_.GetWithOffset<float>(NORM_ROWS * 8, 2304)};
+    views.qRstdInput = inputPong_.GetWithOffset<float>(ROWS, 4352);
+    views.kRstdInput = inputPong_.GetWithOffset<float>(ROWS, 4480);
+    GDN::A2FinalizeQkTailGm<kType> gm;
+    gm.Init(args, dk_);
+    for (uint64_t hk = AscendC::GetSubBlockIdx(); hk < static_cast<uint64_t>(tiling_.HK);
+         hk += AscendC::GetSubBlockNum()) {
+        for (uint32_t row = 0; row < task.curChunkSize; row += ROWS) {
+            const uint32_t rows = task.curChunkSize - row < ROWS ? task.curChunkSize - row : ROWS;
+            const int64_t scalarOffset = static_cast<int64_t>(hk) * tiling_.T + task.keyBos + row;
+            const int64_t dkWyOffset = (((static_cast<int64_t>(coreIdx) * chunkDkSlots_ + slot) *
+                                        tiling_.HK + hk) * CHUNK_SIZE + row) * K_DIM;
+            if (args.useQkL2norm) {
+                GDN::A2FinalizeQkTailRows<kType, true, true, true>(gm, views, scalarOffset, dkWyOffset, rows);
+            } else {
+                GDN::A2FinalizeQkTailRows<kType, false>(gm, views, scalarOffset, dkWyOffset, rows);
+            }
+        }
+    }
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
+          bool ENABLE_MHA_OWNER>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::Process(const GDN::A2FinalizeQkTailArgs &qkTailArgs)
 {
     uint32_t coreIdx = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
     uint32_t coreNum = AscendC::GetBlockNum();
     uint64_t groupSize = PrepareWyReprBwdGetGroupSize(tiling_);
     uint64_t windowIdx = 0;
 
-    for (uint32_t taskIdx = coreIdx; taskIdx < static_cast<uint32_t>(tiling_.chunkNum); taskIdx += coreNum) {
+    for (uint64_t taskIdx = coreIdx, ownedOrdinal = 0; taskIdx < static_cast<uint32_t>(tiling_.chunkNum);
+         taskIdx += coreNum, ++ownedOrdinal) {
+        curChunkDkSlot_ = chunkDkSlots_ == 2 ? static_cast<uint32_t>(ownedOrdinal & 1U) : 0;
         PrepareWyReprBwdTaskInfo task;
-        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
+        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, static_cast<uint32_t>(taskIdx), task);
         // Invalidate this chunk's tag, but retain the cursor for prior readers.
         cachedKktHk_ = static_cast<uint64_t>(-1);
         cachedKktFp32Hk_ = static_cast<uint64_t>(-1);
@@ -1315,7 +1367,31 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                 }
                 curSlot_ ^= 1U;
             }
+            if constexpr (CHUNK_SIZE == 64) {
+                if (task.curChunkSize <= CHUNK_SIZE / 2) {
+                    PipeBarrier<PIPE_ALL>();
+                }
+            }
             ++windowIdx;
+        }
+        if (chunkDkBytes_ != 0 &&
+            (curChunkDkSlot_ + 1U == chunkDkSlots_ || taskIdx + coreNum >= static_cast<uint32_t>(tiling_.chunkNum))) {
+            // RAW publish：整批完整 HV/DG 输出完成，双方均进入新 flag10 代次。
+            PipeBarrier<PIPE_ALL>();
+            Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            const uint64_t firstTaskIdx = taskIdx - static_cast<uint64_t>(curChunkDkSlot_) * coreNum;
+            for (uint32_t slot = 0; slot <= curChunkDkSlot_; ++slot) {
+                PrepareWyReprBwdTaskInfo tailTask = task;
+                if (slot != curChunkDkSlot_) {
+                    const uint64_t tailTaskIdx = firstTaskIdx + static_cast<uint64_t>(slot) * coreNum;
+                    PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_,
+                                              static_cast<uint32_t>(tailTaskIdx), tailTask);
+                }
+                ProcessChunkQkTail(tailTask, coreIdx, slot, qkTailArgs);
+            }
+            // WAR release：无 HK/owned rows 的一方也必须等 peer，之后才能覆盖下一批任一槽。
+            PipeBarrier<PIPE_ALL>();
+            Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
         }
     }
     ReleaseVectorEvents();
