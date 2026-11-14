@@ -342,7 +342,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         return ge::GRAPH_FAILED;
     }
     if (width < 2 || width > 4) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "actually", std::to_string(width), "Only support width in [2,4] now, actually is d.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "width", std::to_string(width),
+            "only width in [2,4] is supported");
         return ge::GRAPH_FAILED;
     }
 
@@ -453,7 +454,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
             const int64_t qslLast = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, qslSize - 1);
             if (qslLast != cuSeqlen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "queryStartLoc[last] must equal cuSeqlend vs d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc",
+            std::to_string(qslLast) + "," + std::to_string(cuSeqlen),
+            "queryStartLoc[last] must equal cuSeqlen");
         return ge::GRAPH_FAILED;
     }
             for (int64_t i = 0; i + 1 < qslSize; ++i) {
@@ -509,7 +512,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     if (isDecodeMode) {
         const int64_t decodeSeqLen = (inputMode == 1) ? seqLen : 1;
         if (decodeSeqLen < 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "actual", std::to_string(decodeSeqLen), "decode mode requires seqlen >= 1, actual is d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "decodeSeqLen",
+            std::to_string(decodeSeqLen), "decode mode requires seqlen >= 1");
         return ge::GRAPH_FAILED;
     }
     }
