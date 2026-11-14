@@ -110,7 +110,7 @@ IR attr 里还有 `use_qk_l2norm` / `use_gate_in_kernel` / `use_beta_sigmoid`，
 - `v` 为 `[B, HV, T, V]`，与 `q` 的 `B`、`T` 一致。
 - `g`、`beta`、`gOut`、`betaEff` 为 `[B, HV, T]`。
 - `wOut` 为 `[B, HV, T, K]`；`aOut` 为 `[B, HV, T, chunkSize]`。
-- **GVA**：`HK > 0`、`HV > 0` 且 `HV % HK == 0`。Ascend950 限制 `HV/HK ∈ {1,2,3,4}`；A2/A3 限制 `HV/HK ∈ [1,16]` 的整数比。K 头按 `hk = hv / (HV/HK)` 复用。
+- **GVA**：`HK > 0`、`HV > 0` 且 `HV % HK == 0`。Ascend950 与 A2/A3 均支持 `HV/HK ∈ [1,16]` 的整数比。K 头按 `hk = hv / (HV/HK)` 复用；Ascend950 上 `HV/HK ∈ {1,2,3,4}` 保持按 HK 分组复用 kkt，`HV/HK > 4` 时按 `(chunk, hk)` 单元调度，每个单元只计算一次 kkt 并由该单元所有 HV 复用（见 `KktGroup` / `MakePackWalk`）。
 - `K = 128`，`V ∈ {128, 256}`，`chunkSize = 64`。
 - A2/A3 与 Ascend950 的 `q/k/v` 均为 `BFLOAT16`，三者 dtype 必须相同。`g` 与 `beta` 可分别选择 BF16 或 FP32，不要求二者相同。
 - Python 默认 stable 入口沿用 ACLNN 校验；ctypes 回退的 QKV dtype、chunkSize 和 GVA 范围与其一致。独立 Prepare 不开放 FP16 QKV 或 chunkSize=128；普通 forward 对这些原有基础调用的 megakernel 分流保持不变。

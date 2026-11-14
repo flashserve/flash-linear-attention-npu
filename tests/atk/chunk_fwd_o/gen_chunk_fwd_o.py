@@ -39,6 +39,54 @@ PROFILES = [
     "K": 128,
     "V": 128,
     "chunk_size": 64
+  },
+  {
+    "name": "a5_gva4_hk1",
+    "dtype": "bf16",
+    "B": 1,
+    "HK": 1,
+    "HV": 4,
+    "T": 256,
+    "K": 128,
+    "V": 128,
+    "chunk_size": 64,
+    "soc": "ascend950"
+  },
+  {
+    "name": "a5_gva16_hk1",
+    "dtype": "bf16",
+    "B": 1,
+    "HK": 1,
+    "HV": 16,
+    "T": 256,
+    "K": 128,
+    "V": 128,
+    "chunk_size": 64,
+    "soc": "ascend950"
+  },
+  {
+    "name": "a5_gva5_hk4",
+    "dtype": "bf16",
+    "B": 1,
+    "HK": 4,
+    "HV": 20,
+    "T": 256,
+    "K": 128,
+    "V": 128,
+    "chunk_size": 64,
+    "soc": "ascend950"
+  },
+  {
+    "name": "a5_gva8_hk16",
+    "dtype": "bf16",
+    "B": 1,
+    "HK": 16,
+    "HV": 128,
+    "T": 256,
+    "K": 128,
+    "V": 128,
+    "chunk_size": 64,
+    "soc": "ascend950"
   }
 ]
 
@@ -54,8 +102,8 @@ def _spec(index):
         "case_id": index,
         "seed": 20260817 + index,
         "route": "ascendc",
-        "soc": "ascend910b",
     })
+    profile.setdefault("soc", "ascend910b")
     return profile
 
 if GENERATOR_REGISTRY is not None:

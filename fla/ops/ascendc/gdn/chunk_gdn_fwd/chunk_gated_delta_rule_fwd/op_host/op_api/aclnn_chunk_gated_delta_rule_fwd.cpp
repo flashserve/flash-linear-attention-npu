@@ -48,6 +48,8 @@ constexpr int64_t CHUNK_GATED_DELTA_RULE_FWD_CHUNK_128 = 128;
 // This is a transport-field bound, so larger Hv stays on the BHT route.
 constexpr int64_t CUMSUM_PREPARE_MAX_HEADS =
     static_cast<int64_t>(0xffffffffULL / sizeof(float) + 1);
+// Ascend950 Prepare/H/O route: Hv/Hk may span the GVA range 1..16.
+constexpr int64_t PREPARE_PATH_MAX_HV_PER_HK = 16;
 
 struct ChunkGatedDeltaRuleFwdParams {
     const aclTensor *q = nullptr;
@@ -161,7 +163,8 @@ static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
                params.k->GetDataType() == DataType::DT_BF16 && params.v->GetDataType() == DataType::DT_BF16 &&
                params.q->GetViewShape().GetDim(3) == HEAD_DIM_128 &&
                params.v->GetViewShape().GetDim(3) == HEAD_DIM_128 &&
-               params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 && hq > 0 && hv / hq <= 4;
+               params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 && hq > 0 &&
+               hv / hq <= PREPARE_PATH_MAX_HV_PER_HK;
     }
     if (UseA2PreparePath(params)) {
         return true;
@@ -1154,12 +1157,13 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
         }
     } else if (UsePreparePath(params)) {
         if (!(dtype == DataType::DT_BF16 && info.vDim == HEAD_DIM_128 &&
-              params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 && info.hv / info.hq <= 4)) {
+              params.chunkSize == CHUNK_GATED_DELTA_RULE_FWD_CHUNK_64 &&
+              info.hv / info.hq <= PREPARE_PATH_MAX_HV_PER_HK)) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 OP_NAME, "dtype,V,chunkSize,Hv/Hk",
                 ge::TypeUtils::DataTypeToSerialString(dtype) + "," + std::to_string(info.vDim) + "," +
                     std::to_string(params.chunkSize) + "," + std::to_string(info.hv / info.hq),
-                "Ascend950 prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in {1,2,3,4}");
+                "Ascend950 prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
