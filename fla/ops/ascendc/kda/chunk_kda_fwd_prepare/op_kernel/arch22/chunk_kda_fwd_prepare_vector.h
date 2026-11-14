@@ -9,7 +9,8 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
     LocalTensor<bfloat16_t> q_,k_,v_;
     LocalTensor<uint8_t> triangle_;
     LocalTensor<float> g_,work_,small_,qr_,kr_,beta_,bias_,blocks_;
-    Work w_; uint64_t base_;
+    Work w_,nextWork_; uint64_t base_;
+    bool inputsPrefetched_=false,prefetchNext_=false;
     bool aLogCached_=false;
     template<class T> __aicore__ inline void BindTensor(LocalTensor<T> &dst,
         const LocalTensor<uint8_t> &allocation,uint32_t offset,uint32_t bytes) {
@@ -85,16 +86,38 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         }
         VBarrier();
         const auto &t=a_.tiling;uint32_t h=w_.head[lane_],qh=w_.qh[lane_];
-        Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
-        Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+        bool gatePrefetched=false;
+        if constexpr(Norm!=0 && Gate!=0 && sizeof(GateT)==2)gatePrefetched=inputsPrefetched_;
+        if constexpr(Norm!=0 && Gate!=0) {
+            if(inputsPrefetched_) {
+                // K's retired32KiB holds next Q then next K. Consume both
+                // after MTE2, preserving BF16/NaN bits with int32 Adds(+0).
+                Mte2ToV();
+                Adds(q_.template ReinterpretCast<int32_t>(),
+                     k_.template ReinterpretCast<int32_t>(),int32_t(0),4096);VBarrier();
+                Adds(k_.template ReinterpretCast<int32_t>(),
+                     k_[8192].template ReinterpretCast<int32_t>(),int32_t(0),4096);VBarrier();
+                inputsPrefetched_=false;
+            } else {
+                Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+                Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+            }
+        } else {
+            Read(q_,a_.q,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+            Read(k_,a_.k,QkvInputOffset(t,w_,qh,t.qkHeadNum,128),w_.rows,128,t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+        }
         // Input types are selected by the package's existing dtype objects,
         // independently of the six Norm/Gate tiling keys.
         auto gateRaw=work_.template ReinterpretCast<GateT>();
         if constexpr(sizeof(GateT)==sizeof(float)) {
             Read(g_,a_.rawGate,GateInputOffset(t,w_,h,128),w_.rows,128,t.valueHeadNum,t.inputSequenceMajor,true);
         } else {
-            // work_ is free until Normalize/GatePrefix. Do not expand in-place.
-            Read(gateRaw,a_.rawGate,GateInputOffset(t,w_,h,128),w_.rows,128,t.valueHeadNum,t.inputSequenceMajor,true);
+            // The upper Work alias retires after the preceding S4 checks.
+            // Cast consumes it before Normalize reuses Work for squares.
+            if constexpr(Norm!=0 && Gate!=0) {
+                if(gatePrefetched)gateRaw=work_[8192].template ReinterpretCast<GateT>();
+                else Read(gateRaw,a_.rawGate,GateInputOffset(t,w_,h,128),w_.rows,128,t.valueHeadNum,t.inputSequenceMajor,true);
+            } else Read(gateRaw,a_.rawGate,GateInputOffset(t,w_,h,128),w_.rows,128,t.valueHeadNum,t.inputSequenceMajor,true);
         }
         auto raw=small_[2048].template ReinterpretCast<BetaT>();
         if constexpr(sizeof(BetaT)==2) {
@@ -510,6 +533,30 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
             ResetMask();SetMaskNorm();
         }
     }
+    __aicore__ inline void PrefetchNextInputs() {
+        if constexpr(Norm!=0 && Gate!=0) {
+            if(!prefetchNext_)return;
+            // Current RHS has retired; no eligible Lower/LeafInverse16 path
+            // touches K. Two16KiB input banks stay live through next Prepare.
+            const auto &t=a_.tiling;const uint32_t qh=nextWork_.qh[lane_];
+            Read(k_,a_.q,QkvInputOffset(t,nextWork_,qh,t.qkHeadNum,128),64,128,
+                 t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+            Read(k_[8192],a_.k,QkvInputOffset(t,nextWork_,qh,t.qkHeadNum,128),64,128,
+                 t.qkHeadNum,t.inputSequenceMajor,t.qkHeadNum==t.valueHeadNum);
+            inputsPrefetched_=true;
+        }
+    }
+    __aicore__ inline void PrefetchNextGate() {
+        if constexpr(Norm!=0 && Gate!=0 && sizeof(GateT)==2) {
+            if(!prefetchNext_)return;
+            // Magnitude/finite checks have retired Work[8192,16384).
+            // LeafInverse16 uses only Work[0,6016), so this16KiB DMA
+            // overlaps its15 updates and stays live until next Prepare.
+            const auto &t=a_.tiling;const uint32_t h=nextWork_.head[lane_];
+            Read(work_[8192].template ReinterpretCast<GateT>(),a_.rawGate,
+                 GateInputOffset(t,nextWork_,h,128),64,128,t.valueHeadNum,t.inputSequenceMajor,true);
+        }
+    }
     __aicore__ inline void LowerAndAqk(uint32_t slot) {
         // Cross-core raw-ready orders GM production, not this AIV's preceding
         // RHS vector consumer of work_. Retire that UB reader before raw DMA.
@@ -523,6 +570,7 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
             DataCopyPad(work_[offset],raw[s*2048],p,pad);
         }
         Mte2ToV();DrainStores(); // kg uses v_, which becomes the Aqk buffer below.
+        PrefetchNextInputs(); // overlap next-input DMA with current S4 Vector work.
         if constexpr(Norm==0 || Gate==0)Duplicate(q_,bfloat16_t(0),4096);
         Duplicate(v_,bfloat16_t(0),8192);
         if constexpr(Norm==0 || Gate==0)Duplicate(g_,0.0F,4096);
@@ -612,6 +660,7 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
             // Fast Cube work can overlap the other AIV's FP32 solve. All
             // public fast-path zeroing must retire before Cube writes Akk.
             CrossCoreSetFlag<0x2,PIPE_MTE3>(LowerChoiceReadyBase+slot);
+            PrefetchNextGate();
             if(fallback)LeafInverse16();
         }
         else {
@@ -709,8 +758,19 @@ public:
         uint32_t generation=0;
         for(uint64_t job=core_;job<WorkCount(a_.tiling);job+=a_.tiling.usedCoreNum,++generation) {
             uint64_t workJob=job;
-            if constexpr(Norm!=0 && Gate!=0)workJob=RotateWork(a_.tiling,job,core_,generation);
-            uint32_t slot=generation&1;w_=Describe(a_,workJob);base_=GmLane(core_,slot,lane_);
+            if constexpr(Norm!=0 && Gate!=0) {
+                // Cache one descriptor ahead: lookahead does not double the
+                // packed-sequence scalar reads or change head-pair rotation.
+                if(generation==0)w_=Describe(a_,RotateWork(a_.tiling,job,core_,generation));
+                else w_=nextWork_;
+                prefetchNext_=false;
+                const uint64_t nextJob=job+a_.tiling.usedCoreNum;
+                if(nextJob<WorkCount(a_.tiling)) {
+                    nextWork_=Describe(a_,RotateWork(a_.tiling,nextJob,core_,generation+1));
+                    prefetchNext_=nextWork_.active[lane_] && nextWork_.rows==64;
+                }
+            } else w_=Describe(a_,workJob);
+            uint32_t slot=generation&1;base_=GmLane(core_,slot,lane_);
             CrossCoreWaitFlag<0x2,PIPE_MTE3>(6+slot);
             if(w_.active[lane_]&&w_.rows) {
                 Prepare();
