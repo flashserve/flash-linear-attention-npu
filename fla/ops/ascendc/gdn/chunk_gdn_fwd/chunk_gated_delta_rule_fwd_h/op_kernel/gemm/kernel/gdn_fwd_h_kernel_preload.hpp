@@ -114,8 +114,6 @@ public:
     uint64_t vWorkspaceOffset{0};
     uint64_t vUpdateWorkspaceOffset{0};
     uint64_t hWorkspaceOffset{0};
-    uint64_t numSeqWorkspaceOffset{0};
-    uint64_t numChunksWorkspaceOffset{0};
     
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementW> gmW;
@@ -130,8 +128,6 @@ public:
     AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
     
     AscendC::GlobalTensor<int64_t> gmSeqlen;
-    AscendC::GlobalTensor<int64_t> gmNumSeq;
-    AscendC::GlobalTensor<int64_t> gmNumChunks;
 
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
@@ -161,8 +157,6 @@ public:
         vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
         vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
         hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
         
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
@@ -177,8 +171,6 @@ public:
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
-        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
-        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
@@ -301,7 +293,7 @@ public:
             {   
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
-                uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
+                uint32_t chunkOffset = isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                 uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                 uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
