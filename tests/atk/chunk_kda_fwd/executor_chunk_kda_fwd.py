@@ -1108,15 +1108,32 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
 class ChunkKdaFwdApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
+        self.task_result = task_result
         self.spec = None
         self.inputs = None
         case_config = getattr(task_result, "case_config", None)
         case_id = case_config.get("id") if isinstance(case_config, dict) else getattr(case_config, "id", None)
         self.runtime_case_id = None if case_id is None else int(case_id)
         self.high_precision = self.device == "cpu"
+        self._chunk32_api = None
+
+    @staticmethod
+    def _new_chunk32_api(task_result):
+        # 复用 chunk32 的 legacy case_spec 解析、FP64 golden 和 NPU 输出契约，
+        # 但不让子 executor 的 @register 覆盖父套件注册项。
+        path = Path(__file__).resolve().parent / "chunk32" / "executor_chunk_kda_fwd_chunk32.py"
+        source = path.read_text(encoding="utf-8").replace('@register("executor_chunk_kda_fwd")\n', '')
+        namespace = {}
+        exec(compile(source, str(path), "exec"), namespace)
+        return namespace["ChunkKdaFwdApi"](task_result)
 
     def init_by_input_data(self, input_data: InputDataset):
         self.spec = json.loads(str(input_data.kwargs["case_spec"]))
+        if "negative" not in str(self.spec["tags"]).split(","):
+            self._chunk32_api = self._new_chunk32_api(self.task_result)
+            self._chunk32_api.init_by_input_data(input_data)
+            self.inputs = self._chunk32_api.inputs
+            return
         runtime_seed = int(self.spec["seed"])
         self.inputs = _prepare_inputs(
             self.spec,
@@ -1136,6 +1153,16 @@ class ChunkKdaFwdApi(BaseApi):
             )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
+        if self._chunk32_api is not None:
+            previous = os.environ.get("KDA_ATK_VISIBLE_OUTPUTS")
+            os.environ["KDA_ATK_VISIBLE_OUTPUTS"] = "attn_out,final_state"
+            try:
+                return self._chunk32_api(input_data, with_output)
+            finally:
+                if previous is None:
+                    os.environ.pop("KDA_ATK_VISIBLE_OUTPUTS", None)
+                else:
+                    os.environ["KDA_ATK_VISIBLE_OUTPUTS"] = previous
         del input_data, with_output
         if "negative" in str(self.spec["tags"]).split(","):
             if self.device != "npu":
@@ -1152,7 +1179,7 @@ class ChunkKdaFwdApi(BaseApi):
             )
         selected_names = _selected_output_names()
         named_visible = tuple(
-            (name, output.to(torch.float32) if self.high_precision and output.is_floating_point() else output)
+            (name, output.to(torch.float32) if output.is_floating_point() else output)
             for name, output in zip(_OUTPUT_NAMES, outputs)
             if isinstance(output, torch.Tensor)
             and (selected_names is None or name in selected_names)

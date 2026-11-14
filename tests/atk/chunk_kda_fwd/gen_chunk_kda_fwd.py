@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from copy import deepcopy
 from pathlib import Path
 
 try:
@@ -30,7 +31,17 @@ except ModuleNotFoundError as exc:
 
 
 SEED_BASE = 20260810
-L1_STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
+L1_STANDARD = {
+    "acc": {
+        "cv_fused_double_benchmark": {
+            "max_re_ratio": 5,
+            "avg_re_ratio": 1.5,
+            "root_mean_squared_ratio": 1.5,
+        }
+    },
+    "perf": "not_key",
+    "mem": 1.1,
+}
 POSITIVE_COUNT = 200
 
 
@@ -225,6 +236,9 @@ NEGATIVE_CASES = (
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
+BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
+CHUNK32_CASES_PATH = Path(__file__).resolve().parent / "chunk32" / "atk_chunk_kda_fwd_chunk32.json"
+CHUNK32_CASE_COUNT = 135
 
 
 def _negative_case(local_id: int, soc: str) -> dict:
@@ -276,6 +290,7 @@ def build_specs() -> list[dict]:
         specs.extend(
             _negative_case(local_id, soc) for local_id in range(NEGATIVE_COUNT)
         )
+    specs.extend(_chunk32_specs())
     return specs
 
 
@@ -298,6 +313,7 @@ def _case_payload(case_id: int, spec: dict) -> dict:
     a5_accuracy_end = 2 * POSITIVE_COUNT + NEGATIVE_COUNT
     metadata = {
         "profile": (
+            "a5_chunk32" if case_id >= BASE_CASE_COUNT else
             "a2_accuracy" if case_id < a2_accuracy_end else
             "a2_negative" if case_id < a2_negative_end else
             "a5_accuracy" if case_id < a5_accuracy_end else
@@ -344,8 +360,8 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         _input("negative_case", "bool", "negative" in str(spec["tags"]).split(",")),
     ]
 
-    expected_error_msg = None
-    if "expected_return_code" in spec:
+    expected_error_msg = spec.get("expected_error_msg")
+    if expected_error_msg is None and "expected_return_code" in spec:
         expected_error_msg = (
             f"{spec['expected_code_name']}({spec['expected_return_code']}): "
             f"{spec['expected_message']}"
@@ -365,6 +381,157 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         "inputs": inputs,
         "save_name": "chunk_kda_fwd",
     }
+
+
+def _chunk32_configs(case: dict, name: str) -> list[dict]:
+    configs = []
+    for item in case["inputs"]:
+        candidates = item if isinstance(item, list) else [item]
+        for config in candidates:
+            if config["name"] == name:
+                configs.append(config)
+    return configs
+
+
+def _chunk32_config(case: dict, name: str) -> dict:
+    configs = _chunk32_configs(case, name)
+    if not configs:
+        raise KeyError(f"chunk32 case {case['id']} is missing input {name!r}")
+    return configs[0]
+
+
+def _chunk32_input(case: dict, name: str):
+    return _chunk32_config(case, name)["range_values"]
+
+
+def _chunk32_has_tensor(case: dict, name: str) -> bool:
+    return any(config["range_values"] not in (None, "null") for config in _chunk32_configs(case, name))
+
+
+def _chunk32_distribution(case: dict, name: str) -> dict:
+    values = _chunk32_input(case, name)
+    if isinstance(values, dict) and values.get("name") == "nd":
+        return {
+            "kind": "normal",
+            "mean": float(values["mean"][0]),
+            "std": float(values["std"][0]),
+        }
+    if isinstance(values, list) and len(values) == 2:
+        return {"kind": "uniform", "low": float(values[0]), "high": float(values[1])}
+    raise ValueError(f"chunk32 case {case['id']} input {name!r} has unsupported distribution")
+
+
+def _chunk32_shape(case: dict) -> tuple[int, int, int, int, int, int]:
+    layout = _chunk32_input(case, "layout")
+    q_shape = _chunk32_config(case, "q")["shape"]
+    v_shape = _chunk32_config(case, "v")["shape"]
+    if layout == "BSND":
+        batch, total_t, h_num, k_dim = q_shape
+        hv_num, v_dim = v_shape[2:]
+    elif layout == "BNSD":
+        batch, h_num, total_t, k_dim = q_shape
+        hv_num, v_dim = v_shape[1], v_shape[3]
+    elif layout == "TND":
+        batch = 1
+        total_t, h_num, k_dim = q_shape
+        hv_num, v_dim = v_shape[1:]
+    elif layout == "NTD":
+        batch = 1
+        h_num, total_t, k_dim = q_shape
+        hv_num, v_dim = v_shape[0], v_shape[2]
+    else:
+        raise ValueError(f"chunk32 case {case['id']} has unsupported layout {layout!r}")
+    return int(batch), int(total_t), int(h_num), int(hv_num), int(k_dim), int(v_dim)
+
+
+def _chunk32_cu_seqlens(case: dict) -> str:
+    configs = _chunk32_configs(case, "cu_seqlens")
+    if not configs or all(config["range_values"] in (None, "null") for config in configs):
+        return ""
+    values = [config["range_values"] for config in configs]
+    if any(not isinstance(value, int) for value in values) or not values or values[0] != 0:
+        raise ValueError(f"chunk32 case {case['id']} has invalid cu_seqlens")
+    return ",".join(str(value) for value in values)
+
+
+def _chunk32_spec(case: dict) -> dict:
+    batch, total_t, h_num, hv_num, k_dim, v_dim = _chunk32_shape(case)
+    if (k_dim, v_dim) != (128, 128):
+        raise ValueError(f"chunk32 case {case['id']} requires K=V=128")
+    q_distribution = _chunk32_distribution(case, "q")
+    k_distribution = _chunk32_distribution(case, "k")
+    if q_distribution != k_distribution or q_distribution.get("mean", 0.0) != 0.0:
+        raise ValueError(f"chunk32 case {case['id']} requires identical zero-mean q/k distributions")
+    input_distributions = {
+        name: (
+            _chunk32_distribution(case, name)
+            if _chunk32_has_tensor(case, name)
+            else {"kind": "uniform", "low": -2.0, "high": 2.0}
+        )
+        for name in ("q", "k", "v", "g", "beta", "A_log", "dt_bias")
+    }
+    input_distributions["initial_state"] = (
+        _chunk32_distribution(case, "initial_state")
+        if _chunk32_has_tensor(case, "initial_state")
+        else {"kind": "uniform", "low": -0.02, "high": 0.02}
+    )
+    expected_error = case.get("expected_error_msg") or None
+    tags = "accuracy,chunk32,fused" + (",negative" if expected_error else "")
+    return {
+        "case_key": f"chunk32_{case['id']:03d}_{case['name']}",
+        "chunk32_source_id": int(case["id"]),
+        "tags": tags,
+        "route": "ascendc",
+        "B": batch,
+        "H": h_num,
+        "HV": hv_num,
+        "T": total_t,
+        "K": k_dim,
+        "V": v_dim,
+        "chunk_size": 32,
+        "layout": _chunk32_input(case, "layout"),
+        "q_dtype": _chunk32_config(case, "q")["dtype"],
+        "g_dtype": _chunk32_config(case, "g")["dtype"],
+        "beta_dtype": _chunk32_config(case, "beta")["dtype"],
+        "scale": float(_chunk32_input(case, "scale")),
+        "initial_state": _chunk32_has_tensor(case, "initial_state"),
+        "output_final_state": bool(_chunk32_input(case, "output_final_state")),
+        "cu_seqlens": _chunk32_cu_seqlens(case),
+        "explicit_chunk_indices": _chunk32_has_tensor(case, "chunk_indices"),
+        "safe_gate": bool(_chunk32_input(case, "safe_gate")),
+        "lower_bound": float(_chunk32_input(case, "lower_bound")),
+        "use_gate_in_kernel": bool(_chunk32_input(case, "use_gate_in_kernel")),
+        "dt_bias": _chunk32_has_tensor(case, "dt_bias"),
+        "disable_recompute": bool(_chunk32_input(case, "disable_recompute")),
+        "return_intermediate_states": bool(_chunk32_input(case, "return_intermediate_states")),
+        "state_v_first": bool(_chunk32_input(case, "state_v_first")),
+        "epsilon": 1e-6,
+        "use_qk_l2norm_in_kernel": True,
+        "use_beta_sigmoid_in_kernel": True,
+        "allow_neg_eigval": False,
+        "use_exp2": True,
+        "data_profile": "chunk32_fused",
+        "input_distributions": input_distributions,
+        "seed": int(case["id"]),
+        "expected_error_msg": expected_error,
+    }
+
+
+def _chunk32_specs() -> list[dict]:
+    cases = json.loads(CHUNK32_CASES_PATH.read_text(encoding="utf-8"))
+    if len(cases) != CHUNK32_CASE_COUNT:
+        raise ValueError(f"expected {CHUNK32_CASE_COUNT} chunk32 cases, got {len(cases)}")
+    if [case["id"] for case in cases] != list(range(CHUNK32_CASE_COUNT)):
+        raise ValueError("chunk32 source IDs must be contiguous")
+    return [_chunk32_spec(case) for case in cases]
+
+
+def _is_chunk32_payload(case: dict) -> bool:
+    for item in case["inputs"]:
+        config = item[0] if isinstance(item, list) else item
+        if config["name"] == "case_spec":
+            return json.loads(config["range_values"]).get("profile") == "a5_chunk32"
+    return False
 
 
 def build_cases() -> list[CaseConfig]:
@@ -396,20 +563,38 @@ def main() -> None:
         default=Path(__file__).with_name("atk_chunk_kda_fwd.json"),
     )
     parser.add_argument("--summary", action="store_true")
+    parser.add_argument(
+        "--merge-frozen-chunk32",
+        action="store_true",
+        help="Append converted chunk32 cases to the curated accuracy JSON without duplicating them.",
+    )
     args = parser.parse_args()
 
-    payloads = [_case_payload(case_id, spec) for case_id, spec in enumerate(build_specs())]
+    generated = [_case_payload(case_id, spec) for case_id, spec in enumerate(build_specs())]
+    chunk32_payloads = generated[BASE_CASE_COUNT:]
+    if args.merge_frozen_chunk32:
+        existing = json.loads(args.output.read_text(encoding="utf-8"))
+        if not isinstance(existing, list):
+            raise ValueError(f"{args.output}: expected a JSON case list")
+        payloads = [case for case in existing if not _is_chunk32_payload(case)]
+        for case in payloads:
+            case["standard"] = deepcopy(L1_STANDARD)
+        payloads += chunk32_payloads
+    else:
+        payloads = generated
+    ids = [case["id"] for case in payloads]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"{args.output}: duplicate case IDs")
     args.output.write_text(
         json.dumps(payloads, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     if args.summary:
-        total = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
         a2_accuracy_end = POSITIVE_COUNT
         a2_negative_end = POSITIVE_COUNT + NEGATIVE_COUNT
         a5_accuracy_end = 2 * POSITIVE_COUNT + NEGATIVE_COUNT
         print(
-            f"total={total} a2_accuracy={POSITIVE_COUNT} a2_negative={NEGATIVE_COUNT} "
+            f"total={len(generated)} a2_accuracy={POSITIVE_COUNT} a2_negative={NEGATIVE_COUNT} "
             f"a5_accuracy={POSITIVE_COUNT} a5_negative={NEGATIVE_COUNT}"
         )
         print(
@@ -418,7 +603,12 @@ def main() -> None:
         )
         print(
             f"a5_accuracy_ids={a2_negative_end}-{a5_accuracy_end - 1} "
-            f"a5_negative_ids={a5_accuracy_end}-{total - 1}"
+            f"a5_negative_ids={a5_accuracy_end}-{BASE_CASE_COUNT - 1}"
+        )
+        print(
+            f"chunk32_cases={CHUNK32_CASE_COUNT} "
+            f"chunk32_ids={BASE_CASE_COUNT}-{BASE_CASE_COUNT + CHUNK32_CASE_COUNT - 1} "
+            f"output_cases={len(payloads)}"
         )
 
 

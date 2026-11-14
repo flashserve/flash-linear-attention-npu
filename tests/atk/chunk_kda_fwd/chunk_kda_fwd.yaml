@@ -87,7 +87,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [2, 96]
+        values: [1, 2, 4, 8, 16, 32, 96]
       invalid:
         values: [0, 129]
   - name: value_head
@@ -97,7 +97,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [4, 96]
+        values: [1, 2, 4, 8, 16, 32, 96]
       invalid:
         values: [0, 2, 129]
   - name: total_tokens
@@ -107,7 +107,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [63, 128, 8192, 16384]
+        values: [1, 63, 64, 65, 96, 128, 129, 130, 192, 193, 194, 512, 1024, 1040, 4096, 8192, 11264, 16384, 65536]
       invalid:
         values: []
   - name: key_dim
@@ -137,10 +137,11 @@ inputs:
     dtypes:
       values: [int]
     ranges:
+      # K/V 只交付两档且必须同档：K=V=64 或 K=V=128；chunk32 仅允许 K=V=128。
       valid:
-        values: [64]
+        values: [32, 64]
       invalid:
-        values: [32, 128]
+        values: [128]
   - name: layout
     type: attr
     required: true
@@ -168,7 +169,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [fp32]
+        values: [bf16, fp32]
       invalid:
         values: [fp16]
   - name: beta_dtype
