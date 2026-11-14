@@ -11,6 +11,7 @@
  * \file aclnn_recurrent_kda.cpp
  * \brief
  */
+#include "op_common/log/log.h"
 #include "aclnn_recurrent_kda.h"
 #include "recurrent_kda.h"
 
@@ -24,6 +25,7 @@
 
 #include <cstring>
 #include <limits>
+#include <string>
 
 using namespace op;
 
@@ -133,15 +135,20 @@ static bool SameTensorView(const aclTensor *lhs, const aclTensor *rhs)
 
 static bool ParseLayout(const char *layout, RecurrentKdaLayout &parsed)
 {
-    if (layout == nullptr || std::strcmp(layout, "BSND") == 0) {
-        parsed = RecurrentKdaLayout::BSND;
-        return true;
+    if (layout != nullptr) {
+        if (std::strcmp(layout, "BSND") == 0) {
+            parsed = RecurrentKdaLayout::BSND;
+            return true;
+        }
+        if (std::strcmp(layout, "TND") == 0) {
+            parsed = RecurrentKdaLayout::TND;
+            return true;
+        }
     }
-    if (std::strcmp(layout, "TND") == 0) {
-        parsed = RecurrentKdaLayout::TND;
-        return true;
-    }
-    OP_LOGE(ACLNN_ERR_PARAM_INVALID, "npu_recurrent_kda: layout must be BSND or TND.");
+
+    const std::string actual = layout == nullptr ? "nullptr" : "'" + std::string(layout) + "'";
+    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKdaGetWorkspaceSize", "layout",
+        "layout must be BSND or TND. Actual: " + actual);
     return false;
 }
 
