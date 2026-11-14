@@ -1394,7 +1394,7 @@ BT/V 的四种几何在同一设备入口内选择。owner=true 仅用于主矩�
 DQ 逻辑任务 `task=chunk*P+partition` 按 `task=core,core+C,...` 分发，head 区间为
 `[partition*HK/P*R,(partition+1)*HK/P*R)`，完整 HK 组不跨 mixed core，也不跨 core 原子归约。
 Cube/Vector 共用 U32 资格选择 `Process<true/false>`，P>1 或不满足资格时走 wide；
-P 仅改变逻辑任务和 head 范围，launch、tiling 与 workspace 不变，不额外拆分 HV 工作项。
+P 改变逻辑任务和 head 范围，Host/device 共用该 P 计算分区 scratch 容量，HV 工作项保持完整。
 
 WY 按 chunk 跨 C 分发，每个 task 遍历完整 HV。一般路径由两个 AIV 横切 row tile；
 满足地址不重叠和几何准入时，BT64/V128 的 MHA 或偶数 GVA 由两个 AIV 分别承包完整 head。
@@ -1421,9 +1421,9 @@ GateTail 由一个 AIV 独占 `(chunk,head group)`：BT64 每组最多 128 个 h
 | DQ D-Vector | decay/两项合并、完整 HK 组归约得到 BF16 dk1；FP32 dg1 | dk1/dg1 保留到最终尾段 |
 | WY S0-Vector | kbg/kbeta/vb（保留原 BF16 cast） | 写入 WY 当前 4-slot 窗口，通知 Cube |
 | WY Cube/Vector | 原 A 转置矩阵链：`A^T @ dw`、`A^T @ du`、`k @ k^T`、`dw @ kbg^T + du @ vb^T`、`dA @ A^T`、`A^T @ dA`、`dD^T @ k`、`dD @ kbeta`；中间 Vector 保留原三角 mask、gate 与 cast | 完整沿用私有 cube/vector 的四个窗口 pass 与 ready 次序 |
-| WY 输出-Vector | 完整 HK 组得到 BF16 dk2；BF16 dv、FP32 dbeta32/dg2 | dk2/dbeta32/dg2 保留到最终尾段；dv 直接是最终输出 |
+| WY 输出-Vector | 完整 HK 组得到 BF16 dk2；BF16 dv、FP32 dbeta32/dg2 | 紧凑 DK 每批交给 QK，dbeta32/dg2 保留到 gate 尾段；dv 直接是最终输出 |
 | A2 S3-Vector | `dg=reverse_cumsum_chunk(dg1+dg2)`；可选 `dbeta=dbeta32*sigmoid(beta_raw)*(1-sigmoid(beta_raw))` | FP32 内部计算，最终才转 g/beta dtype；dg 不另乘 ln(2) |
-| A2 S4-Vector | `dkRaw=BF16(FP32(dk1)+FP32(dk2))`；可选 `rstd*(d-y*sum(y*d))` | dq/dk 最终 CAST_RINT；不开 norm 时保留 dq1/dkRaw |
+| A2 QK-Vector | `dkRaw=BF16(FP32(dk1)+FP32(dk2))`；可选 `rstd*(d-y*sum(y*d))` | 紧凑 DK 在 WY 每批内执行，全 T fallback 在 S4 执行；dq/dk 最终 CAST_RINT |
 
 S3 合并两支 FP32 DG，用 Gather 将 `[head,row]` 转为 `[row,head]`。各 head 独立令 `s[m]=+0`，
 按 `r=m-1,...,0` 执行 `s[r]=FP32(s[r+1]+x[r])`；一条 Add 同时推进 head group 的各 lane，
@@ -1437,25 +1437,49 @@ S0→DQ、DQ→WY、WY→尾段共三次 `SyncAll<false>()`，所有 AIC/AIV 均
 ### 6.3 Workspace 结构与搬运
 
 Host/device 共用 `arch22/chunk_gated_delta_rule_bwd_finalize_workspace.h` 的
-`A2FinalizeWorkspaceLayout(t,C)`。Host 分配 `libApiBytes+layout.totalBytes`，device 从
+`A2FinalizeWorkspaceLayout(t,C,fp32Gate)`。Host 分配 `libApiBytes+layout.totalBytes`，device 从
 `GetUserWorkspace` 解释以下区域；每区末尾按 512B 对齐，offset 单位为字节。
+
+K128/V128 时，DQ 的 dq1、dk1、dw 分别驻留在最终 dq、dk、dv 输出中。WY 对当前 chunk 的
+dw 完成末次读取后才写最终 dv，QK 在两支 DK 齐备后更新 dq/dk。V256 使用独立 dq1、dk1、dw。
+FP32 g/beta 使用最终 dg、dbeta 保存 dg1、dbeta32，BF16 保留两份 FP32 workspace。
+g32、beta32 和 dg2 各自保留独立区域。
 
 | 顺序 | 区域与逻辑字节数 | producer → consumer |
 | --- | --- | --- |
 | 0 | g32，`4*S` | S0 → DQ/WY |
 | 1 | beta32，`4*S` | S0 → WY |
 | 2/3 | 可选 h/dh KV，各 `2*N*HV*K*V` | S0 → DQ；stateVFirst=false 时各 0B、直接使用输入 |
-| 4/5/6 | dq1/dk1/dk2，各 `2*Q` | DQ/WY → QK |
-| 7 | dw，`2*S*K` | DQ → WY |
-| 8/9/10 | dg1/dg2/dbeta32，各 `4*S` | DQ/WY → GateTail |
+| 4/5 | dq1/dk1，各 `2*Q` 或 0B | DQ → QK，V128 使用最终 dq/dk |
+| 6 | dk2，`2*C*slots*HK*BT*K` 或 `2*Q` | WY → 当前 core 批尾 QK，或全 T QK |
+| 7 | dw，`2*S*K` 或 0B | DQ → WY，V128 使用最终 dv |
+| 8 | dg1，`4*S` 或 0B | DQ → GateTail，FP32 使用最终 dg |
+| 9 | dg2，`4*S` | WY → GateTail |
+| 10 | dbeta32，`4*S` 或 0B | WY → GateTail，FP32 使用最终 dbeta |
 | 11 | DQ/WY 临时区，`max(DQ_bytes,WY_bytes)` | DQ 结束 barrier 后才能改变为 WY 语义 |
 
-令 `BK=2*C*HV*BT*K`、`BB=2*C*HV*BT*BT`，
+每 core 的 DK 槽保存 `[HK,BT,K]`。两槽总容量严格小于全 T DK 时选择 `slots=2`，
+仅单槽能省空间时选择 `slots=1`，其余保留全 T 路径。容量乘积、对齐和额外乘 2 均先检查上界。
+槽号来自本 core 已拥有的 chunk 序号。奇数末批只处理有效槽，变长批尾重建真实任务信息。
+
+一批完整 HV 输出完成后，两个 AIV 以 mode `0x1` 的 flag 10 发布数据，随后分别处理
+`hk=subBlockId,subBlockId+2,...` 的完整 Q/K 行。QK 消费完全部有效槽后再次同步，双方才允许
+覆盖下一批槽。当前 AIV 没有 HK 工作时仍参与两次同步。QK 借用 WY 已消费完的
+inputPing/inputPong 区域，按 32 行 tile 预取两路 rstd，合并 Q/K 的 FP32 归约并保持原
+BF16 CAST_RINT 边界。全 T fallback 继续在全核 WY 退出后执行独立 QK tail。
+
+令 `H=DqWorkspaceHeads(t,C,P)`、`BK=2*C*H*BT*K`、`BB=2*C*H*BT*BT`，
 `DQ_bytes=4*BK+2*BB+align512(4*C*HV)`：四个 BTxK、两个 BTxBT 矩阵及 FP32 dg_last。
 令 `k=2*BT*K`、`v=2*BT*V`、`m=2*BT*BT`，`WY_bytes=C*4*(5*k+2*v+7*m)`；
 每核 4 个 slot，每 slot 为 `5*k+2*v+6*m`，另有四份 KKT 共 `4*m`。持久结果与临时区不重叠。
-DQ 分区不新增区域、slot 或跨阶段驻留；评分在 U32 资格内以 U64 计算 `N*P` 并检查 INT64 上界，
+V128 取 `H=HV/P`，各 core 的 scratch 按分区内 head 索引。V256 仅在 compact DQ 主导共享
+临时区容量时取 `HV/P`，其余取 HV。评分在 U32 资格内以 U64 计算 `N*P` 并检查 INT64 上界，
 由 `P|HV` 得 `score<=N*HV<=UINT32_MAX²`。
+
+公开 Finalize 和完整 Bwd 入口将输出别名类别加入 executor cache 身份，并将相同 mask
+传给 L0。A2/A3 对可能覆盖输入或其他输出的目标申请独立临时输出，kernel 完成后按顺序
+显式 CopyNpuToNpu 回写。实际地址、view offset、跨度溢出和未绑定 storage 均参与保守判断。
+五输出互不重叠时分别验证完整数值，输出之间共享地址的回写遵循输出顺序。
 
 S0 对 g/beta 各读一次、写 FP32 一次；state 转置各读写一次。GateTail 对 dg1/dg2/dbeta32
 各读一次，sigmoid 开启时另读 beta_raw 一次，最终 dg/dbeta 各写一次。QkTail 对 dq1/dk1/dk2
@@ -1523,7 +1547,8 @@ L0A/L0B 各两份；L0C 按 `BT*max(K,V)*sizeof(acc)` 与容量选择一份或�
 | DQ CrossCore credit 3 | 每 task B-Vector 写 ds 后发一次，C-Cube 读 ds 前等一次 |
 | DQ CrossCore clear 4 | 每 AIV 启动预置三次；B/C/D 各发一次；Cube 每 task 等三次、全部 task 后再等三次；总数 `3+3*M` 完全相等 |
 | DQ CrossCore 0x1 / flag 8 | 两 AIV 在 A-Vector 对齐 dg_last 地址复用；与 HardEvent 命名空间独立 |
-| WY CrossCore 2/4 | 保留原 Arch::CrossCoreFlag 对象及四个窗口 pass 的发布/等待次序；未使用 ReversePhase 协议 |
+| WY CrossCore 2/4 | 保留原 Arch::CrossCoreFlag 对象及四个窗口 pass 的发布/等待次序，BT64 短尾窗口在推进前执行 PIPE_ALL |
+| WY CrossCore 0x1 / flag 10 | 每批先发布完整 DK 槽，再释放全部 QK 消费，两个 AIV 均参加 |
 | WY MTE1_MTE2 0..7 | scratch 0/2、DU 1/3、K 4/5、DW 6/7；BT64/V128 保留既有 DW/K 共用 4/5 事件的等待/返还顺序 |
 | WY M_MTE1 0..3 | L0A 0/2、L0B 1/3 的 ping/pong ready/free |
 | WY FIX_M、M_FIX 0/1 | L0C 消费/释放，使用一槽时不等待未初始化的第二槽 |
@@ -1539,10 +1564,10 @@ AIC: DQ Cube（含原末尾三次 WaitClear）
 AIV: DQ Vector -> PipeBarrier ALL -> TPipe Reset
 所有 AIC/AIV: PipeBarrier ALL -> SyncAll(false)
 AIC: WY InitPipeFlags -> WY Cube -> 原 HardEvent 全部末次消费
-AIV: WY Vector -> ReleaseVectorEvents -> PipeBarrier ALL -> TPipe Reset
+AIV: WY Vector（紧凑 DK 每批发布 -> QK -> 释放）-> ReleaseVectorEvents -> PipeBarrier ALL -> TPipe Reset
 所有 AIC/AIV: PipeBarrier ALL -> SyncAll(false)
 所有 AIV: GateTail -> PipeBarrier ALL -> TPipe Reset
-所有 AIV: QkTail -> PipeBarrier ALL -> TPipe Reset -> 返回
+全 T DK fallback 的 AIV: QkTail -> PipeBarrier ALL -> TPipe Reset -> 返回
 ```
 
 DQ Cube 退出前已经清空 clear；跨阶段 SyncAll 不能替代 DQ/WY 内部 ready/free 和本地事件。
