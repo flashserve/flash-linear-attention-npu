@@ -20,11 +20,13 @@
 #include "tiling_base/tiling_util.h"
 #include "platform/soc_spec.h"
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 namespace {
     constexpr uint32_t BYTE_BLOCK = 32;
@@ -77,6 +79,27 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
     auto xDtype = xDesc->GetDataType();
+    if (xDtype != ge::DT_FLOAT && xDtype != ge::DT_FLOAT16 && xDtype != ge::DT_BF16) {
+        const auto actual = ge::TypeUtils::DataTypeToSerialString(xDtype);
+        OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), "x", actual.c_str(), "DT_FLOAT, DT_FLOAT16 or DT_BF16");
+        return ge::GRAPH_FAILED;
+    }
+    const uint32_t indices[] = {WEIGHT_INPUT_INDEX, DY_INPUT_INDEX, Y_INPUT_INDEX, INITIAL_STATE_INPUT_INDEX,
+                                DHT_INPUT_INDEX};
+    const char *names[] = {"weight", "dy", "y", "initial_state", "dht"};
+    for (size_t i = 0; i < sizeof(indices) / sizeof(indices[0]); ++i) {
+        const bool required = indices[i] == WEIGHT_INPUT_INDEX || indices[i] == DY_INPUT_INDEX;
+        const auto *desc = required ? context->GetInputDesc(indices[i]) : context->GetOptionalInputDesc(indices[i]);
+        if (required) {
+            OP_CHECK_NULL_WITH_CONTEXT(context, desc);
+        }
+        if (desc != nullptr && desc->GetDataType() != xDtype) {
+            const auto actual = ge::TypeUtils::DataTypeToSerialString(desc->GetDataType());
+            const auto expected = "same as x (" + ge::TypeUtils::DataTypeToSerialString(xDtype) + ")";
+            OP_LOGE_WITH_INVALID_INPUT_DTYPE(context->GetNodeName(), names[i], actual.c_str(), expected.c_str());
+            return ge::GRAPH_FAILED;
+        }
+    }
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
     uint32_t B = 0;
     uint32_t T = 0;
@@ -90,7 +113,16 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t activation = ACTIVATION_NONE;
     auto attrs = context->GetAttrs();
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
-        activation = *(attrs->GetAttrPointer<uint32_t>(ATTR_ACTIVATION_INDEX));
+        const auto *activationAttr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, activationAttr);
+        const int64_t activationValue = *activationAttr;
+        if (activationValue < static_cast<int64_t>(ACTIVATION_NONE) ||
+            activationValue > static_cast<int64_t>(ACTIVATION_SWISH)) {
+            const auto actual = std::to_string(activationValue);
+            OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "activation", actual.c_str(), "0 (None), 1 (SiLU) or 2 (Swish)");
+            return ge::GRAPH_FAILED;
+        }
+        activation = static_cast<uint32_t>(activationValue);
     }
     const char *inputLayoutStr = "BSND";
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_INPUT_LAYOUT_INDEX) {
