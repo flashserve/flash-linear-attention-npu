@@ -8,7 +8,7 @@
 #include "chunk_kda_bwd_recompute_struct.h"
 #include "chunk_kda_bwd_recompute_common.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -66,6 +66,7 @@ public:
         uint64_t K;
         uint64_t V;
         uint64_t chunkSize;
+        uint64_t usedAic;
         int64_t isVariable;
     };
 
@@ -181,6 +182,7 @@ public:
         V_ = static_cast<uint64_t>(tiling->V);
         chunkNum_ = static_cast<uint64_t>(tiling->chunkNum);
         chunkSize_ = static_cast<uint64_t>(tiling->chunkSize);
+        usedAic_ = static_cast<uint64_t>(tiling->usedAic);
         isVariable_ = tiling->isVariable;
     }
 
@@ -198,24 +200,24 @@ public:
         LayoutTagW tagW = LayoutTagW::MakeLayout<QkType>(chunkSize_, K_);
         LayoutTagU tagU = LayoutTagU::MakeLayout<QkType>(chunkSize_, V_);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ArchTag = Arch::Ascend950;
         using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
 #else
         using ArchTag = Arch::AtlasA2;
-        using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
+        using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true, false, 1, false, 1, 1, 1, 1>;
 #endif
 
         using L1TileShape = typename KdaBwdRecomputeTileShapes128::L1TileShape;
         using L0TileShape = typename KdaBwdRecomputeTileShapes128::L0TileShape;
         using TileCopyU =
             Gemm::Tile::PackedTileCopyTla<ArchTag, QkType, LayoutTagA, QkType, LayoutTagVb, QkType, LayoutTagU>;
-        using BlockMmadU =
-            Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType, void, TileCopyU>;
+        using BlockMmadU = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType,
+                                                     void, TileCopyU>;
         using TileCopyW =
             Gemm::Tile::PackedTileCopyTla<ArchTag, QkType, LayoutTagA, QkType, LayoutTagKbg, QkType, LayoutTagW>;
-        using BlockMmadW =
-            Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType, void, TileCopyW>;
+        using BlockMmadW = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType,
+                                                     void, TileCopyW>;
         using MatmulKernel = ChunkKdaBwdRecomputeTla<BlockMmadU, BlockMmadW>;
 
         MatmulKernel kernel;
@@ -240,6 +242,7 @@ private:
     uint64_t V_ = 0;
     uint64_t chunkNum_ = 0;
     uint64_t chunkSize_ = 0;
+    uint64_t usedAic_ = 0;
     int64_t isVariable_ = 0;
 };
 
