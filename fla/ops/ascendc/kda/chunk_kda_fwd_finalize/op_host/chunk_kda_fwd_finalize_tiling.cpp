@@ -335,8 +335,9 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
-    const bool isA5 =
-        platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool isNonArch22 =
+        platform.GetCurNpuArch() == NpuArch::DAV_3510 ||
+        platform.GetCurNpuArch() == NpuArch::DAV_9201;
     ChunkKdaFwdFinalizeScheduleContext scheduleContext;
     scheduleContext.batch = info.batch;
     scheduleContext.valueHeadNum = info.heads;
@@ -344,7 +345,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.totalVarLenChunks = totalChunks;
     scheduleContext.aicCoreNum = platform.GetCoreNumAic();
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
-    scheduleContext.headGroupSize = isA5 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
+    scheduleContext.headGroupSize = isNonArch22 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
@@ -370,7 +371,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         ? FINALIZE_AIV_MOVER_VARLEN_MIN_CHUNKS_PER_CORE
         : FINALIZE_AIV_MOVER_DENSE_MIN_CHUNKS_PER_CORE;
     const bool useAivInputMover =
-        isA5 && schedule.headsPerPartition == info.heads &&
+        isNonArch22 && schedule.headsPerPartition == info.heads &&
         minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
@@ -381,7 +382,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 A5 MIX AIC/AIV batch 调度模式失败", __func__);
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 A5/A6 MIX AIC/AIV batch 调度模式失败",
+                               __func__);
 
         return ge::GRAPH_FAILED;
     }
