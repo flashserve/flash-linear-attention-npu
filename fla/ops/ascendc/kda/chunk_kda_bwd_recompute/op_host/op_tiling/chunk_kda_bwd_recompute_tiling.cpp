@@ -82,7 +82,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const uint32_t mixGroups = std::min(aicNum, aivNum / aivPerBlock);
     if (mixGroups == 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Mix core count", "invalid",
-            "Recompute needs one AIC and two AIVs; platform reports %u AIC and %u AIV.", aicNum, aivNum);
+            "Recompute needs one AIC and two AIVs; platform reports no complete Mix group.");
         return ge::GRAPH_FAILED;
     }
     const int64_t headTasks = isAscend950 ? tiling->Hv :
