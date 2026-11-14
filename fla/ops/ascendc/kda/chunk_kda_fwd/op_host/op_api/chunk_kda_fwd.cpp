@@ -70,7 +70,7 @@ KdaCoreOutputs KdaChunkForward(
     if (chunkIndicesOptional != nullptr) {
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (actualChunkIndices == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "failed to convert chunk metadata to tensor.");
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "failed to convert chunk metadata to tensor.");
             return {};
         }
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);

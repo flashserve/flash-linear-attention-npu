@@ -115,7 +115,7 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
         (chunkIndicesOptional != nullptr && actualChunkIndices == nullptr) ||
         actualQHat == nullptr || actualKHat == nullptr || actualQRstd == nullptr ||
         actualKRstd == nullptr || actualBetaEff == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Create internal tensor failed.");
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Create internal tensor failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 

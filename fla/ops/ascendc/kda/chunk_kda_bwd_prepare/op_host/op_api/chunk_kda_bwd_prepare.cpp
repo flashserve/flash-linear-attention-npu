@@ -54,7 +54,7 @@ const std::array<const aclTensor *, 3> ChunkKdaBwdPrepare(
         cuTensor = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         indicesTensor = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (cuTensor == nullptr || indicesTensor == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "failed to convert KernelA metadata");
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "failed to convert KernelA metadata");
             return {nullptr, nullptr, nullptr};
         }
         for (const aclTensor *tensor : {cuTensor, indicesTensor}) {

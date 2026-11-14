@@ -50,7 +50,7 @@ const aclTensor *ChunkKdaFwdFinalize(
     const aclTensor *chunkIndices = ConvertIntArray(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && chunkIndices == nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
                 "转换 cu_seqlens/chunk_indices 到 Tensor 失败。");
         return nullptr;
     }

@@ -35,14 +35,14 @@ const aclTensor *KdaChunkForwardFused(
 
     const aclTensor *aLogExp = l0op::Exp(aLog, executor);
     if (aLogExp == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "l0op::Exp on aLog failed.");
+        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "l0op::Exp on aLog failed.");
         return nullptr;
     }
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlens != nullptr) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlens, DataType::DT_INT64);
         if (actualCuSeqlens == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "failed to convert cu_seqlens to tensor.");
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "failed to convert cu_seqlens to tensor.");
             return nullptr;
         }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);

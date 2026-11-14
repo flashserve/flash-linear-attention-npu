@@ -30,7 +30,7 @@ const aclTensor *ChunkScaledDotKkt(
     if (cuSeqlensOptional != nullptr) {
         cuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (cuSeqlens == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens to tensor failed.");
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens to tensor failed.");
             return nullptr;
         }
         const_cast<aclTensor *>(cuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
@@ -39,7 +39,7 @@ const aclTensor *ChunkScaledDotKkt(
 
         chunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (chunkIndices == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices to tensor failed.");
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices to tensor failed.");
             return nullptr;
         }
         const_cast<aclTensor *>(chunkIndices)->SetStorageFormat(Format::FORMAT_ND);

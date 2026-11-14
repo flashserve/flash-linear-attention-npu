@@ -108,7 +108,7 @@ const std::array<const aclTensor *, 4> ChunkKdaBwdIntra(
         actualChunkMetadata =
             executor->ConvertToTensor(packed, DataType::DT_INT64);
         if (actualChunkMetadata == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+            OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
                     "failed to convert packed chunk metadata.");
             return {nullptr, nullptr, nullptr, nullptr};
         }
