@@ -876,9 +876,11 @@ jobs:
           PY
 
       - name: 上传 ${{ matrix.name }} 结果
+        id: upload_results_1
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v6
-        with:
+        with: &npu_ci_result_upload
           name: npu-ci-result-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
@@ -889,6 +891,40 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
+          # A lost FinalizeArtifact response may leave a completed artifact.
+          overwrite: true
+
+      - name: 等待 10 秒后重试上传结果
+        if: always() && steps.upload_results_1.outcome == 'failure'
+        run: sleep 10
+
+      - name: 上传 ${{ matrix.name }} 结果（第 2 次）
+        id: upload_results_2
+        if: always() && steps.upload_results_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with: *npu_ci_result_upload
+
+      - name: 等待 30 秒后重试上传结果
+        if: always() && steps.upload_results_2.outcome == 'failure'
+        run: sleep 30
+
+      - name: 上传 ${{ matrix.name }} 结果（第 3 次）
+        id: upload_results_3
+        if: always() && steps.upload_results_2.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with: *npu_ci_result_upload
+
+      - name: 等待 60 秒后重试上传结果
+        if: always() && steps.upload_results_3.outcome == 'failure'
+        run: sleep 60
+
+      - name: 上传 ${{ matrix.name }} 结果（第 4 次）
+        id: upload_results_4
+        if: always() && steps.upload_results_3.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with: *npu_ci_result_upload
 
   finalize:
     name: 校验并发布 A2 + A5 分项状态
@@ -918,10 +954,101 @@ jobs:
         id: download_results
         continue-on-error: true
         uses: actions/download-artifact@v6
-        with:
+        with: &npu_ci_result_download
           pattern: npu-ci-result-*-${{ github.run_id }}-*
           path: accuracy-reports
           merge-multiple: false
+
+      - name: 检查双平台报告是否齐全
+        id: check_results_1
+        if: always() && steps.download_results.outcome == 'success'
+        continue-on-error: true
+        env: &npu_ci_result_scope
+          NPU_OPS: ${{ needs.prepare.outputs.ops }}
+        run: &check_npu_ci_results |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          root = Path('accuracy-reports')
+          run_id = os.environ['GITHUB_RUN_ID']
+          run_attempt = int(os.environ['GITHUB_RUN_ATTEMPT'])
+          missing = []
+          for platform in ('a2', 'a5'):
+              candidates = []
+              prefix = f'npu-ci-result-{platform}-{run_id}-'
+              for directory in root.glob(prefix + '*'):
+                  attempt = directory.name.removeprefix(prefix)
+                  if directory.is_dir() and attempt.isdecimal() and 0 < int(attempt) <= run_attempt:
+                      candidates.append((int(attempt), directory))
+              if not candidates:
+                  missing.append(f'{platform}: result artifact')
+                  continue
+              # Match the publisher: a partial rerun can reuse the other
+              # platform's latest available attempt from this same run.
+              directory = max(candidates, key=lambda item: item[0])[1]
+              files = [f'npu-ci-result-{platform}.json', f'npu-ci-stages-{platform}.json',
+                       f'npu-ci-diagnostics-{platform}.json', f'npu-ci-summary-{platform}.md']
+              if not os.environ.get('NPU_OPS', '').strip():
+                  files.append(f'gdr_accuracy_report-{platform}.json')
+              missing.extend(str(directory / name) for name in files
+                             if not (directory / name).is_file())
+          if missing:
+              raise SystemExit('Missing NPU CI reports: ' + ', '.join(missing))
+          print('A2 and A5 reports are present; content and identity are checked by the publisher.')
+          PY
+
+      - name: 等待 10 秒后重试下载结果
+        if: always() && (steps.download_results.outcome == 'failure' || steps.check_results_1.outcome == 'failure')
+        run: sleep 10
+
+      - name: 下载双平台结果（第 2 次）
+        id: download_results_2
+        if: always() && (steps.download_results.outcome == 'failure' || steps.check_results_1.outcome == 'failure')
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with: *npu_ci_result_download
+
+      - name: 检查双平台报告是否齐全（第 2 次）
+        id: check_results_2
+        if: always() && steps.download_results_2.outcome == 'success'
+        continue-on-error: true
+        env: *npu_ci_result_scope
+        run: *check_npu_ci_results
+
+      - name: 等待 30 秒后重试下载结果
+        if: always() && (steps.download_results_2.outcome == 'failure' || steps.check_results_2.outcome == 'failure')
+        run: sleep 30
+
+      - name: 下载双平台结果（第 3 次）
+        id: download_results_3
+        if: always() && (steps.download_results_2.outcome == 'failure' || steps.check_results_2.outcome == 'failure')
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with: *npu_ci_result_download
+
+      - name: 检查双平台报告是否齐全（第 3 次）
+        id: check_results_3
+        if: always() && steps.download_results_3.outcome == 'success'
+        continue-on-error: true
+        env: *npu_ci_result_scope
+        run: *check_npu_ci_results
+
+      - name: 等待 60 秒后重试下载结果
+        if: always() && (steps.download_results_3.outcome == 'failure' || steps.check_results_3.outcome == 'failure')
+        run: sleep 60
+
+      - name: 下载双平台结果（第 4 次）
+        id: download_results_4
+        if: always() && (steps.download_results_3.outcome == 'failure' || steps.check_results_3.outcome == 'failure')
+        uses: actions/download-artifact@v6
+        with: *npu_ci_result_download
+
+      - name: 检查双平台报告是否齐全（第 4 次）
+        id: check_results_4
+        if: always() && steps.download_results_4.outcome == 'success'
+        env: *npu_ci_result_scope
+        run: *check_npu_ci_results
 
       - name: 发布双平台 NPU CI 状态
         id: publish_statuses
