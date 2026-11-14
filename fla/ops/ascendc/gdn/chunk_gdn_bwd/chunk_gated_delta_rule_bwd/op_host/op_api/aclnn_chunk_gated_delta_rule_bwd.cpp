@@ -648,6 +648,15 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const aclTensor *dDtBiasOutOptional, uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    uint64_t finalizeOutputTemporaryMask = 0;
+    if (IsDav2201Device()) {
+        finalizeOutputTemporaryMask = l0op::GetFinalizeOutputAliasMask(
+            {q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
+             qRstdOptional, kRstdOptional, betaRawOptional, aLogOptional,
+             dtBiasOptional, nullptr, nullptr},
+            {dqOut, dkOut, dvOut, dBetaOut, dGOut});
+    }
+    // 缓存身份与 Finalize 共用同一 mask，避免布局转换后的别名关系改变缓存图。
     L2_DFX_PHASE_1(
         aclnnChunkGatedDeltaRuleBwd,
         DFX_IN(q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
@@ -655,7 +664,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
                dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
                layout, scale, chunkSize, useExp2,
                useGateInKernel, useQkL2normInKernel,
-               useBetaSigmoidInKernel, stateVFirst),
+               useBetaSigmoidInKernel, stateVFirst, finalizeOutputTemporaryMask),
         DFX_OUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
                 dALogOutOptional, dDtBiasOutOptional));
     if (workspaceSize == nullptr || executor == nullptr) {
@@ -866,7 +875,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         params.chunkIndices, params.scale, params.chunkSize,
         params.useQkL2normInKernel, params.useBetaSigmoidInKernel,
         params.useGateInKernel, false, params.useExp2,
-        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr);
+        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr, finalizeOutputTemporaryMask);
     for (const aclTensor *tensor : finalizeResult) {
         if (!(tensor != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGatedDeltaRuleBwdFinalize composition failed.", __func__);
