@@ -111,7 +111,7 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
         ConvertIntArrayToTensor(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && chunkIndices == nullptr)) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
                 "转换 cu_seqlens/chunk_indices 到 Tensor 失败。");
         return {};
     }
@@ -141,7 +141,7 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
         qHatForKernel == nullptr || kHatForKernel == nullptr ||
         qRstdForKernel == nullptr || kRstdForKernel == nullptr ||
         betaEffForKernel == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "创建空输出 descriptor 失败。");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "创建空输出 descriptor 失败。");
         return {};
     }
 

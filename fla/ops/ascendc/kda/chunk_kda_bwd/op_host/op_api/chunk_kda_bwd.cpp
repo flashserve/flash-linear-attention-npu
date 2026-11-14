@@ -68,8 +68,7 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
                 disableRecompute, useExp2, stateVFirst,
                 deferGatePost));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
         return {};
     }
     if (deferGatePost) {
@@ -89,8 +88,7 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
                 OP_ATTR(chunkSize, safeGate, lowerBound, false));
         }
         if (ret != ACLNN_SUCCESS) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "ADD_TO_LAUNCHER_LIST_AICORE GatePost failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE GatePost failed.");
             return {};
         }
     }

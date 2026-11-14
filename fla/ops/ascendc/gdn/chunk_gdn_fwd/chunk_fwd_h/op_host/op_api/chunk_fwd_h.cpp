@@ -63,7 +63,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     if (cuSeqlensOptional) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (actualCuSeqlens == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cuSeqlens to tensor failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert cuSeqlens to tensor failed.");
             return {nullptr, nullptr, nullptr};
         }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
@@ -77,7 +77,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     if (chunkIndicesOptional) {
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (actualChunkIndices == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunkIndices to tensor failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert chunkIndices to tensor failed.");
             return {nullptr, nullptr, nullptr};
         }
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
@@ -102,7 +102,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
                                        : initialStateOptional->GetDataType();
         finalStateOutKernel = executor->AllocTensor(MakeShape({0}), stateType, Format::FORMAT_ND);
         if (finalStateOutKernel == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc finalStateOut placeholder failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Alloc finalStateOut placeholder failed.");
             return {nullptr, nullptr, nullptr};
         }
     }
@@ -131,7 +131,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
                 logicalBatch, logicalSeqlen,
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};
     }
     return {hOut, vNewOut, finalStateOut};

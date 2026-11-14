@@ -34,7 +34,7 @@ const aclTensor *ChunkLocalCumsum(
     if (cuSeqlensOptional != nullptr) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (actualCuSeqlens == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens int array to tensor failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens int array to tensor failed.");
             return nullptr;
         }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
@@ -46,7 +46,7 @@ const aclTensor *ChunkLocalCumsum(
     if (chunkIndicesOutOptional != nullptr) {
         actualChunkIndicesOut = executor->ConvertToTensor(chunkIndicesOutOptional, DataType::DT_INT64);
         if (actualChunkIndicesOut == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices_out int array to tensor failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices_out int array to tensor failed.");
             return nullptr;
         }
         const_cast<aclTensor *>(actualChunkIndicesOut)->SetStorageFormat(Format::FORMAT_ND);
@@ -63,7 +63,7 @@ const aclTensor *ChunkLocalCumsum(
         OP_OUTPUT(out),
         OP_ATTR(chunkSize, reverse, scaleFloat, headFirst, outputDtypeStr));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return nullptr;
     }
     return out;
