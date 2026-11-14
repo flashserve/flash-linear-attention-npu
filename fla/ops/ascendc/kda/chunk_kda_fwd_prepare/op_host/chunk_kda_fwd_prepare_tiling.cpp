@@ -251,7 +251,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
 
     if (!shape.packed && shape.batch != 1) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "B", std::to_string(shape.batch), "rank-4 变长输入要求 B=1，当前d。");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "B", std::to_string(shape.batch), "rank-4 变长输入要求 B=1");
 
         return false;
     }
@@ -369,14 +369,15 @@ bool CheckOptionalInput(gert::TilingContext *context,
     }
     const auto &aLog = aLogShape->GetStorageShape();
     if (!HasShape(aLog, {shape.valueHeadNum})) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(shape.valueHeadNum), "a_log 必须为 [HV]，当前d。");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", std::to_string(shape.valueHeadNum), "a_log 必须为 [HV]");
 
         return false;
     }
     if (hasDtBias) {
         const auto &dtBias = dtBiasShape->GetStorageShape();
         if (!HasShape(dtBias, {shape.valueHeadNum * shape.kDim})) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "dt_bias 必须为展平的 [HV*K]，当前d，d。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV*K",
+                std::to_string(dtBias.GetDim(0)), "dt_bias 必须为展平的 [HV*K]");
 
             return false;
         }
@@ -529,8 +530,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
                                 PREPARE_K_DIM * gateElementBytes) &&
             FitsDmaSourceStride(shape.valueHeadNum, betaElementBytes);
         if (!strideValid) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "sequence-major 输入的跨 head DMA stride 超过 uint32 范围，"
-                    "当前d,d。");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HK,HV",
+                std::to_string(shape.qkHeadNum) + "," + std::to_string(shape.valueHeadNum),
+                "sequence-major 输入的跨 head DMA stride 超过 uint32 范围");
 
             return ge::GRAPH_FAILED;
         }

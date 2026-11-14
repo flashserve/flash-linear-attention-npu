@@ -252,11 +252,12 @@ public:
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
             const int64_t seqNum = cuSeqlensShape.GetDim(CDHP_DIM_0) - 1;
             if (seqNum < 1) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), "cu_seqlens must contain at least 2 entries, but got shape dim0d.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(cuSeqlensShape.GetDim(CDHP_DIM_0)), "cu_seqlens must contain at least 2 entries");
         return ge::GRAPH_FAILED;
     }
             if (B_ != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "cu_seqlens", std::to_string(B_), "when cu_seqlens is provided B must be 1 (one packed segment per launch), but got");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "B", std::to_string(B_),
+                "when cu_seqlens is provided B must be 1 (one packed segment per launch)");
         return ge::GRAPH_FAILED;
     }
             // 本 kernel 一次只处理一个 [bos,eos)：varlen 时由 kernel 从 GM 读取 cu_seqlens[0:2] 覆盖，
