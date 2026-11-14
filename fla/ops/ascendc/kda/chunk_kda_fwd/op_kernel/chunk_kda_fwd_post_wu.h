@@ -537,6 +537,13 @@ private:
     }
 
 
+    __aicore__ inline bool UseTailWuCube() const
+    {
+        // Share the predicate across AIC/AIV so tail completion flags match.
+        // FP16 retains its vector saturation before conversion.
+        return IsSameType<T, bfloat16_t>::value && BT_ == 64 && K_ == 128 && V_ == 128;
+    }
+
     __aicore__ inline void ComputePostWuCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                              uint64_t curT)
     {
@@ -805,7 +812,7 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
-        if (curT < BT_) {
+        if (curT < BT_ && !UseTailWuCube()) {
             ComputeTailWuVector(b, hv, start, curT, subBlockIdx, subBlockNum);
             CopyScratchWAndFinalizeKg(
                 b, h, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum, false);
@@ -831,7 +838,7 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
-        if (curT < BT_) {
+        if (curT < BT_ && !UseTailWuCube()) {
             return;
         }
         ComputePostWuCube(b, hv, chunkIdx, start, curT);
