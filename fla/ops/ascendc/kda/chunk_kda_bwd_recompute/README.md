@@ -109,8 +109,9 @@ Python 固定返回五元组：
 
 ## 支持范围
 
-- SoC 注册：A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
-  当前 ATK 与性能验收以 A5 为主。
+- SoC 注册：A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)、
+  A6 (`ascend960dt`)。当前 ATK 与性能验收以 A5 为主；A6 由本 PR 接入 arch92，
+  仍需在 A6 环境完成正式精度、确定性和性能验收。
 - `K = V = 128`，`chunk_size = 64`；`HV % HK == 0`。
 - 独立入口输入布局固定为 dense BNSD（或总层给出的等价 rank-4 视图）；
   拒绝 `BSND` / `TND` 作为 `input_layout`。
@@ -120,9 +121,10 @@ Python 固定返回五元组：
 
 ## 实现
 
-Mix **1 AIC : 2 AIV**：Vector 完成 gate cumsum、`qg/kg` 与 `kbg/vb` 准备，
-Cube 完成 `A @ kbg` / `A @ vb`。A5 走 `op_kernel/arch35/`；A2/A3 走同目录
-非 arch35 实现。Stage、L1/workspace 与同步见 [设计文档](docs/design.md)。
+A5 使用 Mix **1 AIC : 2 AIV**，A6 使用 Mix **1 AIC : 1 AIV**。Vector 完成
+gate cumsum、`qg/kg` 与 `kbg/vb` 准备，Cube 完成 `A @ kbg` / `A @ vb`。
+A5 走 `op_kernel/arch35/`，A6 走 `op_kernel/arch92/`，A2/A3 走兼容实现。
+Stage、L1/workspace 与同步见 [设计文档](docs/design.md)。
 
 ## 验证
 
