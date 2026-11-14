@@ -163,27 +163,22 @@ public:
     {
         if (RequiredInputDimNumCheck(ctx_.qShape, CHUNK_FWD_O_QKV_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_Q_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.kShape, CHUNK_FWD_O_QKV_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_K_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.vShape, CHUNK_FWD_O_QKV_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_V_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.hShape, CHUNK_FWD_O_H_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_H_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.gShape, CHUNK_FWD_O_G_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_G_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         return ge::GRAPH_SUCCESS;
@@ -285,12 +280,10 @@ public:
         if (IsVariableLength()) {
             if (RequiredInputDimNumCheck(ctx_.cuSeqlensShape, CHUNK_FWD_O_SEQLENS_DIM_NUM,
                                                  CHUNK_FWD_O_INPUT_SEQLENS_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
             if (RequiredInputDimNumCheck(ctx_.chunkOffsetsShape, CHUNK_FWD_O_CHUNK_OFFSETS_DIM_NUM,
                                                  CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
