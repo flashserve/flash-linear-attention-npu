@@ -32,6 +32,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SETUP_DIR = HERE.parent
 SRC_DIR = SETUP_DIR / "csrc" / "src"
+BOXED_HEADER = SETUP_DIR / "csrc" / "include" / "stable" / "boxed.h"
 
 # schema spelling -> the C++ type the boxed adapter unpacks into.  `float` maps
 # to `double` because the stable value conversions hand over a double and every
@@ -68,6 +69,33 @@ _SCHEMA_RE = re.compile(
 _OWNERSHIP_VIOLATION_RE = re.compile(
     r"to<\s*AtenTensorHandle\s*>\(\s*stack\s*\[")
 _OWNERSHIP_CONSUME_RE = re.compile(r"to<\s*Tensor\s*>\(\s*stack\s*\[")
+_BOXED_REGISTRATION_RE = re.compile(
+    r'm\.impl\(\s*"([a-z0-9_]+)"\s*,\s*&(?:\w+::)*'
+    r'boxed_adapter<\s*(run_[a-z0-9_]+)\s*>\s*\)', re.S)
+
+
+def boxed_tensor_ownership() -> tuple[set[str], list[str]]:
+    """Verify that typed unboxing consumes required and optional references."""
+    owned_types: set[str] = set()
+    problems: list[str] = []
+    if not BOXED_HEADER.is_file():
+        return owned_types, ["boxed.h: generic boxed adapter header is missing"]
+    text = BOXED_HEADER.read_text(encoding="utf-8")
+    text = re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.S)
+    for declared in ("Tensor", "std::optional<Tensor>"):
+        pattern = re.compile(
+            r"template\s*<>\s*inline\s+" + re.escape(declared)
+            + r"\s+unbox<\s*" + re.escape(declared)
+            + r"\s*>\(\s*StableIValue\s+(\w+)\s*\)\s*\{([^}]+)\}", re.S)
+        match = pattern.search(text)
+        if match and re.sub(r"\s+", "", match.group(2)) == (
+                f"returnto<{declared}>({match.group(1)});"):
+            owned_types.add(declared)
+        else:
+            problems.append(
+                f"boxed.h: unbox<{declared}> must consume the input reference "
+                f"with owning to<{declared}>")
+    return owned_types, problems
 
 
 def split_params(text: str) -> list[str]:
@@ -154,6 +182,13 @@ def evaluate() -> dict:
     problems: list[str] = []
     checked = 0
     owned_slots = 0
+    owned_slots_by_op: dict[str, int] = {}
+    generic_adapters = dict(_BOXED_REGISTRATION_RE.findall(
+        (SRC_DIR / "stable_ops.cpp").read_text(encoding="utf-8")))
+    owned_types: set[str] = set()
+    if generic_adapters:
+        owned_types, ownership_problems = boxed_tensor_ownership()
+        problems.extend(ownership_problems)
     for source in sorted(SRC_DIR.glob("stable_*.cpp")):
         text = source.read_text(encoding="utf-8")
         for match in _OWNERSHIP_VIOLATION_RE.finditer(text):
@@ -162,7 +197,8 @@ def evaluate() -> dict:
                 f"{source.name}:{line}: to<AtenTensorHandle>(stack[...]) "
                 "does not consume the stack's reference to that tensor; "
                 "unbox the slot with to<Tensor>")
-        owned_slots += len(_OWNERSHIP_CONSUME_RE.findall(text))
+        explicit_owned_slots = len(_OWNERSHIP_CONSUME_RE.findall(text))
+        owned_slots += explicit_owned_slots
         signatures = adapter_signatures(text)
         for call in schema_calls(text):
             if not call["inputs"]:
@@ -192,8 +228,20 @@ def evaluate() -> dict:
                     f"{name} takes {len(params)}")
                 continue
             checked += 1
+            generic = generic_adapters.get(op) == name
+            op_owned_slots = explicit_owned_slots
             for (schema_name, schema_type), (param, declared) in zip(
                     call["inputs"], params):
+                if generic and schema_type in ("Tensor", "Tensor?"):
+                    owning_type = ("Tensor" if schema_type == "Tensor"
+                                   else "std::optional<Tensor>")
+                    if declared != owning_type:
+                        problems.append(
+                            f"{op}: generic boxed parameter '{schema_name}' "
+                            f"must use owning {owning_type}, not {declared}")
+                    elif schema_type == "Tensor" and declared in owned_types:
+                        op_owned_slots += 1
+                        owned_slots += 1
                 expected_name = _RENAMES.get(schema_name, schema_name)
                 if expected_name != param:
                     problems.append(
@@ -208,7 +256,9 @@ def evaluate() -> dict:
                     problems.append(
                         f"{op}: '{schema_name}' is {schema_type} in the schema "
                         f"but {declared} in {name}")
+            owned_slots_by_op[op] = op_owned_slots
     return {"checked": checked, "owned_slots": owned_slots,
+            "owned_slots_by_op": owned_slots_by_op,
             "problems": problems}
 
 

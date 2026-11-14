@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
 import os
 import runpy
 import shutil
@@ -11,6 +13,7 @@ import types
 import unittest
 from pathlib import Path
 from unittest import mock
+from tests.opp_abi_fixtures import write_elf_exports
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -28,21 +31,22 @@ def _minimal_vendor(path: Path) -> None:
     _write_aclnn_header(path, "int64_t")
 
 
-def _write_aclnn_header(vendor: Path, scalar_type: str) -> None:
+def _write_aclnn_header(vendor: Path, scalar_type: str, *, symbol: str = "aclnnDemo") -> None:
     header = vendor / "op_api" / "include" / "aclnnop" / "aclnn_demo.h"
     header.parent.mkdir(parents=True, exist_ok=True)
     header.write_text(
-        "aclnnStatus aclnnDemoGetWorkspaceSize(\n"
+        f"aclnnStatus {symbol}GetWorkspaceSize(\n"
         "    const aclTensor *x,\n"
         f"    {scalar_type} mode,\n"
         "    uint64_t *workspaceSize,\n"
         "    aclOpExecutor **executor);\n"
-        "aclnnStatus aclnnDemo(void *workspace, uint64_t workspaceSize,\n"
+        f"aclnnStatus {symbol}(void *workspace, uint64_t workspaceSize,\n"
         "    aclOpExecutor *executor, aclrtStream stream);\n",
         encoding="utf-8",
     )
+    write_elf_exports(vendor / ABI["LIBRARY"], {symbol, symbol + "GetWorkspaceSize"})
     with mock.patch.dict(ABI["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {"aclnnDemo", "aclnnDemoGetWorkspaceSize"}
+        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
     }):
         ABI["write_manifest"](vendor)
 
@@ -134,6 +138,72 @@ class OverlayInstallerTest(unittest.TestCase):
                 self.module["install_overlay"](source)
             self.assertFalse((vendors / "fla_npu_overlay_transformer").exists())
 
+    def test_new_public_aclnn_interface_can_be_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            vendors, base, source = self._tree(Path(temp_dir))
+            base_manifest = (base / "abi_manifest.json").read_bytes()
+            _write_aclnn_header(source, "float", symbol="aclnnRecurrentGatedDeltaRuleV2")
+            installed = self.module["install_overlay"](source)
+            self.assertEqual(installed, vendors / "fla_npu_overlay_transformer")
+            self.assertEqual(ABI["compare_overlay_to_base"](installed, base), [])
+            self.assertEqual((base / "abi_manifest.json").read_bytes(), base_manifest)
+
+    def test_latest_install_replaces_all_previous_overlays(self) -> None:
+        for scalar in ("float", "double"):
+            with self.subTest(scalar=scalar), tempfile.TemporaryDirectory() as temp_dir, \
+                    mock.patch.dict(os.environ, {}, clear=True):
+                vendors, base, source = self._tree(Path(temp_dir))
+                before = (base / "abi_manifest.json").read_bytes()
+                _write_aclnn_header(source, "float", symbol="aclnnNew")
+                first = self.module["install_overlay"](source, overlay_name="fla_npu_overlay_one")
+                (first / "only_in_A").touch()
+                _write_aclnn_header(source, scalar, symbol="aclnnNew")
+                second = self.module["install_overlay"](source, overlay_name="fla_npu_overlay_two")
+                self.assertFalse(first.exists())
+                self.assertFalse((second / "only_in_A").exists())
+                self.assertEqual(self.module["overlay_vendor_names"](), [second.name])
+                self.assertEqual((vendors / "config.ini").read_text(), f"load_priority={second.name},{base.name}\n")
+                self.assertEqual((base / "abi_manifest.json").read_bytes(), before)
+
+    def test_failed_different_name_install_restores_previous_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            vendors, base, source = self._tree(Path(temp_dir))
+            first = self.module["install_overlay"](source, overlay_name="fla_npu_overlay_one")
+            snapshot = lambda path: {p.relative_to(path): p.read_bytes() for p in path.rglob("*") if p.is_file()}
+            before, base_before = snapshot(first), snapshot(base)
+            config_before = (vendors / "config.ini").read_bytes()
+            install = self.module["install_overlay"]
+            with mock.patch.dict(install.__globals__, {"_write_vendors_config": mock.Mock(side_effect=OSError("injected"))}):
+                with self.assertRaisesRegex(OSError, "injected"):
+                    install(source, overlay_name="fla_npu_overlay_two")
+            self.assertEqual(snapshot(first), before)
+            self.assertEqual(snapshot(base), base_before)
+            self.assertEqual((vendors / "config.ini").read_bytes(), config_before)
+            self.assertFalse((vendors / "fla_npu_overlay_two").exists())
+
+    def test_replacement_does_not_compare_against_its_old_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            _, _, source = self._tree(Path(temp_dir))
+            _write_aclnn_header(source, "float", symbol="aclnnNew")
+            target = self.module["install_overlay"](source)
+            _write_aclnn_header(source, "double", symbol="aclnnNew")
+            self.assertEqual(self.module["install_overlay"](source, force=True), target)
+
+    def test_status_reports_conflicts_in_active_overlays(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, {}, clear=True):
+            vendors, _, _ = self._tree(Path(temp_dir))
+            for name, scalar in (("one", "float"), ("two", "double")):
+                path = vendors / f"fla_npu_overlay_{name}"
+                _minimal_vendor(path)
+                _write_aclnn_header(path, scalar, symbol="aclnnNew")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.module["print_status"]()
+            self.assertEqual(output.getvalue().count("ABI: INVALID"), 2)
+            self.assertIn("aclnnNewGetWorkspaceSize", output.getvalue())
+
     def test_failed_replacement_preserves_previous_overlay_base_and_config(self) -> None:
         for failure in ("copy", "staged_abi", "set_env", "move_old", "move_new", "config"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp_dir, \
@@ -157,10 +227,10 @@ class OverlayInstallerTest(unittest.TestCase):
                     self.assertEqual(snapshot(target), old_overlay)
                     raise OSError("injected copy failure")
 
-                def validate(path):
+                def validate(path, **kwargs):
                     if path.name == "new":
                         raise OSError("injected staged_abi failure")
-                    return real_validate(path)
+                    return real_validate(path, **kwargs)
 
                 def rename(path, destination):
                     if ((failure == "move_old" and path == target)

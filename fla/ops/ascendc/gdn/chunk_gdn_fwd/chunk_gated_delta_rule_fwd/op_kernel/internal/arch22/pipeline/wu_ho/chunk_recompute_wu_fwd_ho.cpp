@@ -52,7 +52,7 @@ __aicore__ inline void RunFwdH(GdnRawFront::Resource &resource, GM_ADDR k, GM_AD
                                GM_ADDR gLastExp = nullptr, GM_ADDR gDecay = nullptr,
                                 const HoOwnerLocal::Config *ownerConfig = nullptr)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     if constexpr (kStaticV == 128 && kStaticBT == 64 && kQkvLayout >= 0 && kQkvLayout <= 1 && !kGated &&
                   sizeof(InputT) == 2 && std::is_same_v<GT, float> && std::is_same_v<StateT, float>) {
         if (ownerConfig != nullptr && ownerConfig->enabled) {
@@ -73,7 +73,7 @@ __aicore__ inline void RunFwdH(GdnRawFront::Resource &resource, GM_ADDR k, GM_AD
     // standalone-H mode here changes synchronization and precision behavior.
     using Kernel = Catlass::Gemm::Kernel::GDNFwdHKernel<
         InputT, GT, StateT, float, TileShapes, kGated, true, false, true, kStaticV, kStaticBT, kQkvLayout>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // The private H implementation retains its original AtlasA2 resource type.
     Catlass::Arch::Resource<Catlass::Arch::AtlasA2> hResource;
     Kernel kernel(hResource);

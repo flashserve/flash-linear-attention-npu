@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
 #define GDN_UP_CONSTEXPR __aicore__ constexpr
 #else
 #define GDN_UP_CONSTEXPR constexpr

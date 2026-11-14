@@ -15,16 +15,18 @@ ge::graphStatus ValidateFinalize(
     bool useBetaSigmoid, bool allowNegEigval, const char *outputLayout)
 {
     if (allowNegEigval && !useBetaSigmoid) {
-        OP_LOGE(ctx.nodeName, "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "allowNegEigval", "invalid", "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+
         return ge::GRAPH_FAILED;
     }
     if (!arch22 && useBetaSigmoid) {
-        OP_LOGE(ctx.nodeName,
-                "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "use_beta_sigmoid_in_kernel", "true", "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+
         return ge::GRAPH_FAILED;
     }
     auto fail = [&]() {
-        OP_LOGE(ctx.nodeName, "invalid finalize shape, dtype, layout or metadata");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx.nodeName, "layout", "invalid", "invalid finalize shape, dtype, layout or metadata");
+
         return ge::GRAPH_FAILED;
     };
     const bool variable = shape.isVariable != 0;
@@ -162,7 +164,8 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
     if (!std::isfinite(static_cast<float>(*scale)) || !std::isfinite(static_cast<float>(*lowerBound)) ||
         *lowerBound < -5.0 || static_cast<float>(*lowerBound) >= 0.0f) {
-        OP_LOGE(context->GetNodeName(), "scale/lower_bound must be finite");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "scale", "invalid", "scale/lower_bound must be finite");
+
         return ge::GRAPH_FAILED;
     }
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
@@ -170,14 +173,17 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     if (aicCoreNum == 0) {
         // The A5 aclnn direct-launch context may omit platform info.  This
         // checkpoint is A5-only and must still expose all 28 physical AICs.
-        aicCoreNum = platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 ? 28U : 1U;
+        aicCoreNum = platform.GetCurNpuArch() == NpuArch::DAV_3510 ? 28U : 1U;
         OP_LOGW(context->GetNodeName(),
                 "platform info did not report AIC count; fallback to %u", aicCoreNum);
     }
     const char *modelLayout = attrs->GetStr(10);
     const bool mixed = modelLayout && modelLayout[0];
     const bool modelTm = mixed && (std::strcmp(modelLayout,"BSND") == 0 || std::strcmp(modelLayout,"TND") == 0);
-    if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) return ge::GRAPH_FAILED;
+    if (mixed && !modelTm && std::strcmp(modelLayout,"BNSD") && std::strcmp(modelLayout,"NTD")) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "model_layout", modelLayout, "BSND/BNSD/TND/NTD, or empty for standalone Finalize");
+        return ge::GRAPH_FAILED;
+    }
     ChunkKdaBwdFinalizeTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(mixed ? INPUT_GK : INPUT_Q),
@@ -214,17 +220,27 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         elements *= static_cast<uint64_t>(dim);
     }
     ChunkKdaBwdFinalizeTilingProcessor processor(ctx, shape);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     shape.qkTokenMajor = modelTm && !ctx.qRstd;
     shape.vTokenMajor = modelTm;
     shape.rawTokenMajor = mixed;
-    const bool arch22 = platform.GetSocVersion() != platform_ascendc::SocVersion::ASCEND950;
+    const auto npuArch = platform.GetCurNpuArch();
+    OP_CHECK_IF(npuArch != NpuArch::DAV_2201 && npuArch != NpuArch::DAV_3510,
+                OP_LOGE(context->GetNodeName(),
+                        "ChunkKdaBwdFinalize requires NpuArch::DAV_2201 or DAV_3510."),
+                return ge::GRAPH_FAILED);
+    const bool arch22 = npuArch == NpuArch::DAV_2201;
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,
                          *allowNegEigval, outputLayout) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
     if (arch22) return TilingFinalizeArch22(context, ctx, shape);
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdFinalizeTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     *tiling = shape;
+    auto *rawTiling = context->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    rawTiling->SetDataSize(sizeof(KDA::ChunkKdaBwdFinalizeTilingData) + 8);
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();

@@ -1,0 +1,62 @@
+#include <torch/csrc/stable/library.h>
+#include "binding.h"
+#include <memory>
+#include <mutex>
+#include <set>
+#include <sstream>
+#include <string>
+@ADAPTERS@
+
+static std::set<std::string> active_ops;
+extern "C" __attribute__((visibility("default")))
+const char* fla_npu_experimental_source_hash() { return FLA_STABLE_SOURCE_HASH; }
+extern "C" __attribute__((visibility("default")))
+int32_t fla_npu_experimental_queue_enqueue_available() {
+  return fla_npu_stable::Runtime::instance().enqueue_enabled() ? 1 : 0;
+}
+static void register_schemas(StableLibrary& m) {
+@SCHEMAS@
+}
+static void register_implementations(StableLibrary& m) {
+@IMPLEMENTATIONS@
+}
+extern "C" __attribute__((visibility("default")))
+const char* fla_npu_experimental_register(const char* ns, const char* paths, const char* exports) {
+  static std::mutex mutex;
+  static std::string registered_namespace, registered_paths;
+  static std::unique_ptr<StableTorchLibraryInit> definitions, implementations;
+  static thread_local std::string error;
+  std::lock_guard<std::mutex> guard(mutex);
+  try {
+    if (!ns || !*ns || !paths || !*paths || !exports || !*exports)
+      throw std::runtime_error("registration requires a namespace, OPP paths and active operators");
+    const std::set<std::string> available = {@EXPORTS@};
+    std::set<std::string> requested;
+    std::istringstream stream(exports);
+    std::string name;
+    while (std::getline(stream, name, ',')) {
+      if (!available.count(name)) throw std::runtime_error("Unknown experimental operator: " + name);
+      requested.insert(name);
+    }
+    if (definitions) {
+      if (registered_namespace != ns || registered_paths != paths || active_ops != requested)
+        throw std::runtime_error("launcher already bound; restart the process");
+      return nullptr;
+    }
+    active_ops = std::move(requested);
+@BINDINGS@
+    auto defs = std::make_unique<StableTorchLibraryInit>(
+        StableLibrary::Kind::DEF, &register_schemas, ns, nullptr, __FILE__, __LINE__);
+    auto impls = std::make_unique<StableTorchLibraryInit>(
+        StableLibrary::Kind::IMPL, &register_implementations, ns,
+        "CompositeExplicitAutograd", __FILE__, __LINE__);
+    registered_namespace = ns;
+    registered_paths = paths;
+    definitions = std::move(defs);
+    implementations = std::move(impls);
+    return nullptr;
+  } catch (const std::exception& exc) {
+    error = exc.what();
+    return error.c_str();
+  }
+}

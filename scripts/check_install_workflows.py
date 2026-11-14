@@ -17,6 +17,7 @@ import argparse
 import base64
 import csv
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -110,18 +111,24 @@ def _is_generated_bytecode(path: Path) -> bool:
     return path.suffix == ".pyc" and "__pycache__" in path.parts
 
 
-def _opp_files(package_dir: Path) -> list[Path]:
+def _is_manager_file(path: Path, package_dir: Path) -> bool:
+    relative = path.relative_to(package_dir).parts
+    return relative == ("opp", ".overlay.lock") or relative[:2] == ("opp", "wheel_layers")
+
+
+def _opp_files(package_dir: Path, *, managed: bool = False) -> list[Path]:
     return [
         path
         for path in sorted((package_dir / "opp").rglob("*"))
-        if path.is_file() or path.is_symlink()
+        if (path.is_file() or path.is_symlink())
+        and not (managed and _is_manager_file(path, package_dir))
     ]
 
 
-def _manifest_from_directory(package_dir: Path) -> dict[str, str]:
+def _manifest_from_directory(package_dir: Path, *, managed: bool = False) -> dict[str, str]:
     site_root = package_dir.parent
     result = {}
-    for path in _opp_files(package_dir):
+    for path in _opp_files(package_dir, managed=managed):
         if _is_generated_bytecode(path):
             continue
         relative = path.relative_to(site_root).as_posix()
@@ -129,9 +136,9 @@ def _manifest_from_directory(package_dir: Path) -> dict[str, str]:
     return result
 
 
-def _assert_manifest_matches_wheel(package_dir: Path, wheel: Path) -> None:
+def _assert_manifest_matches_wheel(package_dir: Path, wheel: Path, *, managed: bool = False) -> None:
     expected = _manifest_from_wheel(wheel)
-    actual = _manifest_from_directory(package_dir)
+    actual = _manifest_from_directory(package_dir, managed=managed)
     if actual == expected:
         return
 
@@ -165,7 +172,7 @@ def _find_package_dir(python: Path, env: dict[str, str], cwd: Path) -> Path:
     return Path(output)
 
 
-def _assert_record_covers_opp(package_dir: Path) -> None:
+def _assert_record_covers_opp(package_dir: Path, *, managed: bool = False) -> None:
     dist_infos = sorted(package_dir.parent.glob(DIST_INFO_GLOB))
     if len(dist_infos) != 1:
         raise AssertionError(
@@ -177,11 +184,19 @@ def _assert_record_covers_opp(package_dir: Path) -> None:
     site_root = package_dir.parent
     opp_files = {
         path.relative_to(site_root).as_posix(): path
-        for path in _opp_files(package_dir)
+        for path in _opp_files(package_dir, managed=managed)
     }
     missing = sorted(opp_files.keys() - recorded.keys())
     if missing:
         raise AssertionError(f"Wheel RECORD does not cover installed OPP files: {missing}")
+
+    missing_payload = [relative for relative in recorded
+                       if relative.startswith("fla_npu/opp/") and not (site_root / relative).is_file()]
+    if missing_payload:
+        raise AssertionError(f"Wheel RECORD references missing OPP files: {missing_payload}")
+    if managed and any(_is_manager_file(site_root / relative, package_dir)
+                       for relative in recorded if relative.startswith("fla_npu/")):
+        raise AssertionError("Overlay state/payload must not be added to the base wheel RECORD")
 
     invalid = []
     for relative, path in sorted(opp_files.items()):
@@ -198,8 +213,19 @@ def _assert_record_covers_opp(package_dir: Path) -> None:
         raise AssertionError(f"Wheel RECORD has stale OPP hashes or sizes: {invalid}")
 
 
-def _assert_opp_layout(package_dir: Path, *, require_runtime: bool) -> None:
-    vendor_dir = package_dir / "opp" / "vendors" / VENDOR_DIR
+def _assert_opp_layout(package_dir: Path, *, require_runtime: bool,
+                       vendors: Optional[list[Path]] = None) -> None:
+    if vendors is not None:
+        if require_runtime and not vendors:
+            raise AssertionError("No active OPP vendor")
+        for vendor in vendors:
+            _assert_vendor_layout(vendor, require_runtime=require_runtime)
+        return
+    _assert_vendor_layout(package_dir / "opp" / "vendors" / VENDOR_DIR,
+                          require_runtime=require_runtime)
+
+
+def _assert_vendor_layout(vendor_dir: Path, *, require_runtime: bool) -> None:
     packaged_opapi = vendor_dir / "op_api" / "lib" / "libcust_opapi.so"
     conflicting_alias = packaged_opapi.with_name("libopapi.so")
     if conflicting_alias.exists() or conflicting_alias.is_symlink():
@@ -218,10 +244,14 @@ def _assert_opp_layout(package_dir: Path, *, require_runtime: bool) -> None:
             )
 
 
-def _assert_set_env_idempotent(package_dir: Path, env: dict[str, str], cwd: Path) -> None:
+def _assert_set_env_idempotent(package_dir: Path, env: dict[str, str], cwd: Path,
+                               *, vendors: Optional[list[Path]] = None) -> None:
     vendor_dir = package_dir / "opp" / "vendors" / VENDOR_DIR
     set_env = vendor_dir / "bin" / "set_env.bash"
     if not set_env.is_file():
+        if vendors is not None and not (vendor_dir / "op_api/lib/libcust_opapi.so").is_file():
+            print("[install-workflows] skeleton has no set_env; validating .pth in a fresh process", flush=True)
+            return
         raise AssertionError(f"Packaged set_env.bash is missing: {set_env}")
 
     check = r'''
@@ -257,6 +287,10 @@ printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH
     first = output[:snapshot_size]
     second = output[snapshot_size:]
     expected_snapshots = [root_based_snapshot, vendor_order_snapshot]
+    if vendors is not None:
+        expected_snapshots = [[os.pathsep.join(map(str, vendors)), "",
+                               str(vendor_dir.parent.parent), op_api_lib,
+                               os.pathsep.join(str(p / "op_api/lib/libcust_opapi.so") for p in vendors)]]
     if first not in expected_snapshots:
         raise AssertionError(
             "set_env.bash produced an unexpected environment after the first source: "
@@ -273,11 +307,17 @@ def _assert_runtime(
     env: dict[str, str],
     cwd: Path,
     expected_ops: Iterable[str],
+    *,
+    vendors: Optional[list[Path]] = None,
 ) -> None:
     child_env = env.copy()
     child_env["FLA_NPU_EXPECT_OPS"] = ",".join(expected_ops)
+    if vendors is None:
+        vendors = [_find_package_dir(python, env, cwd) / "opp/vendors" / VENDOR_DIR]
+    child_env["FLA_NPU_EXPECT_VENDORS"] = json.dumps([str(p.resolve()) for p in vendors])
     code = r'''
 import ctypes
+import json
 import os
 from pathlib import Path
 
@@ -292,8 +332,15 @@ first = fla_npu.load_ascendc_opapi_libraries()
 second = fla_npu.load_ascendc_opapi_libraries()
 if first is not second or not first:
     raise AssertionError("Ascend C op_api loading is not idempotent")
-if len(first) != 2:
-    raise AssertionError(f"expected custom and CANN op_api handles, got {len(first)}")
+vendors = [Path(p) for p in json.loads(os.environ["FLA_NPU_EXPECT_VENDORS"])]
+expected_libraries = [p / "op_api/lib/libcust_opapi.so" for p in vendors]
+if len(first) != len(vendors) + 1:
+    raise AssertionError(f"expected {len(vendors)} custom and one CANN handle, got {len(first)}")
+if [Path(handle._name).resolve() for handle in first[:-1]] != expected_libraries:
+    raise AssertionError("runtime did not load the selected overlay/base libraries in order")
+configured_libraries = os.environ["FLA_NPU_OP_API_LIBS"].split(os.pathsep)
+if configured_libraries != list(map(str, expected_libraries)):
+    raise AssertionError(f"wrong configured library order: {configured_libraries}")
 
 package_dir = Path(fla_npu.__file__).resolve().parent
 expected = (
@@ -305,13 +352,16 @@ expected = (
     / "lib"
     / "libcust_opapi.so"
 ).resolve()
+if not expected.is_file():
+    expected = expected_libraries[0]
 configured = Path(os.environ["FLA_NPU_OP_API_LIB"]).resolve()
 if configured != expected:
     raise AssertionError(f"runtime selected {configured}, expected {expected}")
 
 maps = Path("/proc/self/maps").read_text(encoding="utf-8", errors="replace")
-if str(expected) not in maps:
-    raise AssertionError("packaged libcust_opapi.so is not mapped into the process")
+for library in expected_libraries:
+    if str(library) not in maps:
+        raise AssertionError(f"selected libcust_opapi.so is not mapped: {library}")
 if "/libopapi.so" not in maps:
     raise AssertionError("CANN libopapi.so is not mapped into the process")
 if "custom_aclnn_extension_lib" in maps:
@@ -331,6 +381,7 @@ def _check_stale_alias_recovery(
     cwd: Path,
     expected_wheel: Path,
     expected_ops: Iterable[str],
+    managed: bool = False,
 ) -> None:
     package_dir = _find_package_dir(python, env, cwd)
     packaged_opapi = (
@@ -361,7 +412,7 @@ def _check_stale_alias_recovery(
         expected_ops,
     )
     _assert_opp_layout(package_dir, require_runtime=True)
-    _assert_manifest_matches_wheel(package_dir, expected_wheel)
+    _assert_manifest_matches_wheel(package_dir, expected_wheel, managed=managed)
     print("[install-workflows] PASS stale-libopapi-alias-recovery", flush=True)
 
 
@@ -375,22 +426,85 @@ def _check_stage(
     require_runtime: bool,
     load_runtime: bool,
     expected_ops: Iterable[str],
+    managed: bool = False,
+    vendors: Optional[list[Path]] = None,
 ) -> dict[str, str]:
     package_dir = _find_package_dir(python, env, cwd)
     if expected_wheel is not None:
-        _assert_manifest_matches_wheel(package_dir, expected_wheel)
-    _assert_record_covers_opp(package_dir)
-    _assert_opp_layout(package_dir, require_runtime=require_runtime)
+        _assert_manifest_matches_wheel(package_dir, expected_wheel, managed=managed)
+    _assert_record_covers_opp(package_dir, managed=managed)
+    _assert_opp_layout(package_dir, require_runtime=require_runtime, vendors=vendors)
     if require_runtime:
-        _assert_set_env_idempotent(package_dir, env, cwd)
+        _assert_set_env_idempotent(package_dir, env, cwd, vendors=vendors)
     if load_runtime and require_runtime:
-        _assert_runtime(python, env, cwd, expected_ops)
+        _assert_runtime(python, env, cwd, expected_ops, vendors=vendors)
     elif expected_ops:
         raise AssertionError(
             f"Cannot validate APIs without loading the runtime: {list(expected_ops)}"
         )
     print(f"[install-workflows] PASS {name}", flush=True)
-    return _manifest_from_directory(package_dir)
+    return _manifest_from_directory(package_dir, managed=managed)
+
+
+def _payload_manifest(root: Path) -> dict[str, str]:
+    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob("*")) if p.is_file() and not _is_generated_bytecode(p)}
+
+
+def _base_snapshot(package_dir: Path) -> dict[str, str]:
+    result = {p.relative_to(package_dir.parent).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in package_dir.rglob("*") if p.is_file()
+              and not _is_generated_bytecode(p) and not _is_manager_file(p, package_dir)}
+    for info in package_dir.parent.glob(DIST_INFO_GLOB):
+        result[info.name + "/RECORD"] = hashlib.sha256((info / "RECORD").read_bytes()).hexdigest()
+    return result
+
+
+def _assert_base_unchanged(package_dir: Path, expected: dict[str, str]) -> None:
+    if _base_snapshot(package_dir) != expected:
+        raise AssertionError("Run installation/removal changed the base package or wheel RECORD")
+
+
+def _active_run_vendors(python: Path, env: dict[str, str], cwd: Path) -> list[Path]:
+    code = r'''
+import json
+import fla_npu_wheel_overlay as layers
+package = layers.package_dir()
+state = layers.state(package)
+if not state.get("active") or state.get("pending"):
+    raise AssertionError(f"Run installation must activate, not just return success: {state}")
+snapshot = layers.active(package)
+selected = layers.components(package, snapshot)
+if selected["adapter"] is not None or not selected["opp"]:
+    raise AssertionError(f"Run-only installation changed the adapter selection: {selected}")
+plan = layers.runtime_plan(package)
+if not plan or plan["errors"]:
+    raise AssertionError(f"Invalid active run composition: {plan}")
+expected = [layers.layer_path(package, selected["opp"]) / "fla_npu/opp/vendors" / layers.BASE]
+base = package / "opp/vendors" / layers.BASE
+if (base / layers.LIBRARY).is_file():
+    expected.append(base)
+if plan["vendors"] != list(map(str, expected)):
+    raise AssertionError(f"Expected overlay then available base: {plan['vendors']}")
+print(json.dumps(plan["vendors"]))
+'''
+    output = subprocess.check_output([str(python), "-c", code], env=env, cwd=cwd, encoding="utf-8")
+    return [Path(p) for p in json.loads(output)]
+
+
+def _assert_removed_overlay(package_dir: Path) -> set[Path]:
+    """Removal retains only a lock inode and an inactive state, outside pip ownership."""
+    root = package_dir / "opp/wheel_layers"
+    state_file = root / "state.json"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    if state != {"version": 2, "active": None, "pending": None}:
+        raise AssertionError(f"Overlay is still selected after removal: {state}")
+    if set(root.iterdir()) != {state_file}:
+        raise AssertionError("Overlay removal left component payloads or unexpected state files")
+    lock = package_dir / "opp/.overlay.lock"
+    if lock.is_symlink() or lock.read_bytes() != b"":
+        raise AssertionError("Unexpected overlay lock file")
+    return {package_dir, package_dir / "opp", root, state_file, lock}
 
 
 def _install_wheel(python: Path, wheel: Path, env: dict[str, str], cwd: Path) -> None:
@@ -416,6 +530,7 @@ def _uninstall_and_assert_clean(
     python: Path,
     env: dict[str, str],
     cwd: Path,
+    managed: bool = False,
 ) -> None:
     package_dir = _find_package_dir(python, env, cwd)
     site_root = package_dir.parent
@@ -426,6 +541,7 @@ def _uninstall_and_assert_clean(
         )
 
     record = dist_infos[0] / "RECORD"
+    allowed = _assert_removed_overlay(package_dir) if managed else set()
     with record.open("r", encoding="utf-8", newline="") as handle:
         recorded_paths = [site_root / row[0] for row in csv.reader(handle) if row]
 
@@ -444,6 +560,7 @@ def _uninstall_and_assert_clean(
     )
     if package_dir.exists():
         residual_package_entries.insert(0, str(package_dir))
+    residual_package_entries = [p for p in residual_package_entries if Path(p) not in allowed]
     if residual_record_paths or residual_dist_infos or residual_package_entries:
         raise AssertionError(
             f"pip uninstall left {_dist_name(dist_infos[0])} files behind: "
@@ -479,9 +596,10 @@ for distribution in importlib.metadata.distributions():
     print(f"[install-workflows] PASS {name}", flush=True)
 
 
-def _apply_run_package(run_package: Path, env: dict[str, str], cwd: Path) -> None:
+def _apply_run_package(run_package: Path, env: dict[str, str], cwd: Path,
+                       options: Iterable[str] = ()) -> None:
     run_package.chmod(run_package.stat().st_mode | 0o100)
-    _run([str(run_package), "--install", "--quiet"], env=env, cwd=cwd)
+    _run([str(run_package), *options], env=env, cwd=cwd)
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -513,9 +631,12 @@ def _run_workflows(args: argparse.Namespace, work_dir: Path) -> None:
     env["PATH"] = os.pathsep.join([str(python.parent), env.get("PATH", "")])
     env["VIRTUAL_ENV"] = str(venv_dir)
     env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     env["TMPDIR"] = str(temp_dir)
-    for name in ("PYTHONPATH", "FLA_NPU_OPP_PATH", "FLA_NPU_OP_API_LIB", "ASCEND_CUSTOM_OPP_PATH"):
+    for name in ("PYTHONPATH", "FLA_NPU_OPP_PATH", "FLA_NPU_OP_API_LIB", "FLA_NPU_OP_API_LIBS",
+                 "ASCEND_CUSTOM_OPP_PATH", "FLA_NPU_OVERLAY_VENDOR", "FLA_NPU_DISABLE_PTH",
+                 "FLA_NPU_STABLE_LIB", "FLA_NPU_OVERLAY_OPS"):
         env.pop(name, None)
 
     base_requires_runtime = args.base_mode == "full"
@@ -545,35 +666,44 @@ def _run_workflows(args: argparse.Namespace, work_dir: Path) -> None:
     if run_package is not None:
         copied_run = work_dir / run_package.name
         shutil.copy2(run_package, copied_run)
-        _apply_run_package(copied_run, env, work_cwd)
-        first_run_manifest = _check_stage(
-            "run-package-install-1",
-            python=python,
-            env=env,
-            cwd=work_cwd,
-            expected_wheel=None,
-            require_runtime=True,
-            load_runtime=not args.skip_runtime_load,
-            expected_ops=args.run_op,
+        extracted = work_dir / "run-payload"
+        _run(["bash", str(copied_run), "--noexec", "--extract=" + str(extracted)], env=env, cwd=work_cwd)
+        source_vendor = extracted / "packages/vendors" / VENDOR_DIR
+        if not (source_vendor / "op_api/lib/libcust_opapi.so").is_file():
+            raise AssertionError(f"Run payload has no expected vendor: {source_vendor}")
+        expected_payload = _payload_manifest(source_vendor)
+        package_dir = _find_package_dir(python, env, work_cwd)
+        base_snapshot = _base_snapshot(package_dir)
+        # Each replacement must select identical payload bytes, regardless of
+        # snapshot UUIDs or retained snapshots used by older running processes.
+        for label, options in (("default", ()), ("repeat", ()),
+                               ("install", ("--install",)), ("full", ("--full",))):
+            _apply_run_package(copied_run, env, work_cwd, options)
+            vendors = _active_run_vendors(python, env, work_cwd)
+            if not vendors or _payload_manifest(vendors[0]) != expected_payload:
+                raise AssertionError("Active OPP payload differs from the selected run package")
+            _assert_base_unchanged(package_dir, base_snapshot)
+            _check_stage(
+                "run-package-" + label, python=python, env=env, cwd=work_cwd,
+                expected_wheel=wheel, require_runtime=True,
+                load_runtime=not args.skip_runtime_load, expected_ops=args.run_op,
+                managed=True, vendors=vendors,
+            )
+            _assert_base_unchanged(package_dir, base_snapshot)
+        _run([str(python), "-m", "fla_npu_opp_manage", "--remove-overlay"], env=env, cwd=work_cwd)
+        _assert_removed_overlay(package_dir)
+        _assert_base_unchanged(package_dir, base_snapshot)
+        _check_stage(
+            "run-package-removed", python=python, env=env, cwd=work_cwd,
+            expected_wheel=wheel, require_runtime=base_requires_runtime,
+            load_runtime=not args.skip_runtime_load, expected_ops=args.wheel_op, managed=True,
         )
-        _apply_run_package(copied_run, env, work_cwd)
-        second_run_manifest = _check_stage(
-            "run-package-install-2",
-            python=python,
-            env=env,
-            cwd=work_cwd,
-            expected_wheel=None,
-            require_runtime=True,
-            load_runtime=not args.skip_runtime_load,
-            expected_ops=args.run_op,
-        )
-        if first_run_manifest != second_run_manifest:
-            raise AssertionError("Applying the same run package twice changed the installed OPP")
         _uninstall_and_assert_clean(
             "run-package-uninstall",
             python=python,
             env=env,
             cwd=work_cwd,
+            managed=True,
         )
 
     if updated_wheel is not None or run_package is not None:
@@ -591,6 +721,7 @@ def _run_workflows(args: argparse.Namespace, work_dir: Path) -> None:
                 require_runtime=final_mode == "full",
                 load_runtime=not args.skip_runtime_load,
                 expected_ops=final_ops,
+                managed=run_package is not None,
             )
 
     final_wheel = updated_wheel or wheel
@@ -603,6 +734,7 @@ def _run_workflows(args: argparse.Namespace, work_dir: Path) -> None:
             cwd=work_cwd,
             expected_wheel=final_wheel,
             expected_ops=final_ops,
+            managed=run_package is not None,
         )
 
     _uninstall_and_assert_clean(
@@ -610,6 +742,7 @@ def _run_workflows(args: argparse.Namespace, work_dir: Path) -> None:
         python=python,
         env=env,
         cwd=work_cwd,
+        managed=run_package is not None,
     )
 
 
@@ -617,7 +750,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", required=True, help="Base wheel built by the one-command workflow")
     parser.add_argument("--updated-wheel", help="Optional wheel rebuilt after source or adapter changes")
-    parser.add_argument("--run-package", help="Optional scoped .run package to apply twice")
+    parser.add_argument("--run-package", help="Scoped .run to check default/repeated/--install/--full installation")
     parser.add_argument("--base-mode", choices=("full", "skeleton"), default="full")
     parser.add_argument("--updated-mode", choices=("full", "skeleton"), default="full")
     parser.add_argument("--wheel-op", action="append", default=[], help="Ascend C API expected in the base wheel")

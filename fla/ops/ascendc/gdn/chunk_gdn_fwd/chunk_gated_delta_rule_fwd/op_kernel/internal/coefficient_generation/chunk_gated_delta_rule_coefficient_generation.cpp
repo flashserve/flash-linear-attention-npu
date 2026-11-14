@@ -3,7 +3,7 @@
 // This translation unit uses the private PR340 SolveTri copy below. The public
 // solve_tri operator remains independently registered and keeps the same
 // high-precision implementation.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "gated_delta_rule_solve_tri/arch35/solve_tri_ascend950.h"
 #else
 #include "gated_delta_rule_solve_tri/solve_tri_cube.h"
@@ -21,7 +21,7 @@ __aicore__ inline void RunSolvePhase(GM_ADDR a, GM_ADDR cuSeqlens, GM_ADDR chunk
                                      GM_ADDR out, GM_ADDR workspace,
                                      const TilingData *tilingData)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using Sync = GDN::Arch35GdnSyncTraits<Variant>;
     if constexpr (MATRIX_SIZE == 64 && Sync::kKktToSolveGroup) {
         // Mode2 aggregates both AIV stores into one AIC notification. Drain the

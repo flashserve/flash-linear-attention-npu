@@ -10,7 +10,7 @@
 #include "chunk_kda_bwd_recompute_struct.h"
 #include "chunk_kda_bwd_recompute_tiling_key.h"
 #include "chunk_kda_bwd_recompute_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_kda_bwd_recompute_cube.h"
 #include "arch35/chunk_kda_bwd_recompute_vector.h"
 #else

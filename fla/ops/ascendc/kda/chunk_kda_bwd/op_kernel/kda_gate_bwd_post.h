@@ -4,9 +4,7 @@
 #include "kernel_operator.h"
 #include "kda_gate_bwd_post_common.h"
 #include "chunk_kda_bwd_finalize_gate.h"
-#if defined(__DAV_C310__) ||                                                \
-    (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)) ||                    \
-    (defined(__CCE_AICORE__) && (__CCE_AICORE__ == 310))
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define KDA_GATE_POST_ARCH35 1
 #else
 #define KDA_GATE_POST_ARCH35 0
@@ -926,7 +924,7 @@ private:
         return true;
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void ProcessChunkSafeA5(
         const GatePostChunkTask &task, uint32_t head, uint32_t rows,
         float expA, AscendC::LocalTensor<float> dbAcc,

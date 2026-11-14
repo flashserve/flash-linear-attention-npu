@@ -703,7 +703,7 @@ public:
                 BlockMmadKV blockMmadKV(resource);
                 BlockMmadWH blockMmadWHTail(resource);
                 BlockMmadKVTail blockMmadKVTail(resource);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                 if (waveIdx == 0) {
                     AscendC::SyncAll<false>();
                 } else {
@@ -945,7 +945,7 @@ public:
 
                 }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                 if (waveIdx == 0) {
                     AscendC::SyncAll<false>();
                 } else {

@@ -99,6 +99,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     auto gateTensor = useGk ? gkTensor : gTensor;
 
     uint64_t gateDtypeToken = 0;
+    // g/gk 仅支持 BF16/FP32，本处是唯一 dtype 校验门；
+    // 扩展 dtype 时需同步评估 gated 复用支持面。
     OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken),
                 OP_LOGE(context->GetNodeName(),
                         "g/gk dtype must be BF16 or FP32, but got dtype=%d.",
@@ -154,8 +156,11 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
     // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
-    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
-        (gateDtypeToken == CHUNK_FWD_H_TPL_FP32 || gateDtypeToken == CHUNK_FWD_H_TPL_BF16) &&
+    // 域不限（2026-11-10 exp 域复用释放）：useExp2 true/false 均可（域随 tiling
+    // key 的 USE_EXP2 维选实例，epilogue 内 LN2 换算按域取舍）。
+    // vfirst 不限：state 布局经 STATE_V_FIRST 模板维进 kernel，aclnn 层免翻译；
+    // dtype 此处不判，唯一门为函数头部入口校验。
+    tilingCtx.gatedEligible = useG &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 

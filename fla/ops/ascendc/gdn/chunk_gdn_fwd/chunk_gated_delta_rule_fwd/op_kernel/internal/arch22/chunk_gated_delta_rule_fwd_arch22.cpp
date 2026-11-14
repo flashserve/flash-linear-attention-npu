@@ -14,7 +14,7 @@
 #include "stages/solve/solve_layout_staging.h"
 #undef GDN_CHUNK_CUMSUM_KKT_SOLVE_IMPL_ONLY
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #include "stages/solve/solve_tri_pipeline.h"
 #endif
 
@@ -23,7 +23,7 @@ namespace {
 
 constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
 constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
 #endif
 
@@ -300,7 +300,7 @@ __aicore__ inline void WritePublicCumsumRows(
     }
 }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 // HO 空闲流水统一准入（仅 220）：host 的 hoPipelineAvailable 只是 GM 预留信号，
 // 设备侧用与 H 一致的任务轴独立复核全部结构条件。所有 AIC/AIV 基于相同只读
 // 输入得出同一配置，不新增全核同步；任一条件不满足即保持默认关闭。
@@ -403,7 +403,7 @@ __aicore__ inline void ResolveHoIdlePipeline(
 }
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 // 每次调用只处理同一物理组的一批parent。保留原KKT后处理和低精度舍入点。
 template <typename InputT, bool kPreparedCumsum, bool kSharedKkt = false, int kStaticBT = 0>
 __aicore__ inline void RunKktEpilogueBatch(
@@ -642,7 +642,7 @@ __aicore__ inline void RunPhase6(
                              sizeof(InputT));
         vectors = &vectorResources;
     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     const bool useSharedKkt = kPreparedCumsum && abc.hvPerHk > 1;
 #else
     constexpr bool useSharedKkt = false;
@@ -679,7 +679,7 @@ __aicore__ inline void RunPhase6(
         } else {
             kktCube.Process(resource, k, cuSeqlens, chunkIndices, scoreWorkspace, &abc);
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         if constexpr (!kPreparedCumsum) {
             // raw0 的 Front 可能跨组读 score，先汇合全部 AIC 的 FIX 写回。
             AscendC::CrossCoreSetFlag<0x0, PIPE_FIX>(SCORE_READY_FLAG);
@@ -713,7 +713,7 @@ __aicore__ inline void RunPhase6(
     GM_ADDR u = userWorkspace + phase5->uIntermediateOffset;
     GM_ADDR h = userWorkspace + phase5->hIntermediateOffset;
     GM_ADDR vNew = userWorkspace + phase5->vNewIntermediateOffset;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     if (useSharedKkt) {
         RunFrontBatch<InputT, kPreparedCumsum, true, kStaticV, kStaticBT, kQkvLayout>(
             resource, vectors, k, v, beta, rawG, cuSeqlens, chunkIndices, gCumsumBht, A, w, u,
@@ -805,7 +805,7 @@ __aicore__ inline void RunPhase6(
             WritePublicCumsumRows(resource, gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, abc);
         }
     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     GdnHoPipeline::HoPipelineConfig hoIdleConfig{};
     GM_ADDR hoIdleReadyAddr = nullptr;
     ResolveHoIdlePipeline(tiling, cuSeqlens, userWorkspace, phase6, hoIdleConfig,
@@ -818,7 +818,7 @@ __aicore__ inline void RunPhase6(
     const GdnHoPipeline::HoPipelineConfig *hoIdleConfigPtr = nullptr;
     GM_ADDR hoIdleReadyAddr = nullptr;
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     if constexpr (kPreparedCumsum && kStaticV == 128 && kStaticBT == 64 &&
                   kQkvLayout >= 0 && kQkvLayout <= 1 && kOLayout == 1 && sizeof(InputT) == 2) {
         // 编译域外保原H后CopyOTiling；未命中时本作用域也在原H之前结束。
@@ -849,7 +849,7 @@ __aicore__ inline void RunPhase6(
                              hoIdleConfigPtr, hoIdleReadyAddr, Config::InputSequenceMajor(abc), gLastExp, gDecay);
 
     if (!hoIdleEnabled) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // H publishes h/vNew through MTE3 and O first consumes them through MTE2.
         // Limit the global hand-off to those pipelines instead of draining PIPE_ALL.
         AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
@@ -875,7 +875,7 @@ __aicore__ inline void RunPhase6(
         // [0, P) 完成 H 后直达最终会合；仅空闲物理核组 [P, C) 执行 O，O 内部
         // 无 SyncAll、保持已有局部握手。AIC 物理组是 GetBlockIdx()，AIV 物理组
         // 是 GetBlockIdx()/GetSubBlockNum()（即上方 coreGroup）。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         if (coreGroup >= hoIdleConfig.producerCount) {
             DispatchFwdO<InputT, kStaticV, kStaticBT, kQkvLayout, kOLayout>(resource, q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
                          userWorkspace, &oTiling, &hoIdleConfig, hoIdleReadyAddr, Config::InputSequenceMajor(abc), Config::OutputSequenceMajor(abc));
@@ -893,9 +893,16 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR a_storage, GM_ADDR raw_g,
     GM_ADDR gk, GM_ADDR initial_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
     GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A,
+    GM_ADDR q_hat, GM_ADDR k_hat, GM_ADDR q_rstd, GM_ADDR k_rstd, GM_ADDR h, GM_ADDR beta_eff,
     GM_ADDR workspace, GM_ADDR tiling)
 {
     (void)a_storage;
+    (void)q_hat;
+    (void)k_hat;
+    (void)q_rstd;
+    (void)k_rstd;
+    (void)h;
+    (void)beta_eff;
     REGISTER_TILING_DEFAULT(GDN::Arch22ChunkGatedDeltaRuleFwdTrailer);
     if (TILING_KEY_IS(1)) {
         KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);

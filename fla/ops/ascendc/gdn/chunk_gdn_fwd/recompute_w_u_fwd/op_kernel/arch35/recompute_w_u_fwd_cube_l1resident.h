@@ -22,7 +22,7 @@
 
 using GDN::RecomputeWUFwdTilingData;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -287,7 +287,7 @@ __aicore__ void inline RecomputeWUFwdProcessL1Resident<kType, betaType, L1TileSh
     LayoutTagW tagW = LayoutTagW::MakeLayout<kType>(chunkSize, K);
     LayoutTagU tagU = LayoutTagU::MakeLayout<kType>(chunkSize, V);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
     // 使用 MmadPingpongTlaMulti（与原始版本一致），支持 preSetFlags/finalWaitFlags
     using DispatchPolicy = Gemm::MmadPingpongTlaMulti<ArchTag, true, false, 1, true>;

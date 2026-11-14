@@ -117,6 +117,11 @@ def _overlay_names() -> list[str]:
 def _vendor_dirs() -> list[Path]:
     """Overlay vendors first (highest priority), base vendor last."""
 
+    if (_VENDORS_DIR.parent / "wheel_layers/state.json").is_file():
+        from fla_npu_wheel_overlay import environment_vendors
+        vendors = environment_vendors(_PACKAGE_DIR / "fla_npu")
+        if vendors is not None:
+            return vendors
     names = _overlay_names()
     dirs: list[Path] = []
     vendors_root = _VENDORS_DIR.resolve()

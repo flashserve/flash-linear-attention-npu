@@ -34,6 +34,59 @@ FORBIDDEN_ARTIFACT_PARTS = {
 }
 
 HOST_SOURCE_SUFFIXES = {".cc", ".cpp", ".h", ".hpp"}
+ARCHITECTURE_SOURCE_SUFFIXES = HOST_SOURCE_SUFFIXES | {".c", ".cce", ".cmake", ".inc"}
+
+ARCHITECTURE_PATTERNS = (
+    (
+        "host",
+        "ARCH-HOST-SOC",
+        re.compile(r"\bGetSocVersion\s*\(|\bSocVersion::ASCEND950\b"),
+        "host architecture check uses SoC version instead of NpuArch",
+        "use GetCurNpuArch() == NpuArch::DAV_3510 for the A5 host branch",
+    ),
+    (
+        "host",
+        "ARCH-HOST-SOC-NAME",
+        re.compile(r"\baclrtGetSocName\s*\("),
+        "host architecture check parses the SoC product name",
+        "use GetCurrentPlatformInfo().GetCurNpuArch() and compare NpuArch values",
+    ),
+    (
+        "host",
+        "ARCH-HOST-KERNEL-MACRO",
+        re.compile(r"\b__NPU_ARCH__\b"),
+        "host source uses the kernel-only __NPU_ARCH__ compile macro",
+        "use GetCurNpuArch() from the platform API in host code",
+    ),
+    (
+        "kernel",
+        "ARCH-KERNEL-CCE",
+        re.compile(r"\b__CCE_AICORE__\b"),
+        "kernel architecture check uses __CCE_AICORE__ instead of __NPU_ARCH__",
+        "use #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510) for the A5 kernel branch",
+    ),
+    (
+        "kernel",
+        "ARCH-KERNEL-DAV-MACRO",
+        re.compile(r"\b__DAV_C310__\b"),
+        "kernel architecture check uses the __DAV_C310__ alias",
+        "use defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)",
+    ),
+    (
+        "kernel",
+        "ARCH-KERNEL-BARE-MACRO",
+        re.compile(r"\bNPU_ARCH\b"),
+        "kernel architecture check uses the undefined bare macro NPU_ARCH",
+        "use defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)",
+    ),
+    (
+        "either",
+        "ARCH-CUSTOM-MACRO",
+        re.compile(r"\b[A-Z][A-Z0-9_]*?(?:_ENABLE|_USE|_IS)_ARCH(?:22|35)\b"),
+        "custom platform-alias macro replaces an explicit host or kernel architecture predicate",
+        "remove the alias; use GetCurNpuArch() on host and __NPU_ARCH__ in kernel",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -123,6 +176,90 @@ def check_environment_contracts(root: Path, base: str) -> list[Finding]:
                     f"new environment/build switch {name} has no warning contract in changed docs",
                     "document name, default, scope, consumers, precedence, invalid-value behavior, "
                     "lifecycle, test matrix, and rollback in the PR",
+                )
+            )
+    return findings
+
+
+def added_lines_by_file(root: Path, base: str) -> dict[str, list[tuple[int, str]]]:
+    diff = run(["git", "diff", "--unified=0", "--no-color", f"{base}...HEAD"], root)
+    current_file = ""
+    new_line = 0
+    added: dict[str, list[tuple[int, str]]] = {}
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current_file = line[6:]
+            added.setdefault(current_file, [])
+            continue
+        if line.startswith("@@"):
+            match = re.search(r"\+(\d+)(?:,\d+)?", line)
+            new_line = int(match.group(1)) if match else 0
+            continue
+        if not current_file:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            added[current_file].append((new_line, line[1:]))
+            new_line += 1
+        elif not line.startswith("-"):
+            new_line += 1
+    return added
+
+
+def architecture_lines(
+    root: Path, selected_paths: list[Path], diff_base: str | None
+) -> list[tuple[str, int, str]]:
+    if diff_base:
+        return [
+            (path, line, text)
+            for path, lines in added_lines_by_file(root, diff_base).items()
+            for line, text in lines
+        ]
+    source_paths = [
+        path
+        for selected_path in selected_paths
+        for path in files_under(selected_path)
+    ]
+    return [
+        (relative(path, root), line, text)
+        for path in source_paths
+        for line, text in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        )
+    ]
+
+
+def is_architecture_source(path: str) -> bool:
+    return path.endswith("CMakeLists.txt") or Path(path).suffix in ARCHITECTURE_SOURCE_SUFFIXES
+
+
+def check_architecture(
+    root: Path, selected_paths: list[Path], diff_base: str | None
+) -> list[Finding]:
+    findings = []
+    for path, line, text in architecture_lines(root, selected_paths, diff_base):
+        if not is_architecture_source(path):
+            continue
+        stripped = text.lstrip()
+        if stripped.startswith(("//", "/*", "*", "# ")):
+            continue
+        normalized_path = f"/{path}"
+        surface = (
+            "kernel"
+            if "/op_kernel/" in normalized_path
+            else "host" if "/op_host/" in normalized_path else "neither"
+        )
+        for expected_surface, rule, pattern, message, suggestion in ARCHITECTURE_PATTERNS:
+            if expected_surface not in (surface, "either") or not pattern.search(text):
+                continue
+            findings.append(
+                Finding(
+                    "functional",
+                    rule,
+                    "error",
+                    path,
+                    line,
+                    message,
+                    suggestion,
                 )
             )
     return findings
@@ -439,6 +576,8 @@ def main() -> int:
     if args.diff_base:
         findings.extend(check_environment_contracts(root, args.diff_base))
     findings.extend(check_dfx(root, operator_roots))
+    architecture_paths = selected_paths or operator_roots
+    findings.extend(check_architecture(root, architecture_paths, args.diff_base))
     findings.extend(check_docs(root, markdown_paths, operator_roots))
     functional_findings, functional_summary = check_functional(root, op_names)
     findings.extend(functional_findings)

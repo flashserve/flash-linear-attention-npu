@@ -604,6 +604,17 @@ def load_accuracy_report(
         if passed + failed + not_run != total:
             raise ValueError("accuracy report counts are inconsistent")
 
+        # Documentation-only changes intentionally do not execute a device
+        # case.  The CI container writes this explicit marker so the required
+        # report check remains strict for every other run while an empty,
+        # successful report is accepted for this documented skip path.
+        documentation_skip = (
+            report.get("status") == "skipped"
+            and report.get("classification") == "docs-only"
+        )
+        if documentation_skip and (cases or any(summary_counts.values())):
+            raise ValueError("documentation-only accuracy report must be empty")
+
         failures: list[dict[str, Any]] = []
         derived_execution = {"passed": 0, "failed": 0, "not_run": 0}
         derived_accuracy = {"passed": 0, "failed": 0, "not_run": 0}
@@ -712,7 +723,7 @@ def load_accuracy_report(
         accuracy.update(
             {
                 "status": "success"
-                if total > 0 and passed == total and not failures
+                if documentation_skip or (total > 0 and passed == total and not failures)
                 else "failure",
                 "total": total,
                 "passed": passed,

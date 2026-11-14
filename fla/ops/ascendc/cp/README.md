@@ -9,6 +9,7 @@
 | --- | --- | --- |
 | [`pre_process_bwd_kernel_merged`](pre_process_bwd_kernel_merged/README.md) | 反向状态预处理：把本 rank 边界序列的反向状态递推压缩成仿射摘要 `(E_r, P_r)` | 初版：host + kernel 六 Stage 已实现，aclnn 手写，`fla_npu.ops.ascendc` 稳定入口已接入，A2/A5 编译与精度均已打通；列 tile 展平分核待后续 |
 | [`pre_process_fwd_kernel_merged`](pre_process_fwd_kernel_merged/README.md) | 正向状态预处理：把一个 token 窗口压成仿射链 `hm = [h | m]`（`h` 为 `K×V`、`m` 为 `K×K`，FP32） | 初版：host + kernel（Cube/Vector 双核流水）已实现，aclnn 与稳定入口已接入；A5 全量用例 41/41、L1 位级一致，A2/A3 编译与回归通过；GDN（`g`）与 KDA（`gk`）两条路径，DPLR（`bg`）不支持 |
+| [`merge_fwd_bwd_kernel`](merge_fwd_bwd_kernel/README.md) | 把各 rank 的 `(M, He)` 摘要合并成一块状态 `h`（inplace） | 初版：host + Mix Cube/Vector、aclnn 与 `fla_npu.ops.ascendc` 稳定入口已接入；A2/A3/A5 均注册；接口与 Stage 见算子 `docs/` |
 
 ## CP 数据流中的位置
 
@@ -19,7 +20,7 @@
    │                                                  │
    │                                        all-gather（框架侧，非算子）
    │                                                  ▼
-   │                                        merge（框架侧，非算子）→ 各段初始状态
+   │                                        MergeFwdBwdKernel（本目录）→ 各段初始状态 h
    │                                                  │
    ├─▶ PreProcessBwdKernelMerged（本目录）        → dhm = [E_r | P_r]  (FP32)
    │                                                  │

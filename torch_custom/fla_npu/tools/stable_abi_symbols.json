@@ -24,6 +24,7 @@
   "symbols": [
     "aoti_torch_delete_library_object",
     "aoti_torch_delete_tensor_object",
+    "aoti_torch_device_type_privateuse1",
     "aoti_torch_dtype_bfloat16",
     "aoti_torch_dtype_bool",
     "aoti_torch_dtype_complex128",

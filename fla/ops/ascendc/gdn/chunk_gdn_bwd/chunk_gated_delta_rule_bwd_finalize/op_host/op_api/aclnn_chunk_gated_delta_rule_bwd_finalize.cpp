@@ -1,7 +1,3 @@
-#ifndef GDN_FINALIZE_ENABLE_ARCH22
-#define GDN_FINALIZE_ENABLE_ARCH22 0
-#endif
-
 #include "aclnn_chunk_gated_delta_rule_bwd_finalize.h"
 #include "chunk_gated_delta_rule_bwd_finalize.h"
 #include "../chunk_gated_delta_rule_bwd_finalize_validation.h"
@@ -9,19 +5,13 @@
 #include <string>
 
 #include "aclnn_kernels/contiguous.h"
-#if GDN_FINALIZE_ENABLE_ARCH22
 #include "external/aclnn_kernels/aclnn_platform.h"
-#endif
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
 
-#if GDN_FINALIZE_ENABLE_ARCH22
-#include <cstring>
-
 #include "../arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_arch22.h"
-#endif
 #include "op_common/log/log.h"
 
 using namespace op;
@@ -41,7 +31,7 @@ aclnnStatus CheckA5HeadsAndMetadata(const aclTensor *q, const aclTensor *v,
         const int64_t hv = vShape.GetDim(1);
         if (hk <= 0 || hv <= 0 || hv % hk != 0 || hv / hk > GDN::FinalizeHost::kA5PublishedMaxG) {
             const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv);
-            OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "HV/HK", actual.c_str(), "integer in [1, 16] on A5");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "integer in [1, 16] on A5");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -50,18 +40,18 @@ aclnnStatus CheckA5HeadsAndMetadata(const aclTensor *q, const aclTensor *v,
     }
     if (qShape.GetDimNum() != 4) {
         const std::string rank = std::to_string(qShape.GetDimNum());
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q rank", rank.c_str(), "4 in A5 varlen mode");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q rank", rank.c_str(), "4 in A5 varlen mode");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (qShape.GetDim(0) != 1) {
         const std::string batch = std::to_string(qShape.GetDim(0));
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "q.B", batch.c_str(), "1 in A5 varlen mode");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.B", batch.c_str(), "1 in A5 varlen mode");
         return ACLNN_ERR_PARAM_INVALID;
     }
     GDN::FinalizeHost::MetadataError error;
     if (!GDN::FinalizeHost::ValidateVarlenMetadata(
             *cuSeqlens, *chunkIndices, qShape.GetDim(2), chunkSize, error)) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, error.parameter.c_str(), error.actual.c_str(), error.expected.c_str());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, error.parameter.c_str(), error.actual.c_str(), error.expected.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -74,7 +64,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
-        OP_LOGE(OP_NAME, "Failed to create a contiguous input.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to create a contiguous input.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -112,7 +102,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
         if (requiredInputs[index] == nullptr) {
             const char *param_name = requiredInputNames[index];
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -121,10 +111,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
             dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
             workspaceSize == nullptr ? "workspaceSize" : "executor";
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-#if GDN_FINALIZE_ENABLE_ARCH22
     // A2/A3 使用私有 Host 路径；A5 保留原有校验条件、连续化和 executor 流程。
     if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
         return gdn_finalize_arch22::GetWorkspaceSize(
@@ -135,28 +124,27 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
             useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
             dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor);
     }
-    const char *socName = aclrtGetSocName();
-    if (socName == nullptr || std::strstr(socName, "Ascend950") == nullptr) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "soc", socName == nullptr ? "nullptr" : socName,
-                                 "Ascend910B, Ascend910C or Ascend950");
+    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (npuArch != NpuArch::DAV_3510) {
+        const std::string actual = std::to_string(static_cast<int32_t>(npuArch));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "npuArch", actual.c_str(), "DAV_2201 or DAV_3510");
         return ACLNN_ERR_PARAM_INVALID;
     }
-#endif
 
     if (chunkSize != 64) {
         const std::string actual = std::to_string(chunkSize);
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "chunkSize", actual.c_str(), "64");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", actual.c_str(), "chunkSize must be 64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useGateInKernel) {
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "useGateInKernel", "true", "false");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "useGateInKernel", "true", "use_gate_in_kernel must be false");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
         const char *actual = cuSeqlensOptional == nullptr ? "cuSeqlens absent; chunkIndices present" :
             "cuSeqlens present; chunkIndices absent";
-        OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual,
-                                 "both present or both absent");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual, "both present or both absent");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -167,7 +155,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE(OP_NAME, "Failed to create an executor.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to create an executor.", __func__);
+
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto *executorPtr = uniqueExecutor.get();
@@ -190,7 +179,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         executorPtr);
     for (const aclTensor *tensor : result) {
         if (tensor == nullptr) {
-            OP_LOGE(OP_NAME, "Failed to create a Finalize output.");
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a Finalize output tensor", __func__);
+
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -199,7 +189,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < result.size(); ++index) {
         const aclTensor *copied = l0op::ViewCopy(result[index], outputs[index], executorPtr);
         if (copied == nullptr) {
-            OP_LOGE(OP_NAME, "Failed to copy output[%zu] to the output view.", index);
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to copy output[%%zu] to the output view.", __func__);
+
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -215,8 +206,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdFinalize);
     if (CommonOpExecutorRun(workspace, workspaceSize, executor, stream) != ACLNN_SUCCESS) {
-        OP_LOGE(OP_NAME, "ChunkGatedDeltaRuleBwdFinalize launch failed.");
-        return ACLNN_ERR_INNER;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkGatedDeltaRuleBwdFinalize launch failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
 }

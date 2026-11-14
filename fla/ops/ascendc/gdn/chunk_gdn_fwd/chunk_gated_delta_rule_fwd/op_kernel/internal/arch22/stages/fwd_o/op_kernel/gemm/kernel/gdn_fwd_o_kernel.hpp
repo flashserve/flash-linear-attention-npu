@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 
 #include "../../../../../common/qkv_input_layout.h"
@@ -77,7 +77,7 @@ using _65536 = tla::Int<65536>;
 #include "kernel_operator.h"
 #include "../../../../../pipeline/chunk_gated_delta_rule_ho_pipeline.h"
 #include "../../chunk_fwd_o_struct.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #include "../block/block_mmad_qkh_concat.hpp"
 #endif
 using namespace Catlass;
@@ -104,7 +104,7 @@ public:
     static constexpr uint32_t HO_PIPELINE_SYNC_UB_OFFSET = 188 * 1024;
     static constexpr uint64_t HO_PIPELINE_WORKSPACE_ALIGNMENT = 512;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;
@@ -360,7 +360,7 @@ public:
         gmMask.SetGlobalBuffer((__gm__ ElementMask *)(user + maskWorkspaceOffset));
 
         chunkPipelineEnabled = CanRunChunkPipeline();
-#if defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) && defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         // The A2 mega entry executes a full H->O barrier on this fallback path.
         // Spread independent O tasks over all physical Cube core groups.
         taskAffinityEnabled = false;
@@ -404,7 +404,7 @@ public:
         }
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 private:
     __aicore__ inline bool HasH4WorkspaceCapacity() const
     {
@@ -515,7 +515,7 @@ public:
 #endif
 
     __aicore__ inline void Process() {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         bool useQkhConcat = false;
         if constexpr (kStaticBT == 64 && kStaticV == 128 && sizeof(INPUT_TYPE) == 2 &&
                       std::is_same_v<WORKSPACE_TYPE, float>) {
@@ -530,7 +530,7 @@ public:
         }
 #endif
         if ASCEND_IS_AIC {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
             if constexpr (kStaticBT == 64 && kStaticV == 128 && sizeof(INPUT_TYPE) == 2 &&
                           std::is_same_v<WORKSPACE_TYPE, float>) {
                 // 入口只分派一次；pipeline仍沿用完整原路径。
@@ -708,7 +708,7 @@ public:
                         static_cast<uint64_t>(vNumHead) * ValueDim() : ValueDim();
                     int64_t vec2OffsetG = vec2Offsets.gOffset;
                     int64_t vec2OffsetVWork = vec2Offsets.hvWorkOffset;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                     int64_t vec2OffsetHWork = vec2Offsets.hWorkOffset;
 #else
                     int64_t vec2OffsetHWork = vec2Offsets.hvWorkOffset;
@@ -721,7 +721,7 @@ public:
                     );
                     // Keep each subblock's MTE3 completion and Cube wait;
                     // they also close varlen H/V workspace reuse on A2 mega.
-#if !defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) || !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
+#if !defined(GDN_CHUNK_RECOMPUTE_WU_FWD_HO_IMPL_ONLY) || !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 2201)
                     if (isVariedLen != 0) {
                         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
                     }

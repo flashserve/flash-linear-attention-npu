@@ -19,7 +19,7 @@
 #include "pre_process_bwd_kernel_merged_struct.h"
 #include "pre_process_bwd_kernel_merged_policy.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 // arch35（Ascend950 / A5）
 #include "arch35/pre_process_bwd_kernel_merged_cube.h"
 #include "arch35/pre_process_bwd_kernel_merged_vector.h"

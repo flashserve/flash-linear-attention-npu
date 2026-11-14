@@ -1405,9 +1405,10 @@ tensor 语义。任何复用都必须以真实末次消费者完成为前提。
 
 ### 6.1 接口、任务域与架构分派
 
-设备入口以 `__CCE_AICORE__ == 220` 选择 `arch22`；Host 以 `DAV_2201` 分派 A2/A3。
-构建期隔离由 [Finalize Host CMake](../op_host/CMakeLists.txt) 和
-[Bwd Host CMake](../../chunk_gated_delta_rule_bwd/op_host/CMakeLists.txt) 按目标 SoC 生成。
+设备入口以 `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)` 选择 `arch22`；Host 以
+`GetCurNpuArch() == NpuArch::DAV_2201` 分派 A2/A3。[Finalize Host](../op_host/CMakeLists.txt) 和
+[Bwd Host](../../chunk_gated_delta_rule_bwd/op_host/CMakeLists.txt) 同时编入两套实现，不再通过
+`*_ENABLE_ARCH22` 构建别名选择平台。
 
 TilingKey 由 g/beta 存储类型、norm、sigmoid、exp2 和 `ENABLE_MHA_OWNER` 组成，共 32 组；
 BT/V 的四种几何在同一设备入口内选择。owner=true 仅用于主矩阵 BF16、K128、BT64、V128、HK=HV；

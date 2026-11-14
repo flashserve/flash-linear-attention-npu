@@ -53,6 +53,11 @@
 4. 平台编译选项只进入对应 SoC 分支；
 5. `def`/schema/aclnn/Python 入口的 ABI 变化同步 CODEOWNERS 要求的检视材料；
 6. 示例和测试资产有实际构建入口，不依赖历史目录或外部残留文件。
+7. Host 判 A5 必须使用 `GetCurNpuArch() == NpuArch::DAV_3510`，禁止
+   `GetSocVersion() == SocVersion::ASCEND950`；Kernel 判 A5 必须使用
+   `#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)`，禁止
+   `__CCE_AICORE__`、`__DAV_C310__` 等架构别名。自造
+   `GDN_BWD_ENABLE_ARCH22` 一类平台别名宏同样不能作为替代判据。
 
 ## 5. 公开接口兼容性
 

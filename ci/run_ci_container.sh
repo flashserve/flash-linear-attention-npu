@@ -173,6 +173,25 @@ elif ! docker image inspect "$image" >/dev/null 2>&1 || [[ "$rebuild_image" == "
     docker build -t "$image" -f "$dockerfile" .
 fi
 
+# NPU containers must use native user-space binaries on the selected runner.
+# The same image tag can be preloaded independently on x64 and ARM64 A5 hosts.
+host_arch="$(uname -m)"
+case "$host_arch" in
+    x86_64|amd64) image_arch=amd64 ;;
+    aarch64|arm64) image_arch=arm64 ;;
+    *)
+        echo "[CI][ERROR] Unsupported host architecture: $host_arch; use an x64 or ARM64 runner." >&2
+        exit 1
+        ;;
+esac
+image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")"
+if [[ "$image_platform" != "linux/$image_arch" ]]; then
+    echo "[CI][ERROR] Docker image $image uses $image_platform, but this $host_arch runner requires linux/$image_arch." >&2
+    echo "[CI][ERROR] Build or load the matching native image during runner maintenance, then retry CI." >&2
+    exit 1
+fi
+echo "[CI] Native Docker image verified: $image_platform (host: $host_arch)"
+
 acquire_npu_lock
 
 if [[ "${CI_REQUIRE_HEALTHY_NPU:-false}" == "true" && "${NPU_SELECTED_HEALTH:-}" != "OK" ]]; then

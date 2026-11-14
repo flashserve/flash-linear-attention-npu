@@ -50,6 +50,14 @@ strip_comments, split_params = _abi.strip_comments, _abi.split_params
 header_kind = _abi.parameter_kind
 KNOWN_HEADER_GAPS = {}  # Legacy gaps now have explicit contracts in _op_abi.
 
+# Internal build targets are checked through their public ACLNN owner.  This
+# affects only ABI selection; the scoped build must still compile these targets.
+INTERNAL_OP_ABI_OWNERS = {
+    "chunk_kda_fwd_fused": "chunk_kda_fwd",
+    "kda_gate_bwd_post": "chunk_kda_bwd",
+    "kda_gate_bwd_post_varlen": "chunk_kda_bwd",
+}
+
 
 def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
     signatures = _abi.parse_aclnn_signatures(include_dir, wanted)
@@ -166,7 +174,7 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
     calls: dict[str, tuple[Path, list[str]]] = {}
     for source in sorted(src_dir.glob("stable_*.cpp")):
-        text = source.read_text(encoding="utf-8", errors="replace")
+        text = strip_comments(source.read_text(encoding="utf-8", errors="replace"))
         for match in _EXEC_CALL.finditer(text):
             symbol, arguments = match.group(1), match.group(2)
             # The api string is outside the capture, so the list starts at the
@@ -205,8 +213,9 @@ def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
 
     calls: dict[str, tuple[Path, list[str]]] = {}
     for source in sorted(src_dir.glob("stable_*.cpp")):
-        text = source.read_text(encoding="utf-8")
-        if "FLA_STABLE_EXEC" in text:
+        text = strip_comments(source.read_text(encoding="utf-8"))
+        # Classify actual macro calls, not mentions in comments or messages.
+        if _EXEC_CALL.search(text):
             continue
         symbol = _SYMBOL_RE.search(text)
         call = _HAND_WRITTEN_CALL.search(text)
@@ -243,7 +252,7 @@ def compare(expected: list[str], actual: list[str]) -> list[str]:
 def filter_adapters(
     adapters: dict[str, tuple[Path, list[str]]], raw_ops: str
 ) -> dict[str, tuple[Path, list[str]]]:
-    """Limit a scoped build gate to adapters owned by ``--ops`` sources."""
+    """Check public adapters for ``--ops``, resolving internal targets to owners."""
 
     selected = {
         name.removeprefix("npu_")
@@ -254,12 +263,13 @@ def filter_adapters(
         return adapters
     matches = {}
     for name in sorted(selected):
+        owner = INTERNAL_OP_ABI_OWNERS.get(name, name)
         # Shared implementations need not be named stable_<operator>.cpp.
-        normalized = name.replace("_", "").lower()
+        normalized = owner.replace("_", "").lower()
         owned = {
             symbol: value for symbol, value in adapters.items()
             if symbol.removeprefix("aclnn").replace("_", "").lower() == normalized
-            or value[0].stem.removeprefix("stable_") == name
+            or value[0].stem.removeprefix("stable_") == owner
         }
         if not owned:
             raise RuntimeError(f"No ABI call sites found for selected operator {name!r}")
@@ -277,8 +287,8 @@ def main() -> int:
     parser.add_argument(
         "--ops",
         default="",
-        help="comma-separated scoped build operator names; only their stable "
-        "adapter call sites are checked",
+        help="comma-separated scoped build operator names; checks their public "
+        "Stable-ABI adapters (internal targets use their public owners)",
     )
     parser.add_argument("--json", default="")
     args = parser.parse_args()

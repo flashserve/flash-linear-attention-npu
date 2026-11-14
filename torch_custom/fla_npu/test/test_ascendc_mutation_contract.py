@@ -97,9 +97,17 @@ def load_ascendc_module(raw_calls):
         num_accepted_tokens=None,
         g=None,
         gk=None,
+        use_qk_l2norm_in_kernel=False,
+        use_gate_in_kernel=False,
+        A_log=None,
+        dt_bias=None,
+        use_beta_sigmoid_in_kernel=False,
+        allow_neg_eigval=False,
     ):
         del key, value, beta, scale, actual_seq_lengths, ssm_state_indices
         del num_accepted_tokens, g, gk
+        del use_qk_l2norm_in_kernel, use_gate_in_kernel, A_log, dt_bias
+        del use_beta_sigmoid_in_kernel, allow_neg_eigval
         raw_calls.append(state)
         return "output"
 
@@ -242,6 +250,16 @@ class AscendCMutationContractTest(unittest.TestCase):
             ("gdr state keyword", "npu_recurrent_gated_delta_rule",
              [FakeTensor(), FakeTensor(), FakeTensor()],
              dict(gdr_kwargs, state=state)),
+            ("gdr fused state positional", "npu_recurrent_gated_delta_rule",
+             [FakeTensor(), FakeTensor(), FakeTensor(), state],
+             dict(gdr_kwargs, g=one(), A_log=one(), dt_bias=one(),
+                  use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True,
+                  use_beta_sigmoid_in_kernel=True, allow_neg_eigval=True)),
+            ("gdr fused state keyword", "npu_recurrent_gated_delta_rule",
+             [FakeTensor(), FakeTensor(), FakeTensor()],
+             dict(gdr_kwargs, state=state, g=one(), A_log=one(), dt_bias=one(),
+                  use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True,
+                  use_beta_sigmoid_in_kernel=True, allow_neg_eigval=True)),
         ]
 
     def test_fast_path_matches_bind_reference_for_every_call_form(self):

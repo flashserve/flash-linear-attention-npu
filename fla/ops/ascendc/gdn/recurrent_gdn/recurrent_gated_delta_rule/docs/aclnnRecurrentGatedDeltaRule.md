@@ -174,12 +174,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     <tr>
       <td>gk</td>
       <td>输入</td>
-      <td>衰减系数，公式中的αk=e^gk</td>
-      <td><ul><li>不支持空Tensor。</li><li>如果传入nullptr，则表示全0的tensor。</li></td>
-      <td>FLOAT32</td>
-      <td>ND</td>
-      <td>(T, Nv, Dk)</td>
-      <td>√</td>
+      <td>ABI 保留参数。</td>
+      <td>必须传入 nullptr，非空值返回参数错误。</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>numAcceptedTokens</td>

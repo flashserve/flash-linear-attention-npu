@@ -1,0 +1,203 @@
+api: pytorch
+api_type: executor_chunk_gated_delta_rule_fwd_chunk32
+version: v2.1
+name: chunk_gated_delta_rule_fwd_chunk32
+aclnn_name: ChunkGatedDeltaRuleFwd
+generate: generator_chunk_gated_delta_rule_fwd_chunk32
+# 形状和开关由 gen_chunk_gated_delta_rule_fwd_chunk32.py 按套件逐条写死。
+# 默认生成精度套。其它套件设置 CHUNK32_ATK_SUITE=slim|perf|mss|dc，并用 -dt 对齐条数。
+dtype_numbers: 1085
+extra_numbers: 0
+standard:
+  acc:
+    mixed_tolerance_bm:
+      output_dtype_overrides:
+        "0": bf16
+        "1": bf16
+  perf: not_key
+inputs:
+  - name: q
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[-0.05, 0.05]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        values: [[1, 4], [1, 4], [1, 2048], [128, 128]]
+  - name: k
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[-0.05, 0.05]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        values: [[1, 4], [1, 4], [1, 2048], [128, 128]]
+  - name: v
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[-0.05, 0.05]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        values: [[1, 4], [1, 8], [1, 2048], [128, 128]]
+  - name: g
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-0.02, 0.02]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 4], [1, 2048], [1, 8]]
+  - name: beta
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16]
+    ranges:
+      valid:
+        values: [[-1, 1]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        values: [[1, 4], [1, 2048], [1, 8]]
+  - name: scale
+    type: attr
+    required: true
+    dtypes:
+      values: [float]
+    ranges:
+      valid:
+        values: [0.08838834764831845]
+      invalid:
+        values: []
+  - name: chunk_size
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [32]
+      invalid:
+        values: []
+  - name: layout
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [BNSD, BSND, NTD, TND]
+      invalid:
+        values: []
+  - name: state_dtype
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [none, bf16, fp32, zero]
+      invalid:
+        values: []
+  - name: seqlens
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["64,64"]
+      invalid:
+        values: []
+  - name: allow_neg_eigval
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - name: state_v_first
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - name: disable_recompute
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - name: out_h
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+  - name: g_mode
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: [normal, strong, spike, mix]
+      invalid:
+        values: []
+  - name: output_final_state
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []

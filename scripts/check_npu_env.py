@@ -28,7 +28,7 @@ from npu_compat import (  # noqa: E402
     TORCH_NPU_GDN_FIX_MINIMUMS,
     VALIDATED_COMBOS,
 )
-from fla_npu_artifacts import get_tier  # noqa: E402
+from fla_npu_artifacts import get_soc, get_tier  # noqa: E402
 
 # Toolchain and build dependencies checked in addition to the torch-related
 # checks. Values mirror CMakeLists.txt (cmake_minimum_required),
@@ -131,7 +131,7 @@ def _check_torch_npu_gdn_fix(failures: list[str], actual: str) -> None:
 
 
 def _check_triton_ascend_a5_compat(failures: list[str], actual: str) -> None:
-    soc = os.getenv("FLA_NPU_SOC", "ascend910b")
+    soc = get_soc()
     if soc != "ascend950":
         return
     actual_version = _version_obj(actual)

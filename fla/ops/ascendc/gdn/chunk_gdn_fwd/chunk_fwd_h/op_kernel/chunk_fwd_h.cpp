@@ -7,15 +7,13 @@
 #include "chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_policy.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_fwd_h_cube.h"
 #include "arch35/chunk_fwd_h_vec.h"
 #else
 #include "arch22/chunk_fwd_h_cube.h"
 #include "arch22/chunk_fwd_h_vec.h"
-// gated 复用（仅 A2/arch22）：复用 chunk_gated_delta_rule_fwd_h 的 preload kernel。
-#include "gated_reuse/chunk_gated_delta_rule_fwd_h_struct.h"
-#include "gated_reuse/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
+#include "arch22/chunk_fwd_h_utils.h"
 #endif
 
 #include "kernel_operator.h"
@@ -47,80 +45,12 @@ struct FwdHKernelTraits {
     static constexpr bool STATE_V_FIRST_VALUE = STATE_V_FIRST;
 };
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-// gated 复用谓词：g 模式 + use_exp2 + vfirst=0（gated 恒按 [K,V] 产出 state，
-// vfirst=1 须经 aclnn 层转置翻译）；storeFinal 与 gate/state 的 fp32/bf16 均支持。
-template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
-__aicore__ inline constexpr bool FwdHGatedReusable()
-{
-    // USE_EXP2 须 true（gated 按 log2 域 gate 计算）；与 host 侧 gatedEligible 两处同条件。
-    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G &&
-           CompilePolicy::USE_EXP2 && !STATE_V_FIRST &&
-           (std::is_same_v<GateT, float> || std::is_same_v<GateT, bfloat16_t>);
-}
-
-// gated 复用分支：构造 gated tiling 镜像（workspace 的 gatedTilingOffset 段，
-// 各 AIC 幂等同值写）后调用 gated preload kernel；g 须为 log2 域输入。
-template <typename GateT, typename StateT>
-__aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
-{
-    using DataT = bfloat16_t;
-    using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float>;
-    __gm__ uint8_t *user = args.workspace;
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
-    {
-        gtiling->batch = args.tiling.batch;
-        gtiling->seqlen = args.tiling.seqlen;
-        gtiling->kNumHead = args.tiling.kNumHead;
-        gtiling->vNumHead = args.tiling.vNumHead;
-        gtiling->kHeadDim = args.tiling.kHeadDim;
-        gtiling->vHeadDim = args.tiling.vHeadDim;
-        gtiling->chunkSize = args.tiling.chunkSize;
-        gtiling->useInitialState = args.tiling.useInitialState;
-        gtiling->storeFinalState = args.tiling.storeFinalState;
-        gtiling->dataType = 1; // bf16 输入
-        gtiling->gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
-        gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
-        gtiling->isVariedLen = args.tiling.isVariedLen;
-        gtiling->shapeBatch = args.tiling.shapeBatch;
-        gtiling->tokenBatch = args.tiling.tokenBatch;
-        gtiling->useG = true;
-        gtiling->useGk = false;
-        gtiling->vWorkspaceOffset = args.tiling.vWorkspaceOffset;
-        gtiling->vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
-        gtiling->kDecayWorkspaceOffset = 0;
-        gtiling->hWorkspaceOffset = args.tiling.hWorkspaceOffset;
-        gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
-        gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
-    }
-    GatedKernel gatedKernel;
-    gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
-                     args.cuSeqlens, args.chunkIndices, args.h, args.vNew,
-                     args.finalState,
-                     reinterpret_cast<GM_ADDR>(gtiling),
-                     user);
-    gatedKernel.Process();
-}
-#endif
-
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
 {
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
-    // gated 复用分流：eligible 走 gated preload kernel，其余（gk/vfirst=1）回落原路径。
-    if constexpr (FwdHGatedReusable<GateT, CompilePolicy, STATE_V_FIRST>()) {
-        using GatedStateT = std::conditional_t<CompilePolicy::STATE_FP32, float, bfloat16_t>;
-        // varlen 且 head 组数为奇（kNumHead>1）时 gated kernel 会死锁，回落老路径。
-        const int64_t group = args.tiling.kNumHead > 0
-            ? static_cast<int64_t>(args.tiling.vNumHead) / static_cast<int64_t>(args.tiling.kNumHead)
-            : 0;
-        const bool gatedDeadlockShape = args.tiling.isVariedLen != 0 &&
-            (group % 2) != 0 && args.tiling.kNumHead > 1;
-        if (!gatedDeadlockShape) {
-            RunFwdHGatedReuse<GateT, GatedStateT>(args);
-            return;
-        }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+    if (RunFwdHGatedDispatch<GateT, CompilePolicy, STATE_V_FIRST>(args)) {
+        return;
     }
 #endif
     if ASCEND_IS_AIC {
@@ -129,7 +59,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         if (!hasCubeWork) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ChunkFwdHCubeArch35<CompilePolicy, STATE_V_FIRST> cube;
 #else
         AscendC::TPipe pipe;
@@ -139,7 +69,7 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         cube.Process();
     }
     if ASCEND_IS_AIV {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ChunkFwdHVecArch35<GateT, CompilePolicy, STATE_V_FIRST> vec;
         vec.Init(args);
 #else

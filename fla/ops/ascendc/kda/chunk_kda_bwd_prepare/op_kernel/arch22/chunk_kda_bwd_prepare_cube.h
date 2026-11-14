@@ -7,8 +7,9 @@ class ChunkKdaBwdPrepareCube {
 public:
     __aicore__ inline void Init(GM_ADDR aqk, GM_ADDR vNew, GM_ADDR dO, GM_ADDR h,
         GM_ADDR cu, GM_ADDR indices, GM_ADDR dv, GM_ADDR dq, GM_ADDR scratch,
-        const ChunkKdaBwdPrepareTilingData *tiling, AscendC::TPipe *pipe)
+        const ChunkKdaBwdPrepareTilingData *tiling, AscendC::TPipe *pipe, bool doTokenMajor = false)
     {
+        (void)doTokenMajor;
         aqk_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(aqk));
         vNew_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(vNew));
         dO_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(dO));

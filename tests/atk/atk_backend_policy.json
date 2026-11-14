@@ -1,0 +1,5 @@
+{
+  "unsupported_backends": {
+    "pyaclnn": "Use --backend npu to call the FLA Stable wrapper."
+  }
+}

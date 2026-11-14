@@ -66,12 +66,13 @@ constexpr const char* kSchema_chunk_kda_fwd =
     "bool disable_recompute, bool return_intermediate_states, "
     "Tensor? q_hat_out, Tensor? k_hat_out, Tensor? q_rstd_out, "
     "Tensor? k_rstd_out, Tensor? beta_eff_out, int stream) "
-    "-> (Tensor, Tensor?, Tensor?, Tensor, Tensor, Tensor?, Tensor?, Tensor?, "
+    "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, "
     "Tensor?, Tensor?, Tensor?)";
 
-std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>, Tensor, Tensor,
+std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>,
            std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
-           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>>
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>>
 run_npu_chunk_kda_fwd(
     Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta,
     std::optional<Tensor> A_log, std::optional<Tensor> dt_bias,
@@ -133,10 +134,13 @@ run_npu_chunk_kda_fwd(
   if (!use_gate_in_kernel || disable_recompute) {
     out_gk = allocate_sizes(head_sizes(k_dim, leading), kFloat, q_meta);
   }
-  Tensor out_aqk = allocate_sizes(head_sizes(chunk_size, leading), q_dtype,
-                                  q_meta);
-  Tensor out_akk = allocate_sizes(head_sizes(chunk_size, leading), q_dtype,
-                                  q_meta);
+  std::optional<Tensor> out_aqk;
+  std::optional<Tensor> out_akk;
+  if (chunk_size != 32) {
+    // chunk32 大融合不导出中间量；保留空返回槽且不给 ACLNN 分配/传输出指针。
+    out_aqk = allocate_sizes(head_sizes(chunk_size, leading), q_dtype, q_meta);
+    out_akk = allocate_sizes(head_sizes(chunk_size, leading), q_dtype, q_meta);
+  }
   std::optional<Tensor> out_w;
   std::optional<Tensor> out_u;
   std::optional<Tensor> out_qg;
@@ -159,10 +163,9 @@ run_npu_chunk_kda_fwd(
     out_h = allocate_sizes(h_sizes, q_dtype, q_meta);
   }
 
-  // 场景选择：命中三个独立算子的组合场景且工作量足够时走 aclnnChunkKdaFwdV2，
-  // 其余场景回落到签名未变的 aclnnChunkKdaFwd（私有 L0 融合实现）。
-  // 非默认 gate/L2norm 开关只有组合入口支持，此时必须命中组合场景（wrapper
-  // 已在 Python 侧按参考实现拦截非法组合）。
+  // chunk64 命中三算子组合；chunk32 命中同一公开 V2 入口的大融合分支。
+  // 后者允许空序列，前者仍要求 cu 严格递增。chunk32 的 norm/sigmoid 开关由
+  // Python 限定为 true，因此 switches_requested 恒会绕过 chunk64 工作量门控。
   bool cu_strictly_increasing = true;
   for (size_t idx = 0; idx + 1 < cu.size(); ++idx) {
     if (cu[idx] >= cu[idx + 1]) {
@@ -175,12 +178,19 @@ run_npu_chunk_kda_fwd(
       use_beta_sigmoid_in_kernel || allow_neg_eigval || !use_exp2;
   const bool v2_scenario =
       q_meta.scalar_type == kBFloat16 && k_dim == 128 && v_dim == 128 &&
-      chunk_size == 64 && cu_strictly_increasing;
+      (chunk_size == 64 || chunk_size == 32) &&
+      (chunk_size == 32 || cu_strictly_increasing);
   const int64_t work_items =
       heads * layout_math::chunks(cu, ci, chunk_size, tokens);
   const bool use_v2 = v2_scenario &&
                       (switches_requested ||
                        work_items >= kChunkKdaFwdV2MinWorkItems);
+
+  if (chunk_size == 32 && wants_saved) {
+    throw std::runtime_error(
+        "npu_chunk_kda_fwd: chunk_size=32 (fused kernel) does not export "
+        "backward saved values (q_hat/k_hat/q_rstd/k_rstd/beta_eff).");
+  }
 
   if (use_v2) {
     FLA_STABLE_EXEC(
@@ -197,7 +207,8 @@ run_npu_chunk_kda_fwd(
         out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
                                                : TensorMeta()),
         out_tensor(out_gk.has_value() ? meta_of(*out_gk) : TensorMeta()),
-        out_tensor(meta_of(out_aqk)), out_tensor(meta_of(out_akk)),
+        out_tensor(out_aqk.has_value() ? meta_of(*out_aqk) : TensorMeta()),
+        out_tensor(out_akk.has_value() ? meta_of(*out_akk) : TensorMeta()),
         out_tensor(out_w.has_value() ? meta_of(*out_w) : TensorMeta()),
         out_tensor(out_u.has_value() ? meta_of(*out_u) : TensorMeta()),
         out_tensor(out_qg.has_value() ? meta_of(*out_qg) : TensorMeta()),
@@ -235,7 +246,8 @@ run_npu_chunk_kda_fwd(
       out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
                                              : TensorMeta()),
       out_tensor(out_gk.has_value() ? meta_of(*out_gk) : TensorMeta()),
-      out_tensor(meta_of(out_aqk)), out_tensor(meta_of(out_akk)),
+      out_tensor(out_aqk.has_value() ? meta_of(*out_aqk) : TensorMeta()),
+      out_tensor(out_akk.has_value() ? meta_of(*out_akk) : TensorMeta()),
       out_tensor(out_w.has_value() ? meta_of(*out_w) : TensorMeta()),
       out_tensor(out_u.has_value() ? meta_of(*out_u) : TensorMeta()),
       out_tensor(out_qg.has_value() ? meta_of(*out_qg) : TensorMeta()),

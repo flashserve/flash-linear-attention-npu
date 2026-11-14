@@ -20,7 +20,7 @@
 
 using GDN::GdnMegaArch35RecomputeWUTilingData;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -67,7 +67,7 @@ public:
     using LayoutW = typename BlockMmadW::LayoutC;
     static constexpr bool kFlattenHeadTasks = kFlattenHeadTasks_;
     static constexpr bool kCoefficientGenerationTaskOrder = kCoefficientGenerationTaskOrder_;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     static constexpr uint32_t GM_RING_DEPTH = 8;
     static_assert(GM_RING_DEPTH <= Arch::MAX_REVERSE_DEPTH,
                   "Ring window must keep every cross-core flag below the hardware credit limit.");
@@ -134,7 +134,7 @@ public:
     template <>
     CATLASS_DEVICE void operator()<AscendC::AIC>(Params const &params)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         Arch::Resource<ArchTag> resource;
         const uint32_t coreIdx = AscendC::GetBlockIdx();
         const uint32_t coreNum = AscendC::GetBlockNum();
@@ -444,7 +444,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     LayoutTagW tagW = LayoutTagW::MakeLayout<kType>(chunkSize, K);
     LayoutTagU tagU = LayoutTagU::MakeLayout<kType>(chunkSize, V);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
     // UnitFlag keeps L0C single-buffered; L1-resident mode lets the back-to-back
     // U/W calls reuse A while retaining the multi-stage A5 load/compute pipeline.
@@ -465,7 +465,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagA, kType, LayoutTagKbgExp, kType, LayoutTagW>;
     using BlockMmadW =
         Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, kType, kType, kType, void, TileCopyW>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     static_assert(BlockMmadU::ENABLE_L1_RESIDENT, "A5 recompute requires L1-resident A.");
     static_assert(BlockMmadU::L1A_STAGES == 1,
                   "A5 recompute requires one L1A stage so U and W hit the same resident slot.");
@@ -488,7 +488,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     MatmulKernel kernel;
 
     GM_ADDR vb = workspace;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     GM_ADDR kbgExp = workspace + static_cast<uint64_t>(AscendC::GetBlockNum()) *
         MatmulKernel::GM_RING_DEPTH * chunkSize * V * sizeof(kType);
 #else

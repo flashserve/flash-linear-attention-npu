@@ -114,8 +114,6 @@ public:
     uint64_t vWorkspaceOffset{0};
     uint64_t vUpdateWorkspaceOffset{0};
     uint64_t hWorkspaceOffset{0};
-    uint64_t numSeqWorkspaceOffset{0};
-    uint64_t numChunksWorkspaceOffset{0};
     
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementW> gmW;
@@ -130,8 +128,6 @@ public:
     AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
     
     AscendC::GlobalTensor<int64_t> gmSeqlen;
-    AscendC::GlobalTensor<int64_t> gmNumSeq;
-    AscendC::GlobalTensor<int64_t> gmNumChunks;
 
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
@@ -161,8 +157,6 @@ public:
         vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
         vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
         hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
         
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
@@ -177,8 +171,6 @@ public:
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
-        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
-        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         if ASCEND_IS_AIC {
             cubeBlockScheduler.Init(cu_seqlens, chunk_indices, tiling, user);
@@ -213,6 +205,7 @@ public:
                     /* C1: v_work = w @ h[i] */                    
                     cubeBlockScheduler.InitTasks();
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        uint32_t streamId = (cubeBlockScheduler.runningQ.head + i) % PING_PONG_STAGES;
                         const auto& stream = cubeBlockScheduler.GetStream(i);
                         if (cubeBlockScheduler.StreamIsDone(stream)) {
                             continue;
@@ -229,7 +222,7 @@ public:
                         auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.k()));
                         auto tensorBlockH = GetTile(tensorH, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.k(), cube1Shape.n()));
                         auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0), tla::MakeShape(cube1Shape.m(), cube1Shape.n()));
-                        blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape, cubeBlockScheduler.vec2Done[i]);
+                        blockMmadWH(tensorBlockW, tensorBlockH, tensorBlockV, cube1Shape, cubeBlockScheduler.vec2Done[streamId]);
                         Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeBlockScheduler.cube1Done);
                     }
                 } else {
@@ -300,7 +293,7 @@ public:
             {   
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
-                uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
+                uint32_t chunkOffset = isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                 uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                 uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
@@ -376,6 +369,7 @@ public:
                      */
                     vecBlockScheduler.InitTasks();
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        uint32_t streamId = (vecBlockScheduler.runningQ.head + i) % PING_PONG_STAGES;
                         const auto& stream = vecBlockScheduler.GetStream(i);
                         if (vecBlockScheduler.StreamIsDone(stream)) {
                             continue;
@@ -386,12 +380,13 @@ public:
                             gmG[vec1Offsets.gOffset], gmU[vec1Offsets.uvOffset], gmVWorkspace[vec1Offsets.vWorkOffset], 
                             vec1Offsets.blockTokens, kHeadDim, vHeadDim, 
                             vecBlockScheduler.cube1Done, vecBlockScheduler.vec1Done,
-                            vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, (i == 0)
+                            vec1Offsets.isInitialState, vec1Offsets.isFinalState, storeFinalState, (streamId == 0)
                         );
                     }
                 } else {
                     /* V2: h[i+1] += h_work if i < num_chunks - 1 else None */
                     for (uint32_t i = 0; i < PING_PONG_STAGES; ++i) {
+                        uint32_t streamId = (vecBlockScheduler.runningQ.head + i) % PING_PONG_STAGES;
                         const auto& stream = vecBlockScheduler.GetStream(i);
                         if (vecBlockScheduler.StreamIsDone(stream)) {
                             continue;
@@ -406,12 +401,12 @@ public:
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (i == 0)
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, (streamId == 0)
                             );
                         } else {
                             Arch::CrossCoreWaitFlag(vecBlockScheduler.cube2Done);
                         }
-                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[i]);
+                        Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                     }
                 }
                 currStage ^= 0x01;

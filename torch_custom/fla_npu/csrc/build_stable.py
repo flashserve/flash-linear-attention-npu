@@ -79,7 +79,7 @@ def write_hash_module(value: str) -> None:
         "The adapters the bundled libfla_npu_stable.so was compiled from; see\n"
         "``_stable._check_build_stamp``.\n"
         '"""\n\n'
-        f'SOURCE_HASH = "{value}"\n',
+        f'SOURCE_HASH = "{value}"\nLAYER_PROTOCOL = 1\n',
         encoding="utf-8")
 
 
@@ -146,6 +146,7 @@ def main() -> int:
         "-fPIC",
         "-shared",
         "-fvisibility=hidden",
+        "-fno-gnu-unique",
         *(["-DFLA_STABLE_NO_DEBUG_PROBE"] if args.no_debug_probe else []),
         f'-DFLA_STABLE_SOURCE_HASH="{stamp}"',
         "-I", str(CSRC_INCLUDE),

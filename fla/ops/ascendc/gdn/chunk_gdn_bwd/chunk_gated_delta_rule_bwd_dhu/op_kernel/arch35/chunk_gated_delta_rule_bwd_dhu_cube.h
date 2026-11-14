@@ -45,7 +45,8 @@ public:
 
     __aicore__ inline void Init(GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR dO, GM_ADDR dh, GM_ADDR dv2,
                                 GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
-                                const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData)
+                                const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
+                                bool doTokenMajor = false)
     {
         q_ = q;
         k_ = k;
@@ -56,6 +57,7 @@ public:
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         workspace_ = workspace;
+        doTokenMajor_ = doTokenMajor;
 
         tiling_ = tilingData;
         B_ = tiling_->B;
@@ -158,7 +160,9 @@ public:
                     const bool releaseKAfterUse = !nextHeadUsesSameK;
                     const int64_t hq = hv / HRatio_;
                     const int64_t kBase = ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
-                    const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
+                    const int64_t dOBase = doTokenMajor_ ?
+                        ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HV_ + hv) * V_ :
+                        ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
                     const int64_t dhBase =
                         ((chunkInfo.bIdx * totalChunkNum_ + chunkInfo.outputChunkIdx) * HV_ + hv) * K_ * V_;
                     const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
@@ -166,7 +170,8 @@ public:
                     LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_, K_);
                     LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
                     LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
-                    LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, V_DIM);
+                    LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(
+                        chunkSize_, doTokenMajor_ ? HV_ * V_DIM : V_DIM);
                     LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<DT>(K_, V_DIM);
 
                     auto layoutK = tla::MakeLayoutFromTag(tagK);
@@ -1057,6 +1062,7 @@ private:
     bool cachedKResidentValid_ = false;
     int64_t cachedKResidentBase_ = 0;
     uint32_t cachedKResidentSlot_ = 0;
+    bool doTokenMajor_ = false;
 };
 
 } // namespace GDN

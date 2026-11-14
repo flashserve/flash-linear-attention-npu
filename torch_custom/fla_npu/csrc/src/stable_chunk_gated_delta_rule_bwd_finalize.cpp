@@ -65,6 +65,7 @@ run_npu_chunk_gated_delta_rule_bwd_finalize(
     bool use_gate_in_kernel, bool state_v_first, bool use_exp2,
     int64_t stream) {
   const TensorMeta q_meta = meta_of(q);
+
   // Each gradient follows the tensor it differentiates.
   Tensor out_dq = allocate_sizes(meta_of(q).sizes, meta_of(q).scalar_type,
                                  meta_of(q));

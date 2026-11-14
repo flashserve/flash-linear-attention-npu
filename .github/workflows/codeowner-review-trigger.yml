@@ -1,0 +1,36 @@
+name: Code Owner Approval Review Trigger
+
+on:
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeowner-review-trigger-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Record reviewed pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 记录 PR 编号
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p .codeowner-trigger
+          printf '%s\n' "$PR_NUMBER" > .codeowner-trigger/pr-number.txt
+
+      - name: 上传触发信息
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeowner-review-pr
+          path: .codeowner-trigger/pr-number.txt
+          retention-days: 1
+          if-no-files-found: error

@@ -69,63 +69,67 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const ge::DataType mainDtype = qDesc->GetDataType();
     const ge::DataType gDtype = gDesc->GetDataType();
     const ge::DataType betaDtype = betaDesc->GetDataType();
-    OP_CHECK_IF(mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16,
-                OP_LOGE(context->GetNodeName(),
-                        "mainDtype dtype is %s, expect dtype is bf16 or fp16.",
-                        DtypeName(mainDtype)),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "gDtype dtype is %s, expect dtype is bf16 or fp32.",
-                        DtypeName(gDtype)),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "betaDtype dtype is %s, expect dtype is bf16 or fp32.",
-                        DtypeName(betaDtype)),
-                return ge::GRAPH_FAILED);
+    if (mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(mainDtype), "dtype must be bf16 or fp16");
+        return ge::GRAPH_FAILED;
+    }
+    if (gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(gDtype), "g dtype must be bf16 or fp32");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(betaDtype), "beta dtype must be bf16 or fp32");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto qStorage = qShape->GetStorageShape();
     const auto vStorage = vShape->GetStorageShape();
-    OP_CHECK_IF(qStorage.GetDimNum() != 4 || vStorage.GetDimNum() != 4 || *chunkSize != 64,
-                OP_LOGE(context->GetNodeName(), "q/v rank must be 4 and chunk_size must be 64."),
-                return ge::GRAPH_FAILED);
+    if (qStorage.GetDimNum() != 4 || vStorage.GetDimNum() != 4 || *chunkSize != 64) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "chunk_size", "invalid", "q/v rank must be 4 and chunk_size must be 64.");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t batch = qStorage.GetDim(0);
     const int64_t qkHeads = qStorage.GetDim(1);
     const int64_t seqlen = qStorage.GetDim(2);
     const int64_t keyDim = qStorage.GetDim(3);
     const int64_t valueHeads = vStorage.GetDim(1);
     const int64_t valueDim = vStorage.GetDim(3);
-    OP_CHECK_IF(batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0,
-                OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
-                return ge::GRAPH_FAILED);
+    if (batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV", "invalid", "B/T/HK/HV must be positive.");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t headRatio = valueHeads / qkHeads;
-    OP_CHECK_IF(keyDim != 128 || valueDim != 128,
-                OP_LOGE(context->GetNodeName(), "K and V dims must be 128."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(vStorage.GetDim(0) != batch || vStorage.GetDim(2) != seqlen,
-                OP_LOGE(context->GetNodeName(), "v batch and T dims must match q."),
-                return ge::GRAPH_FAILED);
+    if (keyDim != 128 || valueDim != 128) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K and V dims must be 128.");
+        return ge::GRAPH_FAILED;
+    }
+    if (vStorage.GetDim(0) != batch || vStorage.GetDim(2) != seqlen) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "q", "invalid", "v batch and T dims must match q.");
+        return ge::GRAPH_FAILED;
+    }
     uint64_t tensorBytes = 0;
-    OP_CHECK_IF(!IntraCheckedMultiply(batch, valueHeads, tensorBytes) ||
+    if (!IntraCheckedMultiply(batch, valueHeads, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, seqlen, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, 128 * sizeof(uint16_t), tensorBytes) ||
-                    tensorBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
-                OP_LOGE(context->GetNodeName(), "tensor address range overflow."),
-                return ge::GRAPH_FAILED);
+                    tensorBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: tensor address range overflow.", __func__);
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *cuTensor = context->GetOptionalInputTensor(INTRA_CU_SEQLENS_IDX);
     const auto *chunkTensor = context->GetOptionalInputTensor(INTRA_CHUNK_INDICES_IDX);
     const bool isVarlen = cuTensor != nullptr;
-    OP_CHECK_IF(isVarlen != (chunkTensor != nullptr) || (isVarlen && batch != 1),
-                OP_LOGE(context->GetNodeName(), "varlen metadata must be paired and requires B=1."),
-                return ge::GRAPH_FAILED);
+    if (isVarlen != (chunkTensor != nullptr) || (isVarlen && batch != 1)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B", "invalid", "varlen metadata must be paired and requires B=1.");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t chunksPerBatch = seqlen / *chunkSize + (seqlen % *chunkSize != 0);
     uint64_t fixedChunks = 0;
-    OP_CHECK_IF(!IntraCheckedMultiply(batch, chunksPerBatch, fixedChunks) ||
-                    fixedChunks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
-                OP_LOGE(context->GetNodeName(), "chunk count overflow."),
-                return ge::GRAPH_FAILED);
+    if (!IntraCheckedMultiply(batch, chunksPerBatch, fixedChunks) ||
+                    fixedChunks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "chunk count overflow.");
+        return ge::GRAPH_FAILED;
+    }
     int64_t chunkCount = static_cast<int64_t>(fixedChunks);
     if (isVarlen) {
         OP_CHECK_NULL_WITH_CONTEXT(context, chunkTensor);
@@ -134,36 +138,40 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         const auto metadataShape = chunkShape->GetStorageShape();
         const bool matrixMetadata = metadataShape.GetDimNum() == 2 && metadataShape.GetDim(1) == 2;
         const bool flatMetadata = metadataShape.GetDimNum() == 1 && metadataShape.GetDim(0) % 2 == 0;
-        OP_CHECK_IF(!matrixMetadata && !flatMetadata,
-                    OP_LOGE(context->GetNodeName(), "chunk_indices must contain flattened pairs or [Nchunk,2]."),
-                    return ge::GRAPH_FAILED);
+        if (!matrixMetadata && !flatMetadata) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_indices", "invalid", "chunk_indices must contain flattened pairs or [Nchunk,2].");
+        return ge::GRAPH_FAILED;
+    }
         chunkCount = matrixMetadata ? metadataShape.GetDim(0) : metadataShape.GetDim(0) / 2;
     }
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const auto arch = platform.GetCurNpuArch();
     const bool arch22 = arch == NpuArch::DAV_2201;
-    OP_CHECK_IF(!arch22 && arch != NpuArch::DAV_3510,
-                OP_LOGE(context->GetNodeName(), "only DAV_2201 and DAV_3510 are supported."),
-                return ge::GRAPH_FAILED);
+    if (!arch22 && arch != NpuArch::DAV_3510) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: only DAV_2201 and DAV_3510 are supported.", __func__);
+        return ge::GRAPH_FAILED;
+    }
     if (valueHeads % qkHeads != 0 || headRatio > (arch22 ? 4 : kA5PublishedMaxG)) {
         const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads);
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "HV/HK", actual.c_str(),
-                                 arch22 ? "integer in [1, 4] on A2/A3" : "integer in [1, 16] on A5");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV/HK", actual,
+                                            arch22 ? "integer in [1, 4] on A2/A3" : "integer in [1, 16] on A5");
         return ge::GRAPH_FAILED;
     }
     if (headRatio > 4 && mainDtype != ge::DT_BF16) {
         const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads) +
             ", q dtype=" + DtypeName(mainDtype);
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "q dtype", actual.c_str(), "BF16 for HV/HK > 4 on A5");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "q dtype", actual, "BF16 for HV/HK > 4 on A5");
         return ge::GRAPH_FAILED;
     }
     const uint32_t aicCores = platform.GetCoreNumAic();
     IntraSchedule schedule;
-    OP_CHECK_IF(!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
-                                    arch22, platform.GetLibApiWorkSpaceSize(), schedule),
-                OP_LOGE(context->GetNodeName(), "invalid schedule or workspace overflow."),
-                return ge::GRAPH_FAILED);
+    if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
+                                    arch22, platform.GetLibApiWorkSpaceSize(), schedule)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "invalid schedule or workspace overflow.");
+        return ge::GRAPH_FAILED;
+    }
     if (arch22) {
         uint64_t ubBytes = 0;
         uint64_t l1Bytes = 0;
@@ -175,13 +183,14 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, l0aBytes);
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, l0bBytes);
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, l0cBytes);
-        OP_CHECK_IF(ubBytes < GDN::Arch22::UB_BYTES ||
+        if (ubBytes < GDN::Arch22::UB_BYTES ||
                         l1Bytes < GDN::Arch22::L1_SCORE_BYTES + schedule.cg * GDN::Arch22::L1_HEAD_BYTES ||
                         l0aBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
                         l0bBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
-                        l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES,
-                    OP_LOGE(context->GetNodeName(), "insufficient on-chip memory for arch22 schedule."),
-                    return ge::GRAPH_FAILED);
+                        l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: insufficient on-chip memory for arch22 schedule.", __func__);
+        return ge::GRAPH_FAILED;
+    }
     }
     tiling->batch = batch;
     tiling->qkHeads = qkHeads;

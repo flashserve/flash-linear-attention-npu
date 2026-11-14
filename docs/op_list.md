@@ -35,7 +35,7 @@ Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带�
 | KDA | `npu_chunk_kda_bwd` | `chunk_kda_bwd` | chunk 反向 | 暂缺README |
 | KDA | [`npu_chunk_kda_bwd_prepare`](../fla/ops/ascendc/kda/chunk_kda_bwd_prepare/README.md) | `chunk_kda_bwd_prepare` | 反向预处理 | - |
 | KDA | `npu_chunk_kda_bwd_intra` | `chunk_kda_bwd_intra` | chunk 内反向计算 | 暂缺README；已弃用（日落）；2027年1月15日（v26.12.0）移除；替代：`npu_chunk_kda_bwd` |
-| KDA | `npu_chunk_kda_bwd_recompute` | `chunk_kda_bwd_recompute` | 反向中间量重计算 | 暂缺README |
+| KDA | [`npu_chunk_kda_bwd_recompute`](../fla/ops/ascendc/kda/chunk_kda_bwd_recompute/README.md) | `chunk_kda_bwd_recompute` | 反向中间量重计算 | - |
 | KDA | [`npu_chunk_kda_bwd_finalize`](../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/README.md) | `chunk_kda_bwd_finalize` | 反向收尾 | - |
 | KDA | [`npu_recurrent_kda`](../fla/ops/ascendc/kda/recurrent_kda/README.md) | `recurrent_kda` | 递推推理 | - |
 | KDA | `npu_kda_gate_cumsum` | `kda_gate_cumsum` | 门控累加 | 暂缺README；已弃用（日落）；2027年1月15日（v26.12.0）移除；替代：`npu_chunk_kda_fwd` |
@@ -45,7 +45,7 @@ Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带�
 | 卷积 | [`npu_causal_conv1d`](../fla/ops/ascendc/gdn/gdn_preprocess/causal_conv1d/README.md) | `causal_conv1d` | 旧 Host metadata 接口 | 已弃用，兼容保留；2027年1月15日（v26.12.0）移除；替代：`causal_conv1d_fn` / `causal_conv1d_update` |
 | CP | [`npu_pre_process_fwd_kernel_merged`](../fla/ops/ascendc/cp/pre_process_fwd_kernel_merged/README.md) | `pre_process_fwd_kernel_merged` | 正向状态预处理与仿射摘要 | - |
 | CP | [`npu_pre_process_bwd_kernel_merged`](../fla/ops/ascendc/cp/pre_process_bwd_kernel_merged/README.md) | `pre_process_bwd_kernel_merged` | 反向状态预处理与仿射摘要 | - |
-| CP | `npu_merge_fwd_bwd_kernel` | `merge_fwd_bwd_kernel` | 合并各 rank 状态摘要 | 暂缺README |
+| CP | [`npu_merge_fwd_bwd_kernel`](../fla/ops/ascendc/cp/merge_fwd_bwd_kernel/README.md) | `merge_fwd_bwd_kernel` | 合并各 rank 状态摘要 | - |
 
 备注中的弃用说明同时适用于不带 `npu_` 前缀的 Ascend C 入口。迁移至融合算子时，按其接口调整输入、输出和中间状态。
 

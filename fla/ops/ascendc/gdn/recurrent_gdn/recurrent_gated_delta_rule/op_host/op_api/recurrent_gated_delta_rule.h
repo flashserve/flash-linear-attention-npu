@@ -18,7 +18,15 @@ namespace l0op {
 const aclTensor *RecurrentGatedDeltaRule(const aclTensor *query, const aclTensor *key, const aclTensor *value,
                                          const aclTensor *beta, aclTensor *stateRef, const aclTensor *actualSeqLengths,
                                          const aclTensor *ssmStateIndices, const aclTensor *g, const aclTensor *gk,
-                                         const aclTensor *numAcceptedTokens, float scaleValue, aclOpExecutor *executor);
+                                         const aclTensor *numAcceptedTokens,
+                                         float scaleValue, aclOpExecutor *executor);
+
+const aclTensor *RecurrentGatedDeltaRuleV2(const aclTensor *query, const aclTensor *key, const aclTensor *value,
+                                           const aclTensor *beta, aclTensor *stateRef, const aclTensor *actualSeqLengths,
+                                           const aclTensor *ssmStateIndices, const aclTensor *g, const aclTensor *gk,
+                                           const aclTensor *numAcceptedTokens, const aclTensor *aLog, const aclTensor *dtBias,
+                                         float scaleValue, bool useQkL2NormInKernel, bool useGateInKernel,
+                                         bool useBetaSigmoidInKernel, bool allowNegEigval, aclOpExecutor *executor);
 }
 
 #endif // PTA_NPU_OP_API_COMMON_INC_LEVEL0_OP_RECURRENT_GETED_DELTA_RULE

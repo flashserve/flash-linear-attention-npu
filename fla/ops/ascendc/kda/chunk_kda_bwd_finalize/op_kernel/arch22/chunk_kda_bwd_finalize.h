@@ -94,7 +94,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                             AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KE_READY);
                             for (uint32_t keOwner = 0; keOwner < HEADS_PER_WORK; ++keOwner) {
                                 if (firstHead + keOwner < tiling.heads) {
-                                    cube.LoadKe(keOwner, core, bank);
+                                    cube.LoadKe(keOwner, core, bank, chunk.validRows);
                                 }
                             }
                             // kE is now protected in L1. Vector can prepare the next work
@@ -151,7 +151,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                         for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                             if (readyHead + owner < tiling.heads) {
                                 cube.Stage4<CAPTURE, (LAST_STAGE >= 6)>(tiling, readyWork % tiling.chunks,
-                                                                        readyHead + owner, owner, readyBank, capture);
+                                                                        readyHead + owner, owner, readyBank, capture, core);
                             }
                         }
                         if constexpr (LAST_STAGE >= 6) {
@@ -187,7 +187,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
                         for (uint32_t owner = 0; owner < HEADS_PER_WORK; ++owner) {
                             if (readyHead + owner < tiling.heads) {
                                 cube.Stage4<CAPTURE, (LAST_STAGE >= 6)>(tiling, readyWork % tiling.chunks,
-                                                                        readyHead + owner, owner, readyBank, capture);
+                                                                        readyHead + owner, owner, readyBank, capture, core);
                             }
                         }
                         if constexpr (LAST_STAGE >= 6) {
@@ -231,7 +231,7 @@ __aicore__ inline void RunFinalize(GM_ADDR k, GM_ADDR v, GM_ADDR gk, GM_ADDR akk
         auto record = ub[85 * 1024].ReinterpretCast<int64_t>();
         ChunkKdaBwdFinalizeVector<BetaT> vector;
         if constexpr (LAST_STAGE >= 1) {
-            vector.Init(k, gk, h, dh, workspace, ub, &pipe, tiling);
+            vector.Init(k, gk, h, dh, akk, workspace, ub, &pipe, tiling);
             if constexpr (LAST_STAGE >= 3) {
                 vector.template InitStage3<COMPACT_MASK>(v, beta, dv);
             }

@@ -1,0 +1,413 @@
+api: pytorch
+api_type: executor_recurrent_gated_delta_rule
+version: v2.1
+name: recurrent_gated_delta_rule
+aclnn_name: RecurrentGatedDeltaRule
+generate: generator_recurrent_gated_delta_rule_arch22
+dtype_numbers: 200
+extra_numbers: 0
+standard:
+  acc: mixed_tolerance_bm
+  perf: not_key
+inputs:
+- name: low_precision_marker
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - 0
+        - 0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 1
+    dim_values:
+      values:
+      - 1
+- name: fp32_marker
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - 0
+        - 0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 1
+    dim_values:
+      values:
+      - 1
+- name: case_spec
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - '{"B":1,"HK":1,"HV":1,"K":128,"T":1,"V":128,"allow_neg_eigval":false,"arch22":true,"beta_dtype":"bf16","block_num":1,"case_id":0,"data_profile":"random","design_id":"RGDR-A001","design_routes":"P+A","dtype":"bf16","g_dtype":"fp32","gate_mode":"none","input_layout":"contiguous","name":"arch22_000","op":"recurrent_gated_delta_rule","platform_focus":"ascend910b,ascend910_93","route":"ascendc","scale":0.08838834764831843,"seed":20260826,"seq_lengths":[1],"soc":"all","state_dtype":"bf16","state_indices":[0],"state_layout":"contiguous","tags":"accuracy,generalization,positive","use_beta_sigmoid_in_kernel":false,"use_gate_in_kernel":false,"use_qk_l2norm_in_kernel":false}'
+    invalid:
+      values: []
+- name: design_id
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - RGDR-A001
+    invalid:
+      values: []
+- name: dtype
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - bf16
+    invalid:
+      values: []
+- name: state_dtype
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - bf16
+      - fp32
+    invalid:
+      values: []
+- name: state_layout
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - contiguous
+      - noncontiguous
+      - head_padded
+      - block_padded
+      - head_block_padded
+    invalid:
+      values: []
+- name: input_layout
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - contiguous
+      - noncontiguous_qkv_beta_g
+      - noncontiguous_gk_metadata
+      - noncontiguous_qk
+      - noncontiguous_v_gates
+      - noncontiguous_all
+    invalid:
+      values: []
+- name: B
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 8
+      - 16
+    invalid:
+      values: []
+- name: T
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 14
+      - 16
+      - 17
+      - 36
+      - 64
+    invalid:
+      values: []
+- name: HK
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 10
+      - 12
+      - 16
+      - 24
+      - 25
+      - 32
+      - 48
+      - 64
+      - 128
+      - 256
+    invalid:
+      values: []
+- name: HV
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 6
+      - 8
+      - 10
+      - 12
+      - 14
+      - 16
+      - 18
+      - 20
+      - 21
+      - 24
+      - 36
+      - 48
+      - 64
+      - 96
+      - 100
+      - 128
+      - 256
+    invalid:
+      values: []
+- name: K
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 128
+    invalid:
+      values:
+      - 16
+      - 17
+      - 31
+      - 32
+      - 33
+      - 63
+      - 64
+      - 65
+      - 80
+      - 96
+      - 112
+      - 127
+      - 129
+      - 144
+      - 511
+- name: V
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 128
+    invalid:
+      values:
+      - 16
+      - 17
+      - 31
+      - 32
+      - 33
+      - 63
+      - 64
+      - 65
+      - 80
+      - 96
+      - 112
+      - 127
+      - 129
+      - 144
+      - 511
+- name: block_num
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 12
+      - 14
+      - 16
+      - 17
+      - 36
+      - 64
+    invalid:
+      values: []
+- name: gate_mode
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - none
+      - g
+    invalid:
+      values:
+      - gk
+      - both
+- name: use_accepted_tokens
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []
+- name: prefix_tokens
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 8
+    invalid:
+      values: []
+- name: case_id
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 0
+    invalid:
+      values: []
+- name: seed
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 20260826
+    invalid:
+      values: []
+- name: soc
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - ascend910b
+      - ascend910_93
+    invalid:
+      values: []
+- name: route
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - ascendc
+    invalid:
+      values: []

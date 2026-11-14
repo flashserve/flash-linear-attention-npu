@@ -53,7 +53,7 @@ public:
         vToMte3_ = pipe_->AllocEventID<HardEvent::V_MTE3>();
         mte2ToMte3_ = pipe_->AllocEventID<HardEvent::MTE2_MTE3>();
         mte3ToMte2_ = pipe_->AllocEventID<HardEvent::MTE3_MTE2>();
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         vToMte2_ = pipe_->AllocEventID<HardEvent::V_MTE2>();
 #endif
         SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2_);
@@ -79,7 +79,7 @@ public:
             ReleaseEvents();
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         bool ownsHead = false;
         for (uint64_t h = hBegin; h < hEnd; ++h) {
             if ((h & 1U) == subIdx) {
@@ -191,7 +191,7 @@ private:
         pipe_->ReleaseEventID<HardEvent::V_MTE3>(vToMte3_);
         pipe_->ReleaseEventID<HardEvent::MTE2_MTE3>(mte2ToMte3_);
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(mte3ToMte2_);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         pipe_->ReleaseEventID<HardEvent::V_MTE2>(vToMte2_);
 #endif
     }

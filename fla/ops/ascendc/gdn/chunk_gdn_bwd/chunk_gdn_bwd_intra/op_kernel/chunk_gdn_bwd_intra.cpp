@@ -6,7 +6,7 @@
 #include "lib/matmul_intf.h"
 #include "chunk_gdn_bwd_intra_struct.h"
 #include "chunk_gdn_bwd_intra_tiling_key.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "chunk_gdn_bwd_intra_cube.h"
 #include "chunk_gdn_bwd_intra_vector.h"
 #else
@@ -51,7 +51,7 @@ __aicore__ inline void DispatchKernel(
     using MainT = typename IntraMainType<MAIN_KEY>::type;
     using GateT = typename IntraAuxType<GATE_KEY>::type;
     using BetaT = typename IntraAuxType<BETA_KEY>::type;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // 一个 MixBlock 包含 1 个 AIC 和 2 个 AIV：AIC 顺序执行 Stage 0/2，
     // 两个 AIV 并行执行 Stage 1 的前、后半行，二者通过 CrossCore flag 交接数据。
     if ASCEND_IS_AIC {

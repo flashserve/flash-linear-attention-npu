@@ -4,7 +4,7 @@
  */
 #include "../operators/chunk_gated_delta_rule_fwd_h/op_kernel/chunk_gated_delta_rule_fwd_h_struct.h"
 #include "../arch35/ho_pipeline_context.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "../operators/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #else
 #include "../operators/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
@@ -45,7 +45,7 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
                                GM_ADDR userWorkspace,
                                const GDN::HoPipelineContext &hoPipelineContext)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     constexpr bool kB30 = Arch35GdnSyncTraits<Variant>::kB30;
     constexpr uint32_t rowTile =
         kB30 && (std::is_same_v<StateT, float> || std::is_same_v<StateT, bfloat16_t>) ? 64 : 16;
@@ -56,7 +56,7 @@ __aicore__ inline void RunFwdH(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_AD
         InputT, GT, StateT, float, TileShapes, kGated, true, false, false>;
 #endif
     Kernel kernel;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     kernel.Init(k, w, u, g, gk, initialState, cuSeqlens, chunkIndices, h, vNew, finalState,
                 tiling, userWorkspace, hoPipelineContext);
 #else
