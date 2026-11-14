@@ -51,7 +51,7 @@ AIC 数与任务数取 `usedAic`，`scheduleMode = 1`，Mix **1 AIC : 2 AIV**。
   `kHeadRotate = 4` 成组；AIV 按 `h & 1` 独占奇偶 head（slot 0/1）。
 - A2/A3：每组为同一 chunk 的最多 4 个连续 value head。逻辑核数取任务组数和平台可用 AIC 数 中的较小值，组号按核数跨步分配。两个 AIV 分别处理组内偶数和奇数 slot。
 
-A5 平台查询若只回报 1～2 个 AIC，Host 回退到 `aivNum/2`、`GetCoreNum()`，
+平台查询若只回报 1～2 个 AIC，Host 回退到 `aivNum/2`、`GetCoreNum()`，
 再不行落到 A5 的 28。
 
 TilingKey 由 `GET_TPL_TILING_KEY(D_T_G, D_T_BETA, K_DIM)` 生成，覆盖
