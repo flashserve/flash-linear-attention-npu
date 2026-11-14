@@ -60,11 +60,16 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
         return ge::GRAPH_FAILED;
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "w head dim must equal Hv");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv",
+            std::to_string(wShapePtr->GetStorageShape().GetDim(1)) + "," + std::to_string(Hv),
+            "w head dim must equal Hv");
         return ge::GRAPH_FAILED;
     }
     if (uShape.GetDim(0) != 1 || uShape.GetDim(2) != T || uShape.GetDim(3) != V) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "u must be [1,Hv,T,V] and match k's T");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "u",
+            std::to_string(uShape.GetDim(0)) + "," + std::to_string(uShape.GetDim(1)) + "," +
+                std::to_string(uShape.GetDim(2)) + "," + std::to_string(uShape.GetDim(3)),
+            "u must be [1,Hv,T,V] and match k's T");
         return ge::GRAPH_FAILED;
     }
 
@@ -77,7 +82,10 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const bool hasBg = bgTensor != nullptr;
     const bool hasV = context->GetOptionalInputTensor(INPUT_V_IDX) != nullptr;
     if (hasG == hasGk) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "g", "invalid", "exactly one of g / gk must be given");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "g,gk",
+            std::string(hasG ? "g=present" : "g=absent") + "," +
+                (hasGk ? "gk=present" : "gk=absent"),
+            "exactly one of g / gk must be given");
         return ge::GRAPH_FAILED;
     }
     if (hasBg) {

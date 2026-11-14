@@ -143,7 +143,10 @@ public:
                         kShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hk_) ||
                         kShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
                         kShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "Hk", "invalid", "k must match q as [B,Hk,T,K].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "k",
+            std::to_string(kShape.GetDim(0)) + "," + std::to_string(kShape.GetDim(1)) + "," +
+                std::to_string(kShape.GetDim(2)) + "," + std::to_string(kShape.GetDim(3)),
+            "k must match q as [B,Hk,T,K]");
         return ge::GRAPH_FAILED;
     }
         if (wShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
@@ -159,14 +162,19 @@ public:
     }
         if (doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
                         doShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "q", "invalid", "d_o batch/time must match q.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "d_o",
+            std::to_string(doShape.GetDim(0)) + "," + std::to_string(doShape.GetDim(2)),
+            "d_o batch/time must match q");
         return ge::GRAPH_FAILED;
     }
         if (dvShape.GetDim(CDHP_DIM_0) != doShape.GetDim(CDHP_DIM_0) ||
                         dvShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
                         dvShape.GetDim(CDHP_DIM_2) != doShape.GetDim(CDHP_DIM_2) ||
                         dvShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(V_)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "dv must have the same [B,Hv,T,V] shape as d_o.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "dv",
+            std::to_string(dvShape.GetDim(0)) + "," + std::to_string(dvShape.GetDim(1)) + "," +
+                std::to_string(dvShape.GetDim(2)) + "," + std::to_string(dvShape.GetDim(3)),
+            "dv must have the same [B,Hv,T,V] shape as d_o");
         return ge::GRAPH_FAILED;
     }
         if (B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0) {
@@ -207,7 +215,8 @@ public:
     ge::graphStatus ResolveGateMode()
     {
         if (ctx_.hasG && ctx_.hasGk) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "g", "invalid", "g and gk are mutually exclusive: GDN passes scalar g, KDA/GDN2 pass per-K gk.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "g,gk", "g=present,gk=present",
+            "g and gk are mutually exclusive: GDN passes scalar g, KDA/GDN2 pass per-K gk");
         return ge::GRAPH_FAILED;
     }
 
@@ -217,7 +226,10 @@ public:
                             gkShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
                             gkShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
                             gkShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "gk must be [B,Hv,T,K].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "gk",
+            std::to_string(gkShape.GetDim(0)) + "," + std::to_string(gkShape.GetDim(1)) + "," +
+                std::to_string(gkShape.GetDim(2)) + "," + std::to_string(gkShape.GetDim(3)),
+            "gk must be [B,Hv,T,K]");
         return ge::GRAPH_FAILED;
     }
             if (ctx_.gkDtype != ctx_.qDtype) {
@@ -237,11 +249,16 @@ public:
             if (gShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
                             gShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
                             gShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "g must be [B,Hv,T].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "g",
+            std::to_string(gShape.GetDim(0)) + "," + std::to_string(gShape.GetDim(1)) + "," +
+                std::to_string(gShape.GetDim(2)),
+            "g must be [B,Hv,T]");
         return ge::GRAPH_FAILED;
     }
             if (ctx_.gDtype != ctx_.qDtype && ctx_.gDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "g dtype must be FP32 or the same as q/k dtype.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "g.dtype",
+            std::to_string(static_cast<int32_t>(ctx_.gDtype)),
+            "g dtype must be FP32 or the same as q/k dtype");
         return ge::GRAPH_FAILED;
     }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_SCALAR;
