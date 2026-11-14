@@ -42,6 +42,10 @@ struct CausalConv1dBwdTilingData {
     int64_t chunkPerCore;
     int64_t tailChunk;
     int64_t workspaceSize;
+    int64_t useIdSplit;
+    int64_t dwStageRows;
+    int64_t use2DSplit;
+    int64_t redStageRows;
 };
 
 #endif // CAUSAL_CONV1D_BWD_TILING_DATA_H_
