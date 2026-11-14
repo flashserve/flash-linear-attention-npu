@@ -1,0 +1,811 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * the BSD 3-Clause License (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
+
+/*!
+ * \file chunk_gated_delta_rule_bwd_dhu_cube.h
+ * \brief A6 Cube stages for chunk_gated_delta_rule_bwd_dhu.
+ */
+
+#ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_ARCH92_CUBE_H
+#define CHUNK_GATED_DELTA_RULE_BWD_DHU_ARCH92_CUBE_H
+
+#include <type_traits>
+
+#include "chunk_gated_delta_rule_bwd_dhu_common.h"
+#include "catlass/arch/arch.hpp"
+#include "catlass/catlass.hpp"
+#include "catlass/gemm/gemm_type.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
+#include "catlass/gemm/tile/tile_mmad.hpp"
+#include "catlass/layout/layout.hpp"
+#include "catlass/status.hpp"
+#include "catlass/gemm/tile/ascend950/copy_l0c_to_ub.hpp"
+#include "kernel_operator.h"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
+
+namespace GDN::DhuArch92 {
+
+template <AscendC::TPosition Position>
+struct CubeBuffer {
+    uint32_t sizeBytes;
+
+    template <typename T>
+    __aicore__ inline AscendC::LocalTensor<T> GetBufferByByte(uint32_t offset) const
+    {
+        return AscendC::LocalTensor<T>(Position, offset, (sizeBytes - offset) / sizeof(T));
+    }
+};
+
+template <typename ArchTag>
+struct CubeResource {
+    CubeBuffer<AscendC::TPosition::A1> l1Buf{ArchTag::L1_SIZE};
+    CubeBuffer<AscendC::TPosition::A2> l0ABuf{ArchTag::L0A_SIZE};
+    CubeBuffer<AscendC::TPosition::B2> l0BBuf{ArchTag::L0B_SIZE};
+    CubeBuffer<AscendC::TPosition::CO1> l0CBuf{ArchTag::L0C_SIZE};
+    CubeBuffer<AscendC::TPosition::VECCALC> ubBuf{ArchTag::UB_SIZE};
+};
+
+} // namespace GDN::DhuArch92
+
+namespace GDN {
+
+template <typename DT, int V_DIM>
+class ChunkGatedDeltaRuleBwdDhuCube {
+public:
+    __aicore__ inline ChunkGatedDeltaRuleBwdDhuCube() = default;
+
+    __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR dO, GM_ADDR dh, GM_ADDR dv2,
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace,
+                                const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData)
+    {
+        k_ = k;
+        w_ = w;
+        dO_ = dO;
+        dh_ = dh;
+        dv2_ = dv2;
+        cuSeqlens_ = cuSeqlens;
+        chunkIndices_ = chunkIndices;
+        workspace_ = workspace;
+
+        tiling_ = tilingData;
+        HK_ = tiling_->HK;
+        HV_ = tiling_->HV;
+        T_ = tiling_->T;
+        K_ = tiling_->K;
+        V_ = tiling_->V;
+        HRatio_ = tiling_->HRatio;
+        hasGk_ = tiling_->hasGk != 0;
+        chunkSize_ = tiling_->chunkSize;
+        vecRow_ = tiling_->vecRow > 0 ? static_cast<uint32_t>(tiling_->vecRow) : 8U;
+        totalChunkNum_ = tiling_->totalChunkNum;
+        headsPerTask_ = tiling_->headsPerTask;
+        headWindowNum_ = tiling_->headWindowNum;
+        taskNum_ = tiling_->taskNum;
+        workspaceElemsPerSubBlock_ = tiling_->workspaceElemsPerSubBlock;
+        dvStateWorkspaceOffset_ = tiling_->dvStateWorkspaceOffset;
+        termQWorkspaceOffset_ = tiling_->termQWorkspaceOffset;
+        termWWorkspaceOffset_ = tiling_->termWWorkspaceOffset;
+
+        curL1B_ = 0;
+        curL0_ = 0;
+        curL0C_ = 0;
+        nextKResidentSlot_ = 0;
+        cachedKResidentValid_ = false;
+        cachedKResidentBase_ = 0;
+        cachedKResidentSlot_ = 0;
+    }
+
+    __aicore__ inline void Process()
+    {
+        DhuArch92::CubeResource<ArchTag> resource;
+        AscendC::LocalTensor<DT> kResident[K_RESIDENT_BUFFER_COUNT] = {
+            resource.l1Buf.template GetBufferByByte<DT>(K_RESIDENT_OFFSET),
+            resource.l1Buf.template GetBufferByByte<DT>(K_RESIDENT_OFFSET + K_RESIDENT_TILE_BYTES)};
+        AscendC::LocalTensor<DT> wResident[W_RESIDENT_BUFFER_COUNT] = {
+            resource.l1Buf.template GetBufferByByte<DT>(W_RESIDENT_OFFSET),
+            resource.l1Buf.template GetBufferByByte<DT>(W_RESIDENT_OFFSET + W_RESIDENT_TILE_BYTES)};
+        AscendC::LocalTensor<DT> l1AScratch[L1A_SCRATCH_BUFFER_COUNT] = {
+            resource.l1Buf.template GetBufferByByte<DT>(L1A_SCRATCH_OFFSET),
+            resource.l1Buf.template GetBufferByByte<DT>(L1A_SCRATCH_OFFSET + L1A_SCRATCH_TILE_BYTES),
+            resource.l1Buf.template GetBufferByByte<DT>(L1A_SCRATCH_OFFSET + 2 * L1A_SCRATCH_TILE_BYTES),
+            resource.l1Buf.template GetBufferByByte<DT>(L1A_SCRATCH_OFFSET + 3 * L1A_SCRATCH_TILE_BYTES)};
+        AscendC::LocalTensor<DT> l1BScratch[L1B_SCRATCH_BUFFER_COUNT] = {
+            resource.l1Buf.template GetBufferByByte<DT>(L1B_SCRATCH_OFFSET),
+            resource.l1Buf.template GetBufferByByte<DT>(L1B_SCRATCH_OFFSET + L1B_SCRATCH_TILE_BYTES)};
+        AscendC::LocalTensor<DT> l0A[L0_BUFFER_COUNT] = {
+            resource.l0ABuf.template GetBufferByByte<DT>(0),
+            resource.l0ABuf.template GetBufferByByte<DT>(L0A_TILE_BYTES)};
+        AscendC::LocalTensor<DT> l0B[L0_BUFFER_COUNT] = {
+            resource.l0BBuf.template GetBufferByByte<DT>(0),
+            resource.l0BBuf.template GetBufferByByte<DT>(L0B_TILE_BYTES)};
+        AscendC::LocalTensor<ElementAccumulator> l0C[L0C_BUFFER_COUNT];
+        l0C[0] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(0);
+        if constexpr (L0C_BUFFER_COUNT > 1) {
+            l0C[1] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(L0C_TILE_BYTES);
+        }
+        if constexpr (std::is_same<DT, bfloat16_t>::value) {
+            const uint32_t cvSlotBytes = vecRow_ * V_DIM * sizeof(DT);
+            for (uint32_t slot = 0; slot < CV_BUFFER_COUNT; ++slot) {
+                matrixCvBuf_[slot] = resource.ubBuf.template GetBufferByByte<DT>(slot * cvSlotBytes);
+            }
+        }
+        InitPipeFlags();
+
+        const int64_t blockIdx = static_cast<int64_t>(AscendC::GetBlockIdx());
+        const int64_t blockNum = static_cast<int64_t>(AscendC::GetBlockNum());
+
+        for (int64_t taskIdx = blockIdx; taskIdx < taskNum_; taskIdx += blockNum) {
+            const int64_t seqIdx = taskIdx / headWindowNum_;
+            const int64_t headWindowIdx = taskIdx - seqIdx * headWindowNum_;
+            const int64_t hvBase = headWindowIdx * headsPerTask_;
+            const int64_t headCnt = Min(headsPerTask_, HV_ - hvBase);
+            const int64_t taskRound = (taskIdx - blockIdx) / blockNum;
+            const int64_t windowStartSlot = (taskRound & 1) * WORKSPACE_HEAD_STRIDE;
+            if (headCnt <= 0) {
+                continue;
+            }
+
+            SeqInfo seqInfo;
+            GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
+            if (!seqInfo.valid) {
+                continue;
+            }
+
+            for (int64_t chunkIdx = seqInfo.chunkCnt - 1; chunkIdx >= 0; --chunkIdx) {
+                ChunkInfo chunkInfo;
+                GetChunkInfoBySeqChunk(chunkIndices_, *tiling_, seqInfo, chunkIdx, chunkInfo);
+                if (!chunkInfo.valid) {
+                    continue;
+                }
+
+                const uint32_t validTokens = static_cast<uint32_t>(chunkInfo.chunkLen);
+                const uint32_t reductionTokens = DhuAlignCubeK(validTokens);
+                cachedKResidentValid_ = false;
+                nextKResidentSlot_ = 0;
+                for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
+                    const int64_t hv = hvBase + headOffset;
+                    const int64_t workspaceSlot = windowStartSlot + headOffset;
+                    const bool nextHeadUsesSameK =
+                        headOffset + 1 < headCnt && (hv / HRatio_) == ((hv + 1) / HRatio_);
+                    const bool releaseKAfterUse = !nextHeadUsesSameK;
+                    const int64_t hq = hv / HRatio_;
+                    const int64_t kBase = ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
+                    const int64_t dOBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
+                    const int64_t dhBase =
+                        ((chunkInfo.bIdx * totalChunkNum_ + chunkInfo.outputChunkIdx) * HV_ + hv) * K_ * V_;
+                    const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
+
+                    LayoutTagK tagK = LayoutTagK::MakeLayout<DT>(chunkSize_, K_);
+                    LayoutTagState tagState = LayoutTagState::MakeLayout<DT>(K_, V_DIM);
+                    LayoutTagDvState tagDvState = LayoutTagDvState::MakeLayout<DT>(chunkSize_, V_DIM);
+                    LayoutTagDO tagDO = LayoutTagDO::MakeLayout<DT>(chunkSize_, V_DIM);
+                    LayoutTagTermQ tagTermQ = LayoutTagTermQ::MakeLayout<DT>(K_, V_DIM);
+
+                    auto layoutK = tla::MakeLayoutFromTag(tagK);
+                    auto layoutState = tla::MakeLayoutFromTag(tagState);
+                    auto layoutDvState = tla::MakeLayoutFromTag(tagDvState);
+                    auto layoutDO = tla::MakeLayoutFromTag(tagDO);
+                    auto layoutTermQ = tla::MakeLayoutFromTag(tagTermQ);
+
+                    AscendC::GlobalTensor<DT> gmK;
+                    AscendC::GlobalTensor<DT> gmState;
+                    AscendC::GlobalTensor<DT> gmDvState;
+                    AscendC::GlobalTensor<DT> gmDO;
+                    AscendC::GlobalTensor<DT> gmTermQ;
+                    gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
+                    // K 为一次性流式读（组内复用走 L1 kResident，与 L2 无关），
+                    // 禁 L2 防止无收益的写分配驱逐 dh/dv2 生产者-消费者行（fwd_o 先例）
+                    gmK.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                    gmState.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh_) + dhBase);
+                    gmDvState.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
+                                              dvStateWorkspaceOffset_);
+                    gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + dOBase);
+                    // dO 同为一次性流式读，禁 L2（见 gmK 注释）
+                    gmDO.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                    gmTermQ.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
+                                            termQWorkspaceOffset_);
+
+                    auto tensorK = tla::MakeTensor(gmK, layoutK, Catlass::Arch::PositionGM{});
+                    const bool needLoadKResident = !cachedKResidentValid_ || cachedKResidentBase_ != kBase;
+                    if (needLoadKResident) {
+                        if (cachedKResidentValid_) {
+                            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KResidentEvent(cachedKResidentSlot_));
+                            cachedKResidentValid_ = false;
+                        }
+                        cachedKResidentBase_ = kBase;
+                        cachedKResidentSlot_ = nextKResidentSlot_;
+                        cachedKResidentValid_ = true;
+                        nextKResidentSlot_ ^= 1U;
+                    }
+                    const uint32_t kResidentSlot = cachedKResidentSlot_;
+                    const int32_t kResidentEvent = KResidentEvent(kResidentSlot);
+                    auto tensorL1K =
+                        tla::MakeTensor(kResident[kResidentSlot], L1A_LAYOUT_K, Catlass::Arch::PositionL1{});
+                    auto blockK = tla::GetTile(
+                        tensorK, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(K_)));
+                    CopyGmToL1A_DvState<decltype(blockK)> copyGmToL1A_K;
+                    if (needLoadKResident) {
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kResidentEvent);
+                        copyGmToL1A_K(tensorL1K, blockK);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kResidentEvent);
+                    }
+
+                    auto tensorDO = tla::MakeTensor(gmDO, layoutDO, Catlass::Arch::PositionGM{});
+                    auto blockDO = tla::GetTile(
+                        tensorDO, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM)));
+                    CopyGmToL1B_TermQ<decltype(blockDO)> copyGmToL1B_DO;
+
+                    const uint32_t doScratchSlot = curL1B_;
+                    curL1B_ ^= 1U;
+                    const int32_t doScratchEvent = L1BScratchEvent(doScratchSlot);
+                    auto tensorL1DO =
+                        tla::MakeTensor(l1BScratch[doScratchSlot], L1B_LAYOUT_DO, Catlass::Arch::PositionL1{});
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(doScratchEvent);
+                    if (validTokens != reductionTokens) {
+                        ClearL1(l1BScratch[doScratchSlot], L1B_SCRATCH_TILE_BYTES);
+                    }
+                    copyGmToL1B_DO(tensorL1DO, blockDO);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(doScratchEvent);
+
+                    // W^T 提前装载：W 零跨核依赖，在 stage1 阻塞等待前发起 GM→L1A，
+                    // 填充 MTE2 空闲窗口（stage2 GEMM2 消费时 W 必然已就绪）。W 驻留仅
+                    // 双槽而窗口至多 4 head（headOffset 奇偶各占一槽），仅每槽首次使用
+                    // （headOffset 0/1）在此预取：headOffset>=2 若也在此装载，其 Wait 将
+                    // 等同槽前序 W 在 stage2 GEMM2 释放，而 stage2 又被 stage1 阻塞 → 死锁。
+                    // 槽位信用来自上一 chunk stage2 末片释放或 InitPipeFlags 预置。
+                    if (headOffset < static_cast<int64_t>(W_RESIDENT_BUFFER_COUNT)) {
+                        const uint32_t residentSlot = static_cast<uint32_t>(workspaceSlot) & 1U;
+                        LayoutTagWT tagWT = LayoutTagWT::MakeLayout<DT>(K_, chunkSize_);
+                        auto layoutWT = tla::MakeLayoutFromTag(tagWT);
+                        const int64_t wBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * K_;
+                        AscendC::GlobalTensor<DT> gmWT;
+                        gmWT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(w_) + wBase);
+                        gmWT.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                        auto tensorWT = tla::MakeTensor(gmWT, layoutWT, Catlass::Arch::PositionGM{});
+                        auto blockWT = tla::GetTile(
+                            tensorWT, tla::MakeCoord(0, 0),
+                            tla::MakeShape(static_cast<uint32_t>(K_),
+                                           static_cast<uint32_t>(chunkInfo.chunkLen)));
+                        CopyGmToL1A_TermW<decltype(blockWT)> copyGmToL1A_WT;
+                        const int32_t wEvent = WResidentEvent(residentSlot);
+                        auto tensorL1WT =
+                            tla::MakeTensor(wResident[residentSlot], L1A_LAYOUT_WT, Catlass::Arch::PositionL1{});
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(wEvent);
+                        if (validTokens != reductionTokens) {
+                            ClearL1(wResident[residentSlot], W_RESIDENT_TILE_BYTES);
+                        }
+                        copyGmToL1A_WT(tensorL1WT, blockWT);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(wEvent);
+                    }
+
+                    // C3 拆分：GEMM0 只消费 dh（vector S0 中段已写完），此处只等
+                    // dhReady 即可装载并启动 GEMM0；原 vecToCube wait（覆盖 qg/
+                    // dvGateFactor 全部产物）移至 GEMM1 前的 qg 消费点。
+                    DhuWaitReady<DhuReadyFlag::Dh, PIPE_MTE2>();
+
+                    auto tensorState = tla::MakeTensor(gmState, layoutState, Catlass::Arch::PositionGM{});
+                    auto tensorDvState = tla::MakeTensor(gmDvState, layoutDvState, Catlass::Arch::PositionGM{});
+                    auto blockState = tla::GetTile(
+                        tensorState, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM)));
+                    auto blockDvState = tla::GetTile(
+                        tensorDvState, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM)));
+                    CopyGmToL1B_DvState<decltype(blockState)> copyGmToL1B_State;
+                    CopyL1ToL0A_DvState copyL1ToL0A_DvState;
+                    CopyL1ToL0B_DvState copyL1ToL0B_DvState;
+                    TileMmadDvState tileMmadDvState;
+
+                    const uint32_t stateScratchSlot = curL1B_;
+                    curL1B_ ^= 1U;
+                    const int32_t stateScratchEvent = L1BScratchEvent(stateScratchSlot);
+                    auto tensorL1State =
+                        tla::MakeTensor(l1BScratch[stateScratchSlot], L1B_LAYOUT_STATE, Catlass::Arch::PositionL1{});
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stateScratchEvent);
+                    copyGmToL1B_State(tensorL1State, blockState);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stateScratchEvent);
+                    CopyL0CToGm_DvState<decltype(blockDvState)> copyL0CToGm_DvState;
+                    RunResidentMmad<LayoutTagL0A_DvState, LayoutTagL0B_DvState, DhuReadyFlag::DvState>(
+                        copyL1ToL0A_DvState, copyL1ToL0B_DvState, tileMmadDvState, copyL0CToGm_DvState,
+                        tensorL1K, tensorL1State, blockDvState, l0A, l0B, l0C,
+                        needLoadKResident, releaseKAfterUse, kResidentEvent, true, true, stateScratchEvent,
+                        static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM),
+                        static_cast<uint32_t>(K_));
+                    if (releaseKAfterUse) {
+                        cachedKResidentValid_ = false;
+                    }
+
+                    auto tensorTermQ = tla::MakeTensor(gmTermQ, layoutTermQ, Catlass::Arch::PositionGM{});
+                    auto blockTermQ = tla::GetTile(
+                        tensorTermQ, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM)));
+                    CopyL0CToGm_TermQ<decltype(blockTermQ)> copyL0CToGm_TermQ;
+                    CopyL1ToL0A_TermQ copyL1ToL0A_TermQ;
+                    CopyL1ToL0B_TermQ copyL1ToL0B_TermQ;
+                    TileMmadTermQ tileMmadTermQ;
+
+                    // GEMM1 消费 qg（vector S0 尾部经 MTE3 直写 L1A scratch），
+                    // 此处等原 vecToCube（覆盖 qg/dvGateFactor 全部 S0 产物）
+                    DhuWaitReady<DhuReadyFlag::Qg, PIPE_MTE1>();
+
+                    uint32_t qgScratchSlot = static_cast<uint32_t>(headOffset);
+                    if (hasGk_) {
+                        const int64_t groupStartHv = hq * HRatio_;
+                        qgScratchSlot = static_cast<uint32_t>(groupStartHv > hvBase ? groupStartHv - hvBase : 0);
+                    }
+                    auto tensorL1QGT =
+                        tla::MakeTensor(l1AScratch[qgScratchSlot], L1A_LAYOUT_QGT, Catlass::Arch::PositionL1{});
+                    RunResidentMmad<LayoutTagL0A_TermQ, LayoutTagL0B_TermQ>(
+                        copyL1ToL0A_TermQ, copyL1ToL0B_TermQ, tileMmadTermQ, copyL0CToGm_TermQ,
+                        tensorL1QGT, tensorL1DO, blockTermQ, l0A, l0B, l0C,
+                        false, false, 0, true, true, doScratchEvent,
+                        static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM), reductionTokens);
+                }
+                for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
+                    const int64_t hv = hvBase + headOffset;
+                    const int64_t workspaceSlot = windowStartSlot + headOffset;
+                    const int64_t dv2Base = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * V_;
+                    const int64_t slotBase = WorkspaceBase(blockIdx, workspaceSlot);
+                    const uint32_t residentSlot = static_cast<uint32_t>(workspaceSlot) & 1U;
+
+                    LayoutTagDv2 tagDv2 = LayoutTagDv2::MakeLayout<DT>(chunkSize_, V_DIM);
+                    LayoutTagTermW tagTermW = LayoutTagTermW::MakeLayout<DT>(K_, V_DIM);
+
+                    auto layoutDv2 = tla::MakeLayoutFromTag(tagDv2);
+                    auto layoutTermW = tla::MakeLayoutFromTag(tagTermW);
+
+                    AscendC::GlobalTensor<DT> gmDv2;
+                    AscendC::GlobalTensor<DT> gmTermW;
+                    gmDv2.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv2_) + dv2Base);
+                    gmTermW.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + slotBase +
+                                            termWWorkspaceOffset_);
+
+                    auto tensorDv2 = tla::MakeTensor(gmDv2, layoutDv2, Catlass::Arch::PositionGM{});
+                    auto tensorTermW = tla::MakeTensor(gmTermW, layoutTermW, Catlass::Arch::PositionGM{});
+                    auto blockDv2 = tla::GetTile(
+                        tensorDv2, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(chunkInfo.chunkLen), static_cast<uint32_t>(V_DIM)));
+                    auto blockTermW = tla::GetTile(
+                        tensorTermW, tla::MakeCoord(0, 0),
+                        tla::MakeShape(static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM)));
+                    CopyGmToL1B_TermW<decltype(blockDv2)> copyGmToL1B_Dv2;
+                    CopyL1ToL0A_TermW copyL1ToL0A_TermW;
+                    CopyL1ToL0B_TermW copyL1ToL0B_TermW;
+                    TileMmadTermW tileMmadTermW;
+
+                    const int32_t wEvent = WResidentEvent(residentSlot);
+                    auto tensorL1WT =
+                        tla::MakeTensor(wResident[residentSlot], L1A_LAYOUT_WT, Catlass::Arch::PositionL1{});
+                    if (headOffset >= static_cast<int64_t>(W_RESIDENT_BUFFER_COUNT)) {
+                        // head 2/3：W 未在 stage1 预取（双槽容量约束），
+                        // 按原时序在此装载；同奇偶槽已被本 chunk 更早的 GEMM2 末片释放。
+                        LayoutTagWT tagWT = LayoutTagWT::MakeLayout<DT>(K_, chunkSize_);
+                        auto layoutWT = tla::MakeLayoutFromTag(tagWT);
+                        const int64_t wBase = ((chunkInfo.bIdx * HV_ + hv) * T_ + chunkInfo.tokenStart) * K_;
+                        AscendC::GlobalTensor<DT> gmWT;
+                        gmWT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(w_) + wBase);
+                        gmWT.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+                        auto tensorWT = tla::MakeTensor(gmWT, layoutWT, Catlass::Arch::PositionGM{});
+                        auto blockWT = tla::GetTile(
+                            tensorWT, tla::MakeCoord(0, 0),
+                            tla::MakeShape(static_cast<uint32_t>(K_),
+                                           static_cast<uint32_t>(chunkInfo.chunkLen)));
+                        CopyGmToL1A_TermW<decltype(blockWT)> copyGmToL1A_WT;
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(wEvent);
+                        if (validTokens != reductionTokens) {
+                            ClearL1(wResident[residentSlot], W_RESIDENT_TILE_BYTES);
+                        }
+                        copyGmToL1A_WT(tensorL1WT, blockWT);
+                        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(wEvent);
+                    }
+
+                    DhuWaitReady<DhuReadyFlag::Dv2, PIPE_MTE2>();
+
+                    const uint32_t dv2ScratchSlot = curL1B_;
+                    curL1B_ ^= 1U;
+                    const int32_t dv2ScratchEvent = L1BScratchEvent(dv2ScratchSlot);
+                    auto tensorL1Dv2 =
+                        tla::MakeTensor(l1BScratch[dv2ScratchSlot], L1B_LAYOUT_DV2, Catlass::Arch::PositionL1{});
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(dv2ScratchEvent);
+                    if (validTokens != reductionTokens) {
+                        ClearL1(l1BScratch[dv2ScratchSlot], L1B_SCRATCH_TILE_BYTES);
+                    }
+                    copyGmToL1B_Dv2(tensorL1Dv2, blockDv2);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dv2ScratchEvent);
+
+                    CopyL0CToGm_TermW<decltype(blockTermW)> copyL0CToGm_TermW;
+                    RunResidentMmad<LayoutTagL0A_TermW, LayoutTagL0B_TermW, DhuReadyFlag::TermW>(
+                        copyL1ToL0A_TermW, copyL1ToL0B_TermW, tileMmadTermW, copyL0CToGm_TermW,
+                        tensorL1WT, tensorL1Dv2, blockTermW, l0A, l0B, l0C,
+                        true, true, wEvent, true, true, dv2ScratchEvent,
+                        static_cast<uint32_t>(K_), static_cast<uint32_t>(V_DIM), reductionTokens);
+                }
+            }
+        }
+
+        DrainPipeFlags();
+    }
+
+private:
+    __aicore__ inline void ClearL1(AscendC::LocalTensor<DT> tensor, uint32_t bytes) const
+    {
+        AscendC::InitConstValue(tensor, AscendC::InitConstValueParams<DT>(
+            1, static_cast<uint16_t>(bytes / 32U), 0, static_cast<DT>(0)));
+        AscendC::PipeBarrier<PIPE_MTE2>();
+    }
+
+    using ArchTag = Catlass::Arch::Ascend960DT;
+    using LayoutTagK = Catlass::layout::RowMajor;
+    using LayoutTagState = Catlass::layout::RowMajor;
+    using LayoutTagDvState = Catlass::layout::RowMajor;
+    using LayoutTagQGT = Catlass::layout::ColumnMajor;
+    using LayoutTagDO = Catlass::layout::RowMajor;
+    using LayoutTagTermQ = Catlass::layout::RowMajor;
+    using LayoutTagWT = Catlass::layout::ColumnMajor;
+    using LayoutTagDv2 = Catlass::layout::RowMajor;
+    using LayoutTagTermW = Catlass::layout::RowMajor;
+    using TileCopyDvState =
+        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagK, DT, LayoutTagState, DT, LayoutTagDvState>;
+    using TileCopyTermQ =
+        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagQGT, DT, LayoutTagDO, DT, LayoutTagTermQ>;
+    using TileCopyTermW =
+        Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, DT, LayoutTagWT, DT, LayoutTagDv2, DT, LayoutTagTermW>;
+    using ElementAccumulator = typename TileCopyDvState::ElementAccumulator;
+    using CopyL1ToL0A_DvState = typename TileCopyDvState::CopyL1ToL0A;
+    using CopyL1ToL0B_DvState = typename TileCopyDvState::CopyL1ToL0B;
+    using CopyL1ToL0A_TermQ = typename TileCopyTermQ::CopyL1ToL0A;
+    using CopyL1ToL0B_TermQ = typename TileCopyTermQ::CopyL1ToL0B;
+    using CopyL1ToL0A_TermW = typename TileCopyTermW::CopyL1ToL0A;
+    using CopyL1ToL0B_TermW = typename TileCopyTermW::CopyL1ToL0B;
+
+    using LayoutTagL1A_DvState = typename TileCopyDvState::LayoutTagL1A;
+    using LayoutTagL1B_DvState = typename TileCopyDvState::LayoutTagL1B;
+    using LayoutTagL0A_DvState = typename TileCopyDvState::LayoutTagL0A;
+    using LayoutTagL0B_DvState = typename TileCopyDvState::LayoutTagL0B;
+    using LayoutTagL1A_TermQ = typename TileCopyTermQ::LayoutTagL1A;
+    using LayoutTagL1B_TermQ = typename TileCopyTermQ::LayoutTagL1B;
+    using LayoutTagL0A_TermQ = typename TileCopyTermQ::LayoutTagL0A;
+    using LayoutTagL0B_TermQ = typename TileCopyTermQ::LayoutTagL0B;
+    using LayoutTagL1A_TermW = typename TileCopyTermW::LayoutTagL1A;
+    using LayoutTagL1B_TermW = typename TileCopyTermW::LayoutTagL1B;
+    using LayoutTagL0A_TermW = typename TileCopyTermW::LayoutTagL0A;
+    using LayoutTagL0B_TermW = typename TileCopyTermW::LayoutTagL0B;
+
+    using TileMmadDvState = Catlass::Gemm::Tile::TileMmadTla<ArchTag, DT, LayoutTagL1A_DvState>;
+    using TileMmadTermQ = Catlass::Gemm::Tile::TileMmadTla<ArchTag, DT, LayoutTagL1A_TermQ>;
+    using TileMmadTermW = Catlass::Gemm::Tile::TileMmadTla<ArchTag, DT, LayoutTagL1A_TermW>;
+
+    template <typename Tensor>
+    using CopyGmToL1A_DvState = typename TileCopyDvState::template CopyGmToL1A<Tensor>;
+    template <typename Tensor>
+    using CopyGmToL1B_DvState = typename TileCopyDvState::template CopyGmToL1B<Tensor>;
+    template <typename Tensor>
+    using CopyL0CToGm_DvState = typename TileCopyDvState::template CopyL0CToDst<Tensor>;
+    template <typename Tensor>
+    using CopyGmToL1B_TermQ = typename TileCopyTermQ::template CopyGmToL1B<Tensor>;
+    template <typename Tensor>
+    using CopyL0CToGm_TermQ = typename TileCopyTermQ::template CopyL0CToDst<Tensor>;
+    template <typename Tensor>
+    using CopyGmToL1A_TermW = typename TileCopyTermW::template CopyGmToL1A<Tensor>;
+    template <typename Tensor>
+    using CopyGmToL1B_TermW = typename TileCopyTermW::template CopyGmToL1B<Tensor>;
+    template <typename Tensor>
+    using CopyL0CToGm_TermW = typename TileCopyTermW::template CopyL0CToDst<Tensor>;
+
+    static constexpr uint32_t BUFFER_COUNT_2 = 2;
+    static constexpr uint32_t K_DIM = 128;
+    static constexpr uint32_t CHUNK_MAX = 128;
+    static constexpr uint32_t L0_K_TILE = K_DIM;
+
+    static constexpr auto L1A_LAYOUT_K =
+        tla::MakeLayout<DT, LayoutTagL1A_DvState>(tla::Int<CHUNK_MAX>{}, tla::Int<K_DIM>{});
+    static constexpr auto L1B_LAYOUT_STATE =
+        tla::MakeLayout<DT, LayoutTagL1B_DvState>(tla::Int<K_DIM>{}, tla::Int<V_DIM>{});
+    static constexpr auto L1A_LAYOUT_QGT =
+        tla::MakeLayout<DT, LayoutTagL1A_TermQ>(tla::Int<K_DIM>{}, tla::Int<CHUNK_MAX>{});
+    static constexpr auto L1B_LAYOUT_DO =
+        tla::MakeLayout<DT, LayoutTagL1B_TermQ>(tla::Int<CHUNK_MAX>{}, tla::Int<V_DIM>{});
+    static constexpr auto L1A_LAYOUT_WT =
+        tla::MakeLayout<DT, LayoutTagL1A_TermW>(tla::Int<K_DIM>{}, tla::Int<CHUNK_MAX>{});
+    static constexpr auto L1B_LAYOUT_DV2 =
+        tla::MakeLayout<DT, LayoutTagL1B_TermW>(tla::Int<CHUNK_MAX>{}, tla::Int<V_DIM>{});
+    static constexpr uint32_t K_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
+    static constexpr uint32_t W_RESIDENT_BUFFER_COUNT = BUFFER_COUNT_2;
+    static constexpr uint32_t L1A_SCRATCH_BUFFER_COUNT = WORKSPACE_HEAD_STRIDE;
+    static constexpr uint32_t L1B_SCRATCH_BUFFER_COUNT = BUFFER_COUNT_2;
+    static constexpr uint32_t K_RESIDENT_TILE_BYTES = CHUNK_MAX * K_DIM * sizeof(DT);
+    static constexpr uint32_t W_RESIDENT_TILE_BYTES = CHUNK_MAX * K_DIM * sizeof(DT);
+    static constexpr uint32_t L1A_SCRATCH_TILE_BYTES = CHUNK_MAX * K_DIM * sizeof(DT);
+    static constexpr uint32_t L1B_STATE_TILE_BYTES = K_DIM * V_DIM * sizeof(DT);
+    static constexpr uint32_t L1B_TOKEN_TILE_BYTES = CHUNK_MAX * V_DIM * sizeof(DT);
+    static constexpr uint32_t L1B_SCRATCH_TILE_BYTES = L1B_STATE_TILE_BYTES > L1B_TOKEN_TILE_BYTES ?
+                                                           L1B_STATE_TILE_BYTES :
+                                                           L1B_TOKEN_TILE_BYTES;
+    static constexpr uint32_t K_RESIDENT_OFFSET = 0;
+    static constexpr uint32_t W_RESIDENT_OFFSET = K_RESIDENT_OFFSET + K_RESIDENT_TILE_BYTES * K_RESIDENT_BUFFER_COUNT;
+    static constexpr uint32_t L1A_SCRATCH_OFFSET = W_RESIDENT_OFFSET + W_RESIDENT_TILE_BYTES * W_RESIDENT_BUFFER_COUNT;
+    static constexpr uint32_t L1B_SCRATCH_OFFSET =
+        L1A_SCRATCH_OFFSET + L1A_SCRATCH_TILE_BYTES * L1A_SCRATCH_BUFFER_COUNT;
+    static constexpr uint32_t L1_TOTAL_BYTES = 512 * 1024;
+    static constexpr uint32_t L1_USED_BYTES =
+        L1B_SCRATCH_OFFSET + L1B_SCRATCH_TILE_BYTES * L1B_SCRATCH_BUFFER_COUNT;
+    static_assert(L1_USED_BYTES <= L1_TOTAL_BYTES, "chunk_gated_delta_rule_bwd_dhu cube L1 usage exceeds 512KB.");
+
+    static constexpr uint32_t L0_BUFFER_COUNT = BUFFER_COUNT_2;
+    static constexpr uint32_t L0A_TILE_BYTES = CHUNK_MAX * L0_K_TILE * sizeof(DT);
+    static constexpr uint32_t L0B_TILE_BYTES = L0_K_TILE * V_DIM * sizeof(DT);
+    static constexpr uint32_t L0C_MAX_BUFFER_COUNT = BUFFER_COUNT_2;
+    static constexpr uint32_t L0C_TILE_BYTES = K_DIM * V_DIM * sizeof(ElementAccumulator);
+    static constexpr bool ENABLE_L0C_DOUBLE_BUFFER = L0C_TILE_BYTES * L0C_MAX_BUFFER_COUNT <= ArchTag::L0C_SIZE;
+    static constexpr uint32_t L0C_BUFFER_COUNT = ENABLE_L0C_DOUBLE_BUFFER ? L0C_MAX_BUFFER_COUNT : 1;
+    static_assert(L0C_TILE_BYTES * L0C_BUFFER_COUNT <= ArchTag::L0C_SIZE,
+                  "chunk_gated_delta_rule_bwd_dhu cube L0C usage exceeds arch L0C size.");
+
+    static constexpr int32_t EVENT_L1B_SCRATCH_PING = 2;
+    static constexpr int32_t EVENT_L1B_SCRATCH_PONG = 3;
+    static constexpr int32_t EVENT_K_RESIDENT_PING = 4;
+    static constexpr int32_t EVENT_K_RESIDENT_PONG = 5;
+    static constexpr int32_t EVENT_W_RESIDENT_PING = 6;
+    static constexpr int32_t EVENT_W_RESIDENT_PONG = 7;
+    static constexpr int32_t EVENT_L0A_PING = 0;
+    static constexpr int32_t EVENT_L0B_PING = 1;
+    static constexpr int32_t EVENT_L0A_PONG = 2;
+    static constexpr int32_t EVENT_L0B_PONG = 3;
+    static constexpr int32_t EVENT_L0_READY_PING = 0;
+    static constexpr int32_t EVENT_L0_READY_PONG = 1;
+    static constexpr int32_t EVENT_L0C_PING = 0;
+    static constexpr int32_t EVENT_L0C_PONG = 1;
+
+    __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const
+    {
+        return (coreIdx * WORKSPACE_BUFFER_COUNT + workspaceSlot) * workspaceElemsPerSubBlock_;
+    }
+
+    __aicore__ inline int32_t L1BScratchEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_L1B_SCRATCH_PING : EVENT_L1B_SCRATCH_PONG;
+    }
+
+    __aicore__ inline int32_t KResidentEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_K_RESIDENT_PING : EVENT_K_RESIDENT_PONG;
+    }
+
+    __aicore__ inline int32_t WResidentEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_W_RESIDENT_PING : EVENT_W_RESIDENT_PONG;
+    }
+
+    __aicore__ inline int32_t L0AEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_L0A_PING : EVENT_L0A_PONG;
+    }
+
+    __aicore__ inline int32_t L0BEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_L0B_PING : EVENT_L0B_PONG;
+    }
+
+    __aicore__ inline int32_t L0ReadyEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_L0_READY_PING : EVENT_L0_READY_PONG;
+    }
+
+    __aicore__ inline int32_t L0CEvent(uint32_t slot) const
+    {
+        return slot == 0 ? EVENT_L0C_PING : EVENT_L0C_PONG;
+    }
+
+    __aicore__ inline void SwitchL0C()
+    {
+        if constexpr (L0C_BUFFER_COUNT > 1) {
+            curL0C_ ^= 1U;
+        }
+    }
+
+    __aicore__ inline void InitPipeFlags()
+    {
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PING);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PONG);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_K_RESIDENT_PING);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_K_RESIDENT_PONG);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_W_RESIDENT_PING);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_W_RESIDENT_PONG);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PING);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PING);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PONG);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PING);
+        if constexpr (L0C_BUFFER_COUNT > 1) {
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PONG);
+        }
+    }
+
+    __aicore__ inline void DrainPipeFlags()
+    {
+        if (cachedKResidentValid_) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(KResidentEvent(cachedKResidentSlot_));
+            cachedKResidentValid_ = false;
+        }
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PING);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1B_SCRATCH_PONG);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_K_RESIDENT_PING);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_K_RESIDENT_PONG);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_W_RESIDENT_PING);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_W_RESIDENT_PONG);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PING);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PING);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0A_PONG);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_L0B_PONG);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PING);
+        if constexpr (L0C_BUFFER_COUNT > 1) {
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_L0C_PONG);
+        }
+        if constexpr (std::is_same<DT, bfloat16_t>::value) {
+            for (uint32_t slot = 0; slot < CV_BUFFER_COUNT; ++slot) {
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(slot);
+            }
+        }
+    }
+
+    template <typename TensorL0C>
+    __aicore__ inline void PublishCvTiles(TensorL0C &tensorL0C, uint32_t rows)
+    {
+        using TileCopyToUb = Catlass::Gemm::Tile::PackedTileCopyTlaToUB<
+            ArchTag, DT, LayoutTagK, DT, LayoutTagState, DT, LayoutTagDvState>;
+        const auto layout = tla::MakeLayout<DT, LayoutTagDvState>(vecRow_, DhuArch92::VALUE_DIM);
+        uint32_t slot = 0;
+        for (uint32_t row = 0; row < rows; row += vecRow_) {
+            const auto validRows = static_cast<uint32_t>(Min(rows - row, vecRow_));
+            const auto shape = tla::MakeShape(validRows, DhuArch92::VALUE_DIM);
+            auto tensorCv = tla::MakeTensor(matrixCvBuf_[slot], layout, Catlass::Arch::PositionUB{});
+            auto dst = tla::GetTile(tensorCv, tla::MakeCoord(0, 0), shape);
+            auto src = tla::GetTile(tensorL0C, tla::MakeCoord(row, 0), shape);
+            typename TileCopyToUb::template CopyL0CToDst<decltype(dst)> copy;
+            AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(slot);
+            copy(dst, src, uint8_t{0}, uint8_t{0b11});
+            AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(slot);
+            slot = DhuNextSlot(slot);
+        }
+    }
+
+    template <typename LayoutTagL0A, typename LayoutTagL0B, DhuReadyFlag Notify = DhuReadyFlag::None,
+              typename CopyL1ToL0A, typename CopyL1ToL0B, typename TileMmad, typename CopyL0CToGm,
+              typename TensorL1A, typename TensorL1B, typename TensorC>
+    __aicore__ inline void RunResidentMmad(CopyL1ToL0A &copyL1ToL0A, CopyL1ToL0B &copyL1ToL0B,
+                                           TileMmad &tileMmad, CopyL0CToGm &copyL0CToGm,
+                                           TensorL1A &tensorL1A, TensorL1B &tensorL1B, TensorC &tensorBlockC,
+                                           AscendC::LocalTensor<DT> (&l0A)[L0_BUFFER_COUNT],
+                                           AscendC::LocalTensor<DT> (&l0B)[L0_BUFFER_COUNT],
+                                           AscendC::LocalTensor<ElementAccumulator> (&l0C)[L0C_BUFFER_COUNT],
+                                           bool waitL1AReady, bool releaseL1AAfterUse, int32_t l1AEvent,
+                                           bool waitL1BReady, bool releaseL1BAfterUse, int32_t l1BEvent,
+                                           uint32_t m, uint32_t n, uint32_t k)
+    {
+        uint32_t mActual = m;
+        if (mActual == 1) {
+            mActual = 16;
+        }
+
+        const uint32_t l0CSlot = curL0C_;
+        const int32_t l0CEvent = L0CEvent(l0CSlot);
+        auto layoutL0C = tla::MakeLayoutL0C(mActual, n);
+        auto tensorL0C = tla::MakeTensor(l0C[l0CSlot], layoutL0C, Catlass::Arch::PositionL0C{});
+        auto tensorTileL0C = tla::GetTile(tensorL0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, n));
+
+        for (uint32_t kOffset = 0; kOffset < k; kOffset += L0_K_TILE) {
+            const uint32_t curK = kOffset + L0_K_TILE > k ? k - kOffset : L0_K_TILE;
+            const bool firstK = kOffset == 0;
+            const bool lastK = kOffset + curK >= k;
+            const uint32_t l0Slot = curL0_;
+            const int32_t l0AEvent = L0AEvent(l0Slot);
+            const int32_t l0BEvent = L0BEvent(l0Slot);
+            const int32_t l0ReadyEvent = L0ReadyEvent(l0Slot);
+
+            auto layoutL0A = tla::MakeLayout<DT, LayoutTagL0A>(mActual, curK);
+            auto tensorL0A = tla::MakeTensor(l0A[l0Slot], layoutL0A, Catlass::Arch::PositionL0A{});
+            auto tensorTileL1A = tla::GetTile(tensorL1A, tla::MakeCoord(0, kOffset),
+                                              tla::MakeShape(mActual, curK));
+            if (waitL1AReady) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1AEvent);
+                waitL1AReady = false;
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+            copyL1ToL0A(tensorL0A, tensorTileL1A);
+            if (lastK && releaseL1AAfterUse) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEvent);
+            }
+
+            auto layoutL0B = tla::MakeLayout<DT, LayoutTagL0B>(curK, n);
+            auto tensorL0B = tla::MakeTensor(l0B[l0Slot], layoutL0B, Catlass::Arch::PositionL0B{});
+            auto tensorTileL1B = tla::GetTile(tensorL1B, tla::MakeCoord(kOffset, 0),
+                                              tla::MakeShape(curK, n));
+            if (waitL1BReady) {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BEvent);
+                waitL1BReady = false;
+            }
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+            copyL1ToL0B(tensorL0B, tensorTileL1B);
+            if (lastK && releaseL1BAfterUse) {
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEvent);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+            curL0_ ^= 1U;
+
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0ReadyEvent);
+            if (firstK) {
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
+            }
+            const uint8_t mmadUnitFlag = lastK ? 0b11 : 0b10;
+            tileMmad(tensorTileL0C, tensorL0A, tensorL0B, firstK, mmadUnitFlag);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0AEvent);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BEvent);
+            if (lastK) {
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+            }
+        }
+
+        SwitchL0C();
+        if constexpr (Notify != DhuReadyFlag::None && std::is_same<DT, bfloat16_t>::value) {
+            // Unblock the consumer before the producer waits for the first free CV slot.
+            DhuSetReady<Notify, PIPE_FIX>();
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+            PublishCvTiles(tensorL0C, m);
+        } else {
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(l0CEvent);
+            copyL0CToGm(tensorBlockC, tensorL0C, 0b11);
+            if constexpr (Notify != DhuReadyFlag::None) {
+                DhuSetReady<Notify, PIPE_FIX>();
+            }
+        }
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CEvent);
+    }
+
+    AscendC::LocalTensor<DT> matrixCvBuf_[CV_BUFFER_COUNT];
+    GM_ADDR k_ = nullptr;
+    GM_ADDR w_ = nullptr;
+    GM_ADDR dO_ = nullptr;
+    GM_ADDR dh_ = nullptr;
+    GM_ADDR dv2_ = nullptr;
+    GM_ADDR workspace_ = nullptr;
+    GM_ADDR cuSeqlens_ = nullptr;
+    GM_ADDR chunkIndices_ = nullptr;
+    const ChunkGatedDeltaRuleBwdDhuTilingData *tiling_ = nullptr;
+    int64_t HK_ = 0;
+    int64_t HV_ = 0;
+    int64_t T_ = 0;
+    int64_t K_ = 0;
+    int64_t V_ = 0;
+    int64_t HRatio_ = 0;
+    bool hasGk_ = false;
+    int64_t chunkSize_ = 0;
+    uint32_t vecRow_ = 8;
+    int64_t totalChunkNum_ = 0;
+    int64_t headsPerTask_ = 0;
+    int64_t headWindowNum_ = 0;
+    int64_t taskNum_ = 0;
+    int64_t workspaceElemsPerSubBlock_ = 0;
+    int64_t dvStateWorkspaceOffset_ = 0;
+    int64_t termQWorkspaceOffset_ = 0;
+    int64_t termWWorkspaceOffset_ = 0;
+    uint32_t curL1B_ = 0;
+    uint32_t curL0_ = 0;
+    uint32_t curL0C_ = 0;
+    uint32_t nextKResidentSlot_ = 0;
+    bool cachedKResidentValid_ = false;
+    int64_t cachedKResidentBase_ = 0;
+    uint32_t cachedKResidentSlot_ = 0;
+};
+
+} // namespace GDN
+
+#endif // CHUNK_GATED_DELTA_RULE_BWD_DHU_ARCH92_CUBE_H

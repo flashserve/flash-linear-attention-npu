@@ -17,7 +17,10 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/chunk_gated_delta_rule_bwd_dhu_cube.h"
+#include "arch92/chunk_gated_delta_rule_bwd_dhu_vector.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_cube.h"
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_vector.h"
@@ -86,12 +89,23 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
 
     REGISTER_TILING_DEFAULT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData, tilingData, tiling);
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
 
     using QType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_Q>::type;
     using GType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_G>::type;
     GM_ADDR gate = (USE_GK == 0) ? g : gk;
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    if constexpr (V == GDN::DhuArch92::VALUE_DIM) {
+        GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK>(
+            q, k, w, d_o, dv, gate, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+    }
+#else
     GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK>(
         q, k, w, d_o, dv, gate, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+#endif
 }
 #endif

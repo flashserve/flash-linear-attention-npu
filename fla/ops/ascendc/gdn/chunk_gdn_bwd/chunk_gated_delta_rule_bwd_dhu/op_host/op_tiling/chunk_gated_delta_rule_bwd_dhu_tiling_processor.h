@@ -90,6 +90,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     uint64_t ubSize;
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
+    bool isArch92 = false;
 };
 
 class ChunkGatedDeltaRuleBwdDhuTilingProcessor {
@@ -222,33 +223,28 @@ private:
         return align == 0 ? bytes : bytes / align * align;
     }
 
-    uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize) const
+    uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize, uint64_t slots) const
     {
-        // 不含 state 缓冲（tile 态/驻留态由调用方 GetVecRow 按路径叠加
-        // StateTileBytes / ResidentStateBytes）；output 行数下限 16 为
-        // main 侧 cd357a66 融合接口引入的输出 buffer 约束
+        // The output slots also hold the 16-row state transpose tiles.
         const uint64_t outputRows = std::max<uint64_t>(row, 16UL);
-        uint64_t bytes = 2 * Align32(row * maxDim * qSize) +
-                         2 * Align32(outputRows * maxDim * qSize) +
+        uint64_t bytes = slots * Align32(row * maxDim * qSize) +
+                         slots * Align32(outputRows * maxDim * qSize) +
                          2 * Align32(row * maxDim * DTYPE_SIZE_FLOAT);
         if (ctx_.qDataType == ge::DT_BF16) {
-            bytes += 2 * Align32(row * static_cast<uint64_t>(tiling_.V) * qSize);
+            bytes += slots * Align32(row * static_cast<uint64_t>(tiling_.V) * qSize);
         }
         return bytes;
     }
 
-    uint64_t StateTileBytes(uint64_t row) const
+    uint64_t StateTileBytes(uint64_t row, uint64_t slots) const
     {
-        // GM 往返路径：state ping/pong 按行 tile 分配
-        return 2 * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
+        return slots * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
     }
 
-    uint64_t ResidentStateBytes() const
+    uint64_t ResidentStateBytes(uint64_t slots) const
     {
-        // 驻留路径：state ping/pong 按全量 [K,V] fp32 分配（每个 subblock 最多
-        // 2 个 owned head，ping/pong 复用为 owned head 槽位）
-        return 2 * Align32(static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) *
-                           DTYPE_SIZE_FLOAT);
+        return slots * Align32(static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) *
+                               DTYPE_SIZE_FLOAT);
     }
 
     int64_t GetVecRow(uint64_t qSize, bool &stateResident) const
@@ -258,28 +254,26 @@ private:
         const uint64_t gateSize = DtypeSize(ctx_.gDataType);
         const uint64_t gateFactorResidentCount = ctx_.hasG ? 3UL : 1UL;
         const uint64_t maxRows = static_cast<uint64_t>(tiling_.K);
-        const uint64_t fixedBytes =
-            2 * Align32(gateElems * gateSize) +
-            gateFactorResidentCount *
-                Align32(static_cast<uint64_t>(HEADS_PER_TASK) * gateElems * DTYPE_SIZE_FLOAT);
+        const uint64_t slots = ctx_.isArch92 ? GDN::DhuArch92::SLOT_COUNT : 2U;
+        const uint64_t gateHeads = ctx_.isArch92 ? GDN::DhuArch92::HEADS_PER_TASK : HEADS_PER_TASK;
+        const uint64_t fixedBytes = slots * Align32(gateElems * gateSize) +
+            gateFactorResidentCount * Align32(gateHeads * gateElems * DTYPE_SIZE_FLOAT);
         stateResident = false;
-        // 驻留路径仅在 arch35（A5）kernel 中实现，其他 arch 保持 GM 往返原行为；
-        // kernel FillFloatRegbase 的元素计数为 uint16，须 K*V <= 65535；
-        // stateVFirst 时 kernel 驻留 dh0 分支无转置输出，须走 GM 往返
-        const bool allowResident = ctx_.isArch35 && !ctx_.stateVFirst &&
-            static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) <= 65535UL;
+        // FillFloatRegbase accepts a uint16 element count. V-first uses the GM state path.
+        const bool allowResident = (ctx_.isArch35 || ctx_.isArch92) && !ctx_.stateVFirst &&
+            maxRows * static_cast<uint64_t>(tiling_.V) <= 65535UL;
         if (ctx_.ubSize > UB_GUARD_BYTES) {
             if (allowResident) {
-                const uint64_t residentBytes = ResidentStateBytes();
+                const uint64_t residentBytes = ResidentStateBytes(slots);
                 uint64_t row = maxRows;
                 while (row > 8) {
-                    if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + residentBytes +
+                    if (fixedBytes + VectorTileBytes(row, maxDim, qSize, slots) + residentBytes +
                             UB_GUARD_BYTES <= ctx_.ubSize) {
                         break;
                     }
                     row /= 2;
                 }
-                if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + residentBytes +
+                if (fixedBytes + VectorTileBytes(row, maxDim, qSize, slots) + residentBytes +
                         UB_GUARD_BYTES <= ctx_.ubSize) {
                     stateResident = true;
                     return static_cast<int64_t>(row);
@@ -287,7 +281,7 @@ private:
             }
             uint64_t row = maxRows;
             while (row > 8) {
-                if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + StateTileBytes(row) +
+                if (fixedBytes + VectorTileBytes(row, maxDim, qSize, slots) + StateTileBytes(row, slots) +
                         UB_GUARD_BYTES <= ctx_.ubSize) {
                     break;
                 }
@@ -436,6 +430,10 @@ private:
         if (tiling_.K != K_SIZE_128) {
             return ge::GRAPH_FAILED;
         }
+        if (ctx_.isArch92 && tiling_.V != GDN::DhuArch92::VALUE_DIM) {
+            OP_LOGE(ctx_.nodeName, "Ascend960DT requires value dimension 128, got %ld.", tiling_.V);
+            return ge::GRAPH_FAILED;
+        }
         if (tiling_.V != V_SIZE_128 && tiling_.V != V_SIZE_256) {
             return ge::GRAPH_FAILED;
         }
@@ -486,13 +484,14 @@ private:
     ge::graphStatus WorkspaceTiling()
     {
         const uint32_t maxBlockDim = ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum;
-        const int64_t maxHeads = std::min<int64_t>(HEADS_PER_TASK, tiling_.HV);
+        const int64_t maxHeadsPerTask = ctx_.isArch92 ? GDN::DhuArch92::HEADS_PER_TASK : HEADS_PER_TASK;
+        const int64_t maxHeads = std::min(maxHeadsPerTask, tiling_.HV);
         int64_t bestHeads = maxHeads;
         int64_t bestCost = std::numeric_limits<int64_t>::max();
         for (int64_t heads = 1; heads <= maxHeads; ++heads) {
             const int64_t taskNum = tiling_.seqNum * CeilDiv(tiling_.HV, heads);
             const int64_t rounds = CeilDiv(taskNum, std::min<int64_t>(maxBlockDim, taskNum));
-            const int64_t aivChains = (heads + 1) / 2;
+            const int64_t aivChains = ctx_.isArch92 ? heads : (heads + 1) / 2;
             const int64_t cost = rounds * (std::max(20 * heads, 32 * aivChains) + 5);
             if (cost <= bestCost) {
                 bestCost = cost;
@@ -509,7 +508,7 @@ private:
         tiling_.dh0ClearCoreNum = 0;
         tiling_.dh0ClearElemsPerCore = 0;
         tiling_.dh0ClearTailElems = 0;
-        if (ctx_.hasDh0) {
+        if (ctx_.hasDh0 && !ctx_.isArch92) {
             const uint64_t dh0Elems =
                 static_cast<uint64_t>(tiling_.seqNum) * static_cast<uint64_t>(tiling_.HV) *
                 static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V);

@@ -125,6 +125,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         ubSize,
         static_cast<uint32_t>(ascendcPlatform.GetCoreNumAic()),
         static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize()),
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201,
     };
 
     ChunkGatedDeltaRuleBwdDhuTilingProcessor processor(ctx, *tiling);
