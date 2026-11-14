@@ -98,11 +98,12 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     tiling->reserved = mixed ? (1 | (qkTm ? 2 : 0) | (modelTm ? 4 : 0)) : 0;
     context->SetTilingKey(processor.GetTilingKey());
     uint32_t aicNum = ascendcPlatform.GetCoreNumAic();
-    uint32_t aivNum = ascendcPlatform.GetCoreNumAiv();
-    const uint32_t coreNum = ascendcPlatform.GetCoreNum();
+    uint32_t aivNum = isAscend950 ? ascendcPlatform.GetCoreNumAiv() : 0;
+    constexpr uint32_t aivPerBlock = 2U;
     // Mix 1:2 platform info sometimes reports a single AIC/AIV pair instead of
     // the chip total. Fall back to AIV/2, then GetCoreNum, then A5's 28 AIC.
-    if (aicNum <= 2U) {
+    if (isAscend950 && aicNum <= 2U) {
+        const uint32_t coreNum = ascendcPlatform.GetCoreNum();
         if (aivNum >= 8U) {
             aicNum = aivNum / 2U;
         } else if (coreNum >= 8U) {
@@ -111,21 +112,28 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             aicNum = 28U;
         }
     }
-    // This A2/910B SKU exposes 20 complete 1:2 Mix groups. Platform metadata can
-    // report more logical cores; scheduling group 21 leaves an unpaired waiter.
-    if (!isAscend950) {
-        aicNum = std::min(aicNum, 20U);
-    }
-    const uint32_t aivPerBlock = 2U;
-    if (aivNum < aicNum * aivPerBlock) {
+    if (isAscend950 && aivNum < aicNum * aivPerBlock) {
         aivNum = aicNum * aivPerBlock;
     }
-    const int64_t workUnits = std::max<int64_t>(1, tiling->chunkNum * std::max<int64_t>(tiling->Hv, 1));
+    if (!isAscend950 && aicNum == 0) {
+        // Some ACLNN tiling contexts expose incomplete Mix resource metadata.
+        auto *platform = platform_ascendc::PlatformAscendCManager::GetInstance();
+        if (platform != nullptr) {
+            aicNum = platform->GetCoreNumAic();
+        }
+    }
+    if (aicNum == 0) {
+        OP_LOGE(context->GetNodeName(), "Platform reports no available AIC for recompute.");
+        return ge::GRAPH_FAILED;
+    }
+    const int64_t headTasks = isAscend950 ? tiling->Hv :
+        (tiling->Hv + KDA::RECOMPUTE_HEADS_PER_GROUP - 1) / KDA::RECOMPUTE_HEADS_PER_GROUP;
+    const int64_t workUnits = tiling->chunkNum * headTasks;
     uint32_t usedAic = static_cast<uint32_t>(
         std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
     tiling->usedAic = static_cast<int64_t>(usedAic);
     uint32_t blockDim = usedAic;
-    if (aivPerBlock == 2U) {
+    if (isAscend950) {
         blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * aivPerBlock, aicNum, aivNum);
     }
     if (blockDim < usedAic) {
@@ -134,7 +142,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
-    currentWorkspace[0] = processor.GetWorkspaceSize();
+    currentWorkspace[0] = processor.GetWorkspaceSize(usedAic);
     context->SetScheduleMode(1);
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);

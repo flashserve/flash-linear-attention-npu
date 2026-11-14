@@ -9,6 +9,9 @@
 
 namespace KDA {
 
+constexpr uint32_t RECOMPUTE_HEADS_PER_GROUP = 4;
+constexpr uint32_t RECOMPUTE_PAGE_COUNT = 2;
+
 // All int64_t so host and CCE layouts match (no 4-byte float padding).
 // sizeof must stay a multiple of 16 to equal kernel opParaSize.
 struct ChunkKdaBwdRecomputeTilingData {
