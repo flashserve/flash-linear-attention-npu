@@ -181,7 +181,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     const int64_t *padSlotIdPtr = attrs->GetAttrPointer<int64_t>(ATTR_PAD_SLOT_ID_INDEX);
     attrInfo.padSlotId = (padSlotIdPtr == nullptr) ? -1 : *padSlotIdPtr;
     const int64_t *nullBlockIdPtr = attrs->GetAttrPointer<int64_t>(ATTR_NULL_BLOCK_ID_INDEX);
-    attrInfo.nullBlockId = (nullBlockIdPtr == nullptr) ? -1 : *nullBlockIdPtr;
+    attrInfo.nullBlockId = (nullBlockIdPtr == nullptr) ? 0 : *nullBlockIdPtr;
 
     const int64_t *runModePtr = attrs->GetAttrPointer<int64_t>(ATTR_RUN_MODE_INDEX);
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;

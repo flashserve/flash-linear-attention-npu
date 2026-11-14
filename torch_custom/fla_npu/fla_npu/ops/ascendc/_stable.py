@@ -1054,6 +1054,8 @@ def npu_chunk_gdn_bwd_intra(q, k, v, g, beta, A, d_o, scale, chunk_size, *,
 
 _PAD_SLOT_ID = -1
 _NULL_BLOCK_ID = 0
+# Sentinel passed to the operator to disable null-block filtering.
+_DISABLED_NULL_BLOCK_ID = -1
 _CONV1D_ACTIVATION_CODES = {"none": 0, "silu": 1, "swish": 2}
 
 
@@ -1126,7 +1128,7 @@ def npu_causal_conv1d_fn(x, weight, bias, conv_states=None,
             has_initial_state_cpu),
         code,
         _PAD_SLOT_ID if pad_slot_id is None else pad_slot_id,
-        _NULL_BLOCK_ID if null_block_id is None else null_block_id,
+        _DISABLED_NULL_BLOCK_ID if null_block_id is None else null_block_id,
         head_num, stream,
     )
     if conv_states is not None:
@@ -1168,7 +1170,7 @@ def npu_causal_conv1d_update(x, conv_state, weight, bias=None, activation=None,
         x, conv_state, weight, bias, code,
         conv_state_indices, num_accepted_tokens, query_start_loc,
         max_query_len,
-        _NULL_BLOCK_ID if null_block_id is None else null_block_id,
+        _DISABLED_NULL_BLOCK_ID if null_block_id is None else null_block_id,
         None if conv_state_indices_cpu is None else _host_ints(
             conv_state_indices_cpu),
         None if num_accepted_tokens_cpu is None else _host_ints(

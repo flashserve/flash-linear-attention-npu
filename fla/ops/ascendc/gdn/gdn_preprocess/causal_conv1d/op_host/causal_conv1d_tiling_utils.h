@@ -58,7 +58,7 @@ struct CausalConv1dAttrInfo {
     int64_t headNum = 0;
     int64_t maxQueryLen = -1;
     int64_t padSlotId = -1;
-    int64_t nullBlockId = -1;
+    int64_t nullBlockId = 0;
 };
 
 struct ResolvedMetadataInputs {
