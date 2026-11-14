@@ -123,6 +123,14 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     if (isAscend950 && aivNum < aicNum * aivPerBlock) {
         aivNum = aicNum * aivPerBlock;
     }
+    if (!isAscend950 && (aicNum == 0 || aivNum < aivPerBlock)) {
+        // Some ACLNN tiling contexts expose incomplete Mix resource metadata.
+        auto *platform = platform_ascendc::PlatformAscendCManager::GetInstance();
+        if (platform != nullptr) {
+            aicNum = platform->GetCoreNumAic();
+            aivNum = platform->GetCoreNumAiv();
+        }
+    }
     const uint32_t mixGroups = std::min(aicNum, aivNum / aivPerBlock);
     if (mixGroups == 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Mix core count", "invalid",
