@@ -150,7 +150,11 @@ public:
                         wShape.GetDim(CDHP_DIM_1) != static_cast<int64_t>(Hv_) ||
                         wShape.GetDim(CDHP_DIM_2) != static_cast<int64_t>(T_) ||
                         wShape.GetDim(CDHP_DIM_3) != static_cast<int64_t>(K_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "w must be [B,Hv,T,K]; expect [%lu,%lu,%lu,%lu], got [%ld,%ld,%ld,%ld].");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "w",
+            "[" + std::to_string(wShape.GetDim(0)) + "," + std::to_string(wShape.GetDim(1)) + "," +
+                std::to_string(wShape.GetDim(2)) + "," + std::to_string(wShape.GetDim(3)) + "]",
+            "w must be [B,Hv,T,K]; expect [" + std::to_string(B_) + "," + std::to_string(Hv_) + "," +
+                std::to_string(T_) + "," + std::to_string(K_) + "]");
         return ge::GRAPH_FAILED;
     }
         if (doShape.GetDim(CDHP_DIM_0) != static_cast<int64_t>(B_) ||
@@ -166,7 +170,10 @@ public:
         return ge::GRAPH_FAILED;
     }
         if (B_ == 0 || T_ == 0 || Hk_ == 0 || Hv_ == 0 || K_ == 0 || V_ == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "empty tensor is not supported; got B=%lu T=%lu Hk=%lu Hv=%lu K=%lu V=%lu.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "B,T,Hk,Hv,K,V",
+            std::to_string(B_) + "," + std::to_string(T_) + "," + std::to_string(Hk_) + "," +
+                std::to_string(Hv_) + "," + std::to_string(K_) + "," + std::to_string(V_),
+            "empty tensor is not supported");
         return ge::GRAPH_FAILED;
     }
         if ((Hv_ % Hk_) != 0) {
@@ -214,7 +221,10 @@ public:
         return ge::GRAPH_FAILED;
     }
             if (ctx_.gkDtype != ctx_.qDtype) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "gk dtype must be the same as q/k dtype; got q/k=%d, gk=%d.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(ctx_.nodeName, "q/k,gk",
+            std::to_string(static_cast<int32_t>(ctx_.qDtype)) + "," +
+                std::to_string(static_cast<int32_t>(ctx_.gkDtype)),
+            "gk dtype must be the same as q/k dtype");
         return ge::GRAPH_FAILED;
     }
             gateMode_ = PRE_PROCESS_BWD_KERNEL_MERGED_GATE_MODE_PER_K;

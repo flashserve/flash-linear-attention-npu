@@ -33,7 +33,7 @@ inline ge::graphStatus GetPlatformInfo(gert::TilingContext *context, uint64_t &u
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
     coreNum = platformInfoPtr->GetCoreNum();
     if (coreNum == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "coreNum", std::to_string(coreNum), "coreNum is 0");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: platform reported 0 AIC cores.", __func__);
         return ge::GRAPH_FAILED;
     }
     platformInfoPtr->GetLocalMemSize(fe::LocalMemType::UB, ubSize);
