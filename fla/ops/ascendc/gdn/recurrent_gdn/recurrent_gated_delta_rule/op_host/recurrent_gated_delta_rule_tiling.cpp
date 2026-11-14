@@ -60,7 +60,7 @@ void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
     compileInfo_.aivNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo_.isA5 = ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950 ||
-                        ascendcPlatform.GetCurNpuArch() == platform_ascendc::NpuArch::DAV_9201;
+                        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
 
     if (compileInfo_.aivNum <= 0) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "platform.aivNum", "actual="+std::to_string(compileInfo_.aivNum)+"; expected >0");
