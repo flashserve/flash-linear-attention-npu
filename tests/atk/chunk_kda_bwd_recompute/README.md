@@ -1,9 +1,12 @@
 # ChunkKdaBwdRecompute
 
 融合 kernel：`kda_gate_chunk_cumsum`（safe-gate + chunk cumsum）+ `recompute_w_u_fwd`。
-Mix **1 AIC : 2 AIV**，仅 **ascend950 / A5**。
+已有 A5 路径使用 Mix **1 AIC : 2 AIV**；新增 A6 源码路径使用 **1 AIC : 1 AIV**。
+A6 已完成目标 SDK 编译、安装和产物一致性检查；修正后的最小 camodel 用例五个输出比较通过，
+打印 PASS 后进程段错误退出（139），尚未完成正式验收。
+下面原有 A5 记录不代表 A6 验证结果。
 
-公开入口：`fla_npu.ops.ascendc.chunk_kda_bwd_recompute`。
+公开入口：`fla_npu.ops.ascendc.npu_chunk_kda_bwd_recompute`。
 输出顺序：`(gk, w, u, qg, kg)`。`gk` 为 FP32，其余 BF16。
 
 远程分支：`lyq/chunk_kda_bwd_recompute`（不要用旧的 `lyq/work`，那里的 kernel 是未优化版本）。
@@ -111,7 +114,7 @@ unset CANN_ENV
 ```bash
 python - <<'PY'
 import torch, torch_npu
-from fla_npu.ops.ascendc import chunk_kda_bwd_recompute
+from fla_npu.ops.ascendc import npu_chunk_kda_bwd_recompute as chunk_kda_bwd_recompute
 print("ok", torch.npu.get_device_name(0), chunk_kda_bwd_recompute)
 PY
 ```
@@ -175,7 +178,84 @@ KDA_BWD_T=16384 KDA_BWD_H=96 \
 - `q/k/v/A` 仅 `BFLOAT16`；`g/beta` 支持 `BFLOAT16/FLOAT`。
 - `K=V=128`，`chunk_size=64`；`HV % HK == 0`。
 - `use_gate_in_kernel=true` 时必须提供 `A_log`；safe-gate 下 `lower_bound` 默认 `-5.0`。
-- kernel 仅注册 `ascend950`。当前 ATK 用例为定长 dense，不含 `cu_seqlens/chunk_indices`。
+- kernel 注册 A2/A3/A5/A6，A6 走 arch92。原有 JSON 为定长 dense；A6 候选包包含变长元数据。
+
+## A6 开发期候选用例
+
+首次 camodel 冒烟使用 `B=HK=HV=1、T=64、seed=20260817`，回传结果为
+`w max_diff=0.404297`、`qg max_diff=0.167969`、`kg max_diff=2.3125`，
+gk/u 通过原脚本判据，全部输出两次调用的 `launch_diff=0`。
+arch92 的 half Exp 结果转回 FP32 时误用 FP32 mask，会屏蔽高 64 通道；
+已改用 half 源类型 mask，并按 Prepare 为零核数查询增加回退。相同最小用例的后续 camodel
+复测五个输出均通过：gk/w/u/qg/kg 的 max_diff 分别为
+`0.000076/0.001953/0.125000/0.000977/0.000977`，launch_diff 均为 0，阈值未改变。
+打印 PASS 后发生段错误（退出码 139）；仅记录输出比较通过，不代表正常进程退出或正式验收通过。
+当前候选参考 Merge 的 CompileInfo 传递：A6 TilingParse 默认 64/64，并用实际非零查询值覆盖；
+运行期查询为零时读取 CompileInfo，对应字段不可用时用 64，再按两侧较小值组成 1:1 核对。
+默认值依据目标 Ascend960DT_968B7 的平台配置；它不代表接口原始值已经恢复。
+本轮已替换固定 SoC 补查，尚待远端重编译和复测。
+
+复测相同最小用例：
+
+```bash
+python tests/atk/chunk_kda_bwd_recompute/check_npu_accuracy.py --batch 1 --hk 1 --hv 1 --tokens 64 --seed 20260817
+```
+
+Host Tiling 的临时核数打印和环境开关已删除，核数查询、CompileInfo 回退与配对规则保留。
+`check_npu_accuracy.py` 保留设备、shape、五个输出的误差、两次调用差异和 PASS/FAIL，
+移除调试用的 `--dump-dir` 数据导出。比较时先将输出回读 CPU 再转 FP32，避免额外的 NPU Cast。
+此脚本沿用原有绝对误差与重复执行判据，不替代 ATK 混合容差验收。
+
+### 独立单次调用冒烟
+
+`scripts/recompute_a6_smoke.py` 按 Prepare 冒烟日志的 `[CPU] / [NPU] / [CMP]` 格式运行，
+默认 `B=HK=HV=1、T=64、seed=20260817`。脚本自带输入构造和 CPU 公式，先一次性搬入八个输入，
+仅调用一次公开 Recompute 接口并同步，随后在 CPU 上比较五个输出的 max_abs、RMSE、相对 L2。
+输入值域及每个输出的绝对误差阈值沿用 `check_npu_accuracy.py`，不检查重复调用确定性。
+根据用户提供的 Prepare 原脚本，对齐运行设置：导入 torch/torch_npu 前将
+`TBE_PARALLEL_COMPILE_ENABLE/PARALLEL_COMPILE` 设为 0，CPU 单线程，
+初始化 NPU 时设置 `allow_internal_format=False`、`jit_compile=False`，再设 device 0 并用 `.npu()` 搬输入。
+Prepare 的 `tests/atk/.../scripts/cpu_golden.py` 是纯 CPU 标杆模块，引用其目录不表示启动 ATK；
+本脚本的 CPU 公式内置于文件中。
+
+```bash
+python -u tests/atk/chunk_kda_bwd_recompute/scripts/recompute_a6_smoke.py --output <output.pt>
+```
+
+可用 `--batch/--hk/--hv/--tokens/--seed` 指定相同条件。输出文件先保存 `case/inputs/reference`，
+完成 NPU 回读后追加 `npu`，便于 Host 失败时仍保留原输入和参考结果。
+脚本打印实际 Python、包位置、环境路径和已加载的相关库。
+需在已配置的运行环境中使用，且当前安装的 run 包应包含 Recompute。
+精度比较失败返回 1，Host/运行时异常继续抛出；该脚本不替代 ATK 或正常进程退出验证。
+
+`scripts/run_a6.py` 复用现有 JSON 的值域、`cv_fused_double_benchmark` 双标杆规则和 executor，
+生成 200 条 A6 候选用例，由 ATK 发起实际调用。保留下面 28 类场景并按顺序循环，
+每类执行 7 或 8 个不同 seed，case id 为 0–199，seed 为 20260817–20261016；
+200 条表示不同的 `(场景, seed)` 组合。CPU executor 保留同精度参考和 FP64 高精度标杆路径，
+比较阈值不变。脚本继承调用者的 Python/CANN/OPP 环境，不修改 PYTHONPATH。
+
+```bash
+python tests/atk/chunk_kda_bwd_recompute/scripts/run_a6.py --emit-only
+python tests/atk/chunk_kda_bwd_recompute/scripts/run_a6.py --device 0
+python tests/atk/chunk_kda_bwd_recompute/scripts/run_a6.py --device 0 --task determinism
+```
+
+| 分支 | 候选用例 |
+| --- | --- |
+| g/beta dtype key | BF16/BF16、BF16/FP32、FP32/BF16、FP32/FP32；各覆盖 T=64/65 |
+| 尾块 | T=1/15/16/17/63/127/129 |
+| head 覆盖 | HV=1/2/3/4/5，CG=1 |
+| batch/GQA | B=2、HK=2、HV=4、T=65 |
+| slot 回绕 | HV=3、T=8193；需设备执行记录确认每核 ordinal 和实际 blockDim |
+| varlen | `[1,0,64,65]` 与 `[63,64]`，覆盖空 sequence 和不同 tail |
+| 运行期模式 | 无 bias、自然指数、关闭 gate 的 exp2/exp、lower_bound=-1 |
+
+Python executor 修正为当前公开 `npu_` 入口。CPU 标杆的定长数学保持原公式；新增变长用例
+按各 sequence 切 chunk，关闭 gate 时与公开返回约定一致地省略 gk。
+
+候选包已在本地检查 JSON、CPU shape、有限值和序列边界；未执行 ATK、值域新增场景校准、
+确定性或 mssanitizer。四种 dtype key 的实际设备选择、1:1 bin json、同核 slot 回绕记录、
+pipeline 重叠和 A2/A3/A5 回归均待有环境后执行。候选用例不构成正式验收包或 PASS 结论。
 
 ## 标杆
 

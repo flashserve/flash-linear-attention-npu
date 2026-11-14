@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/tiling_templates_registry.h"
@@ -31,6 +30,7 @@ constexpr size_t KDA_RECOMPUTE_A_LOG_IDX = 6;
 constexpr size_t KDA_RECOMPUTE_DT_BIAS_IDX = 7;
 constexpr size_t KDA_RECOMPUTE_CU_SEQLENS_IDX = 8;
 constexpr size_t KDA_RECOMPUTE_CHUNK_INDICES_IDX = 9;
+constexpr size_t KDA_RECOMPUTE_GK_OUTPUT_IDX = 4;
 constexpr size_t KDA_RECOMPUTE_CHUNK_SIZE_ATTR = 0;
 constexpr size_t KDA_RECOMPUTE_USE_GATE_ATTR = 1;
 constexpr size_t KDA_RECOMPUTE_USE_EXP2_ATTR = 2;
@@ -60,6 +60,7 @@ struct ChunkKdaBwdRecomputeTilingContext {
     uint64_t ubSize;
     size_t sysWorkspaceSize;
     bool enableCompactWorkspace;
+    bool isAscend960 = false;
 };
 
 class ChunkKdaBwdRecomputeTilingProcessor {
@@ -180,6 +181,12 @@ private:
 
     ge::graphStatus SetVecRow()
     {
+        if (ctx_.isAscend960) {
+            using namespace KdaBwdRecomputeArch92;
+            tiling_.vecRow = kRows;
+            userWorkspaceSize_ = 0;
+            return ge::GRAPH_SUCCESS;
+        }
         constexpr uint64_t sizeofQk = 2;
         uint64_t sizeofGate = ctx_.gateDtype == ge::DT_FLOAT ? 4 : 2;
         uint64_t sizeofBeta = ctx_.betaDtype == ge::DT_FLOAT ? 4 : 2;
