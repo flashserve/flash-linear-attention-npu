@@ -106,7 +106,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     tiling->reserved = mixed ? (1 | (qkTm ? 2 : 0) | (modelTm ? 4 : 0)) : 0;
     context->SetTilingKey(processor.GetTilingKey());
     uint32_t aicNum = ascendcPlatform.GetCoreNumAic();
-    uint32_t aivNum = ascendcPlatform.GetCoreNumAiv();
+    uint32_t aivNum = isAscend950 ? ascendcPlatform.GetCoreNumAiv() : 0;
     constexpr uint32_t aivPerBlock = 2U;
     // Mix 1:2 platform info sometimes reports a single AIC/AIV pair instead of
     // the chip total. Fall back to AIV/2, then GetCoreNum, then A5's 28 AIC.
@@ -123,25 +123,23 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     if (isAscend950 && aivNum < aicNum * aivPerBlock) {
         aivNum = aicNum * aivPerBlock;
     }
-    if (!isAscend950 && (aicNum == 0 || aivNum < aivPerBlock)) {
+    if (!isAscend950 && aicNum == 0) {
         // Some ACLNN tiling contexts expose incomplete Mix resource metadata.
         auto *platform = platform_ascendc::PlatformAscendCManager::GetInstance();
         if (platform != nullptr) {
             aicNum = platform->GetCoreNumAic();
-            aivNum = platform->GetCoreNumAiv();
         }
     }
-    const uint32_t mixGroups = std::min(aicNum, aivNum / aivPerBlock);
-    if (mixGroups == 0) {
+    if (aicNum == 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Mix core count", "invalid",
-            "Recompute needs one AIC and two AIVs; platform reports no complete Mix group.");
+            "Platform reports no available AIC for recompute.");
         return ge::GRAPH_FAILED;
     }
     const int64_t headTasks = isAscend950 ? tiling->Hv :
         (tiling->Hv + KDA::RECOMPUTE_HEADS_PER_GROUP - 1) / KDA::RECOMPUTE_HEADS_PER_GROUP;
     const int64_t workUnits = tiling->chunkNum * headTasks;
     uint32_t usedAic = static_cast<uint32_t>(
-        std::max<int64_t>(1, std::min(static_cast<int64_t>(mixGroups), workUnits)));
+        std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
     tiling->usedAic = static_cast<int64_t>(usedAic);
     uint32_t blockDim = usedAic;
     if (isAscend950) {
