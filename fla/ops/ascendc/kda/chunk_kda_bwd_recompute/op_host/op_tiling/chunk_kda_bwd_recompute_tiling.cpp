@@ -128,7 +128,9 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     if (aivNum < aicNum * aivPerBlock) {
         aivNum = aicNum * aivPerBlock;
     }
-    const int64_t workUnits = std::max<int64_t>(1, tiling->chunkNum * std::max<int64_t>(tiling->Hv, 1));
+    const int64_t headTasks = isAscend950 ? tiling->Hv :
+        (tiling->Hv + KDA::RECOMPUTE_HEADS_PER_GROUP - 1) / KDA::RECOMPUTE_HEADS_PER_GROUP;
+    const int64_t workUnits = tiling->chunkNum * headTasks;
     uint32_t usedAic = static_cast<uint32_t>(
         std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
     tiling->usedAic = static_cast<int64_t>(usedAic);
@@ -142,7 +144,7 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
-    currentWorkspace[0] = processor.GetWorkspaceSize();
+    currentWorkspace[0] = processor.GetWorkspaceSize(usedAic);
     context->SetScheduleMode(1);
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
