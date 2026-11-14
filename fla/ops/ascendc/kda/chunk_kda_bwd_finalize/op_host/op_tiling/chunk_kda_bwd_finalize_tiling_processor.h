@@ -79,10 +79,10 @@ public:
         const gert::Shape akk = ctx_.akk->GetStorageShape();
         const gert::Shape h = ctx_.h->GetStorageShape();
         const gert::Shape dh = ctx_.dh->GetStorageShape();
-        const size_t tokenRank = variable ? 3 : 4;
-        const size_t scalarRank = variable ? 2 : 3;
-        const size_t stateRank = variable ? 4 : 5;
-        if (q.GetDimNum() != tokenRank || k.GetDimNum() != tokenRank ||
+        const size_t tokenRank = q.GetDimNum();
+        const size_t scalarRank = tokenRank - 1;
+        const size_t stateRank = tokenRank + 1;
+        if ((tokenRank != 3 && tokenRank != 4) || k.GetDimNum() != tokenRank ||
             v.GetDimNum() != tokenRank || gk.GetDimNum() != tokenRank ||
             akk.GetDimNum() != tokenRank || beta.GetDimNum() != scalarRank ||
             h.GetDimNum() != stateRank || dh.GetDimNum() != stateRank) {
@@ -90,15 +90,17 @@ public:
             return ge::GRAPH_FAILED;
         }
 
+        const size_t base = tokenRank == 3 ? 0 : 1;
+        tiling_.B = base == 0 ? 1 : k.GetDim(0);
+        tiling_.NQ = q.GetDim(base);
+        tiling_.NV = k.GetDim(base);
+        tiling_.T = k.GetDim(base + 1);
+        tiling_.K = k.GetDim(base + 2);
+        tiling_.V = v.GetDim(base + 2);
         if (variable) {
-            tiling_.B = 1;
-            tiling_.NQ = q.GetDim(0);
-            tiling_.NV = k.GetDim(0);
-            tiling_.T = k.GetDim(1);
-            tiling_.K = k.GetDim(2);
-            tiling_.V = v.GetDim(2);
+            if (tiling_.B != 1) return ge::GRAPH_FAILED;
             tiling_.denseChunkNum = 0;
-            tiling_.totalChunkNum = h.GetDim(0);
+            tiling_.totalChunkNum = h.GetDim(base);
             const gert::Shape cu = ctx_.cuSeqlens->GetStorageShape();
             const gert::Shape indices = ctx_.chunkIndices->GetStorageShape();
             if (cu.GetDimNum() != 1 || indices.GetDimNum() != 1 || cu.GetDim(0) < 2 ||
@@ -108,13 +110,7 @@ public:
             }
             tiling_.seqNum = cu.GetDim(0) - 1;
         } else {
-            tiling_.B = k.GetDim(0);
-            tiling_.NQ = q.GetDim(1);
-            tiling_.NV = k.GetDim(1);
-            tiling_.T = k.GetDim(2);
-            tiling_.K = k.GetDim(3);
-            tiling_.V = v.GetDim(3);
-            tiling_.denseChunkNum = h.GetDim(1);
+            tiling_.denseChunkNum = h.GetDim(base);
             tiling_.totalChunkNum = tiling_.B * tiling_.denseChunkNum;
             tiling_.seqNum = tiling_.B;
         }
@@ -124,15 +120,13 @@ public:
             OP_LOGE(ctx_.nodeName, "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
             return ge::GRAPH_FAILED;
         }
-        const bool validStates = variable
-            ? h.GetDim(1) == tiling_.NV && h.GetDim(2) == tiling_.K && h.GetDim(3) == tiling_.V &&
-              dh.GetDim(0) == tiling_.totalChunkNum && dh.GetDim(1) == tiling_.NV &&
-              dh.GetDim(2) == tiling_.K && dh.GetDim(3) == tiling_.V
-            : h.GetDim(0) == tiling_.B && h.GetDim(2) == tiling_.NV &&
-              h.GetDim(3) == tiling_.K && h.GetDim(4) == tiling_.V &&
-              tiling_.denseChunkNum == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize &&
-              dh.GetDim(0) == tiling_.B && dh.GetDim(1) == tiling_.denseChunkNum &&
-              dh.GetDim(2) == tiling_.NV && dh.GetDim(3) == tiling_.K && dh.GetDim(4) == tiling_.V;
+        const int64_t chunks = variable ? tiling_.totalChunkNum : tiling_.denseChunkNum;
+        const bool validStates = (base == 0 || (h.GetDim(0) == tiling_.B && dh.GetDim(0) == tiling_.B)) &&
+            h.GetDim(base + 1) == tiling_.NV && h.GetDim(base + 2) == tiling_.K &&
+            h.GetDim(base + 3) == tiling_.V && dh.GetDim(base) == chunks &&
+            dh.GetDim(base + 1) == tiling_.NV && dh.GetDim(base + 2) == tiling_.K &&
+            dh.GetDim(base + 3) == tiling_.V &&
+            (variable || chunks == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize);
         if (!validStates) {
             OP_LOGE(ctx_.nodeName, "expected NT-first h and dh");
             return ge::GRAPH_FAILED;
@@ -149,9 +143,8 @@ public:
         tiling_.stateVFirst = ctx_.stateVFirst ? 1U : 0U;
         tiling_.scale = static_cast<float>(ctx_.scale);
         tiling_.lowerBound = static_cast<float>(ctx_.lowerBound);
-        blockDim_ = std::min(
-            ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum,
-            static_cast<uint32_t>(tiling_.workTaskNum));
+        blockDim_ = static_cast<uint32_t>(std::min<int64_t>(
+            ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum, tiling_.workTaskNum));
         const size_t slotBytes = static_cast<size_t>(blockDim_) * 4U * 160U * 1024U;
         const size_t taskHeads = static_cast<size_t>(tiling_.totalChunkNum * tiling_.NV);
         // Give each concurrently written scalar partial a complete DMA block.

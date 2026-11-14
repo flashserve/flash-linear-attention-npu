@@ -60,7 +60,7 @@ public:
         this->Attr("scale").AttrType(REQUIRED).Float(1.0f);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("safe_gate").AttrType(REQUIRED).Bool(true);
-        this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(false);
+        this->Attr("use_gate_in_kernel").AttrType(REQUIRED).Bool(true);
         this->Attr("lower_bound").AttrType(OPTIONAL).Float(-5.0f);
         // Reserved CUDA-compatible controls. The current fused implementation
         // consumes forward-saved intermediates and keeps the exp2 path, so only

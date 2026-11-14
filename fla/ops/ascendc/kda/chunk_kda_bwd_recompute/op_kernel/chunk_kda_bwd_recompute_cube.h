@@ -70,6 +70,7 @@ public:
         uint64_t K;
         uint64_t V;
         uint64_t chunkSize;
+        uint64_t usedAic;
         int64_t isVariable;
     };
 
@@ -81,6 +82,8 @@ public:
     {
         Arch::Resource<ArchTag> resource;
         uint32_t coreIdx = AscendC::GetBlockIdx();
+        const uint32_t coreNumAic = params.usedAic > 0 ? static_cast<uint32_t>(params.usedAic)
+                                                        : AscendC::GetBlockNum();
         uint32_t bos = 0;
         uint32_t eos = 0;
         {
@@ -88,31 +91,30 @@ public:
             AscendC::GlobalTensor<ElementA> gmA;
             AscendC::GlobalTensor<ElementVb> gmVb;
             AscendC::GlobalTensor<ElementU> gmU;
-            for (uint32_t loopIdx = coreIdx; loopIdx < params.chunkNum; loopIdx += AscendC::GetBlockNum()) {
+            for (uint64_t taskIdx = coreIdx; taskIdx < params.chunkNum * params.Hv; taskIdx += coreNumAic) {
+                uint32_t loopIdx = static_cast<uint32_t>(taskIdx / params.Hv);
+                uint64_t h = taskIdx % params.Hv;
                 KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
                                               params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
                 uint32_t curChunkSize = eos - bos;
-                for (uint64_t h = 0; h < params.Hv; ++h) {
-                    gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
-                    uint32_t tileN = tla::get<1>(typename BlockMmadU::L1TileShape{});
-                    for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
-                        uint32_t curN = (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
-                        GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
-                        gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb +
-                                             (h * params.T + bos) * params.V + nOffset);
-                        gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V + nOffset);
-                        auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
-                        auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
-                        auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                        auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
-                                                     tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                        blockMmadU(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
-                    }
+                gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
+                auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
+                uint32_t tileN = tla::get<1>(typename BlockMmadU::L1TileShape{});
+                for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
+                    uint32_t curN = (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
+                    GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
+                    gmVb.SetGlobalBuffer((__gm__ ElementVb *)params.ptrVb + (h * params.T + bos) * params.V + nOffset);
+                    gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V + nOffset);
+                    auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
+                    auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
+                    auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                    auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
+                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                    auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
+                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                    blockMmadU(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
                 }
             }
         }
@@ -122,27 +124,27 @@ public:
             AscendC::GlobalTensor<ElementA> gmA;
             AscendC::GlobalTensor<ElementKbg> gmKbg;
             AscendC::GlobalTensor<ElementW> gmW;
-            for (uint32_t loopIdx = coreIdx; loopIdx < params.chunkNum; loopIdx += AscendC::GetBlockNum()) {
+            for (uint64_t taskIdx = coreIdx; taskIdx < params.chunkNum * params.Hv; taskIdx += coreNumAic) {
+                uint32_t loopIdx = static_cast<uint32_t>(taskIdx / params.Hv);
+                uint64_t h = taskIdx % params.Hv;
                 KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
                                               params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
                 uint32_t curChunkSize = eos - bos;
                 GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                for (uint64_t h = 0; h < params.Hv; ++h) {
-                    gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    gmKbg.SetGlobalBuffer((__gm__ ElementKbg *)params.ptrKbg + (h * params.T + bos) * params.K);
-                    gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
-                    auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
-                    auto tensorKbg = tla::MakeTensor(gmKbg, params.layoutKbg, Arch::PositionGM{});
-                    auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
-                    Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
-                    auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockKbg = GetTile(tensorKbg, tla::MakeCoord(0, 0),
-                                                  tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0),
-                                                tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                    blockMmadW(tensorBlockA, tensorBlockKbg, tensorBlockW, actualBlockShape);
-                }
+                gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
+                gmKbg.SetGlobalBuffer((__gm__ ElementKbg *)params.ptrKbg + (h * params.T + bos) * params.K);
+                gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
+                auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
+                auto tensorKbg = tla::MakeTensor(gmKbg, params.layoutKbg, Arch::PositionGM{});
+                auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
+                Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_FIX>(flagAivFinishStore);
+                auto tensorBlockA =
+                    GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
+                auto tensorBlockKbg = GetTile(tensorKbg, tla::MakeCoord(0, 0),
+                                              tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
+                auto tensorBlockW =
+                    GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
+                blockMmadW(tensorBlockA, tensorBlockKbg, tensorBlockW, actualBlockShape);
             }
         }
     }
@@ -174,6 +176,7 @@ public:
         V_ = static_cast<uint64_t>(tiling->V);
         chunkNum_ = static_cast<uint64_t>(tiling->chunkNum);
         chunkSize_ = static_cast<uint64_t>(tiling->chunkSize);
+        usedAic_ = static_cast<uint64_t>(tiling->usedAic);
         isVariable_ = tiling->isVariable;
         kbgBytes_ = static_cast<uint64_t>(B_) * Hv_ * T_ * K_ * sizeof(QkType);
     }
@@ -197,19 +200,19 @@ public:
         using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
 #else
         using ArchTag = Arch::AtlasA2;
-        using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
+        using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true, false, 1, false, 1, 1, 1, 1>;
 #endif
 
         using L1TileShape = typename KdaBwdRecomputeTileShapes128::L1TileShape;
         using L0TileShape = typename KdaBwdRecomputeTileShapes128::L0TileShape;
         using TileCopyU =
             Gemm::Tile::PackedTileCopyTla<ArchTag, QkType, LayoutTagA, QkType, LayoutTagVb, QkType, LayoutTagU>;
-        using BlockMmadU =
-            Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType, void, TileCopyU>;
+        using BlockMmadU = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType,
+                                                     void, TileCopyU>;
         using TileCopyW =
             Gemm::Tile::PackedTileCopyTla<ArchTag, QkType, LayoutTagA, QkType, LayoutTagKbg, QkType, LayoutTagW>;
-        using BlockMmadW =
-            Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType, void, TileCopyW>;
+        using BlockMmadW = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, QkType, QkType, QkType,
+                                                     void, TileCopyW>;
         using MatmulKernel = ChunkKdaBwdRecomputeTla<BlockMmadU, BlockMmadW>;
 
         MatmulKernel kernel;
@@ -218,7 +221,7 @@ public:
         typename MatmulKernel::Params param{
             a_, MakeLayoutFromTag(tagA), vb, MakeLayoutFromTag(tagVb), u_, MakeLayoutFromTag(tagU),
             kbg, MakeLayoutFromTag(tagKbg), w_, MakeLayoutFromTag(tagW),
-            cuSeqlens_, chunkIndices_, chunkNum_, B_, Hv_, T_, K_, V_, chunkSize_, isVariable_};
+            cuSeqlens_, chunkIndices_, chunkNum_, B_, Hv_, T_, K_, V_, chunkSize_, usedAic_, isVariable_};
         kernel(param);
     }
 
@@ -236,6 +239,7 @@ private:
     uint64_t V_ = 0;
     uint64_t chunkNum_ = 0;
     uint64_t chunkSize_ = 0;
+    uint64_t usedAic_ = 0;
     int64_t isVariable_ = 0;
     uint64_t kbgBytes_ = 0;
 };

@@ -5,7 +5,9 @@
 #include "chunk_kda_bwd_recompute_tiling.h"
 #include "../chunk_kda_bwd_recompute_tiling_processor.h"
 #include <algorithm>
+#include <cstring>
 #include <register/op_impl_registry.h>
+#include "platform/soc_spec.h"
 #include "tiling_base/tiling_templates_registry.h"
 
 namespace optiling {
@@ -17,6 +19,11 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
 
     auto attrPtr = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
+    const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
+    OP_CHECK_IF(inputLayout == nullptr ||
+                    (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0),
+                OP_LOGE(context->GetNodeName(), "Recompute input_layout must be BNSD or NTD."),
+                return ge::GRAPH_FAILED);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t ubSize = 0;
@@ -33,12 +40,39 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const int64_t *chunkIndicesData =
         chunkIndicesTensor != nullptr ? chunkIndicesTensor->GetData<int64_t>() : nullptr;
 
+    const bool isAscend950 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
+    OP_CHECK_IF(!isAscend950 && context->GetOutputShape(4) == nullptr,
+                OP_LOGE(context->GetNodeName(), "gk output buffer is required on A2/A3."),
+                return ge::GRAPH_FAILED);
+    const char *modelLayout = attrPtr->GetStr(5);
+    const bool mixed = modelLayout && modelLayout[0];
+    const bool modelTm = mixed && (std::strcmp(modelLayout, "BSND") == 0 || std::strcmp(modelLayout, "TND") == 0);
+    const auto *qkHeadAttr = attrPtr->GetAttrPointer<bool>(6);
+    const bool qkTm = modelTm && !(qkHeadAttr && *qkHeadAttr);
+    OP_CHECK_IF(mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
+                    std::strcmp(modelLayout, "NTD") != 0),
+                OP_LOGE(context->GetNodeName(), "Unsupported Recompute model_layout on this platform."),
+                return ge::GRAPH_FAILED);
+    if (mixed) {
+        const auto &canonical = context->GetOutputShape(4)->GetStorageShape();
+        OP_CHECK_IF(canonical.GetDimNum() != 4, , return ge::GRAPH_FAILED);
+        for (size_t i = 0; i < 4; ++i) {
+            const auto *input = context->GetRequiredInputShape(i);
+            OP_CHECK_NULL_WITH_CONTEXT(context, input);
+            auto expected = canonical;
+            const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
+            if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
+            OP_CHECK_IF(input->GetStorageShape() != expected,
+                        OP_LOGE(context->GetNodeName(), "Invalid mixed-layout Recompute input."),
+                        return ge::GRAPH_FAILED);
+        }
+    }
     ChunkKdaBwdRecomputeTilingContext ctx{
         context->GetNodeName(),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_Q_IDX),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_K_IDX),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_V_IDX),
-        context->GetRequiredInputShape(KDA_RECOMPUTE_G_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_Q_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_K_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_V_IDX),
+        mixed ? context->GetOutputShape(4) : context->GetRequiredInputShape(KDA_RECOMPUTE_G_IDX),
         context->GetRequiredInputShape(KDA_RECOMPUTE_BETA_IDX),
         context->GetRequiredInputShape(KDA_RECOMPUTE_A_IDX),
         context->GetOptionalInputShape(KDA_RECOMPUTE_A_LOG_IDX),
@@ -55,20 +89,17 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         *(attrPtr->GetAttrPointer<float>(KDA_RECOMPUTE_LOWER_BOUND_ATTR)),
         ubSize,
         ascendcPlatform.GetLibApiWorkSpaceSize(),
+        isAscend950,
     };
 
     ChunkKdaBwdRecomputeTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
+    tiling->reserved = mixed ? (1 | (qkTm ? 2 : 0) | (modelTm ? 4 : 0)) : 0;
     context->SetTilingKey(processor.GetTilingKey());
     uint32_t aicNum = ascendcPlatform.GetCoreNumAic();
     uint32_t aivNum = ascendcPlatform.GetCoreNumAiv();
     const uint32_t coreNum = ascendcPlatform.GetCoreNum();
-    const auto *compileInfo = context->GetCompileInfo<ChunkKdaBwdRecomputeCompileInfo>();
-    if (compileInfo != nullptr) {
-        aicNum = std::max(aicNum, compileInfo->aicNum);
-        aivNum = std::max(aivNum, compileInfo->aivNum);
-    }
     // Mix 1:2 platform info sometimes reports a single AIC/AIV pair instead of
     // the chip total. Fall back to AIV/2, then GetCoreNum, then A5's 28 AIC.
     if (aicNum <= 2U) {
@@ -80,14 +111,23 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
             aicNum = 28U;
         }
     }
-    if (aivNum < aicNum * 2U) {
-        aivNum = aicNum * 2U;
+    // This A2/910B SKU exposes 20 complete 1:2 Mix groups. Platform metadata can
+    // report more logical cores; scheduling group 21 leaves an unpaired waiter.
+    if (!isAscend950) {
+        aicNum = std::min(aicNum, 20U);
+    }
+    const uint32_t aivPerBlock = 2U;
+    if (aivNum < aicNum * aivPerBlock) {
+        aivNum = aicNum * aivPerBlock;
     }
     const int64_t workUnits = std::max<int64_t>(1, tiling->chunkNum * std::max<int64_t>(tiling->Hv, 1));
-    const uint32_t usedAic = static_cast<uint32_t>(
+    uint32_t usedAic = static_cast<uint32_t>(
         std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
-    tiling->vecRow = static_cast<int64_t>(usedAic);
-    uint32_t blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * 2U, aicNum, aivNum);
+    tiling->usedAic = static_cast<int64_t>(usedAic);
+    uint32_t blockDim = usedAic;
+    if (aivPerBlock == 2U) {
+        blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * aivPerBlock, aicNum, aivNum);
+    }
     if (blockDim < usedAic) {
         blockDim = usedAic;
     }

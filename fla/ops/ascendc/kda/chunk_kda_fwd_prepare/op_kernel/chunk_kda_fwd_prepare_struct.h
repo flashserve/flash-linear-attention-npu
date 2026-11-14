@@ -8,27 +8,13 @@
 #define CHUNK_KDA_FWD_PREPARE_STRUCT_H
 
 #include "kernel_operator.h"
+#include "chunk_kda_fwd_prepare_tiling_fields.h"
 
 namespace KdaPrepare {
 
 // 与 host 侧 TILING_DATA_FIELD_DEF 的字段顺序和类型严格一致。
 // 该结构只描述 GM 中的序列化布局，运行时计算使用下方的精简副本。
-struct ChunkKdaFwdPrepareTilingData {
-    uint32_t batch;
-    uint32_t seqNum;
-    uint32_t seqLen;
-    uint32_t qkHeadNum;
-    uint32_t valueHeadNum;
-    uint32_t totalChunks;
-    uint32_t usedCoreNum;
-    uint32_t headsPerPartition;
-    float epsilon;
-    float lowerBound;
-    float scale;
-    bool isVarLen;
-    bool inputSequenceMajor;
-    bool hasDtBias;
-};
+using ChunkKdaFwdPrepareTilingData = PrepareTilingWire;
 
 // 入口从框架生成的 tiling 数据中一次性复制这些字段，Stage 不再读取 GM tiling。
 struct PrepareRuntimeTiling {
@@ -46,6 +32,12 @@ struct PrepareRuntimeTiling {
     bool isVarLen = false;
     bool inputSequenceMajor = false;
     bool hasDtBias = false;
+    uint32_t normMode = 0;
+    uint32_t betaMode = 0;
+    uint32_t gateMode = 0;
+    uint32_t outputMode = 0;
+    uint32_t pipelineVariant = 0;
+    bool useExp2 = false;
 };
 
 // 一个实际 chunk 的直接索引。Stage 只接收这些标量，不再传递通用 StageArgs。

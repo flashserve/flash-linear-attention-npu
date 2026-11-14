@@ -415,6 +415,9 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_bool,
         ctypes.c_bool,
         ctypes.c_bool,
+        *([ctypes.c_void_p] * 3),  # q/k rstd and optional beta_eff
+        ctypes.c_char_p,
+        ctypes.c_bool, ctypes.c_bool,
         *([ctypes.c_void_p] * 8),
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
@@ -423,7 +426,9 @@ _GET_WORKSPACE_ARGTYPES = {
         *([ctypes.c_void_p] * 20),
         ctypes.c_double, ctypes.c_int64, ctypes.c_bool, ctypes.c_bool,
         ctypes.c_double, ctypes.c_bool, ctypes.c_bool, ctypes.c_bool,
-        *([ctypes.c_void_p] * 10),  # rstd pair followed by eight public output slots
+        *([ctypes.c_void_p] * 3),  # rstd pair and reserved beta_eff
+        ctypes.c_char_p, ctypes.c_bool, ctypes.c_bool,
+        *([ctypes.c_void_p] * 8),
         ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p),
     ],
     "aclnnChunkKdaBwdRecompute": [
@@ -431,6 +436,7 @@ _GET_WORKSPACE_ARGTYPES = {
         ctypes.c_int64,
         ctypes.c_bool,
         ctypes.c_double,
+        ctypes.c_char_p,
         *([ctypes.c_void_p] * 5),
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_void_p),
@@ -3306,37 +3312,54 @@ def _kda_total_chunks(batch: int, seqlen: int, chunk_size: int, cu_seqlens, chun
 
 
 def _run_kda_bwd_optimized(args):
+    return _run_kda_bwd_arch22(args, optimized=True)
+
+
+def _run_kda_bwd_arch22(args, optimized=False):
     import torch
+    from ._kda_policy import _prepare_kda_bwd_arch22, _prepare_kda_bwd_optimized
 
     bias_shape = None if args["dt_bias"] is None else args["dt_bias"].shape
-    args = _prepare_kda_bwd_optimized(args)
-    q = args["q"]
-    token = tuple(q.shape)
-    h = token[0 if args["cu_seqlens"] is not None else 1]
-    bias = args["dt_bias"]
-    cu, indices = args["cu_seqlens"], args["chunk_indices"]
-    dq,dk,dv = (torch.empty_like(args[name]) for name in ("q","k","v"))
-    db = torch.empty_like(args["beta"])
-    dg = torch.empty(token,dtype=torch.float32,device=q.device)
-    da = torch.empty((h,),dtype=torch.float32,device=q.device)
-    dbias = None if args["dt_bias"] is None else torch.empty(bias_shape, dtype=torch.float32, device=q.device)
-    outputs = (dq,dk,dv,db,dg,None,da,dbias)
+    a = (_prepare_kda_bwd_optimized if optimized else _prepare_kda_bwd_arch22)(args)
+    q = a["q"]
+    token, scalar = a["_output_token_shape"], a["_output_beta_shape"]
+    dq = _empty(token, q, dtype=q.dtype)
+    dk = _empty(token, a["k"], dtype=a["k"].dtype)
+    dv = _empty(token, a["v"], dtype=a["v"].dtype)
+    db = _empty(scalar, q, dtype=a["beta"].dtype)
+    dg = _empty(a["_output_gate_shape"], q, dtype=a["raw_g"].dtype)
+    heads = a["_output_gate_shape"][-2]
+    da = _empty((heads,), q, dtype=torch.float32) if a["use_gate_in_kernel"] else None
+    dbias = (_empty(bias_shape, q, dtype=torch.float32)
+             if a["use_gate_in_kernel"] and bias_shape is not None else None)
+    outputs = (dq, dk, dv, db, dg, None, da, dbias)
 
     def build(ctx):
-        def nd(x,name):
-            return ctx.tensor(x,name,acl_format_override=ACL_FORMAT_ND,
-                storage_shape_override=tuple(x.shape) if x is not None else None)
-        values = [nd(args[name],name) for name in
-            ("q","k","v","beta","gk","Aqk","Akk","w","qg","kg","v_new","h","d_o","raw_g","A_log")]
-        values += [nd(bias,"dt_bias"),nd(None,"initial_state"),nd(None,"dht"),ctx.int_array(cu),ctx.int_array(indices),
-            ctypes.c_double(float(args["scale"])),ctypes.c_int64(64),ctypes.c_bool(True),ctypes.c_bool(True),
-            ctypes.c_double(float(args["lower_bound"])),ctypes.c_bool(bool(args["disable_recompute"])),
-            ctypes.c_bool(True),ctypes.c_bool(False),nd(args["q_rstd"],"q_rstd"),nd(args["k_rstd"],"k_rstd")]
-        values += [nd(x,name) for x,name in zip((dq,dk,dv,db,dg,None,da,
-            None if dbias is None else dbias.view(h,128)),("dq","dk","dv","db","dg","dh0","dA","dbias"))]
+        def nd(x, name):
+            return ctx.tensor(x, name, acl_format_override=ACL_FORMAT_ND,
+                              storage_shape_override=tuple(x.shape) if x is not None else None)
+
+        values = [nd(a[name], name) for name in (
+            "q", "k", "v", "beta", "gk", "Aqk", "Akk", "w", "qg", "kg",
+            "v_new", "h", "d_o", "raw_g", "A_log", "dt_bias", "initial_state", "dht")]
+        values += [
+            ctx.int_array(a["cu_seqlens"]), ctx.int_array(a["chunk_indices"]),
+            ctypes.c_double(a["scale"]), ctypes.c_int64(a["chunk_size"]),
+            ctypes.c_bool(a["safe_gate"]), ctypes.c_bool(a["use_gate_in_kernel"]),
+            ctypes.c_double(a["lower_bound"]), ctypes.c_bool(a["disable_recompute"]),
+            ctypes.c_bool(a["use_exp2"]), ctypes.c_bool(a["state_v_first"]),
+            nd(a["q_rstd"], "q_rstd"), nd(a["k_rstd"], "k_rstd"),
+            nd(a["beta_eff"], "beta_eff"),
+            ctypes.c_char_p(a["layout"].encode("utf-8")),
+            ctypes.c_bool(a["use_beta_sigmoid_in_kernel"]), ctypes.c_bool(a["allow_neg_eigval"]),
+        ]
+        physical = (dq, dk, dv, db, dg, None, da,
+                    None if dbias is None else dbias.view(heads, 128))
+        values += [nd(value, name) for value, name in
+                   zip(physical, ("dq", "dk", "dv", "db", "dg", "dh0", "dA", "dbias"))]
         return values
 
-    return _call_aclnn("aclnnChunkKdaBwdV2",build,outputs)
+    return _call_aclnn("aclnnChunkKdaBwdV2" if optimized else "aclnnChunkKdaBwd", build, outputs)
 
 
 def npu_chunk_kda_bwd(
@@ -3365,26 +3388,39 @@ def npu_chunk_kda_bwd(
     chunk_size=64,
     safe_gate=True,
     lower_bound=-5.0,
-    use_gate_in_kernel=False,
+    use_gate_in_kernel=True,
     disable_recompute=True,
     use_exp2=True,
     state_v_first=False,
     implementation="auto",
     q_rstd=None,
     k_rstd=None,
+    layout="BNSD",
+    use_beta_sigmoid_in_kernel=False,
+    allow_neg_eigval=False,
+    beta_eff=None,
 ):
-    """Run the canonical head-major fused KDA backward ACLNN operator.
+    """Return (dq, dk, dv, db, dg, dh0, dA, dbias), on A2/A3 and A5 V2.
 
-    Dense tensors use ``[B, H, T, D]`` and packed tensors use ``[H, T, D]``.
-    ``Aqk/Akk/w/qg/kg/v_new/h/gk`` are the saved intermediates returned by
-    ``npu_chunk_kda_fwd(..., disable_recompute=True)`` after canonicalization.
-    The return value is always ``(dq, dk, dv, db, dg, dh0, dA, dbias)`` to
-    match the upstream GPU interface. ``dh0`` is ``None`` because the current
-    fused path does not support ``initial_state``; ``dA`` and ``dbias`` are
-    ``None`` unless raw-gate backward is enabled.
+    layout controls q/k/v and dq/dk/dv (BNSD/BSND/NTD/TND).
+    With q_rstd/k_rstd, q/k are saved head-major normalized tensors.
+    do/raw_g/beta and dg/db are always token-major. With fused sigmoid,
+    beta is original logits and beta_eff is required FP32 head-major cache.
+    Without fused sigmoid beta is effective beta and beta_eff must be None.
+    A5 V2 reserves fused sigmoid: beta_eff=None and both sigmoid flags False.
+    All saved Token caches are head-major. 4D varlen calls require B=1.
+    dg/db follow raw_g/beta dtypes; A_log/dt_bias and dA/dbias are FP32.
     """
     import torch
+    from ._kda_policy import _is_kda_bwd_arch22, _validate_kda_bwd_a5_options
 
+    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, True)
+    if not use_gate_in_kernel:
+        raise ValueError("npu_chunk_kda_bwd: use_gate_in_kernel must be True.")
+
+    if _is_kda_bwd_arch22(q):
+        return _run_kda_bwd_arch22(locals())
+    _validate_kda_bwd_a5_options(locals())
     if _select_kda_bwd_optimized(implementation, q_rstd, k_rstd, _optional_bool(disable_recompute, True)):
         return _run_kda_bwd_optimized(locals())
 
@@ -3408,7 +3444,6 @@ def npu_chunk_kda_bwd(
             "npu_chunk_kda_bwd: initial_state and dht are not supported by the current fused backward."
         )
 
-    use_gate_in_kernel = _optional_bool(use_gate_in_kernel, False)
     safe_gate = _optional_bool(safe_gate, True)
     if not safe_gate:
         raise RuntimeError(
@@ -3645,8 +3680,8 @@ def npu_chunk_kda_bwd(
     dq = _empty_like(q, dtype=torch.float32)
     dk = _empty_like(k, dtype=torch.float32)
     dv = _empty_like(v)
-    db = _empty_like(beta, dtype=torch.float32)
-    dg = _empty_like(gk)
+    db = _empty_like(beta)
+    dg = _empty_like(raw_g)
     # Keep the public result contract aligned with the upstream GPU operator.
     # The device ABI still has seven materialized outputs: initial_state/dh0 is
     # reserved but unsupported, so its public slot is an explicit None.
@@ -3678,7 +3713,12 @@ def npu_chunk_kda_bwd(
             ctypes.c_double(float(scale)), ctypes.c_int64(chunk_size),
             ctypes.c_bool(safe_gate), ctypes.c_bool(use_gate_in_kernel),
             ctypes.c_double(lower_bound), ctypes.c_bool(True), ctypes.c_bool(True),
-            ctypes.c_bool(False), nd_tensor(ctx, dq, "dq"), nd_tensor(ctx, dk, "dk"),
+            ctypes.c_bool(False),
+            nd_tensor(ctx, None, "q_rstd"), nd_tensor(ctx, None, "k_rstd"),
+            ctypes.c_char_p(b"NTD" if is_varlen else b"BNSD"),
+            ctypes.c_char_p(b"NTD" if is_varlen else b"BNSD"),
+            ctypes.c_bool(False), ctypes.c_bool(False),
+            nd_tensor(ctx, dq, "dq"), nd_tensor(ctx, dk, "dk"),
             nd_tensor(ctx, dv, "dv"), nd_tensor(ctx, db, "db"), nd_tensor(ctx, dg, "dg"),
             nd_tensor(ctx, None, "dh0"), nd_tensor(ctx, d_a, "dA"), nd_tensor(ctx, d_bias, "dbias"),
         ],
@@ -4085,8 +4125,12 @@ def npu_chunk_kda_fwd_prepare(
         raise RuntimeError("npu_chunk_kda_fwd_prepare: q/k shapes must match and beta rank must match layout.")
 
     if is_rank3:
-        seqlen, h_num, k_dim = q_shape
-        hv_num, v_dim = v_shape[1], v_shape[2]
+        if is_sequence_major:  # TND
+            seqlen, h_num, k_dim = q_shape
+            hv_num, v_dim = v_shape[1], v_shape[2]
+        else:  # NTD
+            h_num, seqlen, k_dim = q_shape
+            hv_num, v_dim = v_shape[0], v_shape[2]
         batch = 1
     else:
         if is_sequence_major:
@@ -4095,9 +4139,9 @@ def npu_chunk_kda_fwd_prepare(
         else:
             batch, h_num, seqlen, k_dim = q_shape
             hv_num, v_dim = v_shape[1], v_shape[3]
-    if h_num <= 0 or hv_num < h_num or hv_num % h_num != 0 or h_num > 128 or hv_num > 128:
+    if h_num <= 0 or hv_num < h_num or hv_num > 0xFFFFFFFF or hv_num % h_num != 0:
         raise RuntimeError(
-            "npu_chunk_kda_fwd_prepare: H/HV must satisfy 0 < H <= HV <= 128 and HV % H == 0.")
+            "npu_chunk_kda_fwd_prepare: H/HV must be positive uint32 values with H <= HV and HV % H == 0.")
     if q.dtype not in {torch.float16, torch.bfloat16} or k.dtype != q.dtype or v.dtype != q.dtype:
         raise RuntimeError(
             "npu_chunk_kda_fwd_prepare: q/k/v must use the same float16 or bfloat16 dtype.")
@@ -4793,9 +4837,12 @@ def npu_chunk_kda_bwd_recompute(
     use_gate_in_kernel=True,
     use_exp2=True,
     lower_bound=-5.0,
+    input_layout="BNSD",
 ):
     import torch
+    from ._kda_policy import _validate_kda_recompute_layout
 
+    _validate_kda_recompute_layout(input_layout)
     if chunk_size != 64:
         raise RuntimeError("npu_chunk_kda_bwd_recompute: chunk_size must be 64.")
     if q.dtype != torch.bfloat16 or k.dtype != torch.bfloat16 or v.dtype != torch.bfloat16:
@@ -4835,6 +4882,7 @@ def npu_chunk_kda_bwd_recompute(
             ctypes.c_int64(int(chunk_size)),
             ctypes.c_bool(bool(use_exp2)),
             ctypes.c_double(float(lower_bound)),
+            ctypes.c_char_p(input_layout.encode("utf-8")),
             ctx.tensor(w, "w"),
             ctx.tensor(u, "u"),
             ctx.tensor(qg, "qg"),
@@ -5004,6 +5052,54 @@ def npu_pre_process_bwd_kernel_merged(
         ],
         out,
     )
+
+
+def npu_chunk_kda_bwd_prepare(
+    aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+):
+    """KernelA partial gradients; outputs always use head-major storage."""
+    import math
+    import torch
+    if layout not in {"BNSD", "BSND", "NTD", "TND"}:
+        raise RuntimeError("chunk_kda_bwd_prepare: invalid layout")
+    packed = layout in {"NTD", "TND"}
+    seq = layout in {"BSND", "TND"}
+    if cu_seqlens is None and chunk_indices is not None:
+        raise RuntimeError("chunk_kda_bwd_prepare: chunk_indices requires cu_seqlens")
+    if int(chunk_size) != 64 or not math.isfinite(float(scale)):
+        raise RuntimeError("chunk_kda_bwd_prepare: chunk_size must be 64 and scale finite")
+    rank = 3 if packed else 4
+    if any(x.dtype != torch.bfloat16 or x.ndim != rank or not x.is_contiguous()
+           for x in (aqk, v_new, d_o)) or h.dtype != torch.bfloat16 or not h.is_contiguous():
+        raise RuntimeError("chunk_kda_bwd_prepare: inputs must be contiguous BF16 with matching rank")
+    base = 0 if packed else 1
+    B = 1 if packed else int(aqk.shape[0])
+    if cu_seqlens is not None and B != 1:
+        raise RuntimeError("chunk_kda_bwd_prepare: variable lengths require B=1")
+    H = int(aqk.shape[base + int(seq)])
+    T = int(aqk.shape[base + int(not seq)])
+    if min(B, H, T) <= 0 or aqk.shape[-1] != 64:
+        raise RuntimeError("chunk_kda_bwd_prepare: invalid shape")
+    prefix = tuple(aqk.shape[:-1])
+    if any(tuple(x.shape[:-1]) != prefix or x.shape[-1] != 128 for x in (v_new, d_o)):
+        raise RuntimeError("chunk_kda_bwd_prepare: input shapes mismatch")
+    output = (H, T) if packed else (B, H, T)
+    d_aqk = _empty(output + (64,), aqk, dtype=torch.float32)
+    dv = _empty(output + (128,), aqk, dtype=torch.bfloat16)
+    dq_raw = _empty(output + (128,), aqk, dtype=torch.float32)
+    def build_args(ctx):
+        def descriptor(tensor, name):
+            return ctx.tensor(tensor, name, acl_format_override=2,
+                              storage_shape_override=tuple(tensor.shape))
+        return [descriptor(aqk, "aqk"), descriptor(v_new, "v_new"),
+                descriptor(d_o, "d_o"), descriptor(h, "h"),
+                ctx.int_array(cu_seqlens), ctx.int_array(chunk_indices),
+                ctypes.c_char_p(layout.encode("utf-8")), ctypes.c_double(float(scale)),
+                ctypes.c_int64(int(chunk_size)), ctypes.c_bool(bool(state_v_first)),
+                descriptor(d_aqk, "d_aqk"), descriptor(dv, "dv"), descriptor(dq_raw, "dq_raw")]
+    _call_aclnn("aclnnChunkKdaBwdPrepare", build_args, (d_aqk, dv, dq_raw))
+    return d_aqk, dv, dq_raw
 
 
 ASCENDC_CTYPES_OPS = {

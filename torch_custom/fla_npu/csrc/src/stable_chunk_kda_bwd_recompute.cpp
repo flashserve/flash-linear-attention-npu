@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <tuple>
 #include <vector>
 
@@ -44,11 +45,13 @@ using fla_npu_stable::stable::tensor;
 // The declared order is the *public* one (`gk` first); aclnn wants the
 // recomputed tensors first and the gate cumsum last, so the return tuple is
 // reordered at the end rather than in Python.
+constexpr const char* kChunkKdaBwdRecomputeLayoutNames[] = {"BSND", "BNSD", "TND", "NTD"};
+
 constexpr const char* kSchema_chunk_kda_bwd_recompute =
     "npu_chunk_kda_bwd_recompute(Tensor q, Tensor k, Tensor v, Tensor g, "
     "Tensor beta, Tensor a, Tensor? A_log, Tensor? dt_bias, "
     "Tensor? cu_seqlens, Tensor? chunk_indices, int chunk_size, bool use_exp2, "
-    "float lower_bound, bool use_gate_in_kernel, int stream) "
+    "float lower_bound, int input_layout, bool use_gate_in_kernel, int stream) "
     "-> (Tensor?, Tensor, Tensor, Tensor, Tensor)";
 
 std::tuple<std::optional<Tensor>, Tensor, Tensor, Tensor, Tensor>
@@ -56,8 +59,11 @@ run_npu_chunk_kda_bwd_recompute(
     Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, Tensor a,
     std::optional<Tensor> A_log, std::optional<Tensor> dt_bias,
     std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
-    int64_t chunk_size, bool use_exp2, double lower_bound,
+    int64_t chunk_size, bool use_exp2, double lower_bound, int64_t input_layout,
     bool use_gate_in_kernel, int64_t stream) {
+  if (input_layout != 1 && input_layout != 3) {
+    throw std::runtime_error("Recompute input_layout must be BNSD or NTD");
+  }
   const TensorMeta v_meta = meta_of(v);
   const TensorMeta g_meta = meta_of(g);
   // `w`/`u` follow their source `v`; `qg`/`kg` are the bfloat16 gate tensors
@@ -77,6 +83,7 @@ run_npu_chunk_kda_bwd_recompute(
                   optional_tensor(A_log), optional_tensor(dt_bias),
                   int_array(cu_seqlens), int_array(chunk_indices),
                   scalar(chunk_size), scalar(use_exp2), scalar(lower_bound),
+                  cstr(kChunkKdaBwdRecomputeLayoutNames, input_layout),
                   out_tensor(meta_of(out_w)), out_tensor(meta_of(out_u)),
                   out_tensor(meta_of(out_qg)), out_tensor(meta_of(out_kg)),
                   out_tensor(out_gk.has_value() ? meta_of(*out_gk)

@@ -18,9 +18,8 @@ out, final_state = recurrent_kda(
     v,
     g,
     beta,
-    initial_state=None,
-    *,
-    cu_seqlens,
+    initial_state,
+    cu_seqlens=cu_seqlens,
     ssm_state_indices=None,
     A_log=None,
     dt_bias=None,
@@ -42,7 +41,8 @@ out, final_state = recurrent_kda(
 
 - `layout="BSND"`：`q/k=[B,T,H,K]`，`v=[B,T,HV,V]`，`g=[B,T,HV,K]`，`beta=[B,T,HV]`。
 - `layout="TND"`：`q/k=[T,H,K]`，`v=[T,HV,V]`，`g=[T,HV,K]`，`beta=[T,HV]`。
-- `initial_state=None` 时，Python wrapper 会创建全零初始状态；显式传入时是 state pool。
+- `initial_state` 为必须显式传入的状态池。原位和非原位模式均要求非 `None`；
+  使用零初态时，由调用方在与 `q` 相同的设备上创建对应布局的零状态张量。
   `state_v_first=True` 对应 `[state_capacity,HV,V,K]`，`state_v_first=False` 对应
   `[state_capacity,HV,K,V]`。支持 slot/head 维带间隔的非连续 view，但内部二维 state
   矩阵必须稠密。
@@ -81,8 +81,8 @@ o_t = S @ (q_t * scale)
 - `g/beta` Python 入口支持 `FP32/BF16/FP16`，aclnn 预处理后以 `FP32` 输入 kernel。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 为必传、与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
-  token capacity，各相邻差值必须不超过 8。接口面向 decode / MTP 短序列，dense 单序列与 varlen
-  每段序列长度均必须小于等于 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
+  token capacity。A2/A3 支持超过 8 token 的 dense 单序列与 varlen 分段，内部按 8-token 窗口递推；
+  A5 每段序列长度仍必须小于等于 8。末项小于 capacity 时，仅有效 token 对应的输出和 state
   更新有定义，padding tail 输出不作保证。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 支持 V-first `[state_capacity,HV,V,K]` 和 K-first `[state_capacity,HV,K,V]`，state dtype 为

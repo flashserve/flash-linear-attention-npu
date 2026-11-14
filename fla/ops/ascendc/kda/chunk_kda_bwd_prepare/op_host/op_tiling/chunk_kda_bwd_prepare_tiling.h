@@ -23,6 +23,7 @@ constexpr size_t KDA_PREPARE_INPUT_CHUNK_INDICES = 5;
 constexpr size_t KDA_PREPARE_ATTR_SCALE = 0;
 constexpr size_t KDA_PREPARE_ATTR_CHUNK_SIZE = 1;
 constexpr size_t KDA_PREPARE_ATTR_STATE_V_FIRST = 2;
+constexpr size_t KDA_PREPARE_ATTR_LAYOUT = 3;
 
 } // namespace optiling
 

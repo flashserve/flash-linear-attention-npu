@@ -111,6 +111,24 @@ void* Runtime::symbol(const std::string& name) {
   return addr;
 }
 
+std::string Runtime::recent_error_message() {
+  using GetError = const char* (*)();
+  GetError get_error = nullptr;
+  try {
+    get_error = reinterpret_cast<GetError>(symbol("aclGetRecentErrMsg"));
+  } catch (const std::exception&) {
+    static void* acl = dlopen("libascendcl.so", RTLD_NOW | RTLD_LOCAL);
+    if (acl != nullptr) {
+      get_error = reinterpret_cast<GetError>(dlsym(acl, "aclGetRecentErrMsg"));
+    }
+  }
+  if (get_error == nullptr) {
+    return {};
+  }
+  const char* message = get_error();
+  return message == nullptr ? std::string() : std::string(message);
+}
+
 void* Runtime::queue_enqueue() {
   if (!queue_enqueue_looked_up_) {
     queue_enqueue_ = find_exported(kQueueEnqueueV2);

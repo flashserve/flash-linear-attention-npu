@@ -10,25 +10,13 @@
 #include <cstddef>
 #include "chunk_kda_fwd_prepare_output_mask.h"
 #include "register/tilingdata_base.h"
+#include "../op_kernel/chunk_kda_fwd_prepare_tiling_fields.h"
 
 namespace optiling {
 
 // 字段顺序和类型必须与设备侧读取保持一致。
 BEGIN_TILING_DATA_DEF(ChunkKdaFwdPrepareTilingData)
-TILING_DATA_FIELD_DEF(uint32_t, batch);
-TILING_DATA_FIELD_DEF(uint32_t, seqNum);
-TILING_DATA_FIELD_DEF(uint32_t, seqLen);
-TILING_DATA_FIELD_DEF(uint32_t, qkHeadNum);
-TILING_DATA_FIELD_DEF(uint32_t, valueHeadNum);
-TILING_DATA_FIELD_DEF(uint32_t, totalChunks);
-TILING_DATA_FIELD_DEF(uint32_t, usedCoreNum);
-TILING_DATA_FIELD_DEF(uint32_t, headsPerPartition);
-TILING_DATA_FIELD_DEF(float, epsilon);
-TILING_DATA_FIELD_DEF(float, lowerBound);
-TILING_DATA_FIELD_DEF(float, scale);
-TILING_DATA_FIELD_DEF(bool, isVarLen);
-TILING_DATA_FIELD_DEF(bool, inputSequenceMajor);
-TILING_DATA_FIELD_DEF(bool, hasDtBias);
+CHUNK_KDA_PREPARE_TILING_FIELDS(TILING_DATA_FIELD_DEF);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaFwdPrepare, ChunkKdaFwdPrepareTilingData)

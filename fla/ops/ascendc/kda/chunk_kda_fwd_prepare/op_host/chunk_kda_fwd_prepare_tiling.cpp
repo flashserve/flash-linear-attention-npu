@@ -14,6 +14,9 @@
 
 #include "chunk_kda_fwd_prepare_tiling_processor.h"
 #include "../op_kernel/chunk_kda_fwd_prepare_tiling_key.h"
+#include "../op_kernel/chunk_kda_fwd_prepare_runtime_key.h"
+#include "../op_kernel/chunk_kda_fwd_prepare_runtime_policy.h"
+#include "../op_kernel/arch22/chunk_kda_fwd_prepare_resource.h"
 #include "platform/soc_spec.h"
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -563,9 +566,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.aicCoreNum = aicCoreNum;
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
     scheduleContext.isVarLen = isVarLen;
-    scheduleContext.workspaceSlotBytes =
-        isAscend950 ? CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES
-                    : CHUNK_KDA_FWD_PREPARE_ARCH22_SLOT_BYTES;
+    scheduleContext.isArch22 = !isAscend950;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),
@@ -592,10 +593,14 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         : (*safeGatePtr ? CHUNK_KDA_FWD_PREPARE_GATE_SAFE_SIGMOID
                         : CHUNK_KDA_FWD_PREPARE_GATE_SOFTPLUS);
     using namespace KdaPrepare;
-    const uint64_t tilingKey = GET_TPL_TILING_KEY(
+    const uint64_t legacyTilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken, betaDtypeToken, normMode, betaMode, gateMode,
         static_cast<uint64_t>(*useExp2Ptr),
-        static_cast<uint64_t>(*safeGatePtr), outputMode);
+        static_cast<uint64_t>(*safeGatePtr),
+        outputMode);
+    const auto pipeline = PreparePipeline::Generic;
+    const uint64_t tilingKey = isAscend950 ? legacyTilingKey
+        : RuntimeKey::Encode(normMode, gateMode);
 
     ChunkKdaFwdPrepareTilingData tiling;
     tiling.set_batch(static_cast<uint32_t>(shape.batch));
@@ -612,6 +617,12 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     tiling.set_isVarLen(isVarLen);
     tiling.set_inputSequenceMajor(shape.sequenceMajor);
     tiling.set_hasDtBias(hasDtBias);
+    tiling.set_normMode(normMode);
+    tiling.set_betaMode(betaMode);
+    tiling.set_gateMode(gateMode);
+    tiling.set_outputMode(outputMode);
+    tiling.set_pipelineVariant(static_cast<uint32_t>(pipeline));
+    tiling.set_useExp2(*useExp2Ptr);
 
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(schedule.usedCoreNum);

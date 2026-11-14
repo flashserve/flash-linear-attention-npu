@@ -243,7 +243,8 @@ private:
     template <typename TileCopy, typename GmLayout>
     __aicore__ inline void LoadGmToL1B(
         AscendC::LocalTensor<DT> dst, GM_ADDR src,
-        uint32_t k, uint32_t n, uint32_t validK = 0, uint32_t validN = 0)
+        uint32_t k, uint32_t n, uint32_t validK = 0, uint32_t validN = 0,
+        uint32_t gmLeadingK = 0)
     {
         validK = validK == 0 ? k : validK;
         validN = validN == 0 ? n : validN;
@@ -256,7 +257,7 @@ private:
         AscendC::GlobalTensor<DT> gm;
         gm.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(src));
         auto tensorGm = tla::MakeTensor(
-            gm, tla::MakeLayout<DT, GmLayout>(k, n), Catlass::Arch::PositionGM{});
+            gm, tla::MakeLayout<DT, GmLayout>(gmLeadingK ? gmLeadingK : k, n), Catlass::Arch::PositionGM{});
         auto block = tla::GetTile(tensorGm, tla::MakeCoord(0, 0), tla::MakeShape(validK, validN));
         auto tensorL1 = tla::MakeTensor(
             dst, tla::MakeLayout<DT, typename TileCopy::LayoutTagL1B>(k, n),
@@ -472,7 +473,10 @@ private:
             hL1, h_ + hState * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
         LoadGmToL1B<CopyTransB, LayoutCM>(
-            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows);
+            vL1, v_ + FinalizeOutputOffset(*tiling_, chunk, head, 0,
+                KDA_FINALIZE_DIM, tiling_->vTokenMajor != 0U) * sizeof(DT),
+            KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows,
+            tiling_->vTokenMajor ? tiling_->NV * KDA_FINALIZE_DIM : KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
     }
 
@@ -503,7 +507,10 @@ private:
             hL1, h_ + hState * sizeof(DT), KDA_FINALIZE_DIM, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 2));
         LoadGmToL1B<CopyTransB, LayoutCM>(
-            vL1, v_ + token * sizeof(DT), KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows);
+            vL1, v_ + FinalizeOutputOffset(*tiling_, chunk, head, 0,
+                KDA_FINALIZE_DIM, tiling_->vTokenMajor != 0U) * sizeof(DT),
+            KDA_FINALIZE_DIM, rows, KDA_FINALIZE_DIM, chunk.validRows,
+            tiling_->vTokenMajor ? tiling_->NV * KDA_FINALIZE_DIM : KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(Stage0Ready(stream, 3));
     }
 
