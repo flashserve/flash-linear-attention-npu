@@ -3,6 +3,7 @@
 
 #include "kernel_operator.h"
 #include "chunk_gated_delta_rule_bwd_finalize_workspace.h"
+#include "chunk_gated_delta_rule_bwd_finalize_qk_tail.h"
 
 // 私有适配结构，不复用其它算子的生成 tiling ABI。
 struct ChunkBwdDqkwgTilingData {
@@ -22,65 +23,6 @@ namespace GDN {
 
 constexpr float A2_FINALIZE_LN2 = 0.6931471805599453f;
 
-// 沿用 07d1b942 的整数 peak 评分；显式使用已由原调度资格限定的 U32 输入域。
-__aicore__ inline bool A2FinalizeDqHkPartitionPeak(
-    uint64_t coreLoops, uint64_t HV, uint64_t coreNum, uint64_t partitions, uint64_t &peak)
-{
-    if (coreLoops == 0 || coreLoops > UINT32_MAX || coreNum == 0 ||
-        partitions == 0 || partitions > UINT32_MAX || HV == 0 || HV > UINT32_MAX || HV % partitions != 0) {
-        return false;
-    }
-    // 两个 U32 因子的乘积可由 U64 表示，因此可在乘后检查原 INT64 上界。
-    const uint64_t tasks = coreLoops * partitions;
-    if (tasks > static_cast<uint64_t>(INT64_MAX)) {
-        return false;
-    }
-    const uint64_t waves = tasks / coreNum + static_cast<uint64_t>(tasks % coreNum != 0);
-    const uint64_t heads = HV / partitions;
-    // waves<=tasks，且 P 整除 HV，所以 waves*heads<=coreLoops*HV<=UINT32_MAX^2。
-    peak = waves * heads;
-    return true;
-}
-
-__aicore__ inline uint64_t A2FinalizeSelectDqHkPartitions(
-    uint64_t B, uint64_t numChunks, uint64_t HV, uint64_t HK,
-    uint64_t coreNum, uint64_t parentPartitions, bool allowBalance)
-{
-    if (!allowBalance || !DqkwgUseU32Schedule(B, numChunks, HV, HK, coreNum, parentPartitions)) {
-        return parentPartitions;
-    }
-    // 原 U32 资格先除后乘界定了 B*numChunks，此处才形成 N。
-    const uint64_t coreLoops = B * numChunks;
-    if (coreLoops < coreNum) {
-        return parentPartitions;
-    }
-    uint64_t parentPeak = 0;
-    if (!A2FinalizeDqHkPartitionPeak(coreLoops, HV, coreNum, parentPartitions, parentPeak)) {
-        return parentPartitions;
-    }
-    uint64_t bestPeak = parentPeak;
-    uint64_t bestPartitions = parentPartitions;
-    for (uint64_t divisor = 1; divisor <= HK / divisor; ++divisor) {
-        if (HK % divisor != 0) {
-            continue;
-        }
-        const uint64_t other = HK / divisor;
-        for (uint32_t candidate = 0; candidate < 2; ++candidate) {
-            const uint64_t partitions = candidate == 0 ? divisor : other;
-            if ((candidate != 0 && other == divisor) || (HK / partitions) % 2 != 0) {
-                continue;
-            }
-            uint64_t peak = 0;
-            if (A2FinalizeDqHkPartitionPeak(coreLoops, HV, coreNum, partitions, peak) &&
-                (peak < bestPeak || (peak == bestPeak && partitions < bestPartitions))) {
-                bestPeak = peak;
-                bestPartitions = partitions;
-            }
-        }
-    }
-    return bestPeak < parentPeak ? bestPartitions : parentPartitions;
-}
-
 __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
     const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
@@ -91,12 +33,11 @@ __aicore__ inline ChunkBwdDqkwgTilingData A2FinalizeDqTiling(
     d.scale = t.scale;
     d.mul0RowNum = t.V == 256 ? 16 : 32;
     d.aicCoreNum = AscendC::GetBlockNum();
-    d.hkPartitions = static_cast<uint32_t>(A2FinalizeSelectDqHkPartitions(
-        d.B, d.numChunks, d.HV, d.HK, d.aicCoreNum, 1,
-        t.isVariable != 0 || d.T % d.BT == 0));
+    d.hkPartitions = static_cast<uint32_t>(A2FinalizeDqPartitionCount(t, d.aicCoreNum));
     d.isVarLen = t.isVariable;
-    const uint64_t btk = d.aicCoreNum * d.HV * d.BT * d.K * sizeof(bfloat16_t);
-    const uint64_t btb = d.aicCoreNum * d.HV * d.BT * d.BT * sizeof(bfloat16_t);
+    const uint64_t dqHeads = A2FinalizeWorkspaceLayout::DqWorkspaceHeads(t, d.aicCoreNum, d.hkPartitions);
+    const uint64_t btk = d.aicCoreNum * dqHeads * d.BT * d.K * sizeof(bfloat16_t);
+    const uint64_t btb = d.aicCoreNum * dqHeads * d.BT * d.BT * sizeof(bfloat16_t);
     uint64_t offset = 0;
     d.wsMm3Offset = offset; offset += btb;
     d.wsMm4Offset = offset; offset += btk;
@@ -158,16 +99,6 @@ __aicore__ inline PrepareWyReprBwdTilingData A2FinalizeWyTiling(
     w.mVecRow = A2FinalizeVectorRows(t.chunkSize, t.chunkSize, 4);
     w.kktVecRow = A2FinalizeVectorRows(t.chunkSize, t.chunkSize, 3);
     return w;
-}
-
-template <typename DT>
-__aicore__ inline void A2FinalizeCopyIn(
-    const AscendC::LocalTensor<DT> &dst, const AscendC::GlobalTensor<DT> &src,
-    int64_t offset, uint32_t count)
-{
-    AscendC::DataCopyExtParams copy{1, count * static_cast<uint32_t>(sizeof(DT)), 0, 0, 0};
-    AscendC::DataCopyPadExtParams<DT> pad{false, 0, 0, 0};
-    AscendC::DataCopyPad(dst, src[offset], copy, pad);
 }
 
 template <typename DT>
@@ -365,9 +296,11 @@ __aicore__ inline void A2FinalizeGateTail(
     AscendC::ResetMask();
     AscendC::GlobalTensor<float> dg1Gm, dg2Gm, dbetaGm;
     AscendC::GlobalTensor<GT> dbetaOutGm, dgOutGm, betaRawGm;
-    dg1Gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + layout.dgDqOffset));
+    dg1Gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+        std::is_same<GT, float>::value ? dg : workspace + layout.dgDqOffset));
     dg2Gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + layout.dgWyOffset));
-    dbetaGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(workspace + layout.dbetaOffset));
+    dbetaGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
+        std::is_same<GT, float>::value ? dbeta : workspace + layout.dbetaOffset));
     dgOutGm.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(dg));
     dbetaOutGm.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(dbeta));
     if constexpr (USE_BETA_SIGMOID) {
@@ -431,89 +364,53 @@ __aicore__ inline void A2FinalizeGateTail(
             }
         }
         AscendC::PipeBarrier<PIPE_ALL>();
-        for (uint32_t lane = 0; lane < heads; ++lane) {
-            const int64_t base = (hv + lane) * t.T + task.valueBos;
-            A2FinalizeCopyIn(values, dbetaGm, base, rows);
-            if constexpr (USE_BETA_SIGMOID) {
-                A2FinalizeCopyIn(raw, betaRawGm, base, rows);
-            }
-            AscendC::PipeBarrier<PIPE_ALL>();
-            if constexpr (USE_BETA_SIGMOID) {
-                if constexpr (std::is_same<GT, float>::value) {
-                    AscendC::Adds(sigmoid, raw, 0.0f, rows);
-                } else {
-                    AscendC::Cast(sigmoid, raw, AscendC::RoundMode::CAST_NONE, rows);
-                }
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Muls(sigmoid, sigmoid, -1.0f, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Exp(sigmoid, sigmoid, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Adds(sigmoid, sigmoid, 1.0f, rows);
-                AscendC::Duplicate(ones, 1.0f, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Div(sigmoid, ones, sigmoid, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Sub(ones, ones, sigmoid, rows);
-                AscendC::Mul(values, values, sigmoid, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Mul(values, values, ones, rows);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-            if constexpr (std::is_same<GT, float>::value) {
+        // FP32 WY 已按原 Adds(+0) 写出，关闭 sigmoid 时该尾段只搬运同一组字节。
+        if constexpr (!std::is_same<GT, float>::value || USE_BETA_SIGMOID) {
+            for (uint32_t lane = 0; lane < heads; ++lane) {
+                const int64_t base = (hv + lane) * t.T + task.valueBos;
+                A2FinalizeCopyIn(values, dbetaGm, base, rows);
                 if constexpr (USE_BETA_SIGMOID) {
-                    AscendC::PipeBarrier<PIPE_ALL>();
+                    A2FinalizeCopyIn(raw, betaRawGm, base, rows);
                 }
-                A2FinalizeCopyOut(dbetaOutGm, values, base, rows);
-            } else {
-                AscendC::Cast(result, values, AscendC::RoundMode::CAST_RINT, rows);
-                AscendC::PipeBarrier<PIPE_V>();
                 AscendC::PipeBarrier<PIPE_ALL>();
-                A2FinalizeCopyOut(dbetaOutGm, result, base, rows);
+                if constexpr (USE_BETA_SIGMOID) {
+                    if constexpr (std::is_same<GT, float>::value) {
+                        AscendC::Adds(sigmoid, raw, 0.0f, rows);
+                    } else {
+                        AscendC::Cast(sigmoid, raw, AscendC::RoundMode::CAST_NONE, rows);
+                    }
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Muls(sigmoid, sigmoid, -1.0f, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Exp(sigmoid, sigmoid, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Adds(sigmoid, sigmoid, 1.0f, rows);
+                    AscendC::Duplicate(ones, 1.0f, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Div(sigmoid, ones, sigmoid, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Sub(ones, ones, sigmoid, rows);
+                    AscendC::Mul(values, values, sigmoid, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Mul(values, values, ones, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
+                if constexpr (std::is_same<GT, float>::value) {
+                    if constexpr (USE_BETA_SIGMOID) {
+                        AscendC::PipeBarrier<PIPE_ALL>();
+                    }
+                    A2FinalizeCopyOut(dbetaOutGm, values, base, rows);
+                } else {
+                    AscendC::Cast(result, values, AscendC::RoundMode::CAST_RINT, rows);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    A2FinalizeCopyOut(dbetaOutGm, result, base, rows);
+                }
+                AscendC::PipeBarrier<PIPE_ALL>();
             }
-            AscendC::PipeBarrier<PIPE_ALL>();
         }
     }
     pipe.Reset();
-}
-
-template <typename QT>
-__aicore__ inline void A2FinalizeNormTile(
-    const AscendC::LocalTensor<float> &grad,
-    const AscendC::LocalTensor<QT> &input,
-    const AscendC::LocalTensor<float> &x,
-    const AscendC::LocalTensor<float> &product,
-    const AscendC::LocalTensor<float> &sum,
-    const AscendC::LocalTensor<float> &reduceWork,
-    const AscendC::LocalTensor<float> &broadcast,
-    const AscendC::GlobalTensor<float> &rstd, int64_t offset, uint32_t rows)
-{
-    constexpr uint32_t K = 128;
-    AscendC::Cast(x, input, AscendC::RoundMode::CAST_NONE, rows * K);
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(product, x, grad, rows * K);
-    AscendC::PipeBarrier<PIPE_V>();
-    // 保留每行 64+64 partial 的布局；两批分离写之间保守保留 V barrier。
-    AscendC::WholeReduceSum(reduceWork, product, 64, rows, 8, 1, 16);
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::WholeReduceSum(reduceWork[1], product[64], 64, rows, 8, 1, 16);
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::WholeReduceSum(sum, reduceWork, 2, rows, 1, 1, 1);
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Brcb(broadcast, sum, (rows + 7) / 8, {1, 8});
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(x, x, broadcast, 64, rows, {1, 1, 0, 16, 16, 1});
-    AscendC::Mul(x[64], x[64], broadcast, 64, rows, {1, 1, 0, 16, 16, 1});
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Sub(grad, grad, x, rows * K);
-    AscendC::PipeBarrier<PIPE_ALL>();
-    A2FinalizeCopyIn(sum, rstd, offset, rows);
-    AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::Brcb(broadcast, sum, (rows + 7) / 8, {1, 8});
-    AscendC::PipeBarrier<PIPE_V>();
-    AscendC::Mul(grad, grad, broadcast, 64, rows, {1, 1, 0, 16, 16, 1});
-    AscendC::Mul(grad[64], grad[64], broadcast, 64, rows, {1, 1, 0, 16, 16, 1});
-    AscendC::PipeBarrier<PIPE_V>();
 }
 
 // S4：独占 (chunk, HK)，合并两条 DK 支路后执行可选 Q/K norm。
@@ -541,19 +438,14 @@ __aicore__ inline void A2FinalizeQkTail(
     auto sum = buf.GetWithOffset<float>(ROWS, 104 * 1024);
     auto reduceWork = buf.GetWithOffset<float>(ROWS * 8, 105 * 1024);
     auto broadcast = buf.GetWithOffset<float>(ROWS * 8, 106 * 1024);
-    AscendC::GlobalTensor<QT> qGm, kGm, dq1Gm, dk1Gm, dk2Gm, dqGm, dkGm;
-    AscendC::GlobalTensor<float> qRstdGm, kRstdGm;
-    qGm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(q));
-    kGm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(k));
-    dq1Gm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(workspace + layout.dqOffset));
-    dk1Gm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(workspace + layout.dkOffset));
-    dk2Gm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(workspace + layout.dkWyOffset));
-    dqGm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(dq));
-    dkGm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(dk));
-    if constexpr (USE_QK_L2NORM) {
-        qRstdGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(qRstd));
-        kRstdGm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(kRstd));
-    }
+    A2FinalizeQkTailViews<QT> views{qInput, dqInput, dkInput, dkWyInput, kInput,
+                                   gradQ, gradK, x, product, sum, reduceWork, broadcast};
+    const bool reuseOutputs = A2FinalizeUseOutputReuse(t);
+    const A2FinalizeQkTailArgs args{q, k, qRstd, kRstd,
+        reuseOutputs ? dq : workspace + layout.dqOffset,
+        reuseOutputs ? dk : workspace + layout.dkOffset, dq, dk, USE_QK_L2NORM};
+    A2FinalizeQkTailGm<QT> gm;
+    gm.Init(args, workspace + layout.dkWyOffset);
     const auto wyTiling = A2FinalizeWyTiling(t);
     const int64_t aivNum = AscendC::GetBlockNum() * 2;
     for (int64_t work = AscendC::GetBlockIdx(); work < t.totalChunkNum * t.HK; work += aivNum) {
@@ -563,42 +455,9 @@ __aicore__ inline void A2FinalizeQkTail(
         PrepareWyReprBwdGetTaskInfo(cuSeqlens, chunkIndices, wyTiling, chunk, task);
         for (uint32_t row = 0; row < task.curChunkSize; row += ROWS) {
             const uint32_t rows = task.curChunkSize - row < ROWS ? task.curChunkSize - row : ROWS;
-            const uint32_t count = rows * K;
             const int64_t scalarOffset = hk * t.T + task.keyBos + row;
             const int64_t offset = scalarOffset * K;
-            AscendC::DataCopy(dqInput, dq1Gm[offset], count);
-            AscendC::DataCopy(dkInput, dk1Gm[offset], count);
-            AscendC::DataCopy(dkWyInput, dk2Gm[offset], count);
-            if constexpr (USE_QK_L2NORM) {
-                AscendC::DataCopy(qInput, qGm[offset], count);
-                AscendC::DataCopy(kInput, kGm[offset], count);
-            }
-            AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::Cast(gradK, dkInput, AscendC::RoundMode::CAST_NONE, count);
-            AscendC::Cast(x, dkWyInput, AscendC::RoundMode::CAST_NONE, count);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(gradK, gradK, x, count);
-            AscendC::PipeBarrier<PIPE_V>();
-            // 原组合链的 add 输出为 BF16；norm 输入保留该 cast 边界。
-            AscendC::Cast(dkInput, gradK, AscendC::RoundMode::CAST_RINT, count);
-            AscendC::PipeBarrier<PIPE_V>();
-            if constexpr (USE_QK_L2NORM) {
-                AscendC::Cast(gradQ, dqInput, AscendC::RoundMode::CAST_NONE, count);
-                AscendC::Cast(gradK, dkInput, AscendC::RoundMode::CAST_NONE, count);
-                AscendC::PipeBarrier<PIPE_V>();
-                A2FinalizeNormTile(gradQ, qInput, x, product, sum, reduceWork, broadcast,
-                                   qRstdGm, scalarOffset, rows);
-                A2FinalizeNormTile(gradK, kInput, x, product, sum, reduceWork, broadcast,
-                                   kRstdGm, scalarOffset, rows);
-                AscendC::Cast(dqInput, gradQ, AscendC::RoundMode::CAST_RINT, count);
-                AscendC::Cast(dkInput, gradK, AscendC::RoundMode::CAST_RINT, count);
-                AscendC::PipeBarrier<PIPE_V>();
-            }
-            // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
-            AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::DataCopy(dqGm[offset], dqInput, count);
-            AscendC::DataCopy(dkGm[offset], dkInput, count);
-            AscendC::PipeBarrier<PIPE_ALL>();
+            A2FinalizeQkTailRows<QT, USE_QK_L2NORM>(gm, views, scalarOffset, offset, rows);
         }
     }
     pipe.Reset();
@@ -615,7 +474,7 @@ __aicore__ inline void A2FinalizeRun(
     GM_ADDR dq, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg,
     GM_ADDR workspace, const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
 {
-    const A2FinalizeWorkspaceLayout layout(t, AscendC::GetBlockNum());
+    const A2FinalizeWorkspaceLayout layout(t, AscendC::GetBlockNum(), std::is_same<GT, float>::value);
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
         A2FinalizePrepare<QT, GT, USE_EXP2>(g, beta, h, dh, workspace, t, layout, pipe);
@@ -628,12 +487,17 @@ __aicore__ inline void A2FinalizeRun(
     const bool dqWideSchedule = !DqkwgUseU32Schedule(
         dqTiling.B, dqTiling.numChunks, dqTiling.HV, dqTiling.HK,
         dqTiling.aicCoreNum, dqTiling.hkPartitions);
+    const bool reuseOutputs = A2FinalizeUseOutputReuse(t);
+    const int64_t chunkDkBytes = A2FinalizeChunkDkScratchBytes(t, AscendC::GetBlockNum());
+    const uint32_t chunkDkSlots = A2FinalizeChunkDkScratchSlots(t, AscendC::GetBlockNum());
+    GM_ADDR dq1 = reuseOutputs ? dq : workspace + layout.dqOffset;
+    GM_ADDR dk1 = reuseOutputs ? dk : workspace + layout.dkOffset;
+    GM_ADDR dw = reuseOutputs ? dv : workspace + layout.dwOffset;
     GM_ADDR stageWorkspace = workspace + layout.stageOffset;
     if ASCEND_IS_AIC {
         ChunkBwdDqkwgCubeProcess<QT, float> cube(
             q, k, vNew, standardH, dO, standardDh, du, cuSeqlens, chunkIndices,
-            workspace + layout.dqOffset, workspace + layout.dkOffset,
-            workspace + layout.dwOffset, stageWorkspace);
+            dq1, dk1, dw, stageWorkspace);
         cube.Init(dqTiling);
         if (dqWideSchedule) {
             cube.template Process<true>();
@@ -646,9 +510,8 @@ __aicore__ inline void A2FinalizeRun(
         AscendC::TPipe pipe;
         ChunkBwdDqkwgVectorProcess<QT, float> vec(
             q, k, vNew, workspace + layout.gOffset, standardH, dO, standardDh, du,
-            cuSeqlens, chunkIndices, workspace + layout.dqOffset,
-            workspace + layout.dkOffset, workspace + layout.dwOffset,
-            workspace + layout.dgDqOffset, stageWorkspace);
+            cuSeqlens, chunkIndices, dq1, dk1, dw,
+            std::is_same<GT, float>::value ? dg : workspace + layout.dgDqOffset, stageWorkspace);
         vec.Init(dqTiling, &pipe);
         if (dqWideSchedule) {
             vec.template Process<true>();
@@ -663,18 +526,20 @@ __aicore__ inline void A2FinalizeRun(
     const auto wyTiling = A2FinalizeWyTiling(t);
     if ASCEND_IS_AIC {
         PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE> cube(
-            k, a, workspace + layout.dwOffset, du, cuSeqlens, chunkIndices, stageWorkspace);
+            k, a, dw, du, cuSeqlens, chunkIndices, stageWorkspace);
         cube.Init(wyTiling);
         cube.Process();
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
+        GM_ADDR dbeta32 = std::is_same<GT, float>::value ? dbeta : workspace + layout.dbetaOffset;
         PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER> vec(
             k, v, workspace + layout.betaOffset, workspace + layout.gOffset,
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
-            workspace + layout.dbetaOffset, workspace + layout.dgWyOffset, stageWorkspace);
-        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum));
-        vec.Process();
+            dbeta32, workspace + layout.dgWyOffset, stageWorkspace);
+        vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum), chunkDkBytes, chunkDkSlots);
+        const A2FinalizeQkTailArgs qkTailArgs{q, k, qRstd, kRstd, dq1, dk1, dq, dk, USE_QK_L2NORM};
+        vec.Process(qkTailArgs);
         AscendC::PipeBarrier<PIPE_ALL>();
         pipe.Reset();
     }
@@ -684,8 +549,10 @@ __aicore__ inline void A2FinalizeRun(
         AscendC::TPipe pipe;
         A2FinalizeGateTail<GT, USE_BETA_SIGMOID, CHUNK_SIZE>(
             betaRaw, cuSeqlens, chunkIndices, dbeta, dg, workspace, t, layout, pipe);
-        A2FinalizeQkTail<QT, USE_QK_L2NORM>(
-            q, k, qRstd, kRstd, cuSeqlens, chunkIndices, dq, dk, workspace, t, layout, pipe);
+        if (chunkDkBytes == 0) {
+            A2FinalizeQkTail<QT, USE_QK_L2NORM>(
+                q, k, qRstd, kRstd, cuSeqlens, chunkIndices, dq, dk, workspace, t, layout, pipe);
+        }
     }
 }
 
