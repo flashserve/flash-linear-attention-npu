@@ -47,6 +47,18 @@ L2 层传 `nullptr`，不参与公开 GM 写回，因此调用方按需取 `q_ha
 格式要求：本算子的 L2 只拒绝私有（分形）格式，`ND`/`NCHW`/`NCL`/`NHWC` 等非私有拼写均可传入；
 张量需连续（`CheckContiguous`）。
 
+## 支持范围
+
+| 产品 | `--soc` | 平台档位 | head 并行铺排 |
+| --- | --- | --- | --- |
+| A2 | `ascend910b` | Arch22（DAV_2201） | 4 head / AIC，双 AIV 各 2 head |
+| A3 | `ascend910_93` | Arch22（DAV_2201） | 4 head / AIC，双 AIV 各 2 head |
+| A5 | `ascend950` | Arch35（DAV_3510） | 4 head / AIC，双 AIV 各 2 head，4 个 workspace 槽 |
+| A6 | `ascend960dt` | Arch92（DAV_9201，`__NPU_ARCH__=9201`） | 3 head / AIC，单 AIV 搬 3 head，3 个 workspace 槽 |
+
+`q/k/v` 固定 BF16，K/V 维固定 128，`chunk_size` 固定 64；不支持的 SoC 在
+tiling 阶段直接返回失败，不会退化成其他平台档位。
+
 ## 输入输出
 
 `q/k/v` 固定为 BF16，K/V 维固定为 128，`chunk_size` 固定为 64。`g/beta` 支持
