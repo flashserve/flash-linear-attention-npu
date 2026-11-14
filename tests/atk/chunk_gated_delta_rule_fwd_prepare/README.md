@@ -1,5 +1,7 @@
 # ChunkGatedDeltaRuleFwdPrepare ATK 工程
 
+下文既有矩阵记录 Ascend950 验证范围。A2 arch22 的 D32 本轮验证记录见文末。
+
 本目录提供 `chunk_gated_delta_rule_fwd_prepare` 的 ATK 单算子工程：`executor_chunk_gated_delta_rule_fwd_prepare.py`、`gen_chunk_gated_delta_rule_fwd_prepare.py`、`chunk_gated_delta_rule_fwd_prepare.yaml`，以及精度 / 性能 / MSS / 精简四份 JSON。
 
 精度标准为 `mixed_tolerance_bm`（NPU DUT vs CPU 高精度 golden）。CPU 标杆为本目录 `scripts/cpu_golden.py` 的 `cpu_gdn_fwd_l2norm_to_recompute`。
@@ -220,3 +222,35 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_prepare -npu_devic
 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_prepare -npu_device_id=0 -scope=mssanitizer
 bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd_prepare -scope=gen_cases
 ```
+
+## A2 arch22 D32 验证记录（2026-11-14）
+
+Assemble16 将两个 32×32 FP32 对角块保存在既有 184 KiB UB 内的 32 KiB 区域，Final 从该区域读取，Cube 继续消费原 GM 中间矩阵。命中现有 `BT=64,V=128` 模板。
+
+实测源码为 `c46dcd6327b0ebc16b1f2ff01d3234a6f487d089`，对照为 `7786e83c2189d084e930d9f52fdf56fe7e0031f2`。环境为 Ascend910B3、CANN9.2.0.beta2、PyTorch2.10.0、torch_npu2.10.0.post2、ATK26.7.8。普通 D32 wheel SHA256 为 `2a9b69318c62b47ef3d1fcd810d33f8671344718946248f79d31aceed01b72e9`。
+
+| 验证 | 原生结果及范围 |
+| --- | --- |
+| 正式双标杆泛化 | 2800 条全部运行成功，2793 通过、7 失败，20998 项输出比较，原生汇总 Failed。g/beta 四种 BF16/FP32 配对各700条，G1–16，定长1384、变长1416，output_a 两值各1400条，覆盖 norm/gate/sigmoid/exp2 组合 |
+| 泛化失败对照 | 106/126/262/330/1145/1858/1926 均为 g_cumsum 的 RMS 比例超原1.5阈值。按原配置及 seed 新跑 main/D32 共14控制，保存输入字节相同，三路共141个输出逐位一致，原生误差指标与原失败相同。原2800未保存完整张量，数值根因待查 |
+| 八模型及四小算子链精度 | 各8/8，通过输出各56/56。小算子链为 Cumsum→KKT→SolveTri→RecomputeWU |
+| 内存对照 | 同原始八组输入，完整小算子原生基线报告经 bm_file 进入 Prepare 比较，8/8 内存 True、汇总 Pass |
+| MSS memcheck | 当前源码独立插桩包，4/4 内存检测 True、内存汇总 Pass。CPU精度4/4、28输出True。该检测node的NPU精度详情为空、精度汇总Failed，原表保留 |
+| 原仓内 Example | case1_current_default，BF16/T4087/原12段变长，o通过，cosine=0.999996169，原tol=0.005。使用官方兼容补丁的私有 Triton3.2 副本复用原 CPU golden |
+| 其他专项 | ACLNN4、UN100、ND100、CONT8通过。SPEC42为41/42，OUTL19为12/19。SPEC失败在main/D32保存控制中27输出逐位一致，OUTL的7条旧错误文本匹配失败在main同样出现。原分配测试8个子项在两版均被Fwd useExp2参数校验拒绝 |
+
+泛化沿原双标杆 CV5/1.5/1.5、mt10。q/k/v/beta 值域为[-5,5]，g在gate关闭时为[-5,0]、开启时为[-5,5]。原生报告 SHA256 为 `67673e56ffbbadd3e1de1f1d1ffc82f607d66964dff8b28bb505eb746d1e0f8c`。全部失败记录保留。
+
+性能与内存模型采用 F0，核内 norm/gate/sigmoid/exp2 关闭，外部 Q/K 归一化开启，output_a=true，QKV BF16、K=V128、chunk64。下表 g/beta 为 BF16，峰值含驻留输入，单位为 MiB。
+
+| 场景 | T / HK / HV | 四小算子峰值 | D32 Prepare峰值 | 差值 | D32主kernel μs | H20/主kernel |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| C01 定长 | 11264 / 16 / 128 | 2502.007813 | 1553.462891 | -948.544922 | 3941.746325 | 0.423722 |
+| C02 变长16×1024 | 16384 / 16 / 128 | 3632.007813 | 2246.587891 | -1385.419922 | 5668.613650 | 0.416526 |
+| C20 变长原64段 | 65536 / 16 / 32 | 4400.007813 | 3404.587891 | -995.419922 | 5970.604350 | 0.448057 |
+
+对应 g/beta FP32 的三条内存也满足相对小算子增加≤200M。八组模型同卡ABBA各臂各20个主kernel样本，共640个，正反两序各组耗时均下降，主kernel均值之和较main下降2.038142%，全部设备任务均值之和下降2.029319%。性能使用共享卡5，suite前HBM30828/65536MiB、AICore0%且有其它驻留进程。Issue657四组H20/设备任务合计均≥0.4，Issue799四组0.45目标仍待满足。完整八组性能与内存表及复现命令见本次PR测试记录。
+
+Example 环境兼容补丁来自 Ascend/AgentSDK 固定提交 `2a7a0c38324e1a1c4c3b4d61f0c80bb37a940b6b`，实际原生 Example 输入、seed及阈值按仓内配置执行。[官方Triton兼容说明](https://github.com/Ascend/AgentSDK/blob/2a7a0c38324e1a1c4c3b4d61f0c80bb37a940b6b/docs/zh/aura/07_faq.md)
+
+A3/A5编译、测试及最终PR head的仓内CI按对应平台门禁补齐。
