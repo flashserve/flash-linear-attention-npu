@@ -38,8 +38,6 @@ extern "C" {
 
 namespace {
 
-constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleFwdPrepare";
-
 constexpr int64_t K_SIZE = 128;
 constexpr int64_t CHUNK_SIZE = 64;
 constexpr int64_t DIM_4 = 4;
