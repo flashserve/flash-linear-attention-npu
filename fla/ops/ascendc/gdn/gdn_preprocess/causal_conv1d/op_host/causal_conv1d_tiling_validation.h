@@ -340,7 +340,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         return ge::GRAPH_FAILED;
     }
     if (width < 2 || width > 4) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "actually", std::to_string(width), "Only support width in [2,4] now, actually is d.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "width", std::to_string(width),
+            "Only support width in [2,4] now");
         return ge::GRAPH_FAILED;
     }
 
