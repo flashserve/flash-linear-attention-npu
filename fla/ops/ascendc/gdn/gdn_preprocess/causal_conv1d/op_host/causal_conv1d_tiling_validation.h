@@ -321,7 +321,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
         tiling.headDim = dim / tiling.headNum;
         if (tiling.headDim % DIM_ALIGN_ELEMS != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim", "invalid", "headDim must satisfy headDim % d == 0 for head-major output");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headDim",
+            std::to_string(tiling.headDim) + "," + std::to_string(DIM_ALIGN_ELEMS),
+            "headDim must be a multiple of " + std::to_string(DIM_ALIGN_ELEMS) + " for head-major output");
         return ge::GRAPH_FAILED;
     }
     }
@@ -452,7 +454,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     }
             const int64_t qslLast = ReadVisibleMetadataValue(qslTensor, tiling.queryStartLocDtype, qslSize - 1);
             if (qslLast != cuSeqlen) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "d", "invalid", "queryStartLoc[last] must equal cuSeqlend vs d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "queryStartLoc",
+            std::to_string(qslLast) + "," + std::to_string(cuSeqlen),
+            "queryStartLoc[last] must equal cuSeqlen");
         return ge::GRAPH_FAILED;
     }
             for (int64_t i = 0; i + 1 < qslSize; ++i) {
@@ -508,7 +512,8 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     if (isDecodeMode) {
         const int64_t decodeSeqLen = (inputMode == 1) ? seqLen : 1;
         if (decodeSeqLen < 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "actual", std::to_string(decodeSeqLen), "decode mode requires seqlen >= 1, actual is d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "seqlen",
+            std::to_string(decodeSeqLen), "decode mode requires seqlen >= 1");
         return ge::GRAPH_FAILED;
     }
     }
