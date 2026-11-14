@@ -26,6 +26,9 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
+#include "op_common/log/log.h"
+
+static constexpr const char *OP_NAME = "aclnnPreProcessBwdKernelMerged";
 
 using namespace op;
 
@@ -49,38 +52,76 @@ struct PreProcessBwdKernelMergedParams {
 
 static aclnnStatus CheckNotNull(PreProcessBwdKernelMergedParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q is nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k is nullptr.");
-    CHECK_COND(params.w != nullptr, ACLNN_ERR_PARAM_NULLPTR, "w is nullptr.");
-    CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "d_o is nullptr.");
-    CHECK_COND(params.dv != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dv is nullptr.");
-    CHECK_COND(params.dhmOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dhm is nullptr.");
+    if (!(params.q != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.k != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.w != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.dO != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "d_o");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.dv != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dv");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.dhmOut != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dhm");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 {
     tensor = l0op::Contiguous(tensor, executor);
-    CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "Contiguous failed.");
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus ParamsDataContiguous(PreProcessBwdKernelMergedParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR, "q Contiguous failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR, "k Contiguous failed.");
-    CHECK_COND(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR, "w Contiguous failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-               "d_o Contiguous failed.");
-    CHECK_COND(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-               "dv Contiguous failed.");
+    if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: q Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: k Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: w Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: d_o Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dv Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     if (params.gOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-                   "g Contiguous failed.");
+        if (!(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: g Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     if (params.gkOptional != nullptr) {
-        CHECK_COND(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR,
-                   "gk Contiguous failed.");
+        if (!(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gk Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     }
     return ACLNN_SUCCESS;
 }
@@ -90,7 +131,9 @@ static aclnnStatus ParamsDataContiguous(PreProcessBwdKernelMergedParams &params,
 static aclnnStatus CheckParams(PreProcessBwdKernelMergedParams params)
 {
     auto ret = CheckNotNull(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -114,16 +157,28 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
     L2_DFX_PHASE_1(aclnnPreProcessBwdKernelMerged,
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional), DFX_OUT(dhmOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto executorPtr = uniqueExecutor.get();
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
                                                  params.chunkSize, params.dhmOut, executorPtr);
-    CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (!(result != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
+            __func__);
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
@@ -133,8 +188,10 @@ aclnnStatus aclnnPreProcessBwdKernelMerged(void *workspace, uint64_t workspaceSi
                                          aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnPreProcessBwdKernelMerged);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in aclnnPreProcessBwdKernelMerged launch aicore.");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in aclnnPreProcessBwdKernelMerged launch aicore.", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }
 

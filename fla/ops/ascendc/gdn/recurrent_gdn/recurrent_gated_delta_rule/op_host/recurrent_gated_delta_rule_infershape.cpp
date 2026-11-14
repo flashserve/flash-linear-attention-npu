@@ -49,7 +49,7 @@ static ge::graphStatus InferShapeRecurrentGatedDeltaRule(InferShapeContext *cont
     auto shapeOut = context->GetOutputShape(DIM_0);
     auto shapeFinalState = context->GetOutputShape(DIM_1);
     if (shapeValue == nullptr || shapeInitialState == nullptr || shapeOut == nullptr || shapeFinalState == nullptr) {
-        OP_LOGE(opName, "[InferShape] shape is null");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(opName, "shape", "input argument must not be nullptr");
         return ge::GRAPH_FAILED;
     }
 

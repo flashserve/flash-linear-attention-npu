@@ -15,6 +15,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
+#include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -25,10 +26,13 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
+#include <string>
 
 using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdDhu";
 
 static constexpr size_t DIM_NUM_1 = 1;
 static constexpr size_t DIM_NUM_3 = 3;
@@ -123,16 +127,19 @@ public:
     ge::graphStatus Process()
     {
         if (PreCheck() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "PreCheck", "invalid", "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+
             return ge::GRAPH_FAILED;
         }
         if (CommonTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "CommonTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+
             return ge::GRAPH_FAILED;
         }
         if (IsVariableLength()) {
             if (VariableLenTiling() != ge::GRAPH_SUCCESS) {
-                OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "VariableLenTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+
                 return ge::GRAPH_FAILED;
             }
             tiling_.isVariable = 1;
@@ -144,7 +151,8 @@ public:
             tiling_.isVariable = 0;
         }
         if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "WorkspaceTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -155,19 +163,24 @@ private:
                                              const char *inputName)
     {
         if (curShape == nullptr) {
-            OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, inputName, "required input must not be nullptr");
             return ge::GRAPH_FAILED;
         }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         if (dimNum != validDimNum) {
-            OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim num should be %zu, but got %zu.",
-                    inputName, validDimNum, dimNum);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ctx_.nodeName, inputName, std::to_string(dimNum),
+                "rank must be " + std::to_string(validDimNum));
             return ge::GRAPH_FAILED;
         }
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
             if (storageShape.GetDim(dimIndex) == 0) {
-                OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim %zu is 0.", inputName, dimIndex);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ctx_.nodeName,
+                    (std::string(inputName) + ".dim[" + std::to_string(dimIndex) + "]").c_str(),
+                    "0", "shape dimensions must be non-zero");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -180,9 +193,10 @@ private:
         const size_t dim1 = shape1.GetDim(dimIndex);
         const size_t dim2 = shape2.GetDim(dimIndex);
         if (dim1 != dim2) {
-            OP_LOGE(ctx_.nodeName,
-                    "Compare input shape of %s and %s failed, dim %zu should be same, but got %zu and %zu.",
-                    inputName1, inputName2, dimIndex, dim1, dim2);
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, (std::string(inputName1) + "," + inputName2).c_str(),
+                std::to_string(dim1) + "," + std::to_string(dim2),
+                "dim " + std::to_string(dimIndex) + " should be same");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -332,12 +346,16 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG == ctx_.hasGk) {
-            OP_LOGE(ctx_.nodeName, "Exactly one of g and gk must be provided, but hasG=%d hasGk=%d.",
-                    static_cast<int>(ctx_.hasG), static_cast<int>(ctx_.hasGk));
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "g,gk",
+                std::string("hasG=") + (ctx_.hasG ? "1" : "0") + ",hasGk=" + (ctx_.hasGk ? "1" : "0"),
+                "exactly one of g and gk must be provided");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
-            OP_LOGE(ctx_.nodeName, "The dtype of g or gk must be float32 or match q and k.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                ctx_.nodeName, "g/gk", ge::TypeUtils::DataTypeToSerialString(ctx_.gDataType),
+                "the dtype of g or gk must be float32 or match q and k");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG) {
@@ -427,7 +445,9 @@ private:
         tiling_.hasDh0 = ctx_.hasDh0 ? 1 : 0;
         tiling_.hasGk = ctx_.hasGk ? 1 : 0;
         if (ctx_.hasGk && !ctx_.useExp2) {
-            OP_LOGE(ctx_.nodeName, "use_exp2 must be true when gk is provided.");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "gk,useExp2", "gk present, useExp2=false",
+                "use_exp2 must be true when gk is provided");
             return ge::GRAPH_FAILED;
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;

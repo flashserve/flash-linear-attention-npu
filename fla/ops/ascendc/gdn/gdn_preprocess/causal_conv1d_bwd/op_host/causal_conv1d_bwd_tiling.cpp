@@ -86,8 +86,8 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
         const auto *desc = context->GetInputDesc(requiredInputIndices[i]);
         OP_CHECK_IF(
             desc == nullptr,
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, std::string(requiredInputNames[i]) +
-                                                    "; expected=present; required tensor descriptor is unavailable"),
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: required input %s descriptor is unavailable", __func__,
+                                   requiredInputNames[i]),
             return ge::GRAPH_FAILED);
         OP_CHECK_IF(desc->GetDataType() != xDtype,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, requiredInputNames[i],
@@ -140,7 +140,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto wShape = context->GetInputShape(WEIGHT_INPUT_INDEX)->GetStorageShape();
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
     OP_CHECK_IF(xDesc == nullptr,
-                OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x; expected=present; required tensor descriptor is unavailable"),
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: required input x descriptor is unavailable", __func__),
                 return ge::GRAPH_FAILED);
     auto xDtype = xDesc->GetDataType();
     if (CheckDtypes(context, xDtype) != ge::GRAPH_SUCCESS) {
@@ -161,8 +161,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
         const int64_t *activationPtr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
         OP_CHECK_IF(activationPtr == nullptr,
-                    OP_LOGE_WITH_INVALID_INPUT(
-                        OP_NAME, "activation; expected=present; declared activation attribute must have a value"),
+                    OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "activation"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(*activationPtr != ACTIVATION_NONE && *activationPtr != ACTIVATION_SILU &&
                         *activationPtr != ACTIVATION_SWISH,
@@ -291,8 +290,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     } else {
         OP_CHECK_IF(
             activation != ACTIVATION_NONE,
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "y; expected=present; activation=" + std::to_string(activation) +
-                                                    "; y with non-empty shape is required when activation is enabled"),
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "y"),
             return ge::GRAPH_FAILED);
     }
     uint32_t W = wShape.GetDim(DIM_INDEX0);
@@ -306,7 +304,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         auto qslShapePtr = context->GetOptionalInputShape(QUERY_START_LOC_INPUT_INDEX);
         OP_CHECK_IF(
             qslShapePtr == nullptr,
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "queryStartLoc shape; expected=present; required in varlen mode"),
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "queryStartLoc"),
             return ge::GRAPH_FAILED);
         auto qslShape = qslShapePtr->GetStorageShape();
         OP_CHECK_IF(qslShape.GetDimNum() != 1 || qslShape.GetDim(0) < 1,
@@ -317,18 +315,18 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INPUT_INDEX);
         OP_CHECK_IF(
             qslDesc == nullptr,
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "queryStartLoc descriptor; expected=present; required in varlen mode"),
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: queryStartLoc descriptor is unavailable in varlen mode", __func__),
             return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64,
-                    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "queryStartLoc (requires int64)",
+                    OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "queryStartLoc",
                                               std::to_string(static_cast<int>(qslDesc->GetDataType())),
                                               std::to_string(static_cast<int>(ge::DT_INT64))),
                     return ge::GRAPH_FAILED);
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
         const int64_t *qslData = (qslTensor != nullptr) ? qslTensor->GetData<int64_t>() : nullptr;
         OP_CHECK_IF(qslData == nullptr,
-                    OP_LOGE_WITH_INVALID_INPUT(
-                        OP_NAME, "queryStartLoc data; expected=present; host tensor data is required in varlen mode"),
+                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: queryStartLoc host tensor data is unavailable in varlen mode",
+                                           __func__),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslData[0] != 0 || qslData[B] != static_cast<int64_t>(totalTokens),
                     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
