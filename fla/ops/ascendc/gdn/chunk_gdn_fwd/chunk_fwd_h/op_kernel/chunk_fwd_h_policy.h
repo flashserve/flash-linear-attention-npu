@@ -28,11 +28,14 @@ struct FwdHCompilePolicy {
 constexpr uint32_t FWD_H_CHUNK = 64;
 constexpr uint32_t FWD_H_K = 128;
 constexpr uint32_t FWD_H_V = 128;
-constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
 #if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_AIV_COUNT = 1;   // A6: 1 AIC : 1 AIV
+constexpr uint32_t FWD_H_WORKSPACE_HEAD_SLOTS = 2 * FWD_H_AIC_HEAD_SLOTS;  // 2 head × 2 bank
 #else
+constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
 constexpr uint32_t FWD_H_AIV_COUNT = 2;   // A5: 1 AIC : 2 AIV
+constexpr uint32_t FWD_H_WORKSPACE_HEAD_SLOTS = FWD_H_AIC_HEAD_SLOTS;      // 4 head
 #endif
 constexpr uint32_t FWD_H_AIV_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_FLAG_SUBBLOCK_STRIDE = 16;
@@ -224,6 +227,53 @@ __aicore__ inline bool FwdHMode2PairHasHead(uint32_t activeHeadCount, uint32_t p
 {
     return pairSlot * 2U + aiv < activeHeadCount;
 }
+
+__aicore__ inline uint64_t FwdHCoreSlotOffset(uint32_t core, uint32_t slot, uint32_t slotElements)
+{
+    return (static_cast<uint64_t>(core) * FWD_H_WORKSPACE_HEAD_SLOTS + slot) * slotElements;
+}
+
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+namespace FwdHArch92 {
+// Offsets are bytes. Both AIC Fixpipe and AIV use the same absolute UB view.
+constexpr uint32_t HEADS = 2;
+constexpr uint32_t BANKS = 2;
+constexpr uint32_t PD_BASE = 0;
+constexpr uint32_t STATE_BASE = 128 * 1024;
+constexpr uint32_t INPUT_BASE = 256 * 1024;
+constexpr uint32_t RIGHT_BASE = 288 * 1024;
+constexpr uint32_t GATE_BASE = 320 * 1024;
+constexpr uint32_t ALPHA_BASE = 321 * 1024;
+constexpr uint32_t UB_USED = ALPHA_BASE + BANKS * HEADS * 32;
+constexpr uint32_t L1_BANK_BYTES = 160 * 1024;
+constexpr uint32_t L1_W_BASE = 0;
+constexpr uint32_t L1_H_BASE = 32 * 1024;
+constexpr uint32_t L1_RIGHT_BASE = 96 * 1024;
+constexpr uint32_t L1_K_BASE = 128 * 1024;
+
+// mode=0x4, one AIC / one AIV. Opposite directions have independent counters.
+constexpr uint32_t P_FLAG = 0;      // 0/1: P_READY -> V, P_FREE -> FIX
+constexpr uint32_t D_FLAG = 2;      // 2/3: D_READY -> V, PD_FREE -> FIX
+constexpr uint32_t RIGHT_FLAG = 4;  // 4..7: bank*2+head, READY -> MTE2, FREE -> V
+constexpr uint32_t H_FLAG = 8;      // 8/9: H_READY -> MTE2
+constexpr uint32_t ROUND_FLAG = 10;
+
+__aicore__ inline uint32_t BankSlot(uint32_t chunk, uint32_t head)
+{
+    return (chunk & 1U) * HEADS + head;
+}
+
+__aicore__ inline uint64_t RightOffset(uint32_t core, uint32_t chunk, uint32_t head)
+{
+    return FwdHCoreSlotOffset(core, BankSlot(chunk, head), FWD_H_CHUNK * FWD_H_V);
+}
+
+__aicore__ inline AscendC::LocalTensor<uint8_t> UbBuffer()
+{
+    return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::VECCALC, 0, UB_USED);
+}
+} // namespace FwdHArch92
+#endif
 
 } // namespace GDN
 
