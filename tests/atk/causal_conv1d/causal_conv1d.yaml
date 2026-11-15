@@ -2,14 +2,86 @@ api: pytorch
 api_type: executor_causal_conv1d
 version: v2.1
 name: causal_conv1d
-aclnn_name:
+aclnn_name: ""
 generate: generator_causal_conv1d
-dtype_numbers: 1
+dtype_numbers: 200
 extra_numbers: 0
 standard:
   acc: mixed_tolerance_bm
   perf: not_key
 inputs:
+  # ==========================================
+  # 第一部分：真实 Tensor 输入声明 (具体 Shape 和 Range 由 gen 动态填充)
+  # ==========================================
+  - name: x
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-1.0, 1.0]]
+      invalid:
+        values: [[5.0, 10.0]]
+    shapes:
+      dim_numbers:
+        values: [-1]
+      dim_values:
+        values: [[]]
+
+  - name: weight
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-1.0, 1.0]]
+      invalid:
+        values: [[5.0, 10.0]]
+    shapes:
+      dim_numbers:
+        values: [-1]
+      dim_values:
+        values: [[]]
+
+  - name: bias
+    type: tensor
+    required: false  # 可选输入，由 gen 动态修正
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-1.0, 1.0]]
+      invalid:
+        values: [[5.0, 10.0]]
+    shapes:
+      dim_numbers:
+        values: [-1]
+      dim_values:
+        values: [[]]
+
+  - name: conv_states
+    type: tensor
+    required: false  # Update 阶段必须，由 gen 依据 run_mode=1 动态修正为 true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[-1.0, 1.0]]
+      invalid:
+        values: [[5.0, 10.0]]
+    shapes:
+      dim_numbers:
+        values: [-1]
+      dim_values:
+        values: [[]]
+
+  # (如果需要支持 varlen，还需增加 query_start_loc, has_initial_state 等可选 Tensor)
+
+  # ==========================================
+  # 第二部分：保留框架 Marker
+  # ==========================================
   - name: low_precision_marker
     type: tensor
     required: true
@@ -40,26 +112,54 @@ inputs:
         values: [1]
       dim_values:
         values: [1]
-  - name: case_spec
+
+  # ==========================================
+  # 第三部分：测试属性空间 (全量笛卡尔积组合)
+  # ==========================================
+  - name: run_mode
     type: attr
     required: true
     dtypes:
-      values: [non_param]
+      values: [int]
     ranges:
       valid:
-        values: ["{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}"]
+        values: [0, 1]  # 0: prefill, 1: decode
       invalid:
         values: []
-  - name: dtype
+
+  - name: activation
     type: attr
     required: true
     dtypes:
       values: [string]
     ranges:
       valid:
-        values: ["bf16", "fp16"]
+        values: ["none", "silu", "swish"]
       invalid:
         values: []
+
+  - name: head_num
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0, 2, 4, 16]
+      invalid:
+        values: []
+
+  - name: is_varlen
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false, true]
+      invalid:
+        values: []
+
   - name: B
     type: attr
     required: true
@@ -67,9 +167,10 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [1]
+        values: [1, 2, 4, 7]
       invalid:
         values: []
+
   - name: T
     type: attr
     required: true
@@ -77,9 +178,10 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [8]
+        values: [1, 8, 64, 256, 1024]
       invalid:
         values: []
+
   - name: D
     type: attr
     required: true
@@ -87,9 +189,10 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [16]
+        values: [16, 64, 256, 1024, 2048]
       invalid:
         values: []
+
   - name: W
     type: attr
     required: true
@@ -97,29 +200,10 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [4]
+        values: [2, 3, 4]
       invalid:
         values: []
-  - name: case_id
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [0]
-      invalid:
-        values: []
-  - name: seed
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [20260817]
-      invalid:
-        values: []
+
   - name: soc
     type: attr
     required: true
@@ -127,9 +211,10 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["ascend910b", "ascend910_93", "ascend950"]
+        values: ["ascend960dt"]
       invalid:
         values: []
+
   - name: route
     type: attr
     required: true
