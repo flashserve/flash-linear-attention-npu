@@ -36,6 +36,11 @@ FORBIDDEN_ARTIFACT_PARTS = {
 HOST_SOURCE_SUFFIXES = {".cc", ".cpp", ".h", ".hpp"}
 ARCHITECTURE_SOURCE_SUFFIXES = HOST_SOURCE_SUFFIXES | {".c", ".cce", ".cmake", ".inc"}
 
+# High-risk architecture files are checked in full even when they are not changed.
+STRICT_ARCHITECTURE_FILES = (
+    "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/op_kernel/chunk_fwd_h_policy.h",
+)
+
 ARCHITECTURE_PATTERNS = (
     (
         "host",
@@ -208,24 +213,37 @@ def added_lines_by_file(root: Path, base: str) -> dict[str, list[tuple[int, str]
 def architecture_lines(
     root: Path, selected_paths: list[Path], diff_base: str | None
 ) -> list[tuple[str, int, str]]:
+    lines = []
     if diff_base:
-        return [
+        lines = [
             (path, line, text)
             for path, lines in added_lines_by_file(root, diff_base).items()
             for line, text in lines
         ]
-    source_paths = [
-        path
-        for selected_path in selected_paths
-        for path in files_under(selected_path)
-    ]
-    return [
-        (relative(path, root), line, text)
-        for path in source_paths
-        for line, text in enumerate(
-            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
-        )
-    ]
+    else:
+        source_paths = [
+            path
+            for selected_path in selected_paths
+            for path in files_under(selected_path)
+        ]
+        lines = [
+            (relative(path, root), line, text)
+            for path in source_paths
+            for line, text in enumerate(
+                path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+            )
+        ]
+
+    for relative_path in STRICT_ARCHITECTURE_FILES:
+        path = root / relative_path
+        if path.is_file():
+            lines.extend(
+                (relative_path, line, text)
+                for line, text in enumerate(
+                    path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+                )
+            )
+    return sorted(set(lines))
 
 
 def is_architecture_source(path: str) -> bool:

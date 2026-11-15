@@ -381,7 +381,18 @@ private:
             dOShape.GetDim(DIM_3) == dvShape.GetDim(DIM_3) &&
             dvShape.GetDim(DIM_1) != dvShape.GetDim(DIM_2);
         if (ctx_.isArch92 && tokenMajorLayout) {
-            OP_LOGE(ctx_.nodeName, "Ascend960DT does not support token-major dO layout.");
+            const std::string actualLayout =
+                "dO=[" + std::to_string(dOShape.GetDim(DIM_0)) + "," +
+                std::to_string(dOShape.GetDim(DIM_1)) + "," +
+                std::to_string(dOShape.GetDim(DIM_2)) + "," +
+                std::to_string(dOShape.GetDim(DIM_3)) + "],dv=[" +
+                std::to_string(dvShape.GetDim(DIM_0)) + "," +
+                std::to_string(dvShape.GetDim(DIM_1)) + "," +
+                std::to_string(dvShape.GetDim(DIM_2)) + "," +
+                std::to_string(dvShape.GetDim(DIM_3)) + "]";
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "dO,dv", actualLayout.c_str(),
+                "Ascend960DT requires matching non-token-major [B,HV,T,V] layouts");
             return ge::GRAPH_FAILED;
         }
         doTokenMajor_ = ctx_.isArch35 && tokenMajorLayout;
@@ -474,7 +485,9 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.isArch92 && tiling_.V != GDN::DhuArch92::VALUE_DIM) {
-            OP_LOGE(ctx_.nodeName, "Ascend960DT requires value dimension 128, got %ld.", tiling_.V);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "V", std::to_string(tiling_.V),
+                "128 on Ascend960DT (DAV_9201)");
             return ge::GRAPH_FAILED;
         }
         if (tiling_.V != V_SIZE_128 && tiling_.V != V_SIZE_256) {
