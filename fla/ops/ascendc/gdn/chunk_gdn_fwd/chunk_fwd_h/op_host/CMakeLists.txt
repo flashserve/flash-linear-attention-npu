@@ -20,3 +20,12 @@ add_ops_compile_options(
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
 )
+
+# A6（Ascend960DT）按 ops-nn#11536 的 960dt kernel compile_options 关闭 dcache flush
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
+    add_ops_compile_options(
+        OP_NAME ChunkFwdH
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-no-dcache-flush
+    )
+endif()

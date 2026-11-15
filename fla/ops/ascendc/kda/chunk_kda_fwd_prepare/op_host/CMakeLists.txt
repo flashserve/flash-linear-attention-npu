@@ -30,3 +30,11 @@ foreach(PREPARE_RUNTIME_SOC ascend910b3 ascend910_9391)
         OPTIONS -DCHUNK_KDA_PREPARE_RUNTIME_KEYS=1
     )
 endforeach()
+
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
+    add_ops_compile_options(
+        OP_NAME ChunkKdaFwdPrepare
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-no-dcache-flush
+    )
+endif()

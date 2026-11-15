@@ -18,6 +18,9 @@ static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdPrepare";
 
 namespace {
 
+constexpr int64_t PREPARE_A6_TASK_SLOTS = 3;
+constexpr int64_t PREPARE_A5_TASK_SLOTS = 4;
+
 bool HasTensor(const gert::StorageShape *shape)
 {
     return shape != nullptr;
@@ -36,6 +39,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
 {
     auto platformInfo = context->GetPlatformInfo();
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    const bool isAscend9201 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
+    const int64_t taskSlots = isAscend9201 ? PREPARE_A6_TASK_SLOTS : PREPARE_A5_TASK_SLOTS;
     if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201) {
         return Tiling4ChunkGatedDeltaRuleFwdPrepareArch22(context);
     }
@@ -249,8 +254,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
 
         return ge::GRAPH_FAILED;
     }
-    // Per-core user WS: gmWsY 4×16 KiB. Must match kWsPerCoreBytes.
-    ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * 64 * 1024;
+    // Per-core Y workspace: A6 uses three slots and A5 uses four.
+    ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * taskSlots * 16 * 1024;
     OP_LOGD(context->GetNodeName(),"workspace = [%zu]", ws[0]);
     return ge::GRAPH_SUCCESS;
 }
