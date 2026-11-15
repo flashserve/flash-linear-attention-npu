@@ -15,10 +15,10 @@ if(NOT CANN_3RD_LIB_PATH)
   set(CANN_3RD_LIB_PATH "${PROJECT_SOURCE_DIR}/third_party")
 endif()
 
+set(CATLASS_VENDOR_GIT_REPOSITORY
+    "https://gitcode.com/cann/catlass.git")
 set(CATLASS_VENDOR_GIT_TAG
-    "41bf90da655bba3c66d0acd7e00abe33960ecfd6"
-    CACHE STRING "Catlass vendor git tag (fixed revision for reproducible build)")
-
+    "86acf1db511ee727d6b2995dd1b41f7f4f9221a8")
 set(_CATLASS_SOURCE_DIR "${CANN_3RD_LIB_PATH}/catlass")
 set(_CATLASS_MARK "${_CATLASS_SOURCE_DIR}/include/catlass/catlass.hpp")
 
@@ -26,14 +26,17 @@ if(EXISTS "${_CATLASS_MARK}")
   get_filename_component(OPS_ADV_CATLASS_INC "${_CATLASS_SOURCE_DIR}/include" REALPATH)
   message(STATUS "[ThirdPartyLib][catlass] Found headers at ${OPS_ADV_CATLASS_INC}")
 else()
-  message(STATUS "[ThirdPartyLib][catlass] Missing ${_CATLASS_MARK}, fetching via FetchContent (GIT_TAG ${CATLASS_VENDOR_GIT_TAG}) …")
+  message(STATUS
+          "[ThirdPartyLib][catlass] Missing ${_CATLASS_MARK}, fetching via FetchContent "
+          "(GIT_REPOSITORY ${CATLASS_VENDOR_GIT_REPOSITORY}, "
+          "GIT_TAG ${CATLASS_VENDOR_GIT_TAG}) …")
   if(EXISTS "${CMAKE_BINARY_DIR}/_deps/catlass_vendor-subbuild")
     file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/_deps/catlass_vendor-subbuild")
   endif()
   include(FetchContent)
   FetchContent_Declare(
     catlass_vendor
-    GIT_REPOSITORY https://gitcode.com/cann/catlass.git
+    GIT_REPOSITORY ${CATLASS_VENDOR_GIT_REPOSITORY}
     GIT_TAG ${CATLASS_VENDOR_GIT_TAG}
     GIT_PROGRESS TRUE
     SOURCE_DIR "${_CATLASS_SOURCE_DIR}")

@@ -45,6 +45,10 @@ class GetSocModules(Module):
                 ascend950_exclued_folders = ["arch20", "arch31", "arch32",
                     "ascend910b", "ascend910_93", "ascend310p"]
                 return any(folder in path_obj.parts for folder in ascend950_exclued_folders)
+            if option[0].lower() == "ascend960dt":
+                ascend960dt_excluded_folders = ["arch20", "arch22", "arch31", "arch32",
+                    "arch35", "arch38", "ascend910b", "ascend910_93", "ascend950", "ascend310p"]
+                return any(folder in path_obj.parts for folder in ascend960dt_excluded_folders)
             return False
 
         def is_excluded(e_f: Path, option: str):

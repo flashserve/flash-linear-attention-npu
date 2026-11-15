@@ -70,7 +70,8 @@ EXPECTED_PLATFORM_PREFIX = "manylinux_2_34"
 # by tests/test_wheel_environment.py.
 DAILY_BASE_SUFFIX = re.compile(r"\.dev\d+$")
 
-TIER_SOC = {"a2": "ascend910b", "a3": "ascend910_93", "a5": "ascend950"}
+TIER_SOC = {"a2": "ascend910b", "a3": "ascend910_93", "a5": "ascend950",
+            "a6": "ascend960dt"}
 
 # Architecture names as the two tools spell them.
 ELF_MACHINE = {"aarch64": "AArch64", "x86_64": "Advanced Micro Devices X86-64"}

@@ -312,7 +312,8 @@ class WheelEnvironmentTest(unittest.TestCase):
         version = self._public_version()
         for soc, tier in (("ascend910b", "a2"),
                           ("ascend910_93", "a3"),
-                          ("ascend950", "a5")):
+                          ("ascend950", "a5"),
+                          ("ascend960dt", "a6")):
             for arch in ("aarch64", "x86_64"):
                 with mock.patch.dict(os.environ, {
                         "FLA_NPU_DISABLE_LOCAL_VERSION": "TRUE",
