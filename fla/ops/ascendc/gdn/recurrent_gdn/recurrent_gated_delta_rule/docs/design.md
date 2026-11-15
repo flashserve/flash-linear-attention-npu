@@ -5,9 +5,12 @@
 ## 1. 目标
 
 接口契约见 [api.md](api.md)。将既有融合实现迁入 arch22，移除历史 A2/A3 kernel，
-保留两个 host ABI。该迁移不改变融合实现的计算、任务划分、地址规划和同步协议。
+使用原 ACLNN 接口名承载完整融合契约，仅保留一套 host ABI。接口收敛不改变融合实现的计算、
+任务划分、地址规划和同步协议。
 host 统一按融合契约校验 dtype 与属性，不再设置版本选择字段或隐藏属性。A2/A3 与 A5
-分别编译 arch22 和 arch35，各架构内部的两个 host ABI 进入同一实现。
+分别编译 arch22 和 arch35，各架构均由同一完整参数表进入既有融合实现。
+原 V2 的描述符校验就地保留在 `aclnn_recurrent_gated_delta_rule.cpp`，在 DFX 缓存检查前执行；
+Q/K/V/State 的 strided view 和 storage offset、辅助输入的 Contiguous 路径均沿用原 V2 实现。
 CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；保持原输入值域及 ATK 原生双标杆标准。
 性能采用 msprof `Task Duration(us)`，本次没有额外性能提升目标。
 

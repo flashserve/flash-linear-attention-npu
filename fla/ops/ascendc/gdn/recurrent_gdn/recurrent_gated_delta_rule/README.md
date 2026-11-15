@@ -7,7 +7,7 @@
 - A2/A3：使用 `op_kernel/arch22` 下的融合实现。
 - A5：使用 `op_kernel/arch35` 下的四 token、三 State bank 流水实现。
 - 所有架构统一拒绝非空 `gk`。
-- 两个 host 接口 RecurrentGatedDeltaRule / RecurrentGatedDeltaRuleV2 均保留。
+- 仅保留一套 host 接口：aclnnRecurrentGatedDeltaRule 使用完整融合参数表。
 - Python 稳定入口始终路由到融合实现，四个融合开关关闭也使用同一个 kernel。
 
 完整参数、dtype、shape、stride、可选项和异常见 [接口文档](docs/api.md)，
