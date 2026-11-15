@@ -27,13 +27,28 @@ storage offset 与实际 backing storage 一并保留，State 原地更新。
 输出为 BF16 `[T,HV,128]`；无效前缀没有数值语义。每个有效 token 写回一个 State checkpoint，
 递推过程在 FP32 中进行，checkpoint 的 BF16 舍入不反馈到下一 token。
 
-保留 `aclnnRecurrentGatedDeltaRule` 和 `aclnnRecurrentGatedDeltaRuleV2` 两套 host ABI。
-前者维持历史参数表（BF16 beta、FP32 g、无融合开关），后者暴露完整融合契约。
-两者在 A2/A3 上均执行 `op_kernel/arch22/recurrent_gated_delta_rule.h`，在 A5 上均执行
-`op_kernel/arch35/recurrent_gated_delta_rule.h`，在 A6 上均执行
-`op_kernel/arch92/recurrent_gated_delta_rule.h`，不存在旧 kernel 回退。
-Python `_stable.py` 无论融合开关是否关闭，始终调用同一个 Stable-ABI adapter，
-adapter 使用 V2 host ABI；V2 只保留为接口名称。
+仅保留一套两段式 host ABI，使用原接口名承载完整融合参数表：
+
+```cpp
+ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(
+    const aclTensor *query, const aclTensor *key, const aclTensor *value, const aclTensor *beta,
+    aclTensor *stateRef, const aclTensor *actualSeqLengths, const aclTensor *ssmStateIndices,
+    const aclTensor *g, const aclTensor *gk, const aclTensor *numAcceptedTokens,
+    const aclTensor *aLog, const aclTensor *dtBias, float scaleValue,
+    bool useQkL2NormInKernel, bool useGateInKernel, bool useBetaSigmoidInKernel,
+    bool allowNegEigval, aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor);
+
+ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRule(
+    void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);
+```
+
+参数顺序、类型及功能沿用原 V2 契约；不再导出带 V2 后缀的接口。
+历史精简参数表已被替换，C/C++ 调用方必须按新头文件补充 aLog、dtBias 和四个布尔参数并重新编译；
+动态调用方也必须更新函数签名。launcher 与 OPP 须配套更新。
+Python 签名、默认值、返回值和 State 原地更新语义保持一致；Stable adapter 始终调用上述完整接口。
+A2/A3 执行 `op_kernel/arch22/recurrent_gated_delta_rule.h`，A5 执行
+`op_kernel/arch35/recurrent_gated_delta_rule.h`，A6 执行
+`op_kernel/arch92/recurrent_gated_delta_rule.h`。
 
 ## 架构分派
 
@@ -44,9 +59,9 @@ bank 流水实现；A6 使用 arch92 的同款 4-token、三 State bank 流水�
 kernel 显式同步。
 
 A6 的 TilingKey 只编入 State/g/beta 三个 dtype 维度，四个融合开关
-（`use_qk_l2norm_in_kernel` / `use_gate_in_kernel` / `use_beta_sigmoid` / `allow_neg_eigval`）
+（`use_qk_l2norm_in_kernel` / `use_gate_in_kernel` / `use_beta_sigmoid_in_kernel` / `allow_neg_eigval`）
 由 arch92 kernel 从 tiling 数据运行时读取，不参与模板实例化；A5/A2/A3 的 TilingKey 则包含
-这四个布尔位。历史接口参数说明参见 [ACLNN 文档](aclnnRecurrentGatedDeltaRule.md)。
+这四个布尔位。两段式调用示例参见 [ACLNN 文档](aclnnRecurrentGatedDeltaRule.md)。
 
 ## 校验与异常
 
