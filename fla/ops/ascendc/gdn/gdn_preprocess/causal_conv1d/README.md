@@ -39,7 +39,7 @@ y[t] = activation(sum(weight[j] * x[t-j]) + bias)
 | `*Cpu` | Optional INT64 aclIntArray | Host-array metadata 输入；FN/UPDATE 保留该形式且不产生 warning。 |
 | `activation` | string | `"none"`、`"silu"` 或 `"swish"`。 |
 | `padSlotId` | int64 | FN padding 索引；raw 默认 `-1`。 |
-| `nullBlockId` | int64 | 保留空状态块；负值禁用。 |
+| `nullBlockId` | int64 | 保留空状态块；算子属性默认 `0`，负值禁用。 |
 | `runMode` | int64 | `0` 为 FN，`1` 为 UPDATE。 |
 | `headNum` | int64 | FN 输出分头；`0` 保持扁平输出。 |
 | `maxQueryLen` | int64 | UPDATE 变长模式的最大分段长度上界；其他模式为 `-1`。 |
