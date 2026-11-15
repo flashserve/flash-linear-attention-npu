@@ -78,16 +78,17 @@ o_t = S @ (q_t * scale)
 - `q/k/v/out` 仅支持 `BF16`。
 - Python/aclnn 通路的 Q/K/V 非连续快路径要求 feature stride 为 1、head 间不重叠、token 间不重叠且 stride 为正；
   BSND 在 `B>1` 时还要求 `batchStride == T * tokenStride`。已验证的 feature-gap、zero-stride
-  与 batch-gap view 自动回退连续化；A5 上 TND 和 BSND `B=1` 也支持不重叠的 head-major view，
-  A5 上 BSND `B>1` 的 head-major view 回退连续化。A2/A3 保留原 token-major 约束。
+  与 batch-gap view 自动回退连续化；A5/A6 上 TND 和 BSND `B=1` 也支持不重叠的 head-major view，
+  A5/A6 上 BSND `B>1` 的 head-major view 回退连续化。A2/A3 保留原 token-major 约束。
   正 stride 的 token/head 地址区间重叠时明确拒绝。
-- A5 L0 直调在 BSND `B>1` 且提供 `cu_seqlens` 时，对 Q/K/V 分别要求 `batchStride == T * tokenStride`，
+- A5/A6 L0 直调在 BSND `B>1` 且提供 `cu_seqlens` 时，对 Q/K/V 分别要求 `batchStride == T * tokenStride`，
   不满足时由 tiling 拒绝。公开 Python/aclnn 仍先按上述规则连续化，保留非连续 QKV 输入支持。
-- `g/beta` Python 入口支持 `FP32/BF16/FP16`，ACLNN 按需连续化；A5 保留输入 dtype，在 VF 中转换为 `FP32` 计算。
+- `g/beta` Python 入口支持 `FP32/BF16/FP16`，ACLNN 按需连续化；A5/A6 保留输入 dtype，在 VF 中转换为 `FP32` 计算。
 - `A_log/dt_bias` 支持 `FP32`。
 - `cu_seqlens` 可选；为空时 BSND 按 batch 行划分、TND 为一条序列；传入时为与 q 同设备的 INT32/INT64 Tensor；offset 必须单调不减，末项不得超过输入
   token capacity。A2/A3 支持超过 8 token 的 dense 单序列与 varlen 分段，内部按 8-token 窗口递推；
-  A5 的 V=128/V=256 均支持长序列。末项小于 capacity 时，仅有效 token 对应的输出和 state
+  A5 的 V=128/V=256 均支持长序列；A6（`ascend960dt`）的 V=128/V=256 按 token 直接递推，
+  不限制每段长度。末项小于 capacity 时，仅有效 token 对应的输出和 state
   更新有定义，padding tail 输出不作保证。
 - 仅支持 `layout="BSND"` 和 `layout="TND"`。
 - 支持 V-first `[state_capacity,HV,V,K]` 和 K-first `[state_capacity,HV,K,V]`，state dtype 为
@@ -102,3 +103,17 @@ V=128/V=256 使用 PR #1083 风格的 `RecurrentKdaEngine` 类，统一管理初
 V-first 以两行为粒度读取两遍 State，先收集 prediction 到512 B scratch，再计算 residual 覆盖同一 scratch，逐行广播 residual 并重读 State 完成更新和 out。K-first 保持紧凑 [K,V] 布局，参考 x8-pr 沿连续 V 维读取两遍 State，prediction 和 out 各用两个 FP32 寄存器累加，512 B scratch 保存 alpha*k 系数。BF16 State 在寄存器中转换，跨 token 仅保留 BF16 结果；out 使用舍入前的 FP32 更新值。Q/K 的 L2 normalize 使用 `x/sqrt(sum(x*x)+1e-6)`。具体内存与同步见 [设计文档](docs/design.md)。
 
 公开接口、`cu_seqlens`、State 索引和非连续 view 的语义保持不变；元数据在设备每次执行时读取。V=256 沿 V 拆成两个128列分块并复用相同 VF 和缓冲；A2/A3 保留兼容实现。
+
+## A6 实现
+
+A6（`ascend960dt`，DAV_9201）由 `__NPU_ARCH__ == 9201` 编译期选择
+[arch92/recurrent_kda.h](op_kernel/arch92/recurrent_kda.h)。它沿用 A5 的单文件 class engine、
+静态 UB、逐 token VF 和 Mutex 同步模型，并按 A6 的 384 KiB 向量 UB 调整资源预算：
+
+- 输入/输出和标量槽使用 `TOKEN_TILE=32`，摊薄 tile 级 descriptor、事件和 Mutex 开销；
+- FP32/BF16 State 均使用 4 个 bank，提高跨任务和跨 V 分块预取深度；
+- V-first 热循环按四行展开，匹配一长两短的向量发射结构。
+
+V=256 在 arch92 engine 内按 128 切片串行处理，与 V=128 共用 bank、VF 和同步路径。
+布局常量与 UB 字节公式统一定义在 [recurrent_kda_struct.h](op_kernel/recurrent_kda_struct.h)，
+host 的 `PlanA6Ub()` 与 kernel 使用同一份定义。

@@ -5,13 +5,16 @@
 
 ## 目标与结构
 
-整体采用参考 PR 的类式 constructor / Init / Process 组织、静态 UB、X=4 输入/out 双缓冲、三个 State bank 轮换、每 token 一个 VF 和 Mutex 同步。V-first 沿用 UnalignRegForStore 输出收集，K-first 在寄存器中累计完整 out 后连续写 UB。A5 的 V=128/V=256 统一使用同一 Engine，不沿用 x8-pr 调度器或 UB 地址规划；A2/A3 继续走兼容实现。
+整体采用参考 PR 的类式 constructor / Init / Process 组织、静态 UB、双槽输入/out、State bank
+轮换、每 token 一个 VF 和 Mutex 同步。A5 的 V=128/V=256 统一使用同一 Engine；A6 通过 arch92
+独立 Engine 接入同一算法路径并使用 A6 的静态 UB 预算；A2/A3 继续走兼容实现。
 
 保留 KDA 原接口，包括向量 gate、128 维 dt_bias、K-first、空请求、非连续输入及各输出组合。host 依次完成形状检查、维度与 stride 填充、属性检查、分核和 UB 规划，复用既有公开接口校验。
 
 ### A2/A3 平台边界
 
-A5 的 State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用 kernel 恢复为 PR 基线，保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径。公共结构化错误码继续保留，auto-sync 配置不在本次修改范围。
+A5/A6 的扩展公开契约、State view/别名前置校验和资源规划按实际架构启用。A2/A3 的通用
+kernel 继续保留 token-major 直接读取条件、BSND 的严格批间距、原分核公式和 ViewCopy 路径。
 
 State 输入与输出沿用远程主线已修复的公开语义：非原位模式直接读取初态，仅写入有效目标槽，不克隆或预填整个输出池。
 
@@ -32,7 +35,9 @@ aclnn 保留输入与 State 输出 view 的 stride/offset，kernel 直接读输�
 
 ## Stage 与分核
 
-每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做 grid-stride 分配，hk=hv/(HV/H)。A5 的 blockDim=min(AIV 数,任务数)，不使用 AIC；A2/A3 保留基线先计算每核任务数、再确定 blockDim 的公式。B=32、HV=48 时共有 1536 个任务，56 个 AIV 每核 27 或 28 个任务。
+每个 AIV 完整处理一个请求的一个 value head，任务数为请求数乘 HV；任务按 core 数做
+grid-stride 分配，hk=hv/(HV/H)。A5/A6 的 blockDim=min(AIV 数,任务数)，不使用 AIC；
+A2/A3 保留基线先计算每核任务数、再确定 blockDim 的公式。
 
 V=128 每任务处理一个128列 V 分块；V=256 沿 V 分成 `[0,128)`、`[128,256)`，同一 AIV 依次完成两个分块的全部 token。每个分块复用原128×128 VF、三个 State bank 和输入/out 槽。K-first 从 GM 的 `[K,256]` 中逐 K 行搬入对应128列，UB 保持 `[K,128]`，输出按原 stride 写回，无转置。V-first 对应128个 V 行。请求元数据、A_log 和 bias 每任务解析或搬入一次；q/k/g/beta 每分块读入。两种 V 维度均按四 token 的 tile 顺序递推，支持跨任意多个 tile，末 tile 仅处理有效 token；UB 占用不随序列长度增加。保留 cu_seqlens 和 State 索引容量校验。
 
@@ -67,6 +72,20 @@ V-first/K-first FP32/BF16 均合计210688 B，即205.75 KiB。全部起点按32 
 
 State view 的末两维必须稠密，slot/head 维允许正向、互不重叠的间隔。对当前128×128分块，输入/输出的 `stride[2]==128` 时用单块 DataCopy，否则用128行 DataCopyPad。因此外层有间隔的 State 仍可使用单块搬运，而物理连续的 K-first V=256 也须逐 K 行搬运128列分块。Q/K/V 的受支持 view 按 tiling 中的实际 stride 直接读取，其余可安全连续化的 view 由 aclnn 预处理；gate/beta 和可选参数、元数据由 aclnn 连续化。使用默认 L2 策略。
 
+## A6 实现差异
+
+A6（`ascend960dt`，DAV_9201）在
+[arch92/recurrent_kda.h](../op_kernel/arch92/recurrent_kda.h) 中维护独立的静态 UB 引擎。
+算法、逐 token VF、V=256 按 DIM 切片以及 State 写回语义与 A5 一致，差异集中在硬件预算：
+
+- `TOKEN_TILE=32`，输入、out 和标量槽使用 32 token tile；
+- FP32 State 和 BF16 State 均使用 4 个 128×128 bank；
+- V-first 热循环按四行展开，以利用一长两短的向量发射结构。
+
+布局常量、UB 字节公式和 host 的 `PlanA6Ub()` 共用
+[recurrent_kda_struct.h](../op_kernel/recurrent_kda_struct.h) 中的单一定义，避免 host/kernel
+两侧数值漂移。A6 仍为 AIV-only，不申请 AIC 核，也不使用公共兼容 kernel 的 `vStep` 搜索。
+
 ## 同步与生命周期
 
 engine 独占 UB 与 Mutex 编号：input[3,4]、out[5,6]、State[7,8,9]、parameter[10,11]，共九个。input 保护 MTE2→V→MTE2；out 保护 V→MTE3→V；State 保护 V 更新、MTE3 读取和 MTE2 覆盖。V 只读取旧 State 时允许 MTE3 同时读。parameter 分别保护两个向量 bias 槽的跨任务复用；未开启 raw gate 或未传入 dt_bias 时，不执行参数锁操作。
@@ -81,11 +100,16 @@ indexed State 写回时，每个 bank 记录其尚未回收的快照目标槽位
 
 ## 元数据与模板
 
-cu_seqlens、indices、accepted 是设备 tensor，host 检查 shape/dtype 等描述信息，不读取内容，保持 graph replay 时读取当前设备值。A5 kernel 在提交算子数据 DMA 前检查全部 cu_seqlens 的首值、单调性和范围；二维 indices 还要求请求长度不超过 max_step。该检查失败时本核直接返回。每个非空请求另行检查初态及各 token 的 State 槽位和 accepted；失败时停止本核后续任务，但此前任务可能已经写出，不能保证输出完全未修改，也不在 host 同步报错。空请求跳过上述槽位检查及算子数据 DMA。
+cu_seqlens、indices、accepted 是设备 tensor，host 检查 shape/dtype 等描述信息，不读取内容，
+保持 graph replay 时读取当前设备值。A5/A6 kernel 在提交算子数据 DMA 前检查全部 cu_seqlens
+的首值、单调性和范围；二维 indices 还要求请求长度不超过 max_step。该检查失败时本核直接返回。
 
 无 indices 时初态槽位为请求编号；有 indices 且无 accepted 时，使用请求首 token 对应的槽位。有 accepted 时使用 `begin+accepted-1` 对应槽位：packed 一维 indices 要求 `1<=accepted<=请求长度`，二维 speculative indices 要求 `1<=accepted<=max_step`，允许超过本次请求长度，但选中的初态槽位仍须在 State pool 内。每个有效 token 的写槽也须在 pool 内。同一请求可重复写槽，按前述 MTE3 顺序保护；不同活跃请求的写槽不得冲突，这一要求由调用方保证。
 
-kernel 入口唯一显式模板参数为 `uint32_t KERNEL_MODE`，host 用 `GET_TPL_TILING_KEY(kernelMode)` 生成 TilingKey。mode 值0为 `RKDA_TPL_COMPAT`，仅由 A2/A3 选择；A5 的 V=128/V=256 均按 State 布局和融合条件选择下表的1～4。V 维度、State dtype、是否 indexed 以及是否写 State 不另增加 mode。
+kernel 入口唯一显式模板参数为 `uint32_t KERNEL_MODE`，host 用 `GET_TPL_TILING_KEY(kernelMode)`
+生成 TilingKey。mode 值 0 为 `RKDA_TPL_COMPAT`，仅由 A2/A3 选择；A5/A6 的 V=128/V=256
+均按 State 布局和融合条件选择下表的 1～4。V 维度、State dtype、是否 indexed 以及是否写
+State 不另增加 mode。
 
 State、gate、beta 的 dtype 由算子 DataTypeList 对应的编译配置提供 `DTYPE_INITIAL_STATE`、`DTYPE_GATE`、`DTYPE_BETA` 宏；这些宏再作为 Engine/VF 的类型模板实参。它们不是入口额外的显式模板参数，也不编码到本算子的 `KERNEL_MODE` 中。
 
@@ -93,7 +117,9 @@ State、gate、beta 的 dtype 由算子 DataTypeList 对应的编译配置提供
 
 ## 验证矩阵
 
-沿用原 CPU 标杆、输入值域和精度标准。精度覆盖布局、dtype、gate 模式、tail、长序列、空请求、槽位和输出组合；补充同一 AIV 连续任务与跨 tile 复用。A5 可达四种模板模式，按下表核对，不能把 A2/A3 的 compat 计为第五种 A5 模式。
+沿用原 CPU 标杆、输入值域和精度标准。精度覆盖布局、dtype、gate 模式、tail、长序列、空请求、
+槽位和输出组合；补充同一 AIV 连续任务与跨 tile 复用。A5/A6 均可达四种模板模式，不能把
+A2/A3 的 compat 计为第五种模式。
 
 | 模板模式 | mode 值 | 布局 | 功能组合 |
 | --- | --- | --- | --- |
@@ -115,4 +141,5 @@ State、gate、beta 的 dtype 由算子 DataTypeList 对应的编译配置提供
 | 分核、UB 和融合标志 | [recurrent_kda_tiling_processor.h](../op_host/recurrent_kda_tiling_processor.h) |
 | mode 声明与 host 选择 | [recurrent_kda_tiling_key.h](../op_kernel/recurrent_kda_tiling_key.h)、[recurrent_kda_tiling.cpp](../op_host/recurrent_kda_tiling.cpp) |
 | 入口模板、dtype 与 Engine 实例化 | [recurrent_kda.cpp](../op_kernel/recurrent_kda.cpp) |
-| VF、State 搬运、元数据及同步 | [arch35/recurrent_kda.h](../op_kernel/arch35/recurrent_kda.h) |
+| A5 VF、State 搬运、元数据及同步 | [arch35/recurrent_kda.h](../op_kernel/arch35/recurrent_kda.h) |
+| A6 VF、State 搬运、元数据及同步 | [arch92/recurrent_kda.h](../op_kernel/arch92/recurrent_kda.h) |
