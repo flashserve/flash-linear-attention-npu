@@ -803,7 +803,8 @@ public:
                 prev = MakePackWalk(pack - numCore, packSize);
             }
             if (pack != coreIdx) {
-                if (NeedsStage7Wait(prev, cur)) {
+                const bool unitGateCovers = UnitScheduled() && !(PackHasTail(cur) || PackHasTail(prev));
+                if (!unitGateCovers && NeedsStage7Wait(prev, cur)) {
                     WaitAicStage7Done();
                 }
             }
