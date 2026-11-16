@@ -26,8 +26,8 @@
 | 单算子增量构建 | 选定算子及必要依赖生成 run；检查包内范围 | A5 通过，仅含 `chunk_local_cumsum` kernel 目录；A2 本轮未通过。见命令 2。 |
 | 三类增量产物 | run 更新 OPP；standalone wheel 更新适配层；携带 OPP 的 wheel 更新两者 | 已有 A2/A5 组件安装和真实调用证据；本轮安装机制检查通过。见命令 2–4。 |
 | 适配层与 OPP 分步配套 | 两种安装顺序配齐后，匹配的新接口可调用 | 已有 A2/A5 真实 ACLNN C ABI 变化及数值验收；不以 Python 参数变化代替 C ABI 验证。见命令 3–4。 |
-| 未覆盖算子隔离 | base 含 A、B，增量仅更新 A；A 命中新实现，B 输出不变 | 已有 A2/A5 数值证据：A=`chunk_local_cumsum`，B=`chunk_fwd_o`；base 文件哈希不变。见命令 4–5。 |
-| 安装安全与恢复 | 重复安装可用，失败不破坏 base；移除后恢复原输出和文件 | 本轮机制检查及已有 A2/A5 三态数值证据通过。见命令 4–5。 |
+| 未覆盖算子隔离 | base 含 A、B，增量仅更新 A；A 命中新实现，B 输出不变 | 已有 A2/A5 数值证据：A=`chunk_local_cumsum`，输出总和由 8320 变为 16640；B=`chunk_fwd_o` 输出不变，base 文件哈希不变。逐元素判据及命令见 4.1–4.3。 |
+| 安装安全与恢复 | 重复安装可用，失败不破坏 base；移除后恢复原输出和文件 | 本轮机制检查及已有 A2/A5 三态数值证据通过；移除后 A 总和恢复 8320、B 不变。移除及结果检查命令见 4.3。 |
 | 状态可观测 | 可查询当前组件、OPP 路径、启用状态和不匹配原因 | 当前安装检查覆盖；run/overlay wheel 成功后打印类型和 OPP 路径。见命令 4。 |
 | 加载路径一致性 | `.pth` 与支持的提前 source 路径选择一致；新进程调用结果符合预期 | 已有 A2/A5 来源与数值证据，本轮另检查路径选择逻辑。见命令 5。 |
 | 精度与端到端 | 按实际影响范围验证数值；保留原用例和阈值 | 已有 A2/A5 数值归档及 PR1183 GDR Example/ST CI；本轮没有重复全量数值测试。见命令 6。 |
@@ -121,6 +121,131 @@ python -m fla_npu_opp_manage --remove-overlay
 
 安装成功不等于新组合已经启用；应核对状态和诊断。不匹配组件可先保存，配齐后再验证调用。
 完整使用说明见 [Wheel 增量安装指南](Wheel增量安装指南.md)。
+
+#### 4.1. 准备能从结果区分的新版本
+
+仅查询 `--status` 或看到 overlay 路径，不能证明算子执行了新实现。
+以下使用已有验收的数值见证：base 的 A=`chunk_local_cumsum` 正常累加，
+测试版 A 在实际 OPP 内将输出乘 2；未覆盖 B=`chunk_fwd_o` 保持不变。
+调用者在三个阶段始终传相同输入、相同 `scale=1.0`，不能在调用端手工乘 2。
+“移除后不生效”指新版本不再生效，base 算子仍应正常运行。
+
+先安装未修改的完整 base wheel，再在独立测试源码中生成 ×2 的 run。
+该改动只用于识别测试版本，不进入正式算子实现或发布包：
+
+```bash
+set -e
+git worktree add --detach "$OUT/overlay-witness-src" 134524a6aae55bc94101575146e88511856716e5
+(
+  cd "$OUT/overlay-witness-src"
+  python - <<'PY'
+from pathlib import Path
+p = Path("fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_local_cumsum/op_host/op_api/chunk_local_cumsum.cpp")
+text = p.read_text()
+old = "float scaleFloat = static_cast<float>(scale);"
+assert text.count(old) == 1, "Unexpected source; stop before changing it"
+p.write_text(text.replace(old, "float scaleFloat = static_cast<float>(scale) * 2.0f;"))
+PY
+  bash build.sh --pkg --soc="$SOC" --vendor_name=fla_npu --ops=chunk_local_cumsum -j4
+)
+export UPDATE_RUN="$OUT/overlay-witness-src/build_out/fla_npu_linux-$(uname -m).run"
+```
+
+#### 4.2. 同一输入的算子结果检查命令
+
+在当前 Bash 会话中定义以下函数；每次调用都会启动新的 Python 进程。
+使用一个新证据目录，先运行 `base` 保存 B 的参考结果，再执行安装和移除。
+测试 A 使用 FP32 全 1 输入 `[1,2,128]`，每个 chunk 长度为 64。
+原始逐元素期望为重复的 `1…64`，新版为 `2,4,…128`，均要求零误差。
+总和仅用于展示，实际断言比较每个元素。
+
+```bash
+export VERIFY_OUT="$(mktemp -d "$OUT/numeric-check-XXXXXX")"
+verify_result() {
+  env -u FLA_NPU_DISABLE_PTH -u FLA_NPU_OVERLAY_VENDOR \
+    python - "$1" "$VERIFY_OUT" <<'PY'
+import hashlib, json, math, os, sys
+from pathlib import Path
+import fla_npu_opp_env  # 在 torch_npu/CANN 初始化前配置路径。
+import torch, torch_npu
+from fla_npu.ops import ascendc as ops
+import fla_npu_wheel_overlay as layers
+
+phase, directory = sys.argv[1:]
+assert phase in ("base", "overlay", "removed")
+directory = Path(directory)
+torch.set_num_threads(1)
+torch.manual_seed(20260717)
+plan = layers.runtime_plan(layers.package_dir())
+states = layers.status(layers.package_dir())
+if phase == "overlay":
+    assert plan is not None and not plan["errors"], states
+    assert not any(item["state"] == "pending" for item in states), states
+else:
+    assert plan is None and not states, states
+
+# B 不在增量中：固定输入，检查其输出与安装前逐位一致。
+b, h, t, k, v, cs = 2, 4, 129, 128, 128, 64
+q = torch.randn(b, h, t, k, dtype=torch.bfloat16) * .1
+key = torch.randn_like(q) * .1
+value = torch.randn(b, h, t, v, dtype=torch.bfloat16) * .1
+state = torch.randn(b, math.ceil(t / cs), h, k, v, dtype=torch.bfloat16) * .1
+g = torch.zeros(b, h, t, dtype=torch.float32)
+other = ops.npu_chunk_fwd_o(q.npu(), key.npu(), value.npu(), state.npu(),
+    1 / math.sqrt(k), g=g.npu(), chunk_size=cs, transpose_state_layout=False).cpu()
+b_hash = hashlib.sha256(other.float().numpy().tobytes()).hexdigest()
+
+# A 的调用参数不变，新版的 ×2 必须由实际安装的实现产生。
+x = torch.ones(1, 2, 128, dtype=torch.float32).npu()
+actual = ops.npu_chunk_local_cumsum(x, chunk_size=64, scale=1.0).cpu()
+expected = torch.arange(1, 65, dtype=torch.float32).repeat(1, 2, 2)
+if phase == "overlay":
+    expected = expected * 2
+torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+if phase != "base":
+    saved = json.loads((directory / "base.json").read_text())
+    assert b_hash == saved["B_sha256"], "Uncovered operator B changed"
+result = {"phase": phase, "A_sum": float(actual.sum()), "B_sha256": b_hash,
+          "max_abs": float((actual - expected).abs().max()),
+          "OPP_paths": os.environ.get("ASCEND_CUSTOM_OPP_PATH"), "plan": plan, "passed": True}
+(directory / (phase + ".json")).write_text(json.dumps(result, indent=2))
+print(f"PASS {phase}: A_sum={result['A_sum']}, max_abs={result['max_abs']}, B_sha256={b_hash}")
+PY
+}
+```
+
+#### 4.3. 安装生效与移除失效的完整顺序
+
+在仅安装 base 的测试环境中执行；失败时先检查日志，不继续把后续步骤计为通过。
+每次 `verify_result` 都实际调用 A、B，不以安装命令返回成功代替结果验证。
+
+```bash
+set -e
+verify_result base                         # A=8320；保存 B 的参考结果。
+bash "$UPDATE_RUN"                        # 安装 4.1 构建的 ×2 新版本。
+python -m fla_npu_opp_manage --status
+verify_result overlay                      # A=16640；B 必须与 base 一致。
+
+python -m fla_npu_opp_manage --remove-overlay
+python -m fla_npu_opp_manage --status
+verify_result removed                      # A=8320；B 不变；无 active/pending。
+```
+
+若验收的是 wheel overlay，将安装行替换为
+`python -m fla_npu_opp_manage --overlay --source /absolute/path/to/update.whl`，
+移除入口不变。用于本例的 wheel 也必须只更新 A、实现 ×2，才可使用同一检查函数：
+standalone 在适配层实现 ×2；携带 OPP 的 wheel 可使用 4.1 的 ×2 OPP 和未改倍率的适配层。
+不要将两处倍率同时改成 2。普通语义不变的优化包不会产生 ×2，不能拿它代替这个见证包。
+
+| 阶段及命令 | A 的逐元素期望 / 总和 | B 的期望 | 已有 A2/A5 run 验证 |
+| --- | --- | --- | --- |
+| `verify_result base` | 每 chunk 为 `1…64`；8320 | 保存参考摘要 | 均通过 |
+| 安装后 `verify_result overlay` | 每 chunk 为 `2,4,…128`；16640 | 与参考摘要相同 | 均通过 |
+| `--remove-overlay` 后 `verify_result removed` | 恢复 `1…64`；8320 | 与参考摘要相同 | 均通过 |
+
+上述实测结果来自 `default-run-install-20261112/full-alias/` 的 A2/A5
+`base.json`、`default.json`、`restored-default.json`；各阶段 `max_abs=0`。
+本节将既有验证逻辑整理为可复制命令，本次文档更新未重新构建见证包或重跑 NPU。
 
 ### 5. 安装机制和文件隔离检查
 
