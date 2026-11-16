@@ -31,6 +31,15 @@ h, v_new, final_state = chunk_fwd_h(
 - g-only：`k` 是 raw key，shape 为 `[B, HK, T, 128]`，要求 `HV % HK == 0`。
 - gk-only：`k` 是 Prepare 阶段已经生成的 `kg`，shape 为 `[B, HV, T, 128]`；本算子不会再次把 `gk` 乘到 `k` 上。
 
+## 支持范围
+
+- A2/A3/A5。
+- A6（CANN soc 短名 `ascend960dt`，soc_version `Ascend960DT_968B7`，`dav-920r1`，编译宏 `__NPU_ARCH__ == 9201`）：
+  使用独立的 arch92 kernel 实现，选用 `Catlass::Arch::Ascend960DT` 和 `CATLASS_ARCH == 9201`，并按
+  A6 的 1 AIC : 1 AIV 拓扑串行处理每轮全部 head；Catlass 固定使用
+  `yjp-hw/catlass-GDN_KDA` 的 `61dbd2f440e1d61e018c81161b4398023cae05a7`。当前完成编译路径接入，
+  精度与性能待 A6 环境补充。
+
 ## 计算语义
 
 记 `E(x)=exp(x)`；`use_exp2=true` 时改为 `E(x)=exp2(x)`。对 value head `h` 的每个 chunk `c`：

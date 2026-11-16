@@ -52,6 +52,7 @@ namespace {
     constexpr uint32_t DIRECT_FAST_BT_STEP = 32U;
     constexpr uint32_t DIRECT_910B_BT_BD64 = 104U;
     constexpr uint32_t DIRECT_910B_BT_BD128 = 55U;
+    // 必须与 kernel 侧 NsCausalConv1dBwd::BWD_DIRECT_W_MAX 保持一致（arch35 regbase 快路径）。
     constexpr uint32_t ARCH35_DIRECT_W_MAX = 8U;
     constexpr uint32_t ACTIVATION_NONE = 0;
     constexpr uint32_t ACTIVATION_SILU = 1;
@@ -385,7 +386,20 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t sysWorkspaceSize = 0;
     uint32_t coreNum = 0;
     bool isAscend910B = false;
-    bool isAscend950 = false;
+    // A5(DAV_3510) 与 A6(DAV_9201) 共用 arch35 系 regbase kernel（kernel 侧由编译期架构宏分派），
+    // 但 host tiling 策略按平台分别给出：每个平台在下方各自的分支里声明自己的 UB 预算口径、
+    // 切分开关、BT 上限与输入 staging 能力。不使用跨架构并集布尔值驱动业务策略，
+    // 避免后续任一平台的调整错误影响另一个平台。
+    struct ArchHostPolicy {
+        bool useRegbaseVfBudget; // 普通路径 UB 预算是否计入 regbase 的 dx/db 输出 staging
+        bool allowIdSplit;       // 是否允许 i_d 独占切分
+        bool allowBtFill;        // 是否允许小 shape 的 BT 台阶回填
+        bool allow2DSplit;       // 是否允许 chunk × i_d 二维切分
+        bool allowTripleBuffer;  // 快路径输入 staging 是否允许三缓冲
+        uint32_t fastBtMax;      // regbase 快路径 BT 上限
+        uint32_t fastBtStep;     // regbase 快路径 BT 回退步距
+    };
+    ArchHostPolicy archPolicy = {}; // 默认全关：910B/A2/A3 保持原有路径
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_IF(
@@ -395,8 +409,15 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                         .c_str()),
             return ge::GRAPH_FAILED);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-        isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
-        isAscend950 = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
+        const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        isAscend910B = (npuArch == NpuArch::DAV_2201);
+        if (npuArch == NpuArch::DAV_3510) {
+            // A5(arch35)：PR #1045 已验证的策略，BT 224/32，仅双缓冲。
+            archPolicy = {true, true, true, true, false, DIRECT_FAST_BT_MAX, DIRECT_FAST_BT_STEP};
+        } else if (npuArch == NpuArch::DAV_9201) {
+            // A6(Ascend960DT)：UB 384KB，BT 上限 240、回退步距 16，允许三缓冲输入 staging。
+            archPolicy = {true, true, true, true, true, 240U, 16U};
+        }
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0,
                     OP_LOGE(OP_NAME, "%s",
@@ -409,6 +430,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
+    const bool useRegbaseVfBudget = archPolicy.useRegbaseVfBudget;
 
     ubSize = (ubSize - RESERVED_UB) / BYTE_BLOCK * BYTE_BLOCK;
 
@@ -432,14 +454,22 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t numBlksD = D / BD;
 
     // i_d 切分（useIdSplit）：每个核独占若干 i_d 的全部 chunk，核间无 dw/db 重叠。
-    bool useIdSplit = isAscend950 && numBlksD >= coreNum;
+    bool useIdSplit = archPolicy.allowIdSplit && numBlksD >= coreNum;
 
-    // A5(arch35) regbase 快路径：b16、BD∈{64,16}、W∈[1,8]、无 initial_state/dht。
+    // A5/A6 各自的 regbase 快路径：b16/fp32、BD∈{64,16}、W∈[1,8]、无 initial_state/dht。
+    // 是否启用由各平台策略的 useRegbaseVfBudget 决定，A5/A6 互不继承判定结果。
+    // activation 支持 SILU/SWISH（同一套 SiLU 反向公式）与 NONE（dy 直读）。
+    // BD=64 时行宽已满一个向量寄存器；BD=16 仅当 useIdSplit 成立（核数按 i_d 铺满）才启用：
+    // 非 idSplit 下核间并行度只来自 chunk 数，而快路径 BT 最大 224 会把 chunk 数压得很低
+    // （例如 T=512、BT=224 只剩 3 个 chunk ⇒ 仅 3 个核），反而比普通路径 BT=64 更慢。
+    // BD=16 且 numBlksD==1（即 D==16）时，i_d 方向本来就只有 1 个块，chunk 并行度与普通路径
+    // 完全一致（T<=64 时两条路径都只产生 1 个 chunk、1 个核）；不存在上面担心的“快路径 BT 过大
+    // 反而压掉 chunk 并行度”的问题，因此可以无 i_d 切分直接启用快路径。
     bool arch35DirectPathCompatible = (W >= 1 && W <= ARCH35_DIRECT_W_MAX);
     if (activation != ACTIVATION_NONE) {
         arch35DirectPathCompatible = arch35DirectPathCompatible && (W == 4 || numBlksD <= 4 || useIdSplit);
     }
-    bool useArch35DirectFast = isAscend950 &&
+    bool useArch35DirectFast = archPolicy.useRegbaseVfBudget &&
                                ((isB16Input && (BD == 64 ||
                                                 (BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))))) ||
                                 (isFp32Input && (BD == 64 || (BD == 16 && useIdSplit)))) &&
@@ -452,18 +482,28 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                              !useInitialState && !useFinalState &&
                              W == 4 && (BD == 64 || BD == 128);
     uint32_t rawDtypeSize = isB16Input ? B16_DTYPE_SIZE : FP32_DTYPE_SIZE;
-    auto CalcArch35DirectNeed = [BD, W, rawDtypeSize, isB16Input](uint32_t bt) -> uint32_t {
+    const uint32_t fastBtMax = archPolicy.fastBtMax;
+    const uint32_t fastBtStep = archPolicy.fastBtStep;
+    uint32_t inputStages = 2;
+    auto CalcArch35DirectNeed = [BD, W, rawDtypeSize, isB16Input](uint32_t bt, uint32_t stages) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
         uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
+        // BD=16 时行宽不足一个向量寄存器，VF 内无掩码读会越过行末；kernel 侧对 tempBuf/weightBuf/
+        // dwBuf 各预留 64 元素、dbBuf 至少 64 元素（见 InitBuffer）。此处同步计入以保持预算一致。
         uint32_t regPad = (BD < 64U) ? 64U : 0U;
         uint32_t dbAl = (BD < 64U) ? 64U : bdAl;
         uint32_t need = 0;
-        need += (2 * btBdAl + 4 * dyBdAl + wBdAl + regPad) * rawDtypeSize;
+        need += (stages * btBdAl + 2 * stages * dyBdAl + wBdAl + regPad) * rawDtypeSize;
         if (isB16Input) {
+            // b16 额外 3 份原始位宽缓冲：castBuf_（x 的转换 staging、dw 的输出 staging，容量取
+            // max(BT*BD, W*BD)）、dxOutBuf_（dx 输出 staging）、dbOutBuf_（db 输出 staging，
+            // hasBias 恒为 1）。与 kernel InitBuffer 逐项对齐，漏算会让 BT 选到实际分配已超过
+            // UB 的取值。
             need += (std::max(btBdAl, wBdAl) + btBdAl + bdAl) * rawDtypeSize;
         }
+        // fp32 计算/输出缓冲：dx + dyAct(temp) + dw + db。
         need += (btBdAl + dyBdAl + wBdAl + 2 * regPad + dbAl) * FP32_DTYPE_SIZE;
         return need;
     };
@@ -478,7 +518,8 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         return need;
     };
     // 普通路径（chunk 切分 / i_d 切分）的 UB 预算，不含两级归约 stage buffer（该部分在预算内按需追加）。
-    auto CalcNormalNeed = [BD, W, rawDtypeSize, isB16Input, isAscend950, activation,
+    // 提取成函数是为了在 BT 选择阶段做「预算超额则减半 BT」的兜底：BT 越小 UB 需求越小。
+    auto CalcNormalNeed = [BD, W, rawDtypeSize, isB16Input, useRegbaseVfBudget, activation,
                            useInitialState, useFinalState](uint32_t bt) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
@@ -499,18 +540,65 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         if (useInitialState || useFinalState) {
             need += bdAl * FP32_DTYPE_SIZE;
         }
-        if (isAscend950 && isB16Input) {
+        // b16 的原始位宽缓冲：castBuf_（x/dw 的转换 staging）恒分配；dxOutBuf_/dbOutBuf_（dx/db
+        // 输出 staging）只在 regbase 构建中存在（A5/A6 各自由编译期架构宏选择），910B 不分配。
+        // 按平台策略 useRegbaseVfBudget 判定，与 kernel InitBuffer 逐项对齐，避免预算少于实际分配。
+        if (isB16Input) {
             need += calcBdAl * rawDtypeSize;
-            need += (btBdAl + bdAl) * rawDtypeSize;
+            if (useRegbaseVfBudget) {
+                need += (btBdAl + bdAl) * rawDtypeSize;
+            }
         }
         return need;
     };
 
+    auto CalcNumChunks = [&](uint32_t bt) -> uint32_t {
+        if (bt == 0) {
+            return 0;
+        }
+        if (inputMode == 0) {
+            const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
+            const int64_t *qslData = qslTensor->GetData<int64_t>();
+            uint32_t n = 0;
+            for (uint32_t i = 0; i < B; i++) {
+                n += CeilDiv(static_cast<uint32_t>(qslData[i + 1] - qslData[i]), bt);
+            }
+            return n;
+        }
+        return CeilDiv(T, bt) * B;
+    };
+
     uint32_t BT = 64;
     if (useArch35DirectFast) {
-        BT = std::min(T, DIRECT_FAST_BT_MAX);
-        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT) > ubSize) {
-            BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
+        if (archPolicy.allowTripleBuffer) {
+            // 三缓冲（仅 A6）：按「三缓冲预算放得下」且「核内可流水 tile 数 >= 3」确定性选择，
+            // 不读取任何环境变量，避免运行期行为随外部环境漂移。
+            auto PerCoreTilesAt = [&](uint32_t bt) -> uint32_t {
+                uint32_t chunks = CalcNumChunks(bt);
+                if (useIdSplit) {
+                    return chunks;
+                }
+                uint32_t coresAtBt = std::min(coreNum, std::max(chunks, 1U));
+                return (chunks + coresAtBt - 1) / coresAtBt;
+            };
+            uint32_t btProbe = std::min(T, fastBtMax);
+            while (btProbe > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(btProbe, 3U) > ubSize) {
+                btProbe = (btProbe > DIRECT_FAST_BT_MIN + fastBtStep) ? (btProbe - fastBtStep) : DIRECT_FAST_BT_MIN;
+            }
+            if (btProbe >= DIRECT_FAST_BT_MIN && PerCoreTilesAt(btProbe) >= 3) {
+                inputStages = 3;
+            }
+        }
+        BT = std::min(T, fastBtMax);
+        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
+            BT = (BT > DIRECT_FAST_BT_MIN + fastBtStep) ? (BT - fastBtStep) : DIRECT_FAST_BT_MIN;
+        }
+        if (inputStages == 3 && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
+            inputStages = 2;
+            BT = std::min(T, fastBtMax);
+            while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
+                BT = (BT > DIRECT_FAST_BT_MIN + fastBtStep) ? (BT - fastBtStep) : DIRECT_FAST_BT_MIN;
+            }
         }
     } else if (use910BDirectFast) {
         uint32_t maxBt = (BD == 128) ? DIRECT_910B_BT_BD128 : DIRECT_910B_BT_BD64;
@@ -528,38 +616,37 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                                                   "; totalTokens=" + std::to_string(totalTokens),
                                               "expected BT > 0 and totalTokens > 0; empty sequence is not supported"),
         return ge::GRAPH_FAILED);
-    auto CalcNumChunks = [&](uint32_t bt) -> uint32_t {
-        if (bt == 0) {
-            return 0;
-        }
-        if (inputMode == 0) {
-            const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
-            const int64_t *qslData = qslTensor->GetData<int64_t>();
-            uint32_t n = 0;
-            for (uint32_t i = 0; i < B; i++) {
-                n += CeilDiv(static_cast<uint32_t>(qslData[i + 1] - qslData[i]), bt);
-            }
-            return n;
-        }
-        return CeilDiv(T, bt) * B;
-    };
     numChunks = CalcNumChunks(BT);
 
     constexpr uint64_t ID_SPLIT_ELEM_BUDGET = 16384ULL;
-    if (isAscend950 && useArch35DirectFast && !useIdSplit && numBlksD >= 2U && numChunks >= 1U &&
+    if (useRegbaseVfBudget && useArch35DirectFast && !useIdSplit && numBlksD >= 2U && numChunks >= 1U &&
         (numChunks <= numBlksD ||
          (numChunks <= 4U * numBlksD &&
           static_cast<uint64_t>(totalTokens) * D <= ID_SPLIT_ELEM_BUDGET))) {
         useIdSplit = true;
     }
 
+    // 小 shape 核数填充：!useIdSplit 时核间并行度只来自 chunk 数，D 方向再多 i_d 也只能每核串行遍历。
+    // T 较小时 BT 取到接近 T，numChunks 很小（如 B1T128D256 只有 1 个 chunk ⇒ 仅 1 个核在跑）。
+    // 此处仅当 !useIdSplit 且 numBlksD >= 2 且 numChunks < target 时，按 BT_FILL_STEP 台阶减小 BT
+    // 以增加 chunk 数，直到达到 target 或触到 BT_FILL_FLOOR。
+    // 已满足 numChunks >= target 的 shape 完全不改 BT；useIdSplit 的大 shape（D 方向已铺满核）亦不受影响。
+    // numBlksD == 1（D=16/64）时单个 i_d 的 chunk 工作量本就极小，再切分只会增加每 chunk 的固定开销
+    // （partial 归约/同步），实测在 ATK 与 msprof 上均出现回归，故跳过。
     constexpr uint32_t BT_FILL_STEP = 32U;
     constexpr uint32_t BT_FILL_FLOOR = 16U;
     constexpr uint32_t BT_FILL_CAP = 8U;
     constexpr uint32_t BT_FILL_CAP_FAST = 16U;
+    // 工作量感知的核数上限：目标核数默认仍取 CAP=8，但在 regbase VF「快路径」上再按总元素量
+    // totalTokens*D 收紧——快路径单位元素效率高，每核约 BT_FILL_ELEMS_PER_CORE 元素即可吃满并行收益，
+    // 工作量小的快路径 shape 不需要更多核。可避免"总工作量不大但 baseline 恰有 4 核"的快路径 shape
+    // 被推到 8 核而过切分（例：B4·T64·D128 32768 元素、快路径 BT=64 ⇒ 4 chunk；固定 CAP=8 会推到
+    // 8 核，kernel 中位由 ~8.14us 变慢到 ~8.79us/-8%，ATK 侧复现 -2.7%）。
+    // 普通路径是 latency-bound（每 chunk 固定开销大），更多核可直接摊薄单 chunk 延迟，其 CAP=8 行为
+    // 已由上一轮 ATK/探针验证无回归，故保持不变；下限 BT_FILL_MIN_TARGET 用以保留 1→4 核的最大收益。
     constexpr uint32_t BT_FILL_ELEMS_PER_CORE = 8192U;
     constexpr uint32_t BT_FILL_MIN_TARGET = 4U;
-    if (isAscend950 && !useIdSplit && numBlksD >= 2) {
+    if (archPolicy.allowBtFill && !useIdSplit && numBlksD >= 2) {
         uint32_t target = std::min(coreNum, useArch35DirectFast ? BT_FILL_CAP_FAST : BT_FILL_CAP);
         if (useArch35DirectFast) {
             uint64_t totalElems = static_cast<uint64_t>(totalTokens) * D;
@@ -574,8 +661,19 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
     }
 
-    // BT=64→32 的两档选择（仅 ascend950 正常路径，非 idSplit / 非快路径）：
-    if (isAscend950 && !useIdSplit && !useArch35DirectFast && !use910BDirectFast && numBlksD >= 2 &&
+    // UB 预算兜底：普通路径的 BT 上限固定为 64，极端 shape（超大卷积核宽度 W、或 b16 的 cast/
+    // 输出 staging 叠加）即使 BT=64 也放不下。BT 越小每份 buffer 越小，故逐级减半直到预算满足，
+    // 保证算子仍能正常执行而不是在 tiling 阶段直接报错。BT 减半只会增加 chunk 数，需同步刷新
+    // numChunks（后续 2D 切分与 chunkPerCore 均依赖它）。快路径与 910B 快路径已有各自的 BT 回退。
+    if (useRegbaseVfBudget && !useArch35DirectFast && !use910BDirectFast) {
+        while (BT > 1U && CalcNormalNeed(BT) > ubSize) {
+            BT >>= 1U;
+        }
+        numChunks = CalcNumChunks(BT);
+    }
+
+    // BT=64→32 的两档选择（仅 A5/A6 正常路径，非 idSplit / 非快路径）：
+    if (useRegbaseVfBudget && !useIdSplit && !useArch35DirectFast && !use910BDirectFast && numBlksD >= 2 &&
         BT == 64U && numChunks < coreNum) {
         uint32_t numChunksHalf = CalcNumChunks(BT >> 1U);
         if (numChunksHalf == coreNum) {
@@ -584,18 +682,20 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
     }
 
-    if (isAscend950 && !useArch35DirectFast && !use910BDirectFast) {
-        while (BT > 1U && CalcNormalNeed(BT) > ubSize) {
-            BT >>= 1U;
-        }
-        numChunks = CalcNumChunks(BT);
-    }
-
     // chunk × i_d 二维切分：把 numBlksD 个 i_d 与 numChunks 个 chunk 一起铺到 AIV 核上
+    // （blockNum = numBlksD * numChunks），每个核只处理 1 个 i_d 的 1 个 chunk 组，
+    // 消除「每核串行遍历全部 i_d」的固定开销（每 i_d 的 CopyInWeight/Duplicate/partial 回写/栅栏）。
+    // 小 shape 下该固定开销是主瓶颈：B2T63D80W2 的 aiv_scalar+mte2 合计 ~12us，与 vec 近似串行。
+    // 仅在全部 (i_d, chunk) 工作单元数严格小于 AIV 核数时启用（twoDByUnit）；numBlksD >= 4 时
+    // 退一步允许 splitG = min(numChunks, coreNum/numBlksD) >= 2 的分组铺法。
+    // 恰好在等于核数（=coreNum）的边界配置上（如 B8·T256·D32·W2 ⇒ numBlksD=2、numChunks=32、
+    // 乘积=64）1D 路径本就用满 chunk 维并行度，2D 再把 partial 写回/归约规模按 numBlksD 放大，
+    // 反而相对原始基线回归（单算子 TD 实测 -4.4%/-6.1%）；严格小于可排除该边界，同时保留小 shape
+    // （乘积远小于核数）的收益。
     const bool twoDByUnit = static_cast<uint64_t>(numBlksD) * numChunks < coreNum;
     uint32_t splitG = 0;
     bool use2DSplit = false;
-    if (isAscend950 && !useIdSplit && !useArch35DirectFast && numBlksD >= 2 && numChunks >= 1) {
+    if (archPolicy.allow2DSplit && !useIdSplit && !useArch35DirectFast && numBlksD >= 2 && numChunks >= 1) {
         if (twoDByUnit) {
             splitG = numChunks; // 每核恰好 1 个 (i_d, chunk) 单元，沿用历史行为
             use2DSplit = true;
@@ -605,17 +705,22 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
     }
 
+
     uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
     uint32_t dwStageRows = 0;
     if (useArch35DirectFast) {
-        need = CalcArch35DirectNeed(BT);
+        need = CalcArch35DirectNeed(BT, inputStages);
     } else if (use910BDirectFast) {
         need = Calc910BDirectNeed(BT);
     } else {
         need = CalcNormalNeed(BT);
 
+        // 两级归约：SILU/SWISH 分支下把 dw/db 的行归约从"每 chunk 全量归约到 1 行"改为
+        // "chunk 内只归约到 R 行并累积进 stage buffer，i_d 末再做 R→1"。
+        // 元素工作量基本不变，收益来自每 chunk 归约依赖链/屏障数由 log2(BT) 降到 log2(BT/R)。
+        // R 取 2 的幂、≤BT，在 UB 预算内取最大者；放不下则 R=0 退化为逐 chunk 全量归约。
         if (useIdSplit && (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)) {
             uint32_t rMax = 1;
             while ((rMax << 1) <= BT) rMax <<= 1;
@@ -647,7 +752,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     // Compute block dimension
     //
     // A5(arch35) 上有两个核间切分方案：
-    //  - i_d 切分（useIdSplit）：每个核独占若干 i_d 的全部 chunk。
+    //  - i_d 切分（useIdSplit）：每个核独占若干 i_d 的全部 chunk。由于每个 i_d 的 dw/db
+    //    只与自身通道相关，核间无重叠，可直接写回 GM，无需 partial 缓冲与第二趟归约。
+    //    该方案对 regbase 快路径与普通路径（含 fp32、W>4、存在 initial_state/dht 等）
+    //    均适用，要求 D 方向 block 数足以铺满 AIV 核。
     //  - chunk 切分（原方案）：每个核负责部分 chunk、遍历全部 i_d，需要 partial 归约。
     uint32_t chunkPerCore = 0;
     uint32_t tailChunk = 0;
@@ -668,7 +776,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 
     constexpr uint32_t RED_STAGE_ELEMS = 2048U; // 2048 个 fp32 = 8KB，与 kernel 侧同一上限
     uint32_t redStageRows = 0;
-    if (isAscend950 && mainCoreNum > 1U && !useIdSplit && !use2DSplit) {
+    if (useRegbaseVfBudget && mainCoreNum > 1U && !useIdSplit && !use2DSplit) {
         uint32_t rowsCap = RED_STAGE_ELEMS / (W * BD);
         if (rowsCap < 1U) {
             rowsCap = 1U;
@@ -725,6 +833,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     tiling->use2DSplit = use2DSplit ? 1 : 0;
     tiling->dwStageRows = dwStageRows;
     tiling->redStageRows = redStageRows;
+    tiling->inputStages = useArch35DirectFast ? static_cast<int64_t>(inputStages) : 2;
 
     // useIdSplit 时每个核独占 i_d 并直接写回 dw/db，不再需要 partial 归约缓冲。
     uint64_t partialDwBytes = useIdSplit ? 0ULL
@@ -741,12 +850,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             "Tiling result: B[%ld] T[%ld] totalTokens[%ld] D[%ld] W[%ld] inputMode[%ld] activation[%ld] "
             "inputLayout[%ld] inputN[%ld] inputHeadDim[%ld] "
             "BT[%ld] BD[%ld] numBlksD[%ld] numChunks[%ld] "
-            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld] idSplit[%d] split2D[%d] dwStageRows[%u] redStageRows[%u]",
+            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld] idSplit[%d] split2D[%d] "
+            "dwStageRows[%u] redStageRows[%u] inputStages[%ld]",
             B, T, totalTokens, D, W, inputMode, activation,
             inputLayout, inputN, inputHeadDim,
             BT, BD, numBlksD, numChunks,
             mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize,
-            useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows, redStageRows);
+            useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows, redStageRows,
+            static_cast<int64_t>(useArch35DirectFast ? inputStages : 2));
 
     return ge::GRAPH_SUCCESS;
 }

@@ -38,7 +38,11 @@ constexpr uint32_t FWD_H_CHUNK = 64;
 constexpr uint32_t FWD_H_K = 128;
 constexpr uint32_t FWD_H_V = 128;
 constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
-constexpr uint32_t FWD_H_AIV_COUNT = 2;
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+constexpr uint32_t FWD_H_AIV_COUNT = 1;   // A6: 1 AIC : 1 AIV
+#else
+constexpr uint32_t FWD_H_AIV_COUNT = 2;   // A5: 1 AIC : 2 AIV
+#endif
 constexpr uint32_t FWD_H_AIV_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_FLAG_SUBBLOCK_STRIDE = 16;
 // P1 varlen 均衡分区：per-core 任务边界表容量（与 host 侧 tiling 数组字段同宽；
@@ -73,7 +77,9 @@ constexpr uint32_t FWD_H_UB_SHARE_BASE = 226 * 1024;
 // ready/free 使用同一 ID 的双向计数器，且复用前必须由上一代 wait 消费。
 // 目标 CANN 9.1 的 A5 mode=0x4 仅支持 AIV 本地 ID 0..10；AIC 侧通过 16-ID
 // 步长选择 AIV0/AIV1。各协议使用互不重叠的本地 ID，最大 ID 为 8。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+// A5（__CCE_AICORE__ == 310）与 A6（Ascend960DT，__NPU_ARCH__ == 9201）共用跨核同步参数布局。
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || \
+    (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 16;
 #else
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 0;
@@ -197,7 +203,9 @@ struct FwdHKernelArgs {
 // 集合同步，同一 localSlot 的两个 AIV 必须使用同一 ID。
 __aicore__ inline uint32_t FwdHAicPeerFlag(uint32_t base, uint32_t localSlot, uint32_t aiv)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+// A5（__CCE_AICORE__ == 310）与 A6（Ascend960DT，__NPU_ARCH__ == 9201）共用跨核同步参数布局。
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || \
+    (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
     return base + localSlot + aiv * FWD_H_AIV_FLAG_STRIDE;
 #else
     (void)aiv;
@@ -219,7 +227,12 @@ __aicore__ inline uint32_t FwdHLocalSlotBase(uint32_t localSlot)
 
 __aicore__ inline uint32_t FwdHAivHeadCount(uint32_t activeHeadCount, uint32_t aiv)
 {
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+    (void)aiv;
+    return activeHeadCount;   // 1:1 单 AIV 处理全部 head
+#else
     return activeHeadCount > aiv ? (activeHeadCount - aiv + 1) / 2 : 0;
+#endif
 }
 
 __aicore__ inline uint32_t FwdHMode2PairCount(uint32_t activeHeadCount)

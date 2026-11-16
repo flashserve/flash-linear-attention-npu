@@ -124,7 +124,7 @@ def get_wheel_platform_tag() -> str:
 
 
 def get_tier(soc: str | None = None) -> str:
-    """Map FLA_NPU_SOC to the published product tier (a2/a3/a5)."""
+    """Map FLA_NPU_SOC to the published product tier (a2/a3/a5/a6)."""
     soc_tag = _compact_tag(soc or get_soc())
     if soc_tag in {"910b", "ascend910b"}:
         return "a2"
@@ -132,9 +132,11 @@ def get_tier(soc: str | None = None) -> str:
         return "a3"
     if soc_tag in {"950", "ascend950"}:
         return "a5"
+    if soc_tag in {"960", "960dt", "ascend960", "ascend960dt"}:
+        return "a6"
     raise ValueError(
         f"FLA_NPU_SOC={soc or get_soc()!r} has no published product tier; "
-        "expected ascend910b / ascend910_93 / ascend950"
+        "expected ascend910b / ascend910_93 / ascend950 / ascend960dt"
     )
 
 
@@ -143,7 +145,7 @@ def get_distribution_name() -> str:
 
     A wheel carries a prebuilt OPP for exactly one SoC, and pip cannot pick a
     chip-specific payload out of one project name, so each product tier is its
-    own project (flash-linear-attention-npu-a2/a3/a5, derived from FLA_NPU_SOC).
+    own project (flash-linear-attention-npu-a2/a3/a5/a6, derived from FLA_NPU_SOC).
     Local, GitHub Release and PyPI artifacts all carry that name.
 
     One name everywhere is the point: a locally built wheel and the published

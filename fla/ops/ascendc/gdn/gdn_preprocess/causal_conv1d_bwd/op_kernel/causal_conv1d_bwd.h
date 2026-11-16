@@ -48,8 +48,11 @@
 #define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 0
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if (defined(__CCE_AICORE__) && __CCE_AICORE__ == 310) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510)
 #include "arch35/causal_conv1d_bwd_regbase.h"
+#define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 1
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/causal_conv1d_bwd_regbase.h"
 #define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 1
 #else
 #define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 0
@@ -152,7 +155,7 @@ private:
                                                       uint32_t seqLen, uint32_t slot,
                                                       event_t mte3ToVEvent);
     __aicore__ inline void CopyOutDx(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
-    __aicore__ inline void ProcessDirectRegbaseIdSplit(uint32_t bIdx, uint32_t blockNum,
+    __aicore__ inline __attribute__((noinline)) void ProcessDirectRegbaseIdSplit(uint32_t bIdx, uint32_t blockNum,
                                                        event_t *mte2ToVEvent);
     __aicore__ inline __attribute__((noinline)) void ProcessNormalIdSplit(uint32_t bIdx, uint32_t blockNum);
     __aicore__ inline __attribute__((noinline)) void ProcessNormal2DSplit(uint32_t bIdx, uint32_t blockNum);
@@ -211,6 +214,7 @@ private:
     uint32_t useIdSplit_ = 0;
     uint32_t use2DSplit_ = 0;
     uint32_t dwStageRows_ = 0;
+    uint32_t inputStages_ = 2;
     uint32_t btBdCount_ = 0, wBdCount_ = 0;
     uint32_t dyRows_ = 0, dyBdCount_ = 0;
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
@@ -258,6 +262,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
     useIdSplit_ = tilingData->useIdSplit;
     use2DSplit_ = tilingData->use2DSplit;
     dwStageRows_ = tilingData->dwStageRows;
+    inputStages_ = (tilingData->inputStages >= 3) ? 3U : 2U;
     btBdCount_ = BT_ * BD_;
     wBdCount_ = W_ * BD_;
     dyRows_ = BT_ + W_ - 1;
@@ -324,17 +329,25 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
     }
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
     if (Arch35UseDirectRegbase()) {
+        // BD=16 时行宽仅 16 个元素，但 VF 内 DataCopy/LoadAlign 不带掩码、恒按一个完整 fp32 向量
+        // 寄存器（64 元素）发起读，会越过行末最多 3 行（48 个元素）。为不越出 UB，对末尾的行缓存
+        // 预留一个寄存器（64 元素）的余量；BD=64 时余量为 0，分配与改动前完全一致。
         const uint32_t regPad = (BD_ < NsCausalConv1dBwd::BWD_DIRECT_BD) ? NsCausalConv1dBwd::BWD_DIRECT_BD : 0U;
-        pipe_->InitBuffer(xBuf_, 2 * btBdCount_ * sizeof(inputT));
-        pipe_->InitBuffer(dyBuf_, 2 * dyBdCount_ * sizeof(inputT));
+        const uint32_t inputStages = (inputStages_ >= 3U) ? 3U : 2U;
+        pipe_->InitBuffer(xBuf_, inputStages * btBdCount_ * sizeof(inputT));
+        pipe_->InitBuffer(dyBuf_, inputStages * dyBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dxBuf_, btBdCount_ * FP32_DTYPE_SIZE);
         if constexpr (!IsSameType<inputT, float>::value) {
+            // castBuf_ 既做 x 的 cast staging，也做 dw 的输出 staging（CopyOutDwDb 一次 Cast
+            // wBdCount_ 个元素）。BT < W 时（如 T=1、W=3 的极小 shape）wBdCount_ > btBdCount_，
+            // 按 btBdCount_ 分配会让 dw 的 Cast 越过 UB 缓冲末尾，踩坏相邻的 dxOutBuf_，
+            // 导致相邻 i_d 的 dx 输出被污染。与普通路径一致，取两者的较大值。
             const uint32_t castCount = (btBdCount_ > wBdCount_) ? btBdCount_ : wBdCount_;
             pipe_->InitBuffer(castBuf_, castCount * sizeof(inputT));
             pipe_->InitBuffer(dxOutBuf_, btBdCount_ * sizeof(inputT));
         }
         pipe_->InitBuffer(tempBuf_, (dyBdCount_ + regPad) * FP32_DTYPE_SIZE);
-        pipe_->InitBuffer(yBuf_, 2 * dyBdCount_ * sizeof(inputT));
+        pipe_->InitBuffer(yBuf_, inputStages * dyBdCount_ * sizeof(inputT));
         if (hasWeight_) {
             pipe_->InitBuffer(weightBuf_, (wBdCount_ + regPad) * sizeof(inputT));
             pipe_->InitBuffer(dwBuf_, (wBdCount_ + regPad) * FP32_DTYPE_SIZE);
@@ -359,6 +372,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *in
     if constexpr (!IsSameType<inputT, float>::value) {
         pipe_->InitBuffer(castBuf_, calcCount * sizeof(inputT));
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+        // 输出专用 staging：dx / db 各自独占，避免与 castBuf_（dw 输出、x staging）复用，
+        // 从而省掉 store 之后为“保护 buffer 不被复用”而做的 MTE3_V 排空。
         pipe_->InitBuffer(dxOutBuf_, btBdCount_ * sizeof(inputT));
 #endif
     }
@@ -434,6 +449,9 @@ __aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::GetInputSegmentL
 }
 
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+// 发起一路 x/y/dy 的 GM→UB 拷贝，但不等待 MTE2 完成：由调用方在合适位置
+// WaitFlag(mte2ToVEvent)，从而把多路互相独立的输入拷贝延迟重叠起来。
+// 返回本 tile 的有效行数（0 表示该 tile 完全越界，此时 dst 已整块清零）。
 template <typename inputT, typename calT>
 __aicore__ inline uint32_t CausalConv1dBwdKernel<inputT, calT>::IssueCopyInInputTile(
     GlobalTensor<inputT> &srcGm, LocalTensor<float> dst, LocalTensor<inputT> staging,
@@ -859,6 +877,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeight(uint32_
 }
 
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+// CopyInWeight 的异步拆分：先只发起 GM→UB 拷贝（不等待、不 Cast），使 weight 的
+// GM 往返延迟与随后 x/dy 的拷贝重叠；Cast 推迟到 FinishCopyInWeight。
+// bf16 的 staging 借用 wdyBuf_ 的 inputT 视图：它在 Finish 的 Cast 之后才会被
+// ComputeWdyAndDwRowsAccum 的 masked Mul 覆写，两者读窗口不重叠；容量 2*calcCount 亦
+// 足以容纳 wBdCount_。fp32 无 Cast，直接拷进 weightBuf_。
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::IssueCopyInWeight(
     uint32_t i_d, event_t mte2ToVEvent)
@@ -1018,6 +1041,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     LocalTensor<float> dyLocal, LocalTensor<float> yLocal, uint32_t count)
 {
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    // 原实现用 10 条向量指令求 silu'(y)=sigmoid(y)*(1 + y*(1-sigmoid(y)))。
+    // 这里用等价式 silu'(y) = (d + y*e) / d^2，其中 e=exp(-y)、d=1+e
+    // （因为 1-sigmoid = e/(1+e) = e/d），只需 8 条向量指令：
+    // 省去 Duplicate 与一次 Mul，且不新增 buffer（仍复用 sigmoidBuf_/tempBuf_）。
+    // 仅重排运算顺序，数值语义不变。
     LocalTensor<float> e = sigmoidBuf_.Get<float>();
     LocalTensor<float> d = tempBuf_.Get<float>();
 
@@ -1038,6 +1066,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     Mul(dyLocal, dyLocal, d, count);
     PipeBarrier<PIPE_V>();
 #else
+    // 非 arch35（含 910B/arch32）沿用原 10 指令实现，保持既有行为不变。
     LocalTensor<float> sigmoidLocal = sigmoidBuf_.Get<float>();
     LocalTensor<float> t = tempBuf_.Get<float>();
 
@@ -1165,6 +1194,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndAcc(
 }
 
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+// ComputeWdyAndAcc + ComputeDwRowsAccum 的融合版（仅 activation==NONE 路径使用）。
+// 把 W_ 轮循环收进函数内部，重复使用的 tensor 取址与 BinaryRepeatParams 只构造一次，
+// 降低标量指令数（数值与逐 i_w 调用完全一致）。
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeWdyAndDwRowsAll()
 {
@@ -1342,6 +1374,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDwRowsAccum(
     LocalTensor<float> rows = dwRowsBuf_.Get<float>();
     LocalTensor<float> dwLocal = dwBuf_.Get<float>();
 
+    // 快速路径：一个归约阶段只处理 pairRows 行，行宽 pairRows*BD_ 不超过一个 repeat
+    // (fp32 为 64 元素) 时，可以用 mask+repeatTimes 的形式把 W_ 个 w 的行归约合并到
+    // 同一条 strided Add 上（repeat 维映射到 w，repeatStride = btBdCount_）。
+    // 这样 3 个归约阶段各只需 1 条指令，并且结果直接落到 rows 每个 w 段的第 0 行上，
+    // 最后一条 strided Adds 一次性搬进 dwLocal。数值与逐 w 串行归约完全一致。
     if (BT_ >= 2U && ((BT_ >> 1U) * BD_) <= 64U) {
         uint32_t remainRows = BT_;
         while (remainRows > 1U) {
@@ -1373,6 +1410,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::FinalizeDwRowsAccum(
     Duplicate(dwLocal, float(0), wBdCount_);
     PipeBarrier<PIPE_V>();
 
+    // W_ 个 w 的行归约彼此独立：按“同一轮内并行归约所有 w，轮间只同步一次”重排，
+    // 把原来 3*W_ 次 PipeBarrier 降到 3 次（数值与逐 w 串行归约完全一致）。
     uint32_t remainRows = BT_;
     while (remainRows > 1U) {
         uint32_t upperRows = (remainRows + 1U) >> 1U;
@@ -1559,7 +1598,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectVectorTi
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen, bool reuseHalo,
     event_t mte2ToVEvent)
 {
-#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     LocalTensor<inputT> xRaw = castBuf_.Get<inputT>();
     LocalTensor<inputT> dyRaw = wdyBuf_.Get<inputT>();
     LocalTensor<inputT> yRaw = sigmoidBuf_.Get<inputT>();
@@ -1589,7 +1628,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectVectorTi
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CastDirectVectorTile(bool reuseHalo)
 {
-#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     Cast(xBuf_.Get<float>(), castBuf_.Get<inputT>(), RoundMode::CAST_NONE, btBdCount_);
     if (reuseHalo) {
         uint32_t haloCount = (W_ - 1) * BD_;
@@ -1612,7 +1651,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CastDirectVectorTile
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectVector(bool reuseHalo)
 {
-#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     NsCausalConv1dBwdArch32::ComputeTile(
         xBuf_.Get<float>(), dyBuf_.Get<float>(), yBuf_.Get<float>(), weightBuf_.Get<float>(),
         dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbBuf_.Get<float>(),
@@ -1691,7 +1730,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDxDirectVecto
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen,
     uint32_t slot, event_t mte3ToVEvent)
 {
-#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     uint64_t startRow = static_cast<uint64_t>(i_t) * BT_;
     uint32_t validRows = (startRow + BT_ <= seqLen) ? BT_ :
                          ((startRow < seqLen) ? (seqLen - startRow) : 0);
@@ -1816,10 +1855,14 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbaseIdSplit(
+__aicore__ inline __attribute__((noinline)) void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbaseIdSplit(
     uint32_t bIdx, uint32_t blockNum, event_t *mte2ToVEvent)
 {
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
+    // 按 i_d 切分核间任务：每个核以 grid-stride 独占若干 i_d 的全部 chunk。
+    // 因 dw/db 只依赖自身通道块 i_d，独占遍历后可直接写回 GM，
+    // 无需 partial workspace、无需 SyncAll 与第二趟归约；同时内层 chunk 循环变长，
+    // 使 ping-pong 预取真正生效。
     for (uint32_t i_d = bIdx; i_d < numBlksD_; i_d += blockNum) {
         if (hasWeight_) {
             CopyInWeightRaw(i_d);
@@ -1830,7 +1873,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbase
         }
         PipeBarrier<PIPE_V>();
 
-        bool tilePrefetched = false;
+        bool tilePrefetched[3] = {false, false, false};
         for (uint32_t chunkIdx = 0; chunkIdx < numChunks_; chunkIdx++) {
             uint32_t i_b = 0;
             uint32_t i_t = 0;
@@ -1840,23 +1883,27 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbase
                 break;
             }
 
-            uint32_t slot = chunkIdx & 1U;
-            if (!tilePrefetched) {
+            uint32_t slot = chunkIdx % inputStages_;
+            if (!tilePrefetched[slot]) {
                 CopyInDirectTileRawAsync(bos, i_t, i_d, seqLen, slot, mte2ToVEvent[slot]);
             }
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent[slot]);
-            tilePrefetched = false;
+            tilePrefetched[slot] = false;
 
-            if (chunkIdx + 1U < numChunks_) {
+            for (uint32_t k = 1; k < inputStages_; k++) {
+                uint32_t nextIdx = chunkIdx + k;
+                uint32_t nextSlot = (slot + k) % inputStages_;
+                if (nextIdx >= numChunks_ || tilePrefetched[nextSlot]) {
+                    continue;
+                }
                 uint32_t nextB = 0;
                 uint32_t nextT = 0;
                 uint32_t nextSeqLen = 0;
                 uint64_t nextBos = 0;
-                if (ResolveChunk(chunkIdx + 1U, nextB, nextT, nextBos, nextSeqLen)) {
-                    uint32_t nextSlot = slot ^ 1U;
+                if (ResolveChunk(nextIdx, nextB, nextT, nextBos, nextSeqLen)) {
                     CopyInDirectTileRawAsync(nextBos, nextT, i_d, nextSeqLen, nextSlot,
                                              mte2ToVEvent[nextSlot]);
-                    tilePrefetched = true;
+                    tilePrefetched[nextSlot] = true;
                 }
             }
 
@@ -1971,6 +2018,10 @@ template <typename inputT, typename calT>
 __aicore__ inline __attribute__((noinline)) void CausalConv1dBwdKernel<inputT, calT>::ProcessNormal2DSplit(
     uint32_t bIdx, uint32_t blockNum)
 {
+    // chunk × i_d 二维切分：核 c 负责 i_d = c / G、chunk 组 = c % G（G = blockNum / numBlksD）。
+    // 每个核只处理 1 个 i_d 的若干 chunk（启用条件保证每核 ≤ 1 个），从而消除「每核串行遍历
+    // 全部 i_d」的固定开销（权重搬运与清零、partial 回写、栅栏、ResolveChunk 标量），
+    // 这些固定开销在小 shape 下与 vec 近似串行，是主要瓶颈。
     uint32_t splitG = blockNum / numBlksD_;
     uint32_t i_d = bIdx / splitG;
     uint32_t group = bIdx % splitG;
@@ -2438,7 +2489,7 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::ResolveChunk(
 template <typename inputT, typename calT>
 __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch32UseDirectVector() const
 {
-#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
     if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
         return false;
     } else {
@@ -2461,6 +2512,9 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegba
                                activation_ == ACTIVATION_NONE) &&
                               !useInitialState_ && !useFinalState_);
     if constexpr (IsSameType<inputT, half>::value || IsSameType<inputT, bfloat16_t>::value) {
+        // BD=16 且 D 只有一个通道块（numBlksD_==1）时无需 i_d 切分：此时 chunk 并行度与普通路径
+        // 相同（T<=64 两条路径都只有 1 个 chunk），可安全启用快路径。与 host 侧 useArch35DirectFast
+        // 的 `BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))` 门控逐字对齐。
         bool tinyBD16 = (BD_ == 16U && numBlksD_ == 1U && T_ <= 64U);
         bool arch35DirectPathCompatible =
             (W_ >= 1U && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX) && (use2DSplit_ == 0U);
@@ -2506,21 +2560,27 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
         directVectorMte2ToVEvent = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
         directVectorMte3ToVEvent[0] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>());
         directVectorMte3ToVEvent[1] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>());
-#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
         Duplicate(tempBuf_.Get<float>()[btBdCount_], float(1.0),
                   NsCausalConv1dBwdArch32::FP32_VECTOR_ELEMENTS);
 #endif
         PipeBarrier<PIPE_V>();
     }
-    event_t directMte2ToVEvent[2];
+    event_t directMte2ToVEvent[3];
+    // 按实际 inputStages_（2=双缓冲 / 3=三缓冲）申请 MTE2_V event，申请与释放数量严格一致，
+    // 避免固定申请 3 个后在双缓冲路径上泄漏第 3 个 event。
+    uint32_t directMte2ToVEventNum = 0;
     if (useDirectRegbase) {
-        directMte2ToVEvent[0] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
-        directMte2ToVEvent[1] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
+        directMte2ToVEventNum = inputStages_;
+        for (uint32_t i = 0; i < directMte2ToVEventNum; i++) {
+            directMte2ToVEvent[i] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
+        }
     }
     if (useDirectRegbase && useIdSplit_) {
         ProcessDirectRegbaseIdSplit(bIdx, blockNum, directMte2ToVEvent);
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[0]);
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[1]);
+        for (uint32_t i = 0; i < directMte2ToVEventNum; i++) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[i]);
+        }
         return;
     }
     if (useNormalIdSplit) {
@@ -2587,7 +2647,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
             PipeBarrier<PIPE_V>();
         }
 
-        bool directTilePrefetched = false;
+        bool directTilePrefetched[3] = {false, false, false};
         bool directVectorTilePrefetched = false;
         bool directVectorPrefetchedReuseHalo = false;
 
@@ -2609,28 +2669,33 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
             }
 
             if (useDirectRegbase) {
-                uint32_t slot = loop & 1U;
-                if (!directTilePrefetched) {
+                uint32_t slot = loop % inputStages_;
+                if (!directTilePrefetched[slot]) {
                     CopyInDirectTileRawAsync(bos, i_t, i_d, seqLen, slot, directMte2ToVEvent[slot]);
                 }
                 WaitFlag<HardEvent::MTE2_V>(directMte2ToVEvent[slot]);
+                directTilePrefetched[slot] = false;
 
-                directTilePrefetched = false;
-                if (loop + 1U < loopC) {
+                for (uint32_t k = 1; k < inputStages_; k++) {
+                    uint32_t nextLoop = loop + k;
+                    uint32_t nextSlot = (slot + k) % inputStages_;
+                    if (nextLoop >= loopC || directTilePrefetched[nextSlot]) {
+                        continue;
+                    }
                     uint32_t nextChunkIdx = (bIdx < tailChunk_)
-                        ? (bIdx * (chunkPerCore_ + 1) + loop + 1U)
-                        : (bIdx * chunkPerCore_ + tailChunk_ + loop + 1U);
-                    if (nextChunkIdx < numChunks_) {
-                        uint32_t nextB = 0;
-                        uint32_t nextT = 0;
-                        uint32_t nextSeqLen = 0;
-                        uint64_t nextBos = 0;
-                        if (ResolveChunk(nextChunkIdx, nextB, nextT, nextBos, nextSeqLen)) {
-                            uint32_t nextSlot = slot ^ 1U;
-                            CopyInDirectTileRawAsync(nextBos, nextT, i_d, nextSeqLen, nextSlot,
-                                                     directMte2ToVEvent[nextSlot]);
-                            directTilePrefetched = true;
-                        }
+                        ? (bIdx * (chunkPerCore_ + 1) + nextLoop)
+                        : (bIdx * chunkPerCore_ + tailChunk_ + nextLoop);
+                    if (nextChunkIdx >= numChunks_) {
+                        continue;
+                    }
+                    uint32_t nextB = 0;
+                    uint32_t nextT = 0;
+                    uint32_t nextSeqLen = 0;
+                    uint64_t nextBos = 0;
+                    if (ResolveChunk(nextChunkIdx, nextB, nextT, nextBos, nextSeqLen)) {
+                        CopyInDirectTileRawAsync(nextBos, nextT, i_d, nextSeqLen, nextSlot,
+                                                 directMte2ToVEvent[nextSlot]);
+                        directTilePrefetched[nextSlot] = true;
                     }
                 }
 
@@ -2807,8 +2872,9 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
 #endif
 
     if (useDirectRegbase) {
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[0]);
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[1]);
+        for (uint32_t i = 0; i < directMte2ToVEventNum; i++) {
+            GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[i]);
+        }
     }
     if (useDirectVector) {
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directVectorMte2ToVEvent);

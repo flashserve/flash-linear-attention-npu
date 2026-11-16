@@ -524,7 +524,7 @@ flash_linear_attention_npu-<ver>-<buildtag>-py3-none-any.whl
   → flash_linear_attention_npu_<tier>-<ver>-py3-none-manylinux_2_34_<arch>.whl
 ```
 
-档位来自 `FLA_NPU_SOC`（`a2` / `a3` / `a5`），架构来自平台标签，文件名里的 build tag 不再使用
+档位来自 `FLA_NPU_SOC`（`a2` / `a3` / `a5`，A6 开发构建为 `a6`），架构来自平台标签，文件名里的 build tag 不再使用
 （要临时打标可用 `FLA_NPU_WHEEL_BUILD_TAG`，但发布门禁会拒绝带 build tag 的产物）。
 **本地自编产物与 PyPI 包同名同平台标签**，所以本地包和发布包互为升级路径，不会出现"同一份
 payload 两个发行名、各自拥有一份 `fla_npu/`、卸载一个留下另一个"的局面；同一档位的多个版本
