@@ -25,9 +25,9 @@
 正式 `atk_chunk_kda_fwd.json` 同时包含：
 
 - 既有 48 条 case（ID 250–297），schema、seed 和 ID 保持不变；
-- 从 `chunk32/atk_chunk_kda_fwd_chunk32.json` 精选的 20 条 case（ID 508–527），统一使用
-  `mixed_tolerance_bm`（max≤5、avg≤1.5、RMSE≤1.5）。转换保留原始 shape、dtype、layout、
-  seed、state、varlen 和调用开关；既有 48 条保持同一容差标准。精选集不纳入 T=1 场景。
+- 从父套件原 44 条 A5 正向 case 转换的 44 条 chunk32 case（ID 508–551），统一使用
+  `mixed_tolerance_bm`。转换保留原始 shape、dtype、layout、seed、state、varlen 和调用开关；
+  前 4 条 A2 负向 case 不转换，chunk32 仅支持 A5。
 
 `gen_chunk_kda_fwd.py` 是统一转换入口。用以下命令可幂等更新正式 accuracy JSON，不会重复追加：
 
@@ -35,9 +35,9 @@
 python3 tests/atk/chunk_kda_fwd/gen_chunk_kda_fwd.py --merge-frozen-chunk32 --summary
 ```
 
-执行时，所有正向 case 统一复用 `chunk32/executor_chunk_kda_fwd_chunk32.py` 的 legacy 输入、FP64 golden、公开调用和输出契约，避免两套 reference 数学路径发生漂移；负向 case 保留本目录的 ACLNN 拦截检查。容差统一使用 `mixed_tolerance_bm`（max≤5、avg≤1.5、RMSE≤1.5）。
+执行时，chunk32 与 chunk64 统一使用本目录 executor，不再保留独立的 chunk32 子目录或第二套执行入口；负向 case 保留本目录的 ACLNN 拦截检查。容差统一使用 `mixed_tolerance_bm`。
 
-`chunk32/` 的独立 accuracy 套件仍保留用于专项对照；本目录的 accuracy 入口覆盖合并后的全部用例。
+本目录的 accuracy 入口覆盖合并后的全部用例。
 
 ## 精度拓扑
 

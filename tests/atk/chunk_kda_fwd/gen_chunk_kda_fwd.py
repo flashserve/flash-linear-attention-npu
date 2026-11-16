@@ -240,7 +240,6 @@ BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
 CHUNK32_CASE_COUNT = 44
 CHUNK32_SOURCE_IDS = tuple(range(254, 298))
 BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
-CHUNK32_CASES_PATH = Path(__file__).resolve().parent / "chunk32" / "atk_chunk_kda_fwd_chunk32.json"
 
 
 def _negative_case(local_id: int, soc: str) -> dict:
@@ -532,7 +531,7 @@ def _is_chunk32_payload(case: dict) -> bool:
     for item in case["inputs"]:
         config = item[0] if isinstance(item, list) else item
         if config["name"] == "case_spec":
-            return json.loads(config["range_values"]).get("profile") == "a5_chunk32"
+            return json.loads(config["range_values"]).get("profile") == "a5_chunk32" or "chunk32_source_id" in json.loads(config["range_values"])
     return False
 
 
@@ -551,6 +550,7 @@ def _chunk32_from_parent(case: dict) -> dict:
     spec.update({
         "case_key": f"chunk32_{case['id']}_{spec['case_key']}",
         "chunk32_source_id": case["id"],
+        "profile": "a5_chunk32",
         "chunk_size": 32,
         "disable_recompute": False,
         "return_intermediate_states": False,
