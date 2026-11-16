@@ -55,3 +55,7 @@ bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -sc
 bash tests/atk/run_test_cpu.sh -op=solve_tri -npu_device_id=6 -soc=ascend950 -scope=mssanitizer
 bash tests/atk/run_test_cpu.sh -op=solve_tri -scope=gen_cases
 ```
+
+## A2 补充验证
+
+A2 使用独立的清单、生成器和 executor，执行说明及历史结果见 [README_A2.md](README_A2.md)。本页原有 A5 用例、生成方式和执行命令保持不变；公共入口的 `-soc` 参数不会切换测试文件。
