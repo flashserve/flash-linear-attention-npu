@@ -13,8 +13,10 @@
  */
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/recurrent_gated_delta_rule.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/recurrent_gated_delta_rule.h"
 #else
-#include "arch22/recurrent_gated_delta_rule.h"
+#include "arch22/recurrent_gated_delta_rule.h" 
 #endif
 #include "recurrent_gated_delta_rule_tiling_data.h"
 
@@ -53,7 +55,18 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
     GET_TILING_DATA(tilingData, tilingGM);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     using StateType = typename RGDRDTypeTraits<D_T_STATE>::type;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    // ===== A6：arch92 + RGDRV2 =====
+    using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
+    using GateType = typename RGDRDTypeTraits<D_T_G>::type;
+    RecurrentGatedDeltaRuleV2::RGDRV2<
+        bfloat16_t, bfloat16_t, StateType, GateType, BetaType> op(&tilingData);
+    RecurrentGatedDeltaRuleV2::RGDRV2InitParams params{
+        query, key, value, g, beta, state, cuSeqlens, ssmStateIndices,
+        aLog, dtBias, numAcceptedTokens, out, stateOut};
+    op.Init(params);
+    op.Process();
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
     using GType = typename RGDRDTypeTraits<D_T_G>::type;
     RGDR<bfloat16_t, bfloat16_t, StateType, GType, BetaType, USE_QK_L2NORM, USE_GATE_IN_KERNEL, USE_BETA_SIGMOID,

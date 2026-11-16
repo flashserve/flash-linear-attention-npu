@@ -32,6 +32,7 @@ struct RecurrentGatedDeltaRuleCompileInfo {
     uint64_t aivNum{0UL};
     uint64_t ubSize{0UL};
     bool isA5{false};
+    bool isA6{false}; 
 };
 
 struct RecurrentGatedDeltaRuleInfo {

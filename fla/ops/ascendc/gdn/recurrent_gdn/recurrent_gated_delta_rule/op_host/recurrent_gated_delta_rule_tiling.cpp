@@ -60,6 +60,7 @@ void RecurrentGatedDeltaRuleTiling::InitCompileInfo()
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
     compileInfo_.aivNum = ascendcPlatform.GetCoreNumAiv();
     compileInfo_.isA5 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
+    compileInfo_.isA6 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
 
     if (compileInfo_.aivNum <= 0) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "platform.aivNum", "actual="+std::to_string(compileInfo_.aivNum)+"; expected >0");
@@ -106,17 +107,22 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
     const uint64_t stateDtypeKey = stateDtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
     const uint64_t betaKey = tilingData_.betaDtype;
     const uint64_t gateKey = tilingData_.gDtype;
-    const uint64_t betaSigmoid = tilingData_.useBetaSigmoidInKernel != 0;
-    tilingKey_ = GET_TPL_TILING_KEY(
-        stateDtypeKey, gateKey, betaKey, tilingData_.useQkL2NormInKernel != 0,
-        tilingData_.useGateInKernel != 0, betaSigmoid,
-        betaSigmoid && tilingData_.allowNegEigval != 0);
-    OP_LOGD(context_->GetNodeName(),
-            "RGDR_TILING_KEY key=%llu state=%llu g=%llu beta=%llu norm=%u gate=%u sigmoid=%u neg=%u",
+    if (compileInfo_.isA6) {
+        // A6：arch92 
+        tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey, gateKey, betaKey, 0, 0, 0, 0);
+    } else {
+        // A5 / A2/A3：main 
+        const uint64_t betaSigmoid = tilingData_.useBetaSigmoidInKernel != 0;
+        tilingKey_ = GET_TPL_TILING_KEY(
+            stateDtypeKey, gateKey, betaKey, tilingData_.useQkL2NormInKernel != 0,
+            tilingData_.useGateInKernel != 0, betaSigmoid,
+            betaSigmoid && tilingData_.allowNegEigval != 0);
+    }
+        OP_LOGD(context_->GetNodeName(),
+            "RGDR_TILING_KEY key=%llu state=%llu g=%llu beta=%llu isA5=%u isA6=%u",
             static_cast<unsigned long long>(tilingKey_), static_cast<unsigned long long>(stateDtypeKey),
             static_cast<unsigned long long>(gateKey), static_cast<unsigned long long>(betaKey),
-            tilingData_.useQkL2NormInKernel != 0, tilingData_.useGateInKernel != 0,
-            betaSigmoid != 0, betaSigmoid && tilingData_.allowNegEigval != 0);
+            compileInfo_.isA5 ? 1u : 0u, compileInfo_.isA6 ? 1u : 0u);
     return ge::GRAPH_SUCCESS;
 };
 
