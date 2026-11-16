@@ -17,9 +17,24 @@ using namespace AscendC;
 using namespace AscendC::MicroAPI;
 
 constexpr uint32_t BWD_DIRECT_BD = 64;
-// 快路径支持的最大卷积宽度：dw 侧按 wIdx 展开成独立的 VF 调用（每个 wIdx 一趟行遍历），
-// 支持到 8 无需额外寄存器（每个 VF 仍只用 4 个数据寄存器），UB 仅随 W*BD 线性增长。
 constexpr uint32_t BWD_DIRECT_W_MAX = 8;
+constexpr uint32_t BWD_DIRECT_BD_NARROW = 16;
+
+constexpr uint32_t BWD_ACTIVATION_NONE = 0;
+constexpr uint32_t BWD_ACTIVATION_SILU = 1;
+constexpr uint32_t BWD_ACTIVATION_SWISH = 2;
+
+constexpr uint32_t BWD_FLAG_OFF = 0;
+
+constexpr uint32_t BWD_TAP_REVERSE_STEP = 1;
+constexpr uint32_t BWD_TAP_IDX_0 = 0;
+constexpr uint32_t BWD_TAP_IDX_1 = 1;
+constexpr uint32_t BWD_TAP_IDX_2 = 2;
+constexpr uint32_t BWD_TAP_IDX_3 = 3;
+constexpr uint32_t BWD_TAP_IDX_4 = 4;
+constexpr uint32_t BWD_TAP_IDX_5 = 5;
+constexpr uint32_t BWD_TAP_IDX_6 = 6;
+constexpr uint32_t BWD_TAP_IDX_7 = 7;
 
 constexpr CastTrait B16_TO_F32_ZERO = {
     RegLayout::ZERO,
@@ -77,16 +92,16 @@ __simd_callee__ inline void ApplySiluBackwardOne(
 {
     // 等价式 silu'(y) = (d + y*e) / d^2，e=exp(-y)、d=1+e，仅 8 条向量指令
     //（原 10 条：省去 Duplicate 与一次 Mul）。仅重排运算顺序，数值语义不变。
-    RegTensor<float> e;
-    RegTensor<float> d;
-    Muls(e, y, -1.0f, maskF32);
-    Exp(e, e, maskF32);
-    Adds(d, e, 1.0f, maskF32);
-    Mul(e, e, y, maskF32);
-    Add(e, d, e, maskF32);
-    Mul(d, d, d, maskF32);
-    Div(d, e, d, maskF32);
-    Mul(dy, dy, d, maskF32);
+    RegTensor<float> expNegY;
+    RegTensor<float> onePlusExpNegY;
+    Muls(expNegY, y, -1.0f, maskF32);
+    Exp(expNegY, expNegY, maskF32);
+    Adds(onePlusExpNegY, expNegY, 1.0f, maskF32);
+    Mul(expNegY, expNegY, y, maskF32);
+    Add(expNegY, onePlusExpNegY, expNegY, maskF32);
+    Mul(onePlusExpNegY, onePlusExpNegY, onePlusExpNegY, maskF32);
+    Div(onePlusExpNegY, expNegY, onePlusExpNegY, maskF32);
+    Mul(dy, dy, onePlusExpNegY, maskF32);
 }
 
 __simd_callee__ inline void ApplySiluBackwardPair(
@@ -108,8 +123,6 @@ __simd_callee__ inline void StoreDwSum(
     StoreFloatPair(dwAddr + wIdx * BWD_DIRECT_BD, oldZero, oldOne, maskF32);
 }
 
-// 快路径的行宽 BD 既可以是 64（一个 fp32 向量寄存器的全宽），也可以是 16（16 车道掩码）。
-// 除 BD=64 的原有实例外，全用 16 车道掩码处理 BD=16；BD=64 模板实参与改动前完全一致。
 template <uint32_t BD>
 __simd_callee__ inline MaskReg MaskF32ForBd()
 {
@@ -211,7 +224,7 @@ static __simd_vf__ inline void ComputeDwOneActivatedB16Vf(
 
     Duplicate(sum, 0.0f, maskF32);
 
-    uint32_t iW = width - wIdx - 1U;
+    uint32_t iW = width - wIdx - BWD_TAP_REVERSE_STEP;
     for (uint32_t row = 0; row < rows; row++) {
         LoadB16AsFloat<T>(x, xAddr + row * BD, maskF32);
         LoadFloatOne(dy, dyActAddr + (row + iW) * BD);
@@ -284,7 +297,7 @@ static __simd_vf__ inline void ComputeDwOneDirectB16Vf(
 
     Duplicate(sum, 0.0f, maskF32);
 
-    uint32_t iW = width - wIdx - 1U;
+    uint32_t iW = width - wIdx - BWD_TAP_REVERSE_STEP;
     for (uint32_t row = 0; row < rows; row++) {
         LoadB16AsFloat<T>(x, xAddr + row * BD, maskF32);
         LoadB16AsFloat<T>(dy, dyAddr + (row + iW) * BD, maskF32);
@@ -374,7 +387,7 @@ static __simd_vf__ inline void ComputeDwOneActivatedF32Vf(
 
     Duplicate(sum, 0.0f, maskF32);
 
-    uint32_t iW = width - wIdx - 1U;
+    uint32_t iW = width - wIdx - BWD_TAP_REVERSE_STEP;
     for (uint32_t row = 0; row < rows; row++) {
         LoadFloatOne(x, xAddr + row * BD);
         LoadFloatOne(dy, dyActAddr + (row + iW) * BD);
@@ -446,7 +459,7 @@ static __simd_vf__ inline void ComputeDwOneDirectF32Vf(
 
     Duplicate(sum, 0.0f, maskF32);
 
-    uint32_t iW = width - wIdx - 1U;
+    uint32_t iW = width - wIdx - BWD_TAP_REVERSE_STEP;
     for (uint32_t row = 0; row < rows; row++) {
         LoadFloatOne(x, xAddr + row * BD);
         LoadFloatOne(dy, dyAddr + (row + iW) * BD);
@@ -580,7 +593,7 @@ static __simd_vf__ inline void ComputeDwOneDirectVf(
     Duplicate(sumZero, 0.0f, maskF32);
     Duplicate(sumOne, 0.0f, maskF32);
 
-    uint32_t iW = width - wIdx - 1U;
+    uint32_t iW = width - wIdx - BWD_TAP_REVERSE_STEP;
     for (uint32_t row = 0; row < rows; row++) {
         LoadAsFloatPair<T>(xZero, xOne, xAddr + row * BWD_DIRECT_BD, maskB16);
         LoadAsFloatPair<T>(dyZero, dyOne, dyAddr + (row + iW) * BWD_DIRECT_BD, maskB16);
@@ -611,7 +624,7 @@ static __simd_vf__ inline void ComputeDwOneActivatedVf(
     Duplicate(sumZero, 0.0f, maskF32);
     Duplicate(sumOne, 0.0f, maskF32);
 
-    uint32_t iW = width - wIdx - 1U;
+    uint32_t iW = width - wIdx - BWD_TAP_REVERSE_STEP;
     for (uint32_t row = 0; row < rows; row++) {
         LoadAsFloatPair<T>(xZero, xOne, xAddr + row * BWD_DIRECT_BD, maskB16);
         LoadFloatPair(dyZero, dyOne, dyActAddr + (row + iW) * BWD_DIRECT_BD);
@@ -695,214 +708,212 @@ __aicore__ inline void ComputeTileDirectRegbaseBd(
     (void)useInitialState;
     (void)computeDh0;
     if constexpr (std::is_same<T, half>() || std::is_same<T, bfloat16_t>()) {
-        if (activation == 1U || activation == 2U) {
+        if (activation == BWD_ACTIVATION_SILU || activation == BWD_ACTIVATION_SWISH) {
             AscendC::VF_CALL<ComputeActivatedDyB16Vf<T, BD>>(dyAddr, yAddr, dyActAddr, dyRows);
             AscendC::VF_CALL<ComputeDxActivatedB16Vf<T, BD>>(dyActAddr, weightAddr, dxAddr, rows, width);
-            if (width > 0U) {
+            if (width > BWD_TAP_IDX_0) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 0U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_0);
             }
-            if (width > 1U) {
+            if (width > BWD_TAP_IDX_1) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 1U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_1);
             }
-            if (width > 2U) {
+            if (width > BWD_TAP_IDX_2) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 2U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_2);
             }
-            if (width > 3U) {
+            if (width > BWD_TAP_IDX_3) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 3U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_3);
             }
-            if (width > 4U) {
+            if (width > BWD_TAP_IDX_4) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 4U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_4);
             }
-            if (width > 5U) {
+            if (width > BWD_TAP_IDX_5) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 5U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_5);
             }
-            if (width > 6U) {
+            if (width > BWD_TAP_IDX_6) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 6U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_6);
             }
-            if (width > 7U) {
+            if (width > BWD_TAP_IDX_7) {
                 AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 7U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_7);
             }
-            if (hasBias != 0U) {
+            if (hasBias != BWD_FLAG_OFF) {
                 AscendC::VF_CALL<ComputeDbActivatedB16Vf<BD>>(dyActAddr, dbAddr, rows);
             }
             return;
         }
-        if (activation != 0U) {
+        if (activation != BWD_ACTIVATION_NONE) {
             return;
         }
         // activation == NONE：dy 直接参与计算，无需 y 与 dyAct 中间缓冲。
         AscendC::VF_CALL<ComputeDxDirectB16Vf<T, BD>>(dyAddr, weightAddr, dxAddr, rows, width);
-        if (width > 0U) {
+        if (width > BWD_TAP_IDX_0) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 0U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_0);
         }
-        if (width > 1U) {
+        if (width > BWD_TAP_IDX_1) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 1U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_1);
         }
-        if (width > 2U) {
+        if (width > BWD_TAP_IDX_2) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 2U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_2);
         }
-        if (width > 3U) {
+        if (width > BWD_TAP_IDX_3) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 3U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_3);
         }
-        if (width > 4U) {
+        if (width > BWD_TAP_IDX_4) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 4U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_4);
         }
-        if (width > 5U) {
+        if (width > BWD_TAP_IDX_5) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 5U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_5);
         }
-        if (width > 6U) {
+        if (width > BWD_TAP_IDX_6) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 6U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_6);
         }
-        if (width > 7U) {
+        if (width > BWD_TAP_IDX_7) {
             AscendC::VF_CALL<ComputeDwOneDirectB16Vf<T, BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 7U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_7);
         }
-        if (hasBias != 0U) {
+        if (hasBias != BWD_FLAG_OFF) {
             AscendC::VF_CALL<ComputeDbDirectB16Vf<T, BD>>(dyAddr, dbAddr, rows);
         }
         return;
     } else if constexpr (std::is_same<T, float>::value) {
-        // fp32 走与 b16 同构的 VF 快路径，仅省去 Cast：BD=64 时行步长恰为一个 fp32 寄存器全宽，
-        // BD=16（D 非 64 整数倍）时用 16 车道掩码。二者共用同一套模板（MaskF32ForBd<BD> 按行宽取掩码）。
-        if (activation == 1U || activation == 2U) {
+        if (activation == BWD_ACTIVATION_SILU || activation == BWD_ACTIVATION_SWISH) {
             AscendC::VF_CALL<ComputeActivatedDyF32Vf<BD>>(dyAddr, yAddr, dyActAddr, dyRows);
             AscendC::VF_CALL<ComputeDxActivatedF32Vf<BD>>(dyActAddr, weightAddr, dxAddr, rows, width);
-            if (width > 0U) {
+            if (width > BWD_TAP_IDX_0) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 0U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_0);
             }
-            if (width > 1U) {
+            if (width > BWD_TAP_IDX_1) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 1U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_1);
             }
-            if (width > 2U) {
+            if (width > BWD_TAP_IDX_2) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 2U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_2);
             }
-            if (width > 3U) {
+            if (width > BWD_TAP_IDX_3) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 3U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_3);
             }
-            if (width > 4U) {
+            if (width > BWD_TAP_IDX_4) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 4U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_4);
             }
-            if (width > 5U) {
+            if (width > BWD_TAP_IDX_5) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 5U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_5);
             }
-            if (width > 6U) {
+            if (width > BWD_TAP_IDX_6) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 6U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_6);
             }
-            if (width > 7U) {
+            if (width > BWD_TAP_IDX_7) {
                 AscendC::VF_CALL<ComputeDwOneActivatedF32Vf<BD>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 7U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_7);
             }
-            if (hasBias != 0U) {
+            if (hasBias != BWD_FLAG_OFF) {
                 AscendC::VF_CALL<ComputeDbActivatedF32Vf<BD>>(dyActAddr, dbAddr, rows);
             }
             return;
         }
-        if (activation != 0U) {
+        if (activation != BWD_ACTIVATION_NONE) {
             return;
         }
         // activation == NONE：dy 直接参与计算，无需 y 与 dyAct 中间缓冲。
         AscendC::VF_CALL<ComputeDxDirectF32Vf<BD>>(dyAddr, weightAddr, dxAddr, rows, width);
-        if (width > 0U) {
+        if (width > BWD_TAP_IDX_0) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 0U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_0);
         }
-        if (width > 1U) {
+        if (width > BWD_TAP_IDX_1) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 1U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_1);
         }
-        if (width > 2U) {
+        if (width > BWD_TAP_IDX_2) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 2U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_2);
         }
-        if (width > 3U) {
+        if (width > BWD_TAP_IDX_3) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 3U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_3);
         }
-        if (width > 4U) {
+        if (width > BWD_TAP_IDX_4) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 4U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_4);
         }
-        if (width > 5U) {
+        if (width > BWD_TAP_IDX_5) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 5U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_5);
         }
-        if (width > 6U) {
+        if (width > BWD_TAP_IDX_6) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 6U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_6);
         }
-        if (width > 7U) {
+        if (width > BWD_TAP_IDX_7) {
             AscendC::VF_CALL<ComputeDwOneDirectF32Vf<BD>>(
-                xAddr, dyAddr, dwAddr, rows, width, 7U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_7);
         }
-        if (hasBias != 0U) {
+        if (hasBias != BWD_FLAG_OFF) {
             AscendC::VF_CALL<ComputeDbDirectF32Vf<BD>>(dyAddr, dbAddr, rows);
         }
     } else {
-        if (activation == 1U) {
+        if (activation == BWD_ACTIVATION_SILU) {
             AscendC::VF_CALL<ComputeActivatedDyVf<T>>(dyAddr, yAddr, dyActAddr, dyRows);
             AscendC::VF_CALL<ComputeDxActivatedVf<T>>(dyActAddr, weightAddr, dxAddr, rows, width);
-            if (width > 0U) {
+            if (width > BWD_TAP_IDX_0) {
                 AscendC::VF_CALL<ComputeDwOneActivatedVf<T>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 0U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_0);
             }
-            if (width > 1U) {
+            if (width > BWD_TAP_IDX_1) {
                 AscendC::VF_CALL<ComputeDwOneActivatedVf<T>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 1U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_1);
             }
-            if (width > 2U) {
+            if (width > BWD_TAP_IDX_2) {
                 AscendC::VF_CALL<ComputeDwOneActivatedVf<T>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 2U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_2);
             }
-            if (width > 3U) {
+            if (width > BWD_TAP_IDX_3) {
                 AscendC::VF_CALL<ComputeDwOneActivatedVf<T>>(
-                    xAddr, dyActAddr, dwAddr, rows, width, 3U);
+                    xAddr, dyActAddr, dwAddr, rows, width, BWD_TAP_IDX_3);
             }
-            if (hasBias != 0U) {
+            if (hasBias != BWD_FLAG_OFF) {
                 AscendC::VF_CALL<ComputeDbActivatedVf>(dyActAddr, dbAddr, rows);
             }
             return;
         }
 
         AscendC::VF_CALL<ComputeDxDirectVf<T>>(dyAddr, weightAddr, dxAddr, rows, width);
-        if (width > 0U) {
+        if (width > BWD_TAP_IDX_0) {
             AscendC::VF_CALL<ComputeDwOneDirectVf<T>>(
-                xAddr, dyAddr, dwAddr, rows, width, 0U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_0);
         }
-        if (width > 1U) {
+        if (width > BWD_TAP_IDX_1) {
             AscendC::VF_CALL<ComputeDwOneDirectVf<T>>(
-                xAddr, dyAddr, dwAddr, rows, width, 1U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_1);
         }
-        if (width > 2U) {
+        if (width > BWD_TAP_IDX_2) {
             AscendC::VF_CALL<ComputeDwOneDirectVf<T>>(
-                xAddr, dyAddr, dwAddr, rows, width, 2U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_2);
         }
-        if (width > 3U) {
+        if (width > BWD_TAP_IDX_3) {
             AscendC::VF_CALL<ComputeDwOneDirectVf<T>>(
-                xAddr, dyAddr, dwAddr, rows, width, 3U);
+                xAddr, dyAddr, dwAddr, rows, width, BWD_TAP_IDX_3);
         }
-        if (hasBias != 0U) {
+        if (hasBias != BWD_FLAG_OFF) {
             AscendC::VF_CALL<ComputeDbDirectVf<T>>(dyAddr, dbAddr, rows);
         }
     }
@@ -918,8 +929,8 @@ __aicore__ inline void ComputeTileDirectRegbase(
     uint32_t validRows, uint32_t useInitialState, uint32_t computeDh0, uint32_t hasBias,
     uint32_t bd)
 {
-    if (bd == 16U) {
-        ComputeTileDirectRegbaseBd<T, 16U>(xRaw, dyRaw, yRaw, weightRaw, stateLocal, dxLocal, dwLocal,
+    if (bd == BWD_DIRECT_BD_NARROW) {
+        ComputeTileDirectRegbaseBd<T, BWD_DIRECT_BD_NARROW>(xRaw, dyRaw, yRaw, weightRaw, stateLocal, dxLocal, dwLocal,
                                            dbLocal, dh0Local, rows, width, dyRows, activation,
                                            validRows, useInitialState, computeDh0, hasBias);
     } else {

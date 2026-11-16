@@ -2461,26 +2461,15 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegba
                                activation_ == ACTIVATION_NONE) &&
                               !useInitialState_ && !useFinalState_);
     if constexpr (IsSameType<inputT, half>::value || IsSameType<inputT, bfloat16_t>::value) {
-        // BD=16 且 D 只有一个通道块（numBlksD_==1）时无需 i_d 切分：此时 chunk 并行度与普通路径
-        // 相同（T<=64 两条路径都只有 1 个 chunk），可安全启用快路径。与 host 侧 useArch35DirectFast
-        // 的 `BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))` 门控逐字对齐。
         bool tinyBD16 = (BD_ == 16U && numBlksD_ == 1U && T_ <= 64U);
-        // 快路径与「chunk×i_d 二维切分」tiling 不兼容：2D 会把 dw/db 的 partial 归约改成
-        // 按 (i_d, chunk 组) 二次归约，而快路径直接按 i_d 独立写回，二者叠加会使 dw/db 漏算。
-        // host 侧的 use2DSplit 决策已保证「启用 2D 时不再走快路径」，此处按 use2DSplit_ 兜底对齐。
-        // W 门控与 host 保持一致：NONE 直读 dy，SILU/SWISH 在 W∈[1,8] 下快路径同样正确，
-        // 是否切到快路径由 host 的 tiling 决策（2D / 直算）统一裁决。
-        bool arch35WOk = (W_ >= 1U && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX) && (use2DSplit_ == 0U);
+        bool arch35DirectPathCompatible =
+            (W_ >= 1U && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX) && (use2DSplit_ == 0U);
         return hasWeight_ &&
                supportActivation &&
                (BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD || (BD_ == 16U && useIdSplit_ != 0U) ||
                 tinyBD16) &&
-               arch35WOk;
+               arch35DirectPathCompatible;
     } else if constexpr (IsSameType<inputT, float>::value) {
-        // fp32 与 b16 分支同构：BD=64（D 为 64 整数倍）或 BD=16 且 i_d 切分成立时可用，
-        // W 门控（NONE 直读 dy，SILU/SWISH 在 W∈[1,8] 下同样正确）与 b16 一致。
-        // 同样按 use2DSplit_ 兜底：二维切分 tiling 与快路径的 dw/db 直接写回不兼容。
-        // 最终是否切到快路径由本函数在运行时裁决（host 的 activation 门控是性能启发式，不在此强制）。
         return hasWeight_ &&
                supportActivation &&
                (BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD || (BD_ == 16U && useIdSplit_ != 0U)) &&
