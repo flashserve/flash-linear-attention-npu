@@ -37,6 +37,8 @@
 先激活对应 Python 环境并初始化 CANN。当前实测 A2 使用 CANN 9.2、
 torch/torch_npu 2.10 环境；A5 使用 CANN 9.2、`zzy` Python 环境。
 安装和数值复现须使用与目标平台匹配的 torch/torch_npu、wheel 和 OPP。
+Host 动态库和 wheel 在与目标 CPU 架构一致的主机上原生构建，
+再通过 `--soc` 指定 Ascend 芯片型号。
 
 ```bash
 # 在已初始化 CANN 的源码根目录执行；A5 将 SOC 改为 ascend950。
@@ -172,9 +174,6 @@ asc/impl/utils/sys_macros_impl.h:18:10: fatal error: 'cstdint' file not found
 
 A5 的 165.22 秒是依赖下载完成后一次成功命令的耗时，不含此前下载超时。
 没有同机器、同并发、同缓存条件的全量构建对照，不能用它与 issue 中历史 884 秒直接计算加速比。
-
-指定 Ascend SoC 编译 kernel 与跨 x86_64/aarch64 生成 host 库是不同维度。
-本报告不把额外的跨 Host 架构请求当作 issue 已明确承诺的功能。
 
 ## 证据索引
 
