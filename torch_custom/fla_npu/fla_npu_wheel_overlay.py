@@ -282,7 +282,7 @@ def resolve(package, layer):
                         errors.append(f"{owner}/{name}: missing OPP symbol {symbol}")
                     continue  # A skeleton base may have unavailable, uncovered ops.
                 if tuple(expected) != contracts[str(chosen)][symbol]:
-                    errors.append(f"{owner}/{name}: {symbol} mismatches {chosen.name}; include its matching adapter/OPP in the update")
+                    errors.append(f"{owner}/{name}: {symbol} mismatches OPP {chosen}; include its matching adapter/OPP in the update")
     # Every selected adapter uses the same immutable, validated CANN order.
     return {"vendors": [str(p) for p in vendors],
             "bindings": {"base": libraries, "overlay": libraries},

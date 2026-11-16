@@ -750,12 +750,15 @@ class MultiOppTests(unittest.TestCase):
         bad = package(self.root / "bad", kind="bool", opp={"aclnnDemo": "bool"})
         pending = self.install(bad)
         self.assertEqual(pending["state"], "pending")
-        self.assertTrue(any("base/npu_a: aclnnDemoGetWorkspaceSize mismatches" in e for e in pending["errors"]))
+        bad_vendor = Path(pending["path"]) / "fla_npu/opp/vendors" / layers.BASE
+        expected_error = (f"base/npu_a: aclnnDemoGetWorkspaceSize mismatches OPP {bad_vendor}; "
+                          "include its matching adapter/OPP in the update")
+        self.assertEqual(pending["errors"], [expected_error])
         self.check_order(second, first)
         # An unrelated later OPP must not hide the mismatch in a retained layer.
         still_pending = self.install(self.b)
         self.assertEqual(still_pending["state"], "pending")
-        self.assertTrue(any("aclnnDemoGetWorkspaceSize mismatches" in e for e in still_pending["errors"]))
+        self.assertEqual(still_pending["errors"], [expected_error])
         self.check_order(second, first)
         # Matching adapter completes the pending chain without discarding B.
         adapter = package(self.root / "adapter", kind="bool", exports=["npu_a"])
@@ -924,7 +927,10 @@ class MultiArtifactTests(unittest.TestCase):
         self.assertEqual(layers.runtime_plan(self.base)["exports"], ["npu_a", "npu_b"])
         pending = layers.install(self.base, self.artifact("old-a-contract", "npu_a", "standalone"))
         self.assertEqual(pending["state"], "pending")
-        self.assertTrue(any("overlay/npu_a: aclnnDemoGetWorkspaceSize mismatches" in e for e in pending["errors"]))
+        opp_vendor = Path(first["path"]) / "fla_npu/opp/vendors" / layers.BASE
+        self.assertEqual(pending["errors"], [
+            f"overlay/npu_a: aclnnDemoGetWorkspaceSize mismatches OPP {opp_vendor}; "
+            "include its matching adapter/OPP in the update"])
         self.assertEqual(layers.active(self.base), Path(second["path"]))
         complete = layers.install(self.base, self.a / "opp/vendors")
         self.assertEqual(complete["state"], "active")
