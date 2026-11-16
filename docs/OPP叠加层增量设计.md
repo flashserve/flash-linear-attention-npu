@@ -24,8 +24,9 @@
 
 先装 P1 再装 O1，与先装 O1 再装 P1，最终均为 P1+O1；完整 wheel 携带 P1+O1 时结果相同。
 多个包重复更新同一组件则以最后安装的为准，因此不承诺重叠更新也与顺序无关。
-组件本身按整体产物替换：新 P 的入口范围不自动合并旧 P 的范围，新 O 也不叠加旧 O；
-未被当前增量提供的入口或 OPP 符号回落 base。只保留另一个未更新的组件。
+适配层 P 仍按整体产物替换：新 P 未声明的入口使用 base adapter，不合并旧 P 的入口范围。
+OPP 保留多个不可变产物，按安装顺序从新到旧查找：先装 A1、再装 B1，顺序为 **B1 → A1 → base**。
+B1 没有 A 的符号时继续使用 A1；同名符号以后安装的包为准，不能因 ABI 不匹配跳过最新提供者。
 
 | 功能 | 必要行为 |
 | --- | --- |
@@ -52,14 +53,14 @@ flowchart TD
     P --> R[解析最新请求组合]
     R -->|依赖未配齐| Q[pending：保留旧 active]
     R -->|依赖匹配| A[原子提交 active 组合]
-    A --> E[新进程 .pth 或手动 source：选中 OPP → base]
+    A --> E[新进程 .pth 或手动 source：最新 OPP → 较早 OPP → base]
     A --> W[声明入口使用选中适配层 / 其余使用 base]
     E --> C[CANN：按相同顺序发现 L2–L4]
     W --> H[Stable launcher：按相同顺序查找 L1]
     H --> C
 ```
 
-host 与 CANN 必须保持相同的 OPP 顺序：**当前生效 O 组件 → 存在的 base OPP**。
+host 与 CANN 必须保持相同的 OPP 顺序：**active 中从新到旧的 OPP 列表 → 存在的 base OPP**。
 没有增量 O 时只使用 base；P 来自哪个 wheel 不决定 O 的来源。外部 vendor 保留在 CANN
 路径中，不作为本包 host 库来源。各 OPP 组件内部的 L1–L4 必须配套，不拆散替换。
 
@@ -86,7 +87,7 @@ site-packages/
         └── wheel_layers/
             ├── state.json              # version=2，active / pending 组合 ID
             └── <id>/
-                ├── components.json     # adapter / opp 各自引用不可变产物 ID
+                ├── components.json     # adapter / opps 引用适配层及有序 OPP 产物 ID
                 ├── installation.json   # 本次安装来源及就绪诊断
                 └── fla_npu/            # 本次实际携带的 P、O 或二者
 ```
@@ -222,7 +223,7 @@ python -m fla_npu_opp_manage --remove-overlay
 
 | 行为 | 组件组合规则 |
 | --- | --- |
-| 最新安装选择 | 从 pending（如有）否则 active 继承；只替换本次实际携带的组件 |
+| 最新安装选择 | 从 pending（如有）否则 active 继承；新 P 替换 P，新 O 加到 OPP 列表首位 |
 | 生效选择 | 仅使用 active；一次原子提交 P/O 的组合，避免两者各自切换形成混源 |
 | 缺依赖 / ABI 不匹配 | 安装成功、pending；状态中列出 errors，须补齐后才可运行该组合 |
 | 格式 / 复制 / 提交失败 | 拒绝或报错，原 active 和 pending 保持；未提交新目录可清理 |
@@ -299,7 +300,7 @@ python -m pytest -q tests/test_opp_overlay.py tests/test_opp_abi_contract.py \
 | --- | --- | --- | --- | --- |
 | run-only overlay | `.run` 或解包后的 vendor | 更新 OPP L1–L4 | 当前 P；未装增量 P 时使用 base adapter | 被更新 O 影响的适配层与它匹配 |
 | standalone wheel overlay | wrapper、Stable launcher、layer manifest；不带 OPP 的骨架 wheel | 更新 P 声明的公共入口 | 当前 O；未装增量 O 时复用 base OPP | 新 P 与选中 OPP 匹配 |
-| 携带 OPP 的 wheel overlay | 适配层及内嵌 OPP | 同时更新 P 和 O | base 算子产物；未覆盖入口或符号回落 base | 新组合的所有受影响依赖匹配 |
+| 携带 OPP 的 wheel overlay | 适配层及内嵌 OPP | 替换 P，将 O 加到列表首位 | 历史 OPP 和 base；OPP 缺失符号依次回落 | 新组合的所有受影响依赖匹配 |
 
 standalone 指实际不含 `libcust_opapi.so` 的产物，不能只按构建命令名称分类。
 `FLA_NPU_OVERLAY_OPS` 决定 P 的公共入口范围，未设置为全部公共 Ascend C 入口；
@@ -308,8 +309,9 @@ base 可带 OPP 或为骨架，骨架缺失的未覆盖算子仍不可用。
 
 ### 9.2 共同规则
 
-1. **最后安装的同类组件优先**：P1+O1 之后安装 P2 得到 P2+O1；再安装 O2 得到 P2+O2。
-   完整 wheel 携带 P3+O3 时同时替换两者。不用版本号推断优先级。
+1. **最后安装优先，OPP 累积保留**：P1+O1 之后安装 P2 得到 P2 与 O1；再安装 O2，
+   得到 P2 与 O2→O1→base。完整 wheel P3+O3 替换 P，同时得到 O3→O2→O1→base。
+   standalone wheel 不改变 OPP 列表；不用版本号推断优先级。
 2. **最新请求与生效组合分离**：pending 保存最新未配齐请求，active 保存上一份可运行组合。
    下一次安装从 pending 继承未携带组件，避免丢失之前已安装但未启用的修改。
 3. **安装成功不等于已启用**：有效但不兼容的组件返回安装成功（退出码 0），明确输出 pending。
@@ -321,10 +323,12 @@ base 可带 OPP 或为骨架，骨架缺失的未覆盖算子仍不可用。
 独立组件引用保存在每次安装的不可变 `components.json` 中，例如：
 
 ```json
-{"version": 1, "adapter": "<P产物ID或null>", "opp": "<O产物ID或null>"}
+{"version": 2, "adapter": "<P产物ID或null>", "opps": ["<最新O产物ID>", "<较早O产物ID>"]}
 ```
 
-实际 ID 为 32 位十六进制字符串；null 表示使用 base。`state.json` 的 active/pending 指向组合 ID，
+实际 ID 为 32 位十六进制字符串；adapter 为 null 表示 base 适配层，opps 为空表示只使用 base OPP。
+旧 version=1 的单个 opp 自动读为一个元素的列表；新安装写 version=2，旧管理器不能读取新组合。
+升级需使用包含新版管理器的 base wheel；降级前应先移除 overlay。`state.json` 的 active/pending 指向组合 ID，
 不是按安装目录排序猜测版本。旧完整 wheel 层没有 components.json 时，按原布局识别其 P 和可选 O。
 不重复复制未更新组件，状态提交后所需文件不会随下一次安装被删除。
 
@@ -377,7 +381,8 @@ python -m fla_npu_opp_manage --overlay --source /path/to/with-opp-update.whl
 
 若同时指定 `--opp-source`，该显式 OPP 替代本次 wheel 内的 OPP。以后再装 standalone 时保留 O，
 再装 run 时保留 P。带 OPP 不等于依赖完整，组合仍可能 pending；不强行启用不兼容的 C 调用。
-同一组件的新包整体替换旧包，不在两个历史 OPP 之间继续逐符号回退；缺失符号仅回落 base。
+新 OPP 加到已有 OPP 列表首位，缺失符号继续在较早增量包及 base 中查找。全部 OPP 的 ABI 清单
+均须有效；契约比较针对第一个提供符号的包。移除统一清除所有增量，暂不提供单层移除命令。
 
 ### 9.6 验收范围
 
@@ -387,7 +392,7 @@ python -m fla_npu_opp_manage --overlay --source /path/to/with-opp-update.whl
 | 验证准则 | 必须覆盖的结果 |
 | --- | --- |
 | 独立安装顺序 | P1→O1、O1→P1、完整 P1+O1 的最终适配层、OPP 与结果一致 |
-| 同组件优先级 | P1+O1→P2 保留 O1；再装 O2 保留 P2；完整包替换两部分 |
+| 同组件优先级 | P 更新保留 OPP 列表；新 O 加到首位；不同算子 A1/B1 两种顺序均保留新数值，同名以后装为准 |
 | 不兼容先安装 | standalone 或 run 均成功保存 pending；旧 active 不变；后续补齐继承最新 pending 并启用 |
 | 真实适配层更新 | 新 Python 参数、默认值、C++ schema 生效；仅更新 O 时原适配层不变 |
 | OPP L1–L4 | P/O 分步后四层同源；不同组件目录不导致 host/kernel 混源 |

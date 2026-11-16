@@ -118,15 +118,32 @@ python -m fla_npu_opp_manage --remove-overlay
 
 active 和 pending 可以同时存在：未配齐的新组合不替换旧 active；后续安装基于最新 pending
 保留另一组件，匹配后自动启用并清空 pending。没有旧 active 时继续使用 base。
-状态中的 `components.adapter` / `components.opp` 是各组件的产物 ID，null 表示 base；
+状态中的 `components.adapter` 是选中适配层的产物 ID，null 表示 base；
+`components.opps` 按新到旧列出 OPP ID，`components.opp` 仅为最新 OPP 的兼容字段。
+`vendors` 给出实际查找路径顺序；
 `affected_base_operators` 列出本次 OPP 选择影响的 base adapter 入口。
 
 组件安装不再要求 `--force`；旧命令带此参数仍可用，但不绕过 ABI 或完整性校验。
 损坏产物、复制或提交失败不改变已有选择。移除统一清理所有保存的组件，base 原文件保留。
 升级或卸载 base 前先移除 overlay；overlay 不登记进 pip RECORD。
 
-例如当前为 P1+O1，安装 standalone P2 得到 P2+O1；再安装 run O2 得到 P2+O2；
-安装完整 wheel P3+O3 后两部分同时更新。同一组件按完整产物替换，不合并多个历史 P 或 O 的范围。
+例如当前为 P1+O1，安装 standalone P2 保留 O1；再装 run O2，使用 P2 和 O2→O1→base；
+安装完整 wheel P3+O3 后使用 P3 和 O3→O2→O1→base。适配层入口不累积，OPP 累积。
+
+```bash
+# 已安装含 A0/B0 的 base wheel；A1.run、B1.run 分别只含对应算子
+bash /path/to/A1.run
+bash /path/to/B1.run
+python -m fla_npu_opp_manage --status
+# 新进程中的 OPP 顺序为 B1 → A1 → base，A 使用 A1，B 使用 B1
+python /path/to/check_A_and_B.py
+python -m fla_npu_opp_manage --remove-overlay
+# 再开新进程：A/B 恢复 base 版本
+python /path/to/check_A_and_B.py
+```
+
+同名 OPP 符号优先使用后安装的包，不会因 ABI 不匹配而退回旧实现。
+需使用含多 OPP 管理器的 base wheel；旧单 OPP 记录可自动读取，新记录不支持旧管理器。
 
 ## 4. 骨架与完整 wheel 的组合
 
@@ -145,7 +162,7 @@ active 和 pending 可以同时存在：未配齐的新组合不替换旧 active
 | --- | --- | --- |
 | run-only overlay | OPP L1–L4 配套产物 | 保留当前适配层 |
 | standalone wheel overlay | 指定 Python/Stable 入口 | 保留当前 OPP |
-| 携带 OPP 的 wheel overlay | 适配层和 OPP | 两部分均按新包替换 |
+| 携带 OPP 的 wheel overlay | 更新适配层，新 OPP 加到列表首位 | 保留较早 OPP，未命中时依次回落 |
 
 上述组合要求新版 base 控制器。无 layer 协议的旧 base 继续使用原 run-only 路径：须先解包 vendor，
 同名 ABI 不兼容直接拒绝，不能混用新组件流程。新版控制器可接管单个已有 vendor overlay，以及
