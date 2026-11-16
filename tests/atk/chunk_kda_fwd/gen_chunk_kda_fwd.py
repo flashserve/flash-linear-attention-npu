@@ -237,8 +237,10 @@ NEGATIVE_CASES = (
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
 BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
+CHUNK32_CASE_COUNT = 44
+CHUNK32_SOURCE_IDS = tuple(range(254, 298))
+BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
 CHUNK32_CASES_PATH = Path(__file__).resolve().parent / "chunk32" / "atk_chunk_kda_fwd_chunk32.json"
-CHUNK32_CASE_COUNT = 135
 
 
 def _negative_case(local_id: int, soc: str) -> dict:
@@ -532,6 +534,44 @@ def _is_chunk32_payload(case: dict) -> bool:
         if config["name"] == "case_spec":
             return json.loads(config["range_values"]).get("profile") == "a5_chunk32"
     return False
+
+
+def _chunk32_from_parent(case: dict) -> dict:
+    spec = json.loads(next(item for item in case["inputs"] if item["name"] == "case_spec")["range_values"])
+    input_distributions = {
+        "q": {"kind": "normal", "mean": 0.0, "std": float(spec["qk_scale"])},
+        "k": {"kind": "normal", "mean": 0.0, "std": float(spec["qk_scale"])},
+        "v": {"kind": "normal", "mean": 0.0, "std": float(spec["v_scale"])},
+        "g": {"kind": "normal", "mean": 0.0, "std": float(spec["gate_scale"])},
+        "beta": {"kind": "normal", "mean": float(spec["beta_bias"]), "std": float(spec["beta_scale"])},
+        "A_log": {"kind": "normal", "mean": 0.0, "std": float(spec["a_log_scale"])},
+        "dt_bias": {"kind": "normal", "mean": float(spec["dt_bias_mean"]), "std": float(spec["dt_bias_scale"])},
+        "initial_state": {"kind": "uniform", "low": -0.02, "high": 0.02},
+    }
+    spec.update({
+        "case_key": f"chunk32_{case['id']}_{spec['case_key']}",
+        "chunk32_source_id": case["id"],
+        "chunk_size": 32,
+        "disable_recompute": False,
+        "return_intermediate_states": False,
+        "data_profile": "chunk32_fused",
+        "input_distributions": input_distributions,
+        "epsilon": 1e-6,
+        "use_qk_l2norm_in_kernel": True,
+        "use_beta_sigmoid_in_kernel": True,
+        "allow_neg_eigval": False,
+        "use_exp2": True,
+        "tags": "accuracy,chunk32,fused",
+    })
+    return spec
+
+
+def _chunk32_specs() -> list[dict]:
+    cases = json.loads(Path(__file__).with_name("atk_chunk_kda_fwd.json").read_text(encoding="utf-8"))
+    selected = [case for case in cases if case["id"] in CHUNK32_SOURCE_IDS]
+    if len(selected) != CHUNK32_CASE_COUNT:
+        raise ValueError(f"expected {CHUNK32_CASE_COUNT} parent cases, got {len(selected)}")
+    return [_chunk32_from_parent(case) for case in selected]
 
 
 def build_cases() -> list[CaseConfig]:
