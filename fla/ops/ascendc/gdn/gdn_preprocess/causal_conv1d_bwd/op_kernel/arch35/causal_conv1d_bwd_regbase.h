@@ -776,8 +776,9 @@ __aicore__ inline void ComputeTileDirectRegbaseBd(
             AscendC::VF_CALL<ComputeDbDirectB16Vf<T, BD>>(dyAddr, dbAddr, rows);
         }
         return;
-    } else if constexpr (BD == 16U) {
-        // fp32 BD=16（D 非 64 整数倍）走与 b16 BD=16 同构的 VF 快路径，仅省去 Cast。
+    } else if constexpr (std::is_same<T, float>::value) {
+        // fp32 走与 b16 同构的 VF 快路径，仅省去 Cast：BD=64 时行步长恰为一个 fp32 寄存器全宽，
+        // BD=16（D 非 64 整数倍）时用 16 车道掩码。二者共用同一套模板（MaskF32ForBd<BD> 按行宽取掩码）。
         if (activation == 1U || activation == 2U) {
             AscendC::VF_CALL<ComputeActivatedDyF32Vf<BD>>(dyAddr, yAddr, dyActAddr, dyRows);
             AscendC::VF_CALL<ComputeDxActivatedF32Vf<BD>>(dyActAddr, weightAddr, dxAddr, rows, width);

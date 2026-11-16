@@ -442,7 +442,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     bool useArch35DirectFast = isAscend950 &&
                                ((isB16Input && (BD == 64 ||
                                                 (BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))))) ||
-                                (isFp32Input && BD == 16 && useIdSplit)) &&
+                                (isFp32Input && (BD == 64 || (BD == 16 && useIdSplit)))) &&
                                (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH ||
                                 activation == ACTIVATION_NONE) &&
                                !useInitialState && !useFinalState &&
@@ -547,14 +547,34 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     };
     numChunks = CalcNumChunks(BT);
 
+    // A5(arch35) regbase 快路径的小 shape：当 chunk 并行度不足（numChunks <= numBlksD）时，
+    // 改用 i_d 切分——每核独占若干 i_d 的全部 chunk、直接写回 dw/db，
+    // 消除 partial workspace / SyncAll / 第二趟归约，对 chunk 数很少的短序列收益显著。
+    // 门控：仅快路径（b16 BD=64 或 BD=16 已 idSplit），且并行度不下降。
+    // 当 numChunks 多于 numBlksD 时，id-split 会牺牲一部分并行度换取「无 SyncAll / 无第二趟归约」，
+    // 仅在整个 shape 很小（元素总数 ≤ ID_SPLIT_ELEM_BUDGET，即 SyncAll 固定开销占主导）时才划算；
+    // 更大的 shape（如 B*T*D 超过该阈值）继续走 chunk 切分以保住并行度。
+    // 倍数上限：shape 越小、每核串行 chunk 的绝对耗时越低，可容忍的倍数越大——对
+    // numChunks = B（T=1 等超短序列，chunk 就是 batch）的小 shape，4 倍仍只对应个位数 chunk，
+    // 串行代价可忽略，而无 SyncAll 的固定收益占主导。
+    constexpr uint64_t ID_SPLIT_ELEM_BUDGET = 16384ULL;
+    if (isAscend950 && useArch35DirectFast && !useIdSplit && numBlksD >= 2U && numChunks >= 1U &&
+        (numChunks <= numBlksD ||
+         (numChunks <= 4U * numBlksD &&
+          static_cast<uint64_t>(totalTokens) * D <= ID_SPLIT_ELEM_BUDGET))) {
+        useIdSplit = true;
+    }
+
     // 小 shape 核数填充：!useIdSplit 时核间并行度只来自 chunk 数，D 方向再多 i_d 也只能每核串行遍历。
     constexpr uint32_t BT_FILL_STEP = 32U;
     constexpr uint32_t BT_FILL_FLOOR = 16U;
     constexpr uint32_t BT_FILL_CAP = 8U;
+    // 快路径（regbase 直算）核内标量开销低、对 chunk 并行度更敏感，允许填充到更多核。
+    constexpr uint32_t BT_FILL_CAP_FAST = 16U;
     constexpr uint32_t BT_FILL_ELEMS_PER_CORE = 8192U;
     constexpr uint32_t BT_FILL_MIN_TARGET = 4U;
     if (isAscend950 && !useIdSplit && numBlksD >= 2) {
-        uint32_t target = std::min(coreNum, BT_FILL_CAP);
+        uint32_t target = std::min(coreNum, useArch35DirectFast ? BT_FILL_CAP_FAST : BT_FILL_CAP);
         if (useArch35DirectFast) {
             uint64_t totalElems = static_cast<uint64_t>(totalTokens) * D;
             uint64_t byWork = (totalElems >= BT_FILL_ELEMS_PER_CORE)
@@ -646,7 +666,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t chunkPerCore = 0;
     uint32_t tailChunk = 0;
     uint32_t totalChunks = numChunks;
-    uint32_t mainCoreNum = useIdSplit ? coreNum
+    uint32_t mainCoreNum = useIdSplit ? std::min(coreNum, numBlksD)
                           : (use2DSplit ? (numBlksD * splitG)
                                         : std::min(coreNum, totalChunks));
     if (useIdSplit || use2DSplit) {

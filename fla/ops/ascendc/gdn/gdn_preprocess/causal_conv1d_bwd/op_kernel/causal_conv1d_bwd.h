@@ -152,7 +152,7 @@ private:
                                                       uint32_t seqLen, uint32_t slot,
                                                       event_t mte3ToVEvent);
     __aicore__ inline void CopyOutDx(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
-    __aicore__ inline __attribute__((noinline)) void ProcessDirectRegbaseIdSplit(uint32_t bIdx, uint32_t blockNum,
+    __aicore__ inline void ProcessDirectRegbaseIdSplit(uint32_t bIdx, uint32_t blockNum,
                                                        event_t *mte2ToVEvent);
     __aicore__ inline __attribute__((noinline)) void ProcessNormalIdSplit(uint32_t bIdx, uint32_t blockNum);
     __aicore__ inline __attribute__((noinline)) void ProcessNormal2DSplit(uint32_t bIdx, uint32_t blockNum);
@@ -1816,7 +1816,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
 }
 
 template <typename inputT, typename calT>
-__aicore__ inline __attribute__((noinline)) void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbaseIdSplit(
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ProcessDirectRegbaseIdSplit(
     uint32_t bIdx, uint32_t blockNum, event_t *mte2ToVEvent)
 {
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
@@ -2477,11 +2477,15 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegba
                 tinyBD16) &&
                arch35WOk;
     } else if constexpr (IsSameType<inputT, float>::value) {
-        // fp32：仅启用 BD=16（D 非 64 整数倍）且 i_d 切分成立的场景，与 host 侧 useArch35DirectFast 门控一致。
+        // fp32 与 b16 分支同构：BD=64（D 为 64 整数倍）或 BD=16 且 i_d 切分成立时可用，
+        // W 门控（NONE 直读 dy，SILU/SWISH 在 W∈[1,8] 下同样正确）与 b16 一致。
+        // 同样按 use2DSplit_ 兜底：二维切分 tiling 与快路径的 dw/db 直接写回不兼容。
+        // 最终是否切到快路径由本函数在运行时裁决（host 的 activation 门控是性能启发式，不在此强制）。
         return hasWeight_ &&
                supportActivation &&
-               BD_ == 16U && useIdSplit_ != 0U &&
-               W_ > 0 && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX;
+               (BD_ == NsCausalConv1dBwd::BWD_DIRECT_BD || (BD_ == 16U && useIdSplit_ != 0U)) &&
+               W_ > 0 && W_ <= NsCausalConv1dBwd::BWD_DIRECT_W_MAX &&
+               use2DSplit_ == 0U;
     } else {
         return false;
     }
