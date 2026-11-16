@@ -29,7 +29,6 @@
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/coord.hpp"
-#include "catlass/debug.hpp"
 #include "catlass/epilogue/block/block_epilogue.hpp"
 #include "catlass/epilogue/tile/tile_copy.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
