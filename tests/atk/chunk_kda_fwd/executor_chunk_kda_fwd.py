@@ -834,8 +834,6 @@ def _public_kwargs(inputs: _PreparedInputs, spec: dict) -> dict:
         "epsilon": float(spec.get("epsilon", 1e-6)),
         "use_qk_l2norm_in_kernel": _as_bool(spec.get("use_qk_l2norm_in_kernel", False)),
         "use_beta_sigmoid_in_kernel": _as_bool(spec.get("use_beta_sigmoid_in_kernel", False)),
-        "allow_neg_eigval": _as_bool(spec.get("allow_neg_eigval", False)),
-        "use_exp2": _as_bool(spec.get("use_exp2", True)),
     }
 
 

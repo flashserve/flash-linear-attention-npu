@@ -394,8 +394,6 @@ def _chunk32_from_parent(case: dict) -> dict:
         "epsilon": 1e-6,
         "use_qk_l2norm_in_kernel": True,
         "use_beta_sigmoid_in_kernel": True,
-        "allow_neg_eigval": False,
-        "use_exp2": True,
         "tags": "accuracy,chunk32,fused",
     })
     return spec
