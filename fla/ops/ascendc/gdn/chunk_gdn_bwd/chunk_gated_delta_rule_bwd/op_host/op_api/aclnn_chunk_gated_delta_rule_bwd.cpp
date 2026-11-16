@@ -9,6 +9,7 @@
 #include "../../../chunk_gdn_bwd_intra/op_host/op_api/chunk_gdn_bwd_intra.h"
 #include "../../../chunk_gated_delta_rule_bwd_dhu/op_host/op_api/chunk_gated_delta_rule_bwd_dhu.h"
 #include "../../../chunk_gated_delta_rule_bwd_finalize/op_host/op_api/chunk_gated_delta_rule_bwd_finalize.h"
+#include "../../../chunk_gated_delta_rule_bwd_finalize/op_host/arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_output_arch22.h"
 #include "../../../../chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 
 #include "aclnn_kernels/common/op_error_check.h"
@@ -629,57 +630,17 @@ aclnnStatus CopyOutputArch22(const aclTensor *src, const aclTensor *dst, aclOpEx
     return ACLNN_SUCCESS;
 }
 
-} // namespace
+namespace gdn_bwd {
 
-extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
-    const aclTensor *q, const aclTensor *k, const aclTensor *v,
-    const aclTensor *g, const aclTensor *beta, const aclTensor *a,
-    const aclTensor *dO, const aclTensor *initialStateOptional,
-    const aclTensor *dhtOptional, const aclTensor *qRstdOptional,
-    const aclTensor *kRstdOptional, const aclTensor *betaRawOptional,
-    const aclTensor *aLogOptional, const aclTensor *dtBiasOptional,
-    const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
-    const char *layout, double scale, int64_t chunkSize, bool useExp2,
-    bool useGateInKernel, bool useQkL2normInKernel,
-    bool useBetaSigmoidInKernel, bool stateVFirst,
-    const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
-    const aclTensor *dBetaOut, const aclTensor *dGOut,
-    const aclTensor *dh0OutOptional, const aclTensor *dALogOutOptional,
-    const aclTensor *dDtBiasOutOptional, uint64_t *workspaceSize,
-    aclOpExecutor **executor)
+aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
+    Params params, uint64_t finalizeOutputTemporaryMask, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    uint64_t finalizeOutputTemporaryMask = 0;
-    if (IsDav2201Device()) {
-        finalizeOutputTemporaryMask = l0op::GetFinalizeOutputAliasMask(
-            {q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
-             qRstdOptional, kRstdOptional, betaRawOptional, aLogOptional,
-             dtBiasOptional, nullptr, nullptr},
-            {dqOut, dkOut, dvOut, dBetaOut, dGOut});
-    }
-    // 缓存身份与 Finalize 共用同一 mask，避免布局转换后的别名关系改变缓存图。
-    L2_DFX_PHASE_1(
-        aclnnChunkGatedDeltaRuleBwd,
-        DFX_IN(q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
-               qRstdOptional, kRstdOptional, betaRawOptional, aLogOptional,
-               dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
-               layout, scale, chunkSize, useExp2,
-               useGateInKernel, useQkL2normInKernel,
-               useBetaSigmoidInKernel, stateVFirst, finalizeOutputTemporaryMask),
-        DFX_OUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
-                dALogOutOptional, dDtBiasOutOptional));
     if (workspaceSize == nullptr || executor == nullptr) {
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
-    Params params{q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
-                  qRstdOptional, kRstdOptional, betaRawOptional,
-                  aLogOptional, dtBiasOptional,
-                  cuSeqlensOptional, chunkIndicesOptional, layout, scale,
-                  chunkSize, useExp2, useGateInKernel,
-                  useQkL2normInKernel, useBetaSigmoidInKernel, stateVFirst,
-                  dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
-                  dALogOutOptional, dDtBiasOutOptional};
+    const aclTensor *dh0OutOptional = params.dh0Out;
     if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
         return ACLNN_ERR_PARAM_NULLPTR;
     }
@@ -869,18 +830,36 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
+    const std::array<const aclTensor *, 5> finalizeOutputs = {dqHead, dkHead, dvHead, dBetaHead, dGHead};
+    auto kernelOutputs = finalizeOutputs;
+    if (IsDav2201Device()) {
+        const aclnnStatus status = GDN::FinalizeHostArch22::PrepareOutputs(
+            finalizeOutputs, finalizeOutputTemporaryMask, executorPtr, kernelOutputs);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
+    }
+
     const auto finalizeResult = l0op::ChunkGatedDeltaRuleBwdFinalize(
         qHead, kHead, vHead, vNew, dOHead, dv2, gHead, betaHead, h, dh,
         params.a, params.qRstd, params.kRstd, betaRawHead, params.cuSeqlens,
         params.chunkIndices, params.scale, params.chunkSize,
         params.useQkL2normInKernel, params.useBetaSigmoidInKernel,
         params.useGateInKernel, false, params.useExp2,
-        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr, finalizeOutputTemporaryMask);
+        kernelOutputs[0], kernelOutputs[1], kernelOutputs[2], kernelOutputs[3], kernelOutputs[4], executorPtr);
     for (const aclTensor *tensor : finalizeResult) {
         if (!(tensor != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGatedDeltaRuleBwdFinalize composition failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
+    }
+
+    if (IsDav2201Device()) {
+        const aclnnStatus status = GDN::FinalizeHostArch22::CopyOutputs(
+            finalizeResult, finalizeOutputs, executorPtr);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
     }
 
     if (info.sequenceMajor) {
@@ -939,6 +918,67 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
+}
+
+} // namespace gdn_bwd
+
+} // namespace
+
+extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
+    const aclTensor *q, const aclTensor *k, const aclTensor *v,
+    const aclTensor *g, const aclTensor *beta, const aclTensor *a,
+    const aclTensor *dO, const aclTensor *initialStateOptional,
+    const aclTensor *dhtOptional, const aclTensor *qRstdOptional,
+    const aclTensor *kRstdOptional, const aclTensor *betaRawOptional,
+    const aclTensor *aLogOptional, const aclTensor *dtBiasOptional,
+    const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional,
+    const char *layout, double scale, int64_t chunkSize, bool useExp2,
+    bool useGateInKernel, bool useQkL2normInKernel,
+    bool useBetaSigmoidInKernel, bool stateVFirst,
+    const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
+    const aclTensor *dBetaOut, const aclTensor *dGOut,
+    const aclTensor *dh0OutOptional, const aclTensor *dALogOutOptional,
+    const aclTensor *dDtBiasOutOptional, uint64_t *workspaceSize,
+    aclOpExecutor **executor)
+{
+    Params params{q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
+                  qRstdOptional, kRstdOptional, betaRawOptional,
+                  aLogOptional, dtBiasOptional,
+                  cuSeqlensOptional, chunkIndicesOptional, layout, scale,
+                  chunkSize, useExp2, useGateInKernel,
+                  useQkL2normInKernel, useBetaSigmoidInKernel, stateVFirst,
+                  dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
+                  dALogOutOptional, dDtBiasOutOptional};
+    if (IsDav2201Device()) {
+        const uint64_t finalizeOutputTemporaryMask = GDN::FinalizeHostArch22::GetOutputAliasMask(
+            {q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
+             qRstdOptional, kRstdOptional, betaRawOptional, aLogOptional,
+             dtBiasOptional, nullptr, nullptr},
+            {dqOut, dkOut, dvOut, dBetaOut, dGOut});
+        L2_DFX_PHASE_1(
+            aclnnChunkGatedDeltaRuleBwd,
+            DFX_IN(q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
+                   qRstdOptional, kRstdOptional, betaRawOptional, aLogOptional,
+                   dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
+                   layout, scale, chunkSize, useExp2,
+                   useGateInKernel, useQkL2normInKernel,
+                   useBetaSigmoidInKernel, stateVFirst, finalizeOutputTemporaryMask),
+            DFX_OUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
+                    dALogOutOptional, dDtBiasOutOptional));
+        return gdn_bwd::aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
+            params, finalizeOutputTemporaryMask, workspaceSize, executor);
+    }
+    L2_DFX_PHASE_1(
+        aclnnChunkGatedDeltaRuleBwd,
+        DFX_IN(q, k, v, g, beta, a, dO, initialStateOptional, dhtOptional,
+               qRstdOptional, kRstdOptional, betaRawOptional, aLogOptional,
+               dtBiasOptional, cuSeqlensOptional, chunkIndicesOptional,
+               layout, scale, chunkSize, useExp2,
+               useGateInKernel, useQkL2normInKernel,
+               useBetaSigmoidInKernel, stateVFirst),
+        DFX_OUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dh0OutOptional,
+                dALogOutOptional, dDtBiasOutOptional));
+    return gdn_bwd::aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(params, 0, workspaceSize, executor);
 }
 
 extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwd(

@@ -1476,9 +1476,12 @@ V128 取 `H=HV/P`，各 core 的 scratch 按分区内 head 索引。V256 仅在 
 临时区容量时取 `HV/P`，其余取 HV。评分在 U32 资格内以 U64 计算 `N*P` 并检查 INT64 上界，
 由 `P|HV` 得 `score<=N*HV<=UINT32_MAX²`。
 
-公开 Finalize 和完整 Bwd 入口将输出别名类别加入 executor cache 身份，并将相同 mask
-传给 L0。A2/A3 对可能覆盖输入或其他输出的目标申请独立临时输出，kernel 完成后按顺序
-显式 CopyNpuToNpu 回写。实际地址、view offset、跨度溢出和未绑定 storage 均参与保守判断。
+A2/A3 的 Finalize 和完整 Bwd 在 ACLNN 层将输出别名类别加入 executor cache 身份，
+并使用同一 mask 调用私有输出准备函数。可能覆盖输入或其他输出的目标使用独立临时输出，
+kernel 完成后由 ACLNN 层按输出顺序显式 CopyNpuToNpu 回写。别名检测、分配和回写位于
+`op_host/arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_output_arch22.h`。L0 沿用原接口和
+launcher。实际地址、view offset、跨度溢出和未绑定 storage 均参与保守判断。
+A5 沿用原 DFX/cache 参数、L0 调用及计算流程。A2/A3 的 DFX guard 覆盖完整构图过程。
 五输出互不重叠时分别验证完整数值，输出之间共享地址的回写遵循输出顺序。
 
 S0 对 g/beta 各读一次、写 FP32 一次；state 转置各读写一次。GateTail 对 dg1/dg2/dbeta32

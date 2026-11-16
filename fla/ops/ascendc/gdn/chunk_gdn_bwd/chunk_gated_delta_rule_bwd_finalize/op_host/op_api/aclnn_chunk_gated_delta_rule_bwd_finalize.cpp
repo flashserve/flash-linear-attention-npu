@@ -53,19 +53,20 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const aclTensor *dbetaOut, const aclTensor *dgOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    uint64_t outputAliasMask = 0;
+    // A2/A3 使用私有 Host 路径；A5 保留原有校验条件、连续化和 executor 流程。
     if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
-        outputAliasMask = l0op::GetFinalizeOutputAliasMask(
-            {q, k, v, vNew, dO, du, g, beta, h, dh, a,
-             qRstdOptional, kRstdOptional, betaRawOptional, nullptr, nullptr},
-            {dqOut, dkOut, dvOut, dbetaOut, dgOut});
+        return gdn_finalize_arch22::aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
+            q, k, v, vNew, dO, du, g, beta, h, dh, a,
+            qRstdOptional, kRstdOptional, betaRawOptional,
+            cuSeqlensOptional, chunkIndicesOptional,
+            scale, chunkSize, useQkL2NormInKernel,
+            useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+            dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor);
     }
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdFinalize,
         DFX_IN(q, k, v, vNew, dO, du, g, beta, h, dh, a,
                qRstdOptional, kRstdOptional, betaRawOptional,
-               cuSeqlensOptional, chunkIndicesOptional,
-               scale, chunkSize, useQkL2NormInKernel, useBetaSigmoidInKernel,
-               useGateInKernel, stateVFirst, useExp2, outputAliasMask),
+               cuSeqlensOptional, chunkIndicesOptional),
         DFX_OUT(dqOut, dkOut, dvOut, dbetaOut, dgOut));
 
     const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
@@ -73,7 +74,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
         if (requiredInputs[index] == nullptr) {
             const char *param_name = requiredInputNames[index];
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, param_name, "nullptr", "input argument must not be nullptr");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -82,18 +83,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
             dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
             workspaceSize == nullptr ? "workspaceSize" : "executor";
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, param_name, "nullptr", "input argument must not be nullptr");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
         return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    // A2/A3 使用私有 Host 路径；A5 保留原有校验条件、连续化和 executor 流程。
-    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
-        return gdn_finalize_arch22::GetWorkspaceSize(
-            q, k, v, vNew, dO, du, g, beta, h, dh, a,
-            qRstdOptional, kRstdOptional, betaRawOptional,
-            cuSeqlensOptional, chunkIndicesOptional,
-            scale, chunkSize, useQkL2NormInKernel,
-            useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
-            dqOut, dkOut, dvOut, dbetaOut, dgOut, workspaceSize, executor, outputAliasMask);
     }
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
     if (npuArch != NpuArch::DAV_3510) {
