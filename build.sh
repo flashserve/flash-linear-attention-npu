@@ -52,7 +52,7 @@ KERNEL_TEMPLATE_INPUT=""
 OPS_FILTER_VALUE=""
 OPS_FILTER_SOURCE=""
 ASCEND_SOC_UNITS="ascend910b"
-SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
+SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend960dt" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
 CMAKE_BUILD_MODE=""
 BUILD_TYPE=""
 VERSION=""
@@ -95,7 +95,11 @@ dotted_line="-------------------------------------------------------------------
 ########################################################################################################################
 
 function list_supported_ops() {
-    python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
+    local checker="${CURRENT_DIR}/scripts/check_build_ops.py"
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        checker="${CURRENT_DIR}/experimental/scripts/check_build_ops.py"
+    fi
+    python3 "${checker}" \
         --repo-root "${CURRENT_DIR}" \
         --list "$@"
 }
@@ -105,7 +109,11 @@ function check_ops_filter() {
     if [ -z "${OPS_FILTER_VALUE}" ]; then
         return 0
     fi
-    if ! python3 "${CURRENT_DIR}/scripts/check_build_ops.py" \
+    local checker="${CURRENT_DIR}/scripts/check_build_ops.py"
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        checker="${CURRENT_DIR}/experimental/scripts/check_build_ops.py"
+    fi
+    if ! python3 "${checker}" \
         --repo-root="${CURRENT_DIR}" \
         --ops="${OPS_FILTER_VALUE}" \
         --source="${OPS_FILTER_SOURCE}" \
@@ -568,10 +576,15 @@ function build_example()
     fi
     # Obtain the example file corresponding to the input soc unit.
     if [[ "$ASCEND_SOC_UNITS" == "ascend950" ]]; then
-        # 1. ascend950/ascend950 example is independent of other soc units.
+        # 1. ascend950 example is independent of other soc units.
         files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/arch35/${pattern}*.cpp"))
         if [[ -z "$files" ]]; then
-            # 2. Example is shared with other soc units, or the current operator only supports ascend950/ascend950.
+            # 2. Example is shared with other soc units.
+            files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/${pattern}*.cpp"))
+        fi
+    elif [[ "$ASCEND_SOC_UNITS" == "ascend960dt" ]]; then
+        files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/arch92/${pattern}*.cpp"))
+        if [[ -z "$files" ]]; then
             files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/${pattern}*.cpp"))
         fi
     else
@@ -691,6 +704,13 @@ function check_stable_aclnn_abi(){
             return 1
             ;;
     esac
+
+    if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+        python3 "${CURRENT_DIR}/experimental/_framework/build.py" check \
+            --manifest "${BUILD_DIR}/experimental-build-manifest.json" \
+            --build-dir "${BUILD_DIR}"
+        return $?
+    fi
 
     local opp_include
     opp_include=$(find "${BUILD_DIR}" "${BUILD_OUT_DIR}" -type d \
@@ -883,8 +903,9 @@ package_static() {
 
 function process_soc_input(){
     local input_string="$1"
-    input_string=$(echo "$input_string" | sed 's/ascend950/ascend950/g')
     local value_part="${input_string#*=}"
+    # Normalize before validation, architecture selection and packaging.
+    value_part="${value_part,,}"
     ASCEND_SOC_UNITS="${value_part//,/;}"
 
     declare -A SOC_HARDWARE_MAP=(
@@ -892,6 +913,7 @@ function process_soc_input(){
         [ascend910_93]="Atlas A3"
         [ascend310p]="Atlas Inference"
         [ascend950]="Ascend 950PR/Ascend 950DT"
+        [ascend960dt]="Ascend960DT_968B7"
     )
 
     if [[ ${SOC_HARDWARE_MAP[$ASCEND_SOC_UNITS]} ]]; then
@@ -1161,7 +1183,7 @@ while [[ $# -gt 0 ]]; do
         shift
         ;;
     -c|--compute-unit)
-        ascend_compute_unit="$2"
+        ascend_compute_unit="${2,,}"
         shift 2
         ;;
     --soc=*)
@@ -1236,11 +1258,7 @@ while [[ $# -gt 0 ]]; do
         ;;
     --PR_PKG)
         PR_CHANGED_FILES="$2"
-        if [[ "$ENABLE_EXPERIMENTAL" == "TRUE" ]]; then
-            parse_changed_files
-        else
-            ops_names=$(python3 "$CURRENT_DIR"/cmake/scripts/parse_changed_files.py -c "$CURRENT_DIR"/tests/test_config.yaml -f "$PR_CHANGED_FILES" get_related_examples)
-        fi
+        ops_names=$(python3 "$CURRENT_DIR"/cmake/scripts/parse_changed_files.py -c "$CURRENT_DIR"/tests/test_config.yaml -f "$PR_CHANGED_FILES" get_related_examples)
         echo "Operators that need custom package compilation:$ops_names"
         if [ -z "${ops_names}" ]; then
             log "Info: No custom packages to build for this PR."
@@ -1440,11 +1458,16 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
-# vendor_name 固定为 fla_npu：不启用自定义 vendor，忽略 --vendor_name 传入值。
-if [ -n "${vendor_name}" ] && [ "${vendor_name}" != "fla_npu" ]; then
-    echo "[INFO] --vendor_name is not supported; forcing vendor_name=fla_npu (ignored: ${vendor_name})"
+# Experimental packages have their own vendor even when a caller forwards the
+# stable vendor explicitly. Stable builds retain the existing fixed vendor.
+fixed_vendor_name="fla_npu"
+if [[ "${ENABLE_EXPERIMENTAL}" == "TRUE" ]]; then
+    fixed_vendor_name="fla_npu_experimental"
 fi
-vendor_name="fla_npu"
+if [ -n "${vendor_name}" ] && [ "${vendor_name}" != "${fixed_vendor_name}" ]; then
+    echo "[INFO] --vendor_name is not supported; forcing vendor_name=${fixed_vendor_name} (ignored: ${vendor_name})"
+fi
+vendor_name="${fixed_vendor_name}"
 # 前置校验 --ops/-n 中的算子名，避免非法名称在 CMake 配置后才以
 # OpFileNotExistsError（aic-*-ops-info.ini 缺失）的形式暴露（issue #482）。
 check_ops_filter
@@ -1683,7 +1706,8 @@ function set_compute_unit_option() {
     local IS_SUPPORT_SOC_INPUT=false
     for support_unit in "${SUPPORT_COMPUTE_UNIT_SHORT[@]}"; do
         lowercase_word=$(echo "$ASCEND_SOC_UNITS" | tr '[:upper:]' '[:lower:]')
-        if [[ "$lowercase_word" == "$support_unit" ]]; then
+        lowercase_support_unit=$(echo "$support_unit" | tr '[:upper:]' '[:lower:]')
+        if [[ "$lowercase_word" == "$lowercase_support_unit" ]]; then
             IS_SUPPORT_SOC_INPUT=true
             break
         fi
@@ -1703,7 +1727,8 @@ function set_compute_unit_option_ut() {
     for soc in "${SOC_ARRAY[@]}"; do
     for support_unit in "${SUPPORT_COMPUTE_UNIT_SHORT[@]}"; do
         lowercase_word=$(echo "$soc" | tr '[:upper:]' '[:lower:]')
-        if [[ "$lowercase_word" == *"$support_unit"* ]]; then
+        lowercase_support_unit=$(echo "$support_unit" | tr '[:upper:]' '[:lower:]')
+        if [[ "$lowercase_word" == *"$lowercase_support_unit"* ]]; then
         COMPUTE_UNIT_SHORT="$COMPUTE_UNIT_SHORT$support_unit;"
         break
         fi

@@ -20,7 +20,7 @@
 #include "causal_conv1d_tiling_data.h"
 #include "causal_conv1d_tiling_key.h"
 #include "causal_conv1d_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/causal_conv1d_regbase.h"
 #endif
 
@@ -572,7 +572,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::RestoreFnLocalPartials(int32_t baseD
     constexpr int32_t ringStart = MAX_WIDTH - kTemplateWidth;
     constexpr int32_t w0Idx = MAX_WIDTH - kTemplateWidth;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     RestoreFnLocalPartialsRegbase<T, kTemplateWidth>(ring[ringStart * MAX_BLOCK_DIM],
                                                      weightF[w0Idx * MAX_BLOCK_DIM], state0F, state1F, state2F,
                                                      baseDim, MAX_BLOCK_DIM);
@@ -639,7 +639,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ComputeFnRollingOutput(int32_t slotC
     LocalTensor<float> &currF = cl.currF;
     LocalTensor<T> ring = inBuf.Get<T>();
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     const bool hasActivation = HasActivation();
     if (hasActivation) {
         ComputeFnRollingOutputRegbase<T, true>(ring[slotCurr * MAX_BLOCK_DIM], currF, state0F,
@@ -679,7 +679,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::AdvanceFnLocalPartials(int32_t slotC
     LocalTensor<T> ring = inBuf.Get<T>();
     constexpr int32_t w0Idx = MAX_WIDTH - kTemplateWidth;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     AdvanceFnLocalPartialsRegbase<T, kTemplateWidth>(ring[slotCurr * MAX_BLOCK_DIM],
                                                      weightF[w0Idx * MAX_BLOCK_DIM], state0F, state1F, state2F,
                                                      baseDim, MAX_BLOCK_DIM);
@@ -759,7 +759,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnRollingToken(int32_t start,
     LocalTensor<T> outT = outBuf.Get<T>();
     const bool hasActivation = HasActivation();
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
     ComputeFnRollingOutput(slotCurr, baseDim);
 #endif
 
@@ -769,7 +769,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnRollingToken(int32_t start,
         WaitFlag<HardEvent::MTE3_V>(outMte3ToVEvent_[outSlot]);
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     constexpr int32_t w0Idx = MAX_WIDTH - kTemplateWidth;
     if (hasActivation) {
         ComputeFnRollingTokenRegbase<T, kTemplateWidth, true>(
@@ -987,7 +987,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::WriteBackFnState(int32_t seq, int32_
     const int64_t dstStride = dstGap / elementsPerBlock;
     bool canBatchStateWrite = historyCount > 1 && blockLen <= 65535 && srcStride <= 65535 && dstGap >= 0 &&
                               dstGap % elementsPerBlock == 0 && dstStride <= 65535;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 
     canBatchStateWrite = false;
 #endif

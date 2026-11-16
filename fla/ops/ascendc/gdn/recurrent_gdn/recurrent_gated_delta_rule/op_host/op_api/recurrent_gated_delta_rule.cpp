@@ -99,7 +99,7 @@ const aclTensor *RecurrentGatedDeltaRuleV2(const aclTensor *query, const aclTens
     auto ret = INFER_SHAPE(
         RecurrentGatedDeltaRule,
         OP_INPUT(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens, aLog, dtBias),
-        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue, useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, true));
+        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue, useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval));
     if (ret != ACLNN_SUCCESS) { return nullptr; };
 
     // SetViewShape also resets strides, so restore strides after the shape.
@@ -113,7 +113,7 @@ const aclTensor *RecurrentGatedDeltaRuleV2(const aclTensor *query, const aclTens
     ret = ADD_TO_LAUNCHER_LIST_AICORE(
         RecurrentGatedDeltaRule,
         OP_INPUT(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens, aLog, dtBias),
-        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue, useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, true));
+        OP_OUTPUT(out, stateRef), OP_ATTR(scaleValue, useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval));
     if (ret != ACLNN_SUCCESS) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRule: failed to create the AICore launcher"); return nullptr; };
 
     return out;

@@ -11,7 +11,7 @@ struct StandaloneTiling {
     uint64_t useQkNorm, useGate, useDtBias, useBetaSigmoid, allowNegEigval, useExp2, outputA;
 };
 
-#if !defined(__CCE_AICORE__)
+#if !defined(__NPU_ARCH__)
 inline bool StandaloneMul(uint64_t a, uint64_t b, uint64_t &out)
 {
     if (b != 0 && a > static_cast<uint64_t>(INT64_MAX) / b) return false;

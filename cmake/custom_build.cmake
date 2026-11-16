@@ -249,6 +249,9 @@ add_subdirectory(common)
 set(OP_LIST)
 set(OP_DIR_LIST)
 op_add_subdirectory(OP_LIST OP_DIR_LIST)
+if(ENABLE_EXPERIMENTAL)
+    fla_write_experimental_ops("experimental-selected-ops.txt" ${OP_LIST})
+endif()
 
 if (BUILD_OPEN_PROJECT)
     if (ENABLE_TEST)
@@ -269,14 +272,18 @@ if (BUILD_OPEN_PROJECT)
             add_definitions(-Wno-builtin-macro-redefined)
         endif()
     endif ()
-   if (TESTS_EXAMPLE_OPS_TEST)
+   if (TESTS_EXAMPLE_OPS_TEST AND NOT ENABLE_EXPERIMENTAL)
        add_subdirectory(examples)
    endif ()
 endif ()
 
 
 foreach (OP_DIR ${OP_DIR_LIST})
-    if (EXISTS "${OP_DIR}/op_host")
+    if (ENABLE_EXPERIMENTAL)
+        # The experimental root CMakeLists.txt owns the operator entry point
+        # and is responsible for adding op_host/op_graph as needed.
+        add_subdirectory(${OP_DIR})
+    elseif (EXISTS "${OP_DIR}/op_host")
         add_subdirectory(${OP_DIR}/op_host)
         if(EXISTS "${OP_DIR}/op_graph/CMakeLists.txt")
             add_subdirectory(${OP_DIR}/op_graph)
@@ -289,22 +296,21 @@ foreach (OP_DIR ${OP_DIR_LIST})
     endif()
 endforeach ()
 
-if(ENABLE_EXPERIMENTAL)
-    # genop新增experimental算子分类
-    # add_subdirectory(${op_class})
-    add_subdirectory(experimental/attention)
-else()
-    # genop新增非experimental算子分类
-    # add_subdirectory(${op_class})
-endif()
+# 说明：本仓没有 attention / mhc / mamba 这类「模块聚合器」分类——
+# 稳定树（fla/ops/ascendc/**）与实验树（experimental/ops/<operator>/）使用不同的
+# 发现入口，并经上面的 foreach 逐算子挂载。因此这里不需要模块聚合器分支，
+# 也不应有 add_subdirectory(experimental/attention)。
+# 设计见 experimental/docs/architecture/experimental 构建适配设计.md。
 
 # 编译AICPU算子
-if("${ASCEND_OP_NAME}" STREQUAL "attention_worker_scheduler" OR "${ASCEND_OP_NAME}" STREQUAL "ffn_worker_scheduler")
+if(NOT ENABLE_EXPERIMENTAL AND
+   ("${ASCEND_OP_NAME}" STREQUAL "attention_worker_scheduler" OR "${ASCEND_OP_NAME}" STREQUAL "ffn_worker_scheduler"))
      add_subdirectory(examples/add_example)
      list(APPEND OP_DIR_LIST ${CMAKE_CURRENT_SOURCE_DIR}/examples/${ASCEND_OP_NAME})
 endif()
 
 # 编译examples目录下算子
+if(NOT ENABLE_EXPERIMENTAL)
 foreach(EXAMPLES_OP_NAME ${ASCEND_OP_NAME})
     set(EXAMPLES_DIR "${OPS_TRANSFORMER_DIR}/examples/${EXAMPLES_OP_NAME}")
     set(EXAMPLES_MC2_DIR "${OPS_TRANSFORMER_DIR}/examples/mc2/${EXAMPLES_OP_NAME}")
@@ -316,6 +322,7 @@ foreach(EXAMPLES_OP_NAME ${ASCEND_OP_NAME})
         list(APPEND OP_DIR_LIST ${CMAKE_CURRENT_SOURCE_DIR}/examples/mc2/${EXAMPLES_OP_NAME})
     endif()
 endforeach()
+endif()
 
 list(APPEND OP_LIST ${COMPILED_OPS})
 list(APPEND OP_DIR_LIST ${COMPILED_OP_DIRS})
@@ -343,42 +350,64 @@ if(ENABLE_TEST)
 endif()
 
 
-if (DEFINED MC2_OPT AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mc2/common/CMakeLists.txt AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mc2/3rd/CMakeLists.txt)
+if (NOT ENABLE_EXPERIMENTAL AND DEFINED MC2_OPT AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mc2/common/CMakeLists.txt AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mc2/3rd/CMakeLists.txt)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mc2/common)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mc2/3rd)
 endif()
 
-set(OP_DEPEND_DIR_LIST)
-op_add_depend_directory(
-        OP_LIST ${OP_LIST}
-        OP_DIR_LIST OP_DEPEND_DIR_LIST
-)
-# 仅针对被依赖的算子重新add_subdirectory
-foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
-    get_filename_component(SUB_DIR ${OP_DEPEND_DIR} NAME)
-    if ("${ASCEND_OP_NAME}" STREQUAL "all" OR "${ASCEND_OP_NAME}" STREQUAL "ALL")
-        if ( "${OP_DEPEND_DIR}" MATCHES ".*attention.*")
-            continue()
+# Only experimental builds need transitive dependency closure. Keep the stable
+# branch identical to the pre-experimental single-pass dependency flow.
+if (ENABLE_EXPERIMENTAL)
+    fla_expand_experimental_dependencies(OP_LIST OP_DIR_LIST)
+    fla_audit_experimental_targets("${CMAKE_SOURCE_DIR}")
+    fla_write_experimental_ops("experimental-resolved-ops.txt" ${OP_LIST})
+    execute_process(
+        COMMAND "${HI_PYTHON}" "${CMAKE_SOURCE_DIR}/experimental/scripts/experimental_manifest.py" generate
+            --repo "${CMAKE_SOURCE_DIR}"
+            --selected "${CMAKE_CURRENT_BINARY_DIR}/experimental-selected-ops.txt"
+            --resolved "${CMAKE_CURRENT_BINARY_DIR}/experimental-resolved-ops.txt"
+            --soc "${ASCEND_COMPUTE_UNIT}"
+            --arch-directories "${ARCH_DIRECTORY}"
+            --output "${CMAKE_CURRENT_BINARY_DIR}/experimental-build-manifest.json"
+        RESULT_VARIABLE _experimental_manifest_result
+        ERROR_VARIABLE _experimental_manifest_error
+    )
+    if(NOT _experimental_manifest_result EQUAL 0)
+        message(FATAL_ERROR "Experimental manifest generation failed: ${_experimental_manifest_error}")
+    endif()
+else()
+    set(OP_DEPEND_DIR_LIST)
+    op_add_depend_directory(
+            OP_LIST ${OP_LIST}
+            OP_DIR_LIST OP_DEPEND_DIR_LIST
+    )
+    # 仅针对被依赖的算子重新add_subdirectory
+    foreach (OP_DEPEND_DIR ${OP_DEPEND_DIR_LIST})
+        get_filename_component(SUB_DIR ${OP_DEPEND_DIR} NAME)
+        if ("${ASCEND_OP_NAME}" STREQUAL "all" OR "${ASCEND_OP_NAME}" STREQUAL "ALL")
+            if ( "${OP_DEPEND_DIR}" MATCHES ".*attention.*")
+                continue()
+            endif()
         endif()
-    endif()
-    if (NOT ${SUB_DIR} IN_LIST ASCEND_OP_NAME)
-        list(APPEND ASCEND_OP_NAME ${SUB_DIR})
-        if (EXISTS "${OP_DEPEND_DIR}/op_host")
-            add_subdirectory(${OP_DEPEND_DIR}/op_host)
-        else()
-            add_subdirectory(${OP_DEPEND_DIR})
+        if (NOT ${SUB_DIR} IN_LIST ASCEND_OP_NAME)
+            list(APPEND ASCEND_OP_NAME ${SUB_DIR})
+            if (EXISTS "${OP_DEPEND_DIR}/op_host")
+                add_subdirectory(${OP_DEPEND_DIR}/op_host)
+            else()
+                add_subdirectory(${OP_DEPEND_DIR})
+            endif()
+        endif ()
+        if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add_with_sorted.*")
+           list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add_with_sorted)
         endif()
-    endif ()
-    if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add_with_sorted.*")
-       list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add_with_sorted)
-    endif()
-    if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add.*")
-       list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add)
-    endif()
-    if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_masked_scatter.*")
-       list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_masked_scatter)
-    endif()
-endforeach ()
+        if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_inplace_index_add.*")
+           list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_inplace_index_add)
+        endif()
+        if ( "${OP_DEPEND_DIR}" MATCHES ".*moe_masked_scatter.*")
+           list(APPEND OP_DIR_LIST ${OPS_TRANSFORMER_DIR}/moe/3rd/moe_masked_scatter)
+        endif()
+    endforeach ()
+endif()
 
 # ------------------------------------------------ aclnn ------------------------------------------------
 get_target_property(base_aclnn_srcs op_host_aclnn SOURCES)
@@ -981,9 +1010,15 @@ foreach (op_dir ${OP_DIR_LIST})
     )
 
     foreach (op_depend_dir ${${_op_name}_depends})
-        set(CURRENT_KERNEL_DIR "${OPS_TRANSFORMER_DIR}/${op_depend_dir}/op_kernel")
+        if (ENABLE_EXPERIMENTAL)
+            fla_resolve_depend_path(${op_depend_dir} _resolved_depend_dir)
+            set(CURRENT_KERNEL_DIR "${CMAKE_SOURCE_DIR}/${_resolved_depend_dir}/op_kernel")
+            get_filename_component(_op_depened_name "${_resolved_depend_dir}" NAME)
+        else()
+            set(CURRENT_KERNEL_DIR "${OPS_TRANSFORMER_DIR}/${op_depend_dir}/op_kernel")
+            get_filename_component(_op_depened_name "${op_depend_dir}" NAME)
+        endif()
         file(GLOB KERNEL_SUB_DIRS RELATIVE "${CURRENT_KERNEL_DIR}" "${CURRENT_KERNEL_DIR}/*")
-        get_filename_component(_op_depened_name "${op_depend_dir}" NAME)
         filter_copy_files(SELECTED_DEPEND_FILES SELECTED_DEPEND_DIRS)
         install(FILES ${SELECTED_DEPEND_FILES}
                 DESTINATION ${IMPL_INSTALL_DIR}/ascendc/${_op_depened_name}
@@ -1034,6 +1069,23 @@ if (ENABLE_OPS_KERNEL)
 endif ()
 
 if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
+  if (ENABLE_EXPERIMENTAL)
+    # Do not copy the stable installer directory: upgrade.sh and the wheel OPP
+    # finalizer can otherwise bypass the experimental install boundary.
+    set(experimental_install_dir ${CMAKE_CURRENT_BINARY_DIR}/experimental-package-scripts)
+    file(MAKE_DIRECTORY ${experimental_install_dir})
+    foreach(script install.sh install_experimental.py help.info)
+        configure_file(${CMAKE_SOURCE_DIR}/experimental/cmake/scripts/experimental/${script}
+                       ${experimental_install_dir}/${script} COPYONLY)
+        install(FILES ${experimental_install_dir}/${script}
+                DESTINATION . PERMISSIONS OWNER_EXECUTE OWNER_READ GROUP_READ)
+    endforeach()
+    install(FILES ${CMAKE_SOURCE_DIR}/torch_custom/fla_npu/fla_npu/_op_abi.py
+            DESTINATION . RENAME experimental_op_abi.py)
+    add_custom_target(modify_vendor ALL)
+    install(FILES ${CMAKE_BINARY_DIR}/experimental-build-manifest.json
+            DESTINATION packages/vendors/${VENDOR_NAME}_transformer/)
+  else()
     set(FLA_NPU_WHEEL_OPP_FINALIZER
             ${CMAKE_SOURCE_DIR}/scripts/package/ops_transformer/scripts/finalize_wheel_opp.py)
     add_custom_target(modify_vendor ALL
@@ -1065,6 +1117,7 @@ if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
     install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/scripts/
             DESTINATION . FILE_PERMISSIONS OWNER_EXECUTE OWNER_READ GROUP_READ
     )
+  endif()
 
     # gen version.info
     set(version_info_dir  ${CMAKE_CURRENT_BINARY_DIR})
@@ -1097,7 +1150,11 @@ if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
     set(CPACK_PACKAGE_DESCRIPTION "CPack ops project")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "CPack ops project")
     set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR})
-    set(CPACK_PACKAGE_FILE_NAME "fla_npu_linux-${ARCH}.run")
+    if (ENABLE_EXPERIMENTAL)
+        set(CPACK_PACKAGE_FILE_NAME "fla_npu_experimental_linux-${ARCH}.run")
+    else()
+        set(CPACK_PACKAGE_FILE_NAME "fla_npu_linux-${ARCH}.run")
+    endif()
     set(CPACK_GENERATOR External)
     set(CPACK_CMAKE_GENERATOR "Unix Makefiles")
     set(CPACK_EXTERNAL_ENABLE_STAGING TRUE)

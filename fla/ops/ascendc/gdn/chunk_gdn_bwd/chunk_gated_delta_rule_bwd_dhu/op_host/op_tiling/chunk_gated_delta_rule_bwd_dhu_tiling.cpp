@@ -125,10 +125,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         ubSize,
         static_cast<uint32_t>(ascendcPlatform.GetCoreNumAic()),
         static_cast<size_t>(ascendcPlatform.GetLibApiWorkSpaceSize()),
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201,
     };
 
     ChunkGatedDeltaRuleBwdDhuTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());

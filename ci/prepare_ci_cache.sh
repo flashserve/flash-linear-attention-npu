@@ -56,7 +56,16 @@ seed_third_party() {
     fi
 
     echo "[CI] Seeding third_party cache from $seed_dir"
-    cp -an "$seed_dir"/. "$third_party_dir"/
+    local source destination
+    while IFS= read -r -d '' source; do
+        destination="$third_party_dir/${source##*/}"
+        # A checkout may have moved headers since the image was built. Copying
+        # missing files back would resurrect removed headers as untracked files.
+        if [[ -d "$source/.git" && -e "$destination" ]]; then
+            continue
+        fi
+        cp -an "$source" "$third_party_dir"/
+    done < <(find "$seed_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
 remove_known_partial_cache() {
@@ -90,5 +99,5 @@ else
     echo "[CI] Build inputs unchanged; keeping third_party cache."
 fi
 
-seed_third_party
 remove_known_partial_cache
+seed_third_party

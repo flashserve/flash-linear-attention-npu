@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 try:
-    from ._op_abi import compare_overlay_to_base
+    from ._op_abi import compare_overlay_to_base, compare_overlays_to_base
 except ImportError:  # run_path/direct-script tests have no package context
     _abi_spec = importlib.util.spec_from_file_location(
         "fla_npu_standalone_op_abi", Path(__file__).with_name("_op_abi.py")
@@ -23,6 +23,7 @@ except ImportError:  # run_path/direct-script tests have no package context
     _abi_module = importlib.util.module_from_spec(_abi_spec)
     _abi_spec.loader.exec_module(_abi_module)
     compare_overlay_to_base = _abi_module.compare_overlay_to_base
+    compare_overlays_to_base = _abi_module.compare_overlays_to_base
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -199,6 +200,11 @@ def _write_set_env(vendor_dir: Path) -> None:
                 "else",
                 '    unset FLA_NPU_OP_API_LIB',
                 "fi",
+                'if [[ -f "${_FLA_NPU_OPP_ROOT}/wheel_layers/state.json" ]]; then',
+                '    _FLA_NPU_LAYER_ENV="$(python3 "${_FLA_NPU_OPP_ROOT}/../../fla_npu_wheel_overlay.py" --shell-env "${_FLA_NPU_OPP_ROOT}/..")" || return 1',
+                '    eval "${_FLA_NPU_LAYER_ENV}"',
+                '    unset _FLA_NPU_LAYER_ENV',
+                'fi',
                 "unset -f _fla_npu_add_vendor_name _fla_npu_add_overlay _fla_npu_discover_overlays",
                 "unset _FLA_NPU_SCRIPT_DIR _FLA_NPU_VENDOR_DIR _FLA_NPU_VENDORS_DIR _FLA_NPU_OPP_ROOT",
                 "unset _FLA_NPU_VENDOR_ORDER _FLA_NPU_NAMES _FLA_NPU_NAME _FLA_NPU_LINE",
@@ -362,6 +368,7 @@ def _validate_overlay_abi(vendor_src: Path) -> None:
         raise RuntimeError(
             f"Cannot validate overlay aclnn ABI because the base vendor is missing: {base_vendor}"
         )
+    # Installation replaces every old overlay; only the base remains a peer.
     problems = compare_overlay_to_base(vendor_src, base_vendor)
     if not problems:
         return
@@ -395,13 +402,15 @@ def _overlay_update_lock():
 
 
 def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[str]:
-    """Stage first; roll back the directory and config on a failed switch."""
+    """Replace the complete overlay slot, restoring all old vendors on failure."""
     if (vendor_dst.exists() or vendor_dst.is_symlink()) and not force:
         raise FileExistsError(f"{vendor_dst} already exists. Use --force to replace the overlay.")
     vendors_root = vendor_dst.parent
     # Outside vendors/: neither auto-discovery nor external export sees staging.
     transaction = Path(tempfile.mkdtemp(prefix=".overlay-", dir=vendors_root.parent))
     staged, backup = transaction / "new", transaction / "previous"
+    retired = transaction / "previous-overlays"
+    moved: list[tuple[Path, Path]] = []
     config = vendors_root / "config.ini"
     saved_config = transaction / "config.ini"
     installed = False
@@ -416,8 +425,17 @@ def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[st
             alias.unlink()
         _write_set_env(staged)
         try:
+            retired.mkdir()
             if vendor_dst.exists() or vendor_dst.is_symlink():
                 vendor_dst.rename(backup)
+                moved.append((vendor_dst, backup))
+            # The new overlay replaces the old one as a whole, including when
+            # --overlay-name changes. Never retain A as fallback after installing B.
+            for old in sorted(vendors_root.iterdir()):
+                if _is_overlay_name(old.name) and (old.is_dir() or old.is_symlink()):
+                    saved = retired / old.name
+                    old.rename(saved)
+                    moved.append((old, saved))
             staged.rename(vendor_dst)
             installed = True
             order = _write_vendors_config(vendors_root)
@@ -425,8 +443,9 @@ def _replace_overlay(vendor_src: Path, vendor_dst: Path, force: bool) -> list[st
             try:
                 if installed:
                     shutil.rmtree(vendor_dst)
-                if backup.exists() or backup.is_symlink():
-                    backup.rename(vendor_dst)
+                for old, saved in reversed(moved):
+                    if saved.exists() or saved.is_symlink():
+                        saved.rename(old)
                 if saved_config.exists():
                     saved_config.replace(config)
                 else:
@@ -453,7 +472,8 @@ def install_overlay(
 ) -> Path:
     """Install an overlay vendor next to the base vendor, inside the package.
 
-    The base vendor is left untouched. No ``RECORD`` rewrite happens: pip keeps
+    The new vendor replaces all prior overlay directories; the base is untouched.
+    No ``RECORD`` rewrite happens: pip keeps
     its own manifest of the wheel, so the overlay is removed with
     ``--remove-overlay`` instead of ``pip uninstall``.
     """
@@ -461,28 +481,39 @@ def install_overlay(
     vendors_root = _vendors_root()
     vendors_root.mkdir(parents=True, exist_ok=True)
     overlay_name = _validate_overlay_name(overlay_name or _default_overlay_name())
-    if overlay_name in overlay_vendor_names():
-        # Force this overlay to be searched first, ahead of other overlays.
-        os.environ[OVERLAY_VENDOR_ENV] = os.pathsep.join(
-            [overlay_name, *[n for n in overlay_vendor_names() if n != overlay_name]]
-        )
-
     vendor_dst = vendors_root / overlay_name
     with _overlay_update_lock():
+        if (PACKAGE_OPP_ROOT / "wheel_layers/state.json").is_file():
+            import fla_npu_wheel_overlay as layers
+            current = layers.state(PACKAGE_OPP_ROOT.parent)
+            if current.get("active") or current.get("pending"):
+                raise RuntimeError("Remove the wheel overlay before installing a run overlay")
         vendor_src = _resolve_overlay_source(source)
         _validate_overlay_abi(vendor_src)
+        previous_opps = sorted(str(path) for path in vendors_root.iterdir()
+                               if path.is_dir() and _is_overlay_name(path.name))
         order = _replace_overlay(vendor_src, vendor_dst, force)
+    if os.environ.get(OVERLAY_VENDOR_ENV):
+        os.environ[OVERLAY_VENDOR_ENV] = overlay_name
 
     files = sum(1 for path in vendor_dst.rglob("*") if path.is_file())
     print(f"Installed overlay vendor: {vendor_dst}")
     print(f"  files copied : {files}")
     print(f"  operators    : {_vendor_ops(vendor_dst)}")
     print(f"  load_priority: {','.join(order)}")
+    print("  previous overlays replaced; restart processes to use this overlay and base only")
     print(
         "  note: pip's RECORD is intentionally not rewritten (the overlay is not a "
         "pip-managed file set). Remove it with:\n"
         f"        python -m fla_npu_opp_manage --remove-overlay --overlay-name {overlay_name}"
     )
+    base = vendors_root / BASE_VENDOR_NAME
+    _print_install_summary({
+        "artifact": "run", "base_opp": str(base) if base.is_dir() else None,
+        "previous_overlay_opp": ", ".join(previous_opps) or None, "previous_state": "active",
+        "installed_opp": str(vendor_dst),
+        "selection": "overlay" if overlay_name in overlay_vendor_names() else "base",
+    }, "active")
     return vendor_dst
 
 
@@ -516,6 +547,10 @@ def print_status() -> None:
         print("  <no vendors installed>")
         return
     active = set(overlay_vendor_names())
+    active_paths = [vendors_root / name for name in sorted(active)
+                    if (vendors_root / name).is_dir()]
+    active_problems = (compare_overlays_to_base(active_paths, vendors_root / BASE_VENDOR_NAME)
+                       if active_paths else [])
     env_set = OVERLAY_VENDOR_ENV in os.environ
     for child in sorted(vendors_root.iterdir()):
         if not child.is_dir():
@@ -529,7 +564,8 @@ def print_status() -> None:
         files = sum(1 for path in child.rglob("*") if path.is_file())
         print(f"  [{kind:8s}] {child.name}: {files} files, ops={_vendor_ops(child)}")
         if _is_overlay_name(child.name):
-            problems = compare_overlay_to_base(child, vendors_root / BASE_VENDOR_NAME)
+            problems = (active_problems if child.name in active else
+                        compare_overlay_to_base(child, vendors_root / BASE_VENDOR_NAME))
             print("    ABI: " + ("INVALID: " + "; ".join(problems) if problems else "OK"))
     if not env_set:
         installed = sorted(
@@ -539,10 +575,21 @@ def print_status() -> None:
         )
         if len(installed) > 1:
             print(
-                "  hint: multiple overlays installed; the load order is taken from "
-                f"config.ini. Cite them explicitly with "
-                f'{OVERLAY_VENDOR_ENV}="{os.pathsep.join(installed)}" to pin the priority.'
+                "  hint: multiple legacy/manual overlays remain; the next overlay "
+                "installation replaces all of them. Active signatures must agree."
             )
+
+
+def _print_install_summary(summary: dict, state: str) -> None:
+    """Report committed paths, without importing or initializing the NPU runtime."""
+    print(f"[fla-npu] Installation successful: mode=overlay, artifact={summary['artifact']}")
+    print(f"[fla-npu] base OPP: {summary['base_opp'] or 'none'}")
+    print(f"[fla-npu] previous overlay OPP ({summary['previous_state']}): "
+          f"{summary['previous_overlay_opp'] or 'none'}")
+    print(f"[fla-npu] installed OPP: {summary['installed_opp'] or 'none (no OPP supplied; previous selection retained)'}")
+    detail = " (installed, not enabled; previous active combination unchanged)" if state == "pending" else ""
+    print(f"[fla-npu] combination: {state}{detail}")
+    print(f"[fla-npu] selection for a new process: {summary['selection']} (restart Python processes before use)")
 
 
 def main() -> int:
@@ -552,7 +599,7 @@ def main() -> int:
     parser.add_argument(
         "--overlay",
         action="store_true",
-        help="Install --source as an overlay vendor inside the package (base vendor untouched).",
+        help="Install a vendor directory or wheel as an overlay (base files untouched).",
     )
     parser.add_argument(
         "--remove-overlay",
@@ -560,9 +607,13 @@ def main() -> int:
         help="Remove the overlay vendor from the package and refresh config.ini.",
     )
     parser.add_argument("--status", action="store_true", help="Show the embedded OPP overlay state.")
-    parser.add_argument("--source", type=Path, help="Delta source: a vendor dir or a parent holding one.")
+    parser.add_argument("--source", type=Path, help="Delta source: a .whl, .run, vendor dir, or parent holding one.")
     parser.add_argument("--overlay-name", help=f"Overlay vendor name (default: {DEFAULT_OVERLAY_NAME}).")
+    parser.add_argument("--opp-source", type=Path, help="Matching vendor or .run for a skeleton wheel overlay")
     args = parser.parse_args()
+
+    if args.opp_source and not (args.overlay and args.source and args.source.suffix == ".whl"):
+        parser.error("--opp-source requires --overlay with a wheel --source")
 
     modes = [bool(args.install_path), args.overlay, args.remove_overlay, args.status]
     if sum(modes) != 1:
@@ -573,11 +624,43 @@ def main() -> int:
     elif args.overlay:
         if args.source is None:
             parser.error("--overlay requires --source")
-        install_overlay(args.source, overlay_name=args.overlay_name, force=args.force)
+        import fla_npu_wheel_overlay as layers
+        package = PACKAGE_OPP_ROOT.parent
+        if args.source.suffix == ".whl" or (package / layers.MANIFEST).is_file():
+            if args.overlay_name and args.overlay_name != layers.NAME:
+                parser.error("component overlays use the default overlay name")
+            result = layers.install(package, args.source, opp_source=args.opp_source, force=args.force)
+            summary = result.pop("installation")
+            print(json.dumps(result, indent=2))
+            _print_install_summary(summary, result["state"])
+        else:
+            if args.opp_source:
+                parser.error("--opp-source requires a wheel --source")
+            if layers.state(package).get("active") or layers.state(package).get("pending"):
+                parser.error("remove the wheel overlay before installing a run overlay")
+            install_overlay(args.source, overlay_name=args.overlay_name, force=args.force)
     elif args.remove_overlay:
-        remove_overlay(overlay_name=args.overlay_name)
+        if (PACKAGE_OPP_ROOT / "wheel_layers/state.json").is_file():
+            import fla_npu_wheel_overlay as layers
+            try:
+                wheel_state = layers.state(PACKAGE_OPP_ROOT.parent)
+            except (OSError, ValueError, RuntimeError):
+                wheel_state = {"active": True}  # Recovery must not require healthy metadata.
+        else:
+            wheel_state = {}
+        if wheel_state.get("active") or wheel_state.get("pending") or wheel_state.get("version") == 2:
+            if args.overlay_name and args.overlay_name != layers.NAME:
+                parser.error("wheel overlays use the default overlay name")
+            layers.remove(PACKAGE_OPP_ROOT.parent)
+            print("Removed wheel overlay; restart processes to use base")
+        else:
+            remove_overlay(overlay_name=args.overlay_name)
     else:
         print_status()
+        if (PACKAGE_OPP_ROOT / "wheel_layers/state.json").is_file():
+            import fla_npu_wheel_overlay as layers
+            for entry in layers.status(PACKAGE_OPP_ROOT.parent):
+                print(json.dumps(entry, indent=2))
     return 0
 
 

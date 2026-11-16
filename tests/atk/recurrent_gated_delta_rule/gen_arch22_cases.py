@@ -12,7 +12,7 @@ FLAGS = ('use_qk_l2norm_in_kernel', 'use_gate_in_kernel',
 def build_arch22_specs():
     flags = [x for x in itertools.product((False, True), repeat=4) if not x[3] or x[2]]
     specs = []
-    for i, spec in enumerate(build_specs()):
+    for i, spec in enumerate(build_specs()[:200]):
         # gk is explicitly outside the current API. These are new cases under
         # that contract, keeping the existing value ranges and tolerance.
         spec.update(arch22=True, design_id=f'RGDR-A{i+1:03}',

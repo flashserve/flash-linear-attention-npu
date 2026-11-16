@@ -16,7 +16,7 @@
 
 #include "kernel_operator.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #ifndef FLA_NPU_REGBASE_HPP_INCLUDED
 #define FLA_NPU_REGBASE_HPP_INCLUDED
 #include "kernel_utils/vector/regbase.hpp"

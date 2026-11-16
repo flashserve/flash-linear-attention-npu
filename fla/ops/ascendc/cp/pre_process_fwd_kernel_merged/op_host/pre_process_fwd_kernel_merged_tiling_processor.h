@@ -12,6 +12,8 @@
 #define PRE_PROCESS_FWD_KERNEL_MERGED_TILING_PROCESSOR_H
 
 #include "pre_process_fwd_kernel_merged_tiling.h"
+#include "op_common/log/log.h"
+#include <string>
 
 // 注意：调用方 op_host/*_tiling.cpp 本身已在 namespace optiling 内 ⇒ 本头**不再**包 namespace，
 //       否则会解析成 optiling::optiling::PreProcessFwdTilingProcessor。
@@ -39,21 +41,30 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const int64_t V = uShape.GetDim(3);
     const int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
 
-    OP_CHECK_IF(B != 1, OP_LOGE(context->GetNodeName(), "B must be 1 (varlen packed), got %ld", B),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(K != PPFM_FIXED_K || V != PPFM_FIXED_V,
-                OP_LOGE(context->GetNodeName(), "K/V must be 128, got %ld/%ld", K, V),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(chunkSize != PPFM_FIXED_CHUNK,
-                OP_LOGE(context->GetNodeName(), "chunk_size must be 64, got %ld", chunkSize),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(Hk <= 0 || Hv <= 0 || Hv % Hk != 0,
-                OP_LOGE(context->GetNodeName(), "GVA requires Hv %% Hk == 0, got Hk=%ld Hv=%ld", Hk, Hv),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(wShapePtr->GetStorageShape().GetDim(1) != Hv,
-                OP_LOGE(context->GetNodeName(), "w head dim must equal Hv"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(uShape.GetDim(0) != 1 || uShape.GetDim(2) != T || uShape.GetDim(3) != V,
-                OP_LOGE(context->GetNodeName(), "u must be [1,Hv,T,V] and match k's T"), return ge::GRAPH_FAILED);
+    if (B != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B", std::to_string(B), "B must be 1 (varlen packed)d");
+        return ge::GRAPH_FAILED;
+    }
+    if (K != PPFM_FIXED_K || V != PPFM_FIXED_V) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K/V must be 128d/d");
+        return ge::GRAPH_FAILED;
+    }
+    if (chunkSize != PPFM_FIXED_CHUNK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(chunkSize), "chunk_size must be 64d");
+        return ge::GRAPH_FAILED;
+    }
+    if (Hk <= 0 || Hv <= 0 || Hv % Hk != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv % Hk == 0d");
+        return ge::GRAPH_FAILED;
+    }
+    if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "w head dim must equal Hv");
+        return ge::GRAPH_FAILED;
+    }
+    if (uShape.GetDim(0) != 1 || uShape.GetDim(2) != T || uShape.GetDim(3) != V) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "u must be [1,Hv,T,V] and match k's T");
+        return ge::GRAPH_FAILED;
+    }
 
     // gate 二选一；DPLR（bg / v）本版本不支持：显式拒绝，保证 TilingKey 3（USE_BG）永不被下发
     auto gTensor = context->GetOptionalInputTensor(INPUT_G_IDX);
@@ -63,36 +74,44 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const bool hasGk = gkTensor != nullptr;
     const bool hasBg = bgTensor != nullptr;
     const bool hasV = context->GetOptionalInputTensor(INPUT_V_IDX) != nullptr;
-    OP_CHECK_IF(hasG == hasGk, OP_LOGE(context->GetNodeName(), "exactly one of g / gk must be given"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(hasBg,
-                OP_LOGE(context->GetNodeName(),
-                        "bg is not supported: DPLR is not implemented in this release (GDN/KDA only)"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(hasV,
-                OP_LOGE(context->GetNodeName(),
-                        "v is not supported: it is DPLR-only; GDN/KDA takes the values from u"),
-                return ge::GRAPH_FAILED);
+    if (hasG == hasGk) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "g", "invalid", "exactly one of g / gk must be given");
+        return ge::GRAPH_FAILED;
+    }
+    if (hasBg) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "DPLR", std::to_string(hasBg), "bg is not supported: DPLR is not implemented in this release (GDN/KDA only)");
+        return ge::GRAPH_FAILED;
+    }
+    if (hasV) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "v", std::to_string(hasV), "v is not supported: it is DPLR-only; GDN/KDA takes the values from u");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t gateMode = hasGk ? GDN::PPFM_GATE_USE_GK : GDN::PPFM_GATE_USE_G;
     const ge::DataType gateDtype = hasG ? gTensor->GetDataType() : gkTensor->GetDataType();
 
     // cu_seqlens：host int 数组，必给；校验 0 <= cu[0] < ... < cu[-1] <= T
     auto cuSeqlensTensor = context->GetOptionalInputTensor(INPUT_SEQLENS_IDX);
-    OP_CHECK_IF(cuSeqlensTensor == nullptr,
-                OP_LOGE(context->GetNodeName(), "cu_seqlens is required (varlen only)"), return ge::GRAPH_FAILED);
+    if (cuSeqlensTensor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cu_seqlens");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t cuNumel = static_cast<int64_t>(cuSeqlensTensor->GetShapeSize());
-    OP_CHECK_IF(cuNumel < 2, OP_LOGE(context->GetNodeName(), "cu_seqlens must have >= 2 elements"),
-                return ge::GRAPH_FAILED);
+    if (cuNumel < 2) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(cuNumel), "cu_seqlens must have >= 2 elements");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t *cuData = cuSeqlensTensor->GetData<int64_t>();
     OP_CHECK_NULL_WITH_CONTEXT(context, cuData);
     for (int64_t i = 0; i < cuNumel; ++i) {
-        OP_CHECK_IF(cuData[i] < 0 || cuData[i] > T,
-                    OP_LOGE(context->GetNodeName(), "cu_seqlens[%ld]=%ld out of range [0,%ld]", i, cuData[i], T),
-                    return ge::GRAPH_FAILED);
+        if (cuData[i] < 0 || cuData[i] > T) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens[d]d out of range [0,d]");
+        return ge::GRAPH_FAILED;
+    }
         if (i > 0) {
-            OP_CHECK_IF(cuData[i] <= cuData[i - 1],
-                        OP_LOGE(context->GetNodeName(), "cu_seqlens must be strictly increasing at %ld", i),
-                        return ge::GRAPH_FAILED);
+            if (cuData[i] <= cuData[i - 1]) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(i), "cu_seqlens must be strictly increasing at d");
+        return ge::GRAPH_FAILED;
+    }
         }
     }
     const int64_t nSeq = cuNumel - 1;
@@ -133,7 +152,7 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     //   ⇒ A5/ASCEND950 全开；A2/A3 **只放行 S=4**，S=2 仍禁用（回收 KDA 档约 5%）。
     //   复现/诊断：环境变量 PPFM_HYBRID_S 在门控之后生效，可强制打开任意 S。
     const bool hybridAll =
-        ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
     int64_t hybridS = 1;
     int64_t hybridBase = 0;
     if (colSplit == 1 && aicNum > 1 && hwItems > aicNum) {
@@ -192,14 +211,16 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     tiling->hybridS = hybridS;
     tiling->hybridBase = hybridBase;
 
-    OP_CHECK_IF(context->GetRawTilingData() == nullptr ||
+    if (context->GetRawTilingData() == nullptr ||
                     context->GetRawTilingData()->GetCapacity() <
-                        sizeof(GDN::PreProcessFwdKernelMergedTilingData),
-                OP_LOGE(context->GetNodeName(), "tiling buffer too small for tcube tiling"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!BuildCubeTiling(ascendcPlatform, tiling),
-                OP_LOGE(context->GetNodeName(), "build cube(TCubeTiling) tiling failed"),
-                return ge::GRAPH_FAILED);
+                        sizeof(GDN::PreProcessFwdKernelMergedTilingData)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "tiling buffer too small for tcube tiling");
+        return ge::GRAPH_FAILED;
+    }
+    if (!BuildCubeTiling(ascendcPlatform, tiling)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "build cube(TCubeTiling) tiling failed");
+        return ge::GRAPH_FAILED;
+    }
 
     context->SetTilingKey(static_cast<uint32_t>(gateMode) + 1U);
     context->SetBlockDim(static_cast<uint32_t>(tiling->usedAicNum));

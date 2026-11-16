@@ -1,5 +1,7 @@
 'use strict';
 
+const checks = require('./npu_ci_checks');
+
 module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const fs = require('fs');
   const path = require('path');
@@ -18,6 +20,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const prNumber = process.env.NPU_PR_NUMBER || '';
   const commentId = process.env.NPU_COMMENT_ID || '';
   const sha = process.env.NPU_EXPECTED_HEAD_SHA;
+  const expectedBaseRef = process.env.NPU_EXPECTED_BASE_REF || '';
   const expectedRunId = process.env.NPU_EXPECTED_RUN_ID;
   const expectedRunAttempt = process.env.NPU_EXPECTED_RUN_ATTEMPT;
   const matrixResult = process.env.NPU_MATRIX_RESULT || 'failure';
@@ -26,41 +29,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     { key: 'a2', label: 'A2', soc: 'ascend910b' },
     { key: 'a5', label: 'A5', soc: 'ascend950' },
   ];
-  const stageDefs = [
-    {
-      key: 'environment-contracts',
-      context: 'NPU CI / A2+A5 / 01 环境、wheel 与运行时契约',
-      label: '环境、wheel 配置及运行时契约',
-    },
-    {
-      key: 'opp-package',
-      context: 'NPU CI / A2+A5 / 02 全量 OPP 构建',
-      label: '目标 SOC 全量 OPP run 包构建',
-    },
-    {
-      key: 'standalone-layout',
-      context: 'NPU CI / A2+A5 / 03 torch_custom wheel 与 OPP 布局',
-      label: '独立 torch_custom wheel 与 OPP 安装布局',
-    },
-    {
-      key: 'torch-adapter',
-      context: 'NPU CI / A2+A5 / 04 OPP 安装与 PyTorch 适配',
-      label: 'OPP 安装与 PyTorch 适配构建',
-    },
-    {
-      key: 'gdr-example-st',
-      context: 'NPU CI / A2+A5 / 05 GDR Example/ST',
-      label: 'GDR Example/ST（4 条精度用例）',
-    },
-  ];
-  const finalStatusDef = {
-    context: 'NPU CI / A2+A5 / 06 报告与 commit 校验',
-    label: '报告完整性与 PR commit 一致性',
-  };
-  const scopedStatusDef = {
-    context: 'NPU CI / A2+A5 / 定向诊断',
-    label: '定向诊断',
-  };
+  const stageDefs = checks.required.slice(0, -1);
+  const finalStatusDef = checks.required.at(-1);
+  const scopedStatusDef = checks.diagnostic;
   const accuracyThresholdContract = {
     output_tol: 5e-3,
     grad_tol: 8e-3,
@@ -814,29 +785,34 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     };
   };
 
-  let currentHeadSha = '';
-  let headCheckError = '';
+  let invalidReason = '';
   try {
     const { data: currentPr } = await github.rest.pulls.get({
       owner: context.repo.owner,
       repo: context.repo.repo,
       pull_number: Number(prNumber),
     });
-    currentHeadSha = currentPr.head.sha;
+    if (!expectedBaseRef) {
+      invalidReason = '缺少 PR 目标分支信息，本次 A2+A5 结果失效';
+    } else if (currentPr.state !== 'open' || currentPr.merged || currentPr.merged_at) {
+      invalidReason = 'PR 已关闭或合入，本次 A2+A5 结果失效';
+    } else if (currentPr.draft) {
+      invalidReason = 'PR 已变为草稿，本次 A2+A5 结果失效';
+    } else if (currentPr.head?.sha !== sha) {
+      invalidReason = 'PR head 已变化，本次 A2+A5 结果失效';
+    } else if (currentPr.base?.ref !== expectedBaseRef) {
+      invalidReason = 'PR 目标分支已变化，本次 A2+A5 结果失效';
+    }
   } catch (error) {
-    headCheckError = error.message;
-    core.warning(`Unable to inspect current PR head before publishing NPU CI status: ${error.message}`);
+    invalidReason = '无法确认 PR 状态或 head/base，本次 A2+A5 结果失效';
+    core.warning(`Unable to inspect current PR state or head/base before publishing NPU CI status: ${error.message}`);
   }
-  const staleRun = Boolean(currentHeadSha) && currentHeadSha !== sha;
   const platforms = platformDefs.map(validatePlatform);
   const matrixArtifactMismatch = matrixResult !== 'success' &&
     platforms.every((item) => item.executionOk && item.accuracyOk && item.stageReportOk);
   const matrixFailureReason = matrixArtifactMismatch
     ? `执行矩阵状态为 ${sanitizeMarkdownInline(matrixResult, 40)}，但双平台 artifact 均记录为通过；请查看失败 job 或 post-action。`
     : '';
-  const invalidReason = headCheckError
-    ? '无法确认 PR head，本次 A2+A5 结果失效'
-    : (staleRun ? 'PR head 已变化，本次 A2+A5 结果失效' : '');
   const stageOutcomes = stageDefs.map((stageDef) => {
     const failures = [];
     for (const platform of platforms) {
@@ -863,13 +839,13 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
         : `${stageDef.label}：${failures.join('；') || '未通过'}`),
     };
   });
-  const accuracyOk = !headCheckError && !staleRun && platforms.every((item) => item.accuracyOk);
+  const accuracyOk = !invalidReason && platforms.every((item) => item.accuracyOk);
   const requiredStageOutcomes = requestScope === 'all'
     ? stageOutcomes
     : stageOutcomes.filter((item) =>
       ['environment-contracts', 'opp-package'].includes(item.key)
     );
-  const executionOk = !headCheckError && !staleRun && matrixResult === 'success' &&
+  const executionOk = !invalidReason && matrixResult === 'success' &&
     platforms.every((item) => item.executionOk && item.stageReportOk) &&
     requiredStageOutcomes.every((item) => item.ok);
   const accuracyTotals = platforms.reduce(

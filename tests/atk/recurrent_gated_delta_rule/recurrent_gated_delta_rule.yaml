@@ -97,7 +97,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["contiguous", "noncontiguous_qkv_beta_g", "noncontiguous_gk_metadata", "noncontiguous_qk", "noncontiguous_v_gates", "noncontiguous_all"]
+        values: ["contiguous", "noncontiguous_qkv", "noncontiguous_qkv_beta_g", "noncontiguous_metadata", "noncontiguous_qk", "noncontiguous_v_beta_g", "noncontiguous_all"]
       invalid:
         values: []
   - name: B
@@ -177,7 +177,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: ["g", "gk", "both"]
+        values: ["none", "g"]
       invalid:
         values: []
   - name: use_accepted_tokens

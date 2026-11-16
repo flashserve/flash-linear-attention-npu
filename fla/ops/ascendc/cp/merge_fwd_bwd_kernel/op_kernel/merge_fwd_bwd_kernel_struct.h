@@ -51,7 +51,7 @@ constexpr uint32_t kCTileElems = kTileM * kVDim;
 // CV/VC are per-AIV (flag = base + (h&1)*16), so all heads on the same AIV
 // share one C UB (fp32Buf). The owner sets CUbFree on PIPE_MTE3 only after
 // that buffer has been drained, and Cube waits it before every Fixpipe.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 constexpr uint8_t kCrossCoreModeAiv = 0x4;  // per-AIV flags, AIV1 uses +16
 #else
 constexpr uint8_t kCrossCoreModeAiv = 0x2;  // 910b/910_93: one flag, both AIVs

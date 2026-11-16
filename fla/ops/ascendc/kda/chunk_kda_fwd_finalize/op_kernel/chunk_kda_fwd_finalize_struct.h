@@ -7,9 +7,31 @@
 #ifndef CHUNK_KDA_FWD_FINALIZE_STRUCT_H
 #define CHUNK_KDA_FWD_FINALIZE_STRUCT_H
 
+#include <type_traits>
+
 #include "kernel_operator.h"
 
 namespace KdaFinalize {
+
+// 三段门控的唯一判定点：把全工程统一用 __NPU_ARCH__ 门控（9201/3510/2201），
+// 收敛到这一处。struct/cube/kernel 的 per-arch 判定一律从这里的 bool 取，不再各自 #if。
+// MIX 实例核型仍在 tiling_key.h 内以数值宏表达（ASCENDC_TPL_PRE 阶段只接受可展开成
+// 数字的宏），属于同一平台契约的另一半。
+struct FinalizePlatform {
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    // A6（Ascend960DT）：AIC:AIV = 1:1，单 AIV 串行搬 4 head。
+    static constexpr bool isSingleAiv = true;
+    static constexpr bool isNonArch22 = true;
+#elif defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
+    // A5（Ascend950）：AIC:AIV = 1:2，双 AIV 各搬 2 head。
+    static constexpr bool isSingleAiv = false;
+    static constexpr bool isNonArch22 = true;
+#else
+    // A2/A3（DAV_2201）：无 AIV input mover，AIC 独立完成搬运与计算。
+    static constexpr bool isSingleAiv = false;
+    static constexpr bool isNonArch22 = false;
+#endif
+};
 
 // 字段类型和顺序与 op_host 的 TILING_DATA_FIELD_DEF 严格一致。
 struct ChunkKdaFwdFinalizeTilingData {
@@ -50,17 +72,32 @@ constexpr uint32_t kHeadsPerGroup = 4;
 constexpr uint32_t kProductBytes = kChunkRows * kHeadDim * sizeof(float); // 32 KiB
 } // namespace Shape
 
-namespace A5Sync {
-// mode 0x4 下，两个 AIV 各自使用本地 flag 0/1、2/3 与 4/5；
+// 双 AIV（A5，1:2）同步 flag 布局：两个 AIV 各自使用本地 flag 0/1、2/3 与 4/5；
 // AIC 访问 AIV1 时由硬件 flag 空间加 16。
-constexpr uint8_t kCrossCoreMode = 0x4;
-constexpr uint16_t kAivQhReadyFlagId[2] = {0, 1};
-constexpr uint16_t kAivAvReadyFlagId[2] = {2, 3};
-constexpr uint16_t kAivL1ReusableFlagId[2] = {4, 5};
-constexpr uint16_t kAicQhReadyFlagId[4] = {0, 16, 1, 17};
-constexpr uint16_t kAicAvReadyFlagId[4] = {2, 18, 3, 19};
-constexpr uint16_t kAicL1ReusableFlagId[4] = {4, 20, 5, 21};
-} // namespace A5Sync
+struct A5Sync {
+    static constexpr uint8_t kCrossCoreMode = 0x4;
+    static constexpr uint16_t kAivQhReadyFlagId[2] = {0, 1};
+    static constexpr uint16_t kAivAvReadyFlagId[2] = {2, 3};
+    static constexpr uint16_t kAivL1ReusableFlagId[2] = {4, 5};
+    static constexpr uint16_t kAicQhReadyFlagId[4] = {0, 16, 1, 17};
+    static constexpr uint16_t kAicAvReadyFlagId[4] = {2, 18, 3, 19};
+    static constexpr uint16_t kAicL1ReusableFlagId[4] = {4, 20, 5, 21};
+};
+
+// 单 AIV（A6，1:1）同步 flag 布局：4 槽在途，flag 无跨 block 偏移。
+struct A6Sync {
+    static constexpr uint8_t kCrossCoreMode = 0x4;
+    static constexpr uint16_t kAivQhReadyFlagId[4] = {0, 1, 2, 3};
+    static constexpr uint16_t kAivAvReadyFlagId[4] = {4, 5, 6, 7};
+    static constexpr uint16_t kAivL1ReusableFlagId[4] = {8, 9, 10, 11};
+    static constexpr uint16_t kAicQhReadyFlagId[4] = {0, 1, 2, 3};
+    static constexpr uint16_t kAicAvReadyFlagId[4] = {4, 5, 6, 7};
+    static constexpr uint16_t kAicL1ReusableFlagId[4] = {8, 9, 10, 11};
+};
+
+// 依据平台 trait 选择同步布局；A5Sync/A6Sync 的名字保留可见，arch35 vec.h 仍直接
+// 引用 A5Sync::，无需随本开关改动。
+using FinalizeSync = std::conditional_t<FinalizePlatform::isSingleAiv, A6Sync, A5Sync>;
 
 __aicore__ inline uint32_t CeilDiv(uint32_t a, uint32_t b)
 {

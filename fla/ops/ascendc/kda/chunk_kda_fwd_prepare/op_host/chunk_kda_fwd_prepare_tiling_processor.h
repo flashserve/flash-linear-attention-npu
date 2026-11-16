@@ -18,9 +18,14 @@ namespace optiling {
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_CHUNK_ROWS = 64;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES = 0x1A400;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP = 4;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES = 0x1A400;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH92_SLOTS_PER_WORKGROUP = 3;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES =
     CHUNK_KDA_FWD_PREPARE_ARCH35_SLOT_BYTES *
     CHUNK_KDA_FWD_PREPARE_SLOTS_PER_WORKGROUP;
+constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH92_WORKGROUP_BYTES =
+    CHUNK_KDA_FWD_PREPARE_ARCH92_SLOT_BYTES *
+    CHUNK_KDA_FWD_PREPARE_ARCH92_SLOTS_PER_WORKGROUP;
 constexpr uint64_t CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES =
     KdaPrepare::Arch22::GroupBytes;
 
@@ -34,6 +39,7 @@ struct ChunkKdaFwdPrepareScheduleContext {
     uint64_t libApiWorkspaceBytes = 0;
     bool isVarLen = false;
     bool isArch22 = true;
+    bool isArch92 = false;
 };
 
 struct ChunkKdaFwdPrepareSchedule {
@@ -95,7 +101,9 @@ public:
         const uint64_t usedCoreNum = std::min(context_.aicCoreNum, totalWorkItems);
         const uint64_t workgroupBytes = context_.isArch22
             ? CHUNK_KDA_FWD_PREPARE_ARCH22_WORKGROUP_BYTES
-            : CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES;
+            : (context_.isArch92
+                   ? CHUNK_KDA_FWD_PREPARE_ARCH92_WORKGROUP_BYTES
+                   : CHUNK_KDA_FWD_PREPARE_ARCH35_WORKGROUP_BYTES);
         uint64_t userWorkspaceBytes = 0;
         if (!CheckedMultiply(usedCoreNum, workgroupBytes,
                              userWorkspaceBytes) ||

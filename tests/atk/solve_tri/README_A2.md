@@ -188,6 +188,8 @@ python scripts/check_pipeline.py run --device 0 \
 
 ## A5 隔离范围
 
+以下为 2026-11-12 的历史记录。随后合入上游 `134524a6`：A5 workspace 改为运行时 `DAV_3510` 分配，host 错误处理和 kernel 架构宏也沿用上游实现；下述旧基线对比与设备结果不能作为合并后版本的验证结论。
+
 2026-11-12，本轮将新增的参数及变长元数据校验、结构化错误、workspace 计算、L0 转换失败保护、注册精度标志修改和 kernel 优化限定在 A2/A3。A5 保留 `546859c7d36f0c01e81e97789b11bb02b38aa8ac` 的原有 host 行为、workspace 计算、kernel 入口、`arch35` 实现及 `PrecisionReduceFlag(true)`；A2/A3 使用独立注册配置和 `false`。A5 原有输入约束仍须满足，本轮未增加其非法输入防御，也不据源码隔离宣称其原有 workspace 容量充分。
 
 原 A5 六份测试资产与该基线逐字节一致；`arch35` 六份实现及 A5 kernel 入口按 LF 规范化后内容一致。原生 C++ 对照直接执行基线和候选的 tiling 函数，在普通 host 编译与显式 `__CCE_AICORE__=310` 编译下共完成 328 次 A5 比较，状态、key、分核、16 个 tiling 字段及 workspace 均一致。A2/A3 共 668 次状态检查通过，合法输入的 tiling 字段及新增 workspace 公式均符合预期。该测试使用 GERT/platform mock，不覆盖真实 SDK ABI 或设备计算；原始证据见外部工作区 `report/pr1085_a5_isolation_20261112/tiling_mock_results/` 和 `baseline_scope.json`。

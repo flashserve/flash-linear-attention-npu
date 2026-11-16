@@ -10,7 +10,7 @@ ACLNN 分两步调用：`aclnnSolveTriGetWorkspaceSize(x, cuSeqlens, chunkIndice
 
 ## 平台隔离
 
-本次新增的参数及变长元数据校验、结构化错误、workspace 计算和 kernel 优化仅用于 A2/A3。A5 保留 `546859c7` 的原有 host 检查、workspace 计算和 kernel 行为；下述合法输入约束仍须满足，但不承诺 A5 对非法输入提供新增的拦截或错误文本。A5 原有 workspace 容量不属于本次验证结论。
+本次新增的参数及变长元数据校验、结构化错误、workspace 计算和 kernel 优化仅用于 A2/A3。A5 沿用当前上游的 host 检查、workspace 计算和 kernel 行为；下述合法输入约束仍须满足，A2/A3 的非法输入拦截结果不代表 A5 的行为。
 
 注册配置使用独立的 `OpAICoreConfig`：A2/A3 的 `PrecisionReduceFlag` 为 `false`，A5 保留基线的 `true`。该字段属于混合精度类型选择策略，不是内部 FP32 运算开关。
 
@@ -42,4 +42,4 @@ ACLNN 分两步调用：`aclnnSolveTriGetWorkspaceSize(x, cuSeqlens, chunkIndice
 
 ## 异常
 
-A2/A3 的新增校验在调度计算前对必选指针为空或参数不满足约束返回对应的参数错误。A5 保留基线的检查范围和错误映射，不承诺新增校验行为。返回状态分类见 [aclnnSolveTri.md](aclnnSolveTri.md)。设备执行错误和异步错误由 ACL 运行时返回或报告。
+A2/A3 的新增校验在调度计算前对必选指针为空或参数不满足约束返回对应的参数错误。A5 使用当前上游的检查范围和错误映射。返回状态分类见 [aclnnSolveTri.md](aclnnSolveTri.md)。设备执行错误和异步错误由 ACL 运行时返回或报告。

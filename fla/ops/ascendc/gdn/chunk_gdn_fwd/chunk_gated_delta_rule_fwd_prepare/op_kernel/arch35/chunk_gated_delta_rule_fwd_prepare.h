@@ -757,6 +757,14 @@ public:
         return PackHasTail(w.base, w.nThis);
     }
 
+    __aicore__ inline bool NeedsStage7Wait(const PackWalk &prev, const PackWalk &next)
+    {
+        // A singleton pack has no AIV1 task. That AIV skips Stage1/3 waits,
+        // so it cannot rely on the next pack's KKT to order the previous W/U
+        // Fixpipe before DrainPackWuToGm. Both AIVs consume the same flag.
+        return next.nThis < 2 || PackHasTail(prev) || PackHasTail(next);
+    }
+
     __aicore__ inline void DrainPackWuToGm(int64_t base, int64_t nThis)
     {
         for (int64_t t = subBlock; t < nThis; t += 2) {
@@ -785,7 +793,7 @@ public:
                 prev = MakePackWalk(pack - numCore, packSize);
             }
             if (pack != coreIdx) {
-                if (PackHasTail(cur) || PackHasTail(prev)) {
+                if (NeedsStage7Wait(prev, cur)) {
                     WaitAicStage7Done();
                 }
             }
@@ -886,7 +894,7 @@ public:
             const int64_t nextPack = pack + numCore;
             if (nextPack < nPacks) {
                 const PackWalk nxt = MakePackWalk(nextPack, packSize);
-                if (PackHasTail(cur) || PackHasTail(nxt)) {
+                if (NeedsStage7Wait(cur, nxt)) {
                     NotifyAivStage7Done();
                 }
             } else {

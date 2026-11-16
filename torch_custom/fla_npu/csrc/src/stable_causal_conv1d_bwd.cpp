@@ -38,7 +38,7 @@ using fla_npu_stable::stable::size_of;
 using fla_npu_stable::stable::tensor;
 
 constexpr const char* kCausalConv1dBwdInputLayoutNames[] = {"BSND", "BNSD",
-                                                            "TND", "NTD"};
+                                                            "TND", "NTD", "BSH"};
 
 // ---------------------------------------------------------------------------
 // npu_causal_conv1d_bwd

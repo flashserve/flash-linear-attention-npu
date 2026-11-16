@@ -16,7 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
-    def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False, broad_tmp=False):
+    def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False,
+               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
@@ -29,13 +30,19 @@ class RunCiContainerTests(unittest.TestCase):
         commands.mkdir()
         (commands / "npu-smi").write_text("#!/bin/sh\nexit 0\n")
         (commands / "npu-smi").chmod(0o755)
+        (commands / "uname").write_text('#!/bin/sh\nprintf "%s\\n" "$TEST_HOST_ARCH"\n')
+        (commands / "uname").chmod(0o755)
         (commands / "docker").write_text(
             "#!/usr/bin/env python3\n"
             "import json, os, pathlib, signal, sys, time\n"
             "args = sys.argv[1:]\n"
             "with open(os.environ['DOCKER_RECORD'], 'a') as stream:\n"
             "    stream.write(json.dumps(args) + '\\n')\n"
-            "if args[:2] == ['image', 'inspect'] or args[:2] == ['rm', '-f']:\n"
+            "if args[:2] == ['image', 'inspect']:\n"
+            "    if os.environ['TEST_IMAGE_PRESENT'] != 'true': sys.exit(1)\n"
+            "    if '--format' in args: print(os.environ['TEST_IMAGE_PLATFORM'])\n"
+            "    sys.exit(0)\n"
+            "if args[:2] == ['rm', '-f']:\n"
             "    pid = pathlib.Path(os.environ['WAIT_PID'])\n"
             "    if args[:2] == ['rm', '-f'] and pid.exists():\n"
             "        os.kill(int(pid.read_text()), signal.SIGKILL)\n"
@@ -64,6 +71,9 @@ class RunCiContainerTests(unittest.TestCase):
             CI_REQUIRE_PRELOADED_IMAGE="true",
             CI_REBUILD_IMAGE="false",
             CI_REQUIRE_HEALTHY_NPU="false",
+            TEST_HOST_ARCH=host_arch,
+            TEST_IMAGE_PLATFORM=image_platform,
+            TEST_IMAGE_PRESENT=str(image_present).lower(),
             DOCKER_RECORD=str(root / "docker.jsonl"),
             RUN_STATUS=str(run_status),
             CLEANUP_STATUS=str(cleanup_status),
@@ -156,6 +166,44 @@ class RunCiContainerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("dedicated temporary subdirectory", result.stderr)
             self.assertFalse(any(call[0] == "run" for call in calls))
+
+    def test_native_x64_and_arm64_images_can_run(self):
+        for host_arch, image_platform in (
+            ("x86_64", "linux/amd64"), ("amd64", "linux/amd64"),
+            ("aarch64", "linux/arm64"), ("arm64", "linux/arm64"),
+        ):
+            with self.subTest(host_arch=host_arch), tempfile.TemporaryDirectory() as temporary:
+                result, calls, _ = self.run_ci(
+                    Path(temporary), host_arch=host_arch, image_platform=image_platform,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Native Docker image verified", result.stdout)
+                self.assertTrue(any("--cidfile" in call for call in calls))
+
+    def test_incompatible_image_is_rejected_before_npu_lock_or_container_start(self):
+        for host_arch, image_platform in (
+            ("x86_64", "linux/arm64"), ("aarch64", "linux/amd64"),
+            ("aarch64", "linux/unknown"), ("x86_64", "windows/amd64"),
+            ("aarch64", ""), ("riscv64", "linux/riscv64"),
+        ):
+            with self.subTest(host_arch=host_arch, image_platform=image_platform):
+                with tempfile.TemporaryDirectory() as temporary:
+                    result, calls, env = self.run_ci(
+                        Path(temporary), host_arch=host_arch, image_platform=image_platform,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(Path(env["CI_NPU_LOCK_DIR"]).exists())
+                    self.assertFalse(any(call[0] in ("run", "build") for call in calls))
+                    expected = "Unsupported host architecture" if host_arch == "riscv64" else "matching native image"
+                    self.assertIn(expected, result.stderr)
+
+    def test_missing_preloaded_image_does_not_build_or_lock_npu(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result, calls, env = self.run_ci(Path(temporary), image_present=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Required preloaded Docker image is missing", result.stderr)
+            self.assertFalse(Path(env["CI_NPU_LOCK_DIR"]).exists())
+            self.assertFalse(any(call[0] in ("run", "build") for call in calls))
 
 
 if __name__ == "__main__":

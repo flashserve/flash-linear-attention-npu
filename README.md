@@ -29,10 +29,11 @@ npu-smi info
 | A2   | `ascend910b`              |
 | A3   | `ascend910_93`            |
 | A5   | `ascend950`               |
+| A6（平台构建支持；算子能力随后续 PR 合入） | `ascend960dt` |
 
 ### Step 1. 部署 CANN 开发环境
 
-安装 toolkit 与对应机型 ops 两个包（A2/A3：CANN ≥ 8.5.2；A5：CANN ≥ 9.0.0），下载页：[CANN 社区下载页](https://www.hiascend.com/developer/download/community/result?module=cann)
+安装 toolkit 与对应机型 ops 两个包（A2/A3：CANN ≥ 8.5.2；A5：CANN ≥ 9.0.0；A6：CANN ≥ 9.3.0），下载页：[CANN 社区下载页](https://www.hiascend.com/developer/download/community/result?module=cann)
 
 - `Ascend-cann-toolkit_<version>_linux-<arch>.run`
 - `Ascend-cann-<chip>-ops_<version>_linux-<arch>.run`

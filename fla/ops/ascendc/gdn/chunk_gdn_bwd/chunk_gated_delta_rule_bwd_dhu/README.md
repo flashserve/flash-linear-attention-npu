@@ -103,10 +103,14 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 - 当 `h0Optional` 非空时 `dh0Out` 不能为空，当 `h0Optional` 为空时 `dh0Out` 可传空指针。
 - **GVA 约束**：`HV % HK == 0`；读 `q`/`k` 时使用 `hq = hv / (HV / HK)`，读/写 `w`/`dO`/`dv`/`g`/`dh`/`dv2` 使用 value head 索引 `hv`。
 - 当前实现仅支持 `K = 128`；其他 `K` 尺寸会在 tiling 阶段被拒绝。
-- 当前实现仅支持 `V = 128` 或 `V = 256`；其他 `V` 尺寸会在 tiling 阶段被拒绝（Cube tile 原生按 `V` 上限 256 设计，**无**按 V 维切换的 TilingKey）。
+- A2/A3/A5 支持 `V = 128` 或 `V = 256`；A6（`ascend960dt`）仅支持 `V = 128`，
+  其他值由 tiling 明确拒绝。
 - **TilingKey**：`g` 与 `q` 同 dtype 时为 Key=1，`g` 为 FP32 时为 Key=2（与 V 维无关）。
 - `chunkSize` 当前仅支持 `64` 或 `128`。
 - 当启用变长模式时，`cuSeqlensOptional` 和 `chunkIndicesOptional` 须同时提供，且仅支持 `B = 1`。
+- A6 使用 `op_kernel/arch92/` 的 MIX AIC 1:1 实现，每个 task 最多处理 3 个 head，
+  使用 3 个 workspace slot。A6 当前不支持 A5 后加的 token-major `DO_TOKEN_MAJOR`
+  模板路径，tiling key 固定选择非 token-major 实例。
 
 ### 3.5 返回值
 

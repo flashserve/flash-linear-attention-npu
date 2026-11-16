@@ -7,7 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 
 #include "catlass/arch/arch.hpp"
@@ -99,7 +99,7 @@ public:
     static constexpr uint32_t HO_PIPELINE_SYNC_UB_OFFSET = 188 * 1024;
     static constexpr uint64_t HO_PIPELINE_WORKSPACE_ALIGNMENT = 512;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;
@@ -109,7 +109,7 @@ public:
     using CubeScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdOCube;
     using VecScheduler = typename Catlass::Gemm::Block::BlockSchedulerGdnFwdOVec;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using DispatchPolicyTla = Gemm::MmadPingpongTlaGdnFwdO<ArchTag, true, false>;
 #else
     using DispatchPolicyTla = Gemm::MmadPingpongTlaMulti<ArchTag, true, false>;
@@ -134,7 +134,7 @@ public:
 
     // cube 1
     using TileCopyQK = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::ColumnMajor, WORKSPACE_TYPE, layout::RowMajor>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using BlockMmadQK = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTla, L1TileShapeQKTla, L0TileShapeQKTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQK>;
 #else
     using BlockMmadQK = Gemm::Block::BlockMmadTla<DispatchPolicyTla, L1TileShapeQKTla, L0TileShapeQKTla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQK>;
@@ -142,7 +142,7 @@ public:
 
     // cube 2
     using TileCopyQH = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using DispatchPolicyTlaShareL1A = Gemm::MmadPingpongTlaGdnFwdO<ArchTag, true, false, 1, false, true>;
     using BlockMmadQH128 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTlaShareL1A, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQH>;
     using BlockMmadQH256 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTlaShareL1A, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyQH>;
@@ -153,7 +153,7 @@ public:
 
     // cube 3
     using TileCopyAttenVNEW = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, INPUT_TYPE, layout::RowMajor, INPUT_TYPE, layout::RowMajor, WORKSPACE_TYPE, layout::RowMajor>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using BlockMmadAttenVNEW128 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTla, L1TileShapeV128Tla, L0TileShapeV128Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
     using BlockMmadAttenVNEW256 = Gemm::Block::BlockMmadTlaPipelined<DispatchPolicyTla, L1TileShapeV256Tla, L0TileShapeV256Tla, INPUT_TYPE, INPUT_TYPE, WORKSPACE_TYPE, void, TileCopyAttenVNEW>;
 #else
@@ -339,7 +339,7 @@ public:
             BlockMmadQK blockMmadQK(resource);
             BlockMmadQH128 blockMmadQH128(resource);
             BlockMmadQH256 blockMmadQH256(resource);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             // A5 local-resource lifetime:
             //   Cube1 L1A/Q [0,64K), L1B/K [64K,128K), events A=0/1 B=2/3.
             //   Cube2 shares L1A/Q and reuses B [64K,128K|192K), events 0..3.
@@ -370,7 +370,7 @@ public:
 
             bool needRun = false;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             while (cubeBlockScheduler.isRunning) {
                 cubeBlockScheduler.InitTask();
 
@@ -674,7 +674,7 @@ public:
 
                 if (vecBlockScheduler.isRunning && coreIdx < coreNum * subBlockNum) {
                     uint32_t streamId = vecBlockScheduler.GetCurStageId();
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube1Done[streamId]);
 #endif
                     GDNFwdOOffsets& vec1Offsets = vecBlockScheduler.GetVec1Offsets();
@@ -688,11 +688,11 @@ public:
                         gmG[vec1OffsetG], gmAttnWorkspace[vec1OffsetAttn], gmMask,
                         chunkSize, vec1Offsets.blockTokens, kHeadDim, vHeadDim, pingpongFlag,
                         vec1Offsets.batchIdx, vec1Offsets.headIdx, vec1Offsets.chunkIdx
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                         , &vecBlockScheduler.cube1Done[streamId]
 #endif
                     );
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                     if constexpr (!kFwdOAggregateQkMaskBarrier) {
                         if (!chunkPipelineEnabled && isVariedLen != 0) {
                             Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
@@ -713,7 +713,7 @@ public:
 
                 if (needRun && coreIdx < coreNum * subBlockNum) {
                     uint32_t streamId = vecBlockScheduler.GetPrevStageId();
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube3Done[streamId]);
 #endif
                     GDNFwdOOffsets& vec2Offsets = vecBlockScheduler.GetVec2Offsets();
@@ -728,14 +728,14 @@ public:
                         scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim,
                         vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx,
                         vec2Offsets.chunkIdx
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                         , &vecBlockScheduler.cube3Done[streamId]
                          , (isVariedLen == 0 || kFwdOAggregateOutputBarrier || chunkPipelineEnabled)
                                ? &vecBlockScheduler.vec2Done[streamId]
                                : nullptr
 #endif
                     );
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                     if constexpr (!kFwdOAggregateOutputBarrier) {
                         // Conservative varlen path: join the two AIV
                         // generations, then publish after both MTE3 pipelines

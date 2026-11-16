@@ -31,6 +31,17 @@ h, v_new, final_state = chunk_fwd_h(
 - g-only：`k` 是 raw key，shape 为 `[B, HK, T, 128]`，要求 `HV % HK == 0`。
 - gk-only：`k` 是 Prepare 阶段已经生成的 `kg`，shape 为 `[B, HV, T, 128]`；本算子不会再次把 `gk` 乘到 `k` 上。
 
+## 支持范围
+
+- A2/A3/A5。
+- A6（CANN soc 短名 `ascend960dt`，soc_version `Ascend960DT_968B7`，`dav-920r1`，编译宏 `__NPU_ARCH__ == 9201`）：
+  使用独立的 arch92 kernel 实现，选用 `Catlass::Arch::Ascend960DT` 和 `CATLASS_ARCH == 9201`，并按
+  A6 的 1 AIC : 1 AIV 拓扑，每个 work unit 最多两个 head；Catlass 固定使用
+  `https://gitcode.com/cann/catlass` 的官方固定提交
+  `86acf1db511ee727d6b2995dd1b41f7f4f9221a8`。
+  当前按两 head 详设适配：独立 PD/right、321.125 KiB UB、两套 160 KiB L1 bank、GM right 与 alpha 按 chunk 奇偶轮转。
+  当前完成编译路径接入，精度与性能待 A6 环境补充。
+
 ## 计算语义
 
 记 `E(x)=exp(x)`；`use_exp2=true` 时改为 `E(x)=exp2(x)`。对 value head `h` 的每个 chunk `c`：
@@ -83,14 +94,9 @@ host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND�
 
 ## 支持范围
 
-- A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
-- `K=V=128`、`chunk_size=64`、`save_new_value=true`；其它取值在参数校验阶段返回
-  `ACLNN_ERR_PARAM_INVALID`，不下沉到 tiling。
-- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`，gk-only 要求 `HK == HV`。
-- dtype：`k/w/u` 为 BF16；`g/gk`、`initial_state/final_state` 支持 BF16/FP32。
-- 变长（BNSD）要求 `B=1`；`cu_seqlens` 从 0 开始、以 `T` 结束且非递减，相邻两项相等
-  表示零长度序列。
-- `state_v_first` 两值均支持。
+- A2、A3、A5。
+- `K=V=128`、`chunk_size=64`、`save_new_value=true`。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`。
 
 ## 变长序列
 

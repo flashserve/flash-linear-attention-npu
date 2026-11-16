@@ -598,3 +598,10 @@ __all__ = [
     *sorted(set(_ASCENDC_OPS)),
     *sorted({_strip_npu_prefix(name) for name in _ASCENDC_OPS}),
 ]
+
+
+# Only the public package routes across layers; private providers stay isolated.
+if (__name__ == "fla_npu.ops.ascendc"
+        and getattr(sys.modules.get("fla_npu"), "_WHEEL_LAYER_PLAN", None)):
+    from ..._wheel_layer_runtime import install_exports as _install_layer_exports
+    _install_layer_exports(globals())

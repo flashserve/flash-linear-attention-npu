@@ -8,7 +8,7 @@
 #include "kernel_operator.h"
 #include "chunk_kda_bwd_intra_struct.h"
 #include "chunk_kda_bwd_intra_common.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "catlass/arch/cross_core_sync.hpp"
 #include "arch35/chunk_kda_bwd_intra_regbase.h"
 #endif
@@ -65,7 +65,7 @@ public:
         pipe_->InitBuffer(reduceTmp_, kReduceTmpBytes);
         InitMatrixInputEvents();
         if constexpr (VARLEN_TND) {
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
             auto offsets = ScalarGatherOffsets();
             for (uint32_t row = 0; row < kRowBlock; ++row) {
                 offsets.SetValue(
@@ -114,14 +114,14 @@ public:
                 for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
                     const uint32_t slot = WorkspaceSlot(windowIdx, headInWindow);
                     PrepareHead(task, headBase + headInWindow, rowStart, validRows, slot);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeReadyFlag_);
 #else
                     AscendC::CrossCoreSetFlag<0x2, PIPE_MTE3>(kVecToCubeReadyFlag);
 #endif
                 }
                 for (uint32_t headInWindow = 0; headInWindow < headCount; ++headInWindow) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                     Catlass::Arch::CrossCoreWaitFlag(cubeToVecReadyFlag_);
 #else
                     AscendC::CrossCoreWaitFlag(kCubeToVecReadyFlag);
@@ -250,7 +250,7 @@ private:
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[slot]);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCopy(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)src.GetPhyAddr(),
@@ -268,7 +268,7 @@ private:
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(
             matrixMte2ToVEvent_[slot]);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCastBf16ToFp32(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ bfloat16_t *)src.GetPhyAddr(),
@@ -309,7 +309,7 @@ private:
             input, src, {1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0}, {false, 0, 0, 0});
         inputQueue_.EnQue(input);
         auto ready = inputQueue_.DeQue<float>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCopy(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)ready.GetPhyAddr(),
@@ -331,7 +331,7 @@ private:
             {false, 0, 0, 0});
         inputQueue_.EnQue(input);
         auto ready = inputQueue_.DeQue<bfloat16_t>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCastBf16ToFp32(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ bfloat16_t *)ready.GetPhyAddr(),
@@ -348,7 +348,7 @@ private:
     {
         AscendC::PipeBarrier<PIPE_V>();
         auto output = outputQueue_.AllocTensor<float>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCopy(
             (__ubuf__ float *)output.GetPhyAddr(),
             (__ubuf__ float *)src.GetPhyAddr(),
@@ -378,7 +378,7 @@ private:
         AscendC::DataCopyPad(input, src, copyParams, {false, 0, 0, 0});
         inputQueue_.EnQue(input);
         auto ready = inputQueue_.DeQue<float>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCopy(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)ready.GetPhyAddr(),
@@ -405,7 +405,7 @@ private:
         AscendC::DataCopyPad(input, src, copyParams, {false, 0, 0, 0});
         inputQueue_.EnQue(input);
         auto ready = inputQueue_.DeQue<bfloat16_t>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCastBf16ToFp32(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ bfloat16_t *)ready.GetPhyAddr(),
@@ -423,7 +423,7 @@ private:
     {
         AscendC::PipeBarrier<PIPE_V>();
         auto output = outputQueue_.AllocTensor<float>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCopy(
             (__ubuf__ float *)output.GetPhyAddr(),
             (__ubuf__ float *)src.GetPhyAddr(),
@@ -487,7 +487,7 @@ private:
         inputQueue_.EnQue(input);
         auto ready = inputQueue_.DeQue<float>();
         auto stage = ScalarStage();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCopy(
             (__ubuf__ float *)stage.GetPhyAddr(),
             (__ubuf__ float *)ready.GetPhyAddr(),
@@ -526,7 +526,7 @@ private:
         inputQueue_.EnQue(input);
         auto ready = inputQueue_.DeQue<bfloat16_t>();
         auto stage = ScalarStage();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseCastBf16ToFp32(
             (__ubuf__ float *)stage.GetPhyAddr(),
             (__ubuf__ bfloat16_t *)ready.GetPhyAddr(),
@@ -579,7 +579,7 @@ private:
         }
         constexpr uint32_t kLocalRowElements = 32 / sizeof(float);
         AscendC::PipeBarrier<PIPE_V>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         auto output = outputQueue_.AllocTensor<float>();
         KdaRegbaseScatterScalars(
             (__ubuf__ float *)output.GetPhyAddr(),
@@ -620,7 +620,7 @@ private:
     __aicore__ inline void Exp2(
         AscendC::LocalTensor<float> dst, AscendC::LocalTensor<float> src, uint32_t count)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseExp2(
             (__ubuf__ float *)dst.GetPhyAddr(),
             (__ubuf__ float *)src.GetPhyAddr(),
@@ -664,7 +664,7 @@ private:
                 MatrixOffset<VARLEN_TND>(
                     tiling_, task.batchIdx, head, task.begin + rowStart);
             LoadRows(work, source[srcOffset], validRows, prefix, MatrixRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseMaskLowerA(
                 (__ubuf__ float *)masked.GetPhyAddr(),
                 (__ubuf__ float *)work.GetPhyAddr(),
@@ -687,7 +687,7 @@ private:
         }
 
         for (uint32_t row = 0; row < kRowBlock; ++row) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseFill(
                 (__ubuf__ float *)work.GetPhyAddr(), 0.0f, prefix);
 #else
@@ -724,7 +724,7 @@ private:
                 tiling_, task.batchIdx, head, task.begin + rowStart, rowStart);
         LoadRows(work, source[srcOffset], future, kRowBlock, MatrixRowElements());
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseMaskUpperA(
             (__ubuf__ float *)masked.GetPhyAddr(),
             (__ubuf__ float *)work.GetPhyAddr(),
@@ -768,7 +768,7 @@ private:
              gkGm_[TensorOffset<VARLEN_TND>(
                  tiling_, task.batchIdx, head, anchorRow, col)],
              cols);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         for (uint32_t row = 1; row < kLowerPackRows; ++row) {
             AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
         }
@@ -788,7 +788,7 @@ private:
                 gkGm_[TensorOffset<VARLEN_TND>(
                     tiling_, task.batchIdx, head, token, col)],
                 rows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseGateScale<true, false>(
                 (__ubuf__ float *)data.GetPhyAddr(),
                 (__ubuf__ float *)gate.GetPhyAddr(),
@@ -829,7 +829,7 @@ private:
                  gkGm_[TensorOffset<VARLEN_TND>(
                      tiling_, task.batchIdx, head, anchorRow, col)],
                  cols);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
             for (uint32_t row = 1; row < kUpperPackRows; ++row) {
                 AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
             }
@@ -850,7 +850,7 @@ private:
                     gkGm_[TensorOffset<VARLEN_TND>(
                         tiling_, task.batchIdx, head, token, col)],
                     rows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 if (subBlock != 0) {
                     LoadScalarRows(
                         beta,
@@ -933,7 +933,7 @@ private:
         auto product = Plane(14);
         auto rowReduce = Plane(15);
         auto dbAcc = Plane(16);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseFill(
             (__ubuf__ float *)dbAcc.GetPhyAddr(), 0.0f, ownedRows);
 #else
@@ -948,7 +948,7 @@ private:
             betaGm_[ScalarOffset<VARLEN_TND>(
                 tiling_, task.batchIdx, head, tokenBegin)],
             ownedRows);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
         AscendC::Brcb(betaBroadcast, beta, static_cast<uint8_t>((ownedRows + 7) / 8), {1, 8});
 #endif
 
@@ -959,7 +959,7 @@ private:
                  gkGm_[TensorOffset<VARLEN_TND>(
                      tiling_, task.batchIdx, head, anchorRow, col)],
                  cols);
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !(defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
             for (uint32_t row = 1; row < ownedRows; ++row) {
                 AscendC::Adds(anchor[row * cols], anchor, 0.0f, cols);
             }
@@ -994,7 +994,7 @@ private:
                              static_cast<uint64_t>(ownedBegin) * K_DIM + col],
                 ownedRows, cols, K_DIM);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseFinishScale(
                 (__ubuf__ float *)rawDq.GetPhyAddr(),
                 (__ubuf__ float *)rawDkLower.GetPhyAddr(),
@@ -1036,7 +1036,7 @@ private:
                      dqGm_[TensorOffset<VARLEN_TND>(
                          tiling_, task.batchIdx, head, tokenBegin, col)],
                      ownedRows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseAdd2(
                 (__ubuf__ float *)output.GetPhyAddr(),
                 (__ubuf__ float *)inputGrad.GetPhyAddr(),
@@ -1053,7 +1053,7 @@ private:
                      dkGm_[TensorOffset<VARLEN_TND>(
                          tiling_, task.batchIdx, head, tokenBegin, col)],
                      ownedRows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseAdd3(
                 (__ubuf__ float *)output.GetPhyAddr(),
                 (__ubuf__ float *)inputGrad.GetPhyAddr(),
@@ -1073,7 +1073,7 @@ private:
                      dgGm_[TensorOffset<VARLEN_TND>(
                          tiling_, task.batchIdx, head, tokenBegin, col)],
                      ownedRows, cols, TensorRowElements());
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaRegbaseDg(
                 (__ubuf__ float *)output.GetPhyAddr(),
                 (__ubuf__ float *)inputGrad.GetPhyAddr(),
@@ -1104,7 +1104,7 @@ private:
             dbGm_[ScalarOffset<VARLEN_TND>(
                 tiling_, task.batchIdx, head, tokenBegin)],
             ownedRows);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         KdaRegbaseAdd2(
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
             (__ubuf__ float *)dbAcc.GetPhyAddr(),
@@ -1147,7 +1147,7 @@ private:
     uint32_t currentMatrixInputSlot_ = 0;
     event_t matrixMte2ToVEvent_[kMatrixInputBufferCount]{};
     event_t matrixVToMte2Event_[kMatrixInputBufferCount]{};
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     Catlass::Arch::CrossCoreFlag vecToCubeReadyFlag_{kVecToCubeReadyFlag};
     Catlass::Arch::CrossCoreFlag cubeToVecReadyFlag_{kCubeToVecReadyFlag};
 #endif

@@ -10,6 +10,8 @@
 
 namespace optiling {
 
+static constexpr const char *OP_NAME = "ChunkKdaBwdPrepare";
+
 ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
 {
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdPrepareTilingData>();
@@ -32,7 +34,8 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     if (!std::isfinite(*scale)) {
-        OP_LOGE(context->GetNodeName(), "scale must be finite");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "scale", std::to_string(*scale), "scale must be finite");
         return ge::GRAPH_FAILED;
     }
 
@@ -53,10 +56,12 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         *scale, *chunkSize, stateVFirst != nullptr && *stateVFirst,
         layout, static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950,
+        platform.GetCurNpuArch() == NpuArch::DAV_3510,
     };
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();

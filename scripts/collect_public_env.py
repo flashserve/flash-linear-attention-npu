@@ -368,6 +368,7 @@ def collect() -> dict[str, str]:
             ("flash-linear-attention-npu-a2",
              "flash-linear-attention-npu-a3",
              "flash-linear-attention-npu-a5",
+             "flash-linear-attention-npu-a6",
              "flash-linear-attention-npu", "fla-npu", "fla_npu"),
             include_dist_name=True,
         ),

@@ -14,9 +14,9 @@ Everything is read from files in the tree:
 3. **Enum tables** -- a ``cstr(k<X>Names, arg)`` call site must have the same
    code order as ``_stable._ENUM[op][arg]``, because the two are the only thing
    that keeps a layout string from silently becoming a different layout.
-4. **Public contract** -- the historical API and dispatcher argument positions
-   in ``tests/stable_public_api.json`` cannot silently disappear or reorder.
-   All operators must be covered; no missing-backend waiver is supported.
+4. **Additive API compatibility** -- new operators and trailing optional
+   arguments are allowed. Existing calling forms, defaults and relative
+   dispatcher argument order remain protected, with the stream last.
 
 Usage::
 
@@ -53,16 +53,16 @@ def public_ops() -> list[str]:
     return re.findall(r'"([a-z0-9_]+)"', match.group(1))
 
 
-def required_public_ops() -> list[str]:
-    """Historical public contract, independent of the implementation inventory."""
-    names = json.loads(PUBLIC_CONTRACT.read_text(encoding="utf-8"))["operators"]
-    if not names or len(names) != len(set(names)):
-        raise ValueError("public API contract must contain unique nonempty operators")
-    return names
+def wrappers() -> dict[str, int]:
+    text = (OPS_DIR / "_stable.py").read_text(encoding="utf-8")
+    return {name: text[:match.start()].count("\n") + 1
+            for name, match in ((m.group(1), m) for m in
+                                re.finditer(r"^def (npu_[a-z0-9_]+)\(",
+                                            text, re.M))}
 
 
 def public_signatures(path: Path) -> dict[str, dict]:
-    """Read inspect.signature-visible arguments without importing torch/CANN."""
+    """Read declarations without importing torch, resolving literal defaults."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     constants = {}
     for node in tree.body:
@@ -78,24 +78,86 @@ def public_signatures(path: Path) -> dict[str, dict]:
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef) or not node.name.startswith("npu_"):
             continue
-        for default in node.args.defaults + node.args.kw_defaults:
-            if isinstance(default, ast.Name) and default.id in constants:
-                replacement = ast.parse(repr(constants[default.id]), mode="eval").body
-                for values in (node.args.defaults, node.args.kw_defaults):
-                    for index, item in enumerate(values):
-                        if item is default:
-                            values[index] = replacement
+        for values in (node.args.defaults, node.args.kw_defaults):
+            for index, default in enumerate(values):
+                if isinstance(default, ast.Name) and default.id in constants:
+                    values[index] = ast.parse(repr(constants[default.id]), mode="eval").body
         result[node.name] = {"arguments": ast.unparse(node.args),
                              "return": ast.unparse(node.returns) if node.returns else None}
     return result
 
 
-def wrappers() -> dict[str, int]:
-    text = (OPS_DIR / "_stable.py").read_text(encoding="utf-8")
-    return {name: text[:match.start()].count("\n") + 1
-            for name, match in ((m.group(1), m) for m in
-                                re.finditer(r"^def (npu_[a-z0-9_]+)\(",
-                                            text, re.M))}
+def _signature_parameters(arguments: str) -> dict[str, tuple[str, str | None]]:
+    args = ast.parse(f"def f({arguments}): pass").body[0].args
+    positional = [*args.posonlyargs, *args.args]
+    defaults = [None] * (len(positional) - len(args.defaults)) + args.defaults
+    parameters = {}
+    for index, (arg, default) in enumerate(zip(positional, defaults)):
+        kind = "posonly" if index < len(args.posonlyargs) else "poskw"
+        parameters[arg.arg] = (kind, ast.unparse(default) if default is not None else None)
+    if args.vararg:
+        parameters[args.vararg.arg] = ("varargs", None)
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        parameters[arg.arg] = ("kwonly", ast.unparse(default) if default is not None else None)
+    if args.kwarg:
+        parameters[args.kwarg.arg] = ("kwargs", None)
+    return parameters
+
+
+def _signature_problems(old: dict, new: dict) -> list[str]:
+    before = _signature_parameters(old["arguments"])
+    after = _signature_parameters(new["arguments"])
+    problems = []
+    old_pos = [name for name, (kind, _) in before.items() if kind in ("posonly", "poskw")]
+    new_pos = [name for name, (kind, _) in after.items() if kind in ("posonly", "poskw")]
+    if new_pos[:len(old_pos)] != old_pos:
+        problems.append("existing positional parameters were removed, reordered or made keyword-only")
+    if any(kind == "varargs" for kind, _ in before.values()) and new_pos != old_pos:
+        problems.append("new positional parameters would consume existing variadic arguments")
+    for name, (kind, default) in before.items():
+        if name not in after:
+            problems.append(f"existing parameter {name} was removed or renamed")
+            continue
+        new_kind, new_default = after[name]
+        if new_kind != kind and (kind, new_kind) not in (("posonly", "poskw"), ("kwonly", "poskw")):
+            problems.append(f"existing parameter {name} changed calling convention")
+        if default != new_default:
+            problems.append(f"existing parameter {name} changed default")
+    for name, (kind, default) in after.items():
+        if name not in before and kind not in ("varargs", "kwargs") and default is None:
+            problems.append(f"new parameter {name} is required")
+    if old.get("return") != new.get("return"):
+        problems.append("declared return contract changed")
+    return problems
+
+
+def public_api_problems(published: list[str], dispatches: dict) -> list[str]:
+    """One-way compatibility: the baseline is not a whitelist for new APIs."""
+    contract = json.loads(PUBLIC_CONTRACT.read_text(encoding="utf-8"))
+    required = contract["operators"]
+    if not required or len(required) != len(set(required)):
+        raise ValueError("public API contract must contain unique nonempty operators")
+    signatures = public_signatures(OPS_DIR / "_stable.py")
+    problems = [f"{name}: historical public API was removed" for name in sorted(set(required) - set(published))]
+    for name in required:
+        old = contract.get("public_signatures", {}).get(name)
+        if old is not None and name in signatures:
+            problems.extend(f"{name}: {problem}" for problem in _signature_problems(old, signatures[name]))
+        expected_calls = contract.get("dispatch_arguments", {}).get(name)
+        if expected_calls is None:
+            continue
+        actual_calls = dispatches.get(name, [])
+        if len(expected_calls) != len(actual_calls):
+            problems.append(f"{name}: existing dispatcher call structure changed")
+            continue
+        for old_call, new_call in zip(expected_calls, actual_calls):
+            # New arguments may be inserted without reordering old arguments.
+            current = iter(new_call["expressions"])
+            if old_call["op"] != new_call["op"] or not all(
+                any(value == expression for value in current) for expression in old_call["expressions"]
+            ):
+                problems.append(f"{name}: existing dispatcher argument order/expression changed")
+    return problems
 
 
 def wrapper_dispatches() -> dict[str, list[dict]]:
@@ -103,8 +165,7 @@ def wrapper_dispatches() -> dict[str, list[dict]]:
 
     The dispatcher registers by position, so a wrapper that hands over a
     different number of arguments than the schema declares is passing something
-    the adapter will not unpack the way it was written -- and a same-type swap
-    inside that list is invisible everywhere else.  Calls to *other* operators
+    the adapter will not unpack the way it was written. Calls to *other* operators
     are skipped: a composed wrapper (`npu_chunk_kda_bwd` splits its launch out
     to a helper) is a legitimate shape.
     """
@@ -422,23 +483,16 @@ def evaluate() -> dict:
     wrapper_lines = wrappers()
     dispatches = wrapper_dispatches()
     schema_by_op = {info["op"]: info["params"] for info in schemas().values()}
-    contract = json.loads(PUBLIC_CONTRACT.read_text(encoding="utf-8"))
     adapter_info = adapters()
     enums = package_enums()
 
     rows = []
-    blockers = []
+    blockers = public_api_problems(published, dispatches)
     if not published:
         blockers.append("public API: operator inventory is empty")
     if len(published) != len(set(published)):
         blockers.append("public API: duplicate published operator")
-    for name in sorted(set(required_public_ops()) - set(published)):
-        blockers.append(f"{name}: historical public API was removed")
-    signatures = public_signatures(OPS_DIR / "_stable.py")
     for name in sorted(published):
-        expected_signature = contract.get("public_signatures", {}).get(name)
-        if expected_signature is not None and signatures.get(name) != expected_signature:
-            blockers.append(f"{name}: public Python signature differs from the baseline")
         row = {
             "op": name,
             "wrapper": name in wrapper_lines,
@@ -468,12 +522,6 @@ def evaluate() -> dict:
                 "(one operator per file)")
         if not dispatches.get(name):
             blockers.append(f"{name}: wrapper never reaches a Stable dispatcher call")
-        expected_calls = contract.get("dispatch_arguments", {}).get(name)
-        if expected_calls is not None:
-            actual_calls = [{"op": call["op"], "expressions": call["expressions"]}
-                            for call in dispatches.get(name, [])]
-            if actual_calls != expected_calls:
-                blockers.append(f"{name}: dispatcher argument order/expression differs from public contract")
         for dispatch in dispatches.get(name, []):
             if dispatch["op"] == name:
                 blockers.extend(

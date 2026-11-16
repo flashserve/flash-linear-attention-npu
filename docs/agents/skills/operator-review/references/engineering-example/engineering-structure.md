@@ -277,7 +277,9 @@ add_ops_compile_options(
 ### 3.5 host 侧平台分支
 
 1. 平台专用 tiling 实现放 `op_host/op_tiling/arch22/*.h`（A2/A3）与 `op_host/op_tiling/arch35/*.h`（A5），
-   入口按 SoC 选择；`arch22` 与 `arch35` 都允许有专用文件，不要求只有 A5 才分平台。
+   入口使用 `GetCurNpuArch() == NpuArch::DAV_3510` 判定 A5；禁止
+   `GetSocVersion() == SocVersion::ASCEND950`。`arch22` 与 `arch35` 都允许有专用文件，不要求只有
+   A5 才分平台。
 2. 同一平台的 tiling 实现不止一份 `.cpp` 时，放 `op_host/op_tiling/arch35/*.cpp`；
    `cmake/obj_func.cmake` 会把该目录收进 tiling 目标。目录名不能自创。
    `fla/` 内当前实际使用 `arch22`、`arch32`、`arch35`，而 cmake 的收集与排除逻辑还会识别
@@ -310,7 +312,7 @@ add_ops_compile_options(
 3. 架构选择的唯一依据是编译期宏，写在算子入口 `.cpp` 顶部：
 
    ```cpp
-   #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+   #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
    #include "arch35/<算子>_cube.h"
    #include "arch35/<算子>_vec.h"
    #else
@@ -320,6 +322,9 @@ add_ops_compile_options(
    ```
 
    参考 `chunk_fwd_h/op_kernel/chunk_fwd_h.cpp` 与 `chunk_kda_fwd/op_kernel/chunk_kda_fwd.cpp`。
+   禁止使用 `__CCE_AICORE__`、`__DAV_C310__` 等架构别名。不得用 `GDN_BWD_ENABLE_ARCH22` 一类构建期
+   `ENABLE_ARCHxx`/`USE_ARCHxx` 宏代替 host 的运行期架构判断或 kernel 的
+   `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)` 判断。
 4. 差异只放在被拆分的实现头里；两份内容相同的文件（TilingData 结构、策略头等）保留在根目录一份，
    不要复制到 `arch22/`、`arch35/` 各一份。
 5. 不新增第三个架构目录名；新的平台集合变化先改 `cmake/scripts/get_soc_version.py` 的目录排除表和本节。
@@ -656,7 +661,9 @@ ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明�
 - [ ] 可选输出的缺席语义只在 L2 表达，且档位/掩码组合有显式枚举与非法组合拦截。
 - [ ] L1 与 L2 的职责边界清楚：L2 不解释上层保留策略，但校验"入参属性 + 可选输出指针"组合是否合法；
       连续性按逐输入契约处理（该连续的才 Contiguous，state 类保持 view）；报错带实际值。
-- [ ] 根目录 kernel 是默认（arch22）实现，`arch35/` 只放差异文件，架构选择用 `__CCE_AICORE__ == 310`。
+- [ ] 根目录 kernel 是默认（arch22）实现，`arch35/` 只放差异文件，架构选择用
+      `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)`；
+      host 用 `GetCurNpuArch() == NpuArch::DAV_3510`，没有使用 SoC 枚举或自定义平台别名宏替代。
 - [ ] TilingKey 只标场景族；模板参数用 `ASCENDC_TPL_*` 声明与枚举，内部用 `if constexpr`。
 - [ ] 组合入口的 `<算子>_depends` 已按依赖闭包展开（构建侧 + 打包侧各一份），并用"只列主算子"的
       过滤构建验证过包自洽（不出现 `561103` / `EZ1013`）。

@@ -11,6 +11,7 @@
 #include <limits>
 #include <utility>
 #include <vector>
+#include "op_common/log/log.h"
 
 namespace rgdn_check {
 struct Params {
@@ -31,15 +32,14 @@ inline bool Type(const aclTensor *t, std::initializer_list<op::DataType> allowed
                  const char *name, const char *expected, const char *entity)
 {
     if (!t || std::find(allowed.begin(), allowed.end(), t->GetDataType()) != allowed.end()) return true;
-    OP_LOGE_WITH_INVALID_INPUT_DTYPE(entity, name,
-        ge::TypeUtils::DataTypeToSerialString(t->GetDataType()), expected);
+    OP_LOGE_FOR_INVALID_DTYPE(entity, name, ge::TypeUtils::DataTypeToSerialString(t->GetDataType()), expected);
     return false;
 }
 
 inline bool Shape(const aclTensor *t, std::initializer_list<int64_t> expected, const char *name)
 {
     constexpr const char *entity = "aclnnRecurrentGatedDeltaRuleV2";
-    if (!t) { OP_LOGE_WITH_INVALID_INPUT(entity, name); return false; }
+    if (!t) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, name, "input argument must not be nullptr"); return false; }
     bool valid = t->GetViewShape().GetDimNum() == expected.size();
     size_t i = 0;
     if (valid) for (auto n : expected) valid = (t->GetViewShape().GetDim(i++) == n) && valid;
@@ -149,10 +149,10 @@ inline bool Check(const Params &p)
         {"query",p.q},{"key",p.k},{"value",p.v},{"beta",p.beta},{"state",p.state},
         {"actual_seq_lengths",p.lengths},{"ssm_state_indices",p.indices},{"out",p.out}};
     for (const auto &input : required) {
-        if (!input.second) { OP_LOGE_WITH_INVALID_INPUT(entity, input.first); return false; }
+        if (!input.second) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, input.first, "input argument must not be nullptr"); return false; }
     }
     if (p.gk) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, "gk", "non-null gk is supported only by V1; V2 requires gk=nullptr");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, "gk", "gk is not supported");
         return false;
     }
     if (!std::isfinite(p.scale)) {
@@ -188,7 +188,7 @@ inline bool Check(const Params &p)
     for (const auto &input : tensors) {
         if (!Type(input.second,input.allowed,input.first,input.expected,entity)) return false;
         if (input.second && input.second->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
-            OP_LOGE_WITH_INVALID_INPUT_FORMAT(entity,input.first,"FRACTAL_NZ","any format except FRACTAL_NZ");
+            OP_LOGE_FOR_INVALID_FORMAT(entity, input.first, "FRACTAL_NZ", "any format except FRACTAL_NZ");
             return false;
         }
         if (!input.second || input.rank == 0) continue;
@@ -210,7 +210,7 @@ inline bool Check(const Params &p)
     }
     if (hv % hk || hv / hk > 16) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(entity,"query.HK,value.HV",
-            std::to_string(hk)+","+std::to_string(hv),"HV must be a multiple of HK and HV/HK must be in [1,16]");
+            std::to_string(hk)+","+std::to_string(hv),"HV/HK must be an integer in [1,16]");
         return false;
     }
     if (b > std::numeric_limits<int64_t>::max() / hv) {

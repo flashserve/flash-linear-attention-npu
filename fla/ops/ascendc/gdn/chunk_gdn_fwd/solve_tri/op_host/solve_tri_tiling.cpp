@@ -374,7 +374,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
  
      context->SetBlockDim(usedCoreNum);
  
-     // Select A2/A3 workspace at runtime; preserve the legacy path for other platforms.
+     // Use the optimized A2/A3 workspace and preserve upstream sizing elsewhere.
      uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
      size_t* ws = context->GetWorkspaceSizes(1);
      if constexpr (IsA2A3) {
@@ -390,7 +390,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
          }
          ws[0] = ((userWorkspaceSize + 511) / 512) * 512 + sysWorkspaceSize;
      } else {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) {
     // FP32 MBH：每 AIC 核一块 side×side FP32 NZ 中转（Fixpipe ChannelSplit L0C→GM→L1）
     // chunk16 纯 Vector，不需要中转；chunk32 把两个 32×32 打进 64×64 工作区
     size_t mbhSide = static_cast<size_t>(chunkSize);
@@ -402,7 +402,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     size_t userWorkspaceSize = static_cast<size_t>(usedCoreNum) * mbhSide * mbhSide * sizeof(float);
     userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
     ws[0] = userWorkspaceSize + sysWorkspaceSize;
-#else
+    } else {
      size_t userWorkspaceSize;
      if (chunkSize == 64) {
          constexpr size_t fp32WorkspaceSlots = 4;
@@ -416,7 +416,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      }
      userWorkspaceSize = ((userWorkspaceSize + 511) / 512) * 512;
      ws[0] = userWorkspaceSize + sysWorkspaceSize;
-#endif
+    }
      }
      return ge::GRAPH_SUCCESS;
  }

@@ -3,12 +3,12 @@
 
 #include "kernel_operator.h"
 #include "kernel_tiling/kernel_tiling.h"
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 #include "lib/matmul_intf.h"
 #endif
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -29,7 +29,7 @@
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_scaled_dot_kkt_vector.h"
 #endif
 
@@ -49,13 +49,13 @@ constexpr uint8_t SCORE_DONE_FLAG2 = 6;
 constexpr uint8_t SCORE_READY_FLAG0 = 4;
 constexpr uint8_t SCORE_READY_FLAG1 = 5;
 constexpr uint8_t SCORE_READY_FLAG2 = 7;
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 constexpr MatmulConfig CHUNK_SCALED_DOT_KKT_MM_CFG = GetNormalConfig(true);
 
 using CType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 using BiasType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, float>;
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using KktArchTag = Catlass::Arch::Ascend950;
 #else
 using KktArchTag = Catlass::Arch::AtlasA2;
@@ -63,7 +63,7 @@ using KktArchTag = Catlass::Arch::AtlasA2;
 using KktScoreDispatchPolicy = Catlass::Gemm::MmadPingpongTlaMulti<KktArchTag, true, false>;
 using KktInt128 = tla::Int<128>;
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 // The shared block clears L1 padding with InitConstValue. On A2 the clear
 // must finish before the following GM->L1 copy can overwrite the valid area.
 template <typename BaseCopy>
@@ -97,7 +97,7 @@ class ChunkScaledDotKkt {
     };
 
 public:
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
     using AType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType>;
     using BType = matmul::MatmulType<TPosition::GM, CubeFormat::ND, KType, true, LayoutMode::NONE, false>;
 #endif
@@ -160,7 +160,7 @@ public:
             pipe_->InitBuffer(gQueue_, BUFFER_NUM, btAlign_ * sizeof(float));
             pipe_->InitBuffer(betaQueue_, BUFFER_NUM, btAlign_ * sizeof(float));
             if (UseCatlassScore()) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 const int64_t scoreRows = ScoreRowBlockSize();
                 const int64_t gateRows = BRCB_ROWS;
 #else
@@ -184,7 +184,7 @@ public:
 
     __aicore__ inline void ProcessAiv()
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (!UseCatlassScore()) {
             return;
         }
@@ -265,7 +265,7 @@ public:
         return useCatlassScore_ != 0 && T_ > 0 && BT_ >= CATLASS_SCORE_MIN_BT && K_ > 0 && (K_ % 16) == 0;
     }
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
     matmul::Matmul<AType, BType, CType, BiasType, CHUNK_SCALED_DOT_KKT_MM_CFG> scoreMatmul;
 #endif
 
@@ -322,7 +322,7 @@ private:
 
     __aicore__ inline int64_t ScoreRowBlockSize() const
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         const int64_t rowBlock = SelectA5ScoreRowBlockLimit(BT_);
 #else
         constexpr int64_t rowBlock = SCORE_ROW_BLOCK_A2;
@@ -385,7 +385,7 @@ private:
         return colCount > 0;
     }
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
     __aicore__ inline void LaunchScoreTask(const TaskMeta &meta, int64_t scoreOffset, int64_t &cachedScoreValid)
     {
         const int64_t kOffset = ((meta.b * Hk_ + meta.h) * T_ + meta.rowStart) * K_;
@@ -417,7 +417,7 @@ private:
         if (cubeIdx >= usedAicNum_ || usedAicNum_ <= 0) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr int32_t ROW_BLOCK_LIMIT =
             BT_VALUE <= SCORE_ROW_BLOCK_A5_BT64 ? SCORE_ROW_BLOCK_A5_BT64 : SCORE_ROW_BLOCK_A5_BT128;
 #else
@@ -457,7 +457,7 @@ private:
                     continue;
                 }
                 const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
                 if (meta.valid < BT_) {
                     using PaddedBlockMmad = Catlass::Gemm::Block::BlockMmadTla<
                         KktScoreDispatchPolicy, L1TileShape, L0TileShape, KType, KType, float, void,
@@ -581,7 +581,7 @@ private:
                 continue;
             }
             const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             ComputeEpilogueScoreBlockRowsHvGroup(meta, rowBegin, rowCount, colCount, scoreOffset, subBlockIdx,
                                                  subBlockNum);
 #else
@@ -832,7 +832,7 @@ private:
 
     __aicore__ inline bool CanUseA5RegBaseEpilogue(int64_t rowBegin, int64_t rowCount, int64_t colCount) const
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         return BT_ == static_cast<int64_t>(KKT_A5_BT64) && btAlign_ == static_cast<int64_t>(KKT_A5_BT64) &&
                rowBegin == 0 && rowCount == static_cast<int64_t>(KKT_A5_BT64) &&
                colCount == static_cast<int64_t>(KKT_A5_BT64);
@@ -856,7 +856,7 @@ private:
                                                                   int64_t subBlockIdx,
                                                                   int64_t subBlockNum)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         WaitMte2ToV();
         auto scoreAddr = reinterpret_cast<uint64_t>(scoreTileLocal.GetPhyAddr());
         auto outAddr = reinterpret_cast<uint64_t>(outTileLocal.GetPhyAddr());
@@ -1065,7 +1065,7 @@ private:
         }
         PipeBarrier<PIPE_V>();
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr uint8_t brcbRepeats = 1;
 #else
         const uint8_t brcbRepeats = static_cast<uint8_t>((rows + BRCB_ROWS - 1) / BRCB_ROWS);

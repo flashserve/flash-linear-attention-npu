@@ -2,7 +2,7 @@
 #define GDN_ARCH22_FP32_SOLVE_PIPELINE_H
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // BSD-3-Clause. DAV_2201 分层 FP32 Solve 的私有迁移组件。
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 220
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 2201)
 #error "This private Solve pipeline is only compiled for DAV_2201"
 #endif
 #include "kernel_operator.h"

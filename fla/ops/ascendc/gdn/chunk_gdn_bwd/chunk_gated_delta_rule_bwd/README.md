@@ -2,18 +2,18 @@
 
 ## 功能
 
-`ChunkGatedDeltaRuleBwd` 实现 Gated Delta Rule 的分块反向计算。A5 上依次调度
-`ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、`ChunkGatedDeltaRuleBwdDhu` 和
-`ChunkGatedDeltaRuleBwdFinalize`。当前实现支持定长和变长序列、GVA、可选初始状态、
+`ChunkGatedDeltaRuleBwd` 实现 Gated Delta Rule 的分块反向计算。所有支持的 SoC 统一
+依次调度 `ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、`ChunkGatedDeltaRuleBwdDhu`
+和 `ChunkGatedDeltaRuleBwdFinalize`。当前实现支持定长和变长序列、GVA、可选初始状态、
 Q/K L2Norm 反向以及 beta sigmoid 反向。
 
-A2/A3 使用已有 `RecomputeWUFwd` 和 `ChunkBwdDvLocal` 生成内部 W/U 与局部 Value 梯度，
-再调用相同的 FwdH、DHU 和 arch22 单 kernel Finalize。W/U 保留在 executor 内部。
-前两个 A2/A3 组件使用自然指数，`useExp2=true` 时在内部将 FP32 gate 乘以 ln(2)；
-后续算子仍接收原始 gate 和原始 `useExp2` 属性。
+A2/A3 不再组合 `RecomputeWUFwd` 和 `ChunkBwdDvLocal`，而是与 A5 一致直接调用融合算子
+`ChunkGdnBwdIntra` 重计算内部 W/U 与局部 Value 梯度；W/U 保留在 executor 内部。
+BF16/FP32 gate、`useExp2` 与 varlen（空序列无 chunk 记录，天然跳过）均由该内核原生
+处理，不再做自然指数转换或空序列重编号。`recompute_w_u_fwd`、`chunk_bwd_dv_local`
+两项构建依赖暂随 arch22 包保留，executor 已不再调用。
 
-A2/A3 新增前序和非连续输出暂存仅在其私有分支执行。纯 `ascend950` 构建不编入
-这些新增 Host helper，也不加入 W/U、local-dV 两项额外依赖；A5 保持原有 Host 流程。
+A2/A3 仅保留非连续输出暂存这一私有分支。纯 `ascend950` 构建不编入这些 Host helper；
 含 A2/A3 的混合 SoC 构建仍共用 Host 对象，并在运行期选择平台分支。
 
 用于组合一致性对比的公开算子链依次由以下算子组成：
@@ -63,9 +63,9 @@ dO 固定为 BSND，可选的 betaRaw 固定为 BSN，与 q/k/v 的 `layout` 无
 
 `Hv` 必须能被 `Hk` 整除。变长模式要求物理 `B=1`；`cuSeqlensOptional` 必须从 0 开始、
 以 `T` 结束且单调不降，`chunkIndicesOptional` 按逻辑序列和 chunk 顺序排列。
-相邻相等的累计长度表示空序列，不产生 chunk。A2/A3 仅为无状态 W/U 重计算准备剔除空序列并
-重编号的内部 metadata；其它阶段保留原序列编号和状态布局。提供 initial state 时，空序列
-的 `dh0` 等于对应 `dht`，未提供 dht 时为零；未提供 initial state 时 `dh0` 仍为空。
+相邻相等的累计长度表示空序列，不产生 chunk，各阶段统一使用原始序列编号和状态布局，
+空序列因无 chunk 记录被内核天然跳过。提供 initial state 时，空序列
+的 `dh0` 等于对应 `dht`，未提供 dht 时为零；未提供 initial state 时，`dh0` 仍为空。
 `qRstdOptional/kRstdOptional` 仅在 `useQkL2normInKernel=true` 时提供；`betaRawOptional`
 仅在 `useBetaSigmoidInKernel=true` 时提供。
 
@@ -128,9 +128,10 @@ A5 沿用原有输出处理，本次不扩展其非连续输出支持范围。
 `Hv/Hk in {1,2,3,4}`。独立 A2/A3 Finalize 的 V=256、chunkSize=128 或更大头比例支持
 不代表整个 Bwd executor 已支持这些规格。
 
-A2/A3 组件复用尚需验证两个数值边界：RecomputeWUFwd 与 A5 Intra 的 BF16 中间舍入位置不同；
-ChunkBwdDvLocal 对 gate 差取 `min(delta,0)`，与非单调 gate 的直接指数公式可能不同。
-新增路径保留原 CPU 标杆和混合精度阈值，不能据前向有效 gate 的通过结果宣称已覆盖任意 gate 值域。
+A2/A3 与 A5 复用同一条 `ChunkGdnBwdIntra` 组合链，原先 RecomputeWUFwd/ChunkBwdDvLocal
+组合引入的两个数值边界（BF16 中间舍入位置不同、gate 差取 `min(delta,0)`）随组合移除
+而消失；非单调 gate 值域的覆盖结论仍以对应设备、版本的 ATK 记录为准，不能据前向有效
+gate 的通过结果宣称已覆盖任意 gate 值域。
 
 ## 测试
 
@@ -141,6 +142,11 @@ ChunkBwdDvLocal 对 gate 差取 `min(delta,0)`，与非单调 gate 的直接指�
 2. ATK 独立精度测试：组合 `ChunkGdnBwdIntra`、`ChunkGatedDeltaRuleFwdH`、
    `ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize` 已有的 CPU reference，
    使用 `mixed_tolerance_bm` 对比全部有效梯度。
+
+`test/` 下另附模型 case 的 msprof 性能测试：`test_bwd_performance.py` 构造 B=1、
+HK=16、HV=32（G=2）、T=11264、K=V=128、chunkSize=64、定长、BF16 主输入 + FP32 g/beta
+的模型 case 并计时；`run_bwd_perf.sh` 串联功能验证、msprof 采集与
+`gen_bwd_perf_report.py` 汇总，性能结论以 `op_summary` 的 `Task Duration(us)` 为准。
 
 用例需要覆盖 `BNSD/BSND/NTD/TND`、`Hv/Hk in {1,2,3,4}`、完整 chunk、尾块、变长序列、
 有无 initial state、`stateVFirst=true/false`、Q/K L2Norm 开关和 beta sigmoid 开关。

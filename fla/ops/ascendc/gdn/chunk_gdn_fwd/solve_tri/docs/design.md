@@ -12,7 +12,7 @@
 | A2/A3 | 16、32、128 | `SolveTriVectorFullFp32` 在 AIV 上使用前向替代，输入转 FP32，求解后转回输入 dtype。 |
 | A5 | 16、32、64、128 | `arch35/solve_tri_ascend950_*.h` 对应实现；片上和 workspace 的具体使用依 chunk size 而异。 |
 
-新增的参数及变长元数据校验仅在 A2/A3 启用：ACLNN 按运行时 `DAV_2201` 分支，tiling 按运行时 `ASCEND910B` / `ASCEND910_93` 分支。A5 保留 `546859c7` 的参数检查、元数据计数、TilingKey 回退和计算入口；`arch35/` 实现未修改。注册配置独立构造，A2/A3 使用 `PrecisionReduceFlag(false)`，A5 保持原值 `true`。
+新增的参数及变长元数据校验仅在 A2/A3 启用：ACLNN 按运行时 `DAV_2201` 分支，tiling 按运行时 `ASCEND910B` / `ASCEND910_93` 分支。A5 沿用当前上游的参数检查、元数据计数、TilingKey 回退和计算入口；`arch35/` 实现未修改。注册配置独立构造，A2/A3 使用 `PrecisionReduceFlag(false)`，A5 保持原值 `true`。
 
 ## A2/A3 chunk 64 流水
 
@@ -45,7 +45,7 @@ AIV1 的两次 strided GM 到 UB 搬运写入互不重叠的左右半块，共�
 
 A2/A3 的 C=16/32/128 路径不分配用户 workspace，C=64 按上述 4 MiB/AIC 分配。
 
-A5 完整保留 `546859c7` 的 workspace 分配分支，包括原有编译宏条件。通常的 host 编译未定义 `__CCE_AICORE__`，按原公式分配：C=64 为 `65536 * N` 字节，其他 C 为 `(6 + 4 * N) * C * C` 字节，其中 N 为实际使用的 AIC 数。若 host 显式定义 `__CCE_AICORE__ == 310`，则沿用原有每核 FP32 矩阵公式（C=16 为零，C=32 使用 64 阶，其余使用 C 阶）。各项按 512 字节对齐，并额外加上系统 workspace。本次仅隔离 A2/A3 的新增分配，不修改或证明 A5 基线分配的容量正确性。
+A5 沿用当前上游按运行时 `DAV_3510` 分配的公式：C=16 为零，C=32 每核使用一个 64 阶 FP32 矩阵，C=64/128 每核使用一个 C 阶 FP32 矩阵。各项按 512 字节对齐，并额外加上系统 workspace。该上游修复与 `546859c7` 的编译宏选择方式不同。
 
 ## 尚需设备证据
 

@@ -18,7 +18,8 @@
  *      "没有对应模板"的编译错误，抄错组合则会静默选错。
  *   5. 只给"必须在该实例中消除的分支"开口（dtype、模式、档位）；shape 相关的量走 TilingData，
  *      不进模板参数，否则实例数爆炸。
- *   6. 这里不写平台：A2/A3/A5 用同一份实例集合，平台在 kernel 入口按 __CCE_AICORE__ 选择实现。
+ *   6. 这里不写平台：A2/A3/A5 用同一份实例集合，平台在 kernel 入口按
+ *      defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510) 选择实现。
  *   7. TilingData 结构属于 op_kernel/<算子>_struct.h，不要与本文件混放。
  *   8. 归属：本示例按本仓新规范把 TPL 单独放 `_tiling_key.h`；结构样板
  *      `chunk_gated_delta_rule_bwd_finalize` 把它放在 `archXX/<算子>_struct.h`。两者等价，

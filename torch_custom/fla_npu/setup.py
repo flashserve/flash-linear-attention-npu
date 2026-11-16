@@ -9,6 +9,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -46,7 +47,13 @@ class CleanBuildPy(_build_py):
         if built_package_dir.exists():
             shutil.rmtree(built_package_dir)
         super().run()
-        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py"):
+        from build_layer_manifest import write_layer_manifest
+        write_layer_manifest(built_package_dir)
+        writer = runpy.run_path(str(REPO_ROOT / "scripts/package/ops_transformer/scripts/finalize_wheel_opp.py"))
+        for vendor in (built_package_dir / "opp/vendors").glob("*"):
+            if vendor.is_dir():
+                writer["_write_set_env"](vendor)
+        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
             src = SETUP_DIR / name
             if src.exists():
                 self.copy_file(str(src), str(Path(self.build_lib) / name))

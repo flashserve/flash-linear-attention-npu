@@ -25,7 +25,7 @@
 #include "chunk_bwd_dqkwg_common.h"
 #include "chunk_bwd_dqkwg_schedule.h"
 #include "kernel_operator.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_bwd_dqkwg_regbase.h"
 #endif
 
@@ -333,7 +333,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ComputeMul1H
     const LocalTensor<float> &tensorGTmpFp32, const LocalTensor<float> &tensorGFp32Left,
     const LocalTensor<float> &tensorGFp32Right, uint32_t BT_sub_start, uint32_t real_BT)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if (BT == 64) {
         Mul1Half<64, 0>((__ubuf__ float *)outFp32.GetPhyAddr(), (__ubuf__ float *)tensorGFp32Left.GetPhyAddr(),
                         (__ubuf__ float *)tensorMaskA.GetPhyAddr(), static_cast<uint16_t>(real_BT), scale);
@@ -395,7 +395,7 @@ template <typename DataType, typename GType>
 __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ComputeDqState(
     const LocalTensor<float> &tensorDqInFp32, const LocalTensor<float> &tensorGFp32, const LocalTensor<float> &tensorGTmpFp32, uint32_t real_BT)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     DqState((__ubuf__ float *)tensorDqInFp32.GetPhyAddr(), (__ubuf__ float *)tensorDqInFp32.GetPhyAddr(),
             (__ubuf__ float *)tensorGFp32.GetPhyAddr(), (__ubuf__ float *)tensorGTmpFp32.GetPhyAddr(), real_BT, scale);
 #else
@@ -465,7 +465,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessAVect
                 auto tensorHFp32 = inQue2.DeQue<float>();
                 auto tensorDhFp32 = tensorHFp32[hDhSize];
                 auto tensorHIn = tensorDhFp32.template ReinterpretCast<DataType>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 if (row == 0) {
                     DgLastMulAccum<DataType, false>(
                         (__ubuf__ float *)tensorSumFp32.GetPhyAddr(), (__ubuf__ DataType *)tensorHIn.GetPhyAddr(),
@@ -512,7 +512,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessAVect
         {
             auto tensorDwIn = inQue1.DeQue<DataType>();
             auto tensorDwOut = outQue1.AllocTensor<DataType>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             DwNegate<DataType>((__ubuf__ DataType *)tensorDwOut.GetPhyAddr(),
                                 (__ubuf__ DataType *)tensorDwIn[actual_dwSize].GetPhyAddr(),
                                 actual_dwSize);
@@ -876,7 +876,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
             Cast(tensorDgAdd, tensorDgIn[BT], RoundMode::CAST_NONE, BT);
         }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         if (std::is_same<DataType, bfloat16_t>::value &&
             BT == 64 && K == 128 && gvaMode && BUFFER_NUM == 2 &&
             real_BT > 32 && real_BT <= 64) {
