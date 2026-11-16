@@ -16,6 +16,7 @@
 #include "tiling_base/tiling_templates_registry.h"
 #include "register/op_def_registry.h"
 #include "platform/platform_infos_def.h"
+#include "platform/soc_spec.h"
 #include "err/ops_err.h"
 #include "recurrent_gated_delta_rule_error.h"
 #include "tiling/platform/platform_ascendc.h"
