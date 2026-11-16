@@ -16,6 +16,8 @@
 namespace optiling {
 namespace {
 
+static constexpr size_t kGTemplateMax = 4;
+
 uint64_t DataTypeKey(ge::DataType dtype, ge::DataType fp32Type,
                      uint64_t lowPrecisionKey, uint64_t fp32Key)
 {
@@ -210,7 +212,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const uint64_t strategyKey = isVarlen ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
     // G 1~4 仍走编译期模板；超过 4（仅 arch22 可达）落到 G_KEY=0 的运行时桶。
-    const uint64_t gKey = headRatio <= 4 ?
+    const uint64_t gKey = headRatio <= static_cast<int64_t>(kGTemplateMax) ?
         static_cast<uint64_t>(headRatio) : CHUNK_GDN_BWD_INTRA_G_RUNTIME;
     const uint64_t mainKey = mainDtype == ge::DT_BF16 ?
         CHUNK_GDN_BWD_INTRA_MAIN_BF16 : CHUNK_GDN_BWD_INTRA_MAIN_FP16;

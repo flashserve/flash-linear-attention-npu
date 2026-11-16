@@ -22,9 +22,6 @@ ASCENDC_TPL_ARGS_DECL(
     ChunkGdnBwdIntra,
     ASCENDC_TPL_UINT_DECL(STRATEGY_KEY, 1, ASCENDC_TPL_UI_LIST,
                           CHUNK_GDN_BWD_INTRA_FIXED, CHUNK_GDN_BWD_INTRA_VARLEN),
-    // 位宽 3 可表达 8 个取值，此处只用到 0/1/2/3/4 共 5 个。G>4 一律落到 0
-    // （运行时 G 桶），不新增取值；若将来改为按 G 实例化模板，取值数超过 8 时
-    // 必须先扩位宽，否则 TPL 编码重叠、分支路由错乱。
     ASCENDC_TPL_UINT_DECL(G_KEY, 3, ASCENDC_TPL_UI_LIST,
                           CHUNK_GDN_BWD_INTRA_G_RUNTIME, 1, 2, 3, 4),
     ASCENDC_TPL_UINT_DECL(MAIN_KEY, 1, ASCENDC_TPL_UI_LIST,

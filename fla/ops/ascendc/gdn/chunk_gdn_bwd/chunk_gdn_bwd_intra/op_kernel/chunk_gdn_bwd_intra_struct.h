@@ -32,9 +32,6 @@ struct ChunkGdnBwdIntraTilingData {
     int64_t useExp2;
     float scale;
     uint32_t reserved;
-    // G_KEY=0（运行时 G 桶）时生效的 GVA 比例；G_KEY 1~4 时与模板参数一致。
-    // 尾部追加（reserved 之后）：旧 tiling 块前缀字段偏移保持不变，避免
-    // host 与 OPP 增量混用时读到错位的 groupSize。
     int64_t groupSize;
 };
 

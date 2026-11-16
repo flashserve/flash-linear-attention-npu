@@ -16,6 +16,8 @@
 
 namespace GDN {
 
+static constexpr size_t kGTemplateMax = 4;
+
 template <uint32_t KEY>
 struct IntraMainType;
 template <>
@@ -45,7 +47,7 @@ __aicore__ inline void DispatchKernel(
     GM_ADDR dvLocal, GM_ADDR workspace,
     const ChunkGdnBwdIntraTilingData *__restrict tiling)
 {
-    static_assert(G_KEY <= 4, "G_KEY must be 0 (runtime) or in [1, 4].");
+    static_assert(G_KEY <= kGTemplateMax, "G_KEY must be 0 (runtime) or in [1, 4].");
     using MainT = typename IntraMainType<MAIN_KEY>::type;
     using GateT = typename IntraAuxType<GATE_KEY>::type;
     using BetaT = typename IntraAuxType<BETA_KEY>::type;
