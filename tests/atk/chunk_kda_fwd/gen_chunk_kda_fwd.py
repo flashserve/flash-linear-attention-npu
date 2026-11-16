@@ -229,7 +229,6 @@ NEGATIVE_COUNT = len(NEGATIVE_CASES)
 BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
 CHUNK32_CASE_COUNT = 44
 CHUNK32_SOURCE_IDS = tuple(range(254, 298))
-BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
 
 
 def _negative_case(local_id: int, soc: str) -> dict:
@@ -374,149 +373,6 @@ def _case_payload(case_id: int, spec: dict) -> dict:
     }
 
 
-def _chunk32_configs(case: dict, name: str) -> list[dict]:
-    configs = []
-    for item in case["inputs"]:
-        candidates = item if isinstance(item, list) else [item]
-        for config in candidates:
-            if config["name"] == name:
-                configs.append(config)
-    return configs
-
-
-def _chunk32_config(case: dict, name: str) -> dict:
-    configs = _chunk32_configs(case, name)
-    if not configs:
-        raise KeyError(f"chunk32 case {case['id']} is missing input {name!r}")
-    return configs[0]
-
-
-def _chunk32_input(case: dict, name: str):
-    return _chunk32_config(case, name)["range_values"]
-
-
-def _chunk32_has_tensor(case: dict, name: str) -> bool:
-    return any(config["range_values"] not in (None, "null") for config in _chunk32_configs(case, name))
-
-
-def _chunk32_distribution(case: dict, name: str) -> dict:
-    values = _chunk32_input(case, name)
-    if isinstance(values, dict) and values.get("name") == "nd":
-        return {
-            "kind": "normal",
-            "mean": float(values["mean"][0]),
-            "std": float(values["std"][0]),
-        }
-    if isinstance(values, list) and len(values) == 2:
-        return {"kind": "uniform", "low": float(values[0]), "high": float(values[1])}
-    raise ValueError(f"chunk32 case {case['id']} input {name!r} has unsupported distribution")
-
-
-def _chunk32_shape(case: dict) -> tuple[int, int, int, int, int, int]:
-    layout = _chunk32_input(case, "layout")
-    q_shape = _chunk32_config(case, "q")["shape"]
-    v_shape = _chunk32_config(case, "v")["shape"]
-    if layout == "BSND":
-        batch, total_t, h_num, k_dim = q_shape
-        hv_num, v_dim = v_shape[2:]
-    elif layout == "BNSD":
-        batch, h_num, total_t, k_dim = q_shape
-        hv_num, v_dim = v_shape[1], v_shape[3]
-    elif layout == "TND":
-        batch = 1
-        total_t, h_num, k_dim = q_shape
-        hv_num, v_dim = v_shape[1:]
-    elif layout == "NTD":
-        batch = 1
-        h_num, total_t, k_dim = q_shape
-        hv_num, v_dim = v_shape[0], v_shape[2]
-    else:
-        raise ValueError(f"chunk32 case {case['id']} has unsupported layout {layout!r}")
-    return int(batch), int(total_t), int(h_num), int(hv_num), int(k_dim), int(v_dim)
-
-
-def _chunk32_cu_seqlens(case: dict) -> str:
-    configs = _chunk32_configs(case, "cu_seqlens")
-    if not configs or all(config["range_values"] in (None, "null") for config in configs):
-        return ""
-    values = [config["range_values"] for config in configs]
-    if any(not isinstance(value, int) for value in values) or not values or values[0] != 0:
-        raise ValueError(f"chunk32 case {case['id']} has invalid cu_seqlens")
-    return ",".join(str(value) for value in values)
-
-
-def _chunk32_spec(case: dict) -> dict:
-    batch, total_t, h_num, hv_num, k_dim, v_dim = _chunk32_shape(case)
-    if (k_dim, v_dim) != (128, 128):
-        raise ValueError(f"chunk32 case {case['id']} requires K=V=128")
-    q_distribution = _chunk32_distribution(case, "q")
-    k_distribution = _chunk32_distribution(case, "k")
-    if q_distribution != k_distribution or q_distribution.get("mean", 0.0) != 0.0:
-        raise ValueError(f"chunk32 case {case['id']} requires identical zero-mean q/k distributions")
-    input_distributions = {
-        name: (
-            _chunk32_distribution(case, name)
-            if _chunk32_has_tensor(case, name)
-            else {"kind": "uniform", "low": -2.0, "high": 2.0}
-        )
-        for name in ("q", "k", "v", "g", "beta", "A_log", "dt_bias")
-    }
-    input_distributions["initial_state"] = (
-        _chunk32_distribution(case, "initial_state")
-        if _chunk32_has_tensor(case, "initial_state")
-        else {"kind": "uniform", "low": -0.02, "high": 0.02}
-    )
-    expected_error = case.get("expected_error_msg") or None
-    tags = "accuracy,chunk32,fused" + (",negative" if expected_error else "")
-    return {
-        "case_key": f"chunk32_{case['id']:03d}_{case['name']}",
-        "chunk32_source_id": int(case["id"]),
-        "tags": tags,
-        "route": "ascendc",
-        "B": batch,
-        "H": h_num,
-        "HV": hv_num,
-        "T": total_t,
-        "K": k_dim,
-        "V": v_dim,
-        "chunk_size": 32,
-        "layout": _chunk32_input(case, "layout"),
-        "q_dtype": _chunk32_config(case, "q")["dtype"],
-        "g_dtype": _chunk32_config(case, "g")["dtype"],
-        "beta_dtype": _chunk32_config(case, "beta")["dtype"],
-        "scale": float(_chunk32_input(case, "scale")),
-        "initial_state": _chunk32_has_tensor(case, "initial_state"),
-        "output_final_state": bool(_chunk32_input(case, "output_final_state")),
-        "cu_seqlens": _chunk32_cu_seqlens(case),
-        "explicit_chunk_indices": _chunk32_has_tensor(case, "chunk_indices"),
-        "safe_gate": bool(_chunk32_input(case, "safe_gate")),
-        "lower_bound": float(_chunk32_input(case, "lower_bound")),
-        "use_gate_in_kernel": bool(_chunk32_input(case, "use_gate_in_kernel")),
-        "dt_bias": _chunk32_has_tensor(case, "dt_bias"),
-        "disable_recompute": bool(_chunk32_input(case, "disable_recompute")),
-        "return_intermediate_states": bool(_chunk32_input(case, "return_intermediate_states")),
-        "state_v_first": bool(_chunk32_input(case, "state_v_first")),
-        "epsilon": 1e-6,
-        "use_qk_l2norm_in_kernel": True,
-        "use_beta_sigmoid_in_kernel": True,
-        "allow_neg_eigval": False,
-        "use_exp2": True,
-        "data_profile": "chunk32_fused",
-        "input_distributions": input_distributions,
-        "seed": int(case["id"]),
-        "expected_error_msg": expected_error,
-    }
-
-
-def _chunk32_specs() -> list[dict]:
-    cases = json.loads(CHUNK32_CASES_PATH.read_text(encoding="utf-8"))
-    if len(cases) != CHUNK32_CASE_COUNT:
-        raise ValueError(f"expected {CHUNK32_CASE_COUNT} chunk32 cases, got {len(cases)}")
-    if [case["id"] for case in cases] != list(range(CHUNK32_CASE_COUNT)):
-        raise ValueError("chunk32 source IDs must be contiguous")
-    return [_chunk32_spec(case) for case in cases]
-
-
 def _is_chunk32_payload(case: dict) -> bool:
     for item in case["inputs"]:
         config = item[0] if isinstance(item, list) else item
@@ -527,16 +383,6 @@ def _is_chunk32_payload(case: dict) -> bool:
 
 def _chunk32_from_parent(case: dict) -> dict:
     spec = json.loads(next(item for item in case["inputs"] if item["name"] == "case_spec")["range_values"])
-    input_distributions = {
-        "q": {"kind": "normal", "mean": 0.0, "std": float(spec["qk_scale"])},
-        "k": {"kind": "normal", "mean": 0.0, "std": float(spec["qk_scale"])},
-        "v": {"kind": "normal", "mean": 0.0, "std": float(spec["v_scale"])},
-        "g": {"kind": "normal", "mean": 0.0, "std": float(spec["gate_scale"])},
-        "beta": {"kind": "normal", "mean": float(spec["beta_bias"]), "std": float(spec["beta_scale"])},
-        "A_log": {"kind": "normal", "mean": 0.0, "std": float(spec["a_log_scale"])},
-        "dt_bias": {"kind": "normal", "mean": float(spec["dt_bias_mean"]), "std": float(spec["dt_bias_scale"])},
-        "initial_state": {"kind": "uniform", "low": -0.02, "high": 0.02},
-    }
     spec.update({
         "case_key": f"chunk32_{case['id']}_{spec['case_key']}",
         "chunk32_source_id": case["id"],
@@ -545,7 +391,6 @@ def _chunk32_from_parent(case: dict) -> dict:
         "disable_recompute": False,
         "return_intermediate_states": False,
         "data_profile": "chunk32_fused",
-        "input_distributions": input_distributions,
         "epsilon": 1e-6,
         "use_qk_l2norm_in_kernel": True,
         "use_beta_sigmoid_in_kernel": True,

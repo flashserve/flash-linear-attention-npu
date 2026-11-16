@@ -152,24 +152,6 @@ def _normal_quantized(
     return value.to(original_dtype).to(target_dtype).to(device)
 
 
-def _chunk32_quantized(spec, name, shape, generator, original_dtype, target_dtype, device):
-    distribution = spec["input_distributions"][name]
-    if distribution["kind"] == "uniform":
-        if math.prod(shape) == 1:
-            values = torch.rand(1, generator=generator)
-            values = values * (distribution["high"] - distribution["low"]) + distribution["low"]
-            values = values.reshape(shape)
-        else:
-            values = np.random.uniform(
-                distribution["low"], distribution["high"], size=shape,
-            ).astype(np.float32)
-        return torch.as_tensor(values).to(original_dtype).to(target_dtype).to(device)
-    if distribution["kind"] == "normal":
-        values = torch.normal(distribution["mean"], distribution["std"], shape, generator=generator)
-        return values.to(original_dtype).to(target_dtype).to(device)
-    raise ValueError(f"unsupported chunk32 distribution: {distribution}")
-
-
 def _layout_from_bsnd(tensor: torch.Tensor, layout: str, *, beta: bool = False) -> torch.Tensor:
     if layout == "BSND":
         return tensor.contiguous()
@@ -217,8 +199,6 @@ def _prepare_inputs(
     v_dim = int(spec["V"])
     layout = str(spec["layout"])
     data_profile = str(spec.get("data_profile", "uniform"))
-    if data_profile == "chunk32_fused":
-        np.random.seed(seed)
 
     q_original = _DTYPES[str(spec["q_dtype"])]
     q_target = _target_dtype(str(spec["q_dtype"]), high_precision)
@@ -228,20 +208,16 @@ def _prepare_inputs(
     beta_target = _target_dtype(str(spec["beta_dtype"]), high_precision)
     fp32_target = torch.float64 if high_precision else torch.float32
 
-    if data_profile == "chunk32_fused":
-        q_bsnd = _chunk32_quantized(spec, "q", (batch, total_t, h_num, k_dim), generator, q_original, q_target, device)
-        k_bsnd = _chunk32_quantized(spec, "k", (batch, total_t, h_num, k_dim), generator, q_original, q_target, device)
-        v_bsnd = _chunk32_quantized(spec, "v", (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device)
-        g_bsnd = _chunk32_quantized(spec, "g", (batch, total_t, hv_num, k_dim), generator, g_original, g_target, device)
-        beta_bsnd = _chunk32_quantized(spec, "beta", (batch, total_t, hv_num), generator, beta_original, beta_target, device)
-    elif data_profile == "model_h96":
+    if data_profile in {"chunk32_fused", "model_h96"}:
+        # chunk32 在 kernel 内做 q/k L2 norm 和 beta sigmoid，输入不做这些预处理。
+        preprocess = data_profile == "model_h96"
         q_bsnd = _normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
-            std=float(spec["qk_scale"]), l2_normalize=True,
+            std=float(spec["qk_scale"]), l2_normalize=preprocess,
         )
         k_bsnd = _normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
-            std=float(spec["qk_scale"]), l2_normalize=True,
+            std=float(spec["qk_scale"]), l2_normalize=preprocess,
         )
         v_bsnd = _normal_quantized(
             (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device,
@@ -253,7 +229,7 @@ def _prepare_inputs(
         )
         beta_bsnd = _normal_quantized(
             (batch, total_t, hv_num), generator, beta_original, beta_target, device,
-            mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=True,
+            mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=preprocess,
         )
     else:
         data_scale = float(spec["data_scale"])
@@ -286,9 +262,7 @@ def _prepare_inputs(
 
     A_log = None
     if _as_bool(spec["use_gate_in_kernel"]):
-        if data_profile == "chunk32_fused":
-            A_log = _chunk32_quantized(spec, "A_log", (hv_num,), generator, torch.float32, fp32_target, device)
-        elif data_profile == "model_h96":
+        if data_profile in {"chunk32_fused", "model_h96"}:
             A_log = _normal_quantized(
                 (hv_num,), generator, torch.float32, fp32_target, device,
                 std=float(spec["a_log_scale"]),
@@ -299,9 +273,7 @@ def _prepare_inputs(
             )
     dt_bias = None
     if _as_bool(spec["dt_bias"]):
-        if data_profile == "chunk32_fused":
-            dt_bias = _chunk32_quantized(spec, "dt_bias", (hv_num * k_dim,), generator, torch.float32, fp32_target, device)
-        elif data_profile == "model_h96":
+        if data_profile in {"chunk32_fused", "model_h96"}:
             dt_bias = _normal_quantized(
                 (hv_num * k_dim,), generator, torch.float32, fp32_target, device,
                 mean=float(spec["dt_bias_mean"]), std=float(spec["dt_bias_scale"]),
@@ -321,14 +293,9 @@ def _prepare_inputs(
             if _as_bool(spec["state_v_first"])
             else (seq_num, hv_num, k_dim, v_dim)
         )
-        if data_profile == "chunk32_fused":
-            initial_state = _chunk32_quantized(
-                spec, "initial_state", state_shape, generator, torch.float32, fp32_target, device,
-            )
-        else:
-            initial_state = _random_quantized(
-                state_shape, generator, torch.float32, fp32_target, device, low=-0.02, high=0.02,
-            )
+        initial_state = _random_quantized(
+            state_shape, generator, torch.float32, fp32_target, device, low=-0.02, high=0.02,
+        )
 
     chunk_indices = None
     if _as_bool(spec["explicit_chunk_indices"]):
@@ -1163,32 +1130,15 @@ def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
 class ChunkKdaFwdApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
-        self.task_result = task_result
         self.spec = None
         self.inputs = None
         case_config = getattr(task_result, "case_config", None)
         case_id = case_config.get("id") if isinstance(case_config, dict) else getattr(case_config, "id", None)
         self.runtime_case_id = None if case_id is None else int(case_id)
         self.high_precision = self.device == "cpu"
-        self._chunk32_api = None
-
-    @staticmethod
-    def _new_chunk32_api(task_result):
-        # 复用 chunk32 的 legacy case_spec 解析、FP64 golden 和 NPU 输出契约，
-        # 但不让子 executor 的 @register 覆盖父套件注册项。
-        path = Path(__file__).resolve().parent / "chunk32" / "executor_chunk_kda_fwd_chunk32.py"
-        source = path.read_text(encoding="utf-8").replace('@register("executor_chunk_kda_fwd")\n', '')
-        namespace = {}
-        exec(compile(source, str(path), "exec"), namespace)
-        return namespace["ChunkKdaFwdApi"](task_result)
 
     def init_by_input_data(self, input_data: InputDataset):
         self.spec = json.loads(str(input_data.kwargs["case_spec"]))
-        if "negative" not in str(self.spec["tags"]).split(","):
-            self._chunk32_api = self._new_chunk32_api(self.task_result)
-            self._chunk32_api.init_by_input_data(input_data)
-            self.inputs = self._chunk32_api.inputs
-            return
         runtime_seed = int(self.spec["seed"])
         self.inputs = _prepare_inputs(
             self.spec,
@@ -1208,16 +1158,6 @@ class ChunkKdaFwdApi(BaseApi):
             )
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        if self._chunk32_api is not None:
-            previous = os.environ.get("KDA_ATK_VISIBLE_OUTPUTS")
-            os.environ["KDA_ATK_VISIBLE_OUTPUTS"] = "attn_out,final_state"
-            try:
-                return self._chunk32_api(input_data, with_output)
-            finally:
-                if previous is None:
-                    os.environ.pop("KDA_ATK_VISIBLE_OUTPUTS", None)
-                else:
-                    os.environ["KDA_ATK_VISIBLE_OUTPUTS"] = previous
         del input_data, with_output
         if "negative" in str(self.spec["tags"]).split(","):
             if self.device != "npu":
