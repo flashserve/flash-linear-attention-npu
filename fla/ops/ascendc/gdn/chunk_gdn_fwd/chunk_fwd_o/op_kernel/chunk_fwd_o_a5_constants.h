@@ -16,6 +16,9 @@ constexpr int64_t CHUNK_FWD_O_A5_BT = 64;
 constexpr int64_t CHUNK_FWD_O_A5_K = 128;
 constexpr int64_t CHUNK_FWD_O_A5_V = 128;
 
+constexpr int64_t CHUNK_FWD_O_A5_MIN_GVA_RATIO = 1;
+constexpr int64_t CHUNK_FWD_O_A5_MAX_GVA_RATIO = 16;
+
 constexpr uint32_t CHUNK_FWD_O_APRIME_SLOT_BYTES =
     static_cast<uint32_t>(CHUNK_FWD_O_A5_BT * CHUNK_FWD_O_A5_BT * sizeof(uint16_t));
 constexpr uint32_t CHUNK_FWD_O_APRIME_WINDOW_COUNT = 2U;
