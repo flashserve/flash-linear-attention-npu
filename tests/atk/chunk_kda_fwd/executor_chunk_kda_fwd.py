@@ -1172,7 +1172,7 @@ class ChunkKdaFwdApi(BaseApi):
             )
         selected_names = _selected_output_names()
         named_visible = tuple(
-            (name, output.to(torch.float32) if output.is_floating_point() else output)
+            (name, output.to(torch.float32) if self.high_precision and output.is_floating_point() else output)
             for name, output in zip(_OUTPUT_NAMES, outputs)
             if isinstance(output, torch.Tensor)
             and (selected_names is None or name in selected_names)
