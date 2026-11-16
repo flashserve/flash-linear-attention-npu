@@ -22,7 +22,7 @@
 | 1. 新增独立 experimental 目录 | 已实现；真实算子在 `experimental/ops/fused_recurrent_rwkv8/`，实验框架、安装和测试也在 experimental 内 | 2、4、5 |
 | 2. 两种构建模式严格互斥 | 已实现默认正式、显式实验；列表与交叉算子拒绝已验证 | 1、2、3 |
 | 3. 正常构建、打包、验证，独立产物 | 有 run、分步 wheel、一键 wheel 和手动验证入口；实包结果见本次记录 | 4、5 |
-| 4. PR 变更识别及 CI 回归 | 通过；当前布局可识别变更算子，实验相关改动运行现有正式 CI，只守护对正式算子的影响，不要求实验功能 CI | 6 |
+| 4. 实验相关改动的正式影响回归 CI | 通过；复用现有正式 CI，只守护对正式算子的影响，实验算子自身功能正确性不通过 CI 守护 | 6 |
 | 5. 不影响稳定构建、打包和发布 | 通过；依据默认路径检查、共享回归及 A2 实编，按需求方确认扩展认可至 A3/A5；本次未执行真实发布 | 1、7、8 |
 
 ## 命令约定
@@ -117,19 +117,7 @@ python experimental/_tests/validate.py --soc ascend910b --mode quick --device 0 
 
 功能：使用 #446 迁入的真实 `fused_recurrent_rwkv8`，不是占位或 recompute 样例。quick 计划执行默认队列和 inline 各 3 条 NPU/CPU reference 对拍，并检查 3 种安装拒绝、17 种装载隔离；结果以输出 `summary.json` 为准。`--mode full` 才是各 209 条全量用例，本次未执行 full。
 
-### 6. PR 变更、多层路径及正式影响回归 CI
-
-```bash
-# 列出深层算子文件变更，供旧路径解析工具读取。
-printf '%s\n' \
-  experimental/ops/fused_recurrent_rwkv8/op_kernel/fused_recurrent_rwkv8.cpp \
-  experimental/ops/fused_recurrent_rwkv8/op_host/op_api/aclnn_fused_recurrent_rwkv8.cpp \
-  > "$OUT/changed-files.txt"
-# 只解析当前目录布局的变更算子，预期 fused_recurrent_rwkv8；此命令不会构建或触发 CI。
-python scripts/ci/parse_changed_ops.py "$OUT/changed-files.txt" TRUE
-```
-
-本次调用解析函数验证，上述两类路径均得到 RWKV8。临时夹具 `experimental/ops/group/rwkv/` 的发现报缺少 `group/CMakeLists.txt`，变更解析为空。本次按既定 `experimental/ops/<op>/` 布局及算子内部深层文件验收，不扩展任意层级的算子分类。
+### 6. 正式影响回归 CI
 
 **验收通过：实验算子相关改动跑 CI，只守护不对正式算子造成影响；实验算子自身功能正确性不通过 CI 守护。** 复用现有正式 CI，不新增独立实验 suite/job，也不要求在 CI 中编译或对拍实验算子。
 
