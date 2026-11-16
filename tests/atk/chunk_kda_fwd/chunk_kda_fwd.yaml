@@ -137,7 +137,7 @@ inputs:
     dtypes:
       values: [int]
     ranges:
-      # K/V 只交付两档且必须同档：K=V=64 或 K=V=128；chunk32 仅允许 K=V=128。
+      # K/V 只交付两档且必须同档：K=V=64 或 K=V=128；固化精度矩阵使用 K=V=128。
       valid:
         values: [32, 64]
       invalid:
@@ -169,7 +169,7 @@ inputs:
       values: [string]
     ranges:
       valid:
-        values: [bf16, fp32]
+        values: [fp32]
       invalid:
         values: [fp16]
   - name: beta_dtype
