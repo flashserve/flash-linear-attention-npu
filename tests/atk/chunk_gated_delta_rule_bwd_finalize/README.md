@@ -270,8 +270,8 @@ actual 数字与 expected 关键词，且拒绝返回 executor；另 3 条合法
 
 ## 本次验证状态
 
-已有 A2 实测绑定源码 `46a46ea2e91d13317159bed2c4f4c3968bcd8ef0`，各项结果按下表的 scope 读取。
-本次自检整改源码正在准备新的构建与回归，结果待新回执记录。
+最新 A2 实测绑定自检整改源码 `a458ab293a3458cf08510a7208ce5154919e4e7f`，各项结果按下表的 scope 读取。
+此前 ACLNN 调整的 `46a46ea2` 结果保留为独立历史记录。
 
 | 平台与环境 | 源码与 scope | 已有结果或待验项目 |
 | --- | --- | --- |
@@ -279,7 +279,7 @@ actual 数字与 expected 关键词，且拒绝返回 executor；另 3 条合法
 | CPU / Host | `46a46ea2` 对应源码与回执 | alias helper 251 组、ABI 10 通过/2 声明跳过、完整 Bwd Host 对象编译通过，3112 组布局结果沿用已有回执 |
 | A3 / A5 | 对应设备版本待绑定 | 独立 Finalize 设备回归待验证 |
 | A2 / A3 / A5 | 对应设备版本待绑定 | 完整 Bwd 设备链路、Example ST、全量 MSS52 与完整确定性回归待验证 |
-| 本次自检整改 | 新源码与工具版本待冻结 | SDK/wheel、受影响回归、新异常参数路径及 UB 重构产物对照待验证 |
+| A2 910B3 / CANN 9.1.0.beta1 | `a458ab29` 自检整改，工具 `0c1972e6` | SDK/wheel、accuracy 204/204、keys 40/40、Host 18/18、alias 240 次、新 Bwd 负向 11/11 通过，两份设备 kernel 的整文件 SHA256 与原版相同 |
 
 A2 的安装身份和 scope 细节见[ACLNN 职责调整回归](#2026-11-16-aclnn-职责调整回归)。
 三核心性能使用[保留版本的测量结果](#保留版本的三核心性能与-workspace)，绑定候选
@@ -350,6 +350,33 @@ L0 使用基线日志头。完整 Bwd Host 对象使用相同实际 CMake 参数
 
 binding SHA256 为 `ae12a615e1d3179213850917b98918a21318103709859dd80f995bdf3b2201d5`，wheel SHA256 为 `e592a33613b1fc751473777297f0a6c4c10171d865f60497845a4b56dc7360fd`，
 本轮完整审核回执 SHA256 为 `e894d04e0478719eb0527f7a8d00cf5cdb732d4fe754704ad33156ab034dcddf`。
+
+### 2026-11-16 operator-review 自检整改回归
+
+实际测试源码为 `a458ab293a3458cf08510a7208ce5154919e4e7f`，工具为
+`0c1972e63fa799189d50e1c874ebda9c716ded42`。本次将 QK 批尾借用的 UB 布局集中到
+具名常量，并增加容量、组成关系和 32B 对齐静态断言。完整 Bwd 的单边 rstd 诊断在读取
+shape 前处理空指针，截短 `chunk_indices` 在读取 pair 和生成报文前校验长度。
+
+A2 910B3/CANN 9.1.0.beta1 实际重新构建、安装并通过 accuracy 204/204、keys 40/40
+（32 实际 key）、Finalize Host 返回码与完整消息 18/18、alias 240 次（208 次重叠）。
+源码 Host alias helper 251 组和完整 Bwd Host 对象编译通过，ABI 为 10 通过、2 声明跳过。
+两份设备 kernel 对象与 `46a46ea2` 安装件逐文件 SHA256 相同。
+
+新增完整 Bwd 回归脚本 `../chunk_gated_delta_rule_bwd/scripts/check_host_contract.py`
+通过公开 GetWorkspaceSize 入口检查参数错误。实际执行 `--negative-only` 的 11 个用例，
+覆盖单边 rstd、optional 开关组合、空或截短 pair 及非规范 pair，全部匹配返回码、完整
+消息片段和空 executor。所用共享库由当前 Bwd Host TU 及本轮实际 CMake 参数编译、链接。
+这组测试在参数检查早退，完整 Bwd 合法构图模式的 5 个用例及设备链路待完整依赖环境验证。
+
+A5 的完整 Bwd 共享 Host 同样包含上述两条异常诊断修订，其设备回归待验。A3/A5、
+完整 Bwd 设备链路/Example ST、全量 MSS52、完整确定性及当前 head 正式 NPU CI/Owner
+门禁继续按各自回执记录。三核心性能仍读取下节保留版本的测量结果。
+
+binding SHA256 为 `382dd152992d503d2f4c581c9fbe1326f64f8391a5a7e046c03b9a0a959ac710`，
+wheel SHA256 为 `54a0bcb93260558003cf535a38f2d996616879c471be2ffd944ae5661965c63c`，
+本轮收审回执 SHA256 为 `162f14c236f5274c86d2efcf06c8c2ca45aaff52665bab11c577a9f6c6f641f5`。
+17 份必要结果回收到本地，原始日志与张量保存在远端。
 
 ### 保留版本的三核心性能与 workspace
 
