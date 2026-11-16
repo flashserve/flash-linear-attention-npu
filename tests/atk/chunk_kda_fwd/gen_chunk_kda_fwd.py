@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from copy import deepcopy
 from pathlib import Path
 
 try:
@@ -226,9 +225,6 @@ NEGATIVE_CASES = (
 )
 
 NEGATIVE_COUNT = len(NEGATIVE_CASES)
-BASE_CASE_COUNT = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
-CHUNK32_CASE_COUNT = 44
-CHUNK32_SOURCE_IDS = tuple(range(254, 298))
 
 
 def _negative_case(local_id: int, soc: str) -> dict:
@@ -280,7 +276,6 @@ def build_specs() -> list[dict]:
         specs.extend(
             _negative_case(local_id, soc) for local_id in range(NEGATIVE_COUNT)
         )
-    specs.extend(_chunk32_specs())
     return specs
 
 
@@ -303,7 +298,6 @@ def _case_payload(case_id: int, spec: dict) -> dict:
     a5_accuracy_end = 2 * POSITIVE_COUNT + NEGATIVE_COUNT
     metadata = {
         "profile": (
-            "a5_chunk32" if case_id >= BASE_CASE_COUNT else
             "a2_accuracy" if case_id < a2_accuracy_end else
             "a2_negative" if case_id < a2_negative_end else
             "a5_accuracy" if case_id < a5_accuracy_end else
@@ -350,8 +344,8 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         _input("negative_case", "bool", "negative" in str(spec["tags"]).split(",")),
     ]
 
-    expected_error_msg = spec.get("expected_error_msg")
-    if expected_error_msg is None and "expected_return_code" in spec:
+    expected_error_msg = None
+    if "expected_return_code" in spec:
         expected_error_msg = (
             f"{spec['expected_code_name']}({spec['expected_return_code']}): "
             f"{spec['expected_message']}"
@@ -371,40 +365,6 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         "inputs": inputs,
         "save_name": "chunk_kda_fwd",
     }
-
-
-def _is_chunk32_payload(case: dict) -> bool:
-    for item in case["inputs"]:
-        config = item[0] if isinstance(item, list) else item
-        if config["name"] == "case_spec":
-            return json.loads(config["range_values"]).get("profile") == "a5_chunk32" or "chunk32_source_id" in json.loads(config["range_values"])
-    return False
-
-
-def _chunk32_from_parent(case: dict) -> dict:
-    spec = json.loads(next(item for item in case["inputs"] if item["name"] == "case_spec")["range_values"])
-    spec.update({
-        "case_key": f"chunk32_{case['id']}_{spec['case_key']}",
-        "chunk32_source_id": case["id"],
-        "profile": "a5_chunk32",
-        "chunk_size": 32,
-        "disable_recompute": False,
-        "return_intermediate_states": False,
-        "data_profile": "chunk32_fused",
-        "epsilon": 1e-6,
-        "use_qk_l2norm_in_kernel": True,
-        "use_beta_sigmoid_in_kernel": True,
-        "tags": "accuracy,chunk32,fused",
-    })
-    return spec
-
-
-def _chunk32_specs() -> list[dict]:
-    cases = json.loads(Path(__file__).with_name("atk_chunk_kda_fwd.json").read_text(encoding="utf-8"))
-    selected = [case for case in cases if case["id"] in CHUNK32_SOURCE_IDS]
-    if len(selected) != CHUNK32_CASE_COUNT:
-        raise ValueError(f"expected {CHUNK32_CASE_COUNT} parent cases, got {len(selected)}")
-    return [_chunk32_from_parent(case) for case in selected]
 
 
 def build_cases() -> list[CaseConfig]:
@@ -436,38 +396,20 @@ def main() -> None:
         default=Path(__file__).with_name("atk_chunk_kda_fwd.json"),
     )
     parser.add_argument("--summary", action="store_true")
-    parser.add_argument(
-        "--merge-frozen-chunk32",
-        action="store_true",
-        help="Append converted chunk32 cases to the curated accuracy JSON without duplicating them.",
-    )
     args = parser.parse_args()
 
-    generated = [_case_payload(case_id, spec) for case_id, spec in enumerate(build_specs())]
-    chunk32_payloads = generated[BASE_CASE_COUNT:]
-    if args.merge_frozen_chunk32:
-        existing = json.loads(args.output.read_text(encoding="utf-8"))
-        if not isinstance(existing, list):
-            raise ValueError(f"{args.output}: expected a JSON case list")
-        payloads = [case for case in existing if not _is_chunk32_payload(case)]
-        for case in payloads:
-            case["standard"] = deepcopy(L1_STANDARD)
-        payloads += chunk32_payloads
-    else:
-        payloads = generated
-    ids = [case["id"] for case in payloads]
-    if len(ids) != len(set(ids)):
-        raise ValueError(f"{args.output}: duplicate case IDs")
+    payloads = [_case_payload(case_id, spec) for case_id, spec in enumerate(build_specs())]
     args.output.write_text(
         json.dumps(payloads, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     if args.summary:
+        total = 2 * (POSITIVE_COUNT + NEGATIVE_COUNT)
         a2_accuracy_end = POSITIVE_COUNT
         a2_negative_end = POSITIVE_COUNT + NEGATIVE_COUNT
         a5_accuracy_end = 2 * POSITIVE_COUNT + NEGATIVE_COUNT
         print(
-            f"total={len(generated)} a2_accuracy={POSITIVE_COUNT} a2_negative={NEGATIVE_COUNT} "
+            f"total={total} a2_accuracy={POSITIVE_COUNT} a2_negative={NEGATIVE_COUNT} "
             f"a5_accuracy={POSITIVE_COUNT} a5_negative={NEGATIVE_COUNT}"
         )
         print(
@@ -476,12 +418,7 @@ def main() -> None:
         )
         print(
             f"a5_accuracy_ids={a2_negative_end}-{a5_accuracy_end - 1} "
-            f"a5_negative_ids={a5_accuracy_end}-{BASE_CASE_COUNT - 1}"
-        )
-        print(
-            f"chunk32_cases={CHUNK32_CASE_COUNT} "
-            f"chunk32_ids={BASE_CASE_COUNT}-{BASE_CASE_COUNT + CHUNK32_CASE_COUNT - 1} "
-            f"output_cases={len(payloads)}"
+            f"a5_negative_ids={a5_accuracy_end}-{total - 1}"
         )
 
 

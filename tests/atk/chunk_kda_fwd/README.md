@@ -29,11 +29,7 @@
   `mixed_tolerance_bm`。转换保留原始 shape、dtype、layout、seed、state、varlen 和调用开关；
   前 4 条 A2 负向 case 不转换，chunk32 仅支持 A5。
 
-`gen_chunk_kda_fwd.py` 是统一转换入口。用以下命令可幂等更新正式 accuracy JSON，不会重复追加：
-
-```bash
-python3 tests/atk/chunk_kda_fwd/gen_chunk_kda_fwd.py --merge-frozen-chunk32 --summary
-```
+以上 92 条 case 已固化在正式 accuracy JSON 中，执行精度测试时直接读取，不需要运行 case 转换或合并脚本。
 
 执行时，chunk32 与 chunk64 统一使用本目录 executor，不再保留独立的 chunk32 子目录或第二套执行入口；负向 case 保留本目录的 ACLNN 拦截检查。容差统一使用 `mixed_tolerance_bm`。
 

@@ -195,7 +195,7 @@ bash tests/atk/run_test_cpu.sh -op=<op_name> -scope=accuracy
 三路双标杆，精度入口为该算子 `README.md` 中的 `scripts/run_matrix.sh`；统一脚本仍用于其
 性能、确定性和 mssanitizer。
 
-`chunk_kda_fwd` 的 Ascend950 chunk32 融合路径与 chunk64 统一在 `chunk_kda_fwd/` 下执行，精度、性能和 mssanitizer 均使用父目录统一入口，不再保留独立的 `chunk32/` 子目录。父目录的 `gen_chunk_kda_fwd.py` 统一生成 case，使用真实公开签名或 legacy marker 输入；公开调用入口为
+`chunk_kda_fwd` 的 Ascend950 chunk32 融合路径与 chunk64 统一在 `chunk_kda_fwd/` 下执行，精度、性能和 mssanitizer 均使用父目录统一入口，不再保留独立的 `chunk32/` 子目录。正式 accuracy JSON 固化 chunk32 与 chunk64 case，统一使用真实公开签名或 legacy marker 输入；公开调用入口为
 `fla_npu.ops.ascendc.chunk_kda_fwd`，底层进入 `aclnnChunkKdaFwdV2`；chunk32 实际路由到
 独立 L0 算子 `ChunkKdaFwdFused`（默认 TilingKey），既有非 fused 分支仍为 `ChunkKdaFwd` 的 `1/2`。
 
