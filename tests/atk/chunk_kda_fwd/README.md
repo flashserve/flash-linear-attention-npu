@@ -62,9 +62,9 @@ CASE_START=0 CASE_END=5 \
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=accuracy
 ```
 
-确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 #440 的 63-token 单序列
-尾块场景，通过 96 个 value heads 放大并行调度覆盖，同时启用 `disable_recompute=true`、最终状态
-和全部中间量：
+性能用例包含同 shape 的 chunk64 ID 250 和 chunk32 ID 508。确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 chunk64 ID 250/298 及对应 chunk32 ID 508/509；其中 ID 298/509 覆盖 #440 的 63-token 单序列
+尾块场景，通过 96 个 value heads 放大并行调度覆盖。chunk32 不导出 recompute 中间量，其余
+shape、varlen、dtype 和 final state 配置与来源用例一致：
 
 ```bash
 DC_LOOP_NUMS=100 \
