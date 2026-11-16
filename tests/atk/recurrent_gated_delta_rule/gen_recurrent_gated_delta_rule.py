@@ -3,7 +3,7 @@
 The committed accuracy matrix is frozen by detailed-design ID:
   * 0-99: RGDR-P001 through RGDR-P100
   * 100-199: RGDR-G001 through RGDR-G100
-  * 200-222: RGDR-V001 through RGDR-V023 (A5 V2)
+  * 200-229: RGDR-V001 through RGDR-V030 (A5 V2)
 
 All positive cases use dimensions aligned to the 32B BF16 transfer block;
 unaligned dimensions are invalid and are covered by op_host interception tests.
@@ -44,6 +44,7 @@ else:
 OP_NAME = "recurrent_gated_delta_rule"
 SEED_BASE = 20260826
 DIM_REQUIRED = 128
+MAX_SEQ_LENGTH = 65536
 STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key"}
 
 STATE_LAYOUTS = {
@@ -436,6 +437,17 @@ def _build_v2_profiles() -> list[dict]:
                     beta_dtype=beta_dtype,
                 )
 
+    # V024-V030: sequence lengths beyond the legacy MAX_MTP=8 boundary.
+    add("v2_seq_len_9_boundary", gate_mode="none", seq_lengths=[9])
+    add("v2_seq_len_12_tiles", gate_mode="none", seq_lengths=[12], state_dtype="bf16")
+    add("v2_seq_len_16_long_single", gate_mode="g", seq_lengths=[16])
+    add("v2_long_varlen_mixed", gate_mode="none", seq_lengths=[12, 3, 0, 9], HK=2, HV=4)
+    add("v2_batch_mixed_short_and_long", gate_mode="none", seq_lengths=[1, 13], HK=1, HV=2)
+    add("v2_prefix_and_long_sequence", gate_mode="g", prefix_tokens=5, seq_lengths=[11], accepted_tokens=[6])
+    add("v2_rank2_indices_long", gate_mode="none", seq_lengths=[9, 10], HK=2, HV=4,
+        ssm_state_indices_rank=2, state_index_width=10,
+        state_indices=[[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]])
+
     return profiles
 
 
@@ -500,8 +512,8 @@ def _validate_specs(specs: list[dict]) -> None:
         if int(spec["case_id"]) != case_id:
             raise ValueError(f"{spec['design_id']}: non-contiguous case_id")
         seq_lengths = [int(value) for value in spec["seq_lengths"]]
-        if not seq_lengths or any(value < 0 or value > 8 for value in seq_lengths):
-            raise ValueError(f"{spec['design_id']}: seq_lengths must be in [0, 8]")
+        if not seq_lengths or any(value < 0 or value >= MAX_SEQ_LENGTH for value in seq_lengths):
+            raise ValueError(f"{spec['design_id']}: seq_lengths must be in [0, {MAX_SEQ_LENGTH})")
         if int(spec.get("prefix_tokens", 0)) < 0:
             raise ValueError(f"{spec['design_id']}: prefix_tokens must be non-negative")
         if int(spec["T"]) <= 0:

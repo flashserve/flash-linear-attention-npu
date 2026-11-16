@@ -14,7 +14,7 @@
 |<term>Atlas 推理系列产品</term>|      ×     |
 |<term>Atlas 训练系列产品</term>|      ×     |
 
-> **架构差异说明**：Ascend 950PR/950DT（A5，DAV_3510）使用 arch35 VF kernel；Ascend 960DT（A6，DAV_9201）使用 arch92 VF kernel。Host 侧 tiling 通过 `GetCurNpuArch()` 区分架构，选择不同的 vStep coeff（VF kernel 消除了 baseline 的 `deltaInUb`/`broadTmpInUb` 中间缓冲）。
+> **架构差异说明**：Ascend 950PR/950DT（A5，DAV_3510）使用 arch35 VF kernel；Ascend 960DT（A6，DAV_9201）使用 arch92 VF kernel。Host 侧 tiling 通过 `GetCurNpuArch()` 区分架构，分别给出固定 UB 预算与 guard 后的 pipeline 常量（V2 kernel 使用固定大小的 state bank 与 tile buffer，不再依赖 vStep 推导）。
 
 ## 功能说明
 
@@ -148,7 +148,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>actualSeqLengths</td>
       <td>输入</td>
       <td>无效前缀长度及不同 batch 的有效序列长度。</td>
-      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, +∞)，全部元素之和等于 T。当序列长度大于 8 时，算子内部按 MAX_MTP=8 窗口拆分处理，state 通过 GM 逐 token 写回传递。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, +∞)，全部元素之和等于 T。序列长度无上限：算子内部以 4-token tile 滚动处理，state 常驻 UB，并逐 token 写回 GM。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
       <td>(B+1,)</td>
@@ -314,7 +314,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
 ## 约束说明
 - 确定性计算：
   - aclnnRecurrentGatedDeltaRule默认确定性实现。
-- 输入 shape 大小需满足约束： $N_k \le 256$， $N_v \le 256$，$D_k = 128$，$D_v = 128$，且 $N_v$ 是 $N_k$ 的整数倍。$L_i$ 无上限约束——当 $L_i > 8$ 时，算子内部按 MAX_MTP=8 窗口拆分处理，state 通过 GM 逐 token 写回传递。
+- 输入 shape 大小需满足约束： $N_k \le 256$， $N_v \le 256$，$D_k = 128$，$D_v = 128$，且 $N_v$ 是 $N_k$ 的整数倍。$L_i$ 无上限约束——算子内部以 4-token tile 滚动处理，state 常驻 UB，并逐 token 写回 GM。
 
 
 ## 调用示例

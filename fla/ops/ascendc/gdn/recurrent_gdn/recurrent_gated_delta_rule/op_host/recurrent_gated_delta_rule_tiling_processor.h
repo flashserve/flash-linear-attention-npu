@@ -9,7 +9,10 @@
 
 /*!
  * \file recurrent_gated_delta_rule_tiling_processor.h
- * \brief Tiling processor shared by aclnn tiling and fast kernel launch.
+ * \brief Tiling processor for the V1 kernel (RGDR, MAX_MTP=8) used only by the
+ *        fast kernel launch example. The aclnn path derives its fixed V2 UB
+ *        budget in recurrent_gated_delta_rule_tiling.cpp (CalUbSize) and does
+ *        not consume the vStep/ubRestBytes fields computed here.
  */
 
 #ifndef RECURRENT_GATED_DELTA_RULE_TILING_PROCESSOR_H
@@ -41,6 +44,9 @@ static constexpr size_t RGDR_DIM_1 = 1;
 static constexpr size_t RGDR_DIM_2 = 2;
 static constexpr size_t RGDR_DIM_3 = 3;
 
+// Matches MAX_MTP in op_kernel/recurrent_gated_delta_rule.h (V1 kernel).
+// The V2 kernel (op_kernel/arch35, arch92) has no MTP limit: it streams
+// arbitrary sequence lengths in TOKEN_TILE windows with UB state banks.
 static constexpr size_t RGDR_MAX_MTP = 8;
 static constexpr size_t RGDR_SYS_WORKSPACE_SIZE = 16U * 1024U * 1024U;
 static constexpr uint32_t RGDR_REQUIRED_DIM = 128;
