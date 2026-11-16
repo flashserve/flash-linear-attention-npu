@@ -308,3 +308,7 @@ AIC 向两个 AIV 分别 set 基础 id 与 id+16，并在反向等待两个 id�
 - Shape：`K=V=64` 或 `K=V=128`（两档且必须同档，混合档与其它取值由参数校验拒绝），
   chunk=64（通用/三算子路径）或 chunk=32（Ascend950 fused），dense/varlen/tail/GVA。
 - 属性：final state、重计算策略、`state_v_first`。
+
+## V2 chunk64 序列数限制移除（规则 V2，局部复核）
+
+本次仅删除 CheckParams 的 seqNum<=1024 校验，Stage、tiling、workspace 与同步协议不变。V2 的 Prepare/ChunkFwdH/Finalize 使用动态序列元数据；ChunkFwdH 当前独立校验上限为 65536，本次专项验证通过至 4096，不声明无限序列支持。chunk32 使用独立校验，仍保留 1024 条限制。验证采用用户指定 GitCode executor，CPU FP64 golden 与同精度 control 保持不变；测试副本删除旧序列数拦截，DUT 经当前 Stable Python 包装调用；双标杆算法不变。
