@@ -205,8 +205,8 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->isVarlen = isVarlen ? 1 : 0;
     tiling->useExp2 = *useExp2 ? 1 : 0;
     tiling->scale = static_cast<float>(*scale);
-    tiling->groupSize = headRatio;
     tiling->reserved = arch22 ? 2201 : 0;
+    tiling->groupSize = headRatio;
     const uint64_t strategyKey = isVarlen ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
     // G 1~4 仍走编译期模板；超过 4（仅 arch22 可达）落到 G_KEY=0 的运行时桶。
