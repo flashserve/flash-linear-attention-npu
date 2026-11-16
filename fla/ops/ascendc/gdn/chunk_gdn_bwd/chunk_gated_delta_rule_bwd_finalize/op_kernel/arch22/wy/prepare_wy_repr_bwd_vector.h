@@ -37,6 +37,8 @@ public:
     __aicore__ inline void Process(const GDN::A2FinalizeQkTailArgs &qkTailArgs);
 
 private:
+    using QkTailUbLayout = GDN::PrepareWyReprBwdQkTailUbLayout<kType, K_DIM>;
+
     __aicore__ inline bool CanUseKktFp32Resident(const PrepareWyReprBwdTaskInfo &task,
                                                 uint64_t groupSize) const
     {
@@ -394,8 +396,8 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
     maxRow = maxRow > static_cast<uint32_t>(tiling_.mVecRow) ? maxRow : static_cast<uint32_t>(tiling_.mVecRow);
     maxRow = maxRow > static_cast<uint32_t>(tiling_.kktVecRow) ? maxRow : static_cast<uint32_t>(tiling_.kktVecRow);
     maxRow = useOutputFullRows_ && maxRow < CHUNK_SIZE ? CHUNK_SIZE : maxRow;
-    pipe_->InitBuffer(inputPing_, UB_BYTES_16K);
-    pipe_->InitBuffer(inputPong_, UB_BYTES_16K);
+    pipe_->InitBuffer(inputPing_, QkTailUbLayout::INPUT_BUFFER_BYTES_16K);
+    pipe_->InitBuffer(inputPong_, QkTailUbLayout::INPUT_BUFFER_BYTES_16K);
     pipe_->InitBuffer(betaGInputPing_, Align32(CHUNK_SIZE * sizeof(float32_t)));
     pipe_->InitBuffer(betaGInputPong_, Align32(CHUNK_SIZE * sizeof(float32_t)));
     pipe_->InitBuffer(outputPing_, UB_BYTES_16K);
@@ -404,9 +406,9 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
     pipe_->InitBuffer(gFp32_, Align32(maxRow * sizeof(float32_t)));
     pipe_->InitBuffer(scaleFp32_, Align32(maxRow * sizeof(float32_t)));
     pipe_->InitBuffer(brcbFp32_, Align32(maxRow * PRONE_BLOCK_BYTES_32));
-    pipe_->InitBuffer(calcFp32A_, 2 * UB_BYTES_16K);
-    pipe_->InitBuffer(calcFp32B_, 2 * UB_BYTES_16K);
-    pipe_->InitBuffer(calcFp32C_, 2 * UB_BYTES_16K);
+    pipe_->InitBuffer(calcFp32A_, QkTailUbLayout::CALC_BUFFER_BYTES_32K);
+    pipe_->InitBuffer(calcFp32B_, QkTailUbLayout::CALC_BUFFER_BYTES_32K);
+    pipe_->InitBuffer(calcFp32C_, QkTailUbLayout::CALC_BUFFER_BYTES_32K);
     if constexpr (CHUNK_SIZE == 64 && V_DIM == 128 && std::is_same<kType, bfloat16_t>::value) {
         if (useOutputFullRows_) {
             pipe_->InitBuffer(kktFp32Cache_, CHUNK_SIZE * CHUNK_SIZE * sizeof(float32_t));
@@ -1251,32 +1253,29 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
 __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessChunkQkTail(
     const PrepareWyReprBwdTaskInfo &task, uint32_t coreIdx, uint32_t slot, const GDN::A2FinalizeQkTailArgs &args)
 {
-    constexpr uint32_t ROWS = 32;
-    constexpr uint32_t ELEMS = ROWS * K_DIM;
-    constexpr uint32_t NORM_ROWS = 2 * ROWS;
-    constexpr uint32_t NORM_ELEMS = 2 * ELEMS;
-    // 借用前已完成整批 chunk 的所有 Output/DG。只建 views，不申请/消费/重发任何 ping 事件。
+    using Layout = QkTailUbLayout;
     GDN::A2FinalizeQkTailViews<kType> views{
-        inputPing_.GetWithOffset<kType>(ELEMS, 0),
-        inputPing_.GetWithOffset<kType>(ELEMS, 8192),
-        calcFp32C_.GetWithOffset<kType>(ELEMS, 0),
-        calcFp32C_.GetWithOffset<kType>(ELEMS, 8192),
-        calcFp32C_.GetWithOffset<kType>(ELEMS, 16384),
-        calcFp32A_.GetWithOffset<float>(NORM_ELEMS, 0),
-        calcFp32A_.GetWithOffset<float>(ELEMS, 16384),
-        calcFp32B_.GetWithOffset<float>(NORM_ELEMS, 0),
-        calcFp32C_.GetWithOffset<float>(NORM_ELEMS, 0),
-        inputPong_.GetWithOffset<float>(NORM_ROWS, 0),
-        inputPong_.GetWithOffset<float>(NORM_ROWS * 8, 256),
-        inputPong_.GetWithOffset<float>(NORM_ROWS * 8, 2304)};
-    views.qRstdInput = inputPong_.GetWithOffset<float>(ROWS, 4352);
-    views.kRstdInput = inputPong_.GetWithOffset<float>(ROWS, 4480);
+        inputPing_.GetWithOffset<kType>(Layout::TILE_ELEMENTS, Layout::Q_INPUT_OFFSET_BYTES),
+        inputPing_.GetWithOffset<kType>(Layout::TILE_ELEMENTS, Layout::DQ_INPUT_OFFSET_BYTES),
+        calcFp32C_.GetWithOffset<kType>(Layout::TILE_ELEMENTS, Layout::DK_INPUT_OFFSET_BYTES),
+        calcFp32C_.GetWithOffset<kType>(Layout::TILE_ELEMENTS, Layout::DK_WY_INPUT_OFFSET_BYTES),
+        calcFp32C_.GetWithOffset<kType>(Layout::TILE_ELEMENTS, Layout::K_INPUT_OFFSET_BYTES),
+        calcFp32A_.GetWithOffset<float>(Layout::NORM_ELEMENTS, Layout::GRAD_Q_OFFSET_BYTES),
+        calcFp32A_.GetWithOffset<float>(Layout::TILE_ELEMENTS, Layout::GRAD_K_OFFSET_BYTES),
+        calcFp32B_.GetWithOffset<float>(Layout::NORM_ELEMENTS, Layout::X_OFFSET_BYTES),
+        calcFp32C_.GetWithOffset<float>(Layout::NORM_ELEMENTS, Layout::PRODUCT_OFFSET_BYTES),
+        inputPong_.GetWithOffset<float>(Layout::NORM_ROWS, Layout::SUM_OFFSET_BYTES),
+        inputPong_.GetWithOffset<float>(Layout::REDUCE_ELEMENTS, Layout::REDUCE_WORK_OFFSET_BYTES),
+        inputPong_.GetWithOffset<float>(Layout::REDUCE_ELEMENTS, Layout::BROADCAST_OFFSET_BYTES)};
+    views.qRstdInput = inputPong_.GetWithOffset<float>(Layout::ROWS_32, Layout::Q_RSTD_OFFSET_BYTES);
+    views.kRstdInput = inputPong_.GetWithOffset<float>(Layout::ROWS_32, Layout::K_RSTD_OFFSET_BYTES);
     GDN::A2FinalizeQkTailGm<kType> gm;
     gm.Init(args, dk_);
     for (uint64_t hk = AscendC::GetSubBlockIdx(); hk < static_cast<uint64_t>(tiling_.HK);
          hk += AscendC::GetSubBlockNum()) {
-        for (uint32_t row = 0; row < task.curChunkSize; row += ROWS) {
-            const uint32_t rows = task.curChunkSize - row < ROWS ? task.curChunkSize - row : ROWS;
+        for (uint32_t row = 0; row < task.curChunkSize; row += Layout::ROWS_32) {
+            const uint32_t rows = task.curChunkSize - row < Layout::ROWS_32 ?
+                                      task.curChunkSize - row : Layout::ROWS_32;
             const int64_t scalarOffset = static_cast<int64_t>(hk) * tiling_.T + task.keyBos + row;
             const int64_t dkWyOffset = (((static_cast<int64_t>(coreIdx) * chunkDkSlots_ + slot) *
                                         tiling_.HK + hk) * CHUNK_SIZE + row) * K_DIM;

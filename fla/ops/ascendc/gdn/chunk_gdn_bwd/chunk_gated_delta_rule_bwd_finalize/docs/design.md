@@ -1482,7 +1482,10 @@ kernel 完成后由 ACLNN 层按输出顺序显式 CopyNpuToNpu 回写。别名�
 `op_host/arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_output_arch22.h`。L0 沿用原接口和
 launcher。实际地址、view offset、跨度溢出和未绑定 storage 均参与保守判断。
 A5 沿用原 DFX/cache 参数、L0 调用及计算流程。A2/A3 的 DFX guard 覆盖完整构图过程。
-五输出互不重叠时分别验证完整数值，输出之间共享地址的回写遵循输出顺序。
+五输出的显式回写顺序为 `dq → dk → dv → dbeta → dg`，输出之间共享地址时，重叠字节最终保留
+顺序较后输出写入的值。五输出互不重叠时分别验证完整数值。临时输出与显式拷贝计入同一 executor，
+workspace 以本次 GetWorkspaceSize 返回值为准。公开约束见[Finalize 输出存储关系](api.md#输出存储关系)，
+完整 Bwd 的布局和输出处理见[完整 Bwd 输出存储关系](../../chunk_gated_delta_rule_bwd/README.md#输出存储关系)。
 
 S0 对 g/beta 各读一次、写 FP32 一次；state 转置各读写一次。GateTail 对 dg1/dg2/dbeta32
 各读一次，sigmoid 开启时另读 beta_raw 一次，最终 dg/dbeta 各写一次。QkTail 对 dq1/dk1/dk2

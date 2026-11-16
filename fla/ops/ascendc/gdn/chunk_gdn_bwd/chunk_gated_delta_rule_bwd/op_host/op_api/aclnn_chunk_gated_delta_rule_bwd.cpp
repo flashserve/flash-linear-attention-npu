@@ -286,8 +286,13 @@ aclnnStatus CheckMetadata(const Params &params, int64_t tokens)
         }
         const int64_t chunks = (end - begin + params.chunkSize - 1) / params.chunkSize;
         for (int64_t chunk = 0; chunk < chunks; ++chunk) {
-            if (!(offset + 1 < params.chunkIndices->Size() &&
-                  (*params.chunkIndices)[offset] == static_cast<int64_t>(seq) &&
+            if (offset + 1 >= params.chunkIndices->Size()) {
+                OP_LOGE_FOR_INVALID_LISTSIZE(
+                    OP_NAME, "chunk_indices", std::to_string(params.chunkIndices->Size()),
+                    "at least " + std::to_string(offset + 2) + " entries for a complete (sequence,chunk) pair");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+            if (!((*params.chunkIndices)[offset] == static_cast<int64_t>(seq) &&
                   (*params.chunkIndices)[offset + 1] == chunk)) {
                 OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "chunk_indices[offset],chunk_indices[offset+1]",
@@ -405,11 +410,15 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
     if (params.qRstd != nullptr || params.kRstd != nullptr) {
         if (!(HasShape(params.qRstd, {info.batch, info.hk, info.tokens}) &&
               HasShape(params.kRstd, {info.batch, info.hk, info.tokens}))) {
+            const std::string qRstdShape = params.qRstd == nullptr
+                                               ? "nullptr"
+                                               : op::ToString(params.qRstd->GetViewShape()).GetString();
+            const std::string kRstdShape = params.kRstd == nullptr
+                                               ? "nullptr"
+                                               : op::ToString(params.kRstd->GetViewShape()).GetString();
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                OP_NAME, "qRstd,kRstd",
-                "qRstd=" + std::string(op::ToString(params.qRstd->GetViewShape()).GetString()) +
-                    ",kRstd=" + std::string(op::ToString(params.kRstd->GetViewShape()).GetString()),
-                "q_rstd and k_rstd must be BNS [B,HK,T]");
+                OP_NAME, "qRstd,kRstd", "qRstd=" + qRstdShape + ",kRstd=" + kRstdShape,
+                "q_rstd and k_rstd must both be present with BNS [B,HK,T]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
