@@ -11,9 +11,19 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
+
+
+GIT_TIMEOUT_SECONDS = 120
+GIT_CLEANUP_GRACE_SECONDS = 5
+
+
+class GitCleanupError(RuntimeError):
+    """Git descendants could not be stopped; retrying would be unsafe."""
 
 
 @dataclass(frozen=True)
@@ -59,13 +69,78 @@ def read_dependencies(repo):
     return dependencies
 
 
+def _git_group_alive(pgid):
+    if sys.platform.startswith("linux"):
+        # Orphaned zombies cannot hold files or download data. Container PID 1
+        # may not reap them promptly, so killpg(pgid, 0) alone is insufficient.
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            if int(fields[2]) == pgid and fields[0] not in {"Z", "X"}:
+                return True
+        return False
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def _stop_git_processes(process):
+    """Stop the whole POSIX group, even if its Git leader already exited."""
+    try:
+        if os.name != "posix":
+            # CI runs on Linux. Keep the previous direct-process behavior on
+            # other platforms, where POSIX process groups are unavailable.
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=GIT_CLEANUP_GRACE_SECONDS)
+            return
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                process.wait(timeout=GIT_CLEANUP_GRACE_SECONDS)
+                return
+            deadline = time.monotonic() + GIT_CLEANUP_GRACE_SECONDS
+            while time.monotonic() < deadline:
+                process.poll()  # Reap our child; descendants may outlive it.
+                if not _git_group_alive(process.pid):
+                    process.wait(timeout=GIT_CLEANUP_GRACE_SECONDS)
+                    return
+                time.sleep(0.05)
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
+        raise GitCleanupError(f"Cannot confirm cleanup of Git process group {process.pid}") from error
+    raise GitCleanupError(f"Git process group {process.pid} is still running; refusing to retry")
+
+
 def run_git(path, *args, check=True):
     # Explicit paths avoid Git discovering the parent source repository. Optional
     # locks are disabled so even status checks never refresh a read-only seed index.
-    return subprocess.run(
-        ["git", f"--git-dir={path / '.git'}", f"--work-tree={path}", *args],
+    command = ["git", f"--git-dir={path / '.git'}", f"--work-tree={path}", *args]
+    process = subprocess.Popen(
+        command,
         env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0"),
-        text=True, capture_output=True, check=check, timeout=120)
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=(os.name == "posix"))
+    try:
+        stdout, stderr = process.communicate(timeout=GIT_TIMEOUT_SECONDS)
+    finally:
+        # Also clean up on interruption or when a failed leader leaves helpers
+        # behind. Cleanup errors are non-retryable and override fetch timeouts.
+        try:
+            _stop_git_processes(process)
+        finally:
+            process.stdout.close()
+            process.stderr.close()
+    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    if check:
+        result.check_returncode()
+    return result
 
 
 def matches(path, dependency):
