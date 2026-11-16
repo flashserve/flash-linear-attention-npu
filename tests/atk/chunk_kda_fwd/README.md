@@ -75,4 +75,11 @@ DC_LOOP_NUMS=100 \
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=determinism
 ```
 
+chunk32 负向回归已合并到父目录的 `negative_chunk32_guards.py`，覆盖零 head、head/lowerBound
+上限、七项 V2 守卫和 V1 对 chunk32 的拒绝：
+
+```bash
+python3 tests/atk/chunk_kda_fwd/negative_chunk32_guards.py
+```
+
 性能、确定性、mssanitizer 和用例生成均通过统一脚本的对应 `-scope` 执行。
