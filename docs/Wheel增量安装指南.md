@@ -118,17 +118,21 @@ python -m fla_npu_opp_manage --remove-overlay
 
 active 和 pending 可以同时存在：未配齐的新组合不替换旧 active；后续安装基于最新 pending
 保留另一组件，匹配后自动启用并清空 pending。没有旧 active 时继续使用 base。
-状态中的 `components.adapter` 是选中适配层的产物 ID，null 表示 base；
-`components.opps` 按新到旧列出 OPP ID，`components.opp` 仅为最新 OPP 的兼容字段。
-`vendors` 给出实际查找路径顺序；
+状态中的 `components.adapters` / `components.opps` 分别按新到旧列出适配层和 OPP ID。
+`components.adapter` / `components.opp` 仅为最新组件的兼容字段；
+`adapter_layers` 列出各适配层实际提供的公共入口，`vendors` 给出 OPP 查找路径顺序；
 `affected_base_operators` 列出本次 OPP 选择影响的 base adapter 入口。
 
 组件安装不再要求 `--force`；旧命令带此参数仍可用，但不绕过 ABI 或完整性校验。
 损坏产物、复制或提交失败不改变已有选择。移除统一清理所有保存的组件，base 原文件保留。
 升级或卸载 base 前先移除 overlay；overlay 不登记进 pip RECORD。
 
-例如当前为 P1+O1，安装 standalone P2 保留 O1；再装 run O2，使用 P2 和 O2→O1→base；
-安装完整 wheel P3+O3 后使用 P3 和 O3→O2→O1→base。适配层入口不累积，OPP 累积。
+例如当前为 P1+O1，安装 standalone P2 得到 P2→P1→base，并保留 O1；再装 run O2，
+OPP 顺序变为 O2→O1→base。完整 wheel P3+O3 将 P3 / O3 分别加入两个列表首位。
+三个类型均可连续或混合安装；不同公共入口和 OPP 符号累积，同名以后装的为准。
+
+wheel 的入口范围取决于 `FLA_NPU_OVERLAY_OPS` 生成的 exports 声明；不设置时声明全部入口，
+因此会覆盖全部适配层入口。只更新 B 时必须声明 B，才能保留此前 A 的适配层。
 
 ```bash
 # 已安装含 A0/B0 的 base wheel；A1.run、B1.run 分别只含对应算子
@@ -140,6 +144,13 @@ python /path/to/check_A_and_B.py
 python -m fla_npu_opp_manage --remove-overlay
 # 再开新进程：A/B 恢复 base 版本
 python /path/to/check_A_and_B.py
+
+# standalone wheel 或带 OPP 的 wheel 使用同一个增量安装入口
+# A1.whl / B1.whl 分别声明只覆盖 A / B
+python -m fla_npu_opp_manage --overlay --source /path/to/A1.whl
+python -m fla_npu_opp_manage --overlay --source /path/to/B1.whl
+python /path/to/check_A_and_B.py  # A / B 均使用各自增量适配层
+python -m fla_npu_opp_manage --remove-overlay
 ```
 
 同名 OPP 符号优先使用后安装的包，不会因 ABI 不匹配而退回旧实现。
@@ -162,7 +173,7 @@ python /path/to/check_A_and_B.py
 | --- | --- | --- |
 | run-only overlay | OPP L1–L4 配套产物 | 保留当前适配层 |
 | standalone wheel overlay | 指定 Python/Stable 入口 | 保留当前 OPP |
-| 携带 OPP 的 wheel overlay | 更新适配层，新 OPP 加到列表首位 | 保留较早 OPP，未命中时依次回落 |
+| 携带 OPP 的 wheel overlay | 新适配层与 OPP 分别加到列表首位 | 保留较早适配层与 OPP，未命中时分别回落 |
 
 上述组合要求新版 base 控制器。无 layer 协议的旧 base 继续使用原 run-only 路径：须先解包 vendor，
 同名 ABI 不兼容直接拒绝，不能混用新组件流程。新版控制器可接管单个已有 vendor overlay，以及
