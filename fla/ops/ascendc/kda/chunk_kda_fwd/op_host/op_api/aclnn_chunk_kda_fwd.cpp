@@ -40,7 +40,6 @@ constexpr int64_t KDA_STAGE_FULL = -1;
 constexpr int64_t KDA_STAGE_GATE_PREPARE = 0;
 constexpr int64_t KDA_STAGE_COUNT = 4;
 
-constexpr int64_t MAX_KDA_VARLEN_SEQUENCES = 1024;
 
 enum class KdaFwdLayout {
     BSND,
@@ -500,8 +499,6 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     CHECK_COND(params.cuSeqlensOptional == nullptr || info.isRank3 || info.batch == 1,
                ACLNN_ERR_PARAM_INVALID,
                "rank4 varlen input with cuSeqlensOptional requires B=1.");
-    CHECK_COND(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES,
-               ACLNN_ERR_PARAM_INVALID, "varlen input supports at most 1024 sequences.");
     CHECK_RET(CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional,
                                 info.totalChunks, params.chunkSize) == ACLNN_SUCCESS,
               ACLNN_ERR_PARAM_INVALID);

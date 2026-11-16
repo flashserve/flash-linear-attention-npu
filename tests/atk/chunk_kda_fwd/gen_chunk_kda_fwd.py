@@ -204,7 +204,7 @@ NEGATIVE_CASES = (
     ("cu_end", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional last element must equal the sequence length"),
     ("cu_order", "ACLNN_ERR_PARAM_INVALID", 161002, "cuSeqlensOptional must be nondecreasing"),
     ("varlen_b2", "ACLNN_ERR_PARAM_INVALID", 161002, "rank4 varlen input with cuSeqlensOptional requires B=1"),
-    ("seq_gt_1024", "ACLNN_ERR_PARAM_INVALID", 161002, "varlen input supports at most 1024 sequences"),
+    ("state_seq_count", "ACLNN_ERR_PARAM_INVALID", 161002, "initialStateOptional must be [N,HV,K,V]"),
     ("indices_without_cu", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional requires cuSeqlensOptional"),
     ("indices_count", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional must contain exactly one"),
     ("indices_order", "ACLNN_ERR_PARAM_INVALID", 161002, "chunkIndicesOptional must use canonical sequence-major chunk order"),

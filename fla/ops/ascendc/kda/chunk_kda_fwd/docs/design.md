@@ -156,3 +156,9 @@ key2 下使用其对应单 launch 实现。tiling key 和私有 `stage` 均不�
 - Shape：`K=V=64` 或 `K=V=128`（两档且必须同档，混合档与其它取值由参数校验拒绝），
   chunk=64/128，dense/varlen/tail/GQA。
 - 属性：final state、重计算策略、`state_v_first`。
+
+## V2 chunk64 序列数限制移除（规则 V2，局部复核）
+
+本次仅删除 CheckParams 的 seqNum<=1024 校验，Stage、tiling、workspace 与同步协议不变。V2 的 Prepare/ChunkFwdH/Finalize 使用动态序列元数据；本次移植沿用该发布版本的动态序列元数据，不声明无限序列支持。验证采用用户指定 GitCode executor，CPU FP64 golden 与同精度 control 保持不变；测试副本删除旧序列数拦截，DUT 经当前 Stable Python 包装调用；双标杆算法不变。
+
+上述 1024–4096 条序列专项结果来自主线修复的 A2 测量；本发布基线仅完成移植核对，尚未单独重跑该专项。
