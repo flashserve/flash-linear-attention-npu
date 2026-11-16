@@ -163,7 +163,7 @@ private:
         // 先把当前 HV 切片中的所有唯一 q/k head 排入 MTE2，隐藏首个 MMAD 后的搬运时间。
         for (int64_t r = 0; r < meta.validHeads; ++r) {
             const bool isLeader =
-                ChunkGdnBwdIntraScoreLeader<G>(meta.hvBegin, r);
+                ChunkGdnBwdIntraScoreLeader<G>(meta.hvBegin, r, tiling_->groupSize);
             if (isLeader) {
                 const uint32_t slot = static_cast<uint32_t>(r);
                 PrefetchLeader(meta, slot, scoreSlotUsed[slot]);
@@ -172,7 +172,7 @@ private:
         }
         for (int64_t r = 0; r < meta.validHeads; ++r) {
             const bool isLeader =
-                ChunkGdnBwdIntraScoreLeader<G>(meta.hvBegin, r);
+                ChunkGdnBwdIntraScoreLeader<G>(meta.hvBegin, r, tiling_->groupSize);
             if (isLeader) {
                 ComputeLeader(meta, static_cast<uint32_t>(r));
             }
@@ -186,7 +186,8 @@ private:
             // 同一个物理 Score slot 跨 work 复用，覆盖前等待上一 work 的 Vector 消费结束。
             WaitScoreFree(r);
         }
-        const int64_t hk = (meta.hvBegin + r) / G;
+        const int64_t hk =
+            (meta.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
         const uint64_t gmOffset =
             ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
                  tiling_->seqlen + meta.tokenStart) * tiling_->keyDim;
@@ -227,7 +228,8 @@ private:
     __aicore__ inline void ComputeLeader(
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t r)
     {
-        const uint32_t leaderIndex = r / G;
+        const uint32_t leaderIndex =
+            r / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
         const uint32_t l0Slot = leaderIndex & 1U;
         auto l1K = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_K_BASE + r * L1_SLOT_BYTES);
@@ -339,7 +341,7 @@ private:
             AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(
                 workspaceFlag + INTRA_SUBBLOCK_FLAG_OFFSET);
             const uint32_t leader = static_cast<uint32_t>(
-                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r));
+                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r, tiling_->groupSize));
             auto l1Record = resource_.l1Buf.template GetBufferByByte<MainT>(
                 L1_RECORD_BASE + r * L1_RECORD_SLOT_BYTES);
             auto l1D = l1Record[L1_D_OFFSET / sizeof(MainT)];
@@ -360,7 +362,8 @@ private:
                 meta, firstL0Slot ^ 1U, l1ABg, l1K, wGm_, outputOffset);
             // 同一 hk 的最后一个 W 已把 k 装入 L0A/B，此时才允许下一 work 覆盖 q/k L1 slot。
             const bool lastKConsumer = r + 1U == validHeads ||
-                (meta.hvBegin + r) / G != (meta.hvBegin + r + 1U) / G;
+                (meta.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize) !=
+                (meta.hvBegin + r + 1U) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
             if (lastKConsumer) {
                 AscendC::Mutex::Unlock<PIPE_MTE1>(qkMutex_[leader]);
             }

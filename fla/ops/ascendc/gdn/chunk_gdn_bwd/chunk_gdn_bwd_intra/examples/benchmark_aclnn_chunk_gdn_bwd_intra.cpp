@@ -109,8 +109,13 @@ int main(int argc, char **argv)
     const int repeats = argc > 2 ? std::atoi(argv[2]) : 10;
     const int64_t hv = argc > 3 ? std::atoll(argv[3]) : 96;
     const int64_t hk = argc > 4 ? std::atoll(argv[4]) : hv;
+    // G>4 仅 A2/A3（910B/910C）支持；A5（950）上限为 4，超限会在 aclnn
+    // 参数校验层被拒绝。此处只做入参粗筛：本样例仅链接公开 aclnn 接口，
+    // 故按 arch22 上限 16 取值，真实上限以算子侧
+    // op_host/chunk_gdn_bwd_intra_schedule.h 的 IntraMaxGvaRatio 为准，调整需同步。
+    // hk<=0 先于取模判断，无需额外除零保护。
     if (t <= 0 || repeats <= 0 || hk <= 0 || hv <= 0 || hv % hk != 0 ||
-        hv / hk > 4) {
+        hv / hk > 16) {
         std::cerr << "Invalid T, repeats, HK, or HV\n";
         return 1;
     }
