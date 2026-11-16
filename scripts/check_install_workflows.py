@@ -480,12 +480,13 @@ if selected["adapter"] is not None or not selected["opp"]:
 plan = layers.runtime_plan(package)
 if not plan or plan["errors"]:
     raise AssertionError(f"Invalid active run composition: {plan}")
-expected = [layers.layer_path(package, selected["opp"]) / "fla_npu/opp/vendors" / layers.BASE]
+expected = [layers.layer_path(package, identity) / "fla_npu/opp/vendors" / layers.BASE
+            for identity in selected["opps"]]
 base = package / "opp/vendors" / layers.BASE
 if (base / layers.LIBRARY).is_file():
     expected.append(base)
 if plan["vendors"] != list(map(str, expected)):
-    raise AssertionError(f"Expected overlay then available base: {plan['vendors']}")
+    raise AssertionError(f"Expected newest-to-oldest overlays then available base: {plan['vendors']}")
 print(json.dumps(plan["vendors"]))
 '''
     output = subprocess.check_output([str(python), "-c", code], env=env, cwd=cwd, encoding="utf-8")
