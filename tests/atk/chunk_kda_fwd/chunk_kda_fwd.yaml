@@ -97,7 +97,7 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [2, 96]
+        values: [4, 96]
       invalid:
         values: [0, 2, 129]
   - name: total_tokens
