@@ -979,8 +979,8 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         for name in ("q", "k", "v", "g", "beta"):
             values[name] = inputs.__dict__[name].repeat(2, *([1] * (inputs.__dict__[name].dim() - 1)))
         values["cu"] = [0, int(spec["T"])]
-    elif mutation == "seq_gt_1024":
-        values["cu"] = [0] * 1025 + [int(spec["T"])]
+    elif mutation == "state_seq_count":
+        values["cu"] = [0, int(spec["T"]) // 2, int(spec["T"])]
     elif mutation == "indices_without_cu":
         values["cu"] = None
         values["indices"] = [0, 0]
