@@ -177,10 +177,10 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     <tr>
       <td>gk</td>
       <td>输入</td>
-      <td>ABI 保留参数。</td>
-      <td>必须传入 nullptr，非空值返回参数错误。</td>
-      <td>-</td>
-      <td>-</td>
+      <td>ABI 保留参数，恢复接受 FP32 gate 张量以保持签名兼容。</td>
+      <td><ul><li>当前 aclnn 构建分派 V2 kernel，不消费 gk 语义。</li><li>传入非空值在 tiling 阶段返回带迁移指引的错误。</li><li>需要 gk 逐 K 衰减语义时，请迁移至 aclnnRecurrentGatedDeltaRuleV2（g/A_log/dt_bias）或构建含 V1 kernel 的产物。</li></ul></td>
+      <td>FP32</td>
+      <td>ND</td>
       <td>-</td>
       <td>×</td>
     </tr>

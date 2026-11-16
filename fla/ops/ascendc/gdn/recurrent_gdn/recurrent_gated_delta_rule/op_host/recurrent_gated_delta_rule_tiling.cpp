@@ -390,7 +390,7 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetOptionalInput()
     tilingData_.hasDtBias = HasOptionalTensor(context_, DT_BIAS_INDEX);
     tilingData_.hasALog = HasOptionalTensor(context_, A_LOG_INDEX);
     if (tilingData_.useGateInKernel && (!tilingData_.hasGama || !tilingData_.hasALog)) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "use_gate_in_kernel", "true requires g and A_log; g="+std::to_string(tilingData_.hasGama)+", A_log="+std::to_string(tilingData_.hasALog)); return ge::GRAPH_FAILED; };
-    if (HasOptionalTensor(context_, GK_INDEX)) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gk", rgdn_error::Format("gk is not supported")); return ge::GRAPH_FAILED; };
+    if (HasOptionalTensor(context_, GK_INDEX)) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "gk", rgdn_error::Format("gk requires the V1 kernel path; this build dispatches the V2 kernel, which does not consume gk. Migrate to aclnnRecurrentGatedDeltaRuleV2 (gate via g/A_log/dtBias) or build the V1 kernel for gk support")); return ge::GRAPH_FAILED; };
     for (size_t index : {G_INDEX, ACC_TO_INDEX, A_LOG_INDEX, DT_BIAS_INDEX}) {
         if (!HasOptionalTensor(context_, index)) {
             continue;
