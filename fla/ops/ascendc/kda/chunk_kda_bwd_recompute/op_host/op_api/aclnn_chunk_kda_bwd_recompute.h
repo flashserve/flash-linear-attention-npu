@@ -26,6 +26,7 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     int64_t chunkSize,
     bool useExp2,
     double lowerBound,
+    const char *inputLayout,
     const aclTensor *wOut,
     const aclTensor *uOut,
     const aclTensor *qgOut,

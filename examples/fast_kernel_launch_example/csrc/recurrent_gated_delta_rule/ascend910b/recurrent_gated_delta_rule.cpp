@@ -28,7 +28,7 @@
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule_struct.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_host/recurrent_gated_delta_rule_tiling_processor.h"
 #include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule_tiling_data.h"
-#include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/recurrent_gated_delta_rule.h"
+#include "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule/op_kernel/arch22/recurrent_gated_delta_rule.h"
 
 using namespace RecurrentGatedDeltaRule;
 using RecurrentGatedDeltaRuleTilingData = RecurrentGatedDeltaRule::RecurrentGatedDeltaRuleTilingData;
@@ -134,6 +134,9 @@ static void FillStateStrides(const at::Tensor &state, RecurrentGatedDeltaRuleTil
     tiling.stateStride0 = static_cast<uint32_t>(stateStrides[0]);
     tiling.stateStride1 = static_cast<uint32_t>(stateStrides[1]);
     tiling.stateStride2 = static_cast<uint32_t>(stateStrides[2]);
+    for (int64_t dim = 0; dim < 4; ++dim) {
+        tiling.stateStrides[dim] = static_cast<uint64_t>(stateStrides[dim]);
+    }
 }
 
 static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &query, const at::Tensor &key,
@@ -185,6 +188,18 @@ static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &quer
     optiling::RecurrentGatedDeltaRuleTilingProcessor processor(ctx);
     TORCH_CHECK(processor.Process(tiling, blockDim, workspaceSize) == ge::GRAPH_SUCCESS,
                 "recurrent_gated_delta_rule tiling failed.");
+    TORCH_CHECK(tiling.nv / tiling.nk <= 16, "value/key head ratio must not exceed 16");
+    tiling.totalTokens = static_cast<uint64_t>(qSizes[0]);
+    tiling.keyHeads = static_cast<uint64_t>(qSizes[1]);
+    tiling.valueHeads = static_cast<uint64_t>(vSizes[1]);
+    tiling.stateSlots = static_cast<uint64_t>(sSizes[0]);
+    tiling.batchSize = static_cast<uint64_t>(cuSizes[0] - 1);
+    tiling.taskCount = tiling.batchSize * tiling.valueHeads;
+    for (int64_t dim = 0; dim < 3; ++dim) {
+        tiling.queryStrides[dim] = static_cast<uint64_t>(query.stride(dim));
+        tiling.keyStrides[dim] = static_cast<uint64_t>(key.stride(dim));
+        tiling.valueStrides[dim] = static_cast<uint64_t>(value.stride(dim));
+    }
     FillStateStrides(state, tiling);
     return tiling;
 }
@@ -198,9 +213,9 @@ __global__ __aicore__ void recurrent_gated_delta_rule_kernel(
     AscendC::SetSysWorkspaceForce(workspace);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     TPipe pipe;
-    RGDR<bfloat16_t, bfloat16_t, StateT> op(&tilingData);
-    RGDRInitParams initParams{query, key, value, g, gk, beta, state, cuSeqlens, ssmStateIndices, numAcceptedTokens, out,
-                              stateOut};
+    RGDR<StateT, bfloat16_t, float> op(&tilingData);
+    RGDRInitParams initParams{query, key, value, beta, state, cuSeqlens, ssmStateIndices, g, numAcceptedTokens,
+                              nullptr, nullptr, out};
     op.Init(initParams, &pipe);
     op.Process();
 }
@@ -228,6 +243,12 @@ static void RunRecurrentGatedDeltaRuleKernel(const at::Tensor &query, const at::
     TORCH_CHECK(actual_seq_lengths.has_value(), "actual_seq_lengths is required");
     TORCH_CHECK(ssm_state_indices.has_value(), "ssm_state_indices is required");
     TORCH_CHECK(beta.has_value(), "beta is required");
+    TORCH_CHECK(!gk.has_value(), "gk is reserved; only scalar gate g is supported.");
+    TORCH_CHECK(query.scalar_type() == at::kBFloat16 && key.scalar_type() == at::kBFloat16 &&
+                    value.scalar_type() == at::kBFloat16,
+                "fast launch requires BF16 query, key and value");
+    TORCH_CHECK(beta->scalar_type() == at::kBFloat16, "fast launch requires BF16 beta");
+    TORCH_CHECK(!g.has_value() || g->scalar_type() == at::kFloat, "fast launch requires FP32 g");
 
     const c10::OptionalDeviceGuard guard(query.device());
     auto stream = c10_npu::getCurrentNPUStream().stream(false);

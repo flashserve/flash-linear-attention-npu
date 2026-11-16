@@ -29,8 +29,10 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 
-DIST_INFO_GLOB = "flash_linear_attention_npu-*.dist-info"
-DIST_NAME = "flash-linear-attention-npu"
+# The wheel is published per product tier (flash-linear-attention-npu-a2/a3/a5)
+# and a local build carries the same name, so match the family instead of the
+# old base name.  The concrete name is read back from the installed dist-info.
+DIST_INFO_GLOB = "flash_linear_attention_npu*.dist-info"
 VENDOR_DIR = "fla_npu_transformer"
 # PEP 427 lets a wheel keep its payload under ``<dist>-<version>.data/<scheme>/``
 # instead of the archive root.  ``bdist_wheel`` builds exactly that layout when a
@@ -38,6 +40,30 @@ VENDOR_DIR = "fla_npu_transformer"
 # installed tree and the archive no longer share entry names while pip still maps
 # both ``purelib`` and ``platlib`` onto the environment site root.
 WHEEL_PAYLOAD_SCHEMES = ("purelib", "platlib")
+
+
+def _dist_name(dist_info: Path) -> str:
+    """Project name of an installed wheel.
+
+    The directory is ``<name>-<version>.dist-info``, so dropping the suffix
+    yields a name that still carries the version -- and ``pip uninstall`` rejects
+    ``name-1.2.3`` as an invalid requirement.  The wheel's own METADATA owns the
+    project name, so read it there and only fall back to trimming the trailing
+    ``-<version>`` component when the metadata cannot be read.
+    """
+
+    metadata = dist_info / "METADATA"
+    try:
+        lines = metadata.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        if line.lower().startswith("name:"):
+            name = line.split(":", 1)[1].strip()
+            if name:
+                return name
+    stem = dist_info.name[: -len(".dist-info")]
+    return stem.rsplit("-", 1)[0] if "-" in stem else stem
 
 
 def _run(command: list[str], *, env: dict[str, str], cwd: Path) -> None:
@@ -200,10 +226,11 @@ def _assert_set_env_idempotent(package_dir: Path, env: dict[str, str], cwd: Path
 
     check = r'''
 set -euo pipefail
-unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB
+unset ASCEND_CUSTOM_OPP_PATH LD_LIBRARY_PATH FLA_NPU_OPP_PATH FLA_NPU_OP_API_LIB FLA_NPU_OP_API_LIBS
 source "$1"
+printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB" "${FLA_NPU_OP_API_LIBS-}"
 source "$1"
-printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB"
+printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH" "$FLA_NPU_OP_API_LIB" "${FLA_NPU_OP_API_LIBS-}"
 '''
     output = subprocess.check_output(
         ["bash", "-c", check, "check-set-env", str(set_env)],
@@ -211,14 +238,34 @@ printf '%s\n' "$ASCEND_CUSTOM_OPP_PATH" "${LD_LIBRARY_PATH-}" "$FLA_NPU_OPP_PATH
         env=env,
         encoding="utf-8",
     ).splitlines()
-    expected = [
+    op_api_lib = str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so")
+    root_based_snapshot = [
         f"{vendor_dir.parent.parent}:{vendor_dir}",
         "",
         str(vendor_dir.parent.parent),
-        str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so"),
+        op_api_lib,
+        "",
     ]
-    if output != expected:
-        raise AssertionError(f"set_env.bash is not idempotent: actual={output}, expected={expected}")
+    vendor_order_snapshot = [
+        str(vendor_dir),
+        "",
+        str(vendor_dir.parent.parent),
+        op_api_lib,
+        op_api_lib,
+    ]
+    snapshot_size = len(root_based_snapshot)
+    first = output[:snapshot_size]
+    second = output[snapshot_size:]
+    expected_snapshots = [root_based_snapshot, vendor_order_snapshot]
+    if first not in expected_snapshots:
+        raise AssertionError(
+            "set_env.bash produced an unexpected environment after the first source: "
+            f"actual={first}, expected one of {expected_snapshots}"
+        )
+    if second != first:
+        raise AssertionError(
+            f"set_env.bash is not idempotent: first={first}, second={second}"
+        )
 
 
 def _assert_runtime(
@@ -383,7 +430,7 @@ def _uninstall_and_assert_clean(
         recorded_paths = [site_root / row[0] for row in csv.reader(handle) if row]
 
     _run(
-        [str(python), "-m", "pip", "uninstall", "-y", DIST_NAME],
+        [str(python), "-m", "pip", "uninstall", "-y", _dist_name(dist_infos[0])],
         env=env,
         cwd=cwd,
     )
@@ -399,7 +446,7 @@ def _uninstall_and_assert_clean(
         residual_package_entries.insert(0, str(package_dir))
     if residual_record_paths or residual_dist_infos or residual_package_entries:
         raise AssertionError(
-            "pip uninstall left flash-linear-attention-npu files behind: "
+            f"pip uninstall left {_dist_name(dist_infos[0])} files behind: "
             f"record={residual_record_paths}, dist_info={residual_dist_infos}, "
             f"package={residual_package_entries}"
         )
@@ -418,11 +465,10 @@ if spec is not None and spec.origin is not None:
     origin = Path(spec.origin).resolve()
     if origin == site_root or site_root in origin.parents:
         raise AssertionError(f"fla_npu remains importable from the test venv: {origin}")
-try:
-    distribution = importlib.metadata.distribution("flash-linear-attention-npu")
-except importlib.metadata.PackageNotFoundError:
-    pass
-else:
+for distribution in importlib.metadata.distributions():
+    name = distribution.metadata["Name"] or ""
+    if not name.replace("_", "-").startswith("flash-linear-attention-npu"):
+        continue
     metadata_path = Path(distribution._path).resolve()
     if metadata_path == site_root or site_root in metadata_path.parents:
         raise AssertionError(

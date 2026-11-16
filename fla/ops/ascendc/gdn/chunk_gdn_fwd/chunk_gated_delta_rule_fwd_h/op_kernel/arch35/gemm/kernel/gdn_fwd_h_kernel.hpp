@@ -582,6 +582,12 @@ public:
 
                             const GDNFwdHOffsets& cube1Offsets = cubeBlockScheduler.GetCurTaskOffsets(stream);
                             Arch::CrossCoreWaitFlag(cubeBlockScheduler.vec2Done[streamId]);
+                            if (cube1Offsets.blockTokens < 16) {
+                                // Vector side owns short chunks; only signal.
+                                Arch::CrossCoreSetFlag<0x2, PIPE_MTE2>(
+                                    cubeBlockScheduler.cube1Done[streamId]);
+                                continue;
+                            }
                             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(
                                 cube1Offsets.blockTokens, cube1Offsets.vBlockDim);
                             auto tensorW = tla::MakeTensor(
@@ -851,9 +857,44 @@ public:
                         isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                     uint32_t hBaseOffset =
-                        (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
+                        ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
                         stateBlockSize;
                     uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
+                    if (isVariedLen &&
+                        vecBlockScheduler.GetVarlenBatchChunks(batchIdx) == 0) {
+                        // 空序列没有 chunk：h/v_new 没有对应槽位，直接把初始状态写回 final_state。
+                        if (storeFinalState &&
+                            std::is_same<ElementFinalState, float>::value) {
+                            for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd;
+                                 rowOffset += rowsPerTile) {
+                                uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
+                                uint32_t stateTileElems = rowsThisTile * vHeadDim;
+                                uint32_t stateOffset =
+                                    initialStateBaseOffset + rowOffset * vHeadDim;
+                                AscendC::LocalTensor<ElementInitialState> stateUbTensor =
+                                    pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
+                                auto eventId = pingpongFlag ? EVENT_ID1 : EVENT_ID0;
+                                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
+                                if (useInitialState) {
+                                    AscendC::DataCopy(
+                                        stateUbTensor, gmInitialState[stateOffset], stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(eventId);
+                                } else {
+                                    AscendC::Duplicate(
+                                        stateUbTensor, static_cast<ElementInitialState>(0),
+                                        stateTileElems);
+                                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(eventId);
+                                }
+                                AscendC::DataCopy(gmFinalState[stateOffset], stateUbTensor,
+                                                  stateTileElems);
+                                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(eventId);
+                                pingpongFlag = 1 - pingpongFlag;
+                            }
+                        }
+                        continue;
+                    }
                     for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {
                         uint32_t rowsThisTile = Min(rowsPerTile, rowEnd - rowOffset);
                         uint32_t stateTileElems = rowsThisTile * vHeadDim;
@@ -953,8 +994,9 @@ public:
                         }
                         const GDNFwdHOffsets& vec1Offsets = vecBlockScheduler.GetCurTaskOffsets(stream);
                         AscendC::LocalTensor<ElementV> l1VUpdate = (i == 0) ? l1VUpdatePing : l1VUpdatePong;
-                        bool tailVectorPath =
-                            vec1Offsets.blockTokens < 16 && !useBoundedMmad;
+                        // Short chunks are computed by the vector side;
+                        // the cube-side tail mmad object is not reusable.
+                        bool tailVectorPath = vec1Offsets.blockTokens < 16;
                         if (tailVectorPath) {
                             Arch::CrossCoreWaitFlag(
                                 vecBlockScheduler.cube1Done[streamId]);

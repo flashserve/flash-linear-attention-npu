@@ -181,7 +181,7 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
     const int64_t *padSlotIdPtr = attrs->GetAttrPointer<int64_t>(ATTR_PAD_SLOT_ID_INDEX);
     attrInfo.padSlotId = (padSlotIdPtr == nullptr) ? -1 : *padSlotIdPtr;
     const int64_t *nullBlockIdPtr = attrs->GetAttrPointer<int64_t>(ATTR_NULL_BLOCK_ID_INDEX);
-    attrInfo.nullBlockId = (nullBlockIdPtr == nullptr) ? -1 : *nullBlockIdPtr;
+    attrInfo.nullBlockId = (nullBlockIdPtr == nullptr) ? 0 : *nullBlockIdPtr;
 
     const int64_t *runModePtr = attrs->GetAttrPointer<int64_t>(ATTR_RUN_MODE_INDEX);
     attrInfo.runMode = (runModePtr == nullptr) ? 0 : *runModePtr;
@@ -330,7 +330,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         OP_CHECK_IF(stateLen < (width - 1), OP_LOGE(context, "convStates.shape[1] must be >= width-1"),
                     return ge::GRAPH_FAILED);
 
-        const auto inputStride = context->GetInputStride(CONV_STATES_INDEX);
+        const auto inputStride = context->GetOptionalInputStride(CONV_STATES_INDEX);
         if (inputStride != nullptr && inputStride->GetDimNum() == 3) {
             const int64_t stride0 = inputStride->GetStride(0);
             const int64_t stride1 = inputStride->GetStride(1);

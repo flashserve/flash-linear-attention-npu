@@ -23,14 +23,14 @@
 
 namespace KDA {
 
-template <bool STATE_V_FIRST>
+template <uint32_t INPUT_LAYOUT, bool STATE_V_FIRST>
 class ChunkKdaBwdPrepareCube {
 public:
     __aicore__ inline void Init(
         GM_ADDR aqk, GM_ADDR vNew, GM_ADDR dO, GM_ADDR h,
         GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
         GM_ADDR dAqk, GM_ADDR dv, GM_ADDR dqRaw,
-        const ChunkKdaBwdPrepareTilingData *tiling)
+        const ChunkKdaBwdPrepareTilingData *tiling, bool doTokenMajor = false)
     {
         aqk_ = aqk;
         vNew_ = vNew;
@@ -42,6 +42,7 @@ public:
         dv_ = dv;
         dqRaw_ = dqRaw;
         tiling_ = tiling;
+        doTokenMajor_ = doTokenMajor;
     }
 
     __aicore__ inline void Process()
@@ -84,15 +85,15 @@ public:
                 const uint32_t preloadCount =
                     preloadHeadSlot + 1U < L1_HEAD_SLOT_COUNT && remaining >= 2U ? 2U : 1U;
                 const int64_t preloadAqkOffset =
-                    TokenOffset(*tiling_, chunk, preloadHead, tiling_->chunkSize);
+                    TokenInputOffset<INPUT_LAYOUT>(*tiling_, chunk, preloadHead, tiling_->chunkSize);
                 const int64_t preloadTokenOffset =
-                    TokenOffset(*tiling_, chunk, preloadHead, tiling_->V);
+                    TokenInputOffset<INPUT_LAYOUT>(*tiling_, chunk, preloadHead, tiling_->V);
                 const int64_t preloadStateOffset =
                     StateOffset(*tiling_, chunk, preloadHead);
                 const uint32_t rows = static_cast<uint32_t>(chunk.validRows);
-                const uint32_t tokenHeadStride = preloadCount == 2U
-                    ? static_cast<uint32_t>(
-                          TokenOffset(*tiling_, chunk, preloadHead + 1, tiling_->V) -
+                const int64_t tokenHeadStride = preloadCount == 2U
+                    ? (
+                          TokenInputOffset<INPUT_LAYOUT>(*tiling_, chunk, preloadHead + 1, tiling_->V) -
                           preloadTokenOffset)
                     : 0U;
                 const uint32_t stateHeadStride = preloadCount == 2U
@@ -100,9 +101,9 @@ public:
                           StateOffset(*tiling_, chunk, preloadHead + 1) -
                           preloadStateOffset)
                     : 0U;
-                const uint32_t aqkHeadStride = preloadCount == 2U
-                    ? static_cast<uint32_t>(
-                          TokenOffset(*tiling_, chunk, preloadHead + 1, tiling_->chunkSize) -
+                const int64_t aqkHeadStride = preloadCount == 2U
+                    ? (
+                          TokenInputOffset<INPUT_LAYOUT>(*tiling_, chunk, preloadHead + 1, tiling_->chunkSize) -
                           preloadAqkOffset)
                     : 0U;
 
@@ -216,24 +217,53 @@ private:
     static constexpr uint32_t L0C_TILE_BYTES = 32 * 1024;
     static constexpr uint32_t L1_HEAD_SLOT_ELEMENTS = L1_HEAD_SLOT_BYTES / sizeof(DT);
 
+    template <typename Copy, typename Dst, typename Src>
+    __aicore__ inline void CopyHeads(
+        Copy &copy, const Dst &dst, const Src &src, uint32_t count, int64_t headStride)
+    {
+        // CATLASS takes a uint32_t matrix stride even on A5. Keep long
+        // head-major sequences addressable without truncating the GM offset.
+        if (headStride <= 0xffffffffLL) {
+            copy(dst, src, count, static_cast<uint32_t>(headStride), L1_HEAD_SLOT_ELEMENTS);
+        } else {
+            for (uint32_t head = 0; head < count; ++head) {
+                auto oneDst = tla::MakeTensor(
+                    dst.data()[head * L1_HEAD_SLOT_ELEMENTS], dst.layout(), Catlass::Arch::PositionL1{});
+                auto oneSrc = tla::MakeTensor(
+                    src.data()[head * headStride], src.layout(), Catlass::Arch::PositionGM{});
+                copy(oneDst, oneSrc);
+            }
+        }
+    }
+
     __aicore__ inline void LoadDoAndVNew(
         Catlass::Arch::Resource<ArchTag> &resource,
         uint32_t headSlot, int64_t tokenOffset, uint32_t rows,
-        uint32_t headCount, uint32_t tokenHeadStride)
+        uint32_t headCount, int64_t tokenHeadStride)
     {
         auto l1DO = resource.l1Buf.template GetBufferByByte<DT>(headSlot * L1_HEAD_SLOT_BYTES + DO_OFFSET);
         auto l1V = resource.l1Buf.template GetBufferByByte<DT>(headSlot * L1_HEAD_SLOT_BYTES + VNEW_OFFSET);
         AscendC::GlobalTensor<DT> gmDO;
         AscendC::GlobalTensor<DT> gmV;
-        gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + tokenOffset);
+        int64_t doOffset = tokenOffset;
+        if (doTokenMajor_) {
+            const int64_t flat = tokenOffset / KDA_PREPARE_DIM;
+            const int64_t batch = flat / (tiling_->NV * tiling_->T);
+            const int64_t head = (flat / tiling_->T) % tiling_->NV;
+            doOffset = ((batch * tiling_->T + flat % tiling_->T) * tiling_->NV + head) * KDA_PREPARE_DIM;
+        }
+        gmDO.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dO_) + doOffset);
         gmV.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vNew_) + tokenOffset);
         // Each tile is read once from GM and reused in L1.
         gmDO.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         gmV.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         auto tensorDO = tla::MakeTensor(
-            gmDO, tla::MakeLayout<DT, LayoutRM>(rows, KDA_PREPARE_DIM), Catlass::Arch::PositionGM{});
+            gmDO, tla::MakeLayout<DT, LayoutRM>(
+                rows, doTokenMajor_ ? tiling_->NV * KDA_PREPARE_DIM :
+                    TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_DIM)), Catlass::Arch::PositionGM{});
         auto tensorV = tla::MakeTensor(
-            gmV, tla::MakeLayout<DT, LayoutCM>(KDA_PREPARE_DIM, rows), Catlass::Arch::PositionGM{});
+            gmV, tla::MakeLayout<DT, LayoutCM>(
+                TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_DIM), rows), Catlass::Arch::PositionGM{});
         auto blockDO = tla::GetTile(
             tensorDO, tla::MakeCoord(0, 0), tla::MakeShape(rows, KDA_PREPARE_DIM));
         auto blockV = tla::GetTile(
@@ -251,8 +281,9 @@ private:
         for (uint32_t i = 0; i < headCount; ++i) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1HeadFree_[headSlot + i]);
         }
-        copyDO(tensorL1DO, blockDO, headCount, tokenHeadStride, L1_HEAD_SLOT_ELEMENTS);
-        copyV(tensorL1V, blockV, headCount, tokenHeadStride, L1_HEAD_SLOT_ELEMENTS);
+        CopyHeads(copyDO, tensorL1DO, blockDO, headCount,
+                  doTokenMajor_ ? KDA_PREPARE_DIM : tokenHeadStride);
+        CopyHeads(copyV, tensorL1V, blockV, headCount, tokenHeadStride);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
             static_cast<AscendC::TEventID>((headSlot / 2U) * STAGE_COUNT + STAGE_A));
     }
@@ -286,14 +317,15 @@ private:
     __aicore__ inline void LoadAqk(
         Catlass::Arch::Resource<ArchTag> &resource,
         uint32_t headSlot, int64_t aqkOffset, uint32_t rows,
-        uint32_t headCount, uint32_t aqkHeadStride)
+        uint32_t headCount, int64_t aqkHeadStride)
     {
         auto l1Aqk = resource.l1Buf.template GetBufferByByte<DT>(headSlot * L1_HEAD_SLOT_BYTES + AQK_OFFSET);
         AscendC::GlobalTensor<DT> gmAqk;
         gmAqk.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(aqk_) + aqkOffset);
         gmAqk.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         auto tensorAqk = tla::MakeTensor(
-            gmAqk, tla::MakeLayout<DT, LayoutCM>(KDA_PREPARE_CHUNK, KDA_PREPARE_CHUNK),
+            gmAqk, tla::MakeLayout<DT, LayoutCM>(
+                TokenInputRowStride<INPUT_LAYOUT>(*tiling_, KDA_PREPARE_CHUNK), KDA_PREPARE_CHUNK),
             Catlass::Arch::PositionGM{});
         auto blockAqk = tla::GetTile(
             tensorAqk, tla::MakeCoord(0, 0), tla::MakeShape(rows, rows));
@@ -302,7 +334,7 @@ private:
             Catlass::Arch::PositionL1{});
         using CopyAqk = typename TileCopyD::template CopyGmToL1A<decltype(blockAqk)>;
         CopyAqk copyAqk;
-        copyAqk(tensorL1Aqk, blockAqk, headCount, aqkHeadStride, L1_HEAD_SLOT_ELEMENTS);
+        CopyHeads(copyAqk, tensorL1Aqk, blockAqk, headCount, aqkHeadStride);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(
             static_cast<AscendC::TEventID>((headSlot / 2U) * STAGE_COUNT + STAGE_D));
     }
@@ -462,6 +494,7 @@ private:
     AscendC::TEventID l0BFree_[L0_SLOT_COUNT];
     AscendC::TEventID l0cReady_[L0_SLOT_COUNT];
     AscendC::TEventID l0cFree_[L0_SLOT_COUNT];
+    bool doTokenMajor_ = false;
 };
 
 } // namespace KDA

@@ -1,3 +1,7 @@
+#ifndef GDN_FINALIZE_ENABLE_ARCH22
+#define GDN_FINALIZE_ENABLE_ARCH22 0
+#endif
+
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
 
 #include <algorithm>
@@ -7,6 +11,11 @@
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "op_common/log/log.h"
+
+#if GDN_FINALIZE_ENABLE_ARCH22
+#include "../arch22/chunk_gated_delta_rule_bwd_finalize_tiling_arch22.h"
+#endif
 
 using namespace GDN;
 
@@ -132,10 +141,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                 return ge::GRAPH_FAILED);
     const int64_t stateDim3 = stateVFirst ? tiling.V : tiling.K;
     const int64_t stateDim4 = stateVFirst ? tiling.K : tiling.V;
-    OP_CHECK_IF(h.GetDim(0) != tiling.B || h.GetDim(1) != tiling.HV ||
+    OP_CHECK_IF(h.GetDim(0) != tiling.B || h.GetDim(2) != tiling.HV ||
                     h.GetDim(3) != stateDim3 || h.GetDim(4) != stateDim4 ||
-                    dh.GetDim(0) != tiling.B || dh.GetDim(1) != tiling.HV ||
-                    dh.GetDim(2) != h.GetDim(2) || dh.GetDim(3) != stateDim3 ||
+                    dh.GetDim(0) != tiling.B || dh.GetDim(2) != tiling.HV ||
+                    dh.GetDim(1) != h.GetDim(1) || dh.GetDim(3) != stateDim3 ||
                     dh.GetDim(4) != stateDim4,
                 OP_LOGE(context->GetNodeName(),
                         "h and dh state dimensions do not match state_v_first=%d, h shape is "
@@ -156,6 +165,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
+#if GDN_FINALIZE_ENABLE_ARCH22
+    // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
+    const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());
+    if (routePlatform.GetCurNpuArch() != NpuArch::DAV_3510) {
+        return gdn_finalize_arch22::Tiling(context, routePlatform);
+    }
+#endif
     OP_CHECK_IF(ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS, ,
                 return ge::GRAPH_FAILED);
 
@@ -203,7 +219,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const auto hShape = context->GetRequiredInputShape(INPUT_H_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
     const int64_t stateChunkNum = tiling->isVariable != 0 ? tiling->totalChunkNum : tiling->chunkNumForT;
-    OP_CHECK_IF(hShape->GetStorageShape().GetDim(2) != stateChunkNum,
+    OP_CHECK_IF(hShape->GetStorageShape().GetDim(1) != stateChunkNum,
                 OP_LOGE(context->GetNodeName(), "h/dh NT does not match the chunk schedule."),
                 return ge::GRAPH_FAILED);
 

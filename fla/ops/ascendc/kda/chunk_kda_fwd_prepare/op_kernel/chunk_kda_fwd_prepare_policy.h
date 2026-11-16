@@ -145,14 +145,6 @@ constexpr uint32_t kPayload = 0x08400;
 constexpr uint32_t kSlotStride = 0x1A400;
 constexpr uint32_t kArch35SlotStride = kSlotStride;
 
-// Arch22 的 Cube 结果先经 GM 交给 Vector。该区只由 AIC 写：
-// C2 放四段连续 raw score，V3 消费后 C4 复用前 4 KiB 放 T。
-constexpr uint32_t kArch22CubeRelay = 0x1A400;
-constexpr uint32_t kArch22RawScoreBytes = 0x5000;
-constexpr uint32_t kArch22TRelay = kArch22CubeRelay;
-constexpr uint32_t kArch22SlotStride =
-    kArch22CubeRelay + kArch22RawScoreBytes;
-
 // payload 在不同 Stage 原址换义，不在 UB/L1 内搬位。
 constexpr uint32_t kX0 = 0x0000;
 constexpr uint32_t kNegX1 = 0x2000;
@@ -161,9 +153,6 @@ constexpr uint32_t kAkk = 0x5800;
 constexpr uint32_t kKBetaG = 0x7800;
 constexpr uint32_t kVBeta = 0xB800;
 
-constexpr uint32_t kArch22SlotCount = 4;
-constexpr uint32_t kArch22WorkgroupStride =
-    kArch22SlotCount * kArch22SlotStride;
 constexpr uint32_t kArch35SlotCount = 4;
 constexpr uint32_t kArch35WorkgroupStride =
     kArch35SlotCount * kSlotStride;
@@ -189,7 +178,28 @@ constexpr uint32_t kQuadrantStride = 0x1000;
 constexpr uint32_t kAkkStride = 0x2000;
 // BF16 NZ 为 [N1,M1,M0,N0]；q10=(row 32,col 0) 的元素偏移。
 constexpr uint32_t kAkkQ10Elements = 32 * 16;
-constexpr uint32_t kPeak = 0x5C000;
+
+// C7 的 RHS（K_beta_g / V_beta）专用 L1 lane。
+//
+// 旧布局把这两份 RHS 直接放在 kHeadLane 上，而 C2 的 score 用的是同一条 lane
+// 的同两个偏移（kQPlus=0x0000 ↔ K_beta_g、kKPlus=0x4000 ↔ V_beta）。C7 刚把 RHS
+// 搬进 lane 就归还了 workspace，于是下一个 chunk 的 C2 一旦拿到 ready，就会用
+// MTE2 往同一条 lane 写 score，覆盖 C7 还没有用 MTE1 读完的 RHS——现场表现为同一
+// 个 Stage 里 U 整块错、W 逐位正常（K_beta_g 先读，V_beta 要隔一整个 Mmad+Fixpipe
+// 才读，暴露窗口更长）。
+//
+// 现在每个 head 各占一条 RHS lane，C2/C4 的 score/B 完全不碰它；pair 之间用的也是
+// 不同 lane，所以同一次 C7 内不存在 lane 换义。跨 chunk / 跨 pair 的写后读由显式的
+// MTE1_MTE2 event 保证（见 chunk_kda_fwd_prepare_cube.h 的 StageC7）：搬入前
+// WaitFlag，W/U 的 MTE1 取数全部下发之后再 SetFlag。C7 归还 workspace 的时机保持
+// "RHS 一离开 workspace 就归还"，好让下一个 chunk 的 V0/V1 与本次 W/U 重叠。
+constexpr uint32_t kRhsLaneBytes = 0x8000; // K_beta_g 0x4000 + V_beta 0x4000
+constexpr uint32_t kRhsLane[Shape::kHeadsPerGroup] = {
+    0x5C000, 0x64000, 0x6C000, 0x74000};
+constexpr uint32_t kRhsKBetaG = 0x0000;
+constexpr uint32_t kRhsVBeta = 0x4000;
+
+constexpr uint32_t kPeak = 0x7C000;
 } // namespace L1
 
 namespace Arch35Ub {
@@ -239,52 +249,7 @@ constexpr uint32_t kGLast = 0x1400;
 constexpr uint32_t kVfScratch = 0x1600;
 } // namespace Arch35Ub
 
-namespace Arch22Ub {
-constexpr uint32_t kHardwareBytes = 0x30000; // 192 KiB
-constexpr uint32_t kUsableBytes = 0x2E000;   // 末尾 8 KiB 保留
-constexpr uint32_t kPrivateBytes = 0x12000;
-constexpr uint32_t kPrivateBase[2] = {0x00000, 0x1C000};
-constexpr uint32_t kSharedBase = 0x12000;
-constexpr uint32_t kSharedG = kSharedBase;
-constexpr uint32_t kSharedScratch = kSharedBase + 0x8000;
 
-constexpr uint32_t kQ = 0x0000;
-constexpr uint32_t kK = 0x4000;
-constexpr uint32_t kGateOrKMinus = 0x8000;
-constexpr uint32_t kKMinus[4] = {0x8000, 0x9000, 0xB000, 0xE000};
-// A2/A3 先把 sequence-major beta 按 32 Byte 行距搬入，再 Gather 成
-// 连续标量；head-major beta 直接写入 kBetaRaw。
-constexpr uint32_t kBetaRawStrided = 0x10000;
-constexpr uint32_t kBetaRaw = 0x10800;
-constexpr uint32_t kBetaEff = 0x10A00;
-constexpr uint32_t kDtBias = 0x10C00;
-constexpr uint32_t kALog = 0x10E00;
-constexpr uint32_t kQRstd = 0x10F00;
-constexpr uint32_t kKRstd = 0x11000;
-constexpr uint32_t kGLast = 0x11200;
-constexpr uint32_t kBetaGatherOffsets = kSharedScratch + 0x1F00;
-
-constexpr uint32_t kV3Aqk = 0x0000;
-constexpr uint32_t kV3Lkk = 0x2000;
-constexpr uint32_t kV3Leaf0 = 0x6000;
-constexpr uint32_t kV3Leaf1 = 0x7000;
-constexpr uint32_t kV3B = 0x8000;
-constexpr uint32_t kV3X0 = 0x9000;
-constexpr uint32_t kV3X1 = 0xA000;
-constexpr uint32_t kV3NegX1 = 0xB000;
-constexpr uint32_t kV3CompactRaw = 0xD000;
-constexpr uint32_t kV3AkkPack = 0xE000;
-// V3 读取 compact raw 时，betaEff 放在已经结束 G 生命周期的共享区。
-// 不能复用 kBetaEff=0x10200，它位于 compact raw [0xD000,0x12000) 内。
-constexpr uint32_t kV3BetaEff = kSharedBase;
-
-constexpr uint32_t kV6Qg = 0x0000;
-constexpr uint32_t kV6Kg = 0x4000;
-constexpr uint32_t kV6VBeta = 0x8000;
-constexpr uint32_t kV6KBetaG = 0xC000;
-// V6 正序消费 FP32 G 后，将 BF16 qgScaled 压缩写入同一共享区低 16 KiB。
-constexpr uint32_t kV6QgScaled = kSharedG;
-} // namespace Arch22Ub
 
 } // namespace KdaPrepare
 

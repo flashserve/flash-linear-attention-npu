@@ -1,4 +1,5 @@
 #include "chunk_kda_bwd_recompute.h"
+#include <cstring>
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
@@ -25,11 +26,19 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
     const aclTensor *q, const aclTensor *k, const aclTensor *v, const aclTensor *g, const aclTensor *beta,
     const aclTensor *a, const aclTensor *aLogOptional, const aclTensor *dtBiasOptional,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, int64_t chunkSize,
-    bool useGateInKernel, bool useExp2, double lowerBound, const aclTensor *wOut, const aclTensor *uOut,
-    const aclTensor *qgOut, const aclTensor *kgOut, const aclTensor *gkOut, aclOpExecutor *executor)
+    bool useGateInKernel, bool useExp2, double lowerBound, const char *inputLayout,
+    const aclTensor *wOut, const aclTensor *uOut,
+    const aclTensor *qgOut, const aclTensor *kgOut, const aclTensor *gkOut, aclOpExecutor *executor, const char *modelLayout, bool qkHeadMajor)
 {
     L0_DFX(ChunkKdaBwdRecompute, q, k, v, g, beta, a, aLogOptional, dtBiasOptional, cuSeqlensOptional,
-           chunkIndicesOptional, chunkSize, useGateInKernel, useExp2, lowerBound, wOut, uOut, qgOut, kgOut, gkOut);
+           chunkIndicesOptional, chunkSize, useGateInKernel, useExp2, lowerBound, inputLayout,
+           wOut, uOut, qgOut, kgOut, gkOut);
+    // Reserved attribute: tensors still use the existing rank-4 BNSD contract.
+    if (!inputLayout || (std::strcmp(inputLayout, "BNSD") != 0 &&
+                         std::strcmp(inputLayout, "NTD") != 0)) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Recompute input_layout must be BNSD or NTD.");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional != nullptr) {
@@ -46,7 +55,7 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
         ChunkKdaBwdRecompute,
         OP_INPUT(q, k, v, g, beta, a, aLogOptional, dtBiasOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(wOut, uOut, qgOut, kgOut, gkOut),
-        OP_ATTR(chunkSize, useGateInKernel, useExp2, static_cast<float>(lowerBound)));
+        OP_ATTR(chunkSize, useGateInKernel, useExp2, static_cast<float>(lowerBound), inputLayout, modelLayout, qkHeadMajor));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdRecompute failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};

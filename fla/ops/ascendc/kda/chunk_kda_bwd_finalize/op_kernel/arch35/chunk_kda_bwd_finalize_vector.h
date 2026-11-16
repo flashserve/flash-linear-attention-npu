@@ -121,10 +121,10 @@ __simd_callee__ inline void FinalizeStoreLocalRow(
     FinalizeStoreNz64(dst + KDA_FINALIZE_MATRIX_ELEMS, packed, nzIndex);
 }
 
-// Stage0 emits paired NZ kE for contiguous UB-to-L1 copies.
+// Stage0 emits paired NZ kE for contiguous UB-to-L1 copies. The raw log gates
+// stay resident in the g frame; consumers recompute Exp(g*LN2) inline.
 __simd_vf__ inline void FinalizeStage0VF(
-    __ubuf__ bfloat16_t *kENd, __ubuf__ bfloat16_t *lowNd,
-    __ubuf__ float *exp2Gk, __ubuf__ float *gkLast, __ubuf__ float *rH,
+    __ubuf__ bfloat16_t *kENd, __ubuf__ bfloat16_t *lowNd, __ubuf__ float *rH,
     __ubuf__ bfloat16_t *k, __ubuf__ float *gk,
     __ubuf__ bfloat16_t *h, __ubuf__ bfloat16_t *dh,
     uint16_t validRows)
@@ -146,6 +146,9 @@ __simd_vf__ inline void FinalizeStage0VF(
     Muls(block, block, uint16_t(1008), bfMask);
     Add(nzIndex, column, block, bfMask);
 
+    // The kE plane rows and the rH reduction rows touch disjoint UB ranges.
+    // Fuse both loops so the rH loads and multiplies fill the kE exp/scatter
+    // latency; two rH rows per iteration cover the full K dimension.
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, gk + rowOffset);
@@ -153,7 +156,6 @@ __simd_vf__ inline void FinalizeStage0VF(
         Muls(e1, g1, KDA_FINALIZE_LN2, fpMask);
         Exp(e0, e0, fpMask);
         Exp(e1, e1, fpMask);
-        StoreAlign<float, StoreDist::DIST_INTLV_B32>(exp2Gk + rowOffset, e0, e1, fpMask);
 
         LoadIn<bfloat16_t, false>(kb, k + rowOffset);
         CastHalf2Float<bfloat16_t>(k0, k1, kb, bfMask);
@@ -167,23 +169,39 @@ __simd_vf__ inline void FinalizeStage0VF(
         Sub(high1, k1, high1, fpMask);
         FinalizeCastBf16(out, high0, high1, fpMask);
         Scatter(lowNd + row * 16, out, nzIndex, bfMask);
+
+        // r_h[k] = sum_v h[k,v] * dh[k,v].
+        const uint32_t rhOffset = 2 * rowOffset;
+        RegTensor<bfloat16_t> hb;
+        RegTensor<bfloat16_t> dhb;
+        RegTensor<float> h0;
+        RegTensor<float> h1;
+        RegTensor<float> dh0;
+        RegTensor<float> dh1;
+        RegTensor<float> product;
+        RegTensor<float> sum;
+        LoadIn<bfloat16_t, false>(hb, h + rhOffset);
+        LoadIn<bfloat16_t, false>(dhb, dh + rhOffset);
+        CastHalf2Float<bfloat16_t>(h0, h1, hb, bfMask);
+        CastHalf2Float<bfloat16_t>(dh0, dh1, dhb, bfMask);
+        Mul(h0, h0, dh0, fpMask);
+        Mul(h1, h1, dh1, fpMask);
+        Add(product, h0, h1, fpMask);
+        ReduceSum(sum, product, fpMask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rH + 2 * row, sum, fpMask);
+        LoadIn<bfloat16_t, false>(hb, h + rhOffset + KDA_FINALIZE_DIM);
+        LoadIn<bfloat16_t, false>(dhb, dh + rhOffset + KDA_FINALIZE_DIM);
+        CastHalf2Float<bfloat16_t>(h0, h1, hb, bfMask);
+        CastHalf2Float<bfloat16_t>(dh0, dh1, dhb, bfMask);
+        Mul(h0, h0, dh0, fpMask);
+        Mul(h1, h1, dh1, fpMask);
+        Add(product, h0, h1, fpMask);
+        ReduceSum(sum, product, fpMask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rH + 2 * row + 1, sum, fpMask);
     }
 
-    if (validRows < KDA_FINALIZE_CHUNK) {
-        Duplicate(out, static_cast<bfloat16_t>(0), bfMask);
-        for (uint16_t row = validRows; row < KDA_FINALIZE_CHUNK; ++row) {
-            Scatter(kENd + row * 16, out, nzIndex, bfMask);
-            Scatter(lowNd + row * 16, out, nzIndex, bfMask);
-        }
-    }
-
-    // gk_last is a full K row.
-    const uint32_t lastOffset = static_cast<uint32_t>(validRows - 1) * KDA_FINALIZE_DIM;
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(g0, g1, gk + lastOffset);
-    StoreAlign<float, StoreDist::DIST_INTLV_B32>(gkLast, g0, g1, fpMask);
-
-    // r_h[k] = sum_v h[k,v] * dh[k,v].
-    for (uint16_t row = 0; row < KDA_FINALIZE_DIM; ++row) {
+    // Short chunks leave the rH rows beyond 2 * validRows to this loop.
+    for (uint16_t row = static_cast<uint16_t>(2 * validRows); row < KDA_FINALIZE_DIM; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<bfloat16_t> hb;
         RegTensor<bfloat16_t> dhb;
@@ -202,6 +220,14 @@ __simd_vf__ inline void FinalizeStage0VF(
         Add(product, h0, h1, fpMask);
         ReduceSum(sum, product, fpMask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rH + row, sum, fpMask);
+    }
+
+    if (validRows < KDA_FINALIZE_CHUNK) {
+        Duplicate(out, static_cast<bfloat16_t>(0), bfMask);
+        for (uint16_t row = validRows; row < KDA_FINALIZE_CHUNK; ++row) {
+            Scatter(kENd + row * 16, out, nzIndex, bfMask);
+            Scatter(lowNd + row * 16, out, nzIndex, bfMask);
+        }
     }
 }
 
@@ -235,7 +261,43 @@ __simd_vf__ inline void FinalizeStage2VF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t row = 0; row < validRows; ++row) {
+    // Interleave independent operations from two rows; handle an odd tail separately.
+    uint16_t row = 0;
+    for (; row + 1U < validRows; row += 2U) {
+        const uint32_t offsetA = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+        const uint32_t offsetB = static_cast<uint32_t>(row + 1U) * KDA_FINALIZE_CHUNK;
+        RegTensor<float> zvA, zwA, resultA;
+        RegTensor<float> zvB, zwB, resultB;
+        RegTensor<bfloat16_t> packedA, packedB;
+        LoadAlign(zvA, zV + offsetA);
+        LoadAlign(zvB, zV + offsetB);
+        LoadAlign(zwA, zW + offsetA);
+        LoadAlign(zwB, zW + offsetB);
+        Sub(resultA, zvA, zwA, fpMask);
+        Sub(resultB, zvB, zwB, fpMask);
+        Mul(resultA, resultA, betaFp, fpMask);
+        Mul(resultB, resultB, betaFp, fpMask);
+        uint32_t lowerCountA = row;
+        uint32_t lowerCountB = row + 1U;
+        MaskReg lowerA = UpdateMask<float>(lowerCountA);
+        MaskReg lowerB = UpdateMask<float>(lowerCountB);
+        Select(resultA, resultA, zero, lowerA);
+        Select(resultB, resultB, zero, lowerB);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, resultA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, resultB, fpMask);
+        FinalizeStoreNz64(zbNd + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(zbNd + (row + 1U) * 16, packedB, nzIndex);
+        RegTensor<float> highA, highB;
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highA, packedA, fpMask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highB, packedB, fpMask);
+        Sub(highA, resultA, highA, fpMask);
+        Sub(highB, resultB, highB, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, highA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, highB, fpMask);
+        FinalizeStoreNz64(zbNd + 4096 + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(zbNd + 4096 + (row + 1U) * 16, packedB, nzIndex);
+    }
+    if (row < validRows) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> zv;
         RegTensor<float> zw;
@@ -262,16 +324,20 @@ __simd_vf__ inline void FinalizeStage2VF(
     }
 }
 
-// Stage3 StatePre.  One VF invocation consumes one complete head/chunk.  The
-// two 64-lane FP32 register halves cover K/V=128 without a second pass.
+// Stage3 StatePre.  One VF invocation consumes one 32-row band slice of a
+// head/chunk.  The two 64-lane FP32 register halves cover K/V=128 without a
+// second pass.  gk is the resident raw log-gate frame; exp2(g) factors are
+// recomputed inline with the same Muls(LN2)/Exp sequence Stage0 used to
+// materialize.  gateState accumulates across bands through its persistent
+// slot in the original row order; the rH term is added by the last band only.
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage3VF(
     __ubuf__ float *dkState, __ubuf__ float *dvb,
     __ubuf__ bfloat16_t *dv, __ubuf__ float *gateState, __ubuf__ float *dbV,
-    __ubuf__ float *dqRaw, __ubuf__ float *exp2Gk, __ubuf__ float *gk,
+    __ubuf__ float *dqRaw, __ubuf__ float *gk,
     __ubuf__ bfloat16_t *k, __ubuf__ bfloat16_t *v,
     __ubuf__ BetaT *beta, __ubuf__ float *gkLast, __ubuf__ float *rH,
-    float scale, uint16_t validRows)
+    float scale, uint16_t validRows, uint16_t rowBegin, uint16_t rows)
 {
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
@@ -280,10 +346,14 @@ __simd_vf__ inline void FinalizeStage3VF(
     RegTensor<float> gate0;
     RegTensor<float> gate1;
     LoadAlign<float, LoadDist::DIST_DINTLV_B32>(last0, last1, gkLast);
-    Duplicate(gate0, 0.0f, fpMask);
-    Duplicate(gate1, 0.0f, fpMask);
+    if (rowBegin == 0) {
+        Duplicate(gate0, 0.0f, fpMask);
+        Duplicate(gate1, 0.0f, fpMask);
+    } else {
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(gate0, gate1, gateState);
+    }
 
-    for (uint16_t row = 0; row < validRows; ++row) {
+    for (uint16_t row = 0; row < rows; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<float> g0;
         RegTensor<float> g1;
@@ -351,42 +421,55 @@ __simd_vf__ inline void FinalizeStage3VF(
         RegTensor<float> dq1;
         RegTensor<float> exp0;
         RegTensor<float> exp1;
+        Muls(exp0, g0, KDA_FINALIZE_LN2, fpMask);
+        Muls(exp1, g1, KDA_FINALIZE_LN2, fpMask);
+        Exp(exp0, exp0, fpMask);
+        Exp(exp1, exp1, fpMask);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dq0, dq1, dqRaw + rowOffset);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(exp0, exp1, exp2Gk + rowOffset);
         Mul(dq0, dq0, exp0, fpMask);
         Mul(dq1, dq1, exp1, fpMask);
         Muls(dq0, dq0, scale, fpMask);
         Muls(dq1, dq1, scale, fpMask);
+        // dqRaw's row is already consumed into registers; dqBase takes its
+        // place so the band buffer at 128 KiB matches the Stage7 load address.
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(
-            dvb + rowOffset, dq0, dq1, fpMask);
+            dqRaw + rowOffset, dq0, dq1, fpMask);
     }
 
-    RegTensor<float> lastExp0;
-    RegTensor<float> lastExp1;
-    RegTensor<float> rh0;
-    RegTensor<float> rh1;
-    const uint32_t lastOffset = static_cast<uint32_t>(validRows - 1) * KDA_FINALIZE_DIM;
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-        lastExp0, lastExp1, exp2Gk + lastOffset);
-    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(rh0, rh1, rH);
-    Mul(rh0, rh0, lastExp0, fpMask);
-    Mul(rh1, rh1, lastExp1, fpMask);
-    Add(gate0, gate0, rh0, fpMask);
-    Add(gate1, gate1, rh1, fpMask);
+    // The rH term enters the gate accumulation exactly once, after the last
+    // band's rows, keeping the original FP add order across bands.
+    if (rowBegin + rows == validRows) {
+        RegTensor<float> lastExp0;
+        RegTensor<float> lastExp1;
+        RegTensor<float> rh0;
+        RegTensor<float> rh1;
+        Muls(lastExp0, last0, KDA_FINALIZE_LN2, fpMask);
+        Muls(lastExp1, last1, KDA_FINALIZE_LN2, fpMask);
+        Exp(lastExp0, lastExp0, fpMask);
+        Exp(lastExp1, lastExp1, fpMask);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(rh0, rh1, rH);
+        Mul(rh0, rh0, lastExp0, fpMask);
+        Mul(rh1, rh1, lastExp1, fpMask);
+        Add(gate0, gate0, rh0, fpMask);
+        Add(gate1, gate1, rh1, fpMask);
+    }
     StoreAlign<float, StoreDist::DIST_INTLV_B32>(gateState, gate0, gate1, fpMask);
 }
 
-// Stage4 BaseFinalize.  The three 64x128 FP32 regions are updated in place:
-// dkState -> dkBase, dKgbRaw -> dgBase, and dbV -> dbBase.  dqBase and exp2Gk
-// remain live in their fixed workspace regions for later stages.
+// Stage4 BaseFinalize, one 32-row band slice per invocation.  dkState is
+// updated in place to dkBase and dbV to dbBase; dg is written straight to
+// its resident frame at 216 KiB (band offset applied by the caller).  dqBase
+// and the resident raw g frame stay live for later stages; the exp2(g)
+// factor is recomputed inline from g.  gateState joins dg only on the
+// chunk's global last row.
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage4VF(
     __ubuf__ float *dkState, __ubuf__ float *dqBase,
-    __ubuf__ float *dKgbRaw, __ubuf__ float *exp2Gk,
+    __ubuf__ float *dKgbRaw, __ubuf__ float *dg, __ubuf__ float *g,
     __ubuf__ bfloat16_t *q,
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta,
     __ubuf__ float *gateState, __ubuf__ float *dbV,
-    uint16_t validRows)
+    uint16_t validRows, uint16_t rowBegin, uint16_t rows)
 {
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
@@ -394,7 +477,7 @@ __simd_vf__ inline void FinalizeStage4VF(
     RegTensor<float> gate1;
     LoadAlign<float, LoadDist::DIST_DINTLV_B32>(gate0, gate1, gateState);
 
-    for (uint16_t row = 0; row < validRows; ++row) {
+    for (uint16_t row = 0; row < rows; ++row) {
         const uint32_t rowOffset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<float> state0;
         RegTensor<float> state1;
@@ -411,7 +494,11 @@ __simd_vf__ inline void FinalizeStage4VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             dkg0, dkg1, dKgbRaw + rowOffset);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-            exp0, exp1, exp2Gk + rowOffset);
+            exp0, exp1, g + rowOffset);
+        Muls(exp0, exp0, KDA_FINALIZE_LN2, fpMask);
+        Muls(exp1, exp1, KDA_FINALIZE_LN2, fpMask);
+        Exp(exp0, exp0, fpMask);
+        Exp(exp1, exp1, fpMask);
 
         RegTensor<bfloat16_t> betaBf;
         RegTensor<float> betaFp;
@@ -476,12 +563,12 @@ __simd_vf__ inline void FinalizeStage4VF(
         Mul(dkgKe1, dkgKe1, betaFp, fpMask);
         Sub(dg0, dg0, dkgKe0, fpMask);
         Sub(dg1, dg1, dkgKe1, fpMask);
-        if (row + 1U == validRows) {
+        if (rowBegin + row + 1U == validRows) {
             Add(dg0, dg0, gate0, fpMask);
             Add(dg1, dg1, gate1, fpMask);
         }
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(
-            dKgbRaw + rowOffset, dg0, dg1, fpMask);
+            dg + rowOffset, dg0, dg1, fpMask);
     }
 }
 
@@ -494,7 +581,7 @@ __simd_vf__ inline void FinalizeStage5VF(
     __ubuf__ FinalizeLocalType *dAkkNd, __ubuf__ FinalizeLocalType *kNegNd,
     __ubuf__ FinalizeLocalType *qPosNd, __ubuf__ FinalizeLocalType *bkPosNd,
     __ubuf__ float *dAkkRaw, __ubuf__ bfloat16_t *q,
-    __ubuf__ bfloat16_t *k, __ubuf__ float *exp2Gk,
+    __ubuf__ bfloat16_t *k, __ubuf__ float *g,
     __ubuf__ BetaT *beta, __ubuf__ float *center, uint16_t validRows,
     uint16_t rowBegin, uint16_t rowEnd)
 {
@@ -533,7 +620,7 @@ __simd_vf__ inline void FinalizeStage5VF(
         RegTensor<float> e0;
         RegTensor<float> e1;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-            e0, e1, exp2Gk + vectorOffset);
+            e0, e1, g + vectorOffset);
 
         RegTensor<bfloat16_t> kBf;
         RegTensor<float> k0;
@@ -566,9 +653,6 @@ __simd_vf__ inline void FinalizeStage5VF(
             Muls(e1, e1, KDA_FINALIZE_LN2, fpMask);
             Exp(e0, e0, fpMask);
             Exp(e1, e1, fpMask);
-            if (row < rowEnd) {
-                StoreAlign<float, StoreDist::DIST_INTLV_B32>(exp2Gk + vectorOffset, e0, e1, fpMask);
-            }
             RegTensor<bfloat16_t> qBf;
             RegTensor<float> q0, q1;
             LoadIn<bfloat16_t, false>(qBf, q + vectorOffset);
@@ -613,7 +697,44 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t row = 0; row < validRows; ++row) {
+    // Interleave independent operations from two rows; handle an odd tail separately.
+    uint16_t row = 0;
+    for (; row + 1U < validRows; row += 2U) {
+        const uint32_t offsetA = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
+        const uint32_t offsetB = static_cast<uint32_t>(row + 1U) * KDA_FINALIZE_CHUNK;
+        RegTensor<float> valueA, diagA;
+        RegTensor<float> valueB, diagB;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(diagA, dAqk + offsetA + row);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(diagB, dAqk + offsetB + row + 1U);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row, diagA, one);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row + 1U, diagB, one);
+        LoadAlign(valueA, dAqk + offsetA);
+        LoadAlign(valueB, dAqk + offsetB);
+        uint32_t countA = row;
+        uint32_t countB = row + 1U;
+        MaskReg strictA = UpdateMask<float>(countA);
+        MaskReg strictB = UpdateMask<float>(countB);
+        Select(valueA, valueA, zero, strictA);
+        Select(valueB, valueB, zero, strictB);
+        Muls(valueA, valueA, 65536.0f, fpMask);
+        Muls(valueB, valueB, 65536.0f, fpMask);
+        RegTensor<bfloat16_t> packedA, packedB;
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB, fpMask);
+        FinalizeStoreNz64(dAqkOut + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(dAqkOut + (row + 1U) * 16, packedB, nzIndex);
+        RegTensor<float> highA, residualA;
+        RegTensor<float> highB, residualB;
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highA, packedA, fpMask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highB, packedB, fpMask);
+        Sub(residualA, valueA, highA, fpMask);
+        Sub(residualB, valueB, highB, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, residualA, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, residualB, fpMask);
+        FinalizeStoreNz64(dAqkOut + KDA_FINALIZE_MATRIX_ELEMS + row * 16, packedA, nzIndex);
+        FinalizeStoreNz64(dAqkOut + KDA_FINALIZE_MATRIX_ELEMS + (row + 1U) * 16, packedB, nzIndex);
+    }
+    if (row < validRows) {
         const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_CHUNK;
         RegTensor<float> value;
         RegTensor<float> diag;
@@ -624,23 +745,33 @@ __simd_vf__ inline void FinalizeStage5DaqkVF(
         MaskReg strict = UpdateMask<float>(count);
         Select(value, value, zero, strict);
         Muls(value, value, 65536.0f, fpMask);
-        FinalizeStoreLocalRow(dAqkOut + row * 16, value, fpMask, nzIndex);
+        RegTensor<bfloat16_t> packed;
+        RegTensor<float> high, residual;
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, fpMask);
+        FinalizeStoreNz64(dAqkOut + row * 16, packed, nzIndex);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, fpMask);
+        Sub(residual, value, high, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, residual, fpMask);
+        FinalizeStoreNz64(dAqkOut + KDA_FINALIZE_MATRIX_ELEMS + row * 16, packed, nzIndex);
     }
 }
 
 // Stage7 consumes the FP32 Cube result, writes the final BF16 dq, and updates
-// dg_base in FP32 for the later K and gate stages.
+// dg_base in FP32 for the later K and gate stages.  The band factor is
+// computed once and retained in the band-local scratch for Stage9.
 __simd_vf__ inline void FinalizeStage7VF(
     __ubuf__ bfloat16_t *dqOut, __ubuf__ float *dgBase,
     __ubuf__ float *dqLocalRaw, __ubuf__ float *dqBase,
-    __ubuf__ float *exp2Gk, __ubuf__ bfloat16_t *q,
+    __ubuf__ float *g, __ubuf__ float *center, __ubuf__ bfloat16_t *q,
     __ubuf__ float *qRstd, uint32_t hasQkL2Norm, uint16_t validRows,
-    __ubuf__ float *diagonal, __ubuf__ bfloat16_t *k)
+    __ubuf__ float *diagonal, __ubuf__ bfloat16_t *k, __ubuf__ float *bandExp)
 {
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg fpMask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
-    MaskReg scalarMask = CreateMask<float, MaskPattern::VL1>();
+    RegTensor<float> center0;
+    RegTensor<float> center1;
+    LoadAlign<float, LoadDist::DIST_DINTLV_B32>(center0, center1, center);
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t offset = static_cast<uint32_t>(row) * KDA_FINALIZE_DIM;
         RegTensor<float> raw0;
@@ -653,7 +784,14 @@ __simd_vf__ inline void FinalizeStage7VF(
             raw0, raw1, dqLocalRaw + offset);
         // Restore the band factor in registers, before the original gradient
         // arithmetic. Keep the two scaling operations and their rounding order.
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(exp0, exp1, exp2Gk + offset);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(exp0, exp1, g + offset);
+        Sub(exp0, exp0, center0, fpMask);
+        Sub(exp1, exp1, center1, fpMask);
+        Muls(exp0, exp0, KDA_FINALIZE_LN2, fpMask);
+        Muls(exp1, exp1, KDA_FINALIZE_LN2, fpMask);
+        Exp(exp0, exp0, fpMask);
+        Exp(exp1, exp1, fpMask);
+        StoreAlign<float, StoreDist::DIST_INTLV_B32>(bandExp + offset, exp0, exp1, fpMask);
         Mul(raw0, raw0, exp0, fpMask);
         Mul(raw1, raw1, exp1, fpMask);
         Muls(raw0, raw0, 1.0f / 65536.0f, fpMask);
@@ -703,12 +841,12 @@ __simd_vf__ inline void FinalizeStage7VF(
             Add(product0, product0, product1, fpMask);
             ReduceSum(dot, product0, fpMask);
             DataCopy<float, LoadDist::DIST_BRC_B32>(rstd, qRstd + row);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
-                qRstd + row, dot, scalarMask);
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            DataCopy<float, LoadDist::DIST_BRC_B32>(dot, qRstd + row);
-            Mul(product0, q0, dot, fpMask);
-            Mul(product1, q1, dot, fpMask);
+            // ReduceSum only guarantees lane 0; broadcast it in-register
+            // instead of a UB scratch round trip.
+            RegTensor<float> dotBrc;
+            Duplicate(dotBrc, dot, fpMask);
+            Mul(product0, q0, dotBrc, fpMask);
+            Mul(product1, q1, dotBrc, fpMask);
             Sub(dq0, dq0, product0, fpMask);
             Sub(dq1, dq1, product1, fpMask);
             Mul(dq0, dq0, rstd, fpMask);
@@ -724,7 +862,7 @@ __simd_vf__ inline void FinalizeStage7VF(
 template <typename BetaT>
 __simd_vf__ inline void FinalizeStage9VF(
     __ubuf__ float *left, __ubuf__ float *right, __ubuf__ float *dbDelta,
-    __ubuf__ float *dg, __ubuf__ float *expG,
+    __ubuf__ float *dg, __ubuf__ float *bandExp,
     __ubuf__ bfloat16_t *k, __ubuf__ BetaT *beta, uint16_t rows,
     __ubuf__ float *diagonal, __ubuf__ bfloat16_t *q)
 {
@@ -738,7 +876,7 @@ __simd_vf__ inline void FinalizeStage9VF(
         RegTensor<bfloat16_t> kb, bb;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(l0, l1, left + offset);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(r0, r1, right + offset);
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, expG + offset);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, bandExp + offset);
         Mul(l0, l0, e0, mask);
         Mul(l1, l1, e1, mask);
         Muls(l0, l0, 1.0f / 65536.0f, mask);
@@ -797,8 +935,66 @@ __simd_vf__ inline void FinalizeStage10VF(
     LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
     MaskReg bfMask = CreateMask<half, MaskPattern::ALL>();
-    MaskReg one = CreateMask<float, MaskPattern::VL1>();
-    for (uint16_t row = 0; row < rows; ++row) {
+    // Interleave independent operations from two rows; handle an odd tail separately.
+    uint16_t row = 0;
+    for (; row + 1U < rows; row += 2U) {
+        uint32_t offsetA = row * KDA_FINALIZE_DIM;
+        uint32_t offsetB = (row + 1U) * KDA_FINALIZE_DIM;
+        RegTensor<float> dA0, dA1, bA0, bA1;
+        RegTensor<float> dB0, dB1, bB0, bB1;
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dA0, dA1, delta + offsetA);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(dB0, dB1, delta + offsetB);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bA0, bA1, base + offsetA);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(bB0, bB1, base + offsetB);
+        Add(dA0, dA0, bA0, mask);
+        Add(dB0, dB0, bB0, mask);
+        Add(dA1, dA1, bA1, mask);
+        Add(dB1, dB1, bB1, mask);
+        if (hasNorm != 0U) {
+            RegTensor<bfloat16_t> kbA, kbB;
+            RegTensor<float> kA0, kA1, pA0, pA1, dotA, rsA;
+            RegTensor<float> kB0, kB1, pB0, pB1, dotB, rsB;
+            LoadIn<bfloat16_t, false>(kbA, k + offsetA);
+            LoadIn<bfloat16_t, false>(kbB, k + offsetB);
+            CastHalf2Float<bfloat16_t>(kA0, kA1, kbA, bfMask);
+            CastHalf2Float<bfloat16_t>(kB0, kB1, kbB, bfMask);
+            Mul(pA0, dA0, kA0, mask);
+            Mul(pB0, dB0, kB0, mask);
+            Mul(pA1, dA1, kA1, mask);
+            Mul(pB1, dB1, kB1, mask);
+            Add(pA0, pA0, pA1, mask);
+            Add(pB0, pB0, pB1, mask);
+            ReduceSum(dotA, pA0, mask);
+            ReduceSum(dotB, pB0, mask);
+            DataCopy<float, LoadDist::DIST_BRC_B32>(rsA, rstd + row);
+            DataCopy<float, LoadDist::DIST_BRC_B32>(rsB, rstd + row + 1U);
+            // ReduceSum only guarantees lane 0; broadcast it in-register
+            // instead of a UB scratch round trip.
+            RegTensor<float> dotBrcA, dotBrcB;
+            Duplicate(dotBrcA, dotA, mask);
+            Duplicate(dotBrcB, dotB, mask);
+            Mul(pA0, kA0, dotBrcA, mask);
+            Mul(pB0, kB0, dotBrcB, mask);
+            Mul(pA1, kA1, dotBrcA, mask);
+            Mul(pB1, kB1, dotBrcB, mask);
+            Sub(dA0, dA0, pA0, mask);
+            Sub(dB0, dB0, pB0, mask);
+            Sub(dA1, dA1, pA1, mask);
+            Sub(dB1, dB1, pB1, mask);
+            Mul(dA0, dA0, rsA, mask);
+            Mul(dB0, dB0, rsB, mask);
+            Mul(dA1, dA1, rsA, mask);
+            Mul(dB1, dB1, rsB, mask);
+        }
+        RegTensor<bfloat16_t> packedA, packedB;
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedA, dA1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedB, dB1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, dA0, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, dB0, mask);
+        StoreAlign(out + offsetA, packedA, bfMask);
+        StoreAlign(out + offsetB, packedB, bfMask);
+    }
+    if (row < rows) {
         uint32_t offset = row * KDA_FINALIZE_DIM;
         RegTensor<float> d0, d1, b0, b1;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(d0, d1, delta + offset);
@@ -815,32 +1011,37 @@ __simd_vf__ inline void FinalizeStage10VF(
             Add(p0, p0, p1, mask);
             ReduceSum(dot, p0, mask);
             DataCopy<float, LoadDist::DIST_BRC_B32>(rs, rstd + row);
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rstd + row, dot, one);
-            LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-            DataCopy<float, LoadDist::DIST_BRC_B32>(dot, rstd + row);
-            Mul(p0, k0, dot, mask);
-            Mul(p1, k1, dot, mask);
+            // ReduceSum only guarantees lane 0; broadcast it in-register
+            // instead of a UB scratch round trip.
+            RegTensor<float> dotBrc;
+            Duplicate(dotBrc, dot, mask);
+            Mul(p0, k0, dotBrc, mask);
+            Mul(p1, k1, dotBrc, mask);
             Sub(d0, d0, p0, mask);
             Sub(d1, d1, p1, mask);
             Mul(d0, d0, rs, mask);
             Mul(d1, d1, rs, mask);
         }
         RegTensor<bfloat16_t> packed;
-        FinalizeCastBf16(packed, d0, d1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, d1, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, d0, mask);
         StoreAlign(out + offset, packed, bfMask);
     }
-    uint32_t count = rows;
-    MaskReg rowMask = UpdateMask<float>(count);
-    RegTensor<float> db, deltaB;
-    RegTensor<bfloat16_t> packedB;
-    LoadAlign(db, dbBase);
-    LoadAlign(deltaB, dbDelta);
-    Add(db, db, deltaB, rowMask);
-    if constexpr (AscendC::IsSameType<BetaT, float>::value) {
-        StoreAlign(dbOut, db, rowMask);
-    } else {
-        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, db, rowMask);
-        StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dbOut, packedB, rowMask);
+    // One 32-byte UB row per scalar enables a single strided token-major DMA.
+    uint32_t count = 1;
+    MaskReg scalarMask = UpdateMask<float>(count);
+    for (uint16_t row = 0; row < rows; ++row) {
+        RegTensor<float> db, deltaB;
+        DataCopy<float, LoadDist::DIST_BRC_B32>(db, dbBase + row);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(deltaB, dbDelta + row);
+        Add(db, db, deltaB, scalarMask);
+        if constexpr (AscendC::IsSameType<BetaT, float>::value) {
+            StoreAlign(dbOut + row * 8, db, scalarMask);
+        } else {
+            RegTensor<bfloat16_t> packedB;
+            Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, db, scalarMask);
+            StoreAlign<bfloat16_t, StoreDist::DIST_PACK_B32>(dbOut + row * 16, packedB, scalarMask);
+        }
     }
 }
 
@@ -855,15 +1056,43 @@ __simd_vf__ inline void FinalizeDwResidualVF(
     ShiftRights(block, column, int16_t(4), bfMask);
     Muls(block, block, uint16_t(1008), bfMask);
     Add(nzIndex, column, block, bfMask);
-    for (uint16_t row = 0; row < KDA_FINALIZE_CHUNK; ++row) {
+    static_assert(KDA_FINALIZE_CHUNK % 2U == 0U, "unrolled pairs need an even trip");
+    // Interleave independent operations from two rows; keep the tail outside the loop.
+    uint16_t row = 0;
+    for (; row + 1U < KDA_FINALIZE_CHUNK; row += 2U) {
+        RegTensor<float> valueA0, valueA1, highA0, highA1;
+        RegTensor<float> valueB0, valueB1, highB0, highB1;
+        RegTensor<bfloat16_t> packedA, packedB;
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(valueA0, valueA1, src + row * 128);
+        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(valueB0, valueB1, src + (row + 1U) * 128);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedA, valueA1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedB, valueB1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA0, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB0, fpMask);
+        CastHalf2Float<bfloat16_t>(highA0, highA1, packedA, bfMask);
+        CastHalf2Float<bfloat16_t>(highB0, highB1, packedB, bfMask);
+        Sub(valueA0, valueA0, highA0, fpMask);
+        Sub(valueB0, valueB0, highB0, fpMask);
+        Sub(valueA1, valueA1, highA1, fpMask);
+        Sub(valueB1, valueB1, highB1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedA, valueA1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packedB, valueB1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA0, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB0, fpMask);
+        Scatter(dst + row * 16, packedA, nzIndex, bfMask);
+        Scatter(dst + (row + 1U) * 16, packedB, nzIndex, bfMask);
+    }
+    if (row < KDA_FINALIZE_CHUNK) {
         RegTensor<float> value0, value1, high0, high1;
         RegTensor<bfloat16_t> packed;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(value0, value1, src + row * 128);
-        FinalizeCastBf16(packed, value0, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value0, fpMask);
         CastHalf2Float<bfloat16_t>(high0, high1, packed, bfMask);
         Sub(value0, value0, high0, fpMask);
         Sub(value1, value1, high1, fpMask);
-        FinalizeCastBf16(packed, value0, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE_ONE>(packed, value1, fpMask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value0, fpMask);
         Scatter(dst + row * 16, packed, nzIndex, bfMask);
     }
 }
@@ -878,15 +1107,35 @@ __simd_vf__ inline void FinalizeResidualVF(
     ShiftRights(block, column, int16_t(4), indexMask);
     Muls(block, block, uint16_t(1008), indexMask);
     Add(nzIndex, column, block, indexMask);
-    for (uint16_t block = 0; block < blocks; ++block) {
+    // Interleave independent operations from two blocks; handle an odd tail separately.
+    // The loop variable is named blk to avoid redefining the function-scope RegTensor named block.
+    uint16_t blk = 0;
+    for (; blk + 1U < blocks; blk += 2U) {
+        RegTensor<float> valueA, highA;
+        RegTensor<float> valueB, highB;
+        RegTensor<bfloat16_t> packedA, packedB;
+        LoadAlign(valueA, src + blk * 64U);
+        LoadAlign(valueB, src + (blk + 1U) * 64U);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB, mask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highA, packedA, mask);
+        Cast<float, bfloat16_t, ctHalf2Fp32Zero>(highB, packedB, mask);
+        Sub(valueA, valueA, highA, mask);
+        Sub(valueB, valueB, highB, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedA, valueA, mask);
+        Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packedB, valueB, mask);
+        FinalizeStoreNz64(dst + blk * 16U, packedA, nzIndex);
+        FinalizeStoreNz64(dst + (blk + 1U) * 16U, packedB, nzIndex);
+    }
+    if (blk < blocks) {
         RegTensor<float> value, high;
         RegTensor<bfloat16_t> packed;
-        LoadAlign(value, src + block * 64U);
+        LoadAlign(value, src + blk * 64U);
         Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
         Cast<float, bfloat16_t, ctHalf2Fp32Zero>(high, packed, mask);
         Sub(value, value, high, mask);
         Cast<bfloat16_t, float, KDA_FINALIZE_FP32_TO_BF16_RNE>(packed, value, mask);
-        FinalizeStoreNz64(dst + block * 16U, packed, nzIndex);
+        FinalizeStoreNz64(dst + blk * 16U, packed, nzIndex);
     }
 }
 
@@ -902,10 +1151,10 @@ public:
         const ChunkKdaBwdFinalizeTilingData *tiling, AscendC::TPipe *pipe)
     {
         q_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
-        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(rawG));
-        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_A_LOG *>(aLog));
+        rawG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_RAW_G *>(rawG));
+        aLog_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(aLog));
         dtBias_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dtBias));
-        dG_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(dG));
+        dG_.SetGlobalBuffer(reinterpret_cast<__gm__ DTYPE_D_G *>(dG));
         k_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(v));
         gk_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gk));
@@ -997,12 +1246,12 @@ public:
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
                 KDA_FINALIZE_TASK_L1_FREE);
 
-            // Stage3 StatePre uses one phase-wide UB working set.  The next
-            // work task starts from slot0, while the previous task finishes
-            // on slot1, so a per-slot credit alone cannot protect the shared
-            // range.  Drain the preceding task's final MTE3 before any Stage0
-            // MTE2 reinterprets UB, then seed the same event for the first
-            // StatePre head in this task.
+            // The task's later phases reinterpret nearly the whole UB.  The
+            // next work task starts from slot0, while the previous task
+            // finishes on slot1, so a per-slot credit alone cannot protect
+            // the shared range.  Drain the preceding task's final MTE3 before
+            // any Stage0 MTE2 reinterprets UB, then seed the same event for
+            // this task's TzaResidual entry.
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
 
@@ -1015,7 +1264,7 @@ public:
                     continue;
                 }
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                RunStage0(chunk, head, owner, slot, logicalCore, groupGeneration);
+                RunStage0(chunk, head, owner, slot);
             }
             // Stage0 uses one shared UB working set for all local heads.  Its
             // final workspace egress must finish before Stage2 reinterprets
@@ -1053,42 +1302,14 @@ public:
                 RunStage2(chunk, head, owner, slot);
             }
 
-            // StatePre reinterprets nearly the whole UB and therefore
-            // overlaps both BuildZ ping/pong egress slots.  Drain both Zb
-            // UB->L1 readers before changing the phase-wide UB semantics.
-            for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-            }
-            generation -= static_cast<uint64_t>(headEnd - headBegin);
-            // StatePre is independent of the Stage3 Cube MMAD.  Each AIV
-            // starts it after completing its own BuildZ heads.
-            uint32_t stage3ActiveMask = 0;
-            for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
-                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
-                const uint32_t aiv = static_cast<uint32_t>(generation & 1U);
-                if (aiv != subBlockIdx_) {
-                    continue;
-                }
-                const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
-                stage3ActiveMask |= 1U << slot;
-                RunStateAndBase(chunk, head, owner, slot, logicalCore, groupGeneration);
-            }
-            // Tail head windows may leave one or both local slots unused.
-            // Restore those consumed credits explicitly for the next task.
-            for (uint32_t slot = 0; slot < KDA_FINALIZE_AIV_SLOTS; ++slot) {
-                if ((stage3ActiveMask & (1U << slot)) == 0U) {
-                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-                }
-            }
-
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 if ((generation & 1U) != subBlockIdx_) continue;
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 RunTzaResidual(static_cast<uint32_t>(head - headBegin), slot);
             }
-            // Drain StateAndBase egress before Stage5 reuses [16,144) KiB.
-            // Retained q/k/exp/beta above that range remain live.
+            // Drain the Tza residual L1 publication before Stage5 reuses
+            // [16,144) KiB.  Retained q/k/g/beta above that range remain live.
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
             AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
 
@@ -1099,18 +1320,17 @@ public:
                     if ((generation & 1U) != subBlockIdx_) continue;
                     const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                     const uint32_t owner = static_cast<uint32_t>(head - headBegin);
-                    RunStage5(chunk, head, owner, slot, logicalCore, groupGeneration, rowBegin);
-                    RunIntraBandResults(chunk, head, owner, slot, logicalCore, groupGeneration, rowBegin);
+                    RunStage5(chunk, head, owner, slot, rowBegin);
+                    RunStateBaseSlice(chunk, head, owner, slot, logicalCore, groupGeneration, rowBegin);
+                    RunIntraBandResults(chunk, head, slot, rowBegin);
                 }
             }
             generation -= static_cast<uint64_t>(headEnd - headBegin);
             for (int64_t head = headBegin; head < headEnd; ++head, ++generation) {
                 if ((generation & 1U) != subBlockIdx_) continue;
-                const uint32_t owner = static_cast<uint32_t>(head - headBegin);
                 const uint32_t slot = static_cast<uint32_t>((generation >> 1U) & 1U);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-                RunStage11(chunk, chunkTask, head,
-                    FinalizeWorkspaceSlotBase(logicalCore, groupGeneration, owner));
+                RunStage11(chunk, chunkTask, head);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
             }
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
@@ -1126,41 +1346,73 @@ public:
     }
 
 private:
+    // Load one head's model rows directly into the existing dense UB tile.
+    template <typename T>
+    __aicore__ inline void LoadModelRows(
+        AscendC::LocalTensor<T> dst, const AscendC::GlobalTensor<T> &src,
+        int64_t headOffset, uint32_t elems, bool tokenMajor)
+    {
+        if (!tokenMajor) {
+            AscendC::DataCopy(dst, src[headOffset], elems);
+            return;
+        }
+        const int64_t flat = headOffset / KDA_FINALIZE_DIM;
+        const int64_t batch = flat / (tiling_->NV * tiling_->T);
+        const int64_t head = (flat / tiling_->T) % tiling_->NV;
+        const int64_t offset = ((batch * tiling_->T + flat % tiling_->T) * tiling_->NV + head) * KDA_FINALIZE_DIM;
+        AscendC::DataCopyPad(dst, src[offset], AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(elems / KDA_FINALIZE_DIM), KDA_FINALIZE_DIM * sizeof(T),
+            static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(T)), 0, 0},
+            AscendC::DataCopyPadExtParams<T>{false, 0, 0, static_cast<T>(0)});
+    }
+
     __aicore__ inline void RunStage11(
-        const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head, uint64_t ws)
+        const FinalizeChunkInfo &chunk, int64_t chunkTask, int64_t head)
     {
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
-        // Assemble both completed bands for the unchanged full-chunk scan.
+        // Both bands leave the complete dg frame resident at 216 KiB; scan it
+        // in place for the unchanged full-chunk reverse scan.
         auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
-        auto raw = UbBytes(176 * 1024).ReinterpretCast<float>();
+        auto raw = UbBytes(176 * 1024).ReinterpretCast<DTYPE_RAW_G>();
         auto bias = UbBytes(160 * 1024).ReinterpretCast<float>();
-        auto log = UbBytes(161 * 1024).ReinterpretCast<DTYPE_A_LOG>();
+        auto log = UbBytes(161 * 1024).ReinterpretCast<float>();
         auto da = UbBytes(162 * 1024).ReinterpretCast<float>();
         auto db = UbBytes(163 * 1024).ReinterpretCast<float>();
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const uint32_t elems = chunk.validRows * KDA_FINALIZE_DIM;
-        AscendC::DataCopy(dg, workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>(), elems);
-        AscendC::DataCopy(raw, rawG_[token], elems);
+        LoadModelRows(raw, rawG_, token, elems, tiling_->rawTokenMajor);
         AscendC::DataCopy(bias, dtBias_[head * KDA_FINALIZE_DIM], KDA_FINALIZE_DIM);
         AscendC::DataCopyPad(log, aLog_[head],
-            AscendC::DataCopyExtParams{1, sizeof(DTYPE_A_LOG), 0, 0, 0},
-            AscendC::DataCopyPadExtParams<DTYPE_A_LOG>{false, 0, 0, static_cast<DTYPE_A_LOG>(0)});
+            AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0},
+            AscendC::DataCopyPadExtParams<float>{false, 0, 0, static_cast<float>(0)});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[0]);
-        FinalizeStage11VF<DTYPE_A_LOG>(
+        FinalizeStage11VF<DTYPE_RAW_G>(
             reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(raw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ DTYPE_RAW_G *>(raw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(bias.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ DTYPE_A_LOG *>(log.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(log.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(da.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(db.GetPhyAddr()), chunk.validRows, tiling_->lowerBound);
+        // raw is dead after the chain rule; partials remain FP32.
+        auto packedG = raw.ReinterpretCast<DTYPE_D_G>();
+        if constexpr (sizeof(DTYPE_D_G) == 2) {
+            AscendC::Cast(packedG, dg, AscendC::RoundMode::CAST_RINT, elems);
+        } else {
+            packedG = dg.ReinterpretCast<DTYPE_D_G>();
+        }
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[0]);
         const int64_t partial = head * tiling_->totalChunkNum + chunkTask;
-        AscendC::DataCopy(dG_[token], dg, elems);
+        const bool tokenMajor = tiling_->gateOutputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, 0, KDA_FINALIZE_DIM, tokenMajor);
+        AscendC::DataCopyPad(dG_[out], packedG, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(chunk.validRows), KDA_FINALIZE_DIM * sizeof(DTYPE_D_G), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(DTYPE_D_G)) : 0U, 0});
         AscendC::DataCopyPad(workspace_[tiling_->gatePartialOffset].ReinterpretCast<float>()[partial * 8], da,
             AscendC::DataCopyExtParams{1, sizeof(float), 0, 0, 0});
-        AscendC::DataCopy(workspace_[tiling_->dtBiasPartialOffset].ReinterpretCast<float>()[partial * 128], db, 128);
+        AscendC::DataCopy(
+            workspace_[tiling_->dtBiasPartialOffset].ReinterpretCast<float>()[partial * 128], db, 128);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage7Mte3ToMte2_);
     }
 
@@ -1215,7 +1467,7 @@ private:
 
     __aicore__ inline void RunStage0(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
-        uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
+        uint32_t slot)
     {
         // Stage0 reinterprets the same physical UB range used by the previous
         // work task's zB source.  Do not let MTE2 overwrite it until MTE3 has
@@ -1223,22 +1475,20 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         // All heads on this AIV share the Stage0 UB layout.  Do not let this
         // head's MTE2/V overwrite the preceding head while its MTE3
-        // workspace stores are still reading that layout.
+        // L1 egress is still reading that layout.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
         auto kUb = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
-        auto gkUb = UbBytes(48 * 1024).ReinterpretCast<float>();
+        auto gkUb = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
         auto hUb = UbBytes(80 * 1024).ReinterpretCast<bfloat16_t>();
         auto dhUb = UbBytes(112 * 1024).ReinterpretCast<bfloat16_t>();
-        auto expUb = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
         auto kENd = UbBytes(144 * 1024).ReinterpretCast<bfloat16_t>();
-        auto gkLast = UbBytes(208 * 1024).ReinterpretCast<float>();
         auto rH = UbBytes(209 * 1024).ReinterpretCast<float>();
         auto lowNd = UbBytes(224 * 1024).ReinterpretCast<bfloat16_t>();
 
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const int64_t hState = FinalizeHOffset(*tiling_, chunk, head);
         const int64_t state = FinalizeDhOffset(*tiling_, chunk, head);
-        AscendC::DataCopy(kUb, k_[token], chunk.validRows * KDA_FINALIZE_DIM);
+        LoadModelRows(kUb, k_, token, chunk.validRows * KDA_FINALIZE_DIM, tiling_->qkTokenMajor);
         AscendC::DataCopy(gkUb, gk_[token], chunk.validRows * KDA_FINALIZE_DIM);
         AscendC::DataCopy(hUb, h_[hState], KDA_FINALIZE_STATE_ELEMS);
         AscendC::DataCopy(dhUb, dh_[state], KDA_FINALIZE_STATE_ELEMS);
@@ -1247,8 +1497,6 @@ private:
         FinalizeStage0VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(kENd.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(lowNd.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(expUb.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(kUb.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(gkUb.GetPhyAddr()),
@@ -1258,11 +1506,6 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
 
-        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        auto wsLast = workspace_[ws + KDA_FINALIZE_WS_GK_LAST].ReinterpretCast<float>();
-        auto wsRh = workspace_[ws + KDA_FINALIZE_WS_RH].ReinterpretCast<float>();
-        AscendC::DataCopy(wsLast, gkLast, KDA_FINALIZE_DIM);
-        AscendC::DataCopy(wsRh, rH, KDA_FINALIZE_DIM);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage0Mte3ToMte2_);
 
         // Direct UB->L1 egress for Stage1.  The fixed destination is the
@@ -1288,7 +1531,12 @@ private:
                       .ReinterpretCast<float>();
         auto betaUb = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>();
         auto zBNd = UbBytes(KDA_FINALIZE_UB_WORK).ReinterpretCast<bfloat16_t>();
+        // q is retained at 144 KiB from here through the band loop (Stage5
+        // qPos and Stage7/9).  Stage0's kENd L1 egress above is already
+        // drained by this function's entry credit.
+        auto qUb = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>();
         const int64_t betaOffset = FinalizeTokenOffset(*tiling_, chunk, head, 1);
+        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         // beta is a scalar per token.  The last chunk is not necessarily
         // 32-byte aligned. DMA pads only to a block boundary; Stage2 masks
         // inactive beta lanes. Padding all the way to 64 can exceed the
@@ -1300,6 +1548,7 @@ private:
             0,
             static_cast<DTYPE_BETA>(0)};
         AscendC::DataCopyPad(betaUb, beta_[betaOffset], betaCopy, betaPad);
+        LoadModelRows(qUb, q_, token, chunk.validRows * KDA_FINALIZE_DIM, tiling_->qkTokenMajor);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage2VF(
@@ -1325,108 +1574,9 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
-    __aicore__ inline void RunStateAndBase(
-        const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
-        uint32_t slot, int64_t coreIdx, uint64_t groupGeneration)
-    {
-        // The shared StatePre UB has two future writers: MTE2 and VF.  This
-        // phase-level credit prevents the next head's MTE2 from overtaking
-        // the preceding head's MTE3->V ownership barrier.
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
-        auto dkState = UbBytes(0).ReinterpretCast<float>();
-        auto dvb = UbBytes(32 * 1024).ReinterpretCast<float>();
-        auto dqRaw = UbBytes(64 * 1024).ReinterpretCast<float>();
-        auto exp2Gk = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
-        auto gk = UbBytes(96 * 1024).ReinterpretCast<float>();
-        auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
-        auto v = UbBytes(144 * 1024).ReinterpretCast<bfloat16_t>();
-        auto dv = UbBytes(128 * 1024).ReinterpretCast<bfloat16_t>();
-        auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>();
-        auto gkLast = UbBytes(209 * 1024).ReinterpretCast<float>();
-        auto rH = UbBytes(210 * 1024).ReinterpretCast<float>();
-        auto gateState = UbBytes(211 * 1024).ReinterpretCast<float>();
-        auto dbV = UbBytes(212 * 1024).ReinterpretCast<float>();
-
-        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        auto wsDkState = workspace_[ws + KDA_FINALIZE_WS_DK_STATE_RAW].ReinterpretCast<float>();
-        auto wsDvb = workspace_[ws + KDA_FINALIZE_WS_DVB].ReinterpretCast<float>();
-        auto wsLast = workspace_[ws + KDA_FINALIZE_WS_GK_LAST].ReinterpretCast<float>();
-        auto wsRh = workspace_[ws + KDA_FINALIZE_WS_RH].ReinterpretCast<float>();
-
-        const uint32_t vectorElems =
-            static_cast<uint32_t>(chunk.validRows) * KDA_FINALIZE_DIM;
-        AscendC::DataCopy(dkState, wsDkState, vectorElems);
-        AscendC::DataCopy(dvb, wsDvb, vectorElems);
-        AscendC::DataCopy(dqRaw, dqRaw_[token], vectorElems);
-        AscendC::DataCopy(gk, gk_[token], vectorElems);
-        AscendC::DataCopy(v, v_[token], vectorElems);
-        AscendC::DataCopy(gkLast, wsLast, KDA_FINALIZE_DIM);
-        AscendC::DataCopy(rH, wsRh, KDA_FINALIZE_DIM);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        FinalizeStage3VF(
-            reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(dv.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gateState.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dbV.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dqRaw.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gk.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(v.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
-            tiling_->scale, static_cast<uint16_t>(chunk.validRows));
-        // Stage4 consumes the FP32 Stage3 results directly from UB.
-        // gk and v are dead after StatePre; reuse them for dKgb_raw and q.
-        // V->MTE2 protects the last reads of those inputs before DMA writes.
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
-        auto dKgbRaw = gk;
-        auto q = v;
-        auto wsDkg = workspace_[ws + KDA_FINALIZE_WS_DKGB_RAW].ReinterpretCast<float>();
-        AscendC::DataCopy(dKgbRaw, wsDkg, vectorElems);
-        AscendC::DataCopy(q, q_[token], vectorElems);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        FinalizeStage4VF(
-            reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dKgbRaw.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(gateState.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dbV.GetPhyAddr()),
-            static_cast<uint16_t>(chunk.validRows));
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-
-        auto wsDbV = workspace_[ws + KDA_FINALIZE_WS_DB_V].ReinterpretCast<float>();
-        AscendC::DataCopy(wsDkState, dkState, vectorElems);
-        AscendC::DataCopy(wsDvb, dvb, vectorElems);
-        AscendC::DataCopy(wsDkg, dKgbRaw, vectorElems);
-        AscendC::DataCopyExtParams dbCopy{
-            1, static_cast<uint32_t>(chunk.validRows * sizeof(float)), 0, 0, 0};
-        AscendC::DataCopyPad(wsDbV, dbV, dbCopy);
-        AscendC::DataCopy(dv_[token], dv, vectorElems);
-        // StatePre has one shared 213-KiB UB working set, not per-slot
-        // ping/pong storage.  Drain every egress before the next head lets VF
-        // overwrite it; this is the same MTE3->V ownership rule used by the
-        // mature fwd_h implementation.
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage3Mte3ToMte2_);
-    }
-
     __aicore__ inline void RunStage5(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
-        uint32_t slot, int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
+        uint32_t slot, uint32_t rowBegin)
     {
         if (rowBegin == 0) {
             AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
@@ -1435,7 +1585,7 @@ private:
         // Protect this ping/pong egress from its previous MTE3 reader while
         // allowing the other slot's MTE3 to overlap the current VF.
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
-        // Retained q/k/exp/beta stay disjoint from Stage5 outputs.
+        // Retained q/k/g/beta stay disjoint from Stage5 outputs.
         // Keep the phase credit protecting reuse in the next head window.
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage5VToMte2_);
 
@@ -1449,7 +1599,7 @@ private:
         auto bkPosNd = UbBytes(112 * 1024).ReinterpretCast<FinalizeLocalType>();
         auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>();
         auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
-        auto exp2Gk = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto g = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
         auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>();
         auto dAqkFp32 = UbBytes(216 * 1024).ReinterpretCast<float>();
 
@@ -1460,18 +1610,14 @@ private:
         if (rowBegin == 0) {
             AscendC::DataCopy(dAqkFp32, dAqk_[matrixToken], matrixElems);
         }
-        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
-        const uint32_t vectorElems = chunk.validRows * KDA_FINALIZE_DIM;
-        const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
-        // State/Base have consumed the unshifted exp2(g). Reload the original
-        // log gates: rebasing an already-underflowed exp2 value cannot recover it.
-        AscendC::DataCopy(exp2Gk, gk_[token], vectorElems);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        auto center = UbBytes(48 * 1024).ReinterpretCast<float>();
+        // Persistent center slot: Stage5(b) -> Stage7/9(b), disjoint from rH
+        // [209,209.5) KiB and diagonal [210,210.5) KiB.
+        auto center = UbBytes(209 * 1024 + 512).ReinterpretCast<float>();
         const uint32_t rowEnd = FinalizeMin(rowBegin + KDA_FINALIZE_INTRA_ROWS, chunk.validRows);
         FinalizeIntraCenterVF(
-            reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()) + rowBegin * 128,
+            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()) + rowBegin * 128,
             reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
             rowEnd - rowBegin);
         FinalizeStage5VF(
@@ -1482,7 +1628,7 @@ private:
             reinterpret_cast<__ubuf__ float *>(dAkkRaw.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(exp2Gk.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
             static_cast<uint16_t>(chunk.validRows), rowBegin, rowEnd);
@@ -1528,29 +1674,136 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
-    // Complete each band while its Cube results are resident. Only the
-    // accumulated gate gradient crosses GM for the full-chunk reverse scan.
-    __aicore__ inline void RunIntraBandResults(
+    // StatePre and BaseFinalize for one 32-row band, fused between Stage5 and
+    // the intra-band GEMM consumers.  dkBase/dqBase land at the same
+    // [112,128)/[128,144) KiB addresses the band loop already used, dg is
+    // written straight to its 216 KiB resident frame, and the band scalars
+    // use band-local row indexing; the band consumer reads all of them
+    // directly from UB on the same vector pipe.
+    __aicore__ inline void RunStateBaseSlice(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner, uint32_t slot,
         int64_t coreIdx, uint64_t groupGeneration, uint32_t rowBegin)
     {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
         const uint32_t rows = FinalizeMin(KDA_FINALIZE_INTRA_ROWS, chunk.validRows - rowBegin);
         const uint32_t elems = rows * KDA_FINALIZE_DIM;
         const uint32_t offset = rowBegin * KDA_FINALIZE_DIM;
+        const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM);
         const uint64_t ws = FinalizeWorkspaceSlotBase(coreIdx, groupGeneration, owner);
+
+        auto dkState = UbBytes(112 * 1024).ReinterpretCast<float>();
+        auto dqRaw = UbBytes(128 * 1024).ReinterpretCast<float>();
+        // X sits in the other slot's result half, which this task's cube
+        // Stage6/8 never writes.  X overlaps five pre-band transients
+        // (zV/zW/dAqkBf16/dAkkNd/TzaResidual low), all drained by Stage5's
+        // closing MTE3_V barrier and program order.
+        auto dvb = UbBytes((2 - slot) * 16 * 1024).ReinterpretCast<float>();
+        auto v = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dv = UbBytes(72 * 1024 + slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
+        auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>();
+        auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>();
+        auto g = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>();
+        auto gkLast = g[static_cast<uint32_t>(chunk.validRows - 1) * KDA_FINALIZE_DIM];
+        auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>();
+        auto rH = UbBytes(209 * 1024).ReinterpretCast<float>();
+        auto gateState = UbBytes(210 * 1024 + 512).ReinterpretCast<float>();
+        auto dbV = UbBytes(211 * 1024).ReinterpretCast<float>();
+        auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
+
+        auto wsDkState = workspace_[ws + KDA_FINALIZE_WS_DK_STATE_RAW].ReinterpretCast<float>();
+        auto wsDvb = workspace_[ws + KDA_FINALIZE_WS_DVB].ReinterpretCast<float>();
+        auto wsDkg = workspace_[ws + KDA_FINALIZE_WS_DKGB_RAW].ReinterpretCast<float>();
+
+        // Drain Stage5's in-flight L1 publication before MTE2 reuses
+        // [16,144) KiB and X/right: the closing MTE3_V barrier in RunStage5
+        // only orders the vector pipe, so the MTE3->MTE2 wait is explicit
+        // here, matching every other UB reinterpretation site.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
+        AscendC::DataCopy(dkState, wsDkState[offset], elems);
+        AscendC::DataCopy(dvb, wsDvb[offset], elems);
+        AscendC::DataCopy(dqRaw, dqRaw_[token + offset], elems);
+        LoadModelRows(v, v_, token + offset, elems, tiling_->vTokenMajor);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        FinalizeStage3VF(
+            reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(dv.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gateState.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dbV.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dqRaw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(v.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta[rowBegin].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gkLast.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(rH.GetPhyAddr()),
+            tiling_->scale, static_cast<uint16_t>(chunk.validRows),
+            static_cast<uint16_t>(rowBegin), static_cast<uint16_t>(rows));
+        // The dv egress must drain before Stage8 may rewrite the right area.
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
+        const bool tokenMajor = tiling_->outputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, KDA_FINALIZE_DIM, tokenMajor);
+        AscendC::DataCopyPad(dv_[out], dv, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(rows), KDA_FINALIZE_DIM * sizeof(bfloat16_t), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0});
+        // V->MTE2 protects the last Stage3 read of dVb in X before the
+        // dKgb_raw DMA overwrites it.
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_);
+        AscendC::DataCopy(dvb, wsDkg[offset], elems);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        FinalizeStage4VF(
+            reinterpret_cast<__ubuf__ float *>(dkState.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dqRaw.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dvb.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(q[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta[rowBegin].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(gateState.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dbV.GetPhyAddr()),
+            static_cast<uint16_t>(chunk.validRows),
+            static_cast<uint16_t>(rowBegin), static_cast<uint16_t>(rows));
+        // The band consumer reads the on-chip dqBase/dkBase/dbBase directly;
+        // only the dv egress needs covering before Stage8's right rewrite.
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
+    }
+
+    // Complete each band while its Cube results are resident. dg stays on
+    // chip from the slice's band0 write through the Stage11 full-chunk
+    // reverse scan.
+    __aicore__ inline void RunIntraBandResults(
+        const FinalizeChunkInfo &chunk, int64_t head, uint32_t slot, uint32_t rowBegin)
+    {
+        const uint32_t rows = FinalizeMin(KDA_FINALIZE_INTRA_ROWS, chunk.validRows - rowBegin);
+        const uint32_t elems = rows * KDA_FINALIZE_DIM;
+        const uint32_t offset = rowBegin * KDA_FINALIZE_DIM;
         const int64_t token = FinalizeTokenOffset(*tiling_, chunk, head, KDA_FINALIZE_DIM) + offset;
         auto result = UbBytes(slot * 32 * 1024).ReinterpretCast<float>();
         auto left = result[KDA_FINALIZE_INTRA_ROWS * KDA_FINALIZE_DIM];
         auto right = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<float>();
-        // For either result slot, [112,144) and [216,248) KiB are free once
-        // Stage5's L1 publication has drained. Retain q/k for the next band.
-        auto dg = UbBytes(112 * 1024).ReinterpretCast<float>();
+        // dg is written straight to its 216 KiB resident frame by the slice's
+        // Stage4VF, band by band; it stays resident through Stage11.  The
+        // slice runs before this stage on the same V pipe, so no load remains.
+        auto dg = UbBytes(KDA_FINALIZE_UB_DG).ReinterpretCast<float>();
+        // dqBase/dkBase/dbBase are read straight from the slice's on-chip
+        // products: same addresses and same bits the workspace mirror held.
         auto dqBase = UbBytes(128 * 1024).ReinterpretCast<float>();
-        auto dkBase = UbBytes(216 * 1024).ReinterpretCast<float>();
-        auto dkOut = UbBytes(232 * 1024).ReinterpretCast<bfloat16_t>();
-        auto dqOut = UbBytes(240 * 1024).ReinterpretCast<bfloat16_t>();
-        auto e = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>()[offset];
+        auto dkBase = UbBytes(112 * 1024).ReinterpretCast<float>();
+        // dqOut reuses this slot's result area and dkOut the right area; both
+        // cube handoffs are dead once Stage7/Stage9 have read them. The
+        // DQ_LOCAL_FREE / KE_READY / mte3ToMte2_ credits drain the dq/dk
+        // egress reads before the next band's cube writes these ranges.
+        auto dqOut = UbBytes(slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
+        auto dkOut = UbBytes(64 * 1024 + slot * 32 * 1024).ReinterpretCast<bfloat16_t>();
+        // The resident g frame holds the raw log gates; Stage7 computes the
+        // band factor once and Stage9 reuses it from the released qPos range.
+        auto g = UbBytes(KDA_FINALIZE_UB_EXP2_GK).ReinterpretCast<float>()[offset];
+        auto center = UbBytes(209 * 1024 + 512).ReinterpretCast<float>();
+        auto bandExp = UbBytes(80 * 1024).ReinterpretCast<float>();
         auto q = UbBytes(KDA_FINALIZE_UB_Q).ReinterpretCast<bfloat16_t>()[offset];
         auto k = UbBytes(KDA_FINALIZE_UB_K).ReinterpretCast<bfloat16_t>()[offset];
         auto beta = UbBytes(KDA_FINALIZE_UB_BETA).ReinterpretCast<DTYPE_BETA>()[rowBegin];
@@ -1560,41 +1813,43 @@ private:
         auto qRstd = UbBytes(213 * 1024).ReinterpretCast<float>();
         auto kRstd = UbBytes(214 * 1024).ReinterpretCast<float>();
         auto dbOut = UbBytes(215 * 1024).ReinterpretCast<DTYPE_BETA>();
-        AscendC::DataCopy(dg, workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>()[offset], elems);
-        AscendC::DataCopy(dqBase, workspace_[ws + KDA_FINALIZE_WS_DQ_BASE].ReinterpretCast<float>()[offset], elems);
-        AscendC::DataCopy(dkBase, workspace_[ws + KDA_FINALIZE_WS_DK_BASE].ReinterpretCast<float>()[offset], elems);
         const AscendC::DataCopyExtParams scalarCopy{1, static_cast<uint32_t>(rows * sizeof(float)), 0, 0, 0};
         const AscendC::DataCopyPadExtParams<float> scalarPad{false, 0, 0, 0.0f};
-        AscendC::DataCopyPad(dbBase,
-            workspace_[ws + KDA_FINALIZE_WS_DB_BASE].ReinterpretCast<float>()[rowBegin], scalarCopy, scalarPad);
         if (tiling_->hasQkL2Norm != 0U) {
             AscendC::DataCopyPad(qRstd, qRstd_[token / KDA_FINALIZE_DIM], scalarCopy, scalarPad);
             AscendC::DataCopyPad(kRstd, kRstd_[token / KDA_FINALIZE_DIM], scalarCopy, scalarPad);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
+        // Issue the cube handshake before draining MTE2 so the load latency
+        // overlaps the wait for the cube result.
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
             KDA_FINALIZE_DQ_LOCAL_FREE_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(
             KDA_FINALIZE_DQ_LOCAL_READY_BASE + slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(mte2ToV_[slot]);
         FinalizeStage7VF(
             reinterpret_cast<__ubuf__ bfloat16_t *>(dqOut.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(result.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dqBase.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(e.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(g.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(center.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(q.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(qRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()));
+            reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bandExp.GetPhyAddr()));
+        // Drain the slice's dv egress out of the right area before KE_READY
+        // lets cube Stage8 rewrite it.
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_KE_READY_BASE + slot);
         AscendC::CrossCoreWaitFlag<KDA_FINALIZE_CROSS_MODE, PIPE_V>(KDA_FINALIZE_ZW_READY_BASE + slot);
         FinalizeStage9VF(
             reinterpret_cast<__ubuf__ float *>(left.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(right.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float *>(dbDelta.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(dg.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ float *>(e.GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(dg[offset].GetPhyAddr()),
+            reinterpret_cast<__ubuf__ float *>(bandExp.GetPhyAddr()),
             reinterpret_cast<__ubuf__ bfloat16_t *>(k.GetPhyAddr()),
             reinterpret_cast<__ubuf__ DTYPE_BETA *>(beta.GetPhyAddr()), rows,
             reinterpret_cast<__ubuf__ float *>(diagonal.GetPhyAddr()),
@@ -1610,11 +1865,18 @@ private:
             reinterpret_cast<__ubuf__ float *>(kRstd.GetPhyAddr()), tiling_->hasQkL2Norm, rows);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3_[slot]);
-        AscendC::DataCopy(dq_[token], dqOut, elems);
-        AscendC::DataCopy(dk_[token], dkOut, elems);
-        AscendC::DataCopyPad(dBeta_[token / KDA_FINALIZE_DIM], dbOut,
-            AscendC::DataCopyExtParams{1, static_cast<uint32_t>(rows * sizeof(DTYPE_BETA)), 0, 0, 0});
-        AscendC::DataCopy(workspace_[ws + KDA_FINALIZE_WS_DG_BASE].ReinterpretCast<float>()[offset], dg, elems);
+        const bool tokenMajor = tiling_->outputTokenMajor != 0U;
+        const uint64_t out = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, KDA_FINALIZE_DIM, tokenMajor);
+        const AscendC::DataCopyExtParams matrixCopy{
+            static_cast<uint16_t>(rows), KDA_FINALIZE_DIM * sizeof(bfloat16_t), 0,
+            tokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * KDA_FINALIZE_DIM * sizeof(bfloat16_t)) : 0U, 0};
+        AscendC::DataCopyPad(dq_[out], dqOut, matrixCopy);
+        AscendC::DataCopyPad(dk_[out], dkOut, matrixCopy);
+        const bool gateTokenMajor = tiling_->gateOutputTokenMajor != 0U;
+        const uint64_t betaOut = FinalizeOutputOffset(*tiling_, chunk, head, rowBegin, 1, gateTokenMajor);
+        AscendC::DataCopyPad(dBeta_[betaOut], dbOut, AscendC::DataCopyExtParams{
+            static_cast<uint16_t>(rows), sizeof(DTYPE_BETA), 0,
+            gateTokenMajor ? static_cast<uint32_t>((tiling_->NV - 1) * sizeof(DTYPE_BETA)) : 0U, 0});
         // The next Stage5 uses these UB ranges. Preserve all output reads.
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
@@ -1623,8 +1885,10 @@ private:
 
 
     AscendC::GlobalTensor<float> kRstd_;
-    AscendC::GlobalTensor<float> rawG_, dtBias_, dG_;
-    AscendC::GlobalTensor<DTYPE_A_LOG> aLog_;
+    AscendC::GlobalTensor<DTYPE_RAW_G> rawG_;
+    AscendC::GlobalTensor<float> dtBias_;
+    AscendC::GlobalTensor<DTYPE_D_G> dG_;
+    AscendC::GlobalTensor<float> aLog_;
     AscendC::GlobalTensor<bfloat16_t> dk_;
     AscendC::GlobalTensor<DTYPE_BETA> dBeta_;
     AscendC::GlobalTensor<bfloat16_t> q_;

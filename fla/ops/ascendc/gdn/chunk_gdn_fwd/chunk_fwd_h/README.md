@@ -71,21 +71,30 @@ Stage0 和 Stage2 均使用 BF16 矩阵乘输入、FP32 累加。Stage0 在写�
 | `g` | BF16/FP32 | g-only 必传，`[B,HV,T]` |
 | `gk` | BF16/FP32 | gk-only 必传，`[B,HV,T,128]` |
 | `initial_state` | BF16/FP32 | 可空；`[N,HV,K,V]` 或 `[N,HV,V,K]` |
-| `h` | BF16 | `[B,HV,C,K,V]` 或 `[B,HV,C,V,K]` |
+| `h` | BF16 | dense `[B,C,HV,K,V]`；带 cu_seqlens 的 packed 为 `[1,C,HV,K,V]`，C 为总 chunk 数；state_v_first 交换末两维 |
 | `v_new` | BF16 | `[B,HV,T,128]` |
 | `final_state` | BF16/FP32 | 可空；shape/layout 与 `initial_state` 相同 |
 
 `state_v_first=false` 时 state 末两维为 `[K,V]`，为 `true` 时为 `[V,K]`。两种布局均由 kernel 原生处理，不依赖外部转置。
 
-当前仅支持 `K=V=128`、`chunk_size=64`、`save_new_value=true`，支持 A2、A3 和 A5。
-
 所有 aclnn tensor descriptor 必须使用非私有 ND storage/view format；输入可以是 ND view，
 host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND。Python 入口只接受标准物理
 布局并创建连续 ND 输出，不支持将私有 NPU format 伪装成 ND。
 
+## 支持范围
+
+- A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)。
+- `K=V=128`、`chunk_size=64`、`save_new_value=true`；其它取值在参数校验阶段返回
+  `ACLNN_ERR_PARAM_INVALID`，不下沉到 tiling。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`，gk-only 要求 `HK == HV`。
+- dtype：`k/w/u` 为 BF16；`g/gk`、`initial_state/final_state` 支持 BF16/FP32。
+- 变长（BNSD）要求 `B=1`；`cu_seqlens` 从 0 开始、以 `T` 结束且非递减，相邻两项相等
+  表示零长度序列。
+- `state_v_first` 两值均支持。
+
 ## 变长序列
 
-变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束并严格递增。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
+变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束且非递减，相邻两项相等表示零长度序列。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
 
 ## 内核分工
 

@@ -1,0 +1,88 @@
+#ifndef CHUNK_GDN_BWD_INTRA_ARCH22_CONFIG_H
+#define CHUNK_GDN_BWD_INTRA_ARCH22_CONFIG_H
+#include <cstdint>
+
+namespace GDN::Arch22 {
+constexpr uint32_t CHUNK_TOKENS = 64;
+constexpr uint32_t HEAD_DIM = 128;
+constexpr uint32_t VECTOR_PART_TOKENS = CHUNK_TOKENS / 2;
+constexpr uint32_t MAIN_BYTES = sizeof(uint16_t);
+constexpr uint32_t FLOAT_BYTES = sizeof(float);
+constexpr uint32_t DMA_BLOCK_BYTES = 32;
+constexpr uint32_t FLOAT_VECTOR_LANES = 256 / FLOAT_BYTES;
+constexpr uint32_t KV_ROW_BLOCKS = HEAD_DIM * FLOAT_BYTES / DMA_BLOCK_BYTES;
+constexpr uint32_t SCORE_ROW_BLOCKS = CHUNK_TOKENS * FLOAT_BYTES / DMA_BLOCK_BYTES;
+constexpr uint32_t KV_ELEMENTS = CHUNK_TOKENS * HEAD_DIM;
+constexpr uint32_t SCORE_ELEMENTS = CHUNK_TOKENS * CHUNK_TOKENS;
+constexpr uint32_t PART_KV_ELEMENTS = VECTOR_PART_TOKENS * HEAD_DIM;
+constexpr uint32_t PART_SCORE_ELEMENTS = VECTOR_PART_TOKENS * CHUNK_TOKENS;
+constexpr uint32_t K_OFFSET = 0;
+constexpr uint32_t V_OFFSET = K_OFFSET + KV_ELEMENTS;
+constexpr uint32_t D_OFFSET = V_OFFSET + KV_ELEMENTS;
+constexpr uint32_t S_OFFSET = D_OFFSET + SCORE_ELEMENTS;
+constexpr uint32_t RECORD_ELEMENTS = S_OFFSET + SCORE_ELEMENTS;
+constexpr uint32_t L1_SCORE_HEAD_BYTES = KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t MAX_HEADS_PER_WORK = 4;
+constexpr uint32_t L1_SCORE_BYTES = 2 * MAX_HEADS_PER_WORK * L1_SCORE_HEAD_BYTES;
+constexpr uint32_t L1_A_OFFSET = 0;
+constexpr uint32_t L1_K_OFFSET = SCORE_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L1_V_OFFSET = L1_K_OFFSET + KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L1_D_OFFSET = L1_V_OFFSET + KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L1_DO_OFFSET = L1_D_OFFSET + SCORE_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L1_HEAD_BYTES = L1_DO_OFFSET + KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L0_SLOTS = 2;
+constexpr uint32_t L0A_SLOT_BYTES = SCORE_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L0B_SLOT_BYTES = KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t L0C_TILE_BYTES = KV_ELEMENTS * FLOAT_BYTES;
+constexpr uint32_t L0_HOST_MIN_BYTES = L0C_TILE_BYTES;
+
+// K/V writeback sources remain live while GateScore runs; its writable scratch is disjoint.
+constexpr uint32_t UB_SCORE_RAW_OFFSET = 0;
+constexpr uint32_t UB_COEFF_ROWS_OFFSET = UB_SCORE_RAW_OFFSET;
+constexpr uint32_t UB_SCORE_FLOAT_OFFSET = PART_SCORE_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t UB_BETA_ROWS_OFFSET = PART_SCORE_ELEMENTS * FLOAT_BYTES;
+constexpr uint32_t UB_K_OUT_OFFSET = PART_KV_ELEMENTS * FLOAT_BYTES;
+constexpr uint32_t UB_V_OUT_OFFSET = UB_K_OUT_OFFSET + PART_KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t UB_K_FLOAT_OFFSET = UB_V_OUT_OFFSET + PART_KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t UB_V_FLOAT_OFFSET = UB_K_FLOAT_OFFSET + PART_KV_ELEMENTS * FLOAT_BYTES;
+constexpr uint32_t UB_AUX_RAW_OFFSET = UB_V_FLOAT_OFFSET + PART_KV_ELEMENTS * FLOAT_BYTES;
+constexpr uint32_t AUX_VECTOR_BYTES = CHUNK_TOKENS * FLOAT_BYTES;
+constexpr uint32_t UB_GATE_RAW_OFFSET = UB_AUX_RAW_OFFSET;
+constexpr uint32_t UB_BETA_RAW_OFFSET = UB_GATE_RAW_OFFSET + AUX_VECTOR_BYTES;
+constexpr uint32_t UB_GATE_FLOAT_OFFSET = UB_AUX_RAW_OFFSET + 4 * AUX_VECTOR_BYTES;
+constexpr uint32_t UB_BETA_FLOAT_OFFSET = UB_GATE_FLOAT_OFFSET + AUX_VECTOR_BYTES;
+constexpr uint32_t UB_COEFF_OFFSET = UB_GATE_FLOAT_OFFSET + 4 * AUX_VECTOR_BYTES;
+constexpr uint32_t UB_K_RAW_OFFSET = UB_COEFF_OFFSET + 8 * AUX_VECTOR_BYTES;
+constexpr uint32_t UB_V_RAW_OFFSET = UB_K_RAW_OFFSET + PART_KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t UB_KV_RAW_END = UB_V_RAW_OFFSET + PART_KV_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t UB_DELTA_OFFSET = UB_KV_RAW_END;
+constexpr uint32_t UB_SCORE_OUT_OFFSET = UB_DELTA_OFFSET + PART_SCORE_ELEMENTS * FLOAT_BYTES;
+constexpr uint32_t UB_ROW_GATE_OFFSET = UB_SCORE_OUT_OFFSET + PART_SCORE_ELEMENTS * MAIN_BYTES;
+constexpr uint32_t UB_BYTES = UB_ROW_GATE_OFFSET + AUX_VECTOR_BYTES;
+static_assert(RECORD_ELEMENTS == 24576 && UB_BYTES == 96 * 1024 + AUX_VECTOR_BYTES,
+    "K/V-GateScore overlap layout compatibility");
+static_assert(UB_BETA_ROWS_OFFSET == 8192, "Phase-overlapped scratch compatibility");
+static_assert(K_OFFSET == 0 && V_OFFSET == 8192 && D_OFFSET == 16384 && S_OFFSET == 20480,
+    "Record offsets compatibility");
+static_assert(UB_SCORE_RAW_OFFSET == 0 && UB_SCORE_FLOAT_OFFSET == 4096 &&
+    UB_K_OUT_OFFSET == 16384 && UB_V_OUT_OFFSET == 24576 &&
+    UB_K_FLOAT_OFFSET == 32768 && UB_V_FLOAT_OFFSET == 49152,
+    "Scratch offsets compatibility");
+static_assert(UB_GATE_RAW_OFFSET == 65536 && UB_BETA_RAW_OFFSET == 65792 &&
+    UB_GATE_FLOAT_OFFSET == 66560 && UB_BETA_FLOAT_OFFSET == 66816 && UB_COEFF_OFFSET == 67584 &&
+    UB_K_RAW_OFFSET == 69632 && UB_V_RAW_OFFSET == 77824 && UB_DELTA_OFFSET == 86016 &&
+    UB_SCORE_OUT_OFFSET == 94208 && UB_ROW_GATE_OFFSET == 98304,
+    "Auxiliary/raw/GateScore offsets compatibility");
+static_assert(L1_K_OFFSET == 8192 && L1_V_OFFSET == 24576 && L1_D_OFFSET == 40960 &&
+    L1_DO_OFFSET == 49152 && L0A_SLOT_BYTES == 8192 && L0B_SLOT_BYTES == 16384 &&
+    L0C_TILE_BYTES == 32768, "Cube offsets compatibility");
+static_assert(L1_HEAD_BYTES == 64 * 1024 && L1_SCORE_BYTES == 128 * 1024, "L1 layout compatibility");
+static_assert(UB_COEFF_OFFSET + AUX_VECTOR_BYTES <= UB_K_RAW_OFFSET, "Coefficient/raw staging overlap");
+static_assert(UB_KV_RAW_END <= UB_DELTA_OFFSET &&
+    UB_DELTA_OFFSET + PART_SCORE_ELEMENTS * FLOAT_BYTES <= UB_SCORE_OUT_OFFSET &&
+    UB_SCORE_OUT_OFFSET + PART_SCORE_ELEMENTS * MAIN_BYTES <= UB_ROW_GATE_OFFSET &&
+    UB_ROW_GATE_OFFSET + AUX_VECTOR_BYTES == UB_BYTES, "GateScore scratch bounds");
+static_assert(UB_K_RAW_OFFSET % DMA_BLOCK_BYTES == 0 && UB_V_RAW_OFFSET % DMA_BLOCK_BYTES == 0,
+    "Raw staging alignment");
+}
+#endif

@@ -235,13 +235,14 @@ def run_cpu(spec: dict[str, Any]):
         seqlens=inputs["seqlens"],
     )
     h, v_new, _ = _FWD_H._reference(
-        fwd_inputs, output_final_state=False, use_exp2=use_exp2, state_v_first=False
+        fwd_inputs, output_final_state=False, use_exp2=use_exp2, state_v_first=False,
     )
     dh, dh0, dv2 = _DHU.chunk_gated_delta_rule_bwd_dhu_cpu(
         inputs["q"], inputs["k"], w, inputs["d_o"], dv_local,
         cu_seqlens=inputs["cu_seqlens"], chunk_indices=inputs["chunk_indices"],
         g=inputs["g"], h0=inputs["initial_state"], dht=inputs["dht"],
         scale=inputs["scale"], chunk_size=CHUNK_SIZE, golden_mode="npu", use_exp2=use_exp2,
+        nt_first=True,
     )
     dh = dh.to(torch.bfloat16)
     dh0 = dh0.to(torch.bfloat16) if dh0 is not None else None
@@ -254,7 +255,7 @@ def run_cpu(spec: dict[str, Any]):
         chunk_size=CHUNK_SIZE,
         use_qk_l2_norm_in_kernel=_as_bool(spec.get("use_qk_l2norm", False)),
         use_beta_sigmoid_in_kernel=_as_bool(spec.get("use_beta_sigmoid", False)),
-        use_gate_in_kernel=False, state_v_first=False, use_exp2=use_exp2,
+        use_gate_in_kernel=False, state_v_first=False, use_exp2=use_exp2, nt_first=True,
     )
     state_v_first = _as_bool(spec.get("state_v_first", False))
     if dh0 is not None and state_v_first:

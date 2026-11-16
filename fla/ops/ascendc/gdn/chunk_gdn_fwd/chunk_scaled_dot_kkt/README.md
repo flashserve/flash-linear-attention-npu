@@ -1,5 +1,8 @@
 # ChunkScaledDotKkt 算子说明
 
+> **[已弃用]** 本算子已弃用，将在2027年1月15日（v26.12.0）移除。请使用融合算子 `npu_chunk_gated_delta_rule_fwd` 替代。
+
+
 `ChunkScaledDotKkt` 用于 Gated Delta Rule 线性注意力中的 chunk-wise WY 表示构建。当前实现覆盖 `gk is None` 的定长和变长序列场景，输入和输出均采用 head-first 排布。
 
 ## 1. 产品支持情况

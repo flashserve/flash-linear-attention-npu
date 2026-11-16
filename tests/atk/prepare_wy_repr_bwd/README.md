@@ -15,7 +15,7 @@
 
 ## 标杆来源
 
-torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py; fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd/README.md
+torch_custom/fla_npu/test/test_npu_prepare_wy_repr_bwd_full.py; fla/ops/ascendc/gdn/chunk_gdn_bwd/prepare_wy_repr_bwd/op_host/op_api/aclnn_prepare_wy_repr_bwd.cpp
 
 CPU 标杆、输入构造、run_cpu、run_npu 和 FunctionApi 均在本目录的 `executor_prepare_wy_repr_bwd.py` 中实现；公共文件只提供基础工具函数。
 

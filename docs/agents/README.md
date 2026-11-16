@@ -85,12 +85,21 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
   ATK 的环境准备和正式精度执行；ATK README 不反向依赖精度规则。
 - [`reference/03-solution-design/`](reference/03-solution-design/) 保存方案设计案例；新算子在阶段 3 读取完整案例，既有算子优先读取自己的设计文档。
 - [`reference/04-operator-development/`](reference/04-operator-development/) 保存阶段 4 的实现参考；根据 chunk 依赖类型选择并读取其中一份开发参考。
+- [`skills/operator-review/references/engineering-example/`](skills/operator-review/references/engineering-example/) 是完整的工程 reference：其中 `engineering-structure.md` 规定目录职责、`def`/`aclnn`/调用层契约、`arch22`/`arch35`、TilingKey、测试位置和编码细节，其余文件是逐文件工程样例。编码前和结构检视时读取。
 - 参考资料按所属阶段分目录维护，阶段入口仍是 `01`–`05` 五个主文件。
+
+## 算子检视 Skill
+
+- [`skills/operator-review/`](skills/operator-review/SKILL.md) 是四层静态检视 skill：功能正确性、工程结构、DFX 拦截与报错、文档正确性与易用性。
+- 功能层覆盖当前全部已完成 issue 的分类规则；工程层以工程规范与样例为 reference；DFX 层按 `op_common/log/log.h` 检查结构化上报；文档层执行格式与“约束到代码”的双向核对。
+- skill 随仓库维护。本机使用时可将 `docs/agents/skills/operator-review/` 复制或链接到 Codex skills 目录。
 
 ## 既有任务按需读取
 
 | 任务 | 必读文件 |
 | --- | --- |
+| 新增算子、调整目录/接口/调用层结构 | [`skills/operator-review/references/engineering-example/`](skills/operator-review/references/engineering-example/) 和当前算子的 `docs/api.md`、`docs/design.md` |
+| 对算子或 PR 做四层静态检视 | [`skills/operator-review/SKILL.md`](skills/operator-review/SKILL.md)，按其路由读取功能、结构、DFX、文档和 issue 分类 reference |
 | 修改既有算子的接口或功能 | 包括修改属性、支持范围和异常行为。先读取当前 `docs/api.md`、CPU 标杆、`docs/design.md`、算子 ATK README、实现和测试；开发期 `docs/validation.md` 存在时同时读取。核对设计文档的规则版本，再按 `01-接口确认.md` 的既有算子修改流程选择后续阶段 |
 | 修改既有算子的内部实现（对外行为不变） | 包括性能优化，以及数据依赖、stage、workspace、同步、tiling、op_host、kernel、op_api 或 Python 适配调整。读取当前算子的 README、`docs/api.md`、`docs/design.md`、算子 ATK README、实现和测试，以及 `03-方案设计.md`、`04-算子开发.md`、`05-算子测试.md`；开发期 `docs/validation.md` 存在时同时读取，设计版本较旧时按 `03` 的当前规则更新受影响内容 |
 | 修改或新增算子测试 | 包括 ATK、精度、性能和回归用例。读取 `05-算子测试.md`、[`../../tests/atk/README.md`](../../tests/atk/README.md) 和当前算子的 ATK README；涉及 CPU 标杆对齐、输入值域、精度规则或精度失败时，同时按下一行进入精度路由 |
@@ -104,4 +113,5 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
   采集命令写在 `reference/精度对比与定位.md`。
 - Python runtime、wheel、动态库、device、stream、autograd 和图编译架构只写在 `docs/architecture/`。
 - 算子接口和支持范围归档在 `docs/api.md`；方案详设归档在 `docs/design.md` 并记录规则版本；开发期间以 `docs/validation.md` 维护验证计划、实现追溯、实验过程和实测结果。最终交付前把仍有效的测试与性能结论收敛到算子 ATK README，删除 `docs/validation.md`；失败实验和临时追溯不作为最终交付件。
+- 工程结构规则写在 `skills/operator-review/references/engineering-example/engineering-structure.md`，逐文件写法写在同一 reference 目录；四层检视流程、issue 分类和历史规则只写在 `skills/operator-review/`。
 - 新增知识归入它实际约束的阶段，并明确适用边界。

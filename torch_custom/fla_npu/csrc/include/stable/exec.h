@@ -180,9 +180,13 @@ inline OutTensorArg nd_out_tensor(const TensorMeta& meta) {
   return OutTensorArg(meta, kAclFormatNd);
 }
 // The same ND spelling with the reference's `storage_shape_override=` logical
-// storage shape.  `aclnnChunkKdaFwdFinalize` is the one operator that reads it
-// on an *output*: given a flat rank-1 storage shape it fails its own tiling and
-// reports ACLNN_ERR_INNER_NULLPTR (561103) instead of writing anything.
+// storage shape.  It is required whenever the operator itself reads an output
+// back before the caller does, because a flat rank-1 storage shape changes what
+// it sees: `aclnnChunkKdaFwdFinalize` fails its own tiling and reports
+// ACLNN_ERR_INNER_NULLPTR (561103) instead of writing anything, and the KDA
+// backward entry points hand the rank-1 storage to `KdaGateBwdPostVarlen`,
+// which classifies the call as dense and rejects a packed one with 161002
+// (ACLNN_ERR_PARAM_INVALID).
 inline OutTensorArg nd_logical_out_tensor(const TensorMeta& meta) {
   return OutTensorArg(meta, kAclFormatNd, /*logical_storage=*/true);
 }
@@ -293,6 +297,10 @@ inline void report_async_failure(const std::string& api, int code) {
   if (async_failure_message().empty()) {
     async_failure_message() =
         api + " failed asynchronously: " + std::to_string(code);
+    const auto details = Runtime::instance().recent_error_message();
+    if (!details.empty()) {
+      async_failure_message() += ". Error message: " + details;
+    }
   }
 }
 
@@ -468,9 +476,11 @@ inline void exec(const char* api, const TensorMeta& workspace_meta,
                                      std::tuple_size<Elements>::value>{},
                                  &workspace_size, &executor);
   if (get_ret != 0) {
+    const auto details = runtime.recent_error_message();
     throw std::runtime_error("fla_npu(stable): " + base +
                              "GetWorkspaceSize failed: " +
-                             std::to_string(get_ret));
+                             std::to_string(get_ret) +
+                             (details.empty() ? "" : ". Error message: " + details));
   }
   if (trace_enabled()) {
     trace_once(api, workspace_size, stream);
@@ -514,8 +524,10 @@ inline void exec(const char* api, const TensorMeta& workspace_meta,
   const int launch_ret = launch(workspace_ptr, workspace_size, executor,
                                 reinterpret_cast<void*>(stream));
   if (launch_ret != 0) {
+    const auto details = runtime.recent_error_message();
     throw std::runtime_error("fla_npu(stable): " + base + " failed: " +
-                             std::to_string(launch_ret));
+                             std::to_string(launch_ret) +
+                             (details.empty() ? "" : ". Error message: " + details));
   }
 }
 

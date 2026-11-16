@@ -35,7 +35,6 @@ STAGE_NAMES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 
 ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
@@ -605,6 +604,17 @@ def load_accuracy_report(
         if passed + failed + not_run != total:
             raise ValueError("accuracy report counts are inconsistent")
 
+        # Documentation-only changes intentionally do not execute a device
+        # case.  The CI container writes this explicit marker so the required
+        # report check remains strict for every other run while an empty,
+        # successful report is accepted for this documented skip path.
+        documentation_skip = (
+            report.get("status") == "skipped"
+            and report.get("classification") == "docs-only"
+        )
+        if documentation_skip and (cases or any(summary_counts.values())):
+            raise ValueError("documentation-only accuracy report must be empty")
+
         failures: list[dict[str, Any]] = []
         derived_execution = {"passed": 0, "failed": 0, "not_run": 0}
         derived_accuracy = {"passed": 0, "failed": 0, "not_run": 0}
@@ -713,7 +723,7 @@ def load_accuracy_report(
         accuracy.update(
             {
                 "status": "success"
-                if total > 0 and passed == total and not failures
+                if documentation_skip or (total > 0 and passed == total and not failures)
                 else "failure",
                 "total": total,
                 "passed": passed,
@@ -763,7 +773,6 @@ def build_reproduction(
         _shell_assignment("CI_SOC", soc),
         _shell_assignment("FLA_NPU_SOC", soc),
         _shell_assignment("CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK", "true"),
-        _shell_assignment("CI_RUN_SCOPED_WHEEL_INSTALL_CHECK", "true"),
     ]
     reproduction_stage = failed_stage or ("opp-package" if ops else "")
     if reproduction_stage:

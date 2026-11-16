@@ -1,0 +1,77 @@
+name: "chunk_kda_bwd_prepare"
+api: "pytorch"
+api_type: "executor_chunk_kda_bwd_prepare"
+aclnn_name: "ChunkKdaBwdPrepare"
+version: "v2.1"
+generate: "generator_chunk_kda_bwd_prepare"
+dtype_numbers: 64
+extra_numbers: 0
+standard: {"acc": "mixed_tolerance_bm"}
+shape_distributions: [[0, 1.0]]
+inputs:
+  - name: aqk
+    type: "tensor"
+    required: true
+    dtypes: {"values": ["bf16"]}
+    ranges: {"valid": {"values": [[-5, 5]], "random_types": [{"name": "nd", "mean": [-5, 5], "std": [0.1, 2]}], "custom_dist_ratio": [[0.5, 0.0], [0.5, 0.0]]}}
+    shapes: {"dim_numbers": {"values": [4]}, "dim_values": [{"values": [1, 2]}, {"values": [1, 2, 3, 4, 5]}, {"values": [1, 15, 16, 17, 63, 64, 65, 127, 128, 129]}, {"values": [64]}], "max_length": 17179869184}
+  - name: v_new
+    type: "tensor"
+    required: true
+    dtypes: {"values": ["bf16"]}
+    ranges: {"valid": {"values": [[-5, 5]], "random_types": [{"name": "nd", "mean": [-5, 5], "std": [0.1, 2]}], "custom_dist_ratio": [[0.5, 0.0], [0.5, 0.0]]}}
+    shapes: {"dim_numbers": {"values": [4]}, "dim_values": [{"values": [1, 2]}, {"values": [1, 2, 3, 4, 5]}, {"values": [1, 15, 16, 17, 63, 64, 65, 127, 128, 129]}, {"values": [128]}], "max_length": 17179869184}
+  - name: d_o
+    type: "tensor"
+    required: true
+    dtypes: {"values": ["bf16"]}
+    ranges: {"valid": {"values": [[-5, 5]], "random_types": [{"name": "nd", "mean": [-5, 5], "std": [0.1, 2]}], "custom_dist_ratio": [[0.5, 0.0], [0.5, 0.0]]}}
+    shapes: {"dim_numbers": {"values": [4]}, "dim_values": [{"values": [1, 2]}, {"values": [1, 2, 3, 4, 5]}, {"values": [1, 15, 16, 17, 63, 64, 65, 127, 128, 129]}, {"values": [128]}], "max_length": 17179869184}
+  - name: h
+    type: "tensor"
+    required: true
+    dtypes: {"values": ["bf16"]}
+    ranges: {"valid": {"values": [[-5, 5]], "random_types": [{"name": "nd", "mean": [-5, 5], "std": [0.1, 2]}], "custom_dist_ratio": [[0.5, 0.0], [0.5, 0.0]]}}
+    shapes: {"dim_numbers": {"values": [5]}, "dim_values": [{"values": [1, 2]}, {"values": [1, 2, 3, 4]}, {"values": [1, 2, 3, 4, 5]}, {"values": [128]}, {"values": [128]}], "max_length": 17179869184}
+  - name: cu_seqlens
+    type: "tensor"
+    required: false
+    dtypes: {"values": ["int64"]}
+    ranges: {"valid": {"values": [[-5, 5]]}}
+    shapes: {"dim_numbers": {"values": [1]}, "dim_values": [{"values": [4]}], "max_length": 17179869184}
+  - name: chunk_indices
+    type: "tensor"
+    required: false
+    dtypes: {"values": ["int64"]}
+    ranges: {"valid": {"values": [[-5, 5]]}}
+    shapes: {"dim_numbers": {"values": [1]}, "dim_values": [{"values": [2, 4, 6, 8]}], "max_length": 17179869184}
+  - name: layout
+    type: "attr"
+    required: true
+    dtypes: {"values": ["string"]}
+    ranges: {"valid": {"values": ["BNSD", "BSND", "NTD", "TND"]}}
+  - name: scale
+    type: "attr"
+    required: true
+    dtypes: {"values": ["float"]}
+    ranges: {"valid": {"values": [-0.125, 0.0, 0.125, 1.0]}}
+  - name: chunk_size
+    type: "attr"
+    required: true
+    dtypes: {"values": ["int"]}
+    ranges: {"valid": {"values": [64]}}
+  - name: state_v_first
+    type: "attr"
+    required: true
+    dtypes: {"values": ["attr_bool"]}
+    ranges: {"valid": {"values": [false, true]}}
+  - name: is_varlen
+    type: "attr"
+    required: true
+    dtypes: {"values": ["attr_bool"]}
+    ranges: {"valid": {"values": [false, true]}}
+  - name: explicit_chunk_indices
+    type: "attr"
+    required: true
+    dtypes: {"values": ["attr_bool"]}
+    ranges: {"valid": {"values": [false, true]}}

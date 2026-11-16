@@ -20,6 +20,7 @@
 #include "stable_causal_conv1d_update.cpp"
 #include "stable_chunk_bwd_dqkwg.cpp"
 #include "stable_chunk_bwd_dv_local.cpp"
+#include "stable_pre_process_bwd_kernel_merged.cpp"
 #include "stable_chunk_fwd_h.cpp"
 #include "stable_chunk_fwd_o.cpp"
 #include "stable_chunk_gated_delta_rule_bwd.cpp"
@@ -31,6 +32,8 @@
 #include "stable_chunk_gdn_bwd_intra.cpp"
 #include "stable_chunk_kda_bwd.cpp"
 #include "stable_chunk_kda_bwd_intra.cpp"
+#include "stable_chunk_kda_bwd_prepare.cpp"
+#include "stable_chunk_kda_bwd_finalize.cpp"
 #include "stable_chunk_kda_bwd_recompute.cpp"
 #include "stable_chunk_kda_fwd.cpp"
 #include "stable_chunk_kda_fwd_finalize.cpp"
@@ -40,6 +43,8 @@
 #include "stable_fast_gelu_custom.cpp"
 #include "stable_fast_gelu_custom_backward.cpp"
 #include "stable_kda_gate_cumsum.cpp"
+#include "stable_merge_fwd_bwd_kernel.cpp"
+#include "stable_pre_process_fwd_kernel_merged.cpp"
 #include "stable_prepare_wy_repr_bwd.cpp"
 #include "stable_prepare_wy_repr_bwd_da.cpp"
 #include "stable_prepare_wy_repr_bwd_full.cpp"
@@ -90,13 +95,15 @@ int64_t fla_npu_stable_last_launch_stream() {
 // second block for the same namespace would be a redefinition.  Both lists are
 // therefore kept here, and in the same order (tools/stable_coverage.py pairs
 // them by position).
-STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
+static void register_schemas(StableLibrary& m) {
   m.def(kSchemaRecurrentGdr);
   m.def(kSchemaRecurrentKda);
   m.def(kSchema_npu_fast_gelu_custom);
   m.def(kSchema_npu_fast_gelu_custom_backward);
   m.def(kSchema_kda_gate_cumsum);
   m.def(kSchema_chunk_kda_bwd_intra);
+  m.def(kSchema_chunk_kda_bwd_prepare);
+  m.def(kSchema_chunk_kda_bwd_finalize);
   m.def(kSchema_chunk_kda_bwd_recompute);
   m.def(kSchema_chunk_kda_fwd);
   m.def(kSchema_chunk_kda_fwd_finalize);
@@ -124,13 +131,17 @@ STABLE_TORCH_LIBRARY(fla_npu_stable, m) {
   m.def(kSchema_chunk_gated_delta_rule_bwd_finalize);
   m.def(kSchema_chunk_kda_bwd);
   m.def(kSchema_chunk_gated_delta_rule_bwd);
+  m.def(kSchema_merge_fwd_bwd_kernel);
+  m.def(kSchema_pre_process_fwd_kernel_merged);
+  m.def(kSchema_pre_process_bwd_kernel_merged);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.def("_stream_probe(int device_index) -> (int, int)");
 #endif
 }
 
-STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
-  m.impl("npu_recurrent_gated_delta_rule", &boxed_recurrent_gated_delta_rule);
+static void register_implementations(StableLibrary& m) {
+  m.impl("npu_recurrent_gated_delta_rule",
+         &fla_npu_stable::stable::boxed_adapter<run_recurrent_gated_delta_rule>);
   m.impl("npu_recurrent_kda", &boxed_recurrent_kda);
   m.impl("npu_fast_gelu_custom",
          &fla_npu_stable::stable::boxed_adapter<run_npu_fast_gelu_custom>);
@@ -141,6 +152,10 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
          &fla_npu_stable::stable::boxed_adapter<run_npu_kda_gate_cumsum>);
   m.impl("npu_chunk_kda_bwd_intra",
          &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_intra>);
+  m.impl("npu_chunk_kda_bwd_prepare",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_prepare>);
+  m.impl("npu_chunk_kda_bwd_finalize",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_finalize>);
   m.impl("npu_chunk_kda_bwd_recompute",
          &fla_npu_stable::stable::boxed_adapter<
              run_npu_chunk_kda_bwd_recompute>);
@@ -211,7 +226,52 @@ STABLE_TORCH_LIBRARY_IMPL(fla_npu_stable, CompositeExplicitAutograd, m) {
       "npu_chunk_gated_delta_rule_bwd",
       &fla_npu_stable::stable::boxed_adapter<
           run_npu_chunk_gated_delta_rule_bwd>);
+  m.impl("npu_merge_fwd_bwd_kernel",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_merge_fwd_bwd_kernel>);
+  m.impl("npu_pre_process_fwd_kernel_merged",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_pre_process_fwd_kernel_merged>);
+  m.impl(
+      "npu_pre_process_bwd_kernel_merged",
+      &fla_npu_stable::stable::boxed_adapter<
+          run_npu_pre_process_bwd_kernel_merged>);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.impl("_stream_probe", &boxed_stream_probe);
 #endif
+}
+
+// Register only after Python selects an immutable layer/OPP binding. Two
+// launchers may define different schemas for the same public Python name.
+#include <memory>
+#include <mutex>
+#include <string>
+extern "C" __attribute__((visibility("default")))
+const char* fla_npu_stable_register(const char* ns, const char* paths) {
+  static std::mutex mutex;
+  static std::string registered_namespace, registered_paths;
+  static std::unique_ptr<StableTorchLibraryInit> definitions, implementations;
+  static thread_local std::string error;
+  std::lock_guard<std::mutex> guard(mutex);
+  try {
+    if (!ns || !*ns || !paths || !*paths)
+      throw std::runtime_error("registration requires a namespace and OPP paths");
+    if (definitions) {
+      if (registered_namespace != ns || registered_paths != paths)
+        throw std::runtime_error("launcher already bound to another layer; restart the process");
+      return nullptr;
+    }
+    fla_npu_stable::Runtime::instance().init(paths);
+    auto defs = std::make_unique<StableTorchLibraryInit>(
+        StableLibrary::Kind::DEF, &register_schemas, ns, nullptr, __FILE__, __LINE__);
+    auto impls = std::make_unique<StableTorchLibraryInit>(
+        StableLibrary::Kind::IMPL, &register_implementations, ns,
+        "CompositeExplicitAutograd", __FILE__, __LINE__);
+    registered_namespace = ns;
+    registered_paths = paths;
+    definitions = std::move(defs);
+    implementations = std::move(impls);
+    return nullptr;
+  } catch (const std::exception& exc) {
+    error = exc.what();
+    return error.c_str();
+  }
 }

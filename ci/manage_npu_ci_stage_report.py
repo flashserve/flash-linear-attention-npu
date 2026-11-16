@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import csv
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import tempfile
+import time
 from typing import Any
 
 
@@ -17,7 +21,6 @@ STAGES = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 STAGE_STATUSES = {"not_run", "running", "success", "failure", "skipped"}
 
@@ -33,10 +36,61 @@ def _metadata() -> dict[str, str]:
 
 
 def _write(path: Path, payload: dict[str, Any]) -> None:
+    _update_timing_table(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     temporary.replace(path)
+
+
+def _update_timing_table(payload: dict[str, Any]) -> None:
+    filename = os.environ.get("CI_STAGE_TIMING_FILE")
+    if not filename:
+        return
+    import fcntl  # The persistent table is written on Linux CI runners.
+
+    path = Path(filename)
+    metadata = payload["metadata"]
+    keys = ("run_id", "run_attempt", "platform")
+    identity = tuple(metadata[key] for key in keys)
+    if not all(identity):
+        raise ValueError("persistent stage timings require run_id, run_attempt and platform")
+    fields = [*keys, "head_sha", "soc", "stage", "status", "exit_code",
+              "started_at", "finished_at", "duration_seconds"]
+    # Lock a separate inode because the CSV is atomically replaced. Each run
+    # updates only its own rows, preserving concurrent runs and all history.
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = []
+        if path.exists():
+            with path.open(newline="", encoding="utf-8") as stream:
+                reader = csv.DictReader(stream)
+                if reader.fieldnames != fields:
+                    raise ValueError(f"unexpected stage timing table header: {path}")
+                rows = [row for row in reader if tuple(row[key] for key in keys) != identity]
+        for stage, item in payload["stages"].items():
+            rows.append({field: {**metadata, **item, "stage": stage}.get(field, "")
+                         for field in fields})
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8",
+                                             dir=path.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows(rows)
+                stream.flush()
+                os.fchmod(stream.fileno(), 0o644)
+                os.fsync(stream.fileno())
+            temporary.replace(path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 def initialize(path: Path) -> None:
@@ -73,11 +127,21 @@ def update(path: Path, stage: str, status: str, exit_code: int | None, reason: s
         raise ValueError(f"stage status {status} must not have an exit code")
 
     payload = _read(path)
-    payload["stages"][stage] = {
+    item = payload["stages"][stage]
+    timestamp = datetime.now(timezone.utc).isoformat()
+    now_ns = time.monotonic_ns()
+    # Environment bootstrap and the stage dispatcher both report running.
+    if status == "running" and item.get("started_at_monotonic_ns") is None:
+        item.update(started_at=timestamp, started_at_monotonic_ns=now_ns)
+    if status in {"success", "failure"}:
+        item["finished_at"] = timestamp
+        start_ns = item.get("started_at_monotonic_ns")
+        item["duration_seconds"] = round((now_ns - start_ns) / 1e9, 3) if start_ns is not None else None
+    item.update({
         "status": status,
         "exit_code": exit_code,
         "reason": reason,
-    }
+    })
     _write(path, payload)
 
 

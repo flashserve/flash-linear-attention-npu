@@ -1,0 +1,918 @@
+name: chunk_kda_bwd
+api: pytorch
+api_type: executor_chunk_kda_bwd
+version: v2.1
+aclnn_name: ChunkKdaBwd
+generate: generator_chunk_kda_bwd
+dtype_numbers: 96
+extra_numbers: 0
+standard:
+  acc: mixed_tolerance_bm
+shape_distributions:
+- - 0
+  - 1.0
+inputs:
+- name: q
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: &id001
+      - 1
+      - 2
+    - values: &id002
+      - 1
+      - 2
+      - 3
+    - values: &id003
+      - 1
+      - 31
+      - 32
+      - 63
+      - 64
+      - 65
+      - 127
+      - 128
+      - 129
+    - values: &id004
+      - 128
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: k
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: v
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: beta
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 3
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: gk
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: Aqk
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values:
+      - 64
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: Akk
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values:
+      - 64
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: w
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: qg
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: kg
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: v_new
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: h
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 5
+    dim_values:
+    - values:
+      - 1
+      - 2
+    - values:
+      - 1
+      - 2
+      - 3
+    - values:
+      - 1
+      - 2
+      - 3
+    - values:
+      - 128
+    - values:
+      - 128
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: d_o
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: raw_g
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - bf16
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values: *id001
+    - values: *id002
+    - values: *id003
+    - values: *id004
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: A_log
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 1
+    dim_values:
+    - values:
+      - 1
+      - 2
+      - 3
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: dt_bias
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - -5
+        - 5
+      random_types:
+      - name: nd
+        mean:
+        - -5
+        - 5
+        std:
+        - 0.1
+        - 2
+      custom_dist_ratio:
+      - - 0.5
+        - 0.0
+      - - 0.5
+        - 0.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 2
+    dim_values:
+    - values:
+      - 1
+      - 2
+      - 3
+    - values:
+      - 128
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: cu_seqlens
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - int64
+  ranges:
+    valid:
+      values:
+      - - 0
+        - 129
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 1
+    dim_values:
+    - values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 6
+      - 8
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: chunk_indices
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - int64
+  ranges:
+    valid:
+      values:
+      - - 0
+        - 129
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 1
+    dim_values:
+    - values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 6
+      - 8
+    max_length: 17179869184
+  boundary:
+    has_empty: false
+    has_scalar: false
+    has_infnan: true
+    has_lower_border: true
+    has_upper_border: true
+- name: scale
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - float
+  ranges:
+    valid:
+      values:
+      - 0.0
+      - 0.08838834764831845
+      - 1.0
+    invalid:
+      values: []
+- name: chunk_size
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 64
+    invalid:
+      values: []
+- name: safe_gate
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - true
+    invalid:
+      values: []
+- name: use_gate_in_kernel
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - true
+    invalid:
+      values: []
+- name: lower_bound
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - float
+  ranges:
+    valid:
+      values:
+      - -5.0
+      - -1.0
+    invalid:
+      values: []
+- name: disable_recompute
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - true
+    invalid:
+      values: []
+- name: use_exp2
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - true
+    invalid:
+      values: []
+- name: state_v_first
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - false
+    invalid:
+      values: []
+- name: implementation
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - legacy
+    invalid:
+      values: []
+- name: is_varlen
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []
+- name: with_bias
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - attr_bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []

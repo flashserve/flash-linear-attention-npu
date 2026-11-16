@@ -56,6 +56,7 @@ static constexpr size_t ATTR_LOGICAL_K_HEADS_IDX = 7;
 static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
+static constexpr size_t ATTR_SEQ_CHUNK_COUNTS_IDX = 11;
 
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
@@ -151,7 +152,30 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.storeFinalState = storeFinalState;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
+    // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
+    // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
+    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
+        (gateDtypeToken == CHUNK_FWD_H_TPL_FP32 || gateDtypeToken == CHUNK_FWD_H_TPL_BF16) &&
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+
+    // P1: per-sequence chunk counts (ListInt attr #11, built by l0op from the
+    // host-readable cu_seqlens). Empty/absent list keeps the uniform partition.
+    // 均衡分区仅 DAV_2201 启用（白名单式，新芯片默认不进）。
+    tilingCtx.seqChunkCounts = nullptr;
+    tilingCtx.seqCount = 0;
+    const bool socSupportsBalanced =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
+    if (socSupportsBalanced) {
+        const auto *seqChunkList = attrPtr->GetListInt(ATTR_SEQ_CHUNK_COUNTS_IDX);
+        if (seqChunkList != nullptr && seqChunkList->GetSize() > 0) {
+            tilingCtx.seqChunkCounts = seqChunkList->GetData();
+            tilingCtx.seqCount = static_cast<int64_t>(seqChunkList->GetSize());
+        }
+    }
+    // 链摊满仅 DAV_2201 启用（白名单式）。
+    tilingCtx.spreadChainsAllowed =
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
         OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
@@ -189,6 +213,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     ChunkFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
+    // T16：dense 且总 head 任务数（batch × vNumHead）≤ 2×blockDim 时选 1（每
+    // AIV 单 head 链，单 slot 大缓冲布局）；超限则 slot1 链缓冲与大缓冲重叠，走 T8。
+    const bool denseT16Eligible = !plainTiling.isVariedLen &&
+        plainTiling.batch * plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) &&
+        plainTiling.seqlen > 0 &&
+        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
+
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken,
@@ -196,7 +227,9 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         static_cast<uint64_t>(useGk ? 1 : 0),
         static_cast<uint64_t>(useExp2 ? 1 : 0),
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
-        static_cast<uint64_t>(stateVFirst ? 1 : 0));
+        static_cast<uint64_t>(stateVFirst ? 1 : 0),
+        static_cast<uint64_t>(storeFinalState ? 1 : 0),
+        static_cast<uint64_t>(denseT16Eligible ? 1 : 0));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
@@ -221,6 +254,11 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
+    tiling.set_coreBoundCount(plainTiling.coreBoundCount);
+    tiling.set_coreTaskBounds(plainTiling.coreTaskBounds);
+    tiling.set_gatedTilingOffset(plainTiling.gatedTilingOffset);
+    tiling.set_gatedNumSeqOffset(plainTiling.gatedNumSeqOffset);
+    tiling.set_gatedNumChunksOffset(plainTiling.gatedNumChunksOffset);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 

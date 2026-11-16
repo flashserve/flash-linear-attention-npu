@@ -30,7 +30,8 @@ class ChunkGatedDeltaRuleBwdDhuVector {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuVector() = default;
 
-    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR dht,
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
                                 GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
                                 AscendC::TPipe *pipe)
@@ -38,8 +39,22 @@ public:
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(gate));
         dvGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv));
+        hasDht_ = dht != nullptr;
+        if (hasDht_) {
+            dhtGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dht));
+        }
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
+        // q/g/dv 均为一次性流式读，禁 L2 防止写分配驱逐 dh/dv2 及 qg/termQ/termW
+        // 等 ping-pong workspace 行（cube 侧 gmK/gmDO/gmWT 同理；dh/dv2 输出与
+        // 全部 workspace 段保持默认 NORMAL——它们是对端即读的生产者-消费者数据）。
+        // 变长模式下跨 task 的 L2 复用有收益（frag64 实测反噬），
+        // 仅固定长度（cuSeqlens == nullptr）启用。须在 cuSeqlens_ 赋值后判断。
+        if (cuSeqlens_ == nullptr) {
+            qGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+            gateGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+            dvGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        }
         dhGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh));
         if (tilingData->hasDh0 != 0 && dh0 != nullptr) {
             dh0Gm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh0));
@@ -166,7 +181,8 @@ public:
             }
 
             SeqInfo seqInfo;
-            GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
+            // 变长前缀增量缓存（taskIdx 递增 → seqIdx 单调不减）
+            GetSeqInfoCached(cuSeqlens_, *tiling_, seqIdx, seqInfoCache_, seqInfo);
             if (!seqInfo.valid) {
                 continue;
             }
@@ -183,7 +199,12 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
-                    AscendC::Duplicate(stateFp32, 0.0f, elems);
+                    if (hasDht_) {
+                        LoadDhtRows(stateFp32, (seqIdx * HV_ + hvBase + headOffset) * K_ * V_,
+                                    rowOffset, curRows);
+                    } else {
+                        AscendC::Duplicate(stateFp32, 0.0f, elems);
+                    }
                     AscendC::PipeBarrier<PIPE_V>();
                     CopyOutStateRows(stateIdx, stateFp32, StateWorkspaceFloatOffset(workspaceBase, rowOffset), elems);
                     curStatePingPong_ ^= 1U;
@@ -205,6 +226,13 @@ public:
                     const int64_t dhBase = DhOffset(chunkInfo.bIdx, hv, chunkInfo.outputChunkIdx);
                     if (headOffset % subBlockNum_ != subBlockIdx_) {
                         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
+                        // 配平：非归属 subblock 同点空转 set dhReady（cube 侧
+                        // 两个 mode-2 wait 各需两个 AIV 的计数）。
+                        // chunk 链浅时禁用拆分同步（见 SYNC_SPLIT_MIN_CHUNKS）
+                        if (seqInfo.chunkCnt >= SYNC_SPLIT_MIN_CHUNKS) {
+                            Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
+                            Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(dhReadyFlag);
+                        }
                         continue;
                     }
                     AscendC::LocalTensor<float> gateFactor =
@@ -287,6 +315,17 @@ public:
                                          elems);
                     }
 
+                    // dh 已全部写 GM（上面 state 行循环的 CopyOutFp32Rows 完成），
+                    // GEMM0 唯一跨核输入就绪——先于 qg 生成发射 dhReady，让 cube 的
+                    // GEMM0 与本 AIV 的 qg 生成重叠。PIPE_MTE3 与 dh 的 MTE3 写同
+                    // pipe 保序。
+                    // chunk 链浅时禁用拆分（每 head 多一次跨核往返不划算），
+                    // cube 侧 GEMM0 前退回原 vecToCube 单次 wait。
+                    if (seqInfo.chunkCnt >= SYNC_SPLIT_MIN_CHUNKS) {
+                        Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
+                        Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(dhReadyFlag);
+                    }
+
                     for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                         const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
                         const int64_t token = chunkInfo.tokenStart + rowOffset;
@@ -324,9 +363,11 @@ public:
                             dvGateFactorAllFp32_.template Get<float>()[headOffset * gateElems_];
                         AscendC::Brcb(gBrcb, gateRaw[lastRowBase], 1, {1, 8});
                         AscendC::PipeBarrier<PIPE_V>();
-                        AscendC::Muls(dvGateFactor, gateRaw, -1.0f, static_cast<uint32_t>(chunkInfo.chunkLen));
+                        AscendC::Muls(dvGateFactor, gateRaw, -1.0f,
+                                      static_cast<uint32_t>(chunkInfo.chunkLen));
                         AscendC::PipeBarrier<PIPE_V>();
-                        for (int64_t offset = 0; offset < chunkInfo.chunkLen; offset += VECTOR_REPEAT_FLOAT_ELEMS) {
+                        for (int64_t offset = 0; offset < chunkInfo.chunkLen;
+                             offset += VECTOR_REPEAT_FLOAT_ELEMS) {
                             const uint64_t cur = static_cast<uint64_t>(
                                 chunkInfo.chunkLen - offset > VECTOR_REPEAT_FLOAT_ELEMS ?
                                     VECTOR_REPEAT_FLOAT_ELEMS :
@@ -340,7 +381,8 @@ public:
                                           static_cast<uint32_t>(chunkInfo.chunkLen));
                             AscendC::PipeBarrier<PIPE_V>();
                         }
-                        AscendC::Exp(dvGateFactor, dvGateFactor, static_cast<uint32_t>(chunkInfo.chunkLen));
+                        AscendC::Exp(dvGateFactor, dvGateFactor,
+                                     static_cast<uint32_t>(chunkInfo.chunkLen));
                         AscendC::PipeBarrier<PIPE_V>();
                     }
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
@@ -479,6 +521,9 @@ private:
 
     __aicore__ inline void InitVectorEvents()
     {
+        if (hasDht_ && stateVFirst_) {
+            dhtMte3ToMte2Event_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+        }
         for (uint32_t eventIdx = 0; eventIdx < BUFFER_COUNT; ++eventIdx) {
             qMte2ToVEvent_[eventIdx] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
             qVToMte2Event_[eventIdx] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
@@ -500,6 +545,9 @@ private:
 
     __aicore__ inline void ReleaseVectorEvents()
     {
+        if (hasDht_ && stateVFirst_) {
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+        }
         for (uint32_t eventIdx = 0; eventIdx < BUFFER_COUNT; ++eventIdx) {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[eventIdx]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gateVToMte2Event_[eventIdx]);
@@ -583,8 +631,47 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
+    // Load the terminal gradient into the internal fp32 [K, V] state.
+    __aicore__ inline void LoadDhtRows(AscendC::LocalTensor<float> dstTensor, int64_t stateBase,
+                                       int64_t rowOffset, int64_t rowCount)
+    {
+        if (!stateVFirst_) {
+            const uint32_t inputIdx = curQInputPingPong_;
+            const uint32_t elements = static_cast<uint32_t>(rowCount * V_);
+            CopyInRows(dhtGm_, qInputBuf_[inputIdx], stateBase + rowOffset * V_, elements);
+            CastInputRows(dstTensor, qInputBuf_[inputIdx], elements, inputIdx);
+            AscendC::PipeBarrier<PIPE_V>();
+            return;
+        }
+
+        // Reuse the two output tiles: [V, 16] -> [16, V]. No additional UB is needed.
+        // q slot 0 protects scratch reuse after V; MTE3->MTE2 protects the previous task's output DMA.
+        constexpr uint32_t SCRATCH_SLOT = 0;
+        constexpr int64_t TILE_ROWS = 16;
+        for (int64_t tileRow = 0; tileRow < rowCount; tileRow += TILE_ROWS) {
+            const int64_t curRows = Min(TILE_ROWS, rowCount - tileRow);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SCRATCH_SLOT]);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+            AscendC::DataCopyExtParams copyParams{
+                static_cast<uint16_t>(V_), static_cast<uint32_t>(curRows * sizeof(DT)),
+                static_cast<uint32_t>((K_ - curRows) * sizeof(DT)), 0, 0};
+            AscendC::DataCopyPadExtParams<DT> padParams{false, 0, 0, 0};
+            AscendC::DataCopyPad(outputBuf_[0], dhtGm_[stateBase + rowOffset + tileRow], copyParams, padParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SCRATCH_SLOT]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SCRATCH_SLOT]);
+            TransposeStateTile(outputBuf_[1], outputBuf_[0], true);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(dstTensor[tileRow * V_], outputBuf_[1], AscendC::RoundMode::CAST_NONE,
+                          static_cast<uint32_t>(curRows * V_));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SCRATCH_SLOT]);
+        }
+    }
+
     __aicore__ inline void TransposeStateTile(AscendC::LocalTensor<DT> dstTensor,
-                                              AscendC::LocalTensor<DT> srcTensor) const
+                                              AscendC::LocalTensor<DT> srcTensor,
+                                              bool vFirstInput = false) const
     {
         constexpr uint32_t TRANSPOSE_ROWS = 16;
         constexpr uint32_t ELEMS_PER_BLOCK = 16;
@@ -595,11 +682,11 @@ private:
         const uint16_t repeatTimes = static_cast<uint16_t>(V_ / ELEMS_PER_BLOCK);
         AscendC::TransDataTo5HDParams transposeParams{
             false, false, static_cast<uint8_t>(repeatTimes),
-            static_cast<uint16_t>(repeatTimes > 1 ? TRANSPOSE_ROWS : 0),
-            static_cast<uint16_t>(repeatTimes > 1 ? 1 : 0)};
+            static_cast<uint16_t>(repeatTimes > 1 ? (vFirstInput ? 1 : TRANSPOSE_ROWS) : 0),
+            static_cast<uint16_t>(repeatTimes > 1 ? (vFirstInput ? TRANSPOSE_ROWS : 1) : 0)};
         for (uint32_t row = 0; row < TRANSPOSE_ROWS; ++row) {
-            srcList[row] = srcAddr + row * V_ * sizeof(uint16_t);
-            dstList[row] = dstAddr + row * TRANSPOSE_ROWS * sizeof(uint16_t);
+            srcList[row] = srcAddr + row * (vFirstInput ? TRANSPOSE_ROWS : V_) * sizeof(uint16_t);
+            dstList[row] = dstAddr + row * (vFirstInput ? V_ : TRANSPOSE_ROWS) * sizeof(uint16_t);
         }
         AscendC::TransDataTo5HD<uint16_t>(dstList, srcList, transposeParams);
     }
@@ -686,7 +773,7 @@ private:
 
     __aicore__ inline int64_t DhOffset(int64_t b, int64_t hv, int64_t chunkIdx) const
     {
-        return ((b * HV_ + hv) * totalChunkNum_ + chunkIdx) * K_ * V_;
+        return ((b * totalChunkNum_ + chunkIdx) * HV_ + hv) * K_ * V_;
     }
 
     __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const
@@ -704,6 +791,7 @@ private:
     AscendC::GlobalTensor<DT> qGm_;
     AscendC::GlobalTensor<GT> gateGm_;
     AscendC::GlobalTensor<DT> dvGm_;
+    AscendC::GlobalTensor<DT> dhtGm_;
     AscendC::GlobalTensor<DT> dhGm_;
     AscendC::GlobalTensor<DT> dh0Gm_;
     AscendC::GlobalTensor<DT> dv2Gm_;
@@ -743,6 +831,7 @@ private:
     AscendC::TEventID stateVToMte2Event_[BUFFER_COUNT];
     AscendC::TEventID stateVToMte3Event_[BUFFER_COUNT];
     AscendC::TEventID stateMte3ToMte2Event_[BUFFER_COUNT];
+    AscendC::TEventID dhtMte3ToMte2Event_;
     uint32_t curQInputPingPong_ = 0;
     uint32_t curGateInputPingPong_ = 0;
     uint32_t curOutputPingPong_ = 0;
@@ -751,6 +840,7 @@ private:
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     GM_ADDR dh0Addr_ = nullptr;
+    SeqInfoCache seqInfoCache_;
     const ChunkGatedDeltaRuleBwdDhuTilingData *tiling_ = nullptr;
     int64_t B_ = 0;
     int64_t HK_ = 0;
@@ -771,6 +861,7 @@ private:
     int64_t isVariable_ = 0;
     float scale_ = 1.0f;
     bool hasDh0_ = false;
+    bool hasDht_ = false;
     bool stateVFirst_ = false;
     int64_t dh0ClearCoreNum_ = 0;
     int64_t dh0ClearElemsPerCore_ = 0;

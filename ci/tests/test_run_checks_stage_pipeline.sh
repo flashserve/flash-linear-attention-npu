@@ -50,10 +50,27 @@ python3() {
     printf 'python3' >>"$CI_TEST_COMMAND_LOG"
     printf ' %q' "$@" >>"$CI_TEST_COMMAND_LOG"
     printf '\n' >>"$CI_TEST_COMMAND_LOG"
+    if [[ "$entrypoint" == "scripts/build_wheel.py" && -n "${CI_TEST_BUILD_ENV_LOG:-}" ]]; then
+        "$CI_TEST_REAL_PYTHON3" -c 'import json, os, sys; print(json.dumps({"args": sys.argv[1:], "env": {key: os.environ.get(key) for key in ("MAX_JOBS", "CMAKE_BUILD_PARALLEL_LEVEL", "MAKEFLAGS", "FLA_NPU_BUILD_ARGS")}}))' "$@" >>"$CI_TEST_BUILD_ENV_LOG"
+    fi
     if [[ "${CI_TEST_FAIL_STAGE_ONE:-false}" == "true" && \
           "$entrypoint" == "tests/test_wheel_environment.py" ]]; then
         echo "injected environment contract failure" >&2
         return 23
+    fi
+    if [[ "${CI_TEST_FAIL_STABLE_COVERAGE:-false}" == "true" && \
+          "$entrypoint" == "torch_custom/fla_npu/tools/stable_coverage.py" ]]; then
+        echo "injected Stable coverage failure" >&2
+        return 26
+    fi
+    if [[ "$entrypoint" == "scripts/build_wheel.py" ]]; then
+        if [[ "${CI_TEST_FAIL_STAGE:-}" == "opp-package" ]]; then
+            echo "injected OPP package failure" >&2
+            return 24
+        fi
+        mkdir -p build_out
+        printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
+        chmod +x build_out/fla_npu_linux-stage-test.run
     fi
     if [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
@@ -74,6 +91,7 @@ bash() {
             return 24
         fi
         mkdir -p build_out
+        mkdir -p build/fake/packages/vendors/fla_npu_transformer/op_api/include/aclnnop
         printf '#!/usr/bin/env bash\nexit 0\n' >build_out/fla_npu_linux-stage-test.run
         chmod +x build_out/fla_npu_linux-stage-test.run
     fi
@@ -99,7 +117,6 @@ stages = (
     "standalone-layout",
     "torch-adapter",
     "gdr-example-st",
-    "scoped-overlay",
 )
 actual = [report["stages"][stage]["status"] for stage in stages]
 assert report["complete"] is True, report
@@ -118,6 +135,7 @@ run_case() {
     local run_example_st="${7:-false}"
     local fail_stage="${8:-}"
     local fail_manager_init="${9:-false}"
+    local fail_stable_coverage="${10:-false}"
     local case_dir="$test_root/$name"
     local case_repo="$case_dir/repo"
     local report_file="${case_repo#"$repo_dir"/}/.ci-tmp/stage-report.json"
@@ -134,7 +152,7 @@ run_case() {
         "$case_repo/torch_custom/fla_npu/test" \
         "$fake_package_dir/opp/vendors/fla_npu_transformer/op_api/lib" \
         "$fake_opp_dir/vendors/fla_npu_transformer/op_api/lib"
-    cp ci/run_checks.sh ci/manage_npu_ci_stage_report.py "$case_repo/ci/"
+    cp ci/run_checks.sh ci/classify_changes.py ci/manage_npu_ci_stage_report.py "$case_repo/ci/"
     touch "$fake_package_dir/opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so"
     : >"$command_log"
     set +e
@@ -147,13 +165,13 @@ run_case() {
         CI_TEST_FAIL_STAGE_ONE="$fail_stage_one" \
         CI_TEST_FAIL_STAGE="$fail_stage" \
         CI_TEST_FAIL_MANAGER_INIT="$fail_manager_init" \
+        CI_TEST_FAIL_STABLE_COVERAGE="$fail_stable_coverage" \
         CI_TEST_FAKE_PACKAGE_DIR="$fake_package_dir" \
         CI_MODE=quick \
         CI_SOC=ascend910b \
         CI_RUN_EXAMPLE_ST="$run_example_st" \
         CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK=false \
         CI_RUN_WHEEL_API_CHECK=false \
-        CI_RUN_SCOPED_WHEEL_INSTALL_CHECK=false \
         CI_TMPDIR="$case_dir/tmp" \
         CI_TMPDIR_MIN_KB=1 \
         CI_JOBS=1 \
@@ -177,10 +195,18 @@ run_case() {
         echo "CI control-plane contract tests ran inside the NPU stage." >&2
         return 1
     fi
+    if [[ "$expected_statuses" == success,* ]]; then
+        grep -Fqx \
+            'python3 torch_custom/fla_npu/tools/stable_coverage.py --strict' \
+            "$command_log"
+        grep -Fqx \
+            'python3 torch_custom/fla_npu/tools/op_abi_parity.py' \
+            "$command_log"
+    fi
 
     if [[ "$name" == "scoped" ]]; then
         grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
-        grep -Fq 'bash build.sh --pkg --soc=ascend910b' "$command_log"
+        grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
     elif [[ "$name" == "prerequisite-failure" ]]; then
         if grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"; then
             echo "The OPP stage ran after the environment stage failed." >&2
@@ -188,6 +214,21 @@ run_case() {
         fi
         grep -Fq '[CI][REPRO] CI_STAGE=environment-contracts' "$output_log"
         grep -Fq 'bash ci/run_ci_container.sh' "$output_log"
+    elif [[ "$name" == "stable-coverage-failure" ]]; then
+        grep -Fq \
+            'python3 torch_custom/fla_npu/tools/stable_coverage.py --strict' \
+            "$command_log"
+        if grep -Fq \
+                'python3 torch_custom/fla_npu/tools/op_abi_parity.py' \
+                "$command_log"; then
+            echo "ABI parity ran after Stable coverage failed." >&2
+            return 1
+        fi
+        if grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"; then
+            echo "The OPP stage ran after Stable coverage failed." >&2
+            return 1
+        fi
+        grep -Fq '[CI][REPRO] CI_STAGE=environment-contracts' "$output_log"
     elif [[ "$name" == "opp-failure" ]]; then
         if grep -Fxq 'bash build.sh' "$command_log"; then
             echo "The PyTorch stage ran after the OPP stage failed." >&2
@@ -199,8 +240,8 @@ run_case() {
         grep -Fq '[CI][REPRO] CI_STAGE=environment-contracts' "$output_log"
         grep -Fq 'bash ci/run_ci_container.sh' "$output_log"
     else
-        grep -Fq 'bash build.sh --pkg --soc=ascend910b' "$command_log"
-        grep -Fq 'bash build.sh' "$command_log"
+        grep -Fq 'python3 scripts/build_wheel.py' "$command_log"
+        grep -Fq 'bash ci/prepare_ci_cache.sh' "$command_log"
         grep -Fq 'python3 ci/run_example_st_cases.py' "$command_log"
     fi
 }
@@ -211,7 +252,7 @@ run_case \
     false \
     0 \
     success \
-    success,success,skipped,skipped,skipped,skipped
+    success,success,skipped,skipped,skipped
 
 run_case \
     disabled-stage-continues \
@@ -219,7 +260,7 @@ run_case \
     false \
     0 \
     success \
-    success,success,skipped,success,success,skipped \
+    success,success,success,success,success \
     true
 
 run_case \
@@ -228,7 +269,19 @@ run_case \
     true \
     1 \
     failure \
-    failure,skipped,skipped,skipped,skipped,skipped
+    failure,skipped,skipped,skipped,skipped
+
+run_case \
+    stable-coverage-failure \
+    all \
+    false \
+    1 \
+    failure \
+    failure,skipped,skipped,skipped,skipped \
+    false \
+    '' \
+    false \
+    true
 
 run_case \
     opp-failure \
@@ -236,7 +289,7 @@ run_case \
     false \
     1 \
     failure \
-    success,failure,skipped,skipped,skipped,skipped \
+    success,failure,skipped,skipped,skipped \
     true \
     opp-package
 

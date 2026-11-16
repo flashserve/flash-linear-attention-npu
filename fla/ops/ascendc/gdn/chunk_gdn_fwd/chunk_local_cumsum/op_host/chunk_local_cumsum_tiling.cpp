@@ -305,17 +305,39 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t tilingH = optimizedHeadFirst ? head : tail;
     int64_t hTileSize = H_TILE_SIZE;
     int64_t chunkGroupSize = 1;
+    bool rebalanceChunkTasks = false;
     if (optimizedHeadFirst) {
         chunkGroupSize = GetFastHeadFirstChunkGroupSize(chunkSize, tilingH, fastBufferLimit);
         int64_t bufferNum = FAST_HEAD_FIRST_CUMSUM_BUFFER_NUM;
         int64_t maxFastHLen = fastBufferLimit /
                               (bufferNum * chunkGroupSize * chunkSize * static_cast<int64_t>(sizeof(float)));
         hTileSize = std::max<int64_t>(1, std::min<int64_t>(std::min<int64_t>(H_TILE_SIZE, tilingH), maxFastHLen));
+        // Use contiguous chunk ranges when they reduce the busiest Vector Core without changing H tiling.
+        if (!isVarlen && (chunkSize == 64 || chunkSize == 128) && chunkGroupSize > 1) {
+            int64_t groupedTaskNum = batch * CeilDiv(t, chunkGroupSize * chunkSize) * CeilDiv(tilingH, hTileSize);
+            int64_t singleMaxHLen = fastBufferLimit /
+                                    (bufferNum * chunkSize * static_cast<int64_t>(sizeof(float)));
+            int64_t singleHTileSize =
+                std::max<int64_t>(1, std::min<int64_t>(std::min<int64_t>(H_TILE_SIZE, tilingH), singleMaxHLen));
+            int64_t singleTaskNum = batch * CeilDiv(t, chunkSize) * CeilDiv(tilingH, singleHTileSize);
+            int64_t groupedCriticalChunks = CeilDiv(groupedTaskNum, aivNum) * chunkGroupSize;
+            int64_t singleCriticalChunks = CeilDiv(singleTaskNum, aivNum);
+            bool increasesCoreUtilization = groupedTaskNum < aivNum && singleTaskNum > groupedTaskNum;
+            // Fine-grained c64 scheduling is only considered for long time axes. Short cases
+            // such as B=1,H=64,T=11202 otherwise pay more queue/DataCopy overhead than the
+            // one-chunk reduction in the busiest core is worth.
+            constexpr int64_t kMinChunkCountForFineRebalance = 220;
+            int64_t chunkCount = CeilDiv(t, chunkSize);
+            bool enoughChunksToAmortize = chunkCount >= kMinChunkCountForFineRebalance;
+            rebalanceChunkTasks = singleHTileSize == hTileSize && enoughChunksToAmortize &&
+                                  (singleCriticalChunks < groupedCriticalChunks || increasesCoreUtilization);
+        }
     }
     int64_t hTileNum = CeilDiv(tilingH, hTileSize);
     int64_t fastRangeLen = chunkGroupSize * FAST_HEAD_FIRST_RANGE_GROUPS * chunkSize;
     int64_t fixedRangeNum = optimizedHeadFirst ? CeilDiv(t, fastRangeLen) : CeilDiv(t, chunkSize);
-    int64_t fixedTaskNum = tilingB * fixedRangeNum * hTileNum;
+    int64_t fixedTaskNum = rebalanceChunkTasks ? tilingB * CeilDiv(t, chunkSize) * hTileNum
+                                               : tilingB * fixedRangeNum * hTileNum;
     bool varlenSeqTask = optimizedHeadFirst && isVarlen && (nt > seqNum) && (batch * seqNum * hTileNum >= aivNum);
     int64_t varlenTaskNum = varlenSeqTask ? tilingB * seqNum * hTileNum : tilingB * nt * hTileNum;
     int64_t taskNum = isVarlen ? varlenTaskNum : fixedTaskNum;
@@ -338,12 +360,19 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     tiling->varlenSeqTask = varlenSeqTask ? 1 : 0;
     tiling->enableCumSumFastPath = enableCumSumFastPath ? 1 : 0;
     tiling->fastBufferLimit = fastBufferLimit;
+    tiling->rebalanceChunkTasks = rebalanceChunkTasks ? 1 : 0;
     tiling->inputDtype = ToTilingDataType(inDtype);
     tiling->outputDtype = ToTilingDataType(outDtype);
     tiling->scale = *scalePtr;
 
     context->SetBlockDim(static_cast<uint32_t>(blockDim));
-    context->SetTilingKey(0);
+    int64_t tilingKey = 0;
+    if (optimizedHeadFirst && !isVarlen) {
+        if (chunkSize == 128) {
+            tilingKey = 1;
+        }
+    }
+    context->SetTilingKey(tilingKey);
     size_t *workspaces = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
     workspaces[0] = SYS_WORKSPACE_SIZE;

@@ -63,6 +63,28 @@ using KktArchTag = Catlass::Arch::AtlasA2;
 using KktScoreDispatchPolicy = Catlass::Gemm::MmadPingpongTlaMulti<KktArchTag, true, false>;
 using KktInt128 = tla::Int<128>;
 
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+// The shared block clears L1 padding with InitConstValue. On A2 the clear
+// must finish before the following GM->L1 copy can overwrite the valid area.
+template <typename BaseCopy>
+struct KktPaddedGmToL1Copy : BaseCopy {
+    template <typename TensorDst, typename TensorSrc>
+    __aicore__ inline void operator()(const TensorDst &dst, const TensorSrc &src)
+    {
+        PipeBarrier<PIPE_MTE2>();
+        BaseCopy::operator()(dst, src);
+    }
+};
+
+template <typename BaseTileCopy>
+struct KktPaddedTileCopy : BaseTileCopy {
+    template <typename Tensor>
+    using CopyGmToL1A = KktPaddedGmToL1Copy<typename BaseTileCopy::template CopyGmToL1A<Tensor>>;
+    template <typename Tensor>
+    using CopyGmToL1B = KktPaddedGmToL1Copy<typename BaseTileCopy::template CopyGmToL1B<Tensor>>;
+};
+#endif
+
 template <typename KType, uint32_t CHUNK_KEY>
 class ChunkScaledDotKkt {
     struct TaskMeta {
@@ -138,12 +160,19 @@ public:
             pipe_->InitBuffer(gQueue_, BUFFER_NUM, btAlign_ * sizeof(float));
             pipe_->InitBuffer(betaQueue_, BUFFER_NUM, btAlign_ * sizeof(float));
             if (UseCatlassScore()) {
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+                const int64_t scoreRows = ScoreRowBlockSize();
+                const int64_t gateRows = BRCB_ROWS;
+#else
+                const int64_t scoreRows = ScoreRowBlockSize() / 2;
+                const int64_t gateRows = scoreRows;
+#endif
                 pipe_->InitBuffer(scoreTileBuf_,
-                                  static_cast<uint32_t>(ScoreRowBlockSize() * btAlign_ * sizeof(float)));
+                                  static_cast<uint32_t>(scoreRows * btAlign_ * sizeof(float)));
                 pipe_->InitBuffer(outTileBuf_,
-                                  static_cast<uint32_t>(ScoreRowBlockSize() * btAlign_ * sizeof(float)));
-                pipe_->InitBuffer(gateBuf_, BRCB_ROWS * btAlign_ * sizeof(float));
-                pipe_->InitBuffer(rowBrcbBuf_, BRCB_ROWS * FP32_BLOCK_ELEMS * sizeof(float));
+                                  static_cast<uint32_t>(scoreRows * btAlign_ * sizeof(float)));
+                pipe_->InitBuffer(gateBuf_, gateRows * btAlign_ * sizeof(float));
+                pipe_->InitBuffer(rowBrcbBuf_, gateRows * FP32_BLOCK_ELEMS * sizeof(float));
             } else {
                 pipe_->InitBuffer(scoreTileBuf_, static_cast<uint32_t>(BT_ * btAlign_ * sizeof(float)));
                 pipe_->InitBuffer(outTileBuf_, static_cast<uint32_t>(BT_ * btAlign_ * sizeof(float)));
@@ -428,6 +457,18 @@ private:
                     continue;
                 }
                 const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
+#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+                if (meta.valid < BT_) {
+                    using PaddedBlockMmad = Catlass::Gemm::Block::BlockMmadTla<
+                        KktScoreDispatchPolicy, L1TileShape, L0TileShape, KType, KType, float, void,
+                        KktPaddedTileCopy<TileCopy>>;
+                    PaddedBlockMmad blockMmad(resource);
+                    blockMmad.preSetFlags();
+                    ComputeCatlassScoreBlock(meta, rowBegin, rowCount, colCount, scoreOffset, blockMmad);
+                    blockMmad.finalWaitFlags();
+                    continue;
+                }
+#endif
                 BlockMmad blockMmad(resource);
                 blockMmad.preSetFlags();
                 ComputeCatlassScoreBlock(meta, rowBegin, rowCount, colCount, scoreOffset, blockMmad);
@@ -540,9 +581,78 @@ private:
                 continue;
             }
             const int64_t scoreOffset = GetScoreOffset(cubeIdx, scoreSlot, batchIdx);
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
             ComputeEpilogueScoreBlockRowsHvGroup(meta, rowBegin, rowCount, colCount, scoreOffset, subBlockIdx,
                                                  subBlockNum);
+#else
+            ComputeEpilogueA2HvGroup(meta, scoreOffset, subBlockIdx);
+#endif
         }
+    }
+
+    // Both AIVs own a contiguous half of every value head. Empty tail halves
+    // skip data access here but still participate in the outer ready/done loop.
+    __aicore__ inline void ComputeEpilogueA2HvGroup(const TaskMeta &scoreMeta,
+                                                   int64_t scoreBaseOffset,
+                                                   int64_t subBlockIdx)
+    {
+        // Keep Brcb source offsets aligned to eight FP32 elements while sharing
+        // short tails between both AIVs instead of leaving the second one idle.
+        const int64_t rowsPerAiv = scoreMeta.valid < BT_
+            ? ((scoreMeta.valid + 2 * BRCB_ROWS - 1) / (2 * BRCB_ROWS)) * BRCB_ROWS
+            : BT_ / 2;
+        const int64_t rowBegin = subBlockIdx * rowsPerAiv;
+        const int64_t rows = MinI64(rowsPerAiv, scoreMeta.valid - rowBegin);
+        if (rows <= 0) {
+            return;
+        }
+        LocalTensor<float> scoreLocal = scoreTileBuf_.Get<float>();
+        LocalTensor<float> outLocal = outTileBuf_.Get<float>();
+        LocalTensor<float> gateLocal = gateBuf_.Get<float>();
+        LocalTensor<float> rowBrcbLocal = rowBrcbBuf_.Get<float>();
+        const bool isTail = scoreMeta.valid < BT_;
+        if (isTail) {
+            DuplicateZero(scoreLocal, rows * btAlign_);
+            event_t eventId = static_cast<event_t>(pipe_->FetchEventID(HardEvent::V_MTE2));
+            SetFlag<HardEvent::V_MTE2>(eventId);
+            WaitFlag<HardEvent::V_MTE2>(eventId);
+        }
+        CopyScoreBlock(scoreBaseOffset + rowBegin * BT_, scoreLocal, rows, scoreMeta.valid, isTail);
+        WaitMte2ToV();
+        const int64_t hvBegin = scoreMeta.h * hvPerHk_;
+        for (int64_t hv = hvBegin; hv < hvBegin + hvPerHk_; ++hv) {
+            const int64_t ghOffset = (scoreMeta.b * Hv_ + hv) * T_ + scoreMeta.rowStart;
+            CopyTaskVectorPadded(gGm, ghOffset, gQueue_, scoreMeta.valid);
+            CopyTaskVectorPadded(betaGm, ghOffset, betaQueue_, scoreMeta.valid);
+            LocalTensor<float> gLocal = gQueue_.template DeQue<float>();
+            LocalTensor<float> betaLocal = betaQueue_.template DeQue<float>();
+            ComputeGateBlock(rowBegin, rows, BT_, gLocal, betaLocal, gateLocal, rowBrcbLocal);
+            Mul(outLocal, scoreLocal, gateLocal, static_cast<int32_t>(rows * btAlign_));
+            PipeBarrier<PIPE_V>();
+            // Rows occupy disjoint 32-byte blocks. Zero the suffix after the
+            // bulk multiply, including the diagonal, without row-wise barriers.
+            // Explicit zeroing also preserves the mask for overflowing gates.
+            for (int64_t localRow = 0; localRow < rows; ++localRow) {
+                const int64_t row = rowBegin + localRow;
+                const int64_t colBase = (row / FP32_REPEAT_ELEMS) * FP32_REPEAT_ELEMS;
+                const int64_t cols = MinI64(FP32_REPEAT_ELEMS, BT_ - colBase);
+                const uint64_t validMask = cols == FP32_REPEAT_ELEMS ? ~0ULL : ((1ULL << cols) - 1);
+                uint64_t mask[2] = {validMask & (~0ULL << (row - colBase)), 0};
+                Duplicate(outLocal[localRow * btAlign_ + colBase], 0.0f, mask, 1, 1, 8);
+                if (colBase + FP32_REPEAT_ELEMS < BT_) {
+                    Duplicate(outLocal[localRow * btAlign_ + colBase + FP32_REPEAT_ELEMS], 0.0f,
+                              static_cast<int32_t>(BT_ - colBase - FP32_REPEAT_ELEMS));
+                }
+            }
+            CopyOutTile((ghOffset + rowBegin) * BT_, BT_, outLocal, rows);
+            gQueue_.FreeTensor(gLocal);
+            betaQueue_.FreeTensor(betaLocal);
+        }
+        // MTE2 may overwrite the score UB on the next work only after its
+        // final Vector use. CopyOutTile has already drained V and MTE3.
+        event_t eventId = static_cast<event_t>(pipe_->FetchEventID(HardEvent::V_MTE2));
+        SetFlag<HardEvent::V_MTE2>(eventId);
+        WaitFlag<HardEvent::V_MTE2>(eventId);
     }
 
     __aicore__ inline void ComputeEpilogueTaskHvGroup(const TaskMeta &scoreMeta, int64_t scoreBaseOffset)
@@ -810,7 +920,8 @@ private:
     __aicore__ inline void CopyScoreBlock(int64_t scoreBaseOffset,
                                           LocalTensor<float> scoreTileLocal,
                                           int64_t rowCount,
-                                          int64_t colCount)
+                                          int64_t colCount,
+                                          bool zeroPadding = false)
     {
         const int64_t copyBytes = colCount * static_cast<int64_t>(sizeof(float));
         const int64_t alignedCopyBytes = (copyBytes + UB_ALIGN_BYTES - 1) / UB_ALIGN_BYTES * UB_ALIGN_BYTES;
@@ -822,7 +933,9 @@ private:
         scoreParams.dstStride = static_cast<uint32_t>((btAlign_ * static_cast<int64_t>(sizeof(float)) -
                                                        alignedCopyBytes) / UB_ALIGN_BYTES);
         scoreParams.rsv = 0;
-        DataCopyPadExtParams<float> padParams{false, 0, 0, 0.0f};
+        const uint8_t rightPadding = zeroPadding
+            ? static_cast<uint8_t>((alignedCopyBytes - copyBytes) / sizeof(float)) : 0;
+        DataCopyPadExtParams<float> padParams{zeroPadding, 0, rightPadding, 0.0f};
         DataCopyPad(scoreTileLocal, scoreGm[scoreBaseOffset], scoreParams, padParams);
     }
 
@@ -907,6 +1020,25 @@ private:
         queue.EnQue(local);
     }
 
+    __aicore__ inline void CopyTaskVectorPadded(const GlobalTensor<float> &srcGm, int64_t gmOffset,
+                                                TQue<QuePosition::VECIN, BUFFER_NUM> &queue, int64_t count)
+    {
+        if (count == BT_) {
+            CopyTaskVector(srcGm, gmOffset, queue, count);
+            return;
+        }
+        LocalTensor<float> local = queue.template AllocTensor<float>();
+        DuplicateZero(local, btAlign_);
+        event_t eventId = static_cast<event_t>(pipe_->FetchEventID(HardEvent::V_MTE2));
+        SetFlag<HardEvent::V_MTE2>(eventId);
+        WaitFlag<HardEvent::V_MTE2>(eventId);
+        DataCopyParams params{1, static_cast<uint16_t>(count * sizeof(float)), 0, 0};
+        const uint8_t rightPadding = static_cast<uint8_t>((FP32_BLOCK_ELEMS - count % FP32_BLOCK_ELEMS) %
+                                                         FP32_BLOCK_ELEMS);
+        DataCopyPad(local, srcGm[gmOffset], params, {true, 0, rightPadding, 0});
+        queue.EnQue(local);
+    }
+
     __aicore__ inline void DuplicateZero(const LocalTensor<float> &dstLocal, int64_t count)
     {
         constexpr int64_t maxDuplicateElems = FP32_REPEAT_ELEMS * 255;
@@ -933,7 +1065,12 @@ private:
         }
         PipeBarrier<PIPE_V>();
 
-        Brcb(rowBrcbLocal, gLocal[rowBase], 1, {1, FP32_BLOCK_ELEMS});
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+        constexpr uint8_t brcbRepeats = 1;
+#else
+        const uint8_t brcbRepeats = static_cast<uint8_t>((rows + BRCB_ROWS - 1) / BRCB_ROWS);
+#endif
+        Brcb(rowBrcbLocal, gLocal[rowBase], brcbRepeats, {1, FP32_BLOCK_ELEMS});
         PipeBarrier<PIPE_V>();
         for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
             const int64_t cur = MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset);
@@ -950,7 +1087,7 @@ private:
         Exp(gateLocal, gateLocal, gateElems);
         PipeBarrier<PIPE_V>();
 
-        Brcb(rowBrcbLocal, betaLocal[rowBase], 1, {1, FP32_BLOCK_ELEMS});
+        Brcb(rowBrcbLocal, betaLocal[rowBase], brcbRepeats, {1, FP32_BLOCK_ELEMS});
         PipeBarrier<PIPE_V>();
         for (int64_t colOffset = 0; colOffset < cols; colOffset += FP32_REPEAT_ELEMS) {
             const int64_t cur = MinI64(static_cast<int64_t>(FP32_REPEAT_ELEMS), cols - colOffset);

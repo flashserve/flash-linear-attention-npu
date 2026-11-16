@@ -13,11 +13,12 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_install_workflows.py"
-DIST_INFO = "flash_linear_attention_npu-1.0.dist-info"
+DIST_INFO = "flash_linear_attention_npu_a2-1.0.dist-info"
 
 OPP_FILES = {
     "fla_npu/opp/vendors/config.ini": b"load_priority=fla_npu_transformer\n",
@@ -31,7 +32,7 @@ def _write_wheel(path, entries):
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             f"{DIST_INFO}/METADATA",
-            "Metadata-Version: 2.1\nName: flash-linear-attention-npu\nVersion: 1.0\n",
+            "Metadata-Version: 2.1\nName: flash-linear-attention-npu-a2\nVersion: 1.0\n",
         )
         for name, payload in entries.items():
             archive.writestr(name, payload)
@@ -40,7 +41,7 @@ def _write_wheel(path, entries):
 
 def _data_layout_entries(entries):
     return {
-        f"flash_linear_attention_npu-1.0.data/purelib/{name}": payload
+        f"flash_linear_attention_npu_a2-1.0.data/purelib/{name}": payload
         for name, payload in entries.items()
     }
 
@@ -60,7 +61,7 @@ class InstalledOppManifestTest(unittest.TestCase):
     def _assert_layout_accepted(self, wheel_entries):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            wheel = root / "flash_linear_attention_npu-1.0-py3-none-any.whl"
+            wheel = root / "flash_linear_attention_npu_a2-1.0-py3-none-any.whl"
             _write_wheel(wheel, wheel_entries)
             site_root = root / "site-packages"
             _write_installed_tree(site_root, OPP_FILES)
@@ -75,7 +76,7 @@ class InstalledOppManifestTest(unittest.TestCase):
     def _failure_for(self, wheel_entries, installed_entries):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            wheel = root / "flash_linear_attention_npu-1.0-py3-none-any.whl"
+            wheel = root / "flash_linear_attention_npu_a2-1.0-py3-none-any.whl"
             _write_wheel(wheel, wheel_entries)
             site_root = root / "site-packages"
             _write_installed_tree(site_root, installed_entries)
@@ -132,6 +133,68 @@ class InstalledOppManifestTest(unittest.TestCase):
         installed["fla_npu/opp/vendors/config.ini"] = b"load_priority=other\n"
         message = self._failure_for(_data_layout_entries(OPP_FILES), installed)
         self.assertIn("changed=['fla_npu/opp/vendors/config.ini']", message)
+
+
+class SetEnvContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.checker = runpy.run_path(str(CHECKER))
+
+    def _paths(self, root):
+        package_dir = root / "site-packages" / "fla_npu"
+        vendor_dir = package_dir / "opp" / "vendors" / "fla_npu_transformer"
+        set_env = vendor_dir / "bin" / "set_env.bash"
+        set_env.parent.mkdir(parents=True)
+        set_env.write_text("# test fixture\n", encoding="utf-8")
+        op_api_lib = str(vendor_dir / "op_api" / "lib" / "libcust_opapi.so")
+        return package_dir, vendor_dir, op_api_lib
+
+    def _check_snapshots(self, package_dir, first, second):
+        output = "\n".join([*first, *second]) + "\n"
+        with mock.patch.object(
+            self.checker["subprocess"], "check_output", return_value=output
+        ):
+            self.checker["_assert_set_env_idempotent"](
+                package_dir, {}, package_dir.parent
+            )
+
+    def test_accepts_current_root_based_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir, vendor_dir, op_api_lib = self._paths(Path(temp_dir))
+            snapshot = [
+                f"{vendor_dir.parent.parent}:{vendor_dir}",
+                "",
+                str(vendor_dir.parent.parent),
+                op_api_lib,
+                "",
+            ]
+            self._check_snapshots(package_dir, snapshot, snapshot)
+
+    def test_accepts_ordered_vendor_contract(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir, vendor_dir, op_api_lib = self._paths(Path(temp_dir))
+            snapshot = [
+                str(vendor_dir),
+                "",
+                str(vendor_dir.parent.parent),
+                op_api_lib,
+                op_api_lib,
+            ]
+            self._check_snapshots(package_dir, snapshot, snapshot)
+
+    def test_rejects_second_source_change(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir, vendor_dir, op_api_lib = self._paths(Path(temp_dir))
+            first = [
+                str(vendor_dir),
+                "",
+                str(vendor_dir.parent.parent),
+                op_api_lib,
+                op_api_lib,
+            ]
+            second = [*first[:-1], "/wrong/libcust_opapi.so"]
+            with self.assertRaisesRegex(AssertionError, "not idempotent"):
+                self._check_snapshots(package_dir, first, second)
 
 
 if __name__ == "__main__":

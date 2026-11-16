@@ -6,6 +6,8 @@ import ctypes
 import json
 import math
 import os
+import sys
+from pathlib import Path
 import re
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -826,7 +828,7 @@ def _run_positive_npu(inputs: _PreparedInputs, spec: dict):
 
         return chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
     if route == "aclnn":
-        from fla_npu.ops.ascendc._aclnn_ctypes import npu_chunk_kda_fwd
+        from fla_npu.ops.ascendc._stable import npu_chunk_kda_fwd
 
         return npu_chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
     if route == "direct_launch":
@@ -1048,7 +1050,8 @@ def _raw_output_tensors(inputs: _PreparedInputs, spec: dict) -> list:
 
 
 def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
-    from fla_npu.ops.ascendc._aclnn_ctypes import _GET_WORKSPACE_ARGTYPES, _call_aclnn
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    from aclnn_error_probe import reject_workspace as _call_aclnn
 
     outputs = _raw_output_tensors(inputs, spec)
     values = _mutate_raw(inputs, spec, outputs)

@@ -142,6 +142,12 @@ if [ $? -ne 0 ];then
     exit 1
 fi
 
+log "[INFO] upgrade ABI manifest"
+upgrade_file abi_manifest.json
+if [ $? -ne 0 ];then
+    exit 1
+fi
+
 config_file=${targetdir}/vendors/config.ini
 found_vendors="$(grep -w "load_priority" "$config_file" | cut --only-delimited -d"=" -f2-)"
 found_vendor=$(echo $found_vendors | sed "s/\<$vendor_name\>//g" | tr ',' ' ')

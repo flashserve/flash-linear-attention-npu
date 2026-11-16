@@ -8,12 +8,24 @@ class ChunkKdaBwdFinalize : public OpDef {
 public:
     explicit ChunkKdaBwdFinalize(const char *name) : OpDef(name)
     {
-        const std::initializer_list<ge::DataType> bf16 = {ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> fp32 = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> betaTypes = {ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> aLogTypes = {ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> int64 = {ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
-        const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+        // Four legacy dtype rows plus two fused-sigmoid rows: FP32 effective beta
+        // may write BF16 db when the total API receives BF16 original logits.
+        constexpr auto gateParam = REQUIRED;
+        const std::initializer_list<ge::DataType> bf16 = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> fp32 = {
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> int64 = {
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
+        const std::initializer_list<ge::DataType> rawTypes = {
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> betaTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::Format> nd = {
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+        const auto gradTypes = bf16;
+        const std::initializer_list<ge::DataType> dbTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16};
 
 #define ADD_INPUT(NAME, PARAM, TYPES) \
         this->Input(NAME).ParamType(PARAM).DataType(TYPES).Format(nd).UnknownShapeFormat(nd).AutoContiguous()
@@ -24,10 +36,10 @@ public:
         ADD_INPUT("k", REQUIRED, bf16);
         ADD_INPUT("v", REQUIRED, bf16);
         ADD_INPUT("gk", REQUIRED, fp32);
-        ADD_INPUT("raw_g", REQUIRED, fp32);
+        ADD_INPUT("raw_g", gateParam, rawTypes);
         ADD_INPUT("beta", REQUIRED, betaTypes);
-        ADD_INPUT("a_log", REQUIRED, aLogTypes);
-        ADD_INPUT("dt_bias", REQUIRED, fp32);
+        ADD_INPUT("a_log", gateParam, fp32);
+        ADD_INPUT("dt_bias", gateParam, fp32);
         ADD_INPUT("akk", REQUIRED, bf16);
         ADD_INPUT("v_new", REQUIRED, bf16);
         ADD_INPUT("h", REQUIRED, bf16);
@@ -40,11 +52,11 @@ public:
         ADD_INPUT("cu_seqlens", OPTIONAL, int64).ValueDepend(OPTIONAL);
         ADD_INPUT("chunk_indices", OPTIONAL, int64).ValueDepend(OPTIONAL);
 
-        ADD_OUTPUT("dq", bf16);
-        ADD_OUTPUT("dk", bf16);
+        ADD_OUTPUT("dq", gradTypes);
+        ADD_OUTPUT("dk", gradTypes);
         ADD_OUTPUT("dv", bf16);
-        ADD_OUTPUT("d_beta", betaTypes);
-        ADD_OUTPUT("d_g", fp32);
+        ADD_OUTPUT("d_beta", dbTypes);
+        ADD_OUTPUT("d_g", rawTypes);
         ADD_OUTPUT("d_a_log", fp32);
         ADD_OUTPUT("d_dt_bias", fp32);
 
@@ -58,6 +70,10 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(OPTIONAL).Bool(true);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("use_beta_sigmoid_in_kernel").AttrType(OPTIONAL).Bool(false);
+        this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
+        this->Attr("output_layout").AttrType(OPTIONAL).String("BNSD");
+        this->Attr("model_layout").AttrType(OPTIONAL).String("");
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
@@ -71,6 +87,8 @@ public:
             .ExtendCfgInfo("opFile.value", "chunk_kda_bwd_finalize")
             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
         this->AICore().AddConfig("ascend950", config);
+        this->AICore().AddConfig("ascend910b", config);
+        this->AICore().AddConfig("ascend910_93", config);
     }
 };
 

@@ -7,9 +7,10 @@
 extern "C" {
 #endif
 
-// Optimized multi-stage KDA backward. Inputs use the canonical internal
-// head-major token layout consumed by the fused forward exports:
-// dense [B,H,T,D], varlen [H,T,D]. Saved h is head-major.
+// A5 V2 single-layout backward: layout controls q/k/v and dq/dk/dv.
+// With rstd, q/k are saved head-major normalized tensors. All other saved
+// caches are head-major; do/raw_g/beta and dg/dbeta are token-major.
+// beta_eff and beta sigmoid flags are reserved (null/false only).
 __attribute__((visibility("default")))
 aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     const aclTensor *q,
@@ -42,6 +43,10 @@ aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     bool stateVFirst,
     const aclTensor *qRstdOptional,
     const aclTensor *kRstdOptional,
+    const aclTensor *betaEffOptional,
+    const char *layout,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
     const aclTensor *dqOut,
     const aclTensor *dkOut,
     const aclTensor *dvOut,

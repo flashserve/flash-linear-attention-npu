@@ -118,15 +118,6 @@ __aicore__ inline uint64_t WyDhOffset(
     const ChunkKdaBwdCTilingData &tiling, uint32_t batchIdx,
     uint32_t headIdx, uint32_t chunkIdx)
 {
-    if (tiling.dhHeadMajor != 0) {
-        if (tiling.isVarLen != 0) {
-            return (static_cast<uint64_t>(headIdx) * tiling.chunkNum +
-                    chunkIdx) * tiling.keyDim * tiling.valueDim;
-        }
-        return ((static_cast<uint64_t>(batchIdx) * tiling.headNum +
-                 headIdx) * tiling.chunkNumPerBatch + chunkIdx) *
-               tiling.keyDim * tiling.valueDim;
-    }
     if (tiling.isVarLen != 0) {
         return (static_cast<uint64_t>(chunkIdx) * tiling.headNum + headIdx) *
                tiling.keyDim * tiling.valueDim;
@@ -968,15 +959,14 @@ public:
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
                 1U;
 #else
-                tiling_.isVarLen == 0 && validLen == kWyChunkSize ? 1U : 2U;
+                tiling_.isVarLen == 0 && validLen == kWyChunkSize &&
+                headCount == kWyFusedHeadsPerWindow ? 1U : 2U;
 #endif
-            // A2's packed square-tail MMAD can leave part of the physical
-            // destination plane untouched on its first layout binding.  A
-            // second overwrite pass makes the logical tile independent of
-            // resident L1/L0 contents.  Varlen uses the recovery pass because
-            // adjacent mixed-length tasks can bind different physical tail
-            // layouts; dense uses it only for the final short chunk.  Dense
-            // full chunks and the A5 path are unchanged.
+            // Generic square MMAD also needs the recovery pass for a lone
+            // head in a full dense chunk.  Without it, S6/S7 can propagate
+            // prior scratch contents into dAkk and then dk/db/dg (issue 874).
+            // Packed and short-tail tasks already use two overwrite passes.
+            // Retain one pass for full dense paired-head windows and A5.
             for (uint32_t pass = 0; pass < squarePasses; ++pass) {
                 for (uint32_t lane = 0; lane < headCount; ++lane) {
                     const uint32_t head = headBase + lane;
@@ -1152,6 +1142,11 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(
                 WyTileGemmDirectEvent::kL0B);
             AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(
+                WyTileGemmDirectEvent::kL0C);
+            // Complete the consumer wait before FIX re-seeds the next phase.
+            AscendC::SetFlag<AscendC::HardEvent::M_FIX>(
+                WyTileGemmDirectEvent::kL0C);
+            AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(
                 WyTileGemmDirectEvent::kL0C);
         }
     }
@@ -2262,6 +2257,8 @@ private:
     {
         auto out = outputQueue_.AllocTensor<float>();
         AscendC::Adds(out, src, 0.0f, count);
+        // The caller may reuse src as soon as Store returns.
+        AscendC::PipeBarrier<PIPE_V>();
         outputQueue_.EnQue(out);
         auto ready = outputQueue_.DeQue<float>();
         AscendC::DataCopyPad(
@@ -2819,7 +2816,7 @@ private:
                 if (logicalRow == 0) {
                     AscendC::Duplicate(out[r * 64], 0.0f, 64);
                 } else if (logicalRow < 64) {
-                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
                     upperMask[0] <<= logicalRow;
                     AscendC::Duplicate(
                         out[r * 64], 0.0f, upperMask, 1, 1, 8);
@@ -2840,7 +2837,7 @@ private:
                 if (logicalRow == 0) {
                     AscendC::Duplicate(out[r * 64], 0.0f, 64);
                 } else if (logicalRow < 64) {
-                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
                     upperMask[0] <<= logicalRow;
                     AscendC::Duplicate(
                         out[r * 64], 0.0f, upperMask, 1, 1, 8);
@@ -2992,7 +2989,7 @@ private:
                 if (logicalRow == 0) {
                     AscendC::Duplicate(value[r * 64], 0.0f, 64);
                 } else {
-                    uint64_t upperMask[1] = {0xffffffffffffffffULL};
+                    uint64_t upperMask[2] = {0xffffffffffffffffULL, 0};
                     upperMask[0] <<= logicalRow;
                     AscendC::Duplicate(
                         value[r * 64], 0.0f, upperMask, 1, 1, 8);

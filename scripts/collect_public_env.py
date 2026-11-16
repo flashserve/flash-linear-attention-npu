@@ -365,7 +365,10 @@ def collect() -> dict[str, str]:
         "torch_npu": _safe_version("torch_npu", ("torch-npu", "torch_npu")),
         "fla_npu": _safe_version(
             "fla_npu",
-            ("flash-linear-attention-npu", "fla-npu", "fla_npu"),
+            ("flash-linear-attention-npu-a2",
+             "flash-linear-attention-npu-a3",
+             "flash-linear-attention-npu-a5",
+             "flash-linear-attention-npu", "fla-npu", "fla_npu"),
             include_dist_name=True,
         ),
         "fla_npu commit": _git_commit(),

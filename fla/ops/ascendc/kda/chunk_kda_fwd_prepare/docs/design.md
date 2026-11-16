@@ -164,10 +164,15 @@ Q/K head，也只允许 GVA 组首 owner 写 `q_hat/k_hat/q_rstd/k_rstd`，避�
 
 - A5 UB 为两个 112 KiB 计算槽和两个 12 KiB 状态槽，总计 248 KiB。
 - A2/A3 使用 184 KiB 可用 UB，按两个私有区和一个共享区规划，尾部 8 KiB 保留。
-- L1 为 512 KiB，四个 head lane 保存 C2 payload，其余区域保存 X0、negX1、T 和 Akk。
+- L1 为 512 KiB，四个 head lane 保存 C2 payload，其余区域保存 X0、negX1、T、Akk，
+  以及 C7 的 RHS（K_beta_g/V_beta）专用 lane。RHS 不再复用 head lane：C2 的
+  score 与 C7 的 RHS 同址时，下一个 chunk 的 C2 会在 C7 读完 RHS 之前把该 lane
+  覆盖成 Qplus/Kplus。
 - Arch35 每个 workspace slot 为 `0x1A400` Byte，保存 Qhat、Khat、betaEff
   和 72 KiB payload。
-- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，总计 `0x1F400` Byte；C2
+- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，并再追加 32 KiB RHS 独立区
+  （V6→C7 的 K_beta_g/V_beta，不再与 V1 payload 换义地址），总计 `0x27400`
+  Byte；C2
   写四段 raw score，V3 消费后 C4 在同址前 4 KiB 写 `T`。host 根据目标
   平台选择 slot 大小，A5 不预留 Arch22 的追加区。
 

@@ -11,7 +11,7 @@ const std::array<const aclTensor *, 3> ChunkKdaBwdPrepare(
     const aclTensor *dO,
     const aclTensor *h,
     const aclIntArray *cuSeqlensOptional,
-    const aclIntArray *chunkIndicesOptional,
+    const aclIntArray *chunkIndicesOptional, const char *layout,
     double scale,
     int64_t chunkSize,
     bool stateVFirst,

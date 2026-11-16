@@ -85,7 +85,11 @@ public:
                         dO.GetDimNum() != tokenRank ||
                         h.GetDimNum() != stateRank,
                     OP_LOGE(ctx_.nodeName,
-                            "Kernel A expects dense BNSD rank-4/rank-5 or varlen NTD rank-3/rank-4."),
+                            "Kernel A expects dense BNSD rank-4/rank-5 or varlen NTD rank-3/rank-4. "
+                            "hasCu=%d, hasChunks=%d, AqkRank=%zu, vNewRank=%zu, dORank=%zu, "
+                            "hRank=%zu, expectedTokenRank=%zu, expectedStateRank=%zu.",
+                            hasCu, hasChunks, aqk.GetDimNum(), vNew.GetDimNum(),
+                            dO.GetDimNum(), h.GetDimNum(), tokenRank, stateRank),
                     return ge::GRAPH_FAILED);
 
         const size_t headAxis = hasCu ? 0 : 1;

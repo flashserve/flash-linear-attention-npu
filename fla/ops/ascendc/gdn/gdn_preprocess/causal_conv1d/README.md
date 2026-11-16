@@ -39,7 +39,7 @@ y[t] = activation(sum(weight[j] * x[t-j]) + bias)
 | `*Cpu` | Optional INT64 aclIntArray | Host-array metadata 输入；FN/UPDATE 保留该形式且不产生 warning。 |
 | `activation` | string | `"none"`、`"silu"` 或 `"swish"`。 |
 | `padSlotId` | int64 | FN padding 索引；raw 默认 `-1`。 |
-| `nullBlockId` | int64 | 保留空状态块；负值禁用。 |
+| `nullBlockId` | int64 | 保留空状态块；算子属性默认 `0`，负值禁用。 |
 | `runMode` | int64 | `0` 为 FN，`1` 为 UPDATE。 |
 | `headNum` | int64 | FN 输出分头；`0` 保持扁平输出。 |
 | `maxQueryLen` | int64 | UPDATE 变长模式的最大分段长度上界；其他模式为 `-1`。 |
@@ -92,9 +92,9 @@ UPDATE 传入 `query_start_loc` 或 `query_start_loc_cpu` 时，必须同时提�
 
 高层 FN 默认 `pad_slot_id=-1`、`null_block_id=0`；高层 UPDATE 不公开 pad sentinel，默认 `null_block_id=0`。`null_block_id=None` 可禁用 null block 过滤。保留在签名中的 APC/block scheduling 参数当前不支持，传入非默认值会抛出 `NotImplementedError`。
 
-`causal_conv1d` Python 接口作为废弃兼容入口保留，调用时会发出 `FutureWarning`，并将在 2027 年 2 月移除；新代码应使用 FN/UPDATE 接口。该入口保持原有签名以及 prefill 场景的 autograd 绑定行为。
+`causal_conv1d` Python 接口作为废弃兼容入口保留，调用时会发出 `FutureWarning`，并将在 2027年1月15日（v26.12.0）移除；新代码应使用 FN/UPDATE 接口。该入口保持原有签名以及 prefill 场景的 autograd 绑定行为。
 
- `npu_causal_conv1d` Python 接口仅为兼容保留，调用时会发出 `FutureWarning`，并将在 2026 年 12 月废弃；新代码应使用 FN/UPDATE 接口。该接口保持原有参数不变，`query_start_loc`、`cache_indices`、`initial_state_mode` 和 `num_accepted_tokens` 仍按 Host int-array metadata 传递，不接受接口使用的 device metadata 参数。该入口继续发出既有的 `FutureWarning`。
+ `npu_causal_conv1d` Python 接口仅为兼容保留，调用时会发出 `FutureWarning`，并将在 2027年1月15日（v26.12.0）移除；新代码应使用 FN/UPDATE 接口。该接口保持原有参数不变，`query_start_loc`、`cache_indices`、`initial_state_mode` 和 `num_accepted_tokens` 仍按 Host int-array metadata 传递，不接受接口使用的 device metadata 参数。该入口继续发出既有的 `FutureWarning`。
 
 ## ACLNN
 

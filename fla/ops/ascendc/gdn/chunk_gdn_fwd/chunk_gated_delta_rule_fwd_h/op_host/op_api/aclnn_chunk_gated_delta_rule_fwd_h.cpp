@@ -109,6 +109,19 @@ static aclnnStatus CheckFormat(ChunkGatedDeltaRuleFwdHParams params)
     return ACLNN_SUCCESS;
 }
 
+static int64_t CountChunks(const aclIntArray *cuSeqlens, int64_t seqlen, int64_t chunkSize)
+{
+    if (cuSeqlens == nullptr) {
+        return (seqlen + chunkSize - 1) / chunkSize;
+    }
+    int64_t totalChunks = 0;
+    for (size_t seq = 0; seq + 1 < cuSeqlens->Size(); ++seq) {
+        const int64_t length = (*cuSeqlens)[seq + 1] - (*cuSeqlens)[seq];
+        totalChunks += (length + chunkSize - 1) / chunkSize;
+    }
+    return totalChunks;
+}
+
 static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
 {
     auto kShape = params.k->GetViewShape();
@@ -137,10 +150,13 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleFwdHParams params)
                                ? batch
                                : static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
     auto hShape = params.hOut->GetViewShape();
-    CHECK_COND(hShape.GetDimNum() == 5 && hShape.GetDim(0) == batch && hShape.GetDim(1) == hv,
-               ACLNN_ERR_PARAM_INVALID, "hOut must have prefix [B, HV, num_chunks].");
-    const int64_t hK = params.stateVFirst ? hShape.GetDim(4) : hShape.GetDim(3);
-    const int64_t hV = params.stateVFirst ? hShape.GetDim(3) : hShape.GetDim(4);
+    const int64_t chunks = CountChunks(params.cuSeqlensOptional, kShape.GetDim(2), params.chunkSize);
+    CHECK_COND(hShape.GetDimNum() == 5 &&
+                   hShape.GetDim(0) == batch &&
+                   hShape.GetDim(1) == chunks && hShape.GetDim(2) == hv,
+               ACLNN_ERR_PARAM_INVALID, "hOut must be [B, NT, HV, K, V] with matching chunk count.");
+    const int64_t hK = hShape.GetDim(params.stateVFirst ? 4 : 3);
+    const int64_t hV = hShape.GetDim(params.stateVFirst ? 3 : 4);
     CHECK_COND(hK == kDim && hV == vDim, ACLNN_ERR_PARAM_INVALID,
                "hOut state dimensions must be [K, V] when stateVFirst=false and [V, K] otherwise.");
     auto vNewShape = params.vNewOut->GetViewShape();
@@ -255,14 +271,67 @@ static aclnnStatus CheckGkParams(const ChunkGatedDeltaRuleFwdHParams &params)
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus CheckVariableLength(const ChunkGatedDeltaRuleFwdHParams &params)
+{
+    if (params.cuSeqlensOptional == nullptr) {
+        CHECK_COND(params.chunkIndicesOptional == nullptr, ACLNN_ERR_PARAM_INVALID,
+                   "chunkIndicesOptional requires cuSeqlensOptional.");
+        return ACLNN_SUCCESS;
+    }
+
+    const auto kShape = params.k->GetViewShape();
+    const int64_t seqNum = static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
+    CHECK_COND(seqNum >= 1, ACLNN_ERR_PARAM_INVALID,
+               "cuSeqlensOptional must contain at least [0, total_tokens].");
+    CHECK_COND((*params.cuSeqlensOptional)[0] == 0, ACLNN_ERR_PARAM_INVALID,
+               "cuSeqlensOptional[0] must be 0, but got %ld.",
+               (*params.cuSeqlensOptional)[0]);
+    CHECK_COND((*params.cuSeqlensOptional)[seqNum] == kShape.GetDim(2),
+               ACLNN_ERR_PARAM_INVALID,
+               "cuSeqlensOptional last element must equal T=%ld, but got %ld.",
+               kShape.GetDim(2), (*params.cuSeqlensOptional)[seqNum]);
+    // 与 ChunkFwdH 保持同一准入口径：非递减，允许相等项表示零长度序列。
+    for (int64_t seq = 0; seq < seqNum; ++seq) {
+        CHECK_COND((*params.cuSeqlensOptional)[seq] <= (*params.cuSeqlensOptional)[seq + 1],
+                   ACLNN_ERR_PARAM_INVALID,
+                   "cuSeqlensOptional must be non-decreasing; equal neighbours denote empty sequences.");
+    }
+
+    if (params.chunkIndicesOptional == nullptr) {
+        return ACLNN_SUCCESS;
+    }
+    const int64_t totalChunks =
+        CountChunks(params.cuSeqlensOptional, kShape.GetDim(2), params.chunkSize);
+    CHECK_COND(params.chunkIndicesOptional->Size() == static_cast<size_t>(totalChunks) * 2,
+               ACLNN_ERR_PARAM_INVALID,
+               "chunkIndicesOptional must contain exactly one (seq_id, chunk_id) pair per chunk.");
+    int64_t offset = 0;
+    for (int64_t seq = 0; seq < seqNum; ++seq) {
+        const int64_t length =
+            (*params.cuSeqlensOptional)[seq + 1] - (*params.cuSeqlensOptional)[seq];
+        const int64_t chunks = (length + params.chunkSize - 1) / params.chunkSize;
+        for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+            CHECK_COND((*params.chunkIndicesOptional)[offset] == seq &&
+                           (*params.chunkIndicesOptional)[offset + 1] == chunk,
+                       ACLNN_ERR_PARAM_INVALID,
+                       "chunkIndicesOptional must use canonical sequence-major chunk order.");
+            offset += 2;
+        }
+    }
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus CheckParams(ChunkGatedDeltaRuleFwdHParams params)
 {
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
+               "chunkSize must be 64 or 128.");
     CHECK_RET(CheckGateOptionalNonNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckGkParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckVariableLength(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     return ACLNN_SUCCESS;
 }
 

@@ -19,6 +19,22 @@
 
 namespace RecurrentKda {
 
+constexpr uint32_t RKDA_A5_WINDOW_TOKENS = 8;
+
+// A5 static VF configuration, built once by host tiling. Runtime bank/slot
+// ownership remains in the kernel and is never encoded by the host.
+enum RecurrentKdaVfFlags : uint32_t {
+    RKDA_VF_NORM = 1U << 0,
+    RKDA_VF_RAW_GATE = 1U << 1,
+    RKDA_VF_BIAS = 1U << 2,
+    RKDA_VF_SIGMOID = 1U << 3,
+    RKDA_VF_NEGATIVE = 1U << 4,
+    RKDA_VF_SAFE = 1U << 5,
+    RKDA_VF_WRITE_STATE = 1U << 6,
+    RKDA_VF_INDEXED = 1U << 7,
+    RKDA_VF_FUSED = 1U << 8,
+};
+
 #pragma pack(push, 8)
 struct alignas(8) RecurrentKdaTilingData {
     uint32_t vectorCoreNum;
@@ -71,6 +87,9 @@ struct alignas(8) RecurrentKdaTilingData {
     uint64_t keyHeadStride;
     uint64_t valueTokenStride;
     uint64_t valueHeadStride;
+    uint32_t windowSize; // A5 token capacity selected by host tiling; A2/A3 ignore it.
+    uint32_t a5VfFlags; // A2/A3 keep their existing flags and resource paths.
+    uint32_t a5HeadRatio;
 };
 #pragma pack(pop)
 

@@ -1,11 +1,10 @@
 # 全仓默认请求以下账号检视。
-* @juyangokok @weinachuan @weiwei-612 @woey @zhangshuolei-hfut @chen-linxin
+* @weinachuan @weiwei-612 @chen-linxin @Ensley0304 @zhangshuolei-hfut
 
 # ABI-sensitive interfaces require @weinachuan as code owner.
 fla/ops/**/op_host/*_def.cpp @weinachuan
 fla/ops/**/op_host/op_api/aclnn_*.h @weinachuan
 fla/ops/**/op_host/op_api/aclnn_*.cpp @weinachuan
-torch_custom/fla_npu/npu_custom.yaml @weinachuan
-torch_custom/fla_npu/test_native_functions.yaml @weinachuan
-torch_custom/fla_npu/deprecated.yaml @weinachuan
-torch_custom/fla_npu/op_plugin/ops/opapi/** @weinachuan
+torch_custom/fla_npu/csrc/src/stable_*.cpp @weinachuan
+torch_custom/fla_npu/csrc/include/stable/** @weinachuan
+torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py @weinachuan

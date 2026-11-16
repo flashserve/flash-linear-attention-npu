@@ -83,10 +83,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepare(
 
 | 参数名 | 输入/输出 | 必选/可选 | 描述 | 使用说明 | 数据类型 | 取值约束 |
 |---|---|---|---|---|---|---|
-| `chunkSize` | 输入 | 可选属性，接口侧必传 | 分块大小 | 当前仅 64 | `int64_t` | `64` |
+| `chunkSize` | 输入 | 可选属性，接口侧必传 | 分块大小 | A2/A3 与 Ascend950 均为 64 | `int64_t` | `64` |
 | `allowNegEigval` | 输入 | 可选属性，接口侧必传 | 负特征值缩放 | True 时要求写入 `betaEff`（sigmoid 打开） | `bool` | `true` / `false` |
 | `useExp2` | 输入 | 可选属性，接口侧必传 | 指数底 | True：cumsum × `RCP_LN2`，后续 `exp2`；False：cumsum × 1，后续自然 `exp` | `bool` | `true` / `false` |
-| `outputA` | 输入 | 可选属性，接口侧必传 | 是否把 A 写回 GM | False 时 A 只留在 L1 | `bool` | `true` / `false` |
+| `outputA` | 输入 | 可选属性，接口侧必传 | 是否写入公开 A 输出 | False 时不写公开 A；A2/A3 当前使用内部 workspace 保存 A | `bool` | `true` / `false` |
 
 IR attr 里还有 `use_qk_l2norm` / `use_gate_in_kernel` / `use_beta_sigmoid`，由 L0 根据 optional 张量填入，不出现在 ACLNN C 接口参数表中。
 
@@ -110,9 +110,10 @@ IR attr 里还有 `use_qk_l2norm` / `use_gate_in_kernel` / `use_beta_sigmoid`，
 - `v` 为 `[B, HV, T, V]`，与 `q` 的 `B`、`T` 一致。
 - `g`、`beta`、`gOut`、`betaEff` 为 `[B, HV, T]`。
 - `wOut` 为 `[B, HV, T, K]`；`aOut` 为 `[B, HV, T, chunkSize]`。
-- **GVA**：`HV % HK == 0` 且 `HV/HK ∈ {1,2,3,4}`。任务按 HV 计数，K 头 `hk = hv / (HV/HK)` 复用。
+- **GVA**：`HK > 0`、`HV > 0` 且 `HV % HK == 0`。Ascend950 限制 `HV/HK ∈ {1,2,3,4}`；A2/A3 限制 `HV/HK ∈ [1,16]` 的整数比。K 头按 `hk = hv / (HV/HK)` 复用。
 - `K = 128`，`V ∈ {128, 256}`，`chunkSize = 64`。
-- `q/k/v` 当前仅 `BFLOAT16`。
+- A2/A3 与 Ascend950 的 `q/k/v` 均为 `BFLOAT16`，三者 dtype 必须相同。`g` 与 `beta` 可分别选择 BF16 或 FP32，不要求二者相同。
+- Python 默认 stable 入口沿用 ACLNN 校验；ctypes 回退的 QKV dtype、chunkSize 和 GVA 范围与其一致。独立 Prepare 不开放 FP16 QKV 或 chunkSize=128；普通 forward 对这些原有基础调用的 megakernel 分流保持不变。
 - 变长：`cuSeqlens` 与 `chunkIndices` 成对，且 `B = 1`。
 - `allow_neg_eigval=True` 要求 `use_beta_sigmoid=True`。
 - `dt_bias` 不能在没有 `a_log` 时单独出现。
