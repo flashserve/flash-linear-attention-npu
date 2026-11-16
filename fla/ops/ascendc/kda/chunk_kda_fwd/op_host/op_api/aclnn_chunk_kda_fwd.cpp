@@ -631,10 +631,6 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "B", "invalid", "rank4 varlen input with cuSeqlensOptional requires B=1.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(params.cuSeqlensOptional == nullptr || info.seqNum <= MAX_KDA_VARLEN_SEQUENCES)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "size", "invalid", "varlen input supports at most 1024 sequences.");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
     {
         const aclnnStatus checkStatus = CheckChunkIndices(params.chunkIndicesOptional, params.cuSeqlensOptional, info.totalChunks, params.chunkSize);
         if (checkStatus != ACLNN_SUCCESS) {
