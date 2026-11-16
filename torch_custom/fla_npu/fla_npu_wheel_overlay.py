@@ -132,40 +132,48 @@ def components(package, snapshot):
     if not isinstance(data, dict):
         raise RuntimeError("Invalid overlay component selections")
     if data.get("version") == 1 and set(data) == {"version", "adapter", "opp"}:
+        adapters = [data["adapter"]] if data["adapter"] is not None else []
         opps = [data["opp"]] if data["opp"] is not None else []
     elif data.get("version") == 2 and set(data) == {"version", "adapter", "opps"}:
+        # Accept the single-adapter format used by the initial multi-OPP builds.
+        adapters = [data["adapter"]] if data["adapter"] is not None else []
         opps = data["opps"]
-        if (not isinstance(opps, list) or not all(isinstance(v, str) for v in opps)
-                or len(opps) != len(set(opps))):
-            raise RuntimeError("Invalid overlay OPP order")
+    elif data.get("version") == 2 and set(data) == {"version", "adapters", "opps"}:
+        adapters = data["adapters"]
+        opps = data["opps"]
     else:
         raise RuntimeError("Invalid overlay component selections")
-    for identity in [data["adapter"], *opps]:
-        if identity is not None:
+    for kind, identities in (("adapter", adapters), ("OPP", opps)):
+        if (not isinstance(identities, list) or not all(isinstance(v, str) for v in identities)
+                or len(identities) != len(set(identities))):
+            raise RuntimeError(f"Invalid overlay {kind} order")
+        for identity in identities:
             layer_path(package, identity)
-    # Keep the old convenience field for callers that only need the newest OPP.
-    return {"adapter": data["adapter"], "opp": opps[0] if opps else None, "opps": opps}
+    # Keep convenience fields for callers that only need the newest component.
+    return {"adapter": adapters[0] if adapters else None, "adapters": adapters,
+            "opp": opps[0] if opps else None, "opps": opps}
 
 
 def component_paths(package, snapshot):
-    """Return adapter and newest OPP; validate every retained OPP as well."""
-    adapter, vendors = component_vendors(package, snapshot)
-    return adapter, vendors[0] if vendors else None
+    """Return newest adapter/OPP; validate every retained component as well."""
+    adapters, vendors = component_vendors(package, snapshot)
+    return adapters[0] if adapters else None, vendors[0] if vendors else None
 
 
 def component_vendors(package, snapshot):
-    """Return adapter and OPPs in installation priority (newest first)."""
+    """Return adapter and OPP lists in installation priority (newest first)."""
     selected = components(package, snapshot)
-    adapter = layer_path(package, selected["adapter"]) if selected["adapter"] else None
-    if adapter and not (adapter / PACKAGE / MANIFEST).is_file():
-        raise RuntimeError("Selected adapter is missing; use --remove-overlay to recover")
+    adapters = [layer_path(package, identity) for identity in selected["adapters"]]
+    for adapter in adapters:
+        if not (adapter / PACKAGE / MANIFEST).is_file():
+            raise RuntimeError("Selected adapter is missing; use --remove-overlay to recover")
     vendors = []
     for identity in selected["opps"]:
         vendor = _vendor(layer_path(package, identity) / PACKAGE)
         if vendor is None:
             raise RuntimeError("Selected OPP is missing; use --remove-overlay to recover")
         vendors.append(vendor)
-    return adapter, vendors
+    return adapters, vendors
 
 
 def environment_vendors(package):
@@ -233,20 +241,29 @@ def resolve(package, layer):
     must match it, including base adapters reached by an OPP-only update.
     """
     base = manifest(package)
-    adapter, overlay_vendors = component_vendors(package, layer)
-    update = manifest(adapter / PACKAGE) if adapter else {"operators": {}, "exports": []}
-    if adapter and base.get("tier") != update.get("tier"):
-        raise RuntimeError("Wheel layer and base target different NPU products")
+    adapters, overlay_vendors = component_vendors(package, layer)
+    exports, adapter_layers, groups = set(), [], []
+    for adapter in adapters:
+        update = manifest(adapter / PACKAGE)
+        if base.get("tier") != update.get("tier"):
+            raise RuntimeError("Wheel layer and base target different NPU products")
+        # A later wheel only replaces the public entries it declares. Hidden
+        # entries from older adapters must not participate in ABI validation.
+        names = set(update["exports"]) - exports
+        exports.update(names)
+        if names:
+            adapter_layers.append({"path": str(adapter), "exports": sorted(names)})
+            groups.append(("overlay", update, names))
     abi = abi_module(package)
     base_vendor = _vendor(package)
     vendors = [p for p in [*overlay_vendors, base_vendor] if p is not None]
     contracts = {str(p): abi.validated_contracts(p, require_manifest=p in overlay_vendors) for p in vendors}
-    exports = set(update["exports"])
-    errors, binding, affected = [], {}, set()
+    libraries = [str(p / LIBRARY) for p in vendors]
+    errors, affected = [], set()
     if not vendors:
         errors.append("No usable OPP vendor; provide a matching --opp-source")
-    for owner, data, names in (("overlay", update, exports),
-                               ("base", base, set(base["operators"]) - exports)):
+    groups.append(("base", base, set(base["operators"]) - exports))
+    for owner, data, names in groups:
         required = {}
         for name in sorted(names):
             for symbol, expected in data["operators"][name]["requires"].items():
@@ -266,12 +283,12 @@ def resolve(package, layer):
                     continue  # A skeleton base may have unavailable, uncovered ops.
                 if tuple(expected) != contracts[str(chosen)][symbol]:
                     errors.append(f"{owner}/{name}: {symbol} mismatches {chosen.name}; include its matching adapter/OPP in the update")
-        # All reachable adapters use the same validated CANN ownership order.
-        # The binding is explicit and immutable, never read from a later env edit.
-        binding[owner] = [str(p / LIBRARY) for p in vendors]
-    return {"vendors": [str(p) for p in vendors], "bindings": binding,
+    # Every selected adapter uses the same immutable, validated CANN order.
+    return {"vendors": [str(p) for p in vendors],
+            "bindings": {"base": libraries, "overlay": libraries},
             "exports": sorted(exports), "errors": sorted(set(errors)),
-            "layer": str(adapter) if adapter else None,
+            "layer": str(adapters[0]) if adapters else None,
+            "adapter_layers": adapter_layers,
             "components": components(package, layer),
             "affected_base_operators": sorted(affected)}
 
@@ -406,7 +423,7 @@ def _adopt_vendor_overlay(package, previous, created):
 
 
 def install(package, source, *, opp_source=None, force=False):
-    """Replace the supplied adapter and prepend supplied OPP to the retained chain.
+    """Prepend supplied adapter/OPP to their independently retained chains.
 
     Pending is the latest requested combination and active is the last runnable
     one. Component payloads are immutable and shared by snapshots. ``force`` is
@@ -424,7 +441,7 @@ def install(package, source, *, opp_source=None, force=False):
             previous = _adopt_vendor_overlay(package, previous, created)
             latest = previous.get("pending") or previous.get("active")
             selected = (components(package, layer_path(package, latest)) if latest
-                        else {"adapter": None, "opps": []})
+                        else {"adapters": [], "opps": []})
             previous_opps = [layer_path(package, i) / PACKAGE / "opp/vendors" / BASE
                              for i in selected["opps"]]
             identity = uuid.uuid4().hex
@@ -433,7 +450,7 @@ def install(package, source, *, opp_source=None, force=False):
             created.append(target)
             if is_wheel:
                 extract_wheel(source, target)
-                selected["adapter"] = identity
+                selected["adapters"].insert(0, identity)
                 if opp_source is not None:
                     _attach_opp(opp_source, target)
             else:
@@ -441,7 +458,7 @@ def install(package, source, *, opp_source=None, force=False):
             if _vendor(target / PACKAGE):
                 selected["opps"].insert(0, identity)
             _atomic_json(target / "components.json", {"version": 2,
-                         "adapter": selected["adapter"], "opps": selected["opps"]})
+                         "adapters": selected["adapters"], "opps": selected["opps"]})
             plan = resolve(package, target)
             base_opp = _vendor(package)
             installed_opp = _vendor(target / PACKAGE)
@@ -470,6 +487,7 @@ def install(package, source, *, opp_source=None, force=False):
         # processes may still map it. Explicit removal reclaims retained layers.
         return {"state": "pending" if plan["errors"] else "active", "path": str(target),
                 "operators": plan["exports"], "components": plan["components"],
+                "adapter_layers": plan["adapter_layers"],
                 "affected_base_operators": plan["affected_base_operators"], "errors": plan["errors"],
                 "installation": {
                     "artifact": "wheel" if is_wheel else "run",
@@ -514,6 +532,7 @@ def status(package):
                 plan = resolve(package, path)
                 result.append({"state": kind, "path": str(path), "operators": plan["exports"],
                                "components": plan["components"],
+                               "adapter_layers": plan["adapter_layers"],
                                "vendors": plan["vendors"],
                                "affected_base_operators": plan["affected_base_operators"],
                                "errors": plan["errors"]})
