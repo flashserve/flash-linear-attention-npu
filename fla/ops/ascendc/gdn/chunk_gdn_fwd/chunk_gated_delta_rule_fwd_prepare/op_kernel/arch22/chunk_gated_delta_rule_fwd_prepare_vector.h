@@ -73,6 +73,69 @@ class Vector {
     Chunk rhsKChunk_{};
     uint64_t rhsKHk_ = 0;
 
+    __aicore__ inline bool CompensatePublicGatePrefix(LocalTensor<float> input, LocalTensor<float> prefix,
+                                                      LocalTensor<float> acc, uint32_t rows,
+                                                      uint32_t heads, uint32_t slot)
+    {
+        if constexpr (!Prepared && BT == 64 && QkvLayout == 0) {
+            if (a_.useGate == 0) return false;
+            constexpr uint32_t CompareLanes = 64;
+            constexpr uint32_t VectorBytes = CompareLanes * sizeof(float);
+            constexpr uint32_t MaskBytes = 32;
+            constexpr uint32_t ScratchBytes = 4 * VectorBytes + MaskBytes;
+            constexpr uint32_t SlotBytes = 128 * BT;
+            constexpr float MaxFinite = 3.4028234663852886e+38f;
+            static_assert(2 * Half <= 8 && SlotBytes == LeafBytes && ScratchBytes <= SlotBytes,
+                "Public gate prefix scratch must fit its dead activation leaf slot");
+            static_assert(Local::kLeaf + 2 * SlotBytes <= Local::kArena,
+                "Public gate prefix scratch exceeds the leaf envelope");
+            // 当前槽的 gate 激活已结束；配对路径也已 Gather 完两个槽，尚未生成 leaf。
+            const uint32_t scratch = Local::kLeaf + slot * SlotBytes;
+            auto correction = r_.template UB<float>(scratch);
+            auto adjusted = r_.template UB<float>(scratch + VectorBytes);
+            auto next = r_.template UB<float>(scratch + 2 * VectorBytes);
+            auto finiteMask = r_.template UB<uint8_t>(scratch + 3 * VectorBytes);
+            auto zero = r_.template UB<float>(scratch + 3 * VectorBytes + MaskBytes);
+            PipeBarrier<PIPE_V>();
+            Duplicate(correction, 0.0f, CompareLanes);
+            Duplicate(adjusted, 0.0f, CompareLanes);
+            Duplicate(next, 0.0f, CompareLanes);
+            Duplicate(r_.template UB<float>(scratch + 3 * VectorBytes), 0.0f, MaskBytes / sizeof(float));
+            Duplicate(zero, 0.0f, CompareLanes);
+            PipeBarrier<PIPE_V>();
+            for (uint32_t row = 0; row < rows; ++row) {
+                if (row == 0) {
+                    Adds(acc, input[row * 8], 0.0f, heads);
+                    PipeBarrier<PIPE_V>();
+                } else {
+                    Sub(adjusted, input[row * 8], correction, heads);
+                    PipeBarrier<PIPE_V>();
+                    Add(next, acc, adjusted, heads);
+                    PipeBarrier<PIPE_V>();
+                    Sub(correction, next, acc, heads);
+                    PipeBarrier<PIPE_V>();
+                    Sub(correction, correction, adjusted, heads);
+                    PipeBarrier<PIPE_V>();
+                    Abs(adjusted, next, heads);
+                    PipeBarrier<PIPE_V>();
+                    // c220 比较固定读完整 256B；无效 lane 已清零，不能只预留 heads 个 float。
+                    Compares<float, uint8_t>(finiteMask, adjusted, MaxFinite, CMPMODE::LE, CompareLanes);
+                    PipeBarrier<PIPE_V>();
+                    Select<float, uint8_t>(correction, finiteMask, correction, zero,
+                        SELMODE::VSEL_CMPMASK_SPR, static_cast<uint64_t>(heads), 1, {1, 1, 1, 8, 8, 8});
+                    PipeBarrier<PIPE_V>();
+                    // 只清除非有限 sum 的补偿项；保留 next 本身的 Inf/NaN/溢出结果。
+                    Copy(acc, next, heads, 1, {1, 1, 8, 8});
+                    PipeBarrier<PIPE_V>();
+                }
+                Copy(prefix[row * 8], acc, heads, 1, {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+            }
+            return true;
+        }
+        return false;
+    }
+
     __aicore__ static inline bool ScaleBytes(uint64_t &bytes, uint64_t factor)
     {
         const uint32_t aLo = static_cast<uint32_t>(bytes);
@@ -584,12 +647,14 @@ public:
         }
         Gather(input, r_.template UB<float>(Local::kG), r_.template UB<uint32_t>(PairTokenIndices), 0, BT * 8);
         PipeBarrier<PIPE_V>();
-        for (uint32_t row = 0; row < c.valid; ++row) {
-            if (row == 0) Adds(acc, input[row * 8], 0.0f, 2 * Half);
-            else Add(acc, acc, input[row * 8], 2 * Half);
-            PipeBarrier<PIPE_V>();
-            Copy(prefix[row * 8], acc, 2 * Half, 1, {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
+        if (!CompensatePublicGatePrefix(input, prefix, acc, static_cast<uint32_t>(c.valid), 2 * Half, firstSlot)) {
+            for (uint32_t row = 0; row < c.valid; ++row) {
+                if (row == 0) Adds(acc, input[row * 8], 0.0f, 2 * Half);
+                else Add(acc, acc, input[row * 8], 2 * Half);
+                PipeBarrier<PIPE_V>();
+                Copy(prefix[row * 8], acc, 2 * Half, 1, {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+            }
         }
         ScalePrepareCumsum(a_, prefix, acc, static_cast<uint32_t>(c.valid), 2 * Half);
         for (uint32_t i = 0; i < 2; ++i) {
@@ -647,12 +712,14 @@ public:
         }
         EffectiveBeta(c, begin, count, slot, slot);
         ActivatePrepareGate<BT>(r_, a_, input, begin, count, static_cast<uint32_t>(c.valid), slot);
-        for (uint32_t row = 0; row < c.valid; ++row) {
-            if (row == 0) Adds(acc, input[row * 8], 0.0f, count);
-            else Add(acc, acc, input[row * 8], count);
-            PipeBarrier<PIPE_V>();
-            Copy(prefix[row * 8], acc, count, 1, {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>(); // Copy 对 acc 的末次读取先于下一行 Add。
+        if (!CompensatePublicGatePrefix(input, prefix, acc, static_cast<uint32_t>(c.valid), count, slot)) {
+            for (uint32_t row = 0; row < c.valid; ++row) {
+                if (row == 0) Adds(acc, input[row * 8], 0.0f, count);
+                else Add(acc, acc, input[row * 8], count);
+                PipeBarrier<PIPE_V>();
+                Copy(prefix[row * 8], acc, count, 1, {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>(); // Copy 对 acc 的末次读取先于下一行 Add。
+            }
         }
         ScalePrepareCumsum(a_, prefix, acc, static_cast<uint32_t>(c.valid), count);
         Gather(g, prefix, r_.template UB<uint32_t>(HeadIndices), 0, Half * BT);
