@@ -73,7 +73,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
 }
 
 
-aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
+aclnnStatus GetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
     const aclTensor *vNew, const aclTensor *dO, const aclTensor *du,
     const aclTensor *g, const aclTensor *beta, const aclTensor *h,
@@ -86,20 +86,8 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
-    uint64_t *workspaceSize, aclOpExecutor **executor)
+    uint64_t *workspaceSize, aclOpExecutor **executor, uint64_t outputAliasMask)
 {
-    const uint64_t outputAliasMask = GDN::FinalizeHostArch22::GetOutputAliasMask(
-            {q, k, v, vNew, dO, du, g, beta, h, dh, a,
-             qRstdOptional, kRstdOptional, betaRawOptional, nullptr, nullptr},
-            {dqOut, dkOut, dvOut, dbetaOut, dgOut});
-    L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdFinalize,
-        DFX_IN(q, k, v, vNew, dO, du, g, beta, h, dh, a,
-               qRstdOptional, kRstdOptional, betaRawOptional,
-               cuSeqlensOptional, chunkIndicesOptional,
-               scale, chunkSize, useQkL2NormInKernel, useBetaSigmoidInKernel,
-               useGateInKernel, stateVFirst, useExp2, outputAliasMask),
-        DFX_OUT(dqOut, dkOut, dvOut, dbetaOut, dgOut));
-
     {
         const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
         const char *requiredInputNames[] = {"q", "k", "v", "vNew", "dO", "du", "g", "beta", "h", "dh", "a"};
