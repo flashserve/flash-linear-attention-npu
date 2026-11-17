@@ -20,21 +20,6 @@
 - `use_gate_in_kernel=true` 时必须提供 `A_log`；`safe_gate=true` 时 `lower_bound` 取 `[-5,0)`。
 - `initial_state` 如提供，末两维由 `state_v_first` 解释为 `[K,V]` 或 `[V,K]`。
 
-## Accuracy case 组成
-
-正式 `atk_chunk_kda_fwd.json` 同时包含：
-
-- 既有 48 条 case（ID 250–297），schema、seed 和 ID 保持不变；
-- 从父套件原 44 条 A5 正向 case 转换的 44 条 chunk32 case（ID 508–551），统一使用
-  `mixed_tolerance_bm`。转换保留原始 shape、dtype、layout、seed、state、varlen 和调用开关；
-  前 4 条 A2 负向 case 不转换，chunk32 仅支持 A5。
-
-以上 92 条 case 已固化在正式 accuracy JSON 中，执行精度测试时直接读取，不需要运行 case 转换或合并脚本。
-
-执行时，chunk32 与 chunk64 统一使用本目录 executor，不再保留独立的 chunk32 子目录或第二套执行入口；负向 case 保留本目录的 ACLNN 拦截检查。容差统一使用 `mixed_tolerance_bm`。
-
-本目录的 accuracy 入口覆盖合并后的全部用例。
-
 ## 精度拓扑
 
 精度标准统一使用 `mixed_tolerance_bm`。显式 CPU 节点调用 executor 的 FP64 路径生成
