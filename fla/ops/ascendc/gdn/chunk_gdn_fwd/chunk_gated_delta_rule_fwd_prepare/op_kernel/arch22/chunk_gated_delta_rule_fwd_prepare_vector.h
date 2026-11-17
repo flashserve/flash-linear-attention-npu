@@ -84,7 +84,7 @@ class Vector {
             constexpr uint32_t CompareLanes = 64;
             constexpr uint32_t VectorBytes = CompareLanes * sizeof(float);
             constexpr uint32_t MaskBytes = 32;
-            constexpr uint32_t ScratchBytes = 4 * VectorBytes + MaskBytes;
+            constexpr uint32_t ScratchBytes = 3 * VectorBytes + MaskBytes;
             constexpr uint32_t SlotBytes = 128 * BT;
             constexpr float MaxFinite = 3.4028234663852886e+38f;
             static_assert(2 * Half <= 8 && SlotBytes == LeafBytes && ScratchBytes <= SlotBytes,
@@ -97,18 +97,22 @@ class Vector {
             auto adjusted = r_.template UB<float>(scratch + VectorBytes);
             auto next = r_.template UB<float>(scratch + 2 * VectorBytes);
             auto finiteMask = r_.template UB<uint8_t>(scratch + 3 * VectorBytes);
-            auto zero = r_.template UB<float>(scratch + 3 * VectorBytes + MaskBytes);
+            auto zero = r_.template UB<float>(SelectZero);
+            // 首次 Sub 读取构造时清零的常驻区，后续读取上一行补偿。
+            auto previousCorrection = zero;
+            // 用对齐基址上的 bit mask 仅初始化比较尾部，避免 heads 偏移破坏块对齐。
+            uint64_t tailMask[2] = {~0ULL << heads, 0};
             PipeBarrier<PIPE_V>();
-            Duplicate(correction, 0.0f, CompareLanes);
-            Duplicate(adjusted, 0.0f, CompareLanes);
-            Duplicate(zero, 0.0f, CompareLanes);
+            SetMaskNorm();
+            Duplicate(adjusted, 0.0f, tailMask, uint8_t(1), uint16_t(1), uint8_t(8));
+            ResetMask();
             PipeBarrier<PIPE_V>();
             for (uint32_t row = 0; row < rows; ++row) {
                 if (row == 0) {
                     Adds(acc, input[row * 8], 0.0f, heads);
                     PipeBarrier<PIPE_V>();
                 } else {
-                    Sub(adjusted, input[row * 8], correction, heads);
+                    Sub(adjusted, input[row * 8], previousCorrection, heads);
                     PipeBarrier<PIPE_V>();
                     Add(next, acc, adjusted, heads);
                     PipeBarrier<PIPE_V>();
@@ -122,11 +126,12 @@ class Vector {
                     Compares<float, uint8_t>(finiteMask, adjusted, MaxFinite, CMPMODE::LE, CompareLanes);
                     PipeBarrier<PIPE_V>();
                     Select<float, uint8_t>(correction, finiteMask, correction, zero,
-                        SELMODE::VSEL_CMPMASK_SPR, static_cast<uint64_t>(heads), 1, {1, 1, 1, 8, 8, 8});
+                        SELMODE::VSEL_CMPMASK_SPR, static_cast<uint64_t>(heads), 1, {1, 1, 0, 8, 8, 0});
                     PipeBarrier<PIPE_V>();
                     // 只清除非有限 sum 的补偿项；保留 next 本身的 Inf/NaN/溢出结果。
                     Copy(acc, next, heads, 1, {1, 1, 8, 8});
                     PipeBarrier<PIPE_V>();
+                    previousCorrection = correction;
                 }
                 Copy(prefix[row * 8], acc, heads, 1, {1, 1, 8, 8});
                 PipeBarrier<PIPE_V>();
