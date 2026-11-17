@@ -136,6 +136,10 @@ Python ctypes 执行后端已删除；标准库 `ctypes.CDLL` 仍可用于加载
 命名空间，因此允许同名公共入口具有不同 schema；公共 wrapper 负责选择对应层。
 适配层和 OPP 独立保存，后安装的同类组件优先；standalone 只更新适配层，run-only
 只更新 OPP，完整 wheel 更新两部分。未配齐组合保存 pending，保留旧 active，配齐后原子切换。
+OPP 列表保留历史增量，按最新→较早→base 逐符号查找，与 CANN 的 vendor 顺序一致；
+同名符号按首个提供者检查 ABI，不因不匹配跳过该包。适配层也按新到旧保留列表，
+每个公共入口选择第一个声明它的 wheel；各 wheel 的 Python 模块和 Stable dispatcher 命名空间隔离。
+只对实际选中的入口做 ABI 配对，未声明的入口继续回落较早适配层及 base。
 各 launcher 按 active 组合绑定同一 OPP 来源顺序，不从自己的 wheel 目录推断 OPP。直接调用
 `torch.ops.load_library()` 不再等于完成注册。安装和兼容边界见 [Wheel 增量安装指南](../Wheel增量安装指南.md)。
 
