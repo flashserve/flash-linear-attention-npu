@@ -47,7 +47,4 @@ else()
 
   set(OPBASE_SOURCE_PATH ${CANN_3RD_LIB_PATH}/opbase)
 
-  if(EXISTS ${OPBASE_SOURCE_PATH}/aicpu_common)
-    file(REMOVE_RECURSE ${OPBASE_SOURCE_PATH}/aicpu_common)
-  endif()
 endif()
