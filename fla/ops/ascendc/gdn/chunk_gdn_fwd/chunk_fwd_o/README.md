@@ -105,7 +105,7 @@ aclnnStatus aclnnChunkFwdO(
 | `scale` | 输入 | 必选 | 缩放系数 | `double` | 建议按 `1 / sqrt(K)` 设置 |
 | `chunkSize` | 输入 | 必选 | 分块大小 | `int64_t` | 仅支持 `64` / `128` |
 | `useExp2` | 输入 | 必选 | Gate 指数是否使用以 2 为底的语义 | `bool` | 只控制指数语义，不参与新旧实现选择 |
-| `stateVFirst` | 输入 | 可选 | `h` 的末两维是否为 `[V,K]` | `bool` | 默认 `false`，A5 新路径支持 true/false |
+| `stateVFirst` | 输入 | 可选 | `h` 的末两维是否为 `[V,K]` | `bool` | 默认 `false`，A5/A6 新路径支持 true/false |
 | `outputLayout` | 输入 | 必选 | 输出布局，大小写敏感 | `const char *` | `BNSD` / `BSND` / `TND` / `NTD`，具体组合见下表 |
 
 ### 3.3 输出参数（Outputs）
@@ -141,8 +141,8 @@ aclnnStatus aclnnChunkFwdO(
   - 二者任意一个出现时进入变长模式，当前实现要求二者同时提供
   - 变长模式仅支持 `B = 1`
 - Torch 公开接口的 `use_exp2` 和 `output_layout` 默认值分别为 `False` 和 `"BNSD"`。
-- A5 上使用 `BSND/TND` 输出且满足 BF16、`K=V=128`、`chunkSize=64`、`HV/HK in [1,16]` 时，`useExp2=true/false` 均走优化实现。
-- 非 exp2 的 `BNSD/NTD` 输出继续走兼容实现；`useExp2=true` 和 `stateVFirst=true` 仅支持上述 A5 优化实现。
+- A5/A6 上使用 `BSND/TND` 输出且满足 BF16、`K=V=128`、`chunkSize=64`、`HV/HK in [1,16]` 时，`useExp2=true/false` 均走优化实现。
+- 非 exp2 的 `BNSD/NTD` 输出继续走兼容实现；`useExp2=true` 和 `stateVFirst=true` 仅支持上述 A5/A6 优化实现。
 
 ### 4.2 形状约束（强约束）
 
@@ -334,3 +334,12 @@ chunk_fwd_o/
         ├── run_gdn_fwd_o.sh
         └── test_fwd_o.py
 ```
+
+## A6 支持范围与源码适配
+
+`ascend960dt`（`__NPU_ARCH__ == 9201`）使用独立 `op_kernel/arch92/`，与 A5 的 `arch35/` 保持对应结构：
+`chunk_fwd_o_{a6,common,cube,vector}.h`、`gemm/{block,kernel}` 和 `epilogue/{block,policies}`。
+优化路径每组 3 个 value head，MIX 1:1，UB 313.5 KiB、L1 264 KiB，A_prime workspace 与 A5 一致按每 AIC 64 KiB 预留，kernel 不访问该预留区；
+兼容路径保留 A5 数学语义和 GM 路径，V128 使用整块 L0C→UB，单 AIV 每段最多处理 32 行，UB 峰值 375 KiB。
+详见 [接口范围](docs/api.md) 和 [差异设计](docs/design.md)。
+当前仅完成源码适配和本地主机检查，A6 CANN 编译、逐 Stage 设备精度、同步、ATK 与性能验收待完成。

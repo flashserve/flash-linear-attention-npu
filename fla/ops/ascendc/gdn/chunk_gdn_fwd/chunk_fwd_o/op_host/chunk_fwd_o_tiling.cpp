@@ -79,9 +79,12 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
     const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(CHUNK_FWD_O_ATTR_STATE_V_FIRST_IDX);
     const bool stateVFirst = stateVFirstPtr != nullptr ? *stateVFirstPtr : false;
     const char *outputLayout = attrPtr->GetStr(CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX);
-    if (useExp2 && ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_3510) {
+    const auto npuArch = ascendcPlatform.GetCurNpuArch();
+    const bool isA5 = npuArch == NpuArch::DAV_3510;
+    const bool isA6 = npuArch == NpuArch::DAV_9201;
+    if (useExp2 && !isA5 && !isA6) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                    OP_NAME, "use_exp2", "true", "use_exp2=true is supported only on A5");
+                    OP_NAME, "use_exp2", "true", "use_exp2=true is supported only on A5/A6");
         return ge::GRAPH_FAILED;
     }
 
@@ -101,9 +104,10 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         useExp2,
         stateVFirst,
         outputLayout,
-        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
+        isA5,
         aicCoreNum,
         sysWorkspaceSize,
+        isA6,
     };
 
     ChunkFwdOTilingProcessor processor(ctx, *tiling);
