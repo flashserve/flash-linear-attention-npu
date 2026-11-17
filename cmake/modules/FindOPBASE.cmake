@@ -17,9 +17,7 @@ endif()
 include(FindPackageHandleStandardArgs)
 
 set(OPBASE_HEAD_SEARCH_PATHS
-  ${OPBASE_SOURCE_PATH}/include
   ${OPBASE_SOURCE_PATH}/pkg_inc
-  ${TOP_DIR}/ops-base/include
   ${TOP_DIR}/ops-base/pkg_inc             # compile with ci
 )
 
@@ -47,18 +45,4 @@ if(OPBASE_FOUND)
     ${OPBASE_INC_DIR}/op_common/atvoss
     ${ASCEND_DIR}/${SYSTEM_PREFIX}/pkg_inc
   )
-  # AICPU public headers are separate from opbase_export.h in source checkouts.
-  foreach(OPBASE_HEAD_PATH IN LISTS OPBASE_HEAD_SEARCH_PATHS)
-    set(OPBASE_AICPU_CONTEXT_DIR "${OPBASE_HEAD_PATH}/op_common/aicpu_common/context")
-    if(EXISTS "${OPBASE_AICPU_CONTEXT_DIR}/common/cpu_kernel.h")
-      list(APPEND OPBASE_INC_DIRS
-        ${OPBASE_AICPU_CONTEXT_DIR}
-        ${OPBASE_AICPU_CONTEXT_DIR}/common
-        ${OPBASE_AICPU_CONTEXT_DIR}/cpu_proto
-        ${OPBASE_AICPU_CONTEXT_DIR}/utils
-        ${OPBASE_AICPU_CONTEXT_DIR}/cust_op
-      )
-    endif()
-  endforeach()
-  list(REMOVE_DUPLICATES OPBASE_INC_DIRS)
 endif()
