@@ -12,7 +12,6 @@
 #include "../../../chunk_gated_delta_rule_bwd_finalize/op_host/arch22/aclnn_chunk_gated_delta_rule_bwd_finalize_output_arch22.h"
 #include "../../../../chunk_gdn_fwd/chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 
-#include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
