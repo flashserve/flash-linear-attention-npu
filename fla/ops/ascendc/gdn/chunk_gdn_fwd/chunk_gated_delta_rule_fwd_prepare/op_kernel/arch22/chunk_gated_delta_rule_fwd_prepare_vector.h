@@ -101,8 +101,6 @@ class Vector {
             PipeBarrier<PIPE_V>();
             Duplicate(correction, 0.0f, CompareLanes);
             Duplicate(adjusted, 0.0f, CompareLanes);
-            Duplicate(next, 0.0f, CompareLanes);
-            Duplicate(r_.template UB<float>(scratch + 3 * VectorBytes), 0.0f, MaskBytes / sizeof(float));
             Duplicate(zero, 0.0f, CompareLanes);
             PipeBarrier<PIPE_V>();
             for (uint32_t row = 0; row < rows; ++row) {
