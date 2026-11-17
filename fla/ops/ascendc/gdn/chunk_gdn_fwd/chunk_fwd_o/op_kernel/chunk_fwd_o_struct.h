@@ -19,6 +19,9 @@
 
 namespace GDN {
 
+// A6 head group size shared by host tiling and the kernel.
+constexpr uint32_t CHUNK_FWD_O_A6_HEAD_COUNT = 3U;
+
 enum ChunkFwdOOutputLayout : int64_t {
     CHUNK_FWD_O_LAYOUT_BNSD = 0,
     CHUNK_FWD_O_LAYOUT_BSND = 1,
