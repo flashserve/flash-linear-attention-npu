@@ -43,8 +43,8 @@ A2/A3 共用 `DAV_2201` / `arch22` 路径，完整 Finalize 链在一次混合 A
 tiling 和 workspace 在内部按平台选择。精度、性能和内存检测结论须以对应设备、版本的 ATK 记录为准；
 910B 的实机验证不能替代 910C 的实机验证。
 
-新增的 Host 校验、view 规范化和 arch22 tiling 位于 A2/A3 私有路径，A5 沿用原有流程。
-纯 `ascend950` 构建不编入这些新增 Host helper；含 A2/A3 的混合 SoC 构建保留运行期分派。
+Host 校验、view 规范化和 arch22 tiling 位于 A2/A3 私有路径，A5 沿用原有流程。
+公共 Host 对象保留 A2/A3 与 A5 的实现，并在运行期按 `NpuArch` 分派。
 
 ## aclnn
 
@@ -144,6 +144,23 @@ A5 保留原有的连续化、输出分配和描述符处理，本次不增加�
 
 dq/dk/dv 分别跟随 q/k/v；dbeta/dg 分别跟随 beta/g。由于本接口要求 g/beta 同 dtype，
 dbeta/dg 也必须同为 BF16 或同为 FP32。
+
+### 输出存储关系
+
+A2/A3 的 aclnn 接口逐个判断 `dq/dk/dv/dbeta/dg` 与公开 tensor 输入、其他输出的存储关系。
+已绑定的连续 view 按实际数据地址、view offset 和 dtype 字节跨度判断。非连续 view、
+跨度或地址加法无法安全表示的情形按可能重叠处理。尚未绑定的 executor 内部存储按 storage 身份判断，
+尚未绑定的外部存储按可能重叠处理。
+
+Host 可排除重叠时沿用调用方输出。可能重叠的输出由 ACLNN 按需申请独立临时目标，
+kernel 完成后显式 `CopyNpuToNpu` 回写到对应输出 view。临时存储及拷贝任务进入同一 executor，
+会影响 workspace 和搬运开销，调用方应使用本次 `GetWorkspaceSize` 返回的大小。
+输出隔离 mask 同时参与 executor cache 身份，具体构图见[设计说明](design.md#63-workspace-结构与搬运)。
+
+回写顺序为 `dq → dk → dv → dbeta → dg`。输出 view 相互重叠时，重叠字节最终保留
+顺序较后输出写入的值。同时保留五个完整梯度需要五个输出 view 互不重叠。
+Python 主入口由 Stable 适配层分配五个输出。完整 Bwd 的布局、标量 dtype 与非连续输出处理见
+[完整 Bwd 输出存储关系](../../chunk_gated_delta_rule_bwd/README.md#输出存储关系)。
 
 ## 返回码
 
