@@ -32,6 +32,7 @@ struct ChunkGdnBwdIntraTilingData {
     int64_t useExp2;
     float scale;
     uint32_t reserved;
+    int64_t groupSize;
 };
 
 struct ChunkGdnBwdIntraWorkMeta {

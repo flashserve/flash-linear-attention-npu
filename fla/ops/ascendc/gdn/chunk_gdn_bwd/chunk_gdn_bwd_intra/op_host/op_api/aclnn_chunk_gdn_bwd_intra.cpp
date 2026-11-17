@@ -7,8 +7,10 @@
 
 #include <array>
 #include <set>
+#include <string>
 #include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
+#include "external/aclnn_kernels/aclnn_platform.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -16,13 +18,16 @@
 #include "opdev/op_log.h"
 #include "opdev/tensor_view_utils.h"
 #include "op_common/log/log.h"
-#include <string>
-
-static constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
 
 using namespace op;
 
 namespace {
+
+constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
+
+// GVA 比例（HV/HK）上限：DAV_2201（A2/A3）为 16，其他（含 DAV_3510/A5）为 4。
+constexpr int64_t GVA_RATIO_MAX_DAV_2201 = 16;
+constexpr int64_t GVA_RATIO_MAX_OTHER = 4;
 
 struct Params {
     const aclTensor *q;
@@ -116,8 +121,15 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "q/k and value tensors must share B and T.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(hv % hk == 0 && hv / hk <= 4)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "HV/HK must be an integer in [1, 4].");
+    // GVA 上限在 aclnn 参数校验层拦截：DAV_2201（A2/A3）支持 1~16，其他 1~4。
+    const int64_t gvaLimit = GetCurrentPlatformInfo().GetCurNpuArch() ==
+        NpuArch::DAV_2201 ? GVA_RATIO_MAX_DAV_2201 : GVA_RATIO_MAX_OTHER;
+    if (hv % hk != 0 || hv / hk < 1 || hv / hk > gvaLimit) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "hv/hk",
+            std::to_string(hv) + "/" + std::to_string(hk),
+            "HV/HK ratio must be an integer in [1, 16] on DAV_2201 (A2/A3), "
+            "or [1, 4] on other SoC archs.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t)) {
