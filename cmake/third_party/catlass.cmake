@@ -35,6 +35,8 @@ else()
     catlass_vendor
     GIT_REPOSITORY https://gitcode.com/cann/catlass.git
     GIT_TAG ${CATLASS_VENDOR_GIT_TAG}
+    GIT_SUBMODULES ""
+    GIT_SUBMODULES_RECURSE FALSE
     GIT_PROGRESS TRUE
     SOURCE_DIR "${_CATLASS_SOURCE_DIR}")
   FetchContent_Populate(catlass_vendor)
