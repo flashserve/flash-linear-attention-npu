@@ -378,6 +378,22 @@ wheel SHA256 为 `54a0bcb93260558003cf535a38f2d996616879c471be2ffd944ae5661965c6
 本轮收审回执 SHA256 为 `162f14c236f5274c86d2efcf06c8c2ca45aaff52665bab11c577a9f6c6f641f5`。
 17 份必要结果回收到本地，原始日志与张量保存在远端。
 
+### 2026-11-17 原生 SDK 编译修复
+
+正式 NPU CI 运行 `43995288776` 在 CANN 9.2.1 下编译失败。Finalize 的共享输出辅助头
+先加载结构化日志宏，随后未使用的 `aclnn_kernels/common/op_error_check.h` 将整数错误码
+传给同名日志宏，触发 `GetOpInfo<int>` 的 context 指针错误。A2 与 A5 日志均命中此问题。
+已从 Finalize arch22 头与完整 Bwd Host 中删除该未使用的 SDK 头引用。
+
+修复源码为 `1ffb924beb95275487de46a250b3ed5658894c5f`，回归工具为
+`af3e79e01215169cfa3351b4faa58801fbd702b5`。在 A2 主机的原生 CANN 9.3.0/aarch64
+SDK 下，用真实 CMake 通用参数和系统 g++ 编译两个完整 Host TU，修复前 Finalize
+复现相同错误，完整 Bwd 成功作为控制；修复后两者均生成对象文件。依赖文件核实使用
+SDK 自带日志头，且未包含上述 SDK 校验头。构建参数采用普通头文件搜索，NPU kernel 调用为 0。
+
+该回归验证 Host 编译修复。最新提交的 CANN 9.2.1 正式 A2+A5 全量 CI、安装和精度结果
+继续按对应 Actions 回执确认。前节 204/204 等设备结果归属其列明的源码与安装版本。
+
 ### 保留版本的三核心性能与 workspace
 
 下表来自保留版本 `817eed14cf76d4dd86e70b682066c511b7c17df6` 对
