@@ -285,6 +285,13 @@ if (NOT BUILD_OPEN_PROJECT)
   )
 endif()
 
+# Other dependencies may add the CANN include root before OPBASE. Keep the
+# selected OPBASE headers first for all host compilation paths.
+foreach(_opbase_host_include OPAPI_INCLUDE OP_TILING_INCLUDE OP_PROTO_INCLUDE)
+  list(PREPEND ${_opbase_host_include} ${OPBASE_INC_DIRS})
+endforeach()
+unset(_opbase_host_include)
+
 set(AICPU_INCLUDE
   ${OPBASE_INC_DIRS}
   ${AICPU_INC_DIRS}
