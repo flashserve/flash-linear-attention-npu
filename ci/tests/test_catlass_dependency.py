@@ -128,14 +128,40 @@ class CatlassConfigureTest(unittest.TestCase):
             f"-DCATLASS_VENDOR_GIT_TAG={self.revisions['new']}",
         )), self.revisions["old"])
 
+    def test_empty_soc_entries_are_ignored(self):
+        for soc in ("ascend960dt;", "Ascend960Dt;", ";ASCEND960DT;;ascend960dt;", "ascend960dt,"):
+            with self.subTest(soc=soc):
+                self.assertEqual(self.configure(soc), self.revisions["new"])
+                self.assertEqual(self.git(self.cache / "catlass", "rev-parse", "HEAD"), self.revisions["new"])
+
     def test_missing_revision_is_fetched(self):
         self.clone_cache(shallow=True)
         self.assertEqual(self.configure("ascend950"), self.revisions["old"])
 
     def test_disconnected_missing_revision_is_reported(self):
         self.clone_cache(shallow=True)
-        output = self.configure("ascend950", success=False, extra=("-DFETCHCONTENT_FULLY_DISCONNECTED=ON",))
-        self.assertIn("not cached for offline use", " ".join(output.split()))
+        flags = (
+            "FETCHCONTENT_FULLY_DISCONNECTED",
+            "FETCHCONTENT_UPDATES_DISCONNECTED",
+            "FETCHCONTENT_UPDATES_DISCONNECTED_CATLASS_VENDOR",
+        )
+        for active_flag in flags:
+            with self.subTest(flag=active_flag):
+                extra = tuple(f"-D{flag}={'ON' if flag == active_flag else 'OFF'}" for flag in flags)
+                output = self.configure("ascend950", success=False, extra=extra)
+                self.assertIn("not cached for offline use", " ".join(output.split()))
+                self.assertEqual(self.git(self.cache / "catlass", "rev-parse", "HEAD"), self.revisions["new"])
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.git(self.cache / "catlass", "cat-file", "-e", f"{self.revisions['old']}^{{commit}}")
+
+    def test_dependency_disconnected_cached_revision_can_be_selected(self):
+        self.clone_cache()
+        for soc, revision in (("ascend950", "old"), ("ascend960dt", "new")):
+            with self.subTest(soc=soc):
+                self.assertEqual(self.configure(soc, extra=(
+                    "-DFETCHCONTENT_UPDATES_DISCONNECTED_CATLASS_VENDOR=ON",
+                )), self.revisions[revision])
+                self.assertEqual(self.git(self.cache / "catlass", "rev-parse", "HEAD"), self.revisions[revision])
 
     def test_dirty_cache_is_preserved(self):
         self.clone_cache()
@@ -154,7 +180,7 @@ class CatlassConfigureTest(unittest.TestCase):
         self.assertIn("Offline Catlass headers do not match", self.configure("ascend950", success=False))
 
     def test_mixed_revision_soc_list_is_rejected(self):
-        for soc in ("ASCEND960DT;ascend950", "ascend950,Ascend960Dt"):
+        for soc in ("ASCEND960DT;ascend950", "ascend950,Ascend960Dt", "ASCEND960DT;;ascend950;"):
             with self.subTest(soc=soc):
                 self.assertIn("Build ascend960dt separately", self.configure(soc, success=False))
 
