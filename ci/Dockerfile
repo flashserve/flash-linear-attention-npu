@@ -129,7 +129,7 @@ RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
         c8cfc45e350d4e07cd8cab8448d3b40f9727ea4c \
         /opt/fla-ci/third_party/opbase; \
       clone_at "https://gitcode.com/cann/catlass.git" \
-        490ae05852f7fad7e5e2ed13b305a80f4d9d91f9 \
+        9034426342c8f53c02fd469b4cfe880d49e4b60c \
         /opt/fla-ci/third_party/catlass; \
     fi
 
