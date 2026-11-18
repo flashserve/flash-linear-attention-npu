@@ -156,7 +156,7 @@ __simd_vf__ inline void ChunkGdnBwdIntraPackMatrixVF(
     }
 }
 
-template <typename MainT, typename GateT, typename BetaT, uint32_t G_GROUP_KEY>
+template <typename MainT, typename GateT, typename BetaT, uint32_t G>
 class ChunkGdnBwdIntraVector {
 public:
     using ArchTag = Catlass::Arch::Ascend950;
@@ -177,7 +177,6 @@ public:
         (void)workspace;
         mapper_.Init(cuSeqlens, chunkIndices, tiling);
         tiling_ = tiling;
-        headRatio_ = tiling->valueHeads / tiling->qkHeads;
         const int64_t subblocks = static_cast<int64_t>(AscendC::GetSubBlockNum());
         coreIdx_ = static_cast<int64_t>(AscendC::GetBlockIdx()) / subblocks;
         part_ = static_cast<int64_t>(AscendC::GetSubBlockIdx());
@@ -227,35 +226,6 @@ public:
     }
 
 private:
-    __aicore__ inline int64_t HeadIndex(int64_t hv) const
-    {
-        if constexpr (G_GROUP_KEY <= 4) {
-            return hv / G_GROUP_KEY;
-        } else {
-            return hv / headRatio_;
-        }
-    }
-
-    __aicore__ inline bool ScoreLeader(int64_t hvBegin, int64_t r) const
-    {
-        if constexpr (G_GROUP_KEY <= 4) {
-            return ChunkGdnBwdIntraScoreLeader<G_GROUP_KEY>(hvBegin, r);
-        } else {
-            return ChunkGdnBwdIntraScoreLeader(hvBegin, r, headRatio_);
-        }
-    }
-
-    __aicore__ inline int64_t LeaderR(int64_t hvBegin, int64_t r) const
-    {
-        if constexpr (G_GROUP_KEY <= 4) {
-            return ChunkGdnBwdIntraLeaderR<G_GROUP_KEY>(hvBegin, r);
-        } else {
-            return ChunkGdnBwdIntraLeaderR(hvBegin, r, headRatio_);
-        }
-    }
-
-    int64_t headRatio_ = 1;
-
     // 编译期布局常量放在函数前，保证函数签名和函数体都可直接使用。
     static constexpr uint32_t INTRA_A_UB_BASE = 32 * 1024;
     static constexpr uint32_t INTRA_WORKSPACE_UB_BASE = 48 * 1024;
@@ -382,7 +352,7 @@ private:
                 PrefetchStage1Input(meta, r + 1);
             }
             const int64_t leader =
-                LeaderR(meta.hvBegin, r);
+                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r, tiling_->groupSize);
             if (r == leader) {
                 // AIC 只为每个唯一 hk 发布一次 Score；同一 hk 的后续 hv 直接复用该槽。
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
@@ -400,7 +370,8 @@ private:
             vdoSlotUsed[vdoSlot] = true;
             RunStage1(meta, r, leader, pairInputs);
             const bool lastConsumer = r + 1 == meta.validHeads ||
-                HeadIndex(meta.hvBegin + r) != HeadIndex(meta.hvBegin + r + 1);
+                (meta.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize) !=
+                (meta.hvBegin + r + 1) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
             if (lastConsumer) {
                 // 当前 hk 的最后一个 hv 已读完 Score，向 AIC 归还本 AIV 的半片槽。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(

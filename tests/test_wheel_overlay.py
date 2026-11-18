@@ -680,5 +680,310 @@ def uuid_name():
     return uuid.uuid4().hex
 
 
+class MultiOppTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        environment = mock.patch.dict(os.environ, {}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.base = package(self.root / "site/fla_npu",
+                            opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
+        self.a = package(self.root / "a", opp={"aclnnDemo": "int64"})
+        self.b = package(self.root / "b", opp={"aclnnOther": "int64"})
+
+    def install(self, source):
+        return layers.install(self.base, source / "opp/vendors")
+
+    def check_order(self, *results):
+        expected = [str(Path(r["path"]) / "fla_npu/opp/vendors" / layers.BASE) for r in results]
+        expected.append(str(layers._vendor(self.base)))
+        plan = layers.runtime_plan(self.base)
+        self.assertEqual(plan["vendors"], expected)
+        self.assertEqual(list(map(str, layers.environment_vendors(self.base))), expected)
+        for owner in ("base", "overlay"):
+            self.assertEqual(plan["bindings"][owner], [str(Path(p) / layers.LIBRARY) for p in expected])
+        self.assertEqual(layers.status(self.base)[0]["vendors"], expected)
+        return plan
+
+    def test_disjoint_runs_preserve_both_orders_and_remove_restores_base(self):
+        before = {p: p.read_bytes() for p in self.base.rglob("*") if p.is_file()}
+        for first_source, second_source in ((self.a, self.b), (self.b, self.a)):
+            with self.subTest(first=first_source.name):
+                first = self.install(first_source)
+                second = self.install(second_source)
+                plan = self.check_order(second, first)
+                self.assertEqual(plan["affected_base_operators"], ["npu_a", "npu_b"])
+                self.assertIsNone(plan["layer"])
+                layers.remove(self.base)
+                self.assertIsNone(layers.runtime_plan(self.base))
+                self.assertEqual(layers.environment_vendors(self.base), [layers._vendor(self.base)])
+                self.assertFalse(any(p.is_dir() for p in layers.storage(self.base).iterdir()))
+                self.assertEqual(before, {p: p.read_bytes() for p in before})
+
+    def test_newest_duplicate_wins_and_other_operator_is_retained(self):
+        first = self.install(self.a)
+        second = self.install(self.b)
+        third = self.install(self.a)
+        plan = self.check_order(third, second, first)
+        abi = layers.abi_module(self.base)
+        contracts = {p: abi.validated_contracts(Path(p), require_manifest=True) for p in plan["vendors"]}
+        for symbol, index in (("aclnnDemo", 0), ("aclnnOther", 1)):
+            self.assertEqual(next(p for p in plan["vendors"] if symbol in contracts[p]), plan["vendors"][index])
+        self.assertEqual(third["installation"]["opp_order"], plan["vendors"])
+
+    def test_wheel_opp_prepends_and_standalone_preserves_chain(self):
+        first = self.install(self.a)
+        full = package(self.root / "full", exports=["npu_b"], opp={"aclnnOther": "int64"})
+        second = layers.install(self.base, wheel(self.root / "full.whl", full))
+        self.check_order(second, first)
+        standalone = package(self.root / "standalone", exports=["npu_b"])
+        third = layers.install(self.base, wheel(self.root / "standalone.whl", standalone))
+        plan = self.check_order(second, first)
+        self.assertEqual(plan["layer"], third["path"])
+        self.assertEqual(plan["exports"], ["npu_b"])
+
+    def test_newest_incompatible_symbol_does_not_fall_through(self):
+        first = self.install(self.a)
+        second = self.install(self.b)
+        bad = package(self.root / "bad", kind="bool", opp={"aclnnDemo": "bool"})
+        pending = self.install(bad)
+        self.assertEqual(pending["state"], "pending")
+        bad_vendor = Path(pending["path"]) / "fla_npu/opp/vendors" / layers.BASE
+        expected_error = (f"base/npu_a: aclnnDemoGetWorkspaceSize mismatches OPP {bad_vendor}; "
+                          "include its matching adapter/OPP in the update")
+        self.assertEqual(pending["errors"], [expected_error])
+        self.check_order(second, first)
+        # An unrelated later OPP must not hide the mismatch in a retained layer.
+        still_pending = self.install(self.b)
+        self.assertEqual(still_pending["state"], "pending")
+        self.assertEqual(still_pending["errors"], [expected_error])
+        self.check_order(second, first)
+        # Matching adapter completes the pending chain without discarding B.
+        adapter = package(self.root / "adapter", kind="bool", exports=["npu_a"])
+        completed = layers.install(self.base, wheel(self.root / "adapter.whl", adapter))
+        self.assertEqual(completed["state"], "active")
+        self.check_order(still_pending, pending, second, first)
+
+    def test_version_one_record_migrates_without_dropping_old_opp(self):
+        first = self.install(self.a)
+        snapshot = Path(first["path"])
+        (snapshot / "components.json").write_text(json.dumps({"version": 1, "adapter": None, "opp": snapshot.name}))
+        second = self.install(self.b)
+        self.check_order(second, first)
+        self.assertEqual(json.loads((Path(second["path"]) / "components.json").read_text())["version"], 2)
+
+    def test_missing_retained_opp_is_reported_and_removal_recovers(self):
+        first = self.install(self.a)
+        self.install(self.b)
+        (Path(first["path"]) / "fla_npu/opp/vendors" / layers.BASE / layers.LIBRARY).unlink()
+        with self.assertRaisesRegex(RuntimeError, "OPP is missing"):
+            layers.environment_vendors(self.base)
+        self.assertTrue(layers.status(self.base)[0]["errors"])
+        layers.remove(self.base)
+        self.assertEqual(layers.environment_vendors(self.base), [layers._vendor(self.base)])
+
+    def test_invalid_chain_is_rejected(self):
+        for invalid in (None, "bad", [None], ["../escape"], ["a" * 32, "a" * 32]):
+            with self.subTest(opps=invalid):
+                first = self.install(self.a)
+                (Path(first["path"]) / "components.json").write_text(json.dumps(
+                    {"version": 2, "adapter": None, "opps": invalid}))
+                with self.assertRaises(RuntimeError):
+                    layers.runtime_plan(self.base)
+                layers.remove(self.base)
+
+    def test_pth_manual_source_and_disabled_selection_agree(self):
+        first = self.install(self.a)
+        second = self.install(self.b)
+        expected = self.check_order(second, first)["vendors"]
+        bootstrap = self.base.parent / "fla_npu_opp_env.py"
+        shutil.copyfile(SETUP / bootstrap.name, bootstrap)
+        runpy.run_path(str(bootstrap))
+        self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"], os.pathsep.join(expected))
+        libs = os.pathsep.join(str(Path(p) / layers.LIBRARY) for p in expected)
+        # The .pth hook configures CANN only; import later binds the host list.
+        shell = layers.shell_environment(self.base)
+        self.assertIn(os.pathsep.join(expected), shell)
+        self.assertIn(libs, shell)
+        with mock.patch.dict(os.environ, {"FLA_NPU_OVERLAY_VENDOR": ""}):
+            self.assertEqual(layers.environment_vendors(self.base), [layers._vendor(self.base)])
+            self.assertNotIn(first["path"], layers.shell_environment(self.base))
+            self.assertNotIn(second["path"], layers.shell_environment(self.base))
+
+    def test_failed_pointer_commit_keeps_entire_previous_chain(self):
+        first = self.install(self.a)
+        second = self.install(self.b)
+        before = set(layers.storage(self.base).iterdir())
+        original = layers._atomic_json
+        def fail(path, value):
+            if path.name == "state.json":
+                raise OSError("injected disk failure")
+            original(path, value)
+        with mock.patch.object(layers, "_atomic_json", side_effect=fail):
+            with self.assertRaisesRegex(OSError, "injected disk failure"):
+                self.install(self.a)
+        self.check_order(second, first)
+        self.assertEqual(set(layers.storage(self.base).iterdir()), before)
+
+
+
+class MultiArtifactTests(unittest.TestCase):
+    setUp = MultiOppTests.setUp
+
+    def artifact(self, name, op, kind, *, abi="int64", gain=3):
+        symbol = "aclnnDemo" if op == "npu_a" else "aclnnOther"
+        src = package(self.root / name, exports=[op],
+                      opp={symbol: abi} if kind != "standalone" else None)
+        data = layers.manifest(src)
+        data["operators"][op]["requires"] = contract(abi, symbol)
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+        self.provider(src, {op: gain})
+        return src / "opp/vendors" if kind == "run" else wheel(self.root / (name + ".whl"), src)
+
+    def provider(self, src, gains):
+        code = (f"_ASCENDC_OPS = {tuple(gains)!r}\n"
+                "BACKWARD_OPS = {}\nMUTATION_FLAGS = {}\nMUTATION_PREDICATES = {}\n"
+                "MUTATED_ARGUMENTS = {}\n_TORCH_NPU_COMPAT_OPS = ()\n")
+        for op, gain in gains.items():
+            alias = op.removeprefix("npu_")
+            code += f"def {op}(x, *, gain={gain}):\n    return x * gain\n{alias} = {op}\n"
+            code += f"MUTATED_ARGUMENTS[{op!r}] = ('{gain}',)\n"
+        (src / "ops/ascendc/__init__.py").write_text(code)
+
+    def route(self, plan):
+        runtime = runpy.run_path(str(SETUP / "fla_npu/_wheel_layer_runtime.py"))
+        root = types.ModuleType("fla_npu")
+        root._WHEEL_LAYER_PLAN = plan
+        old_a, old_b = lambda x: x, lambda x: x
+        namespace = {"_ASCENDC_OPS": ("npu_a", "npu_b"), "__all__": ["npu_a", "a", "npu_b", "b"],
+                     "npu_a": old_a, "a": old_a, "npu_b": old_b, "b": old_b,
+                     "BACKWARD_OPS": {}, "MUTATION_FLAGS": {}, "MUTATION_PREDICATES": {},
+                     "MUTATED_ARGUMENTS": {}, "_TORCH_NPU_COMPAT_OPS": ("npu_a", "npu_b")}
+        def cleanup():
+            for key in list(sys.modules):
+                if key.startswith("_fla_npu_layer_"):
+                    del sys.modules[key]
+        self.addCleanup(cleanup)
+        with mock.patch.dict(sys.modules, {"fla_npu": root}):
+            runtime["install_exports"](namespace)
+        return namespace
+
+    def test_all_three_artifact_types_compose_in_both_orders(self):
+        from itertools import product
+        for a_kind, b_kind, reverse in product(("run", "standalone", "full"),
+                                             ("run", "standalone", "full"), (False, True)):
+            tag = f"{a_kind}-{b_kind}-{reverse}"
+            with self.subTest(case=tag):
+                artifacts = [("npu_a", a_kind, self.artifact(tag+"-a", "npu_a", a_kind)),
+                             ("npu_b", b_kind, self.artifact(tag+"-b", "npu_b", b_kind, gain=5))]
+                if reverse:
+                    artifacts.reverse()
+                expected_p, expected_o, owners = [], [], {}
+                try:
+                    for op, kind, source in artifacts:
+                        result = layers.install(self.base, source)
+                        self.assertEqual(result["state"], "active")
+                        identity = Path(result["path"]).name
+                        if kind != "run":
+                            expected_p.insert(0, identity)
+                            owners[op] = result["path"]
+                        if kind != "standalone":
+                            expected_o.insert(0, identity)
+                    plan = layers.runtime_plan(self.base)
+                    self.assertEqual(plan["components"]["adapters"], expected_p)
+                    self.assertEqual(plan["components"]["opps"], expected_o)
+                    actual = {op: entry["path"] for entry in plan["adapter_layers"] for op in entry["exports"]}
+                    self.assertEqual(actual, owners)
+                    namespace = self.route(plan)
+                    self.assertEqual(namespace["a"](2), 2 if a_kind == "run" else 6)
+                    self.assertEqual(namespace["b"](2), 2 if b_kind == "run" else 10)
+                finally:
+                    layers.remove(self.base)
+
+    def test_latest_declared_entry_wins_and_older_other_entry_keeps_metadata(self):
+        src = package(self.root / "both", exports=["npu_a", "npu_b"])
+        self.provider(src, {"npu_a": 3, "npu_b": 4})
+        first = layers.install(self.base, wheel(self.root / "both.whl", src))
+        second = layers.install(self.base, self.artifact("new-b", "npu_b", "standalone", gain=5))
+        plan = layers.runtime_plan(self.base)
+        self.assertEqual(plan["adapter_layers"], [
+            {"path": second["path"], "exports": ["npu_b"]},
+            {"path": first["path"], "exports": ["npu_a"]}])
+        namespace = self.route(plan)
+        for op, gain in (("npu_a", 3), ("npu_b", 5)):
+            self.assertEqual(namespace[op](2), 2 * gain)
+            self.assertEqual(str(inspect.signature(namespace[op])), f"(x, *, gain={gain})")
+            self.assertIs(namespace[op], namespace[op[4:]])
+            self.assertEqual(namespace["MUTATED_ARGUMENTS"][op], (str(gain),))
+        self.assertEqual(namespace["_TORCH_NPU_COMPAT_OPS"], ())
+
+    def test_abi_checks_effective_entries_across_all_adapters(self):
+        first = layers.install(self.base, self.artifact("new-a", "npu_a", "full", abi="bool"))
+        second = layers.install(self.base, self.artifact("new-b", "npu_b", "full"))
+        self.assertEqual(second["state"], "active")
+        # A still needs the older wheel adapter: its new OPP differs from base.
+        self.assertEqual(layers.runtime_plan(self.base)["exports"], ["npu_a", "npu_b"])
+        pending = layers.install(self.base, self.artifact("old-a-contract", "npu_a", "standalone"))
+        self.assertEqual(pending["state"], "pending")
+        opp_vendor = Path(first["path"]) / "fla_npu/opp/vendors" / layers.BASE
+        self.assertEqual(pending["errors"], [
+            f"overlay/npu_a: aclnnDemoGetWorkspaceSize mismatches OPP {opp_vendor}; "
+            "include its matching adapter/OPP in the update"])
+        self.assertEqual(layers.active(self.base), Path(second["path"]))
+        complete = layers.install(self.base, self.a / "opp/vendors")
+        self.assertEqual(complete["state"], "active")
+        plan = layers.runtime_plan(self.base)
+        self.assertEqual(plan["adapter_layers"], [
+            {"path": pending["path"], "exports": ["npu_a"]},
+            {"path": second["path"], "exports": ["npu_b"]}])
+        self.assertIn(Path(first["path"]).name, plan["components"]["adapters"])
+
+    def test_pending_standalones_and_runs_accumulate_until_both_dependencies_exist(self):
+        base = package(self.root / "skeleton-base")
+        for name, op in (("a", "npu_a"), ("b", "npu_b")):
+            result = layers.install(base, self.artifact("pending-"+name, op, "standalone"))
+            self.assertEqual(result["state"], "pending")
+        self.assertEqual(layers.install(base, self.a / "opp/vendors")["state"], "pending")
+        self.assertEqual(layers.install(base, self.b / "opp/vendors")["state"], "active")
+        plan = layers.runtime_plan(base)
+        self.assertEqual(len(plan["adapter_layers"]), 2)
+        self.assertEqual(len(plan["vendors"]), 2)
+        self.assertEqual(plan["exports"], ["npu_a", "npu_b"])
+
+    def test_single_adapter_records_migrate_without_losing_earlier_entry(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                first = layers.install(self.base, self.artifact("legacy-"+str(version), "npu_a", "standalone"))
+                snapshot = Path(first["path"])
+                data = {"version": version, "adapter": snapshot.name}
+                data.update({"opp": None} if version == 1 else {"opps": []})
+                (snapshot / "components.json").write_text(json.dumps(data))
+                second = layers.install(self.base, self.artifact("next-"+str(version), "npu_b", "standalone"))
+                self.assertEqual(second["components"]["adapters"], [Path(second["path"]).name, snapshot.name])
+                self.assertEqual(second["operators"], ["npu_a", "npu_b"])
+                layers.remove(self.base)
+
+    def test_missing_older_adapter_is_not_silently_replaced_by_base(self):
+        first = layers.install(self.base, self.artifact("older-a", "npu_a", "standalone"))
+        layers.install(self.base, self.artifact("newer-b", "npu_b", "standalone"))
+        (Path(first["path"]) / "fla_npu" / layers.MANIFEST).unlink()
+        with self.assertRaisesRegex(RuntimeError, "adapter is missing"):
+            layers.runtime_plan(self.base)
+        layers.remove(self.base)
+        self.assertIsNone(layers.runtime_plan(self.base))
+
+    def test_invalid_adapter_order_is_rejected(self):
+        for i, invalid in enumerate((None, "bad", [None], ["../outside"], ["a"*32, "a"*32])):
+            with self.subTest(adapters=invalid):
+                result = layers.install(self.base, self.artifact("invalid-"+str(i), "npu_a", "standalone"))
+                (Path(result["path"]) / "components.json").write_text(json.dumps(
+                    {"version": 2, "adapters": invalid, "opps": []}))
+                with self.assertRaises(RuntimeError):
+                    layers.runtime_plan(self.base)
+                layers.remove(self.base)
+
+
 if __name__ == "__main__":
     unittest.main()

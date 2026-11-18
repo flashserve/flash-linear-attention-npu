@@ -12,7 +12,14 @@
 
 namespace optiling {
 
-constexpr int64_t kA5PublishedMaxG = 16;
+// A2/A3（DAV_2201）和 A5（DAV_3510）的 Intra GVA 上限。
+constexpr int64_t INTRA_MAX_GVA_RATIO_ARCH22 = 16;
+constexpr int64_t INTRA_MAX_GVA_RATIO_ARCH35 = 16;
+
+constexpr int64_t IntraMaxGvaRatio(bool arch22)
+{
+    return arch22 ? INTRA_MAX_GVA_RATIO_ARCH22 : INTRA_MAX_GVA_RATIO_ARCH35;
+}
 
 struct IntraSchedule {
     int64_t cg = 0;
@@ -35,7 +42,8 @@ inline bool BuildIntraSchedule(int64_t chunks, int64_t hv, int64_t hk,
                               uint32_t cores, bool arch22, size_t systemBytes,
                               IntraSchedule &result)
 {
-    if (chunks <= 0 || hv <= 0 || hk <= 0 || cores == 0 || hv % hk != 0 || hv / hk > (arch22 ? 4 : kA5PublishedMaxG)) {
+    if (chunks <= 0 || hv <= 0 || hk <= 0 || cores == 0 || hv % hk != 0 ||
+        hv / hk < 1 || hv / hk > IntraMaxGvaRatio(arch22)) {
         return false;
     }
     IntraSchedule candidate;

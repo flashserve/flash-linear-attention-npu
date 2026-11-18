@@ -17,7 +17,10 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+#include "arch92/chunk_gated_delta_rule_bwd_dhu_cube.h"
+#include "arch92/chunk_gated_delta_rule_bwd_dhu_vector.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_struct.h"
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_cube.h"
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_vector.h"
@@ -35,6 +38,18 @@ __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dh, GM_ADDR dh0, GM_ADDR dv2,
     GM_ADDR workspace, const ChunkGatedDeltaRuleBwdDhuTilingData *tilingData)
 {
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    if ASCEND_IS_AIC {
+        ChunkGatedDeltaRuleBwdDhuCube<DT, V_DIM> cube;
+        cube.Init(k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, workspace, tilingData);
+        cube.Process();
+    }
+    if ASCEND_IS_AIV {
+        ChunkGatedDeltaRuleBwdDhuVector<DT, GT, USE_GK> vec;
+        vec.Init(q, gate, dv, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData);
+        vec.Process();
+    }
+#else
     if ASCEND_IS_AIC {
         ChunkGatedDeltaRuleBwdDhuCube<DT, V_DIM> cube;
         cube.Init(q, k, w, d_o, dh, dv2, cu_seqlens, chunk_indices, workspace, tilingData, DO_TOKEN_MAJOR);
@@ -46,6 +61,7 @@ __aicore__ inline void ChunkGatedDeltaRuleBwdDhuKernelImpl(
         vec.Init(q, gate, dv, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, workspace, tilingData, &pipe);
         vec.Process();
     }
+#endif
 }
 
 template <int D_T>
@@ -86,12 +102,23 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
 
     REGISTER_TILING_DEFAULT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData, tilingData, tiling);
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
 
     using QType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_Q>::type;
     using GType = typename GDN::ChunkGatedDeltaRuleBwdDhuDTypeTraits<D_T_G>::type;
     GM_ADDR gate = (USE_GK == 0) ? g : gk;
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    if constexpr (V == GDN::DhuArch92::VALUE_DIM && !DO_TOKEN_MAJOR) {
+        GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK, DO_TOKEN_MAJOR>(
+            q, k, w, d_o, dv, gate, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+    }
+#else
     GDN::ChunkGatedDeltaRuleBwdDhuKernelImpl<QType, GType, V, USE_GK, DO_TOKEN_MAJOR>(
         q, k, w, d_o, dv, gate, dht, cu_seqlens, chunk_indices, dh, dh0, dv2, userWS, &tilingData);
+#endif
 }
 #endif

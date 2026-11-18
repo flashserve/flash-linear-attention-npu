@@ -52,6 +52,7 @@ namespace {
     constexpr uint32_t DIRECT_FAST_BT_STEP = 32U;
     constexpr uint32_t DIRECT_910B_BT_BD64 = 104U;
     constexpr uint32_t DIRECT_910B_BT_BD128 = 55U;
+    constexpr uint32_t ARCH35_DIRECT_W_MAX = 8U;
     constexpr uint32_t ACTIVATION_NONE = 0;
     constexpr uint32_t ACTIVATION_SILU = 1;
     constexpr uint32_t ACTIVATION_SWISH = 2;
@@ -147,6 +148,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     bool isB16Input = (xDtype == ge::DT_BF16 || xDtype == ge::DT_FLOAT16);
+    bool isFp32Input = (xDtype == ge::DT_FLOAT);
     uint32_t B = 0;
     uint32_t T = 0;
     uint32_t D = 0;
@@ -381,7 +383,16 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t sysWorkspaceSize = 0;
     uint32_t coreNum = 0;
     bool isAscend910B = false;
-    bool isAscend950 = false;
+    struct ArchHostPolicy {
+        bool useRegbaseVfBudget;
+        bool allowIdSplit;
+        bool allowBtFill;
+        bool allow2DSplit;
+        bool allowTripleBuffer;
+        uint32_t fastBtMax;
+        uint32_t fastBtStep;
+    };
+    ArchHostPolicy archPolicy = {};
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_IF(
@@ -391,8 +402,13 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                         .c_str()),
             return ge::GRAPH_FAILED);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-        isAscend910B = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201);
-        isAscend950 = (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510);
+        const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        isAscend910B = (npuArch == NpuArch::DAV_2201);
+        if (npuArch == NpuArch::DAV_3510) {
+            archPolicy = {true, true, true, true, false, DIRECT_FAST_BT_MAX, DIRECT_FAST_BT_STEP};
+        } else if (npuArch == NpuArch::DAV_9201) {
+            archPolicy = {true, true, true, true, true, 240U, 16U};
+        }
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0,
                     OP_LOGE(OP_NAME, "%s",
@@ -405,6 +421,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
+    const bool useRegbaseVfBudget = archPolicy.useRegbaseVfBudget;
 
     ubSize = (ubSize - RESERVED_UB) / BYTE_BLOCK * BYTE_BLOCK;
 
@@ -427,22 +444,42 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
     uint32_t numBlksD = D / BD;
 
-    bool useArch35DirectFast = isAscend950 && isB16Input &&
-                               activation == ACTIVATION_SILU &&
+    // i_d 切分（useIdSplit）：每个核独占若干 i_d 的全部 chunk，核间无 dw/db 重叠。
+    bool useIdSplit = archPolicy.allowIdSplit && numBlksD >= coreNum;
+
+    bool arch35DirectPathCompatible = (W >= 1 && W <= ARCH35_DIRECT_W_MAX);
+    if (activation != ACTIVATION_NONE) {
+        arch35DirectPathCompatible = arch35DirectPathCompatible && (W == 4 || numBlksD <= 4 || useIdSplit);
+    }
+    bool useArch35DirectFast = archPolicy.useRegbaseVfBudget &&
+                               ((isB16Input && (BD == 64 ||
+                                                (BD == 16 && (useIdSplit || (numBlksD == 1 && T <= 64))))) ||
+                                (isFp32Input && (BD == 64 || (BD == 16 && useIdSplit)))) &&
+                               (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH ||
+                                activation == ACTIVATION_NONE) &&
                                !useInitialState && !useFinalState &&
-                               W == 4 && BD == 64;
+                               arch35DirectPathCompatible;
     bool use910BDirectFast = isAscend910B && isB16Input &&
                              activation == ACTIVATION_SILU &&
                              !useInitialState && !useFinalState &&
                              W == 4 && (BD == 64 || BD == 128);
-    auto CalcArch35DirectNeed = [BD, W](uint32_t bt) -> uint32_t {
+    uint32_t rawDtypeSize = isB16Input ? B16_DTYPE_SIZE : FP32_DTYPE_SIZE;
+    const uint32_t fastBtMax = archPolicy.fastBtMax;
+    const uint32_t fastBtStep = archPolicy.fastBtStep;
+    uint32_t inputStages = 2;
+    auto CalcArch35DirectNeed = [BD, W, rawDtypeSize, isB16Input](uint32_t bt, uint32_t stages) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
         uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
+        uint32_t regPad = (BD < 64U) ? 64U : 0U;
+        uint32_t dbAl = (BD < 64U) ? 64U : bdAl;
         uint32_t need = 0;
-        need += (3 * btBdAl + 4 * dyBdAl + wBdAl) * B16_DTYPE_SIZE;
-        need += (btBdAl + dyBdAl + wBdAl + bdAl) * FP32_DTYPE_SIZE;
+        need += (stages * btBdAl + 2 * stages * dyBdAl + wBdAl + regPad) * rawDtypeSize;
+        if (isB16Input) {
+            need += (std::max(btBdAl, wBdAl) + btBdAl + bdAl) * rawDtypeSize;
+        }
+        need += (btBdAl + dyBdAl + wBdAl + 2 * regPad + dbAl) * FP32_DTYPE_SIZE;
         return need;
     };
     auto Calc910BDirectNeed = [BD, W](uint32_t bt) -> uint32_t {
@@ -455,12 +492,82 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         need += (xRawAl + 2 * dyBdAl + 2 * btBdAl) * B16_DTYPE_SIZE;
         return need;
     };
+    // 普通路径（chunk 切分 / i_d 切分）的 UB 预算，不含两级归约 stage buffer（该部分在预算内按需追加）。
+    auto CalcNormalNeed = [BD, W, rawDtypeSize, isB16Input, useRegbaseVfBudget, activation,
+                           useInitialState, useFinalState](uint32_t bt) -> uint32_t {
+        uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
+        uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
+        uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
+        uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
+        uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
+        uint32_t wBtBdAl = CeilAlign(W * bt * BD, BLOCK_ALIGN_NUM);
+        const bool hasWeight = true;
+        const bool hasBias = true;
+        uint32_t need = (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
+        need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
+        if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
+        if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
+        if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
+        if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
+        if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
+            need += 2 * dyBdAl * FP32_DTYPE_SIZE;
+        if (useInitialState || useFinalState) {
+            need += bdAl * FP32_DTYPE_SIZE;
+        }
+        if (isB16Input) {
+            need += calcBdAl * rawDtypeSize;
+            if (useRegbaseVfBudget) {
+                need += (btBdAl + bdAl) * rawDtypeSize;
+            }
+        }
+        return need;
+    };
+
+    auto CalcNumChunks = [&](uint32_t bt) -> uint32_t {
+        if (bt == 0) {
+            return 0;
+        }
+        if (inputMode == 0) {
+            const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
+            const int64_t *qslData = qslTensor->GetData<int64_t>();
+            uint32_t n = 0;
+            for (uint32_t i = 0; i < B; i++) {
+                n += CeilDiv(static_cast<uint32_t>(qslData[i + 1] - qslData[i]), bt);
+            }
+            return n;
+        }
+        return CeilDiv(T, bt) * B;
+    };
 
     uint32_t BT = 64;
     if (useArch35DirectFast) {
-        BT = std::min(T, DIRECT_FAST_BT_MAX);
-        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT) > ubSize) {
-            BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP) : DIRECT_FAST_BT_MIN;
+        if (archPolicy.allowTripleBuffer) {
+            auto PerCoreTilesAt = [&](uint32_t bt) -> uint32_t {
+                uint32_t chunks = CalcNumChunks(bt);
+                if (useIdSplit) {
+                    return chunks;
+                }
+                uint32_t coresAtBt = std::min(coreNum, std::max(chunks, 1U));
+                return (chunks + coresAtBt - 1) / coresAtBt;
+            };
+            uint32_t btProbe = std::min(T, fastBtMax);
+            while (btProbe > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(btProbe, 3U) > ubSize) {
+                btProbe = (btProbe > DIRECT_FAST_BT_MIN + fastBtStep) ? (btProbe - fastBtStep) : DIRECT_FAST_BT_MIN;
+            }
+            if (btProbe >= DIRECT_FAST_BT_MIN && PerCoreTilesAt(btProbe) >= 3) {
+                inputStages = 3;
+            }
+        }
+        BT = std::min(T, fastBtMax);
+        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
+            BT = (BT > DIRECT_FAST_BT_MIN + fastBtStep) ? (BT - fastBtStep) : DIRECT_FAST_BT_MIN;
+        }
+        if (inputStages == 3 && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
+            inputStages = 2;
+            BT = std::min(T, fastBtMax);
+            while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
+                BT = (BT > DIRECT_FAST_BT_MIN + fastBtStep) ? (BT - fastBtStep) : DIRECT_FAST_BT_MIN;
+            }
         }
     } else if (use910BDirectFast) {
         uint32_t maxBt = (BD == 128) ? DIRECT_910B_BT_BD128 : DIRECT_910B_BT_BD64;
@@ -478,41 +585,92 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                                                   "; totalTokens=" + std::to_string(totalTokens),
                                               "expected BT > 0 and totalTokens > 0; empty sequence is not supported"),
         return ge::GRAPH_FAILED);
-    if (inputMode == 0) {
-        numChunks = 0;
-        const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
-        const int64_t *qslData = qslTensor->GetData<int64_t>();
-        for (uint32_t i = 0; i < B; i++) {
-            numChunks += CeilDiv(static_cast<uint32_t>(qslData[i + 1] - qslData[i]), BT);
-        }
-    } else {
-        numChunks = CeilDiv(T, BT) * B;
+    numChunks = CalcNumChunks(BT);
+
+    constexpr uint64_t ID_SPLIT_ELEM_BUDGET = 16384ULL;
+    if (useRegbaseVfBudget && useArch35DirectFast && !useIdSplit && numBlksD >= 2U && numChunks >= 1U &&
+        (numChunks <= numBlksD ||
+         (numChunks <= 4U * numBlksD &&
+          static_cast<uint64_t>(totalTokens) * D <= ID_SPLIT_ELEM_BUDGET))) {
+        useIdSplit = true;
     }
 
-    uint32_t btBdAl = CeilAlign(BT * BD, BLOCK_ALIGN_NUM);
-    uint32_t dyBdAl = CeilAlign((BT + W - 1) * BD, BLOCK_ALIGN_NUM);
+    constexpr uint32_t BT_FILL_STEP = 32U;
+    constexpr uint32_t BT_FILL_FLOOR = 16U;
+    constexpr uint32_t BT_FILL_CAP = 8U;
+    constexpr uint32_t BT_FILL_CAP_FAST = 16U;
+    constexpr uint32_t BT_FILL_ELEMS_PER_CORE = 8192U;
+    constexpr uint32_t BT_FILL_MIN_TARGET = 4U;
+    if (archPolicy.allowBtFill && !useIdSplit && numBlksD >= 2) {
+        uint32_t target = std::min(coreNum, useArch35DirectFast ? BT_FILL_CAP_FAST : BT_FILL_CAP);
+        if (useArch35DirectFast) {
+            uint64_t totalElems = static_cast<uint64_t>(totalTokens) * D;
+            uint64_t byWork = (totalElems >= BT_FILL_ELEMS_PER_CORE)
+                                  ? (totalElems / BT_FILL_ELEMS_PER_CORE) : 1ULL;
+            target = static_cast<uint32_t>(
+                std::min<uint64_t>(target, std::max<uint64_t>(BT_FILL_MIN_TARGET, byWork)));
+        }
+        while (BT > BT_FILL_FLOOR && numChunks < target) {
+            BT = (BT > BT_FILL_FLOOR + BT_FILL_STEP) ? (BT - BT_FILL_STEP) : BT_FILL_FLOOR;
+            numChunks = CalcNumChunks(BT);
+        }
+    }
+
+    if (useRegbaseVfBudget && !useIdSplit && !useArch35DirectFast && !use910BDirectFast && numBlksD >= 2 &&
+        BT == 64U && numChunks < coreNum) {
+        uint32_t numChunksHalf = CalcNumChunks(BT >> 1U);
+        if (numChunksHalf == coreNum) {
+            BT >>= 1U;
+            numChunks = numChunksHalf;
+        }
+    }
+
+    if (useRegbaseVfBudget && !useArch35DirectFast && !use910BDirectFast) {
+        while (BT > 1U && CalcNormalNeed(BT) > ubSize) {
+            BT >>= 1U;
+        }
+        numChunks = CalcNumChunks(BT);
+    }
+
+    // chunk × i_d 二维切分：把 numBlksD 个 i_d 与 numChunks 个 chunk 一起铺到 AIV 核上
+    const bool twoDByUnit = static_cast<uint64_t>(numBlksD) * numChunks < coreNum;
+    uint32_t splitG = 0;
+    bool use2DSplit = false;
+    if (archPolicy.allow2DSplit && !useIdSplit && !useArch35DirectFast && numBlksD >= 2 && numChunks >= 1) {
+        if (twoDByUnit) {
+            splitG = numChunks; // 每核恰好 1 个 (i_d, chunk) 单元，沿用历史行为
+            use2DSplit = true;
+        } else if (numBlksD >= 4 && numChunks < coreNum) {
+            splitG = std::min(numChunks, coreNum / numBlksD);
+            use2DSplit = (splitG >= 2); // splitG<2 时 2D 无额外并行度，退回 1D
+        }
+    }
+
+
     uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
-    uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
-    uint32_t wBtBdAl = CeilAlign(W * BT * BD, BLOCK_ALIGN_NUM);
     uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
     uint32_t need = 0;
+    uint32_t dwStageRows = 0;
     if (useArch35DirectFast) {
-        need = CalcArch35DirectNeed(BT);
+        need = CalcArch35DirectNeed(BT, inputStages);
     } else if (use910BDirectFast) {
         need = Calc910BDirectNeed(BT);
     } else {
-        need += (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
-        need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
-        const bool hasWeight = true;
-        const bool hasBias = true;
-        if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
-        if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
-        if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
-        if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
-        if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
-            need += 2 * dyBdAl * FP32_DTYPE_SIZE;
-        if (useInitialState || useFinalState) {
-            need += bdAl * FP32_DTYPE_SIZE;
+        need = CalcNormalNeed(BT);
+
+        if (useIdSplit && (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)) {
+            uint32_t rMax = 1;
+            while ((rMax << 1) <= BT) rMax <<= 1;
+            for (uint32_t r = rMax; r >= 2; r >>= 1) {
+                uint32_t dwStageAl = CeilAlign(W * r * BD, BLOCK_ALIGN_NUM);
+                uint32_t dbStageAl = CeilAlign(r * BD, BLOCK_ALIGN_NUM);
+                uint32_t stageBytes = (dwStageAl + dbStageAl) * FP32_DTYPE_SIZE;
+                if (need + stageBytes <= ubSize) {
+                    dwStageRows = r;
+                    need += stageBytes;
+                    break;
+                }
+            }
         }
     }
 
@@ -529,16 +687,46 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint64_t tilingKey = CAUSAL_CONV1D_BWD_TPL_ACTIVATION_NONE;
 
     // Compute block dimension
+    //
+    // A5(arch35) 上有两个核间切分方案：
+    //  - chunk 切分（原方案）：每个核负责部分 chunk、遍历全部 i_d，需要 partial 归约。
     uint32_t chunkPerCore = 0;
     uint32_t tailChunk = 0;
     uint32_t totalChunks = numChunks;
-    uint32_t mainCoreNum = std::min(coreNum, totalChunks);
-    if (totalChunks <= mainCoreNum) {
+    uint32_t mainCoreNum = useIdSplit ? std::min(coreNum, numBlksD)
+                          : (use2DSplit ? (numBlksD * splitG)
+                                        : std::min(coreNum, totalChunks));
+    if (useIdSplit || use2DSplit) {
+        chunkPerCore = 0;
+        tailChunk = 0;
+    } else if (totalChunks <= mainCoreNum) {
         chunkPerCore = 1;
         tailChunk = 0;
     } else {
         chunkPerCore = totalChunks / mainCoreNum;
         tailChunk = totalChunks % mainCoreNum;
+    }
+
+    constexpr uint32_t RED_STAGE_ELEMS = 2048U; // 2048 个 fp32 = 8KB，与 kernel 侧同一上限
+    uint32_t redStageRows = 0;
+    if (useRegbaseVfBudget && mainCoreNum > 1U && !useIdSplit && !use2DSplit) {
+        uint32_t rowsCap = RED_STAGE_ELEMS / (W * BD);
+        if (rowsCap < 1U) {
+            rowsCap = 1U;
+        }
+        redStageRows = (mainCoreNum < rowsCap) ? mainCoreNum : rowsCap;
+        if (redStageRows < 2U) {
+            redStageRows = 0U;
+        }
+    }
+    if (redStageRows >= 2U) {
+        uint64_t redBytes =
+            static_cast<uint64_t>(CeilAlign(redStageRows * W * BD, BLOCK_ALIGN_NUM)) * FP32_DTYPE_SIZE;
+        OP_CHECK_IF(redBytes > RESERVED_UB,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "ubSize", std::to_string(redBytes).c_str(),
+                        "the partial-reduce staging buffer exceeds the reserved UB region"),
+                    return ge::GRAPH_FAILED);
     }
 
     context->SetTilingKey(tilingKey);
@@ -574,9 +762,17 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     tiling->tailBatch = 0;
     tiling->chunkPerCore = chunkPerCore;
     tiling->tailChunk = tailChunk;
+    tiling->useIdSplit = useIdSplit ? 1 : 0;
+    tiling->use2DSplit = use2DSplit ? 1 : 0;
+    tiling->dwStageRows = dwStageRows;
+    tiling->redStageRows = redStageRows;
+    tiling->inputStages = useArch35DirectFast ? static_cast<int64_t>(inputStages) : 2;
 
-    uint64_t partialDwBytes = static_cast<uint64_t>(mainCoreNum) * numBlksD * wBdAl * FP32_DTYPE_SIZE;
-    uint64_t partialDbBytes = static_cast<uint64_t>(mainCoreNum) * numBlksD * bdAl * FP32_DTYPE_SIZE;
+    // useIdSplit 时每个核独占 i_d 并直接写回 dw/db，不再需要 partial 归约缓冲。
+    uint64_t partialDwBytes = useIdSplit ? 0ULL
+        : static_cast<uint64_t>(mainCoreNum) * numBlksD * wBdAl * FP32_DTYPE_SIZE;
+    uint64_t partialDbBytes = useIdSplit ? 0ULL
+        : static_cast<uint64_t>(mainCoreNum) * numBlksD * bdAl * FP32_DTYPE_SIZE;
     uint64_t wsSize = sysWorkspaceSize + partialDwBytes + partialDbBytes;
     tiling->workspaceSize = sysWorkspaceSize;
 
@@ -587,11 +783,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             "Tiling result: B[%ld] T[%ld] totalTokens[%ld] D[%ld] W[%ld] inputMode[%ld] activation[%ld] "
             "inputLayout[%ld] inputN[%ld] inputHeadDim[%ld] "
             "BT[%ld] BD[%ld] numBlksD[%ld] numChunks[%ld] "
-            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld]",
+            "mainCore[%d] chunkPerCore[%ld] tail[%ld] sysWs[%ld] wsSize[%ld] idSplit[%d] split2D[%d] "
+            "dwStageRows[%u] redStageRows[%u] inputStages[%ld]",
             B, T, totalTokens, D, W, inputMode, activation,
             inputLayout, inputN, inputHeadDim,
             BT, BD, numBlksD, numChunks,
-            mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize);
+            mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize,
+            useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows, redStageRows,
+            static_cast<int64_t>(useArch35DirectFast ? inputStages : 2));
 
     return ge::GRAPH_SUCCESS;
 }

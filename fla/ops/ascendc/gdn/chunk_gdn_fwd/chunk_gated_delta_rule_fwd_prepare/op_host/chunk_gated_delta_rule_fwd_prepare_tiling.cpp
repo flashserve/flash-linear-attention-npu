@@ -6,6 +6,7 @@
 #include "graph/utils/type_utils.h"
 #include "chunk_gated_delta_rule_fwd_prepare_tiling.h"
 
+#include "op_common/log/log.h"
 #include "register/op_impl_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -17,6 +18,9 @@ namespace optiling {
 static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleFwdPrepare";
 
 namespace {
+
+constexpr int64_t PREPARE_A6_TASK_SLOTS = 3;
+constexpr int64_t PREPARE_A5_TASK_SLOTS = 4;
 
 bool HasTensor(const gert::StorageShape *shape)
 {
@@ -36,6 +40,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
 {
     auto platformInfo = context->GetPlatformInfo();
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
+    const bool isAscend9201 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
+    const int64_t taskSlots = isAscend9201 ? PREPARE_A6_TASK_SLOTS : PREPARE_A5_TASK_SLOTS;
     if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201) {
         return Tiling4ChunkGatedDeltaRuleFwdPrepareArch22(context);
     }
@@ -170,9 +176,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
         return ge::GRAPH_FAILED;
     }
     const int64_t hRatio = HV / HK;
-    if (hRatio < 1 || hRatio > 4) {
+    if (hRatio < 1 || hRatio > 16) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "Hv/Hk", std::to_string(hRatio), "Hv/Hk must be in {1,2,3,4}");
+            OP_NAME, "Hv/Hk", std::to_string(hRatio), "Hv/Hk must be in [1,16]");
         return ge::GRAPH_FAILED;
     }
     if (qDtype != ge::DT_BF16) {
@@ -249,8 +255,8 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
 
         return ge::GRAPH_FAILED;
     }
-    // Per-core user WS: gmWsY 4×16 KiB. Must match kWsPerCoreBytes.
-    ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * 64 * 1024;
+    // Per-core Y workspace: A6 uses three slots and A5 uses four.
+    ws[0] = sysWorkspaceSize + static_cast<size_t>(coreNum) * taskSlots * 16 * 1024;
     OP_LOGD(context->GetNodeName(),"workspace = [%zu]", ws[0]);
     return ge::GRAPH_SUCCESS;
 }

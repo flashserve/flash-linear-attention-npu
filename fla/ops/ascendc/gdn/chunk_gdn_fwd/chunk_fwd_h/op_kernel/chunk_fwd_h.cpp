@@ -7,7 +7,10 @@
 #include "chunk_fwd_h_tiling_key.h"
 #include "chunk_fwd_h_policy.h"
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/chunk_fwd_h_cube.h"
+#include "arch92/chunk_fwd_h_vec.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_fwd_h_cube.h"
 #include "arch35/chunk_fwd_h_vec.h"
 #else
@@ -59,7 +62,9 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         if (!hasCubeWork) {
             return;
         }
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+        ChunkFwdHCubeArch92<CompilePolicy, STATE_V_FIRST> cube;
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ChunkFwdHCubeArch35<CompilePolicy, STATE_V_FIRST> cube;
 #else
         AscendC::TPipe pipe;
@@ -69,7 +74,10 @@ __aicore__ inline void RunFwdHTyped(const FwdHKernelArgs &args)
         cube.Process();
     }
     if ASCEND_IS_AIV {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+        ChunkFwdHVecArch92<GateT, CompilePolicy, STATE_V_FIRST> vec;
+        vec.Init(args);
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         ChunkFwdHVecArch35<GateT, CompilePolicy, STATE_V_FIRST> vec;
         vec.Init(args);
 #else
@@ -91,7 +99,11 @@ __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
     GM_ADDR final_state, GM_ADDR workspace, GM_ADDR tiling)
 {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
     GDN::FwdHKernelArgs args{};
     args.k = k;
     args.w = w;

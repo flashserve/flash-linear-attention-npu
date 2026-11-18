@@ -7,7 +7,6 @@
 
 #include "chunk_kda_bwd_recompute_struct.h"
 #include "chunk_kda_bwd_recompute_common.h"
-#include "catlass/arch/cross_core_sync.hpp"
 
 using namespace AscendC;
 
@@ -64,21 +63,39 @@ public:
         hasDtBias_ = tiling_->hasDtBias != 0;
         lowerBound_ = KdaBwdRecomputeBitsToFloat(static_cast<uint32_t>(tiling_->lowerBoundBits));
         gateScale_ = lowerBound_ * (useExp2_ ? KDA_BWD_RECOMPUTE_RCP_LN2 : 1.0f);
-        kbgBytes_ = B_ * Hv_ * T_ * K_ * sizeof(QkType);
-        kbgTensor_.SetGlobalBuffer((__gm__ QkType *)workspace_);
-        vbTensor_.SetGlobalBuffer((__gm__ QkType *)(workspace_ + kbgBytes_));
     }
 
     __aicore__ inline void Process()
     {
-        ProcessVb();
-        pipe_->Reset();
-        AscendC::SyncAll<false>();
-        ProcessGateAndK();
+        const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
+        const uint32_t coreNumAic = tiling_->usedAic;
+        if (coreIdx >= coreNumAic) return;
+        const uint64_t groupsPerChunk = (Hv_ + RECOMPUTE_HEADS_PER_GROUP - 1) / RECOMPUTE_HEADS_PER_GROUP;
+        const uint64_t groupCount = chunkNum_ * groupsPerChunk;
+        for (uint64_t group = coreIdx; group < groupCount; group += coreNumAic) {
+            const uint32_t loopIdx = group / groupsPerChunk;
+            const uint64_t firstHead = group % groupsPerChunk * RECOMPUTE_HEADS_PER_GROUP;
+            const uint64_t round = group / coreNumAic;
+            const uint32_t page = round % RECOMPUTE_PAGE_COUNT;
+            if (round >= RECOMPUTE_PAGE_COUNT) {
+                CrossCoreWaitFlag<0x2, PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE + page);
+            }
+            auto pageBase = (__gm__ QkType *)workspace_ +
+                KdaRecomputePageOffset(coreIdx, page, chunkSize_ * (V_ + K_));
+            vbTensor_.SetGlobalBuffer(pageBase);
+            kbgTensor_.SetGlobalBuffer(pageBase + chunkSize_ * V_);
+            ProcessVb(loopIdx, firstHead);
+            PipeBarrier<PIPE_ALL>();
+            pipe_->Reset();
+            ProcessGateAndK(loopIdx, firstHead);
+            PipeBarrier<PIPE_ALL>();
+            CrossCoreSetFlag<0x2, PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE + page);
+            pipe_->Reset();
+        }
     }
 
 private:
-    // flags: raw gate=1, q/k=2, v=4; workspaces always remain head-major.
+    // flags: raw gate=1, q/k=2, v=4.
     template <typename T>
     __aicore__ inline void LoadModel(LocalTensor<T> dst, GlobalTensor<T> src,
         uint64_t offset, uint32_t rows, uint64_t width, uint64_t heads, int64_t flag)
@@ -106,11 +123,8 @@ private:
         pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
     }
 
-    __aicore__ inline void ProcessGateAndK()
+    __aicore__ inline void ProcessGateAndK(uint32_t loopIdx, uint64_t firstHead)
     {
-        uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        uint32_t coreNumAic = tiling_->usedAic > 0 ? static_cast<uint32_t>(tiling_->usedAic) : GetBlockNum();
-        uint32_t vecTaskIdx = 0;
         uint32_t bos = 0;
         uint32_t eos = 0;
 
@@ -149,18 +163,14 @@ private:
         Duplicate(scaleFp32Buf_.Get<float>(), gateScale_, rowNum_ * K_);
         PipeBarrier<PIPE_V>();
 
-        for (uint64_t taskIdx = coreIdx; taskIdx < chunkNum_ * Hv_; taskIdx += coreNumAic) {
-            uint32_t loopIdx = static_cast<uint32_t>(taskIdx / Hv_);
-            uint64_t h = taskIdx % Hv_;
+        for (uint64_t slot = GetSubBlockIdx(); slot < RECOMPUTE_HEADS_PER_GROUP;
+             slot += GetSubBlockNum()) {
+            const uint64_t h = firstHead + slot;
+            if (h >= Hv_) break;
             KdaBwdRecomputeGetChunkOffset(cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos,
                                           isVariable_);
             uint32_t curChunkSize = eos - bos;
-            ++vecTaskIdx;
             uint64_t hk = h / hvPerHk_;
-            if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
-                continue;
-            }
             uint64_t coreLoopsInB = (T_ + chunkSize_ - 1) / chunkSize_;
             uint64_t bIdx = isVariable_ ? 0 : (loopIdx / coreLoopsInB);
             uint64_t bosK = isVariable_ ? bos : (bos - bIdx * (Hv_ - Hk_) * T_);
@@ -261,12 +271,11 @@ private:
                     auto qgOut = qgOutQue_.DeQue<QkType>();
                     auto kbgOut = kbgOutQue_.DeQue<QkType>();
                     DataCopy(qgTensor_[outBase + rowOffset * K_], qgOut, K_ * curRowNum);
-                    DataCopy(kbgTensor_[outBase + rowOffset * K_], kbgOut, K_ * curRowNum);
+                    DataCopy(kbgTensor_[slot * chunkSize_ * (V_ + K_) + rowOffset * K_], kbgOut, K_ * curRowNum);
                     qgOutQue_.FreeTensor(qgOut);
                     kbgOutQue_.FreeTensor(kbgOut);
                 }
             }
-            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
             SetFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
             WaitFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
@@ -302,12 +311,8 @@ private:
         ReleaseAuxEvents();
     }
 
-    __aicore__ inline void ProcessVb()
+    __aicore__ inline void ProcessVb(uint32_t loopIdx, uint64_t firstHead)
     {
-        uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        uint32_t coreNumAic = tiling_->usedAic > 0 ? static_cast<uint32_t>(tiling_->usedAic)
-                                                   : GetBlockNum();
-        uint32_t vecTaskIdx = 0;
         uint32_t bos = 0;
         uint32_t eos = 0;
 
@@ -322,17 +327,13 @@ private:
         auto betaFp32 = betaFp32Buf_.Get<float>();
         auto betaBrcb = betaBrcbBuf_.Get<float>();
 
-        for (uint64_t taskIdx = coreIdx; taskIdx < chunkNum_ * Hv_; taskIdx += coreNumAic) {
-            uint32_t loopIdx = static_cast<uint32_t>(taskIdx / Hv_);
-            uint64_t h = taskIdx % Hv_;
+        for (uint64_t slot = GetSubBlockIdx(); slot < RECOMPUTE_HEADS_PER_GROUP;
+             slot += GetSubBlockNum()) {
+            const uint64_t h = firstHead + slot;
+            if (h >= Hv_) break;
             KdaBwdRecomputeGetChunkOffset(cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos,
                                           isVariable_);
             uint32_t curChunkSize = eos - bos;
-            ++vecTaskIdx;
-            if (vecTaskIdx % GetSubBlockNum() != GetSubBlockIdx()) {
-                Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
-                continue;
-            }
             for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
                 uint32_t curRowNum = (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
                 uint64_t vOffset = (h * T_ + bos + rowOffset) * V_;
@@ -376,11 +377,10 @@ private:
                 }
                 {
                     auto vbOut = vbOutQue_.DeQue<QkType>();
-                    DataCopy(vbTensor_[vOffset], vbOut, V_ * curRowNum);
+                    DataCopy(vbTensor_[slot * chunkSize_ * (V_ + K_) + rowOffset * V_], vbOut, V_ * curRowNum);
                     vbOutQue_.FreeTensor(vbOut);
                 }
             }
-            Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_MTE3>(flagAivFinishStore_);
         }
     }
 
@@ -535,7 +535,6 @@ private:
     uint64_t chunkNum_ = 0;
     uint64_t chunkSize_ = 64;
     int64_t isVariable_ = 0;
-    uint64_t kbgBytes_ = 0;
     uint32_t rowNum_ = 64;
     bool useGate_ = true;
     bool useExp2_ = true;
@@ -544,8 +543,6 @@ private:
     float lowerBound_ = -5.0f;
     float gateScale_ = 0.0f;
 
-    Catlass::Arch::CrossCoreFlagWithReverse<> flagAivFinishStore_{
-        KDA_BWD_RECOMPUTE_SYNC_AIC_AIV_FLAG, KDA_BWD_RECOMPUTE_SYNC_AIV_AIC_FLAG};
     TEventID auxMte2ToVEvent_;
     TEventID auxMte3ToMte2Event_;
 

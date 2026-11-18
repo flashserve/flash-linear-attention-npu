@@ -13,8 +13,8 @@ BF16/FP32 gate、`useExp2` 与 varlen（空序列无 chunk 记录，天然跳过
 处理，不再做自然指数转换或空序列重编号。`recompute_w_u_fwd`、`chunk_bwd_dv_local`
 两项构建依赖暂随 arch22 包保留，executor 已不再调用。
 
-A2/A3 仅保留非连续输出暂存这一私有分支。纯 `ascend950` 构建不编入这些 Host helper；
-含 A2/A3 的混合 SoC 构建仍共用 Host 对象，并在运行期选择平台分支。
+A2/A3 在 ACLNN 层处理非连续输出暂存和输出重叠隔离，具体规则见[输出存储关系](#输出存储关系)。
+公共 Host 对象保留 A2/A3 与 A5 的实现，并在运行期按 `NpuArch` 选择平台分支。
 
 用于组合一致性对比的公开算子链依次由以下算子组成：
 
@@ -88,10 +88,24 @@ dO 固定为 BSND，可选的 betaRaw 固定为 BSN，与 q/k/v 的 `layout` 无
 `None`。
 
 在 A2/A3 上，`dq/dk/dv` 和非空 `dh0` 支持非连续输出 view。L2 为需要连续写入的 L0 分配临时输出，
-计算结束后通过 ViewCopy 写入原 view；BNSD/NTD 的连续输出保持直接写入。
-BSND/TND 仍按原布局转换后写回，`dh0` 保持 `stateVFirst` 指定的状态布局。
-A5 沿用原有输出处理，本次不扩展其非连续输出支持范围。
-未提供 initial state 时，即使提供 dht，公开 `dh0` 仍为空。
+计算结束后通过 ViewCopy 写入原 view。BSND/TND 按原布局转换后写回，`dh0` 保持
+`stateVFirst` 指定的状态布局。未提供 initial state 时，即使提供 dht，公开 `dh0` 仍为空。
+A5 沿用原有输出处理，设备验证状态见对应版本的 ATK 记录。
+
+### 输出存储关系
+
+A2/A3 对 `dq/dk/dv/dBeta/dG` 五个 Finalize 梯度逐个进行重叠判断。BNSD/NTD 的连续
+`dq/dk/dv` 在 Host 可判定其与公开输入及其他四个梯度均不重叠时直接写入。
+Host 同时检查实际地址、view offset、连续性、字节跨度和 storage 绑定关系，无法排除重叠时按可能重叠处理。
+相应输出由 ACLNN 按需申请独立临时目标，Finalize 完成后以显式 `CopyNpuToNpu` 回写，
+后续再完成公开输出的布局与 dtype 转换。该路径会增加临时存储及搬运任务，workspace 以本次
+`GetWorkspaceSize` 返回值为准。
+
+五个梯度的回写顺序为 `dq → dk → dv → dBeta → dG`，对应独立 Finalize 的
+`dq → dk → dv → dbeta → dg`。这五个输出的 view 相互重叠时，重叠字节最终保留顺序较后输出写入的值。
+同时保留五个完整梯度需要五个输出 view 互不重叠。逐项判定和回写流程见
+[Finalize 输出存储关系](../chunk_gated_delta_rule_bwd_finalize/docs/api.md#输出存储关系)，
+executor cache 的隔离方式见[设计说明](../chunk_gated_delta_rule_bwd_finalize/docs/design.md#63-workspace-结构与搬运)。
 
 ## 属性
 

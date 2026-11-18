@@ -76,6 +76,17 @@ class PrepareCiCacheTests(unittest.TestCase):
         self.assertFalse((cached / "stale.h").exists())
         self.assertEqual(self.git(cached, "status", "--porcelain"), "")
 
+    def test_newer_seed_does_not_restore_headers_after_legacy_checkout(self):
+        self.git(self.opbase, "checkout", "-q", self.new)
+        self.prepare()
+        cached = self.cache / "opbase"
+        self.git(cached, "checkout", "-q", self.old)
+        self.prepare()
+        self.assertEqual(self.git(cached, "rev-parse", "HEAD"), self.old)
+        self.assertEqual(self.git(cached, "status", "--porcelain"), "")
+        self.assertFalse((cached / "include/op_common/log/log.h").exists())
+        self.assertEqual((cached / "pkg_inc/op_common/log/log.h").read_text(), "old header\n")
+
     def test_force_clean_removes_existing_pollution(self):
         self.prepare()
         (self.cache / "opbase/stale.h").write_text("untracked")

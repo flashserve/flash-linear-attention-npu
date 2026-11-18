@@ -109,8 +109,13 @@ __aicore__ inline FwdHHeadRoundPlan FwdHBuildHeadRange(const FwdHRuntimeTiling &
         head.roundHead = roundHead;
         head.hv = hvBegin + roundHead;
         head.kh = GATE_MODE == FwdHGateMode::SCALAR_G ? head.hv / groupSize : head.hv;
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+        head.aiv = 0;                     // 1:1 恒指向唯一 AIV
+        head.localSlot = roundHead;       // 两个独立 head 槽，不循环覆盖
+#else
         head.aiv = roundHead & 1U;
         head.localSlot = roundHead >> 1U;
+#endif
 
         uint32_t kgSlot = plan.requiredKhCount;
         for (uint32_t consumer = 0; consumer < roundHead; ++consumer) {
@@ -293,11 +298,6 @@ __aicore__ inline uint64_t FwdHStateOffset(const FwdHRuntimeTiling &tiling,
         return base + static_cast<uint64_t>(v) * FWD_H_K + k;
     }
     return base + static_cast<uint64_t>(k) * FWD_H_V + v;
-}
-
-__aicore__ inline uint64_t FwdHCoreSlotOffset(uint32_t core, uint32_t slot, uint32_t slotElements)
-{
-    return (static_cast<uint64_t>(core) * FWD_H_AIC_HEAD_SLOTS + slot) * slotElements;
 }
 
 } // namespace GDN

@@ -23,6 +23,13 @@
 
 namespace GDN {
 
+namespace DhuArch92 {
+constexpr uint32_t SLOT_COUNT = 3;
+constexpr uint32_t HEADS_PER_TASK = 3;
+constexpr uint32_t VALUE_DIM = 128;
+constexpr uint32_t GATE_ELEMENTS = VALUE_DIM;
+} // namespace DhuArch92
+
 #define TPL_BF16 10
 #define TPL_FP16 20
 #define TPL_FP32 30

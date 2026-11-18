@@ -38,7 +38,7 @@ sequence-major 顺序映射，不按 tensor 的 T 维简单除以 64。
 任务少于可用核时增加完整 value head 的分区。输出写回地址按
 `(batch,chunk,head)` 分区，不与其他 AIC 重叠。
 
-A5 dense 的主体按完整 chunk 均分；最后不足一轮核数的 chunk，再按
+A5/A6 dense 的主体按完整 chunk 均分；最后不足一轮核数的 chunk，再按
 4 个完整 head 的组均摊。AIC/AIV 使用相同映射和组内消费顺序。例如
 128 个 chunk、96 个 head、28 核时，先每核分 4 个完整 chunk，余下
 16 个 chunk 的 384 个 head 组按每核 13/14 组分配，避免原来每核
@@ -47,14 +47,15 @@ A5 dense 的主体按完整 chunk 均分；最后不足一轮核数的 chunk，�
 
 Host 根据平台和每核工作量选择 `USE_AIV_INPUT_MOVER` 编译期模板参数：
 
-- `false`：A2/A3 始终使用，A5 在 Host 已划分 head 分区，或每核完整
+- `false`：A2/A3 始终使用，A5/A6 在 Host 已划分 head 分区，或每核完整
   chunk 数不足阈值时使用（dense 为 4、变长为 8）。模板组合指定为
   AIC-only，四个输入由 AIC MTE2 直接从 GM
   搬到 L1。
-- `true`：仅 A5 使用，要求 Host 未划分 head 分区，且每核至少有
+- `true`：A5/A6 使用，要求 Host 未划分 head 分区，且每核至少有
   4 个 dense chunk 或 8 个变长 chunk。dense 尾部负载均衡由 Kernel
-  进一步划分完整 head 组。模板组合指定为 MIX AIC 1:2，两个 AIV 负责 GM 到
-  UB 再到 L1 的格式转换，AIC 只消费已经就绪的 L1 操作数。
+  进一步划分完整 head 组。模板组合指定为 MIX：A5 为 AIC 1:2，两个 AIV
+  负责 GM 到 UB 再到 L1 的格式转换；A6 为 AIC 1:1，唯一 AIV 串行搬满组内
+  4 个 head。AIC 只消费已经就绪的 L1 操作数。
 
 TilingKey 由 `GET_TPL_TILING_KEY(USE_AIV_INPUT_MOVER)` 生成；Kernel 全局
 入口直接以同名模板参数实例化，不做数值 key 的运行时
@@ -115,6 +116,14 @@ ready 使用 2/3，映射为 2/18/3/19；L1 free 使用 4/5，映射为
 4/20/5/21。每个 ready 都由对应 AIC 消费，每个在途 L1 槽都在复用
 前等待 free，禁止连续无消费地设置同一个 flag。A2/A3 不编译 A5
 Vector mover，也不参与上述跨核同步。
+
+A6（`__NPU_ARCH__==9201`、Ascend960DT、Arch92）为单 AIV（AIC:AIV=1:1），
+组内 4 个 head 由唯一 AIV 串行搬运，`localHead=localSlot`（0..3）。
+mode 0x4 下 Q/H ready、Aqk/V ready 与 L1 free 各占 4 个标志，AIV 侧
+与 AIC 侧编号一致（0..3 / 4..7 / 8..11），不再有 A5 双 AIV 场景下 AIC
+访问 AIV1 的 +16 偏移。UB 仍为两个静态槽 ping-pong，L1 四个 head 槽共
+288 KiB，仍在 A6 512 KiB L1 内。A6 与 A5 一样只编译 Vector mover 和跨核
+同步，A2/A3 不参与。
 
 两条路径都不把中间结果写入 GM relay，Host 只申请平台库 API
 workspace。Fixpipe 将 L0C FP32 结果直接转换为 BF16：BNSD/NTD

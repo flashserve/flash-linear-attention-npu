@@ -4,14 +4,14 @@
  */
 #include "aclnn_chunk_gdn_bwd_intra.h"
 #include "chunk_gdn_bwd_intra.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
 
 #include <array>
-#include "external/aclnn_kernels/aclnn_platform.h"
-#include "../chunk_gdn_bwd_intra_schedule.h"
 #include <set>
 #include <string>
 #include <utility>
 #include "aclnn_kernels/common/op_error_check.h"
+#include "external/aclnn_kernels/aclnn_platform.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
@@ -20,11 +20,13 @@
 #include "opdev/tensor_view_utils.h"
 #include "op_common/log/log.h"
 
-static constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
-
 using namespace op;
 
 namespace {
+
+constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
+
+constexpr int64_t GVA_RATIO_MAX_OTHER = 4;
 
 struct Params {
     const aclTensor *q;
@@ -118,12 +120,18 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "q/k and value tensors must share B and T.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    const bool isA5 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
+    const auto arch = GetCurrentPlatformInfo().GetCurNpuArch();
+    const bool isAscend950 = arch == NpuArch::DAV_3510;
+    const bool arch22 = arch == NpuArch::DAV_2201;
+    const int64_t gvaLimit = arch22 || isAscend950 ? optiling::IntraMaxGvaRatio(arch22) : GVA_RATIO_MAX_OTHER;
     const int64_t ratio = hv / hk;
-    if (hv % hk != 0 || ratio > (isA5 ? optiling::kA5PublishedMaxG : 4)) {
-        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv);
+    if (hv % hk != 0 || ratio < 1 || ratio > gvaLimit) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "HV/HK", actual, isA5 ? "integer in [1, 16] on A5" : "integer in [1, 4] on A2/A3");
+            OP_NAME, "hv/hk",
+            std::to_string(hv) + "/" + std::to_string(hk),
+            isAscend950 ? "HV/HK ratio must be an integer in [1, 16] on DAV_3510 (A5)." :
+                "HV/HK ratio must be an integer in [1, 16] on DAV_2201 (A2/A3), "
+                "or [1, 4] on other SoC archs.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t)) {
@@ -144,7 +152,7 @@ aclnnStatus Check(const Params &p)
     }
 
     const DataType mainType = p.q->GetDataType();
-    if (ratio > 4 && mainType != DataType::DT_BF16) {
+    if (isAscend950 && ratio > 4 && mainType != DataType::DT_BF16) {
         const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv) +
             ", q dtype=" + (mainType == DataType::DT_FLOAT16 ? "FP16" : std::to_string(static_cast<int>(mainType)));
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q dtype", actual, "BF16 for HV/HK > 4 on A5");

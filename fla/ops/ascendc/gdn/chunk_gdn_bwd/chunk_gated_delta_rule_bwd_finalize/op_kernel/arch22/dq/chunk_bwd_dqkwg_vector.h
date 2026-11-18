@@ -101,6 +101,8 @@ private:
     uint64_t n_ratio = 1;    // GVA: HV / HK
     uint32_t coreNum = 0; // CV 深融合 blockDim (cube/vector 共用)
     uint32_t hkPartitions = 1;
+    uint64_t workspaceHeads = 0;
+    uint32_t workspaceHeadBase = 0;
     uint32_t hBegin = 0;
     uint32_t hEnd = 0;
     uint32_t coreIdx = 0;
@@ -186,6 +188,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Init(const C
     subBlockIdx = GetSubBlockIdx();
     wsMm3Offset = tiling.wsMm3Offset;
     wsMm4Offset = tiling.wsMm4Offset;
+    workspaceHeads = wsMm4Offset / (uint64_t{2} * coreNum * BT * BT);
     wsMm6Offset = tiling.wsMm6Offset;
     wsMm5Offset = tiling.wsMm5Offset;
     wsMm7Offset = tiling.wsMm7Offset;
@@ -282,6 +285,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::Process()
             hBegin = 0;
             hEnd = static_cast<uint32_t>(HV);
         }
+        workspaceHeadBase = workspaceHeads < HV ? hBegin : 0;
         // 统一算一次 bos/real_BT, 传给 4 个 stage 复用 (替代每 stage 内部 GetChunkOffset)
         uint32_t bos = 0;
         uint32_t eos = 0;
@@ -555,9 +559,9 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessBVect
             continue;
         }
         uint64_t gOffset = (h * T + bos);
-        uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h, HV, BT);
+        uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, BT);
         uint32_t groupFirstHead = static_cast<uint32_t>((h / n_ratio) * n_ratio);
-        uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, groupFirstHead, HV, BT);
+        uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, groupFirstHead - workspaceHeadBase, workspaceHeads, BT);
         uint64_t dgOffset = gOffset;
 
         if (useMm3Resident) {
@@ -712,7 +716,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
         uint64_t qkOffset = (h * T + bos) * K;    // q (HK)
         uint64_t dqOutOffset = (h * T + bos) * K; // dq (HK)
         uint64_t gOffset = (h * T + bos);
-        uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
+        uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, BT, K);
 
         // CopyIn: dq_inner, q, g, dg
         {
@@ -839,7 +843,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessCVect
         uint64_t qkOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K;    // q (HK)
         uint64_t dqOutOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K; // dq (HK)
         uint64_t gOffset = (static_cast<uint64_t>(h) * T + bos);
-        uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
+        uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, BT, K);
 
         if (BT == 64 && h % scheduleRatio == 0) {
             tensorQResident = inQue2.AllocTensor<float>();
@@ -1071,7 +1075,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
         uint64_t kOffset = (h * T + bos) * K;     // k (HK)
         uint64_t dkOutOffset = (h * T + bos) * K; // dk (HK)
         uint64_t gOffset = (h * T + bos);
-        uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
+        uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, BT, K);
 
         // HDH使用已有输入队列的独立暂存和ready/free配对，避免复用calcBuf2旧数据。
         {
@@ -1270,7 +1274,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType>::ProcessDVect
         uint64_t kOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K;     // k (HK)
         uint64_t dkOutOffset = (static_cast<uint64_t>(hk_idx) * T + bos_hk) * K; // dk (HK)
         uint64_t gOffset = (static_cast<uint64_t>(h) * T + bos);
-        uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, HV, BT, K);
+        uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, BT, K);
 
         if (BT == 64 && h % scheduleRatio == 0) {
             tensorKResident = inQue2.AllocTensor<float>();

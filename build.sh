@@ -52,7 +52,7 @@ KERNEL_TEMPLATE_INPUT=""
 OPS_FILTER_VALUE=""
 OPS_FILTER_SOURCE=""
 ASCEND_SOC_UNITS="ascend910b"
-SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
+SUPPORT_COMPUTE_UNIT_SHORT=("ascend910b" "ascend910_93" "ascend950" "ascend960dt" "ascend310p" "kirinx90" "kirin9030" "mc62cm12a")
 CMAKE_BUILD_MODE=""
 BUILD_TYPE=""
 VERSION=""
@@ -576,10 +576,15 @@ function build_example()
     fi
     # Obtain the example file corresponding to the input soc unit.
     if [[ "$ASCEND_SOC_UNITS" == "ascend950" ]]; then
-        # 1. ascend950/ascend950 example is independent of other soc units.
+        # 1. ascend950 example is independent of other soc units.
         files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/arch35/${pattern}*.cpp"))
         if [[ -z "$files" ]]; then
-            # 2. Example is shared with other soc units, or the current operator only supports ascend950/ascend950.
+            # 2. Example is shared with other soc units.
+            files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/${pattern}*.cpp"))
+        fi
+    elif [[ "$ASCEND_SOC_UNITS" == "ascend960dt" ]]; then
+        files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/arch92/${pattern}*.cpp"))
+        if [[ -z "$files" ]]; then
             files=($(find ../ -path "*/${EXAMPLE_NAME}/examples/${pattern}*.cpp"))
         fi
     else
@@ -908,6 +913,7 @@ function process_soc_input(){
         [ascend910_93]="Atlas A3"
         [ascend310p]="Atlas Inference"
         [ascend950]="Ascend 950PR/Ascend 950DT"
+        [ascend960dt]="Ascend960DT_968B7"
     )
 
     if [[ ${SOC_HARDWARE_MAP[$ASCEND_SOC_UNITS]} ]]; then
@@ -1700,7 +1706,8 @@ function set_compute_unit_option() {
     local IS_SUPPORT_SOC_INPUT=false
     for support_unit in "${SUPPORT_COMPUTE_UNIT_SHORT[@]}"; do
         lowercase_word=$(echo "$ASCEND_SOC_UNITS" | tr '[:upper:]' '[:lower:]')
-        if [[ "$lowercase_word" == "$support_unit" ]]; then
+        lowercase_support_unit=$(echo "$support_unit" | tr '[:upper:]' '[:lower:]')
+        if [[ "$lowercase_word" == "$lowercase_support_unit" ]]; then
             IS_SUPPORT_SOC_INPUT=true
             break
         fi
@@ -1720,7 +1727,8 @@ function set_compute_unit_option_ut() {
     for soc in "${SOC_ARRAY[@]}"; do
     for support_unit in "${SUPPORT_COMPUTE_UNIT_SHORT[@]}"; do
         lowercase_word=$(echo "$soc" | tr '[:upper:]' '[:lower:]')
-        if [[ "$lowercase_word" == *"$support_unit"* ]]; then
+        lowercase_support_unit=$(echo "$support_unit" | tr '[:upper:]' '[:lower:]')
+        if [[ "$lowercase_word" == *"$lowercase_support_unit"* ]]; then
         COMPUTE_UNIT_SHORT="$COMPUTE_UNIT_SHORT$support_unit;"
         break
         fi

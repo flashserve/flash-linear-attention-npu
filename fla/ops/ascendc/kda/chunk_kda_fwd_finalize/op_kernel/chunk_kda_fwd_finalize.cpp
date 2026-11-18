@@ -39,7 +39,7 @@ __global__ __aicore__ void chunk_kda_fwd_finalize(
     args.tiling.stateVFirst = tilingData.stateVFirst;
 
     constexpr bool kUseAivInputMover =
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
         USE_AIV_INPUT_MOVER;
 #else
         false;

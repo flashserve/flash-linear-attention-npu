@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/tiling_templates_registry.h"
@@ -32,6 +31,7 @@ constexpr size_t KDA_RECOMPUTE_A_LOG_IDX = 6;
 constexpr size_t KDA_RECOMPUTE_DT_BIAS_IDX = 7;
 constexpr size_t KDA_RECOMPUTE_CU_SEQLENS_IDX = 8;
 constexpr size_t KDA_RECOMPUTE_CHUNK_INDICES_IDX = 9;
+constexpr size_t KDA_RECOMPUTE_GK_OUTPUT_IDX = 4;
 constexpr size_t KDA_RECOMPUTE_CHUNK_SIZE_ATTR = 0;
 constexpr size_t KDA_RECOMPUTE_USE_GATE_ATTR = 1;
 constexpr size_t KDA_RECOMPUTE_USE_EXP2_ATTR = 2;
@@ -61,6 +61,7 @@ struct ChunkKdaBwdRecomputeTilingContext {
     uint64_t ubSize;
     size_t sysWorkspaceSize;
     bool enableCompactWorkspace;
+    bool isAscend960 = false;
 };
 
 class ChunkKdaBwdRecomputeTilingProcessor {
@@ -82,7 +83,6 @@ public:
         if (SetVecRow() != ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
-        workspaceSize_ = ctx_.sysWorkspaceSize + userWorkspaceSize_;
         tilingKey_ = ComputeTilingKey();
         return ge::GRAPH_SUCCESS;
     }
@@ -92,9 +92,9 @@ public:
         return tilingKey_;
     }
 
-    size_t GetWorkspaceSize() const
+    size_t GetWorkspaceSize(uint32_t usedAic) const
     {
-        return workspaceSize_;
+        return ctx_.sysWorkspaceSize + usedAic * workspaceBytesPerCore_;
     }
 
 private:
@@ -200,6 +200,12 @@ private:
 
     ge::graphStatus SetVecRow()
     {
+        if (ctx_.isAscend960) {
+            using namespace KdaBwdRecomputeArch92;
+            tiling_.vecRow = kRows;
+            workspaceBytesPerCore_ = 0;
+            return ge::GRAPH_SUCCESS;
+        }
         constexpr uint64_t sizeofQk = 2;
         uint64_t sizeofGate = ctx_.gateDtype == ge::DT_FLOAT ? 4 : 2;
         uint64_t sizeofBeta = ctx_.betaDtype == ge::DT_FLOAT ? 4 : 2;
@@ -230,13 +236,9 @@ private:
         }
 
         tiling_.vecRow = static_cast<int64_t>(rowNum);
-        if (ctx_.enableCompactWorkspace) {
-            // A5 L1 path keeps kbg/vb on-chip.
-            userWorkspaceSize_ = 0;
-        } else {
-            const uint64_t tensorBytes = Align32(static_cast<uint64_t>(tiling_.B) *
-                static_cast<uint64_t>(tiling_.Hv) * static_cast<uint64_t>(tiling_.T) * kDim * sizeofQk);
-            userWorkspaceSize_ = static_cast<size_t>(2ULL * tensorBytes);
+        if (!ctx_.enableCompactWorkspace) {
+            workspaceBytesPerCore_ = KDA::RECOMPUTE_PAGE_COUNT * KDA::RECOMPUTE_HEADS_PER_GROUP * chunkSize_ *
+                (kDim + static_cast<uint64_t>(tiling_.V)) * sizeofQk;
         }
         return ge::GRAPH_SUCCESS;
     }
@@ -258,8 +260,7 @@ private:
 
     ChunkKdaBwdRecomputeTilingContext &ctx_;
     ChunkKdaBwdRecomputeTilingData &tiling_;
-    size_t workspaceSize_ = 0;
-    size_t userWorkspaceSize_ = 0;
+    size_t workspaceBytesPerCore_ = 0;
     uint64_t tilingKey_ = 1;
     uint64_t chunkSize_ = 64;
 };

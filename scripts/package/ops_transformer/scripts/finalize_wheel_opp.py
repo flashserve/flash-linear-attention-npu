@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 
-# The wheel is published per product tier (flash-linear-attention-npu-a2/a3/a5)
+# The wheel is named per product tier (flash-linear-attention-npu-a2/a3/a5/a6)
 # and a local build carries the same name, so match the family rather than the
 # old base name: a run package installed over a tiered wheel used to find no
 # dist-info at all and refuse to refresh RECORD.

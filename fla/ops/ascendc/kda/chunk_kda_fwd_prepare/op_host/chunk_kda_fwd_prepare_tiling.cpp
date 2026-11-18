@@ -554,6 +554,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const uint64_t aicCoreNum = platform.GetCoreNumAic();
     const bool isAscend950 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510;
+    const bool isAscend9201 =
+        platform.GetCurNpuArch() == NpuArch::DAV_9201;
+    const bool isNonArch22 = isAscend950 || isAscend9201;
     ChunkKdaFwdPrepareScheduleContext scheduleContext;
     scheduleContext.batch = static_cast<uint64_t>(shape.batch);
     scheduleContext.qkHeadNum = static_cast<uint64_t>(shape.qkHeadNum);
@@ -563,7 +566,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.aicCoreNum = aicCoreNum;
     scheduleContext.libApiWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
     scheduleContext.isVarLen = isVarLen;
-    scheduleContext.isArch22 = !isAscend950;
+    scheduleContext.isArch22 = !isNonArch22;
+    scheduleContext.isArch92 = isAscend9201;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE(context->GetNodeName(),
@@ -595,7 +599,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         static_cast<uint64_t>(*useExp2Ptr),
         static_cast<uint64_t>(*safeGatePtr),
         outputMode);
-    const uint64_t tilingKey = isAscend950 ? legacyTilingKey
+    const uint64_t tilingKey = isNonArch22 ? legacyTilingKey
         : RuntimeKey::Encode(normMode, gateMode);
 
     ChunkKdaFwdPrepareTilingData tiling;

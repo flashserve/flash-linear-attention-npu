@@ -136,6 +136,10 @@ Python ctypes 执行后端已删除；标准库 `ctypes.CDLL` 仍可用于加载
 命名空间，因此允许同名公共入口具有不同 schema；公共 wrapper 负责选择对应层。
 适配层和 OPP 独立保存，后安装的同类组件优先；standalone 只更新适配层，run-only
 只更新 OPP，完整 wheel 更新两部分。未配齐组合保存 pending，保留旧 active，配齐后原子切换。
+OPP 列表保留历史增量，按最新→较早→base 逐符号查找，与 CANN 的 vendor 顺序一致；
+同名符号按首个提供者检查 ABI，不因不匹配跳过该包。适配层也按新到旧保留列表，
+每个公共入口选择第一个声明它的 wheel；各 wheel 的 Python 模块和 Stable dispatcher 命名空间隔离。
+只对实际选中的入口做 ABI 配对，未声明的入口继续回落较早适配层及 base。
 各 launcher 按 active 组合绑定同一 OPP 来源顺序，不从自己的 wheel 目录推断 OPP。直接调用
 `torch.ops.load_library()` 不再等于完成注册。安装和兼容边界见 [Wheel 增量安装指南](../Wheel增量安装指南.md)。
 
@@ -524,7 +528,7 @@ flash_linear_attention_npu-<ver>-<buildtag>-py3-none-any.whl
   → flash_linear_attention_npu_<tier>-<ver>-py3-none-manylinux_2_34_<arch>.whl
 ```
 
-档位来自 `FLA_NPU_SOC`（`a2` / `a3` / `a5`），架构来自平台标签，文件名里的 build tag 不再使用
+档位来自 `FLA_NPU_SOC`（`a2` / `a3` / `a5`，A6 开发构建为 `a6`），架构来自平台标签，文件名里的 build tag 不再使用
 （要临时打标可用 `FLA_NPU_WHEEL_BUILD_TAG`，但发布门禁会拒绝带 build tag 的产物）。
 **本地自编产物与 PyPI 包同名同平台标签**，所以本地包和发布包互为升级路径，不会出现"同一份
 payload 两个发行名、各自拥有一份 `fla_npu/`、卸载一个留下另一个"的局面；同一档位的多个版本
