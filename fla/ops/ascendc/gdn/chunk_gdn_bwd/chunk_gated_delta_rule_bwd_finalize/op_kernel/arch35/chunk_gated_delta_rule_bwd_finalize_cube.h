@@ -27,7 +27,7 @@ public:
         GM_ADDR kbg, GM_ADDR vb, GM_ADDR dA0, GM_ADDR ds0Out,
         GM_ADDR dkbOut, GM_ADDR dkbTOut, GM_ADDR dsIn,
         GM_ADDR doGIn, GM_ADDR vDecayIn, GM_ADDR workspace,
-        GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+        GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR gateDq, GM_ADDR gateDkBase, GM_ADDR gateDkIntra,
         const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling)
     {
         q_ = q;
@@ -48,6 +48,9 @@ public:
         doGIn_ = doGIn;
         vDecayIn_ = vDecayIn;
         workspace_ = workspace;
+        gateDq_ = gateDq;
+        gateDkBase_ = gateDkBase;
+        gateDkIntra_ = gateDkIntra;
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         tiling_ = tiling;
@@ -162,15 +165,6 @@ public:
         AscendC::LocalTensor<DT> ds0Cv[BANK_COUNT_2] = {
             resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE12_DS_OFFSET),
             resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE12_DS_OFFSET + MATRIX_BYTES)};
-        AscendC::LocalTensor<DT> dk0Cv[BANK_COUNT_2] = {
-            resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE13_DK0_OFFSET),
-            resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE13_DK0_OFFSET + VECTOR_BYTES)};
-        AscendC::LocalTensor<DT> dqIntraCv[BANK_COUNT_2] = {
-            resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE13_DQ_INTRA_OFFSET),
-            resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE13_DQ_INTRA_OFFSET + VECTOR_BYTES)};
-        AscendC::LocalTensor<DT> dkIntraCv[BANK_COUNT_2] = {
-            resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE13_DK_INTRA_OFFSET),
-            resource.ubBuf.template GetBufferByByte<DT>(UB_STAGE13_DK_INTRA_OFFSET + VECTOR_BYTES)};
 
         uint32_t eventIndex = 0;
         int64_t taskIdx = 0;
@@ -279,14 +273,12 @@ public:
                     ProcessStage13Head(
                         qStage13L1, dhStage13L1, dsStage13L1,
                         kStage5L1, hL1, vNewStage11L1, vbL1, l0A, l0B, l0C,
-                        dk0Cv, dqIntraCv, dkIntraCv,
                         chunk, hvBase + headOffset, headOffset);
-                    // 三份结果均已进入 owner AIV，通知后续 Stage 14 消费。
+                    // 三份 FP32 结果已写入 GM，通知 Stage 14 搬入并消费。
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
                 }
-                // Stage 13 的三份 UB resident 会被下一任务组的 Stage 13
-                // Fixpipe 原址复用。等待两个 AIV 完成当前组的 MTE3 消费，
-                // 防止下一轮 Fixpipe 覆盖仍在读取的源 UB。
+                // Stage 13 的 FP32 GM 输出槽由后续任务组复用。
+                // 等待两个 AIV 完成 Stage 14 后再释放当前窗口。
                 Catlass::Arch::CrossCoreWaitFlag(vecToCubeFlag_);
                 // 下一任务组 Stage 1 必须逐 HEAD 等待下一组 Stage 0 的
                 // Vector->Cube 有序链。两个 AIV 只有完成本组 Stage 4 后才会
@@ -327,6 +319,8 @@ private:
         ArchTag, DT, LayoutRowMajor, DT, LayoutColumnMajor, DT, LayoutRowMajor>;
     using TileCopyDvbToUb = Common::Tile::PackedTileCopyTlaToUB<
         ArchTag, DT, LayoutRowMajor, DT, LayoutRowMajor, DT, LayoutRowMajor>;
+    using TileCopyGate = Catlass::Gemm::Tile::PackedTileCopyTla<
+        ArchTag, DT, LayoutRowMajor, DT, LayoutRowMajor, float, LayoutRowMajor>;
     using ElementAccumulator = typename TileCopyDau::ElementAccumulator;
     using CopyDauL1ToL0A = typename TileCopyDau::CopyL1ToL0A;
     using CopyDauL1ToL0B = typename TileCopyDau::CopyL1ToL0B;
@@ -1385,15 +1379,10 @@ private:
         AscendC::LocalTensor<DT> (&l0A)[L0_BUFFER_COUNT_2],
         AscendC::LocalTensor<DT> (&l0B)[L0_BUFFER_COUNT_2],
         AscendC::LocalTensor<ElementAccumulator> (&l0C)[L0_BUFFER_COUNT_2],
-        AscendC::LocalTensor<DT> (&dk0Cv)[BANK_COUNT_2],
-        AscendC::LocalTensor<DT> (&dqIntraCv)[BANK_COUNT_2],
-        AscendC::LocalTensor<DT> (&dkIntraCv)[BANK_COUNT_2],
         const ChunkInfo &chunk, int64_t hv, int64_t headOffset)
     {
         const uint32_t chunkLen = static_cast<uint32_t>(chunk.chunkLen);
         const uint32_t mActual = chunkLen == 1 ? 16 : chunkLen;
-        const uint32_t ownerSubBlock = static_cast<uint32_t>(headOffset % AIV_COUNT_2);
-        const uint32_t localHv = static_cast<uint32_t>(headOffset / AIV_COUNT_2);
         const int64_t hk = hv / tiling_->headRatio;
         const uint32_t qSlot = static_cast<uint32_t>(headOffset / tiling_->headRatio) & 1U;
         const uint32_t dhSlot = static_cast<uint32_t>(headOffset) & 1U;
@@ -1515,10 +1504,6 @@ private:
             l0C[dqL0CSlot], tla::MakeLayoutL0C(mActual, K_SIZE_128), Catlass::Arch::PositionL0C{});
         auto tileDqL0C = tla::GetTile(
             tensorDqL0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, K_SIZE_128));
-        auto tensorDqCv = tla::MakeTensor(
-            dqIntraCv[localHv], UB_DVB_LAYOUT, Catlass::Arch::PositionUB{});
-        auto blockDqCv = tla::GetTile(
-            tensorDqCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(doGEvent);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dqL0AEvent);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dqL0BEvent);
@@ -1565,8 +1550,13 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dqL0BEvent);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dqL0CSlot);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dqL0CSlot);
-        typename TileCopyDvbToUb::template CopyL0CToDst<decltype(blockDqCv)>{}(
-            blockDqCv, tensorDqL0C, static_cast<uint8_t>(ownerSubBlock), 0);
+        {
+            AscendC::GlobalTensor<float> gm;
+            gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDq_) + workspaceBase);
+            auto output = tla::MakeTensor(gm, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+            auto tile = tla::GetTile(output, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
+            typename TileCopyGate::template CopyL0CToDst<decltype(tile)>{}(tile, tensorDqL0C);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dqL0CSlot);
 
         // do_g resident 已进入 L0，复用同一事件搬入当前 HK 的 q。
@@ -1611,12 +1601,7 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkL0AEvent);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dkL0BEvent);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dkL0CSlot);
-        auto tensorDkCv = tla::MakeTensor(
-            dkIntraCv[localHv], UB_DVB_LAYOUT, Catlass::Arch::PositionUB{});
-        auto blockDkCv = tla::GetTile(
-            tensorDkCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
-        // dk_intra 暂留在独立 L0C。其目标 UB[144,176) 仍是
-        // Stage 12 v_decay 的 MTE3 源，必须等 v_decay 搬入 L1 后再覆盖。
+        // dk_intra 暂留在独立 L0C，与下一条 GEMM 使用不同累加槽。
 
         // GEMM 3: dk_base = v_decay @ dh.T。ds 已完成末次 MTE1 消费，
         // 复用其事件将 Stage 12 写入 GM 的 v_decay 搬到固定 L1 resident。
@@ -1647,10 +1632,6 @@ private:
             l0C[dk0L0CSlot], tla::MakeLayoutL0C(mActual, K_SIZE_128), Catlass::Arch::PositionL0C{});
         auto tileDk0L0C = tla::GetTile(
             tensorDk0L0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, K_SIZE_128));
-        auto tensorDk0Cv = tla::MakeTensor(
-            dk0Cv[localHv], UB_DVB_LAYOUT, Catlass::Arch::PositionUB{});
-        auto blockDk0Cv = tla::GetTile(
-            tensorDk0Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(dsEvent);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(dhEvent);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(dk0L0AEvent);
@@ -1679,15 +1660,24 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(dk0L0BEvent);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(dk0L0CSlot);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dk0L0CSlot);
-        typename TileCopyDvbToUb::template CopyL0CToDst<decltype(blockDk0Cv)>{}(
-            blockDk0Cv, tensorDk0L0C, static_cast<uint8_t>(ownerSubBlock), 0);
+        {
+            AscendC::GlobalTensor<float> gm;
+            gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDkBase_) + workspaceBase);
+            auto output = tla::MakeTensor(gm, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+            auto tile = tla::GetTile(output, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
+            typename TileCopyGate::template CopyL0CToDst<decltype(tile)>{}(tile, tensorDk0L0C);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dk0L0CSlot);
 
-        // v_decay 已完成 GM->L1，原 UB 源地址可以覆盖。此处执行
-        // dk_intra 的唯一 Fixpipe，不增加第二份结果或 UB 位置移动。
+        // 发布保留在另一 L0C 槽中的 dk_intra。
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(dkL0CSlot);
-        typename TileCopyDvbToUb::template CopyL0CToDst<decltype(blockDkCv)>{}(
-            blockDkCv, tensorDkL0C, static_cast<uint8_t>(ownerSubBlock), 0);
+        {
+            AscendC::GlobalTensor<float> gm;
+            gm.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gateDkIntra_) + workspaceBase);
+            auto output = tla::MakeTensor(gm, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+            auto tile = tla::GetTile(output, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, K_SIZE_128));
+            typename TileCopyGate::template CopyL0CToDst<decltype(tile)>{}(tile, tensorDkL0C);
+        }
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(dkL0CSlot);
     }
 
@@ -1714,6 +1704,9 @@ private:
     GM_ADDR doGIn_ = nullptr;
     GM_ADDR vDecayIn_ = nullptr;
     GM_ADDR workspace_ = nullptr;
+    GM_ADDR gateDq_ = nullptr;
+    GM_ADDR gateDkBase_ = nullptr;
+    GM_ADDR gateDkIntra_ = nullptr;
     GM_ADDR cuSeqlens_ = nullptr;
     GM_ADDR chunkIndices_ = nullptr;
     const ChunkGatedDeltaRuleBwdFinalizeTilingData *tiling_ = nullptr;
