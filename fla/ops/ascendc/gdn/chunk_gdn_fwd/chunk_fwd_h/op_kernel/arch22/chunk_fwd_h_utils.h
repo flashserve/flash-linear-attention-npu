@@ -159,6 +159,7 @@ public:
         AscendC::GlobalTensor<GElementInput> gInput,
         AscendC::GlobalTensor<HElementInput> hInput,
         AscendC::GlobalTensor<float> hUpdateInput,
+        AscendC::GlobalTensor<FinalStateElement> initialState,
         uint32_t chunkSize,
         uint32_t kHeadDim,
         uint32_t vHeadDim,
@@ -166,6 +167,7 @@ public:
         bool isInitialState,
         bool isFinalState,
         bool storeFinalState,
+        bool useInitialState,
         bool isPing
     )
     {
@@ -197,11 +199,15 @@ public:
         } else {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
         }
-        AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
-
-        AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
+        // fp32 存终态时全块直读 state：首块读初态，其余块读上块写入 finalState 槽，免 bf16 往返
+        const bool directStateLoad = std::is_same<FinalStateElement, float>::value &&
+            storeFinalState && (!isInitialState || useInitialState);
+        if (!directStateLoad) {
+            AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
+        }
         AscendC::PipeBarrier<PIPE_V>();
         if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
@@ -233,9 +239,19 @@ public:
         float muls = glastUbTensor.GetValue(0);
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        Arch::CrossCoreWaitFlag(cube2Done);
+        if constexpr (std::is_same<FinalStateElement, float>::value) {
+            if (directStateLoad) {
+                // 须在 cube2Done 后直读：calcUb 与 V1 共用该区，等 V1 排空再写
+                AscendC::GlobalTensor<FinalStateElement> stateSrc =
+                    isInitialState ? initialState[offsetH] : finalStateThisSubBlock;
+                AscendC::DataCopy(calcUbTensor, stateSrc, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            }
+        }
         AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
         AscendC::PipeBarrier<PIPE_V>();
-        Arch::CrossCoreWaitFlag(cube2Done);
 
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::DataCopy(hUpdateUbTensor, hUpdateInputThisSubBlock, mActualThisSubBlock * nActual);
@@ -246,11 +262,25 @@ public:
 
         if constexpr(std::is_same<FinalStateElement, float>::value) {
             if (storeFinalState && isFinalState) {
+                // 终块：直写 finalState（原逻辑不变）
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+            } else if (storeFinalState) {
+                // 中间块：state 落 finalState 槽传下块（事件同终块，释放改 MTE3_MTE2 等两处读完成）
+                AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                AscendC::DataCopy(hOutputThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
             } else {
+                // 不存终值：原路径不变
                 AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
@@ -477,7 +507,8 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
         Arch::CrossCoreWaitFlag(cube1Done);
 
-        if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
+        // fp32 存终态：等上块 MTE3 写完再装载 ws（该区与 V2 共用）
+        if (storeFinalState && std::is_same<FinalStateElement, float>::value) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
         } else {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
@@ -1919,9 +1950,10 @@ public:
                                 gmG[vec2Offsets.gOffset],
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
+                                gmInitialState[vec2Offsets.finalStateOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
                                 // isPing 按槽位取（同 V1，防流迁移换组断链）
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, useInitialState,
                                 (vecBlockScheduler.GetStreamSlot(i) == 0)
                             );
                         } else {
