@@ -297,7 +297,13 @@ private:
     static constexpr int32_t EVENT_DW_RESIDENT_PONG = 7;
     static constexpr int32_t EVENT_SHARED_DW_K_RESIDENT_PING = 4;
     static constexpr int32_t EVENT_SHARED_DW_K_RESIDENT_PONG = 5;
-    static constexpr bool SHARE_DW_K_EVENT = CHUNK_SIZE == 64 && V_DIM == 128;
+    // Window-level A/dW prefetch batches every head's GM->L1 load before the
+    // first chain. The shared dW/K scheme releases the dW event mid-chain so K
+    // can reuse IDs 4/5 in the same head; with the loads of both heads issued
+    // up front that hand-off can wait on the wrong generation. Give dW its
+    // own IDs (6/7) and keep K on 4/5 so both rotate independently. The
+    // non-shared release discipline (loop 2 DA1) is the already-tested path.
+    static constexpr bool SHARE_DW_K_EVENT = false;
     static constexpr int32_t EVENT_L0A_PING = 0;
     static constexpr int32_t EVENT_L0B_PING = 1;
     static constexpr int32_t EVENT_L0A_PONG = 2;
@@ -571,6 +577,49 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 
             // Stage0 fills both workspace slots before later stages consume the first head.
             curSlot_ = windowStartSlot;
+            // Window-level A/dW prefetch: issue every head's GM->L1 resident
+            // load before the first chain so later heads' load latency hides
+            // behind earlier heads' compute. Event generations per buffer are
+            // unchanged: each slot's MTE1_MTE2 free event was already released
+            // by the previous window's last consumer, and the MTE2_MTE1 ready
+            // flags are consumed by the same chain code below in the same order.
+            for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
+                uint32_t residentSlot = curSlot_ & 1U;
+                uint64_t hv = hvBase + headIdx;
+                uint64_t valueBase = hv * tiling_.T + task.valueBos;
+                uint32_t stage0AIdx = residentSlot;
+                int32_t stage0AEvent = stage0AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
+                uint32_t dwResidentIdx = residentSlot;
+                int32_t dwResidentEvent = SHARE_DW_K_EVENT ?
+                    (dwResidentIdx == 0 ? EVENT_SHARED_DW_K_RESIDENT_PING : EVENT_SHARED_DW_K_RESIDENT_PONG) :
+                    (dwResidentIdx == 0 ? EVENT_DW_RESIDENT_PING : EVENT_DW_RESIDENT_PONG);
+
+                AscendC::GlobalTensor<kType> gmATPre;
+                AscendC::GlobalTensor<kType> gmDwPre;
+                gmATPre.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
+                gmDwPre.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
+                auto tensorATPre = tla::MakeTensor(gmATPre, layoutAT, Arch::PositionGM{});
+                auto tensorDwPre = tla::MakeTensor(gmDwPre, layoutDw, Arch::PositionGM{});
+                auto blockATPre = GetTile(tensorATPre, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.m(), shapeK.k()));
+                auto blockDwPre = GetTile(tensorDwPre, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.k(), shapeK.n()));
+                CopyGmToL1A_Dkbg<decltype(blockATPre)> copyGmToL1A_ATPre;
+                CopyGmToL1B_Dkbg<decltype(blockDwPre)> copyGmToL1B_DWPre;
+                auto tensorL1ResidentATPre =
+                    tla::MakeTensor(aResident[stage0AIdx], L1A_LAYOUT_AT, Arch::PositionL1{});
+                auto tensorL1ResidentDWPre =
+                    tla::MakeTensor(dwResident[dwResidentIdx], L1B_LAYOUT_DW, Arch::PositionL1{});
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stage0AEvent);
+                copyGmToL1A_ATPre(tensorL1ResidentATPre, blockATPre);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stage0AEvent);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(dwResidentEvent);
+                copyGmToL1B_DWPre(tensorL1ResidentDWPre, blockDwPre);
+                if (SHARE_DW_K_EVENT) {
+                    AscendC::PipeBarrier<PIPE_MTE2>();
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dwResidentEvent);
+                curSlot_ ^= 1U;
+            }
+            curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
                 uint64_t hv = hvBase + headIdx;
@@ -628,8 +677,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 auto blockKkt =
                     GetTile(tensorKkt, tla::MakeCoord(0, 0), tla::MakeShape(shapeKkt.m(), shapeKkt.n()));
 
-                CopyGmToL1A_Dkbg<decltype(blockATForDkbg)> copyGmToL1A_AT;
-                CopyGmToL1B_Dkbg<decltype(blockDw)> copyGmToL1B_DW;
                 CopyGmToL1B_Dvb<decltype(blockDu)> copyGmToL1B_DU;
                 CopyGmToL1A_Kkt<decltype(blockK)> copyGmToL1A_K;
                 CopyL0CToGm_Dkbg<decltype(blockDkbg)> copyL0CToGm_Dkbg;
@@ -644,15 +691,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 auto tensorL1ResidentAT = tla::MakeTensor(aResident[stage0AIdx], L1A_LAYOUT_AT, Arch::PositionL1{});
                 auto tensorL1ResidentDWForDkbg =
                     tla::MakeTensor(dwResident[dwResidentIdx], L1B_LAYOUT_DW, Arch::PositionL1{});
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stage0AEvent);
-                copyGmToL1A_AT(tensorL1ResidentAT, blockATForDkbg);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stage0AEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(dwResidentEvent);
-                copyGmToL1B_DW(tensorL1ResidentDWForDkbg, blockDw);
-                if (SHARE_DW_K_EVENT) {
-                    AscendC::PipeBarrier<PIPE_MTE2>();
-                }
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dwResidentEvent);
+                // A/dW GM->L1 loads were issued by the window-level prefetch
+                // pass above; the chains below only consume their ready events.
 
                 uint32_t mActualDkbg = shapeK.m();
                 if (mActualDkbg == 1) {
