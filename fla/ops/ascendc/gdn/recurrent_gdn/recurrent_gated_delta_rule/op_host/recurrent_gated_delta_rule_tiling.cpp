@@ -108,10 +108,13 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
     const uint64_t betaKey = tilingData_.betaDtype;
     const uint64_t gateKey = tilingData_.gDtype;
     if (compileInfo_.isA6) {
-        // A6：arch92 
+        // A6: arch92 RGDRV2 has only five type template parameters; the four fusion
+        // switches are read at runtime from tilingData (see useQkL2norm_/useGateInKernel_/
+        // useBetaSigmoid_/allowNegEigval_ in op_kernel/arch92/recurrent_gated_delta_rule.h).
+        // The key therefore encodes only the three dtypes and keeps all bool bits at 0.
         tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey, gateKey, betaKey, 0, 0, 0, 0);
     } else {
-        // A5 / A2/A3：main 
+        // A5 / A2/A3: main
         const uint64_t betaSigmoid = tilingData_.useBetaSigmoidInKernel != 0;
         tilingKey_ = GET_TPL_TILING_KEY(
             stateDtypeKey, gateKey, betaKey, tilingData_.useQkL2NormInKernel != 0,
@@ -268,11 +271,11 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::AnalyzeShapes()
     tilingData_.sBlockNum = static_cast<uint32_t>(tilingData_.stateSlots);
     tilingData_.b = static_cast<uint32_t>(tilingData_.batchSize);
     tilingData_.stateIndicesWidth = static_cast<uint32_t>(tilingData_.checkpointWidth);
-    if (compileInfo_.isA5) {
+    if (compileInfo_.isA5 || compileInfo_.isA6) {
         if (tilingData_.totalTokens > std::numeric_limits<uint32_t>::max() ||
                     tilingData_.stateSlots > std::numeric_limits<uint32_t>::max() ||
                     tilingData_.batchSize > std::numeric_limits<uint32_t>::max() ||
-                    tilingData_.checkpointWidth > std::numeric_limits<uint32_t>::max()) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input shapes", rgdn_error::Format("Ascend950 dimensions exceed uint32")); return ge::GRAPH_FAILED; };
+                    tilingData_.checkpointWidth > std::numeric_limits<uint32_t>::max()) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input shapes", rgdn_error::Format("V2 dimensions exceed uint32")); return ge::GRAPH_FAILED; };
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -446,6 +449,43 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CalUbSize()
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
                 context_->GetNodeName(), "UB capacity",
                 rgdn_error::Format("UB cannot hold the Ascend950 V2 pipeline"));
+            return ge::GRAPH_FAILED;
+        }
+        tilingData_.ubCalSize = static_cast<uint32_t>(pipelineBytes);
+        tilingData_.ubRestBytes = 0;
+        tilingData_.vStep = RGDR_REQUIRED_DIM;
+        tilingData_.stateOutBufferNum = 1;
+        tilingData_.attnOutBufferNum = 1;
+        return ge::GRAPH_SUCCESS;
+    }
+    if (compileInfo_.isA6) {
+        // A6: arch92 RGDRV2 uses the same 4-token / 3-bank layout as arch35, plus one
+        // extra BF16 State conversion buffer (stateIo_ in
+        // op_kernel/arch92/recurrent_gated_delta_rule.h) and two strided copy staging
+        // buffers (stridedStaging_/stridedOffsets_).
+        constexpr uint64_t tokenTile = 4;
+        constexpr uint64_t stateBanks = 3;
+        constexpr uint64_t inputBuffers = 2;
+        constexpr uint64_t dim = RGDR_REQUIRED_DIM;
+        constexpr uint64_t bf16Bytes = 2;
+        constexpr uint64_t fp32Bytes = 4;
+        constexpr uint64_t dataBlockBytes = 32;
+        constexpr uint64_t ubGuardBytes = 4U * 1024U;
+        const bool stateIsFp32 = context_->GetInputDesc(STATE_INDEX)->GetDataType() == ge::DT_FLOAT;
+        const uint64_t pipelineBytes =
+            stateBanks * dim * dim * fp32Bytes +
+            inputBuffers * tokenTile * 3U * dim * bf16Bytes +
+            inputBuffers * tokenTile * dataBlockBytes +
+            inputBuffers * tokenTile * dataBlockBytes +
+            inputBuffers * tokenTile * dim * bf16Bytes +
+            (stateIsFp32 ? 0U : dim * dim * bf16Bytes) +
+            dim * dataBlockBytes +
+            dim * sizeof(uint32_t);
+        if (pipelineBytes + ubGuardBytes > compileInfo_.ubSize ||
+            pipelineBytes > std::numeric_limits<uint32_t>::max()) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context_->GetNodeName(), "UB capacity",
+                rgdn_error::Format("UB cannot hold the Ascend960 arch92 V2 pipeline"));
             return ge::GRAPH_FAILED;
         }
         tilingData_.ubCalSize = static_cast<uint32_t>(pipelineBytes);

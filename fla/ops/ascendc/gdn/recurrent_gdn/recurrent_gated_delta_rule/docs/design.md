@@ -87,3 +87,30 @@ A5 使用静态 UB Tensor，显式 mutex 管理 MTE2/Vector/MTE3 所有权，不
 
 A5 回归使用 223 条 ATK 矩阵，并使用 issue 679 的 36 个模型 shape 检查性能；最终
 验收数据必须来自合并后的统一算子，不能沿用 standalone V2 的历史记录。
+
+## 4. A6 arch92 流水
+
+A6（`ascend960dt`，`__NPU_ARCH__ == 9201`）复用 A5 的任务域与 tile 划分：任务域
+`[0,B*HV)`，每 tile 4 token，Q/K/V 双输入 buffer，递推 State 使用三个 FP32 bank 轮换。
+与 A5 的差异在于：
+
+- 不使用 `TPipe`，UB 由 `InitBuffers` 以静态偏移一次性划分（`TPosition::VECCALC` 上的
+  `LocalTensor`），host 侧 `CalUbSize` 按同一布局核算预算。
+- 除 A5 的 State bank 与输入 buffer 外，额外占用一块 BF16 State 转换缓冲（`stateIo_`，
+  State 为 BF16 时启用）以及跨步搬运暂存（`stridedStaging_` / `stridedOffsets_`）。
+- 四个融合开关不作为模板参数，`RGDRV2` 在构造时从 tiling 数据读取
+  `useQkL2NormInKernel` / `useGateInKernel` / `useBetaSigmoidInKernel` / `allowNegEigval`，
+  再按运行时分支分派 VF；因此 TilingKey 只编入三个 dtype 维度。
+- 跨 MTE2/Vector/MTE3 的依赖由显式 mutex 管理，不依赖 `--cce-auto-sync=on`。
+
+A6 回归使用 `tests/atk/recurrent_gated_delta_rule/atk_recurrent_gated_delta_rule_a6.json`
+中的 23 条 V2 专项用例（`RGDR-V001`~`RGDR-V023`），由
+`gen_recurrent_gated_delta_rule.py --a6` 生成。该矩阵的 `soc` 属性为 `ascend960dt`，
+已列入 `recurrent_gated_delta_rule.yaml` 的合法取值。
+
+执行前需确认 Python 侧入口能力，当前稳定入口
+`fla_npu.ops.ascendc.recurrent_gated_delta_rule` 只暴露 V1 主机 ABI：
+它不接受 `A_log` / `dt_bias` 与四个融合开关参数，也要求 `g` 或 `gk` 至少提供一个，
+且 dtype 白名单为 beta=BF16、g=FP32。因此矩阵中依赖这些能力的用例必须先打通
+`aclnnRecurrentGatedDeltaRuleV2` 的 Python 绑定，否则会在进入算子前失败，
+不能计入 A6 验收结果。kernel 侧（arch92）本身已支持无 gate 与全部 8 组 dtype 组合。

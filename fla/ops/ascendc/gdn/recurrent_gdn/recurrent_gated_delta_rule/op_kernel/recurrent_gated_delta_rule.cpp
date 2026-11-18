@@ -56,7 +56,7 @@ recurrent_gated_delta_rule(GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR be
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     using StateType = typename RGDRDTypeTraits<D_T_STATE>::type;
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
-    // ===== A6：arch92 + RGDRV2 =====
+    // ===== A6: arch92 + RGDRV2 =====
     using BetaType = typename RGDRDTypeTraits<D_T_BETA>::type;
     using GateType = typename RGDRDTypeTraits<D_T_G>::type;
     RecurrentGatedDeltaRuleV2::RGDRV2<

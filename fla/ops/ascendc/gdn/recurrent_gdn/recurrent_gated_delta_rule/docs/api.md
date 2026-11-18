@@ -30,16 +30,23 @@ storage offset 与实际 backing storage 一并保留，State 原地更新。
 保留 `aclnnRecurrentGatedDeltaRule` 和 `aclnnRecurrentGatedDeltaRuleV2` 两套 host ABI。
 前者维持历史参数表（BF16 beta、FP32 g、无融合开关），后者暴露完整融合契约。
 两者在 A2/A3 上均执行 `op_kernel/arch22/recurrent_gated_delta_rule.h`，在 A5 上均执行
-`op_kernel/arch35/recurrent_gated_delta_rule.h`，不存在旧 kernel 回退。
+`op_kernel/arch35/recurrent_gated_delta_rule.h`，在 A6 上均执行
+`op_kernel/arch92/recurrent_gated_delta_rule.h`，不存在旧 kernel 回退。
 Python `_stable.py` 无论融合开关是否关闭，始终调用同一个 Stable-ABI adapter，
 adapter 使用 V2 host ABI；V2 只保留为接口名称。
 
 ## 架构分派
 
-A2/A3 和 A5 共享上述 host、dtype、shape、stride 与融合属性契约。差异仅位于 kernel：
+A2/A3、A5 和 A6 共享上述 host、dtype、shape、stride 与融合属性契约。差异仅位于 kernel：
 A2/A3 使用 arch22 的 8-token 窗口实现；A5 使用 arch35 的 4-token ping-pong、三 State
-bank 流水实现。A5 编译不启用 `--cce-auto-sync=on`，跨 MTE2/Vector/MTE3 依赖由 kernel
-显式同步。历史接口参数说明参见 [ACLNN 文档](aclnnRecurrentGatedDeltaRule.md)。
+bank 流水实现；A6 使用 arch92 的同款 4-token、三 State bank 流水实现，State 常驻 UB
+并逐 token 写回。A5/A6 编译不启用 `--cce-auto-sync=on`，跨 MTE2/Vector/MTE3 依赖由
+kernel 显式同步。
+
+A6 的 TilingKey 只编入 State/g/beta 三个 dtype 维度，四个融合开关
+（`use_qk_l2norm_in_kernel` / `use_gate_in_kernel` / `use_beta_sigmoid` / `allow_neg_eigval`）
+由 arch92 kernel 从 tiling 数据运行时读取，不参与模板实例化；A5/A2/A3 的 TilingKey 则包含
+这四个布尔位。历史接口参数说明参见 [ACLNN 文档](aclnnRecurrentGatedDeltaRule.md)。
 
 ## 校验与异常
 

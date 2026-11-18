@@ -61,6 +61,39 @@ bash tests/atk/run_test_cpu.sh -op=recurrent_gated_delta_rule \
   -npu_device_id=0 -scope=accuracy
 ```
 
+## A6 矩阵
+
+A6（`ascend960dt`，`__NPU_ARCH__ == 9201`）只走 arch92 的 RGDRV2，因此只复用 V2 用例族：
+
+```bash
+python3 tests/atk/recurrent_gated_delta_rule/gen_recurrent_gated_delta_rule.py --a6 \
+  --output tests/atk/recurrent_gated_delta_rule/atk_recurrent_gated_delta_rule_a6.json
+```
+
+产物 `atk_recurrent_gated_delta_rule_a6.json` 为 `RGDR-V001`~`RGDR-V023` 共 23 条，
+`platform_focus` 与 `soc` 均改写为 `ascend960dt`（该取值已列入
+`recurrent_gated_delta_rule.yaml` 的 `soc` 合法枚举）；A2/A3 与 A5 用例族不在 A6 上执行。
+
+注意：当前 Python 稳定入口 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 只绑定 V1 主机
+ABI（无 `A_log`/`dt_bias`/融合开关参数，要求 `g` 或 `gk` 至少一个，beta=BF16、g=FP32）。
+矩阵中依赖这些能力的用例需先打通 `aclnnRecurrentGatedDeltaRuleV2` 的 Python 绑定，
+否则会在进入算子前失败，不能计入 A6 验收结果。
+
+## 验证脚本的环境变量
+
+`scripts/run_arch22_validation.sh` 使用以下环境变量：
+
+| 环境变量 | 默认值 | 作用域与消费者 | 非法值行为 |
+|:---|:---|:---|:---|
+| `OMP_NUM_THREADS` | `1` | 仅脚本子进程；ATK 精度比对与 CPU 标杆 | 不做校验，由 OpenMP 运行时自行处理 |
+| `MKL_NUM_THREADS` | `1` | 仅脚本子进程；ATK 精度比对与 CPU 标杆 | 不做校验，由 MKL 运行时自行处理 |
+| `NPU_DEVICE_ID` | `0` | 脚本读取后传给 ATK 的 `-npu_device_id` | 非整数时 ATK 报错退出 |
+| `ATK_OUTPUT_ROOT` | `./arch22_results` | 脚本读取，作为结果输出目录 | 目录不可创建时脚本因 `set -e` 退出 |
+
+前两者固定为 1：ATK 精度比对要求确定性，多线程 BLAS 的归约顺序变化会引入 1e-6 级抖动。
+它们只作用于本脚本进程，不继承给调用方，也不影响算子运行时行为；回退方式是取消 export
+后重新执行脚本。
+
 YAML 的 SOC 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`。精度统一
 使用 ATK 原生 `mixed_tolerance_bm`；不能通过缩小输入值域、调整阈值或删除失败
 用例处理精度问题。完整接口和内部方案见算子目录的 `docs/api.md` 与
