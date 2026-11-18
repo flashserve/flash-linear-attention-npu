@@ -58,7 +58,7 @@ chunk_bwd_dqkwg
 [`chunk_gated_delta_rule_bwd_dhu`](https://github.com/flashserve/flash-linear-attention-npu/tree/main/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu)
 的混合 AIC/AIV、定长/变长 offset helper、跨核同步和 workspace 管理方式，但采用不同的
 逻辑分核：**只按 chunk 分核，不按 head 分核**。每个 chunk task 在核内遍历所有
-`HK/HV` head。本版本仅支持 GVA 比例 `1:1`--`1:4`，即 `G=HV/HK in {1,2,3,4}`。
+`HK/HV` head。此处描述 A5 的原分组路径，对应 `G=HV/HK in {1,2,3,4}`。
 核内使用动态 HV 任务组：`G=3` 时组大小取 3，`G=1/2/4` 时取 4。对每个
 任务组，两个 AIV 按任务序号交错承包完整 HV：AIV0 处理 0、2、4...，AIV1
 处理 1、3、5...，不切分单个 HV 内部数据。两个 AIV 不设置 stage 级汇合；每个
