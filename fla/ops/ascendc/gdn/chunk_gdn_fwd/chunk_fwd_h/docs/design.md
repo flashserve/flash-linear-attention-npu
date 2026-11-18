@@ -17,7 +17,7 @@ descriptor 使用非私有 ND；输入可由 host 连续化，直接写入的输
 ```text
 H_c = cast_BF16(R_c)
 Pacc_c = W_c @ H_c
-P_c = cast_PType(Pacc_c)  # StateT=BF16 时 PType=BF16，否则为 FP32
+P_c = cast_PType(Pacc_c)  # A2 scalar-g preload 固定 FP32；其余路径随 StateT
 V_new_fp32_c = fp32(U_c) - fp32(P_c)
 V_new_c = cast_BF16(V_new_fp32_c)
 
