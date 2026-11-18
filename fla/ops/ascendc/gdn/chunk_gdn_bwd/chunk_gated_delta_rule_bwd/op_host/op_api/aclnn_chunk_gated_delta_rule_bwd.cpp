@@ -40,7 +40,6 @@ static constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleBwd";
 
 namespace {
 
-constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleBwd";
 constexpr int64_t DIM_128 = 128;
 constexpr int64_t CHUNK_64 = 64;
 
