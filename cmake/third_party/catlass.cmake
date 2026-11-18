@@ -18,7 +18,7 @@ endif()
 set(CATLASS_VENDOR_GIT_REPOSITORY
     "https://gitcode.com/cann/catlass.git")
 set(CATLASS_VENDOR_GIT_TAG
-    "9034426342c8f53c02fd469b4cfe880d49e4b60c")
+    "3a6b66970ea1469fb566eb5f50afa9a469606e92")
 set(_CATLASS_SOURCE_DIR "${CANN_3RD_LIB_PATH}/catlass")
 set(_CATLASS_MARK "${_CATLASS_SOURCE_DIR}/include/catlass/catlass.hpp")
 
@@ -50,6 +50,8 @@ else()
     catlass_vendor
     GIT_REPOSITORY ${CATLASS_VENDOR_GIT_REPOSITORY}
     GIT_TAG ${CATLASS_VENDOR_GIT_TAG}
+    # FLA only consumes C++ headers; skip the DSL/LLVM submodule tree.
+    GIT_SUBMODULES ""
     GIT_PROGRESS TRUE
     SOURCE_DIR "${_CATLASS_SOURCE_DIR}")
   FetchContent_Populate(catlass_vendor)
