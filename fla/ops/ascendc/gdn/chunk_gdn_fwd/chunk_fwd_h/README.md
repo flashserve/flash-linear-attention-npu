@@ -38,7 +38,7 @@ h, v_new, final_state = chunk_fwd_h(
   使用独立的 arch92 kernel 实现，选用 `Catlass::Arch::Ascend960DT` 和 `CATLASS_ARCH == 9201`，并按
   A6 的 1 AIC : 1 AIV 拓扑，每个 work unit 最多两个 head；Catlass 固定使用
   `https://gitcode.com/cann/catlass` 的官方固定提交
-  `86acf1db511ee727d6b2995dd1b41f7f4f9221a8`。
+  `490ae05852f7fad7e5e2ed13b305a80f4d9d91f9`。
   当前按两 head 详设适配：独立 PD/right、321.125 KiB UB、两套 160 KiB L1 bank、GM right 与 alpha 按 chunk 奇偶轮转。
   当前完成编译路径接入，精度与性能待 A6 环境补充。
 

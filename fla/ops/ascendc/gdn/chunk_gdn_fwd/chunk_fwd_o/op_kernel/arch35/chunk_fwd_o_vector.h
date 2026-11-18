@@ -408,7 +408,7 @@ public:
     {
         GlobalTensor<GT> gGm;
         gGm.SetGlobalBuffer((__gm__ GT *)g_);
-        gGm.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        gGm.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         const int64_t gOffset = ChunkFwdOGOffset(tiling_, loc, hv);
         const uint32_t bt = static_cast<uint32_t>(CHUNK_FWD_O_A5_BT);
         const uint32_t gScratchOff = ChunkFwdOGScratchOffset(streamSlot);

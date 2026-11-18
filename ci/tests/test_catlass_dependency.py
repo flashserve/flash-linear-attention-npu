@@ -7,7 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 OFFICIAL_REPOSITORY = "https://gitcode.com/cann/catlass.git"
-PINNED_REVISION = "86acf1db511ee727d6b2995dd1b41f7f4f9221a8"
+PINNED_REVISION = "490ae05852f7fad7e5e2ed13b305a80f4d9d91f9"
 
 
 class CatlassDependencyTest(unittest.TestCase):
