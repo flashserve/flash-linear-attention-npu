@@ -383,6 +383,12 @@ public:
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
         if (mActualThisSubBlock == 0) {
+            // Empty AIV still hands the FP32 final-state buffer credit to V2.
+            if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
+                const uint32_t event = EVENT_ID0 + (isPing ? 0 : pongBaseEvent);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(event);
+            }
             Arch::CrossCoreWaitFlag(cube1Done);
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
             return;
