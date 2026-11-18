@@ -33,5 +33,10 @@ jobs:
       - name: 执行 CI 契约单元测试
         run: python -m unittest discover -s ci/tests -p 'test_*.py' -b
 
+      - name: 执行 daily 发布契约测试（无凭证、不编包、不上传）
+        run: |
+          python -m unittest discover -s ci/publish -p 'test_*.py' -b
+          for script in ci/publish/*.sh; do bash -n "$script"; done
+
       - name: 执行分阶段调度集成测试
         run: bash ci/tests/test_run_checks_stage_pipeline.sh
