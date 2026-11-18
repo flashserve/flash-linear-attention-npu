@@ -94,7 +94,7 @@ ABI（无 `A_log`/`dt_bias`/融合开关参数，要求 `g` 或 `gk` 至少一�
 它们只作用于本脚本进程，不继承给调用方，也不影响算子运行时行为；回退方式是取消 export
 后重新执行脚本。
 
-YAML 的 SOC 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`。精度统一
+YAML 的 SOC 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950` 和 `ascend960dt`。精度统一
 使用 ATK 原生 `mixed_tolerance_bm`；不能通过缩小输入值域、调整阈值或删除失败
 用例处理精度问题。完整接口和内部方案见算子目录的 `docs/api.md` 与
 `docs/design.md`。

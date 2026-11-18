@@ -146,7 +146,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>actualSeqLengths</td>
       <td>输入</td>
       <td>无效前缀长度及不同 batch 的有效序列长度。</td>
-      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, 65536)，全部元素之和等于 T。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, 8]，全部元素之和等于 T。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
       <td>(B+1,)</td>

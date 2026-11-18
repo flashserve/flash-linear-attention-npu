@@ -106,9 +106,6 @@ struct alignas(8) RecurrentGatedDeltaRuleTilingData {
     uint32_t attnOutBufferNum;
     float scale;
     uint32_t hasGama;
-    // Used by the V1 kernel (op_kernel/recurrent_gated_delta_rule.h) and the fast kernel
-    // launch example; V2 (arch22/arch35/arch92) does not read this field.
-    uint32_t hasGamaK;
     uint32_t hasAcceptedTokens;
     uint32_t stateStride0;
  	uint32_t stateStride1;

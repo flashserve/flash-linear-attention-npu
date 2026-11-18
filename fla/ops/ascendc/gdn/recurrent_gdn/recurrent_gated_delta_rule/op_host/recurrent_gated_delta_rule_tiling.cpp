@@ -107,21 +107,21 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::DoLibApiTiling()
     const uint64_t stateDtypeKey = stateDtype == ge::DT_FLOAT ? RGDR_TPL_FP32 : RGDR_TPL_BF16;
     const uint64_t betaKey = tilingData_.betaDtype;
     const uint64_t gateKey = tilingData_.gDtype;
+    const uint64_t betaSigmoid = tilingData_.useBetaSigmoidInKernel != 0;
     if (compileInfo_.isA6) {
-        // A6: arch92 RGDRV2 has only five type template parameters; the four fusion
-        // switches are read at runtime from tilingData (see useQkL2norm_/useGateInKernel_/
-        // useBetaSigmoid_/allowNegEigval_ in op_kernel/arch92/recurrent_gated_delta_rule.h).
-        // The key therefore encodes only the three dtypes and keeps all bool bits at 0.
+        // A6/arch92: RGDRV2 takes only the three dtype template parameters; the four
+        // fusion switches are read at runtime from tilingData (see useQkL2norm_ /
+        // useGateInKernel_ / useBetaSigmoid_ / allowNegEigval_ in
+        // op_kernel/arch92/recurrent_gated_delta_rule.h). The key therefore keeps all
+        // four bool bits at 0.
         tilingKey_ = GET_TPL_TILING_KEY(stateDtypeKey, gateKey, betaKey, 0, 0, 0, 0);
     } else {
-        // A5 / A2/A3: main
-        const uint64_t betaSigmoid = tilingData_.useBetaSigmoidInKernel != 0;
         tilingKey_ = GET_TPL_TILING_KEY(
             stateDtypeKey, gateKey, betaKey, tilingData_.useQkL2NormInKernel != 0,
             tilingData_.useGateInKernel != 0, betaSigmoid,
             betaSigmoid && tilingData_.allowNegEigval != 0);
     }
-        OP_LOGD(context_->GetNodeName(),
+    OP_LOGD(context_->GetNodeName(),
             "RGDR_TILING_KEY key=%llu state=%llu g=%llu beta=%llu isA5=%u isA6=%u",
             static_cast<unsigned long long>(tilingKey_), static_cast<unsigned long long>(stateDtypeKey),
             static_cast<unsigned long long>(gateKey), static_cast<unsigned long long>(betaKey),
@@ -459,10 +459,10 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::CalUbSize()
         return ge::GRAPH_SUCCESS;
     }
     if (compileInfo_.isA6) {
-        // A6: arch92 RGDRV2 uses the same 4-token / 3-bank layout as arch35, plus one
+        // A6/arch92: RGDRV2 uses the same 4-token / 3-bank layout as arch35, plus one
         // extra BF16 State conversion buffer (stateIo_ in
         // op_kernel/arch92/recurrent_gated_delta_rule.h) and two strided copy staging
-        // buffers (stridedStaging_/stridedOffsets_).
+        // buffers (stridedStaging_ / stridedOffsets_).
         constexpr uint64_t tokenTile = 4;
         constexpr uint64_t stateBanks = 3;
         constexpr uint64_t inputBuffers = 2;
