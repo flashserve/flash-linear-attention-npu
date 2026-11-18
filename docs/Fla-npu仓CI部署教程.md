@@ -405,11 +405,23 @@ bash ci/run_ci_container.sh
 - 自动扫描宿主机 NPU
 - 用 `--privileged` 启动容器
 - 挂载 `third_party` 缓存
+- 按当前源码 CMake 声明的 commit 校验 Catlass、opbase：优先复用版本匹配且文件完整的缓存，其次复制匹配的镜像预置依赖；都不匹配时重新获取指定 commit，校验成功后替换缓存。下载或校验失败会终止任务，不回退到旧依赖。镜像中的预置文件保持只读。
 - 按顺序检查环境、wheel 配置及运行时契约
 - 为目标 SOC 构建全量 OPP run 包
 - 检查独立 `torch_custom` wheel 与 OPP 安装布局
 - 安装 OPP 并构建 PyTorch 适配
 - 执行 `ci/example_st_cases.json` 中启用的 GDR Example/ST 用例，仅覆盖容器内逻辑设备号 `--device 0`
+
+依赖校验由 `ci/prepare_ci_cache.sh` 调用 `ci/prepare_ci_dependencies.py` 执行，读取
+`cmake/third_party/catlass.cmake`、`opbase.cmake` 的版本声明，不另维护一份版本号。
+即使构建签名未变化，也会检查实际依赖提交及工作区修改。`CI_SEED_THIRD_PARTY=false`
+只禁止使用镜像预置依赖，不跳过版本校验；需要重新获取依赖时必须能够访问其 Git 仓库。
+这一检查不重建 Docker 镜像，不更新镜像中的 CANN、Python 或编译器。
+
+依赖准备中的每次 Git 命令限时 120 秒。Linux CI 使用独立进程组；超时或中断后，
+先发送 SIGTERM，最多等待 5 秒，再对仍运行的进程发送 SIGKILL，并再等待最多 5 秒。
+确认 Git 及下载子进程全部停止后，fetch 才可重试（最多 3 次）；无法确认清理完成则直接报错，
+避免旧下载进程与重试同时写入目录。Git 主进程提前退出时，也会清理遗留子进程。
 
 上述分项串行执行。一个分项失败后，脚本会停止实际测试并把后续分项标记为未执行；不会为了收集更多结果继续执行依赖已失败的步骤。失败日志和汇总诊断会给出类似下面的复现命令：
 
