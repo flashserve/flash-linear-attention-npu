@@ -17,14 +17,20 @@ endif()
 include(FindPackageHandleStandardArgs)
 
 set(OPBASE_HEAD_SEARCH_PATHS
+  ${OPBASE_SOURCE_PATH}/include
   ${OPBASE_SOURCE_PATH}/pkg_inc
+  ${TOP_DIR}/ops-base/include
   ${TOP_DIR}/ops-base/pkg_inc             # compile with ci
 )
 
+# A previous configure may have cached headers from the installed CANN SDK.
+# Resolve against the selected source tree on each configure instead.
+unset(OPBASE_INC_DIR CACHE)
+unset(OPBASE_INC_DIR)
 find_path(OPBASE_INC_DIR
   NAMES op_common/op_host/util/opbase_export.h
   PATHS ${OPBASE_HEAD_SEARCH_PATHS}
-  NO_CMAKE_SYSTEM_PATH
+  NO_DEFAULT_PATH
   NO_CMAKE_FIND_ROOT_PATH
 )
 
@@ -43,6 +49,10 @@ if(OPBASE_FOUND)
     ${OPBASE_INC_DIR}/op_common
     ${OPBASE_INC_DIR}/op_common/op_host
     ${OPBASE_INC_DIR}/op_common/atvoss
+    ${OPBASE_SOURCE_PATH}/pkg_inc
+    ${OPBASE_SOURCE_PATH}/pkg_inc/op_common
+    ${OPBASE_SOURCE_PATH}/pkg_inc/op_common/op_host
+    ${OPBASE_SOURCE_PATH}/pkg_inc/op_common/atvoss
     ${ASCEND_DIR}/${SYSTEM_PREFIX}/pkg_inc
   )
 endif()
