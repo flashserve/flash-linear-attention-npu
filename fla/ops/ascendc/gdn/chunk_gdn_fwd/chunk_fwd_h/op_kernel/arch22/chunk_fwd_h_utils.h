@@ -383,12 +383,6 @@ public:
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
         if (mActualThisSubBlock == 0) {
-            // Empty AIV still hands the FP32 final-state buffer credit to V2.
-            if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
-                const uint32_t event = EVENT_ID0 + (isPing ? 0 : pongBaseEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event);
-                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(event);
-            }
             Arch::CrossCoreWaitFlag(cube1Done);
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
             return;
@@ -2026,15 +2020,15 @@ public:
 
 // ---- 自原 chunk_fwd_h.cpp 移入：gated 复用谓词与入口（RunFwdHTyped 分流调用）
 namespace GDN {
-// gated 复用谓词：g 模式即复用（vfirst 经 STATE_V_FIRST 模板维支持；storeFinal
-// 与 fp32/bf16 gate/state 均可）；g dtype 由 host 入口唯一校验。
+// gated preload 复用 BF16 state；FP32 state 由通用路径保留完整递推精度。
+// vfirst 经 STATE_V_FIRST 模板维支持；g dtype 由 host 入口唯一校验。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
     // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
     // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
     // 与 host 侧 gatedEligible 两处同条件。
-    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G;
+    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G && !CompilePolicy::STATE_FP32;
 }
 
 // gated 复用分支：构造本地 tiling 后调用 preload kernel；

@@ -181,9 +181,9 @@ Host 将 `(sequence, value_head)` 展平为连续 head task。设有效 sequence
 sequence 内也按连续 value head 每四个一组拆分，因此每个 unit 最多四个 head。每个 head
 的全部 chunk 递推仍固定在同一核并顺序执行，不依赖 block 启动顺序建立状态依赖。
 
-A2 gated preload 的单 token 尾块中，空 AIV 仍需完成事件配对。若首块请求 FP32
-final state，V1 提前返回前必须消费 `MTE3_MTE2(EVENT_ID0+slot)` 并发布
-`V_MTE2(EVENT_ID0+slot)`，供 V2 读取状态增量；不能只完成跨核 ready 握手。
+A2 scalar-g 的 BF16 state 复用 gated preload，其 P workspace 固定为 FP32。
+FP32 state 使用通用路径保留完整 rolling state，避免 preload 复用 BF16 H 快照导致
+状态精度损失；host 的 `gatedEligible` 与 kernel 的 `FwdHGatedReusable` 保持相同条件。
 
 ## 7. 变长序列
 
