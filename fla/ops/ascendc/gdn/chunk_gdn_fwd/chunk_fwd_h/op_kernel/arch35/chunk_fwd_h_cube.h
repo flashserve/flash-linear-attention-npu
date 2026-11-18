@@ -470,7 +470,7 @@ private:
         const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
                                             binding.kh, chunk.tokenBegin);
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) + offset);
-        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND || args_.tiling.layout == GDN::FwdHLayout::TND)
+        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND)
             ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         bool readOnce = true;
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {

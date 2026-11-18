@@ -46,7 +46,7 @@ constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleBwd";
 constexpr int64_t DIM_128 = 128;
 constexpr int64_t CHUNK_64 = 64;
 
-enum class Layout { BNSD, BSND, NTD, TND };
+enum class Layout { BNSD, BSND };
 
 struct ShapeInfo {
     Layout layout = Layout::BNSD;
@@ -318,19 +318,15 @@ aclnnStatus ResolveShapeInfo(const Params &params, ShapeInfo &info)
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "layout");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    if (std::strcmp(params.layout, "BNSD") == 0) {
+    if (std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "NTD") == 0) {
         info.layout = Layout::BNSD;
-    } else if (std::strcmp(params.layout, "BSND") == 0) {
+    } else if (std::strcmp(params.layout, "BSND") == 0 || std::strcmp(params.layout, "TND") == 0) {
         info.layout = Layout::BSND;
-    } else if (std::strcmp(params.layout, "NTD") == 0) {
-        info.layout = Layout::NTD;
-    } else if (std::strcmp(params.layout, "TND") == 0) {
-        info.layout = Layout::TND;
     } else {
         OP_LOGE_WITH_INVALID_ATTR(OP_NAME, "layout", params.layout, "BNSD, BSND, NTD or TND");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    info.sequenceMajor = info.layout == Layout::BSND || info.layout == Layout::TND;
+    info.sequenceMajor = info.layout == Layout::BSND;
     if (!(params.q->GetViewShape().GetDimNum() == 4 && params.v->GetViewShape().GetDimNum() == 4)) {
         OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
             OP_NAME, "q/v",
@@ -737,6 +733,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
 
     ShapeInfo info;
     CHECK_RET(CheckParams(params, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    const char *qkvLayout = info.sequenceMajor ? "BSND" : "BNSD";
 
     CHECK_RET(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -828,7 +825,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const auto intraResult = l0op::ChunkGdnBwdIntra(
         qHead, kHead, vHead, gHead, betaHead, params.a, dOHead,
         params.cuSeqlens, params.chunkIndices, params.scale, params.chunkSize,
-        params.useExp2, w, u, dvLocal, executorPtr, params.layout);
+        params.useExp2, w, u, dvLocal, executorPtr, qkvLayout);
     CHECK_COND(intraResult[0] != nullptr && intraResult[1] != nullptr &&
                    intraResult[2] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "ChunkGdnBwdIntra composition failed.");
@@ -836,7 +833,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     const auto fwdHResult = l0op::ChunkFwdH(
         kHead, w, u, gHead, nullptr, initialStateKv,
         params.cuSeqlens, params.chunkIndices, false, params.chunkSize, true,
-        params.useExp2, false, h, vNew, nullptr, executorPtr, params.layout);
+        params.useExp2, false, h, vNew, nullptr, executorPtr, qkvLayout);
     CHECK_COND(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "ChunkFwdH composition failed.");
 
@@ -844,7 +841,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         qHead, kHead, w, dOHead, dvLocal, gHead, nullptr,
         params.initialState, params.dht, params.cuSeqlens, params.chunkIndices,
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst, dh, params.dh0Out,
-        dv2, executorPtr, params.layout);
+        dv2, executorPtr, qkvLayout);
     CHECK_COND(dhuResult[0] != nullptr && dhuResult[1] != nullptr &&
                    dhuResult[2] != nullptr,
                ACLNN_ERR_INNER_NULLPTR, "ChunkGatedDeltaRuleBwdDhu composition failed.");
@@ -855,7 +852,7 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         params.chunkIndices, params.scale, params.chunkSize,
         params.useQkL2normInKernel, params.useBetaSigmoidInKernel,
         params.useGateInKernel, false, params.useExp2,
-        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr, params.layout);
+        dqHead, dkHead, dvHead, dBetaHead, dGHead, executorPtr, qkvLayout);
     for (const aclTensor *tensor : finalizeResult) {
         CHECK_COND(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR,
                    "ChunkGatedDeltaRuleBwdFinalize composition failed.");

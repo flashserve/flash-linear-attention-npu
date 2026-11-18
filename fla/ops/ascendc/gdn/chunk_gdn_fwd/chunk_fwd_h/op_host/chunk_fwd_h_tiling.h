@@ -44,8 +44,8 @@ TILING_DATA_FIELD_DEF(int64_t, coreBoundCount);
 TILING_DATA_FIELD_DEF_ARR(int64_t, 32, coreTaskBounds);
 // ===== gated 复用路径（GATED_REUSE）追加段 =====
 // gated kernel（chunk_gated_delta_rule_fwd_h preload）运行时分支复用：kernel
-// 入口在 workspace 现场构造 ChunkGatedDeltaRuleFwdHTilingData 后原样调用。
-// 三个 offset 为 workspace 内的段偏移（8B 对齐）。
+// 入口在核内构造私有 tiling view 后调用，不通过共享 GM 镜像传递。
+// 三个 offset 为 workspace 内的段偏移（8B 对齐）；首段保留原预留空间。
 TILING_DATA_FIELD_DEF(int64_t, gatedTilingOffset);
 TILING_DATA_FIELD_DEF(int64_t, gatedNumSeqOffset);
 TILING_DATA_FIELD_DEF(int64_t, gatedNumChunksOffset);

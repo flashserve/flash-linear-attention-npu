@@ -420,7 +420,7 @@ private:
         const uint64_t vectorOffset =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
                 tiling_->seqlen + meta.tokenStart;
-        const uint64_t vdoOffset = (tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)
+        const uint64_t vdoOffset = (tiling_->layout == GDN::IntraLayout::BSND)
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
                 meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
             : (vectorOffset + rowBegin) * tiling_->valueDim;
@@ -440,7 +440,7 @@ private:
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaLocal, betaGm_[vectorOffset], vectorCopy, betaPad);
         const uint32_t vdoElements = static_cast<uint32_t>(rows * tiling_->valueDim);
-        if (!(tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)) {
+        if (!(tiling_->layout == GDN::IntraLayout::BSND)) {
             AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
             AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
         } else {
@@ -460,7 +460,7 @@ private:
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t firstSlot,
         uint32_t count)
     {
-        if ((tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)) {
+        if ((tiling_->layout == GDN::IntraLayout::BSND)) {
             for (uint32_t offset = 0; offset < count; ++offset) {
                 PrefetchStage1Input<true>(meta, static_cast<int64_t>(firstSlot + offset));
             }

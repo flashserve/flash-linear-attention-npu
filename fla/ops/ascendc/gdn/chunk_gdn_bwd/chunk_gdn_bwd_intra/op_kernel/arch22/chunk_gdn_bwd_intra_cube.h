@@ -55,12 +55,12 @@ public:
             for (int64_t r = 0; r < m.validHeads; ++r) {
                 if (!ChunkGdnBwdIntraScoreLeader<G>(m.hvBegin, r)) continue;
                 const int64_t hk = (m.hvBegin + r) / G;
-                const uint64_t qk = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
+                const uint64_t qk = (t_->layout == GDN::IntraLayout::BSND)
                     ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart) *
                        t_->qkHeads + hk) * HEAD_DIM
                     : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hk) *
                        t_->seqlen + m.tokenStart) * HEAD_DIM;
-                const uint32_t qkStride = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
+                const uint32_t qkStride = (t_->layout == GDN::IntraLayout::BSND)
                     ? static_cast<uint32_t>(t_->qkHeads * HEAD_DIM) : HEAD_DIM;
                 auto kGm = tla::MakeTensor(k_[qk], tla::MakeLayout<MainT,
                     Catlass::layout::RowMajor>(CHUNK_TOKENS, qkStride), Catlass::Arch::PositionGM{});

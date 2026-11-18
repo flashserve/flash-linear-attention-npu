@@ -184,7 +184,7 @@ private:
     __aicore__ inline auto MakeQkvKLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
     {
         const uint32_t rowStride =
-            (tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)
+            (tiling_->layout == GDN::IntraLayout::BSND)
                 ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128;
         return tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, 128, rowStride));
     }
@@ -192,7 +192,7 @@ private:
     __aicore__ inline auto MakeQkvQLayout(const ChunkGdnBwdIntraWorkMeta &meta) const
     {
         const uint32_t rowStride =
-            (tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)
+            (tiling_->layout == GDN::IntraLayout::BSND)
                 ? static_cast<uint32_t>(tiling_->qkHeads * tiling_->keyDim) : 128;
         return tla::MakeLayoutFromTag(LayoutCM(128, meta.validTokens, rowStride));
     }
@@ -205,7 +205,7 @@ private:
             WaitScoreFree(r);
         }
         const int64_t hk = (meta.hvBegin + r) / G;
-        const uint64_t gmOffset = (tiling_->layout == GDN::IntraLayout::BSND || tiling_->layout == GDN::IntraLayout::TND)
+        const uint64_t gmOffset = (tiling_->layout == GDN::IntraLayout::BSND)
             ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen + meta.tokenStart) *
                    tiling_->qkHeads + hk) * tiling_->keyDim
             : ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *

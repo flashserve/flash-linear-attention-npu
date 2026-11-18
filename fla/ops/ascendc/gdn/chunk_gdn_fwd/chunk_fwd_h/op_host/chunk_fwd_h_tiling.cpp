@@ -124,9 +124,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
                 OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FwdHLayout::BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::FwdHLayout::BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::FwdHLayout::NTD : GDN::FwdHLayout::TND;
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::FwdHLayout::BSND : GDN::FwdHLayout::BNSD;
     int64_t logicalBatch = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_BATCH_IDX));
     int64_t logicalSeqlen = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_SEQLEN_IDX));
     int64_t logicalKHeads = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_HEADS_IDX));

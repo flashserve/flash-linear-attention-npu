@@ -424,7 +424,7 @@ private:
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) +
             FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
                                                          binding.kh, chunk.tokenBegin));
-        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND || args_.tiling.layout == GDN::FwdHLayout::TND)
+        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND)
             ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         if constexpr (!STATE_V_FIRST) {
             auto tensorGm = tla::MakeTensor(gmKg,

@@ -62,9 +62,8 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::IntraLayout::BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::IntraLayout::BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::IntraLayout::NTD : GDN::IntraLayout::TND;
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::IntraLayout::BSND : GDN::IntraLayout::BNSD;
     tiling->layout = layoutValue;
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
@@ -109,10 +108,10 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "chunk_size", std::to_string(*chunkSize), "64"),
                 return ge::GRAPH_FAILED);
     const int64_t batch = qStorage.GetDim(0);
-    const int64_t qkHeads = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 2 : 1);
-    const int64_t seqlen = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 1 : 2);
+    const int64_t qkHeads = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 2 : 1);
+    const int64_t seqlen = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 1 : 2);
     const int64_t keyDim = qStorage.GetDim(3);
-    const int64_t valueHeads = vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 2 : 1);
+    const int64_t valueHeads = vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 2 : 1);
     const int64_t valueDim = vStorage.GetDim(3);
     OP_CHECK_IF(batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0,
                 OP_LOGE(context->GetNodeName(), "B/T/HK/HV must be positive."),
@@ -126,14 +125,14 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         vStorage.GetDim(0) != batch ||
-            vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 1 : 2) !=
+            vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 1 : 2) !=
                 seqlen,
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             context->GetNodeName(), "q/v",
             std::string("q.B=") + std::to_string(batch) + ", q.T=" + std::to_string(seqlen) +
                 ", v.B=" + std::to_string(vStorage.GetDim(0)) + ", v.T=" +
                 std::to_string(vStorage.GetDim(
-                    (layoutValue == GDN::IntraLayout::BSND || layoutValue == GDN::IntraLayout::TND) ? 1 : 2)),
+                    (layoutValue == GDN::IntraLayout::BSND) ? 1 : 2)),
             std::string("v.B and v.T must match q under layout=") + qkvLayout),
         return ge::GRAPH_FAILED);
     uint64_t tensorBytes = 0;

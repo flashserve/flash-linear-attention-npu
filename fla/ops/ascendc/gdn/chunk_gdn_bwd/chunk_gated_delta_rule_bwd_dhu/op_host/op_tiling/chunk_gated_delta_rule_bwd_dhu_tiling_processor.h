@@ -359,7 +359,7 @@ private:
     {
         gert::Shape qShape = ctx_.qShape->GetStorageShape();
         gert::Shape kShape = ctx_.kShape->GetStorageShape();
-        if ((ctx_.layout == GDN::DhuLayout::BSND || ctx_.layout == GDN::DhuLayout::TND)) {
+        if ((ctx_.layout == GDN::DhuLayout::BSND)) {
             const int64_t tokens = qShape.GetDim(DIM_1);
             qShape.SetDim(DIM_1, qShape.GetDim(DIM_2));
             qShape.SetDim(DIM_2, tokens);
