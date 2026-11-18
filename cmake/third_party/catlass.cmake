@@ -51,3 +51,7 @@ else()
   get_filename_component(OPS_ADV_CATLASS_INC "${_CATLASS_SOURCE_DIR}/include" REALPATH)
   message(STATUS "[ThirdPartyLib][catlass] Populated at ${OPS_ADV_CATLASS_INC}")
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/catlass_compat.cmake")
+fla_prepare_catlass_headers("${OPS_ADV_CATLASS_INC}" OPS_ADV_CATLASS_INC)
+message(STATUS "[ThirdPartyLib][catlass] Build headers at ${OPS_ADV_CATLASS_INC}")

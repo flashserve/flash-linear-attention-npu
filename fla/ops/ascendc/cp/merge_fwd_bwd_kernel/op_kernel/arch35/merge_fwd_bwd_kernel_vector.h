@@ -42,9 +42,9 @@ public:
         agHmTensor_.SetGlobalBuffer((__gm__ T *)agHm_);
         hTensor_.SetGlobalBuffer((__gm__ T *)h_);
         scratchTensor_.SetGlobalBuffer((__gm__ float *)scratch_);
-        agHmTensor_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        hTensor_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        scratchTensor_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        agHmTensor_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        hTensor_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        scratchTensor_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
 
         pipe_->InitBuffer(fp32Buf_, kKvElems * sizeof(float));
         pipe_->InitBuffer(hmmBuf_, kKvElems * sizeof(float));

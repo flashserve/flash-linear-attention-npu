@@ -48,10 +48,10 @@ public:
         a_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.aqk));
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.vNew));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.h));
-        q_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        a_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        v_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        h_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        q_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        a_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        v_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        h_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         l1Buffer_ = LocalTensor<uint8_t>(TPosition::A1, 0, 512 * 1024);
     }
 
