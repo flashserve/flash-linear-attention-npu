@@ -207,11 +207,23 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must span [0,T].");
         return ACLNN_ERR_PARAM_INVALID;
     }
+        const bool requireCompleteChunks = isAscend950 && ratio > 4;
+        uint64_t expectedChunks = 0;
         for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
             if (!(cu[seq] >= 0 && cu[seq + 1] >= cu[seq])) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be nonnegative and nondecreasing.");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be nonnegative and nondecreasing.");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+            if (requireCompleteChunks) {
+                const int64_t length = cu[seq + 1] - cu[seq];
+                expectedChunks += length / p.chunkSize + (length % p.chunkSize != 0);
+            }
+        }
+        if (requireCompleteChunks && indices.Size() / 2 != expectedChunks) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_NAME, "chunk_indices pair count", std::to_string(indices.Size() / 2),
+                "expected " + std::to_string(expectedChunks) + " to cover all nonempty sequence chunks");
+            return ACLNN_ERR_PARAM_INVALID;
         }
         std::set<std::pair<int64_t, int64_t>> seen;
         for (size_t offset = 0; offset < indices.Size(); offset += 2) {

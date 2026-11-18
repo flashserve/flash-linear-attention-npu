@@ -164,6 +164,8 @@ sequence 的边界。所有输出保持输入的 BNSD 逻辑排布。
 - 变长场景：`cu_seqlens` 和 `chunk_indices` 必须同时提供；输入容器 `B=1`。
   `cu_seqlens` 从 0 开始、以物理 token 总数结束并单调不减；`chunk_indices` 每行是
   `(sequence_index, local_chunk_index)`，且不能超出对应 sequence 的 chunk 范围。
+  A5 上 `G>4` 的独立 ACLNN 入口要求 `chunk_indices` 完整且唯一地列出所有非空序列的 chunk，
+  允许调整 pair 顺序。缺块返回 `ACLNN_ERR_PARAM_INVALID`，报错包含实际和预期的 pair 数。
 - 尾 chunk 只计算有效 token；输出仍按原输入的 `T` 维写回。
 
 对变长 pair `(seq, lc)`：
