@@ -18,7 +18,7 @@ endif()
 set(CATLASS_VENDOR_GIT_REPOSITORY
     "https://gitcode.com/cann/catlass.git")
 set(CATLASS_VENDOR_GIT_TAG
-    "edacbdc1f111465c44699a8b6294a7a2e956b98c")
+    "9034426342c8f53c02fd469b4cfe880d49e4b60c")
 set(_CATLASS_SOURCE_DIR "${CANN_3RD_LIB_PATH}/catlass")
 set(_CATLASS_MARK "${_CATLASS_SOURCE_DIR}/include/catlass/catlass.hpp")
 
