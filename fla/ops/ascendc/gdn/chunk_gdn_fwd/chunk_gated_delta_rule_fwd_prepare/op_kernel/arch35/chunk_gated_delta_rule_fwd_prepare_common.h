@@ -92,7 +92,9 @@ struct ChunkGatedDeltaRuleFwdStageTilingData {
     // V. Channel of v/u. First version is 128 or 256.
     int64_t valueHeadDim;
 
-    // G = Hv / Hk in {1,2,3,4}. hk = hv / G. OwnsHk(hv) is (hv % G) == 0.
+    // G = Hv / Hk in [1,16]. hk = hv / G. OwnsHk uses the effective kkt
+    // group (KktGroup = G): G in {1,2,3,4} group by HK, G > 4 by (chunk, hk)
+    // unit so each unit computes exactly one kkt.
     int64_t valueHeadsPerQueryKeyHead;
 
     // BT. Tokens in one chunk tile. First version is 64. Last chunk may be shorter.
@@ -312,20 +314,46 @@ struct PrepareState {
         if (HRatio <= 0) {
             HRatio = 1;
         }
+        kktGroup = ComputeKktGroup();
+    }
+
+    // Effective kkt sharing granularity: how many consecutive HV (of the same
+    // chunk) read one Cube kkt.
+    //   G in {1,2,3,4}: historical grouping. One pack still covers <= 4 HV of
+    //     a single HK group, so G=1 means every task owns its own kkt and
+    //     G=2/3/4 mean the HK group shares one kkt.
+    //   G > 4: one kkt per (chunk, hk), shared by all G HV. The scheduler is
+    //     unit-aligned (UnitScheduled / MakePackWalk): a (chunk, hk) unit is
+    //     covered by CeilDiv(G, 4) consecutive sub-packs, the first of which
+    //     owns the kkt and the rest reuse it. OwnsHk() then reduces to
+    //     (hv % HRatio == 0), i.e. only a unit's first task. This removes the
+    //     former O(G) per-HK redundancy for G % 4 != 0 and the 2x redundancy
+    //     for G % 4 == 0.
+    __aicore__ inline int64_t ComputeKktGroup() const
+    {
+        // The sharing granularity is the HK group for every G: G in {1,2,3,4}
+        // reproduces the historical values (one pack <= 4 HV of one HK group),
+        // G > 4 becomes one kkt per (chunk, hk) via the unit scheduler.
+        return HRatio;
+    }
+
+    __aicore__ inline int64_t KktGroup() const
+    {
+        return kktGroup;
     }
 
     // G=3 cannot fill 4 consecutive HV of one HK, so a pack is one HK group
     // (nThis=3). G=1/2/4 fill a pack of 4: 4 HK, 2 HK, or 1 HK.
     __aicore__ inline int64_t TasksPerPack() const
     {
-        return (HRatio == 3) ? 3 : kTasksPerRound;
+        return (KktGroup() == 3) ? 3 : kTasksPerRound;
     }
 
     // G=2 full pack: place both HK owners first so AIV0/AIV1 each own one
     // complete HK group: [owner0, owner1, sibling0, sibling1].
     __aicore__ inline int64_t PackWorkId(int64_t base, int64_t nThis, int64_t taskIdx) const
     {
-        if (HRatio == 2 && nThis == kTasksPerRound && taskIdx > 0 && taskIdx < 3) {
+        if (KktGroup() == 2 && nThis == kTasksPerRound && taskIdx > 0 && taskIdx < 3) {
             return base + 3 - taskIdx;
         }
         return base + taskIdx;
@@ -336,34 +364,86 @@ struct PrepareState {
         int64_t nThis;
     };
 
+    // G > 4: schedule by (chunk, hk) "unit" instead of by raw HV, so a unit
+    // costs exactly one Cube kkt. Unit u owns work ids [u*G, u*G + G); each
+    // unit is covered by CeilDiv(G, 4) sub-packs of <= 4 tasks, walked back to
+    // back by one core so the first sub-pack owns the kkt and the rest reuse
+    // it. G in {1,2,3,4} keeps the raw-HV pack walk untouched.
+    __aicore__ inline bool UnitScheduled() const
+    {
+        return HRatio > kTasksPerRound;
+    }
+
+    // totalChunks == numChunkTiles * B * HV; one unit == one (chunk, hk), and
+    // HV == HRatio * HK, so the unit count is totalChunks / HRatio.
+    __aicore__ inline int64_t UnitCount() const
+    {
+        return totalChunks / HRatio;
+    }
+
+    __aicore__ inline int64_t SubPacksPerUnit() const
+    {
+        return CeilDiv(HRatio, kTasksPerRound);
+    }
+
+    __aicore__ inline int64_t NumPacks() const
+    {
+        if (UnitScheduled()) {
+            return CeilDiv(UnitCount(), numCore) * numCore * SubPacksPerUnit();
+        }
+        return CeilDiv(totalChunks, TasksPerPack());
+    }
+
     __aicore__ inline PackWalk MakePackWalk(int64_t pack, int64_t packSize) const
     {
         PackWalk w;
+        if (UnitScheduled()) {
+            const int64_t nSub = SubPacksPerUnit();
+            const int64_t ordinal = (pack - coreIdx) / numCore;
+            const int64_t unit = coreIdx + (ordinal / nSub) * numCore;
+            const int64_t sub = ordinal % nSub;
+            if (unit >= UnitCount()) {
+                w.base = 0;
+                w.nThis = 0;
+                return w;
+            }
+            w.base = unit * HRatio + sub * kTasksPerRound;
+            const int64_t remain = HRatio - sub * kTasksPerRound;
+            w.nThis = remain < kTasksPerRound ? remain : kTasksPerRound;
+            return w;
+        }
         w.base = pack * packSize;
         const int64_t remain = totalChunks - w.base;
         w.nThis = remain < packSize ? remain : packSize;
         return w;
     }
 
-    // First HV of an HK group owns L2Norm(q/k) and Cube kkt.
+    // First HV of a kkt group owns L2Norm(q/k) and Cube kkt.
     __aicore__ inline bool OwnsHk(int64_t hv) const
     {
-        return (HRatio <= 1) || ((hv % HRatio) == 0);
+        const int64_t g = KktGroup();
+        return (g <= 1) || ((hv % g) == 0);
     }
 
     // Pack-local task that produced kkt for this hv.
     __aicore__ inline int64_t OwnerTaskIdx(int64_t hv, int64_t taskIdx) const
     {
-        if (HRatio <= 1) {
+        const int64_t g = KktGroup();
+        if (g <= 1) {
             return taskIdx;
         }
-        if (HRatio == 2) {
+        if (g > kTasksPerRound) {
+            // G > 4: the (chunk, hk) kkt is produced by task 0 of the unit's
+            // first sub-pack (ping slot 0); every task of the unit reads it.
+            return 0;
+        }
+        if (g == 2) {
             if ((hv & 1) == 0) {
                 return taskIdx;
             }
             return taskIdx - ((taskIdx >= 2) ? 2 : 1);
         }
-        const int64_t owner = taskIdx - (hv % HRatio);
+        const int64_t owner = taskIdx - (hv % g);
         return (owner < 0) ? taskIdx : owner;
     }
 
@@ -371,6 +451,7 @@ struct PrepareState {
     AscendC::GlobalTensor<int64_t> gmIdx;
 
     int64_t B, HK, HV, T, K, V, HRatio, chunkSize;
+    int64_t kktGroup;
     int64_t isVariable, hasChunkIndices;
     int64_t useQkL2norm, useGateInKernel, useBetaSigmoid, hasDtBias, allowNegEigval, useExp2;
     int64_t totalChunks, outputA;

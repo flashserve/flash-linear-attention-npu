@@ -51,8 +51,10 @@ public:
             mapper_.ResolveChunkMajor(work, m);
             if (m.validTokens <= 0 || m.validHeads <= 0) continue;
             for (int64_t r = 0; r < m.validHeads; ++r) {
-                if (!ChunkGdnBwdIntraScoreLeader<G>(m.hvBegin, r)) continue;
-                const int64_t hk = (m.hvBegin + r) / G;
+                if (!ChunkGdnBwdIntraScoreLeader<G>(
+                        m.hvBegin, r, t_->groupSize)) continue;
+                const int64_t hk =
+                    (m.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(t_->groupSize);
                 const uint64_t qk = ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hk)
                     * t_->seqlen + m.tokenStart) * HEAD_DIM;
                 auto kGm = tla::MakeTensor(k_[qk], tla::MakeLayout<MainT,

@@ -4,13 +4,14 @@
 #include "../op_api/aclnn_chunk_gated_delta_rule_bwd_finalize.h"
 #include "../op_api/chunk_gated_delta_rule_bwd_finalize.h"
 #include "chunk_gated_delta_rule_bwd_finalize_validation_arch22.h"
+#include "aclnn_chunk_gated_delta_rule_bwd_finalize_output_arch22.h"
 
 #include <cmath>
 
-#include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_executor.h"
+#include "opdev/op_dfx.h"
 #include "opdev/tensor_view_utils.h"
 
 #include "op_common/log/log.h"
@@ -64,7 +65,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     // 连续 view 也需由 Contiguous 规范化 storage shape，并保留 view offset。
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
-        OP_LOGE(OP_NAME, "Failed to create a contiguous input.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to create a contiguous input.");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -84,8 +85,27 @@ aclnnStatus GetWorkspaceSize(
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
-    uint64_t *workspaceSize, aclOpExecutor **executor)
+    uint64_t *workspaceSize, aclOpExecutor **executor, uint64_t outputAliasMask)
 {
+    {
+        const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
+        const char *requiredInputNames[] = {"q", "k", "v", "vNew", "dO", "du", "g", "beta", "h", "dh", "a"};
+        for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
+            if (requiredInputs[index] == nullptr) {
+                const char *param_name = requiredInputNames[index];
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, param_name, "nullptr", "input argument must not be nullptr");
+                return ACLNN_ERR_PARAM_NULLPTR;
+            }
+        }
+        if (dqOut == nullptr || dkOut == nullptr || dvOut == nullptr || dbetaOut == nullptr ||
+            dgOut == nullptr || workspaceSize == nullptr || executor == nullptr) {
+            const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
+                dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
+                workspaceSize == nullptr ? "workspaceSize" : "executor";
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, param_name, "nullptr", "input argument must not be nullptr");
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
     if (!SameShape(q, k)) {
         const std::string actualValue = "k.shape=" + ShapeString(k->GetViewShape());
         const std::string expectedValue = "q.shape=" + ShapeString(q->GetViewShape());
@@ -331,7 +351,7 @@ aclnnStatus GetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE(OP_NAME, "Failed to create the operator executor.");
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to create the operator executor.");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto *executorPtr = uniqueExecutor.get();
@@ -345,25 +365,38 @@ aclnnStatus GetWorkspaceSize(
         }
     }
 
+    const std::array<const aclTensor *, 5> outputViews = {dqOut, dkOut, dvOut, dbetaOut, dgOut};
+    auto kernelOutputs = outputViews;
+    const aclnnStatus prepareStatus = GDN::FinalizeHostArch22::PrepareOutputs(
+        outputViews, outputAliasMask, executorPtr, kernelOutputs);
+    if (prepareStatus != ACLNN_SUCCESS) {
+        return prepareStatus;
+    }
+
     const auto result = l0op::ChunkGatedDeltaRuleBwdFinalize(
         q, k, v, vNew, dO, du, g, beta, h, dh, a,
         qRstdOptional, kRstdOptional, betaRawOptional,
         cuSeqlensOptional, chunkIndicesOptional,
         scale, chunkSize, useQkL2NormInKernel,
         useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
-        dqOut, dkOut, dvOut, dbetaOut, dgOut,
+        kernelOutputs[0], kernelOutputs[1], kernelOutputs[2], kernelOutputs[3], kernelOutputs[4],
         executorPtr);
     for (const aclTensor *tensor : result) {
         if (tensor == nullptr) {
-            OP_LOGE(OP_NAME, "Failed to create a Finalize output.");
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to create a Finalize output.");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
 
+    const aclnnStatus copyStatus = GDN::FinalizeHostArch22::CopyOutputs(result, outputViews, executorPtr);
+    if (copyStatus != ACLNN_SUCCESS) {
+        return copyStatus;
+    }
+
     for (size_t index = 0; index < result.size(); ++index) {
-        const aclTensor *copied = l0op::ViewCopy(result[index], outputs[index], executorPtr);
+        const aclTensor *copied = l0op::ViewCopy(outputViews[index], outputs[index], executorPtr);
         if (copied == nullptr) {
-            OP_LOGE(OP_NAME, "Failed to copy output[%zu] to the output view.", index);
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "Failed to copy output[%zu] to the output view.", index);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

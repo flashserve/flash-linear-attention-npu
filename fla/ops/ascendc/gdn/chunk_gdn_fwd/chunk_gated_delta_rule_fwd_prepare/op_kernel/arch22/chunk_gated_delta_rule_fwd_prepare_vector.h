@@ -39,6 +39,15 @@ class Vector {
     static_assert(Local::kArena + KktBatchRows * BT * (2 * sizeof(float) + sizeof(InputT)) +
         KktBatchRows * 8 * sizeof(float) <= Local::kUbBytes, "KKT rows exceed UB");
     static constexpr uint32_t RhsKCache = Local::kUbBytes - 64 * 128 * sizeof(float);
+    static constexpr bool RetainD32 = BT == 64 && V == 128;
+    static constexpr uint32_t D32HeadBytes = BT * 32 * sizeof(float);
+    static constexpr uint32_t D32SlotBytes = Half * D32HeadBytes;
+    // 两槽 KKT 全部结束后复用 typed/brcb 区，保留至各槽 Final 的最后一次读取。
+    static constexpr uint32_t D32Cache = RhsKCache - 2 * D32SlotBytes;
+    static_assert(!RetainD32 || (Local::kArena + BT * BT * sizeof(float) <= D32Cache &&
+        D32Cache + 2 * D32SlotBytes <= RhsKCache), "Final overlaps retained D32");
+    static_assert(!RetainD32 || Local::kLeaf + 64 * V * (2 * sizeof(InputT) + sizeof(float)) +
+        64 * 8 * sizeof(float) <= D32Cache, "RHS broadcast overlaps retained D32");
     static_assert(Local::kArena + KktBatchRows * BT * (2 * sizeof(float) + sizeof(InputT)) +
         KktBatchRows * 8 * sizeof(float) <= RhsKCache, "KKT overlaps retained K cache");
     static_assert(Local::kLeaf + BT * BT * sizeof(InputT) <= Local::kArena &&
@@ -64,26 +73,100 @@ class Vector {
     Chunk rhsKChunk_{};
     uint64_t rhsKHk_ = 0;
 
+    __aicore__ inline bool CompensatePublicGatePrefix(LocalTensor<float> input, LocalTensor<float> prefix,
+                                                      LocalTensor<float> acc, uint32_t rows,
+                                                      uint32_t heads, uint32_t slot)
+    {
+        if constexpr (!Prepared && BT == 64 && QkvLayout == 0) {
+            if (a_.useGate == 0) {
+                return false;
+            }
+            constexpr uint32_t CompareLanes = 64;
+            constexpr uint32_t VectorBytes = CompareLanes * sizeof(float);
+            constexpr uint32_t MaskBytes = 32;
+            constexpr uint32_t ScratchBytes = 3 * VectorBytes + MaskBytes;
+            constexpr uint32_t SlotBytes = 128 * BT;
+            constexpr float MaxFinite = 3.4028234663852886e+38f;
+            static_assert(2 * Half <= 8 && SlotBytes == LeafBytes && ScratchBytes <= SlotBytes,
+                "Public gate prefix scratch must fit its dead activation leaf slot");
+            static_assert(Local::kLeaf + 2 * SlotBytes <= Local::kArena,
+                "Public gate prefix scratch exceeds the leaf envelope");
+            // 当前槽的 gate 激活已结束；配对路径也已 Gather 完两个槽，尚未生成 leaf。
+            const uint32_t scratch = Local::kLeaf + slot * SlotBytes;
+            auto correction = r_.template UB<float>(scratch);
+            auto adjusted = r_.template UB<float>(scratch + VectorBytes);
+            auto next = r_.template UB<float>(scratch + 2 * VectorBytes);
+            auto finiteMask = r_.template UB<uint8_t>(scratch + 3 * VectorBytes);
+            auto zero = r_.template UB<float>(SelectZero);
+            // 首次 Sub 读取构造时清零的常驻区，后续读取上一行补偿。
+            auto previousCorrection = zero;
+            // 用对齐基址上的 bit mask 仅初始化比较尾部，避免 heads 偏移破坏块对齐。
+            uint64_t tailMask[2] = {~0ULL << heads, 0};
+            PipeBarrier<PIPE_V>();
+            SetMaskNorm();
+            Duplicate(adjusted, 0.0f, tailMask, uint8_t(1), uint16_t(1), uint8_t(8));
+            ResetMask();
+            PipeBarrier<PIPE_V>();
+            for (uint32_t row = 0; row < rows; ++row) {
+                if (row == 0) {
+                    Adds(acc, input[row * 8], 0.0f, heads);
+                    PipeBarrier<PIPE_V>();
+                } else {
+                    Sub(adjusted, input[row * 8], previousCorrection, heads);
+                    PipeBarrier<PIPE_V>();
+                    Add(next, acc, adjusted, heads);
+                    PipeBarrier<PIPE_V>();
+                    Sub(correction, next, acc, heads);
+                    PipeBarrier<PIPE_V>();
+                    Sub(correction, correction, adjusted, heads);
+                    PipeBarrier<PIPE_V>();
+                    Abs(adjusted, next, heads);
+                    PipeBarrier<PIPE_V>();
+                    // c220 比较固定读完整 256B；无效 lane 已清零，不能只预留 heads 个 float。
+                    Compares<float, uint8_t>(finiteMask, adjusted, MaxFinite, CMPMODE::LE, CompareLanes);
+                    PipeBarrier<PIPE_V>();
+                    Select<float, uint8_t>(correction, finiteMask, correction, zero,
+                        SELMODE::VSEL_CMPMASK_SPR, static_cast<uint64_t>(heads), 1, {1, 1, 0, 8, 8, 0});
+                    PipeBarrier<PIPE_V>();
+                    // 只清除非有限 sum 的补偿项；保留 next 本身的 Inf/NaN/溢出结果。
+                    Copy(acc, next, heads, 1, {1, 1, 8, 8});
+                    PipeBarrier<PIPE_V>();
+                    previousCorrection = correction;
+                }
+                Copy(prefix[row * 8], acc, heads, 1, {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+            }
+            return true;
+        }
+        return false;
+    }
+
     __aicore__ static inline bool ScaleBytes(uint64_t &bytes, uint64_t factor)
     {
         const uint32_t aLo = static_cast<uint32_t>(bytes);
         const uint32_t aHi = static_cast<uint32_t>(bytes >> 32);
         const uint32_t bLo = static_cast<uint32_t>(factor);
         const uint32_t bHi = static_cast<uint32_t>(factor >> 32);
-        if (aHi != 0 && bHi != 0) return false;
+        if (aHi != 0 && bHi != 0) {
+            return false;
+        }
         // 两个32位分肢相乘均能放入uint64；高分肢同时非零已在上方拒绝。
         const uint64_t low = static_cast<uint64_t>(aLo) * bLo;
         const uint64_t cross = aHi != 0 ? static_cast<uint64_t>(aHi) * bLo :
             static_cast<uint64_t>(aLo) * bHi;
         const uint64_t high = (low >> 32) + cross;
-        if (high > 0xFFFFFFFFULL) return false;
+        if (high > 0xFFFFFFFFULL) {
+            return false;
+        }
         bytes = (high << 32) | static_cast<uint32_t>(low);
         return true;
     }
 
     __aicore__ static inline bool Disjoint(GM_ADDR p, uint64_t n, GM_ADDR q, uint64_t m)
     {
-        if (n == 0 || m == 0) return true;
+        if (n == 0 || m == 0) {
+            return true;
+        }
         const uint64_t x = reinterpret_cast<uint64_t>(p);
         const uint64_t y = reinterpret_cast<uint64_t>(q);
         return x <= y ? y - x >= n : x - y >= m;
@@ -91,15 +174,21 @@ class Vector {
 
     __aicore__ inline bool PrefixPairOutputSafe() const
     {
-        if (a_.outputG == 0 || a_.gBth == nullptr) return true;
+        if (a_.outputG == 0 || a_.gBth == nullptr) {
+            return true;
+        }
         uint64_t rows = a_.batch;
-        if (!ScaleBytes(rows, a_.hv) || !ScaleBytes(rows, a_.tokens)) return false;
+        if (!ScaleBytes(rows, a_.hv) || !ScaleBytes(rows, a_.tokens)) {
+            return false;
+        }
         uint64_t gate = rows, values = rows, matrix = rows, keys = a_.batch;
         if (!ScaleBytes(gate, sizeof(float)) ||
             !ScaleBytes(values, V) || !ScaleBytes(values, sizeof(InputT)) ||
             !ScaleBytes(matrix, BT) || !ScaleBytes(matrix, sizeof(InputT)) ||
             !ScaleBytes(keys, a_.hk) || !ScaleBytes(keys, a_.tokens) ||
-            !ScaleBytes(keys, 128) || !ScaleBytes(keys, sizeof(InputT))) return false;
+            !ScaleBytes(keys, 128) || !ScaleBytes(keys, sizeof(InputT))) {
+            return false;
+        }
         // 另一 AIV 的旧 RHS1 / Cube WU1 可能尚未关闭；重叠只回退原 Prefix。
         return Disjoint(a_.gBth, gate, a_.rawG, gate) &&
             Disjoint(a_.gBth, gate, a_.beta, gate) &&
@@ -113,19 +202,31 @@ class Vector {
 
     __aicore__ inline bool RhsKInputSafe() const
     {
-        if (a_.hk == 0 || a_.hv / a_.hk < 2) return false;
+        if (a_.hk == 0 || a_.hv / a_.hk < 2) {
+            return false;
+        }
         uint64_t keys = a_.batch, rows = a_.batch;
         if (!ScaleBytes(keys, a_.hk) || !ScaleBytes(keys, a_.tokens) ||
             !ScaleBytes(keys, 128 * sizeof(InputT)) ||
-            !ScaleBytes(rows, a_.hv) || !ScaleBytes(rows, a_.tokens)) return false;
+            !ScaleBytes(rows, a_.hv) || !ScaleBytes(rows, a_.tokens)) {
+            return false;
+        }
         uint64_t matrix = rows;
         if (!ScaleBytes(matrix, BT * sizeof(InputT)) || !RhsKRangeSafe(a_.k, keys) ||
-            !RhsKRangeSafe(a_.a, matrix) || !Disjoint(a_.k, keys, a_.a, matrix)) return false;
-        if (a_.betaEff == nullptr && (a_.outputG == 0 || a_.gBth == nullptr)) return true;
+            !RhsKRangeSafe(a_.a, matrix) || !Disjoint(a_.k, keys, a_.a, matrix)) {
+            return false;
+        }
+        if (a_.betaEff == nullptr && (a_.outputG == 0 || a_.gBth == nullptr)) {
+            return true;
+        }
         uint64_t gate = rows;
-        if (!ScaleBytes(gate, sizeof(float))) return false;
+        if (!ScaleBytes(gate, sizeof(float))) {
+            return false;
+        }
         if (a_.betaEff != nullptr && (!RhsKRangeSafe(a_.betaEff, gate) ||
-            !Disjoint(a_.k, keys, a_.betaEff, gate))) return false;
+            !Disjoint(a_.k, keys, a_.betaEff, gate))) {
+            return false;
+        }
         return a_.outputG == 0 || a_.gBth == nullptr ||
             (RhsKRangeSafe(a_.gBth, gate) && Disjoint(a_.k, keys, a_.gBth, gate));
     }
@@ -168,7 +269,9 @@ class Vector {
     __aicore__ inline void LoadRect(LocalTensor<float> dst, GlobalTensor<float> src,
                                     uint32_t rows, uint32_t cols, uint32_t srcStride, uint32_t dstStride)
     {
-        if (rows == 0 || cols == 0) return;
+        if (rows == 0 || cols == 0) {
+            return;
+        }
         const uint32_t rounded = (cols + 7) / 8 * 8;
         DataCopyExtParams cp{static_cast<uint16_t>(rows), cols * 4, (srcStride - cols) * 4,
             (dstStride - rounded) / 8, 0};
@@ -179,7 +282,9 @@ class Vector {
     __aicore__ inline void EffectiveBeta(const Chunk &c, uint64_t begin, uint32_t count,
                                          uint32_t slot, uint32_t scratchSlot)
     {
-        if (a_.useBetaSigmoid == 0 && a_.betaEff == nullptr) return;
+        if (a_.useBetaSigmoid == 0 && a_.betaEff == nullptr) {
+            return;
+        }
         auto beta = r_.template UB<float>(Local::kBeta + slot * ContextBytes);
         ActivatePrepareBeta<BT>(r_, a_, beta, count, scratchSlot);
         if (a_.betaEff != nullptr) {
@@ -192,7 +297,9 @@ public:
     __aicore__ inline Vector(Resources &r, const Args &a, WorkspaceLayout p)
         : r_(r), a_(a), p_(p), core_(a.scratch + GroupId() * p.coreBytes), sub_(GetSubBlockIdx())
     {
-        if constexpr (Prepared) prefixPairSafe_ = PrefixPairOutputSafe();
+        if constexpr (Prepared) {
+            prefixPairSafe_ = PrefixPairOutputSafe();
+        }
         auto heads = r_.template UB<uint32_t>(HeadIndices);
         auto tokens = r_.template UB<uint32_t>(TokenIndices);
         for (uint32_t h = 0; h < Half; ++h) {
@@ -236,7 +343,9 @@ public:
         const uint32_t firstRows = (static_cast<uint32_t>(c.valid) + 1) / 2;
         const uint32_t begin = sub_ == 0 ? 0 : firstRows;
         const uint32_t count = sub_ == 0 ? firstRows : static_cast<uint32_t>(c.valid) - firstRows;
-        if (count == 0 || c.hkBegin == c.hkEnd) return; // 外层仍发布同一个work的NormReady。
+        if (count == 0 || c.hkBegin == c.hkEnd) {
+            return; // 外层仍发布同一个work的NormReady。
+        }
         constexpr uint32_t Input = Local::kLeaf;
         constexpr uint32_t Fp = Input + NormRows * 128 * sizeof(InputT);
         constexpr uint32_t Square = Fp + NormRows * 128 * sizeof(float);
@@ -270,7 +379,9 @@ public:
             // 仅构造索引，不Scalar读写数据；full/tail两表在kind/批次循环外复用。
             for (uint32_t table = 0; table < 2; ++table) {
                 const uint32_t tokens = table == 0 ? fullTokens : tailTokens;
-                if (tokens == 0) continue;
+                if (tokens == 0) {
+                    continue;
+                }
                 const uint32_t rounded = (tokens + 7) / 8 * 8;
                 auto indices = r_.template UB<uint32_t>(NormIndices + table * NormIndexElements * sizeof(uint32_t));
                 for (uint32_t h = 0; h < heads; ++h) {
@@ -333,7 +444,9 @@ public:
                 for (uint32_t kind = 0; kind < 2; ++kind) {
                     if (!directRstd) {
                         // 上一路rstd仍由MTE3读Work；关闭读者后第二Gather才可覆写。
-                        if (kind != 0) r_.template Fence<HardEvent::MTE3_V>();
+                        if (kind != 0) {
+                            r_.template Fence<HardEvent::MTE3_V>();
+                        }
                         Gather(work, sums, r_.template UB<uint32_t>(NormIndices),
                             kind * tokens * sizeof(float), rounded);
                         PipeBarrier<PIPE_V>();
@@ -435,7 +548,9 @@ public:
         r_.template Fence<HardEvent::V_MTE2>();
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             Duplicate(r_.template UB<float>(Local::kG + slot * ContextBytes), 0.0f, Half * BT);
             Duplicate(r_.template UB<float>(Local::kBeta + slot * ContextBytes), 0.0f, Half * BT);
@@ -446,7 +561,9 @@ public:
         r_.template Fence<HardEvent::V_MTE2>();
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             LoadHeadMajor(r_.template UB<float>(Local::kBeta + slot * ContextBytes), a_.beta,
                 c, headBegin + i * kHeadsPerWindow + sub_ * Half, count);
@@ -460,7 +577,9 @@ public:
         if (a_.useBetaSigmoid != 0 || a_.betaEff != nullptr) {
             for (uint32_t i = 0; i < 2; ++i) {
                 const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-                if (count == 0) continue;
+                if (count == 0) {
+                    continue;
+                }
                 const uint32_t slot = (firstSlot + i) & 1;
                 EffectiveBeta(c, headBegin + i * kHeadsPerWindow + sub_ * Half, count, slot, firstSlot);
             }
@@ -468,8 +587,11 @@ public:
         ActivatePrepareGate<BT>(r_, a_, input, headBegin, activeHeads,
             static_cast<uint32_t>(c.valid), firstSlot);
         for (uint32_t row = 0; row < c.valid; ++row) {
-            if (row == 0) Adds(acc, input[row * 8], 0.0f, activeHeads);
-            else Add(acc, acc, input[row * 8], activeHeads);
+            if (row == 0) {
+                Adds(acc, input[row * 8], 0.0f, activeHeads);
+            } else {
+                Add(acc, acc, input[row * 8], activeHeads);
+            }
             PipeBarrier<PIPE_V>();
             Copy(prefix[row * 8], acc, activeHeads, 1, {1, 1, 8, 8});
             PipeBarrier<PIPE_V>();
@@ -477,7 +599,9 @@ public:
         ScalePrepareCumsum(a_, prefix, acc, static_cast<uint32_t>(c.valid), activeHeads);
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             const uint32_t base = (i * kHeadsPerWindow + sub_ * Half) * sizeof(float);
             Gather(r_.template UB<float>(Local::kG + slot * ContextBytes), prefix,
@@ -487,7 +611,9 @@ public:
         r_.template Fence<HardEvent::V_MTE3>();
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             StoreHeadMajor(a_.gBht, r_.template UB<float>(Local::kG + slot * ContextBytes),
                 c, headBegin + i * kHeadsPerWindow + sub_ * Half, count);
@@ -517,7 +643,9 @@ public:
         r_.template Fence<HardEvent::MTE3_V>(); // 公开 BTH 的最后 Prefix 读者退出。
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             auto decay = r_.template UB<float>(PrefixBth + i * ContextBytes);
             const uint32_t base = (i * kHeadsPerWindow + sub_ * Half) * sizeof(float);
             Gather(decay, input, r_.template UB<uint32_t>(HeadIndices), base, Half * BT);
@@ -549,7 +677,9 @@ public:
         r_.template Fence<HardEvent::V_MTE2>();
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             const uint64_t begin = headBegin + i * kHeadsPerWindow + sub_ * Half;
             LoadHeadMajor(r_.template UB<float>(Local::kBeta + slot * ContextBytes), a_.beta, c, begin, count);
@@ -558,7 +688,9 @@ public:
         r_.template Fence<HardEvent::MTE2_V>();
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             const uint64_t begin = headBegin + i * kHeadsPerWindow + sub_ * Half;
             auto g = r_.template UB<float>(Local::kG + slot * ContextBytes);
@@ -575,17 +707,24 @@ public:
         }
         Gather(input, r_.template UB<float>(Local::kG), r_.template UB<uint32_t>(PairTokenIndices), 0, BT * 8);
         PipeBarrier<PIPE_V>();
-        for (uint32_t row = 0; row < c.valid; ++row) {
-            if (row == 0) Adds(acc, input[row * 8], 0.0f, 2 * Half);
-            else Add(acc, acc, input[row * 8], 2 * Half);
-            PipeBarrier<PIPE_V>();
-            Copy(prefix[row * 8], acc, 2 * Half, 1, {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>();
+        if (!CompensatePublicGatePrefix(input, prefix, acc, static_cast<uint32_t>(c.valid), 2 * Half, firstSlot)) {
+            for (uint32_t row = 0; row < c.valid; ++row) {
+                if (row == 0) {
+                    Adds(acc, input[row * 8], 0.0f, 2 * Half);
+                } else {
+                    Add(acc, acc, input[row * 8], 2 * Half);
+                }
+                PipeBarrier<PIPE_V>();
+                Copy(prefix[row * 8], acc, 2 * Half, 1, {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>();
+            }
         }
         ScalePrepareCumsum(a_, prefix, acc, static_cast<uint32_t>(c.valid), 2 * Half);
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             const uint32_t base = slot * Half * sizeof(float);
             Gather(r_.template UB<float>(Local::kG + slot * ContextBytes), prefix,
@@ -595,7 +734,9 @@ public:
         r_.template Fence<HardEvent::V_MTE3>();
         for (uint32_t i = 0; i < 2; ++i) {
             const uint32_t count = Heads(activeHeads - i * kHeadsPerWindow);
-            if (count == 0) continue;
+            if (count == 0) {
+                continue;
+            }
             const uint32_t slot = (firstSlot + i) & 1;
             StoreHeadMajor(a_.gBht, r_.template UB<float>(Local::kG + slot * ContextBytes),
                 c, headBegin + i * kHeadsPerWindow + sub_ * Half, count);
@@ -605,7 +746,9 @@ public:
     __aicore__ inline void Prefix(const Chunk &c, uint64_t headBegin, uint32_t activeHeads, uint32_t slot)
     {
         const uint32_t count = Heads(activeHeads);
-        if (count == 0) return;
+        if (count == 0) {
+            return;
+        }
         const uint64_t begin = headBegin + sub_ * Half;
         auto g = r_.template UB<float>(Local::kG + slot * ContextBytes);
         auto beta = r_.template UB<float>(Local::kBeta + slot * ContextBytes);
@@ -638,12 +781,17 @@ public:
         }
         EffectiveBeta(c, begin, count, slot, slot);
         ActivatePrepareGate<BT>(r_, a_, input, begin, count, static_cast<uint32_t>(c.valid), slot);
-        for (uint32_t row = 0; row < c.valid; ++row) {
-            if (row == 0) Adds(acc, input[row * 8], 0.0f, count);
-            else Add(acc, acc, input[row * 8], count);
-            PipeBarrier<PIPE_V>();
-            Copy(prefix[row * 8], acc, count, 1, {1, 1, 8, 8});
-            PipeBarrier<PIPE_V>(); // Copy 对 acc 的末次读取先于下一行 Add。
+        if (!CompensatePublicGatePrefix(input, prefix, acc, static_cast<uint32_t>(c.valid), count, slot)) {
+            for (uint32_t row = 0; row < c.valid; ++row) {
+                if (row == 0) {
+                    Adds(acc, input[row * 8], 0.0f, count);
+                } else {
+                    Add(acc, acc, input[row * 8], count);
+                }
+                PipeBarrier<PIPE_V>();
+                Copy(prefix[row * 8], acc, count, 1, {1, 1, 8, 8});
+                PipeBarrier<PIPE_V>(); // Copy 对 acc 的末次读取先于下一行 Add。
+            }
         }
         ScalePrepareCumsum(a_, prefix, acc, static_cast<uint32_t>(c.valid), count);
         Gather(g, prefix, r_.template UB<uint32_t>(HeadIndices), 0, Half * BT);
@@ -851,7 +999,9 @@ public:
         auto publicA = Gm<InputT>(a_.a, a_.batch * a_.hv * a_.tokens * BT);
         // Cube 的整包 result 已 ready，diag 在本 phase 内不再被生产者修改。
         // ENTIRE_DATA_CACHE 一次覆盖所有 head；空 AIV 不额外清理。
-        if (count != 0) Invalidate(Gm<float>(Head(slot, sub_ * Half), p_.headBytes / sizeof(float)));
+        if (count != 0) {
+            Invalidate(Gm<float>(Head(slot, sub_ * Half), p_.headBytes / sizeof(float)));
+        }
         for (uint32_t h = 0; h < count; ++h) {
             const uint32_t local = sub_ * Half + h;
             auto result = Gm<float>(Head(slot, local) + p_.resultOffset, BT * BT / 4);
@@ -867,12 +1017,24 @@ public:
                 if constexpr (S == 16) {
                     // 两个对角叶仍在 UB；绝不从旧 X/leaf GM 重新加载它们。
                     Copy(out, leaves[(h * Leaves + row / 16) * 256], n0, static_cast<uint8_t>(n0), {1, 1, 4, 2});
-                    if (n1 > 0) Copy(out[2 * S * S + S], leaves[(h * Leaves + row / 16 + 1) * 256],
-                        n1, static_cast<uint8_t>(n1), {1, 1, 4, 2});
+                    if (n1 > 0) {
+                        Copy(out[2 * S * S + S], leaves[(h * Leaves + row / 16 + 1) * 256],
+                            n1, static_cast<uint8_t>(n1), {1, 1, 4, 2});
+                    }
+                    PipeBarrier<PIPE_V>();
+                } else if constexpr (RetainD32 && Final) {
+                    auto d32 = r_.template UB<float>(D32Cache + slot * D32SlotBytes + h * D32HeadBytes);
+                    Copy(out, d32[row * S], n0, static_cast<uint8_t>(n0), {1, 1, 8, 4});
+                    if (n1 > 0) {
+                        Copy(out[2 * S * S + S], d32[(row + S) * S],
+                            n1, static_cast<uint8_t>(n1), {1, 1, 8, 4});
+                    }
                     PipeBarrier<PIPE_V>();
                 } else {
                     LoadRect(out, diag[row * S], n0, n0, S, 2 * S);
-                    if (n1 > 0) LoadRect(out[2 * S * S + S], diag[(row + S) * S], n1, n1, S, 2 * S);
+                    if (n1 > 0) {
+                        LoadRect(out[2 * S * S + S], diag[(row + S) * S], n1, n1, S, 2 * S);
+                    }
                 }
                 if constexpr (BT == 64 && S == 16) {
                     if (c.valid == BT) {
@@ -882,11 +1044,15 @@ public:
                         LoadRect(out[2 * S * S], result[pair * S * S], n1, n0, S, 2 * S);
                     }
                 } else {
-                    if (n1 > 0) LoadRect(out[2 * S * S], result[pair * S * S], n1, n0, S, 2 * S);
+                    if (n1 > 0) {
+                        LoadRect(out[2 * S * S], result[pair * S * S], n1, n0, S, 2 * S);
+                    }
                 }
                 r_.template Fence<HardEvent::MTE2_V>();
-                if (n1 > 0) Muls(out[2 * S * S], out[2 * S * S], -1.0f, S,
-                    static_cast<uint8_t>(n1), {1, 1, static_cast<uint8_t>(2 * S / 8), static_cast<uint8_t>(2 * S / 8)});
+                if (n1 > 0) {
+                    Muls(out[2 * S * S], out[2 * S * S], -1.0f, S,
+                        static_cast<uint8_t>(n1), {1, 1, static_cast<uint8_t>(2 * S / 8), static_cast<uint8_t>(2 * S / 8)});
+                }
                 PipeBarrier<PIPE_V>();
                 if constexpr (Final) {
                     Cast(typed, out, RoundMode::CAST_RINT, 4 * S * S);
@@ -895,6 +1061,11 @@ public:
                     DataCopyExtParams cp{static_cast<uint16_t>(n0 + n1), 2 * S * sizeof(InputT), 0, 0, 0};
                     DataCopyPad(publicA[HeadOffset(a_, c, headBegin + local, BT) + row * BT], typed, cp);
                 } else {
+                    if constexpr (RetainD32 && S == 16) {
+                        auto d32 = r_.template UB<float>(D32Cache + slot * D32SlotBytes + h * D32HeadBytes);
+                        Copy(d32[row * 2 * S], out, 64, static_cast<uint8_t>(4 * S * S / 64), {1, 1, 8, 8});
+                    }
+                    // 原 V→MTE3 同时关闭缓存 Copy，随后仍按原样写 GM 供 Cube 消费。
                     r_.template Fence<HardEvent::V_MTE3>();
                     DataCopyExtParams cp{static_cast<uint16_t>(n0 + n1), 2 * S * 4, 0, 0, 0};
                     DataCopyPad(next[row * 2 * S], out, cp);
@@ -964,10 +1135,14 @@ public:
                     DataCopyExtParams load{static_cast<uint16_t>(rows), static_cast<uint32_t>(width * sizeof(InputT)),
                         static_cast<uint32_t>((sourceStride - width) * sizeof(InputT)), 0, 0};
                     DataCopyPadExtParams<InputT> pad{false, 0, 0, 0};
-                    if (!kHit) DataCopyPad(in, source[InputOffset<QkvLayout>(a_, c, sourceHead, sourceHeads, width, row)], load, pad);
+                    if (!kHit) {
+                        DataCopyPad(in, source[InputOffset<QkvLayout>(a_, c, sourceHead, sourceHeads, width, row)], load, pad);
+                    }
                     r_.template Fence<HardEvent::MTE2_V>();
                     if (cachedK) {
-                        if (!kHit) Cast(cache, in, RoundMode::CAST_NONE, rows * width);
+                        if (!kHit) {
+                            Cast(cache, in, RoundMode::CAST_NONE, rows * width);
+                        }
                     } else {
                         Cast(fp, in, RoundMode::CAST_NONE, rows * width);
                     }

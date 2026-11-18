@@ -2,11 +2,13 @@
 
 50 个中型 shape × 24 条合法 flag × output_a True/False = 2400（q/k/v bf16，g/beta/a_log/dt_bias fp32）。
 前 1200 为 output_a=True（原矩阵，case id 不变）；后 1200 为同 shape/flag 的 output_a=False（flag_tag 加 `_a0`）。
-id ≥ 2400 追加少量 g/beta/a_log/dt_bias bf16 混合用例（不扩笛卡尔积）。q/k/v 仅 bf16；gate 张量仅 fp32/bf16，不测 fp16。
+id ≥ 2400 追加 16 条 g/beta/a_log/dt_bias bf16 混合用例（不扩笛卡尔积）。
+id ≥ 2416 追加 4 个 GVA>4 shape × 24 flag × 2 output_a = 192 条（arch35 单元调度分支，不扰动既有 id）。
+q/k/v 仅 bf16；gate 张量仅 fp32/bf16，不测 fp16。
 中型按 tiling 的 totalChunks：dense 为 B*HV*ceil(T/64)，
 varlen 为 HV*sum(ceil(s/64))，必须 **>256** 且 ≤384。
 G≠3 时 pack=4：256 tiles = 64 packs = 32 AIC × 2 pack；>256 保证每核至少 2 pack。
-约束：chunk_size=64，K=128，V∈{128,256}，HV/HK∈{1,2,3,4}。
+约束：chunk_size=64，K=128，V∈{128,256}，HV/HK∈[1,16]（HV/HK>4 走 arch35 单元调度）。
 含 packed varlen（B=1 + seqlens）。
 use_qk_l2norm True/False、use_gate True/False、use_exp2 True/False 都覆盖。
 False 时 executor 在调用前对 q/k 做 L2norm。
@@ -100,7 +102,8 @@ MIX_DTYPE_SPECS: list[tuple] = [
     ("varlen_g1_tail", "l2_gate1_sig1_neg1", "allgate_bf16", "bf16", "bf16", "bf16", "bf16", True),
 ]
 N_MIX_DTYPE = len(MIX_DTYPE_SPECS)
-N_PROFILES = N_ACCURACY_PROFILES + N_MIX_DTYPE
+N_GVA_PROFILES = 4 * N_FLAGS * 2  # GVA>4 追加块：4 shape × 24 flag × output_a 两套
+N_PROFILES = N_ACCURACY_PROFILES + N_MIX_DTYPE + N_GVA_PROFILES
 
 _BT = 64
 _MEDIUM_CHUNKS_MIN = 256  # exclusive: tiles must be > 256
@@ -111,7 +114,7 @@ _MEDIUM_HV_MAX = 32
 
 
 def _ok(hk: int, hv: int) -> bool:
-    return hk > 0 and hv % hk == 0 and 1 <= (hv // hk) <= 4
+    return hk > 0 and hv % hk == 0 and 1 <= (hv // hk) <= 16
 
 
 def _n_time_chunks(length: int) -> int:
@@ -276,7 +279,12 @@ def _make_profiles() -> list[dict]:
         s["flag_tag"] = f"{spec['flag_tag']}_a0"
         s["name"] = f"{spec['name']}_a0"
         extra.append(s)
-    return profiles + extra + _mix_dtype_profiles(start_id=n_base * 2)
+    return (
+        profiles
+        + extra
+        + _mix_dtype_profiles(start_id=n_base * 2)
+        + _gva_profiles(start_id=n_base * 2 + N_MIX_DTYPE)
+    )
 
 
 def _mix_dtype_profiles(start_id: int) -> list[dict]:
@@ -333,11 +341,66 @@ def _mix_dtype_profiles(start_id: int) -> list[dict]:
     return out
 
 
+def _gva_shape_table() -> list[dict]:
+    """GVA>4：arch35 按 (chunk, hk) 单元调度，每个单元只算一次 kkt。"""
+    rows: list[dict] = []
+
+    def add(name: str, B: int, HK: int, HV: int, T: int, V: int) -> None:
+        if not _ok(HK, HV):
+            raise ValueError(f"{name}: invalid GVA HK={HK} HV={HV}")
+        _assert_medium(name, B, HK, HV, T)
+        rows.append(dict(name=name, B=B, HK=HK, HV=HV, T=T, K=128, V=V, chunk_size=_BT))
+
+    add("G16_HK2_T576_V128", 1, 2, 32, 576, 128)   # G=16 上界；9*32=288
+    add("G16_HK2_T576_V256", 1, 2, 32, 576, 256)   # G=16 上界 × V256
+    add("G8_HK4_T576_V128", 1, 4, 32, 576, 128)    # G=8 全满子包；9*32=288
+    add("G5_HK4_T832_V128", 1, 4, 20, 832, 128)    # G=5 单元素子包；13*20=260
+    return rows
+
+
+def _gva_profiles(start_id: int) -> list[dict]:
+    """GVA>4 追加块接在 mix-dtype 之后，既有 case id 保持不变。"""
+    base: list[dict] = []
+    case_id = start_id
+    for shape in _gva_shape_table():
+        for tag, l2, gate, sigmoid, neg, exp2 in SUPPORTED_FLAGS:
+            spec = dict(shape)
+            spec.update(
+                dtype="bf16",
+                op=OP_NAME,
+                case_id=case_id,
+                seed=20260817 + case_id,
+                route="ascendc",
+                soc="ascend950",
+                use_qk_l2norm_in_kernel=l2,
+                use_gate_in_kernel=gate,
+                use_beta_sigmoid_in_kernel=sigmoid,
+                allow_neg_eigval=neg,
+                use_exp2=exp2,
+                output_a=True,
+                flag_tag=tag,
+            )
+            spec["name"] = f"{shape['name']}_{tag}"
+            base.append(spec)
+            case_id += 1
+    extra = []
+    for spec in base:
+        s = deepcopy(spec)
+        s["output_a"] = False
+        s["case_id"] = spec["case_id"] + len(base)
+        s["seed"] = 20260817 + s["case_id"]
+        s["flag_tag"] = f"{spec['flag_tag']}_a0"
+        s["name"] = f"{spec['name']}_a0"
+        extra.append(s)
+    return base + extra
+
+
 PROFILES = _make_profiles()
 if len(PROFILES) != N_PROFILES:
     raise RuntimeError(
         f"need {N_PROFILES} profiles "
-        f"({N_SHAPES} shapes x {N_FLAGS} flags x 2 output_a + {N_MIX_DTYPE} mix-dtype), "
+        f"({N_SHAPES} shapes x {N_FLAGS} flags x 2 output_a + {N_MIX_DTYPE} mix-dtype "
+        f"+ {N_GVA_PROFILES} gva>4), "
         f"got {len(PROFILES)}"
     )
 
@@ -455,7 +518,7 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
                 return i
         raise RuntimeError(f"no profile matching {substr!r} tag={tag!r}")
 
-    # TilingKey 固定为 0。MSS 覆盖 V128/256、尾块、不满 pack、varlen、G=2/3/4、B>1，
+    # TilingKey 固定为 0。MSS 覆盖 V128/256、尾块、不满 pack、varlen、G=2/3/4、GVA>4（G=5/16）、B>1，
     # 全部 24 组合法 flag（新 flag 落在 r1_T4160_V128），以及 g/beta/a_log bf16 混合。
     mss_idx = [
         _first("r1_T4160_V128", "l2_sig1_neg1"),
@@ -472,6 +535,8 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         _first("r1_T4160_V128", "nol2_sig1_neg1"),
         _first("r4_T1088_V256", "nol2_sig1_neg0"),
         _first("partial_HV5_T3328", "nol2_sig1_neg1"),
+        _first("G16_HK2_T576_V128", "l2_sig1_neg1"),
+        _first("G5_HK4_T832_V128", "l2_sig1_neg1"),
         _first("varlen_g2_v256", "nol2_sig0_neg0"),
         _first("r1_T4160_V128", "l2_gate1_sig1_neg1"),
         _first("r1_T4192_V128", "l2_gate1_sig1_neg1"),
@@ -516,7 +581,7 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
         json.dumps(perf, indent=1, ensure_ascii=False) + "\n"
     )
     # 精简精度：每种合法 flag 1 条（落在第一个 shape）+ 其余每个 shape 1 条（默认 flag）。
-    # 再复制一套 output_a=False（id = 原 id + 1200）。保留原精度 case id。
+    # 再复制一套 output_a=False（id = 原 id + N_BASE_PROFILES）。保留原精度 case id。
     slim_idx = list(range(N_FLAGS))
     for shape_i in range(1, N_SHAPES):
         slim_idx.append(shape_i * N_FLAGS)
@@ -524,7 +589,7 @@ def dump_json_files(out_dir: Path | None = None) -> dict:
     slim_idx.extend(range(N_ACCURACY_PROFILES, N_PROFILES))
     if len(slim_idx) != len(set(slim_idx)):
         raise RuntimeError(f"duplicate slim indices: {slim_idx}")
-    expected_slim = 2 * (N_FLAGS + (N_SHAPES - 1)) + N_MIX_DTYPE
+    expected_slim = 2 * (N_FLAGS + (N_SHAPES - 1)) + N_MIX_DTYPE + N_GVA_PROFILES
     if len(slim_idx) != expected_slim:
         raise RuntimeError(f"need {expected_slim} slim cases, got {len(slim_idx)}")
     slim = [all_cases[i] for i in slim_idx]

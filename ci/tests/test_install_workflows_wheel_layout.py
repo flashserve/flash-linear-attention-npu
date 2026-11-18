@@ -364,7 +364,8 @@ build_torch_custom() { echo WHEEL_BUILD_REACHED; }
                 self.assertEqual(result.returncode, 0, result.stderr)
                 values = json.loads(result.stdout.splitlines()[-1])
                 vendors = self.layers.runtime_plan(self.base)["vendors"]
-                self.assertEqual(len(vendors), 2 if full else 1)
+                # The full-base iteration installs a second OPP and retains the first.
+                self.assertEqual(len(vendors), 3 if full else 1)
                 self.assertEqual(values["ASCEND_CUSTOM_OPP_PATH"], os.pathsep.join(vendors))
                 self.assertEqual(values["FLA_NPU_OP_API_LIBS"], os.pathsep.join(
                     str(Path(p) / self.layers.LIBRARY) for p in vendors))

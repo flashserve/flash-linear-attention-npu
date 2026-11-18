@@ -28,6 +28,7 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 
 - BF16 用例：`{"dtype": "bf16", "B": 1, "HK": 1, "HV": 1, "T": 16, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_fwd_o", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend910b"}`
 - FP16 用例：`{"dtype": "fp16", "B": 1, "HK": 1, "HV": 1, "T": 16, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_fwd_o", "case_id": 1, "seed": 20260818, "route": "ascendc", "soc": "ascend910b"}`
+- A5 GVA 用例（`case_id` 2~5，`soc=ascend950`）：`HK=1 HV∈{4,16}`、`HK=4 HV=20`、`HK=16 HV=128`，覆盖 GVA 上边界 16、单元素子包 5 和全满子包 8。
 
 ## 执行方式
 

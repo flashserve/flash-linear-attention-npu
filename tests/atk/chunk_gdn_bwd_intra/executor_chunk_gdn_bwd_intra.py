@@ -176,7 +176,8 @@ def _compute_intermediates(inputs: dict[str, Any]):
     return tuple(outputs)
 
 
-def _cpu_ref(inputs: dict[str, Any]):
+def _cpu_ref(inputs: dict[str, Any], *, quantize_workspace: bool = True):
+    """CPU reference; optionally model the device's main-dtype workspace writes."""
     q, k, v, d_o = inputs["q"], inputs["k"], inputs["v"], inputs["d_o"]
     B, HK, T, _ = q.shape
     HV = v.shape[1]
@@ -190,10 +191,14 @@ def _cpu_ref(inputs: dict[str, Any]):
         for hv in range(HV):
             hk = hv // group
             length = end - start
-            # Stage 1 writes main dtype workspace before the three Cube MMADs.
-            a_bg = a_bg_all[b, hv, start:end, :length].to(main_dtype).to(calc)
-            a_beta = a_beta_all[b, hv, start:end, :length].to(main_dtype).to(calc)
-            d_local = d_all[b, hv, start:end, :length].to(main_dtype).to(calc)
+            a_bg = a_bg_all[b, hv, start:end, :length]
+            a_beta = a_beta_all[b, hv, start:end, :length]
+            d_local = d_all[b, hv, start:end, :length]
+            if quantize_workspace:
+                # Stage 1 writes main dtype workspace before the three Cube MMADs.
+                a_bg = a_bg.to(main_dtype).to(calc)
+                a_beta = a_beta.to(main_dtype).to(calc)
+                d_local = d_local.to(main_dtype).to(calc)
             outputs[0][b, hv, start:end] = (
                 a_bg @ k[b, hk, start:end].to(calc)
             )
@@ -208,7 +213,24 @@ def _cpu_ref(inputs: dict[str, Any]):
 
 def run_cpu(spec: dict[str, Any], high_precision: bool = False):
     inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
-    return _cpu_ref(inputs)
+    outputs = _cpu_ref(inputs)
+    if high_precision:
+        # 普通 CPU golden 保留设备输出的主 dtype；独立无量化 FP64
+        # 数学标杆由 run_cpu_benchmark 提供，不经过这里的输出转换。
+        main_dtype = inputs["main_dtype"]
+        outputs = tuple(output.to(main_dtype) for output in outputs)
+    return outputs
+
+
+def run_cpu_benchmark(spec: dict[str, Any]):
+    """FP64 mathematical benchmark without workspace or output quantization.
+
+    Inputs still originate from the same main/auxiliary-dtype samples as the DUT.
+    Only FunctionApi.cpu_benchmark normalizes the FP64 outputs to FP32 for ATK.
+    This is separate from run_cpu's device-matching quantized workspace reference.
+    """
+    inputs = build_inputs(spec, torch.device("cpu"), high_precision=True)
+    return _cpu_ref(inputs, quantize_workspace=False)
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
@@ -246,15 +268,29 @@ class FunctionApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
         self.high_precision = self.device == "cpu"
+        self.qkv_type = None
+
+    def cpu(self, input_data: InputDataset, with_output: bool = False):
+        """设备匹配 CPU 参考：主 dtype 输入，FP32 累加与工作区量化。"""
+        spec = _case_spec(input_data, OP_NAME)
+        return _finite_tuple(run_cpu(spec, high_precision=False), golden=True)
+
+    def cpu_benchmark(self, input_data: InputDataset, with_output: bool = False):
+        """高精度 CPU 真值（fp64 计算，输出归一 fp32）。"""
+        spec = _case_spec(input_data, OP_NAME)
+        return _finite_tuple(run_cpu_benchmark(spec), golden=True)
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME)
         if self.device in {"npu", "pyaclnn"}:
-            outputs = run_npu(spec, input_data)
-        elif self.device == "cpu":
-            outputs = run_cpu(spec, self.high_precision)
-        else:
-            raise RuntimeError(
-                f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}"
-            )
-        return _finite_tuple(outputs, golden=self.device == "cpu")
+            spec = _case_spec(input_data, OP_NAME)
+            return _finite_tuple(run_npu(spec, input_data), golden=False)
+        if self.device == "cpu":
+            # ATK runs benchmark tasks through __call__ with this flag; BaseApi
+            # does not automatically dispatch to a cpu_benchmark method.
+            if self.task_result.is_benchmark_task:
+                return self.cpu_benchmark(input_data, with_output)
+            spec = _case_spec(input_data, OP_NAME)
+            return _finite_tuple(run_cpu(spec, high_precision=True), golden=True)
+        raise RuntimeError(
+            f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}"
+        )

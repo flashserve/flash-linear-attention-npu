@@ -3,6 +3,8 @@
  * BSD 3-Clause License.
  */
 
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
 #include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "aclnn_chunk_gated_delta_rule_fwd_prepare.h"
@@ -24,6 +26,7 @@
 #include "opdev/shape_utils.h"
 #include "opdev/tensor_view_utils.h"
 #include <cstdint>
+#include <string>
 
 using namespace op;
 
@@ -429,10 +432,9 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t ratio = HV / HK;
-    if (!(ratio >= 1 && ratio <= (IsA2PrepareSoc() ? 16 : 4))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "Hv/Hk", std::to_string(ratio),
-            IsA2PrepareSoc() ? "Hv/Hk must be in [1,16] on A2/A3" : "Hv/Hk must be in [1,4] on Ascend950");
+    if (!(ratio >= 1 && ratio <= 16)) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "Hv/Hk", std::to_string(ratio),
+                                             "Hv/Hk must be in [1,16]");
         return ACLNN_ERR_PARAM_INVALID;
     }
 

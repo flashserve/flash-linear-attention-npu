@@ -587,6 +587,8 @@ def _print_install_summary(summary: dict, state: str) -> None:
     print(f"[fla-npu] previous overlay OPP ({summary['previous_state']}): "
           f"{summary['previous_overlay_opp'] or 'none'}")
     print(f"[fla-npu] installed OPP: {summary['installed_opp'] or 'none (no OPP supplied; previous selection retained)'}")
+    if "opp_order" in summary:
+        print(f"[fla-npu] {state} OPP order (newest first): " + " -> ".join(summary["opp_order"]))
     detail = " (installed, not enabled; previous active combination unchanged)" if state == "pending" else ""
     print(f"[fla-npu] combination: {state}{detail}")
     print(f"[fla-npu] selection for a new process: {summary['selection']} (restart Python processes before use)")
