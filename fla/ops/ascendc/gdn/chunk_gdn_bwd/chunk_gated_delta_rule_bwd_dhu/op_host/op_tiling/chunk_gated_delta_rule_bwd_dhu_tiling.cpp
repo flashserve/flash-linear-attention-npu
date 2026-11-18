@@ -108,9 +108,15 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
                 OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::DhuLayout::BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::DhuLayout::BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::DhuLayout::NTD : GDN::DhuLayout::TND;
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::DhuLayout::BSND : GDN::DhuLayout::BNSD;
+
+    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201 &&
+        layoutValue == GDN::DhuLayout::BSND) {
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout,
+                                  "BNSD or NTD on DAV_9201");
+        return ge::GRAPH_FAILED;
+    }
 
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);

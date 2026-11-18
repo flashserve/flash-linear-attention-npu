@@ -30,8 +30,6 @@ namespace FwdHLayout {
 enum Layout : int64_t {
     BNSD = 0,
     BSND = 1,
-    NTD = 2,
-    TND = 3,
 };
 } // namespace FwdHLayout
 

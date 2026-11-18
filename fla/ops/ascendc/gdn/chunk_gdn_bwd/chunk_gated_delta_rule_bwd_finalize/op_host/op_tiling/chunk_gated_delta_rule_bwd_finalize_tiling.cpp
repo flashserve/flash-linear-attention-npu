@@ -95,10 +95,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape h = hShape->GetStorageShape();
     const gert::Shape dh = dhShape->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? q.GetDim(2) : q.GetDim(1);
-    tiling.T = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? q.GetDim(1) : q.GetDim(2);
+    tiling.HK = (inputLayout == GDN::FinalizeLayout::BSND) ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = (inputLayout == GDN::FinalizeLayout::BSND) ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = (inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? v.GetDim(2) : v.GetDim(1);
+    tiling.HV = (inputLayout == GDN::FinalizeLayout::BSND) ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -123,12 +123,12 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
 
-    OP_CHECK_IF(k.GetDim(0) != tiling.B ||
-                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ?
+    if (k.GetDim(0) != tiling.B ||
+                    ((inputLayout == GDN::FinalizeLayout::BSND) ?
                          (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK) :
                          (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
-                    k.GetDim(3) != tiling.K,
-                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    k.GetDim(3) != tiling.K) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                     context->GetNodeName(), "q/k",
                     std::string("q=") +
                         (std::string("[") + std::to_string(q.GetDim(0)) + "," + std::to_string(q.GetDim(1)) + "," +
@@ -136,10 +136,11 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
                         ", k=" +
                         (std::string("[") + std::to_string(k.GetDim(0)) + "," + std::to_string(k.GetDim(1)) + "," +
                          std::to_string(k.GetDim(2)) + "," + std::to_string(k.GetDim(3)) + "]"),
-                    "k must have the same shape as q in the selected layout"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(v.GetDim(0) != tiling.B ||
-                    ((inputLayout == GDN::FinalizeLayout::BSND || inputLayout == GDN::FinalizeLayout::TND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
+                    "k must have the same shape as q in the selected layout");
+        return ge::GRAPH_FAILED;
+    }
+    if (v.GetDim(0) != tiling.B ||
+                    ((inputLayout == GDN::FinalizeLayout::BSND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
                                        : (v.GetDim(1) != tiling.HV || v.GetDim(2) != tiling.T)) ||
                     vNew.GetDim(0) != tiling.B || vNew.GetDim(1) != tiling.HV ||
                     vNew.GetDim(2) != tiling.T || vNew.GetDim(3) != tiling.V ||
@@ -191,14 +192,14 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     if (qkvLayout == nullptr) {
         qkvLayout = "BNSD";
     }
-    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
-                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
-                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
-                return ge::GRAPH_FAILED);
+    if (std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0) {
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t layoutValue =
-        std::strcmp(qkvLayout, "BNSD") == 0 ? GDN::FinalizeLayout::BNSD :
-        std::strcmp(qkvLayout, "BSND") == 0 ? GDN::FinalizeLayout::BSND :
-        std::strcmp(qkvLayout, "NTD") == 0 ? GDN::FinalizeLayout::NTD : GDN::FinalizeLayout::TND;
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::FinalizeLayout::BSND : GDN::FinalizeLayout::BNSD;
     tiling->layout = layoutValue;
     // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
     const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());

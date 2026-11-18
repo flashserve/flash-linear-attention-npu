@@ -79,18 +79,18 @@ private:
         const uint32_t rows = remaining < VECTOR_PART_TOKENS ? remaining : VECTOR_PART_TOKENS;
         const uint32_t count = rows * HEAD_DIM;
         if (count == 0) return;
-        const uint64_t vv = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
+        const uint64_t vv = (t_->layout == GDN::IntraLayout::BSND)
             ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
                t_->valueHeads + hv) * HEAD_DIM
             : ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv) *
                t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
         if (loadK) {
-            const uint64_t kk = (t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)
+            const uint64_t kk = (t_->layout == GDN::IntraLayout::BSND)
                 ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
                    t_->qkHeads + hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize)) * HEAD_DIM
                 : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize)) *
                    t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
-            if (!(t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)) {
+            if (!(t_->layout == GDN::IntraLayout::BSND)) {
                 AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
             } else {
                 AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),
@@ -100,7 +100,7 @@ private:
                 AscendC::DataCopyPad(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], cp, pad);
             }
         }
-        if (!(t_->layout == GDN::IntraLayout::BSND || t_->layout == GDN::IntraLayout::TND)) {
+        if (!(t_->layout == GDN::IntraLayout::BSND)) {
             AscendC::DataCopy(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], count);
         } else {
             AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),

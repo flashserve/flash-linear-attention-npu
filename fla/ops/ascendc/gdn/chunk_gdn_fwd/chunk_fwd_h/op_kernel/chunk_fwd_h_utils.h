@@ -274,7 +274,7 @@ __aicore__ inline uint64_t FwdHKOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t physicalBatch, uint32_t kh,
                                        uint32_t tokenBegin)
 {
-    if ((tiling.layout == GDN::FwdHLayout::BSND || tiling.layout == GDN::FwdHLayout::TND)) {
+    if ((tiling.layout == GDN::FwdHLayout::BSND)) {
         return ((static_cast<uint64_t>(physicalBatch) * tiling.seqlen + tokenBegin) *
                 tiling.kNumHead + kh) * FWD_H_K;
     }

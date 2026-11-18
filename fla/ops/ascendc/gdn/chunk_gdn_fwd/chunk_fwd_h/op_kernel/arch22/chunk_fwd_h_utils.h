@@ -46,9 +46,7 @@
 #define CATLASS_ARCH 2201
 #endif
 
-// ---- 内联自原 chunk_fwd_h_gated_struct.h：本尊算子 kernel 侧 tiling 结构体镜像
-// （字段序/类型对齐框架 BEGIN_TILING_DATA_DEF 宏生成的同名结构；fast kernel launch
-// 扩展独立编译 kernel 时无该自动生成头，故提供同构 plain struct，可按值经 <<<>>> 传入）
+// ---- gated preload 内部使用的本地 tiling 视图，由 FwdHKernelArgs 填充并按引用传递。
 struct ChunkGatedDeltaRuleFwdHTilingData {
     int64_t layout;
     int64_t batch;
@@ -606,7 +604,6 @@ struct GDNFwdHRunningQPreload {
 
 struct BlockSchedulerGdnFwdHPreload {
     uint32_t batch{0};
-    int64_t layout_{0};
     uint32_t seqlen{0};
     uint32_t kNumHead{0};
     uint32_t vNumHead{0};
@@ -657,7 +654,6 @@ struct BlockSchedulerGdnFwdHPreload {
     void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
 
         batch = tiling.batch;
-        layout_ = tiling.layout;
         seqlen = tiling.seqlen;
         kNumHead = tiling.kNumHead;
         vNumHead = tiling.vNumHead;
@@ -2035,8 +2031,8 @@ __aicore__ inline constexpr bool FwdHGatedReusable()
     return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G;
 }
 
-// gated 复用分支：构造 gated tiling 镜像（workspace gatedTilingOffset 段，各 AIC
-// 写入同值）后调 preload kernel；USE_EXP2 携带 g 域，STATE_V_FIRST 携带布局。
+// gated 复用分支：构造本地 tiling 后调用 preload kernel；
+// USE_EXP2 携带 g 域，STATE_V_FIRST 携带状态布局。
 template <typename GateT, typename StateT, bool USE_EXP2, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
