@@ -13,7 +13,7 @@ if (BUILD_OPEN_PROJECT)
     )
 endif()
 
-add_modules_sources(OPTYPE gdn_recoverssm_verify ACLNNTYPE aclnn_inner)
+add_modules_sources(OPTYPE gdn_recoverssm_verify ACLNNTYPE aclnn_exclude)
 add_ops_compile_options(
     OP_NAME GdnRecoverssmVerify
     OPTIONS --cce-auto-sync=off
