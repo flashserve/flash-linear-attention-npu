@@ -41,12 +41,12 @@ struct Params {
     aclTensor *out;
 };
 
-inline uint64_t ElementBytes(const aclTensor *t)
+inline uint64_t GetElementSize(const aclTensor *t)
 {
     return t->GetDataType() == op::DataType::DT_BF16 ? 2 : 4;
 }
 
-inline bool Type(const aclTensor *t, std::initializer_list<op::DataType> allowed,
+inline bool CheckTypeValid(const aclTensor *t, std::initializer_list<op::DataType> allowed,
                  const char *name, const char *expected, const char *entity)
 {
     if (!t || std::find(allowed.begin(), allowed.end(), t->GetDataType()) != allowed.end()) return true;
@@ -54,7 +54,7 @@ inline bool Type(const aclTensor *t, std::initializer_list<op::DataType> allowed
     return false;
 }
 
-inline bool Shape(const aclTensor *t, std::initializer_list<int64_t> expected, const char *name)
+inline bool CheckShapeValid(const aclTensor *t, std::initializer_list<int64_t> expected, const char *name)
 {
     constexpr const char *entity = "aclnnRecurrentGatedDeltaRule";
     if (!t) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, name, "input argument must not be nullptr"); return false; }
@@ -70,14 +70,14 @@ inline bool Shape(const aclTensor *t, std::initializer_list<int64_t> expected, c
 }
 
 // Validate every multiply/add before using an address or narrowing a DMA gap.
-inline bool ViewValid(const aclTensor *t)
+inline bool CheckViewBoundsValid(const aclTensor *t)
 {
     if (!t) return true;
     const auto &shape = t->GetViewShape();
     const auto &stride = t->GetViewStrides();
     const auto &storageShape = t->GetStorageShape();
     uint64_t storage = 1;
-    const uint64_t limit = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / ElementBytes(t);
+    const uint64_t limit = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / GetElementSize(t);
     for (size_t i = 0; i < storageShape.GetDimNum(); ++i) {
         int64_t n = storageShape.GetDim(i);
         if (n <= 0 || static_cast<uint64_t>(n) > limit / storage) return false;
@@ -93,20 +93,20 @@ inline bool ViewValid(const aclTensor *t)
         last += static_cast<uint64_t>(n - 1) * static_cast<uint64_t>(s);
     }
     const uintptr_t base = reinterpret_cast<uintptr_t>(t->GetStorageAddr());
-    return base != 0 && (last + 1) <= (std::numeric_limits<uintptr_t>::max() - base) / ElementBytes(t);
+    return base != 0 && (last + 1) <= (std::numeric_limits<uintptr_t>::max() - base) / GetElementSize(t);
 }
 
 using Interval = std::pair<uintptr_t, uintptr_t>;
-inline Interval Extent(const aclTensor *t)
+inline Interval GetAddressRange(const aclTensor *t)
 {
     uint64_t last = 0;
     for (size_t i = 0; i < t->GetViewShape().GetDimNum(); ++i)
         last += (t->GetViewShape().GetDim(i) - 1) * t->GetViewStrides()[i];
-    uintptr_t begin = reinterpret_cast<uintptr_t>(t->GetStorageAddr()) + t->GetViewOffset() * ElementBytes(t);
-    return {begin, begin + (last + 1) * ElementBytes(t)};
+    uintptr_t begin = reinterpret_cast<uintptr_t>(t->GetStorageAddr()) + t->GetViewOffset() * GetElementSize(t);
+    return {begin, begin + (last + 1) * GetElementSize(t)};
 }
 
-inline std::vector<Interval> Intervals(const aclTensor *t)
+inline std::vector<Interval> GetAddressIntervals(const aclTensor *t)
 {
     std::vector<std::pair<uint64_t, uint64_t>> axes;
     for (size_t i = 0; i < t->GetViewShape().GetDimNum(); ++i)
@@ -119,21 +119,21 @@ inline std::vector<Interval> Intervals(const aclTensor *t)
         span *= axes[dense].second;
         ++dense;
     }
-    std::vector<uintptr_t> starts{Extent(t).first};
+    std::vector<uintptr_t> starts{GetAddressRange(t).first};
     for (size_t i = dense; i < axes.size(); ++i) {
         std::vector<uintptr_t> expanded;
         for (auto start : starts)
             for (uint64_t j = 0; j < axes[i].second; ++j)
-                expanded.push_back(start + j * axes[i].first * ElementBytes(t));
+                expanded.push_back(start + j * axes[i].first * GetElementSize(t));
         starts.swap(expanded);
     }
     std::sort(starts.begin(), starts.end());
     std::vector<Interval> result;
-    for (auto start : starts) result.emplace_back(start, start + span * ElementBytes(t));
+    for (auto start : starts) result.emplace_back(start, start + span * GetElementSize(t));
     return result;
 }
 
-inline bool Intersect(const std::vector<Interval> &a, const std::vector<Interval> &b)
+inline bool HasAddressOverlap(const std::vector<Interval> &a, const std::vector<Interval> &b)
 {
     size_t i = 0, j = 0;
     while (i < a.size() && j < b.size()) {
@@ -143,23 +143,23 @@ inline bool Intersect(const std::vector<Interval> &a, const std::vector<Interval
     return false;
 }
 
-inline bool Alias(const aclTensor *a, const aclTensor *b)
+inline bool HasTensorOverlap(const aclTensor *a, const aclTensor *b)
 {
     if (!a || !b) return false;
-    auto x = Extent(a), y = Extent(b);
+    auto x = GetAddressRange(a), y = GetAddressRange(b);
     if (x.second <= y.first || y.second <= x.first) return false;
-    return Intersect(Intervals(a), Intervals(b));
+    return HasAddressOverlap(GetAddressIntervals(a), GetAddressIntervals(b));
 }
 
-inline bool MatrixView(const aclTensor *t, size_t rowAxis)
+inline bool CheckMatrixStridesValid(const aclTensor *t, size_t rowAxis)
 {
     for (auto stride : t->GetViewStrides()) if (stride <= 0) return false;
     const auto &s = t->GetViewStrides();
     return s[s.size() - 1] == 1 && s[rowAxis] >= 128 &&
-        static_cast<uint64_t>(s[rowAxis] - 128) <= std::numeric_limits<uint32_t>::max() / ElementBytes(t);
+        static_cast<uint64_t>(s[rowAxis] - 128) <= std::numeric_limits<uint32_t>::max() / GetElementSize(t);
 }
 
-inline aclnnStatus Check(const Params &p)
+inline aclnnStatus CheckParams(const Params &p)
 {
     using op::DataType;
     constexpr const char *entity = "aclnnRecurrentGatedDeltaRule";
@@ -204,7 +204,7 @@ inline aclnnStatus Check(const Params &p)
         {"ssm_state_indices",p.indices,{DataType::DT_INT32},"[int32]",0},
         {"num_accepted_tokens",p.accepted,{DataType::DT_INT32},"[int32]",1}};
     for (const auto &input : tensors) {
-        if (!Type(input.second,input.allowed,input.first,input.expected,entity)) return ACLNN_ERR_PARAM_INVALID;
+        if (!CheckTypeValid(input.second,input.allowed,input.first,input.expected,entity)) return ACLNN_ERR_PARAM_INVALID;
         if (input.second && input.second->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
             OP_LOGE_FOR_INVALID_FORMAT(entity, input.first, "FRACTAL_NZ", "any format except FRACTAL_NZ");
             return ACLNN_ERR_PARAM_INVALID;
@@ -236,10 +236,10 @@ inline aclnnStatus Check(const Params &p)
             std::to_string(b)+","+std::to_string(hv),"B*HV must fit int64 task addressing");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!Shape(p.q,{t,hk,128},"query") || !Shape(p.k,{t,hk,128},"key") || !Shape(p.v,{t,hv,128},"value") ||
-        !Shape(p.beta,{t,hv},"beta") || !Shape(p.state,{blocks,hv,128,128},"state") || !Shape(p.out,{t,hv,128},"out")) return ACLNN_ERR_PARAM_INVALID;
+    if (!CheckShapeValid(p.q,{t,hk,128},"query") || !CheckShapeValid(p.k,{t,hk,128},"key") || !CheckShapeValid(p.v,{t,hv,128},"value") ||
+        !CheckShapeValid(p.beta,{t,hv},"beta") || !CheckShapeValid(p.state,{blocks,hv,128,128},"state") || !CheckShapeValid(p.out,{t,hv,128},"out")) return ACLNN_ERR_PARAM_INVALID;
     if (p.indices->GetViewShape().GetDimNum() == 1) {
-        if (!Shape(p.indices,{t},"ssm_state_indices")) return ACLNN_ERR_PARAM_INVALID;
+        if (!CheckShapeValid(p.indices,{t},"ssm_state_indices")) return ACLNN_ERR_PARAM_INVALID;
     } else if (p.indices->GetViewShape().GetDimNum() == 2) {
         if (p.indices->GetViewShape().GetDim(0) != b || p.indices->GetViewShape().GetDim(1) <= 0) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(entity,"ssm_state_indices",rgdn_error::ShapeText(p.indices->GetViewShape()),
@@ -250,10 +250,10 @@ inline aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_SHAPEDIM(entity,"ssm_state_indices",std::to_string(p.indices->GetViewShape().GetDimNum()),"1 or 2");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if ((p.g && !Shape(p.g,{t,hv},"g")) || (p.aLog && !Shape(p.aLog,{hv},"A_log")) ||
-        (p.bias && !Shape(p.bias,{hv},"dt_bias")) || (p.accepted && !Shape(p.accepted,{b},"num_accepted_tokens"))) return ACLNN_ERR_PARAM_INVALID;
+    if ((p.g && !CheckShapeValid(p.g,{t,hv},"g")) || (p.aLog && !CheckShapeValid(p.aLog,{hv},"A_log")) ||
+        (p.bias && !CheckShapeValid(p.bias,{hv},"dt_bias")) || (p.accepted && !CheckShapeValid(p.accepted,{b},"num_accepted_tokens"))) return ACLNN_ERR_PARAM_INVALID;
     for (const auto &input : tensors) {
-        if (input.second && !ViewValid(input.second)) {
+        if (input.second && !CheckViewBoundsValid(input.second)) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,input.first,
                 "view exceeds storage bounds, has invalid dimensions/strides, or overflows address arithmetic; shape="+
                 rgdn_error::ShapeText(input.second->GetViewShape())+", strides="+
@@ -264,7 +264,7 @@ inline aclnnStatus Check(const Params &p)
     }
     for (const auto &input : required) {
         if (input.second != p.q && input.second != p.k && input.second != p.v && input.second != p.state) continue;
-        if (!MatrixView(input.second,input.second == p.state ? 2 : 0)) {
+        if (!CheckMatrixStridesValid(input.second,input.second == p.state ? 2 : 0)) {
             OP_LOGE_FOR_INVALID_STRIDE(entity,input.first,rgdn_error::StrideText(input.second->GetViewStrides()),
                 input.second == p.state ? "positive strides, K stride=1, V stride>=128, row byte gap<=UINT32_MAX" :
                 "positive strides, last stride=1, token stride>=128, token byte gap<=UINT32_MAX");
@@ -288,7 +288,7 @@ inline aclnnStatus Check(const Params &p)
         span+=(axis.second-1)*axis.first;
     }
     if (!disjoint) {
-        auto intervals=Intervals(p.state);
+        auto intervals=GetAddressIntervals(p.state);
         for (size_t i=1;i<intervals.size();++i) if(intervals[i-1].second>intervals[i].first) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,"state",
                 "writable State elements overlap; strides="+rgdn_error::StrideText(p.state->GetViewStrides()));
@@ -297,13 +297,13 @@ inline aclnnStatus Check(const Params &p)
     }
     for (const auto &input : tensors) {
         if (std::string(input.first) == "state" || std::string(input.first) == "out") continue;
-        if (Alias(p.state,input.second) || Alias(p.out,input.second)) {
+        if (HasTensorOverlap(p.state,input.second) || HasTensorOverlap(p.out,input.second)) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,input.first,
-                std::string("read-only input overlaps writable ")+(Alias(p.state,input.second) ? "state" : "out"));
+                std::string("read-only input overlaps writable ")+(HasTensorOverlap(p.state,input.second) ? "state" : "out"));
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
-    if (Alias(p.state,p.out)) {
+    if (HasTensorOverlap(p.state,p.out)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,"state,out","writable State and out storage overlap");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -337,8 +337,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(
     const rgdn_check::Params params{query, key, value, beta, stateRef, actualSeqLengths,
         ssmStateIndices, g, gk, numAcceptedTokens, aLog, dtBias, scaleValue,
         useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, out};
-    // Preserve parameter-specific null-pointer status in the unified interface.
-    const aclnnStatus checkRet = rgdn_check::Check(params);
+    const aclnnStatus checkRet = rgdn_check::CheckParams(params);
     if (checkRet != ACLNN_SUCCESS) {
         return checkRet;
     }
