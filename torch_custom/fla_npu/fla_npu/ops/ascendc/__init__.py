@@ -425,6 +425,13 @@ def _has_tensor_requiring_grad(*values) -> bool:
     return False
 
 
+def causal_conv1d_grouped(inputs, weights, cu_seqlens=None):
+    """Apply a separate width-2/3/4 causal convolution and SiLU to each [T, C] input."""
+    from ._causal_conv1d_grouped import causal_conv1d_grouped as grouped
+
+    return grouped(inputs, weights, cu_seqlens)
+
+
 class _FastGeluCustomFunction:
     @staticmethod
     def apply(input_tensor):
@@ -589,6 +596,7 @@ validate_backend_environment()
 _prepare_direct_runtime(raise_on_error=False)
 
 __all__ = [
+    "causal_conv1d_grouped",
     "FALLBACKS",
     "install_torch_npu_ops_compat",
     "BACKENDS",
