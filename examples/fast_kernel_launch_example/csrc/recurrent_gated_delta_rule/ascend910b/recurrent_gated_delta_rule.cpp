@@ -176,7 +176,6 @@ static RecurrentGatedDeltaRuleTilingData CalcTilingParams(const at::Tensor &quer
     ctx.ssmStateShape = &ssmShape;
     ctx.scale = scaleVal;
     ctx.hasGama = hasG ? 1U : 0U;
-    ctx.hasGamaK = hasGk ? 1U : 0U;
     ctx.hasAcceptedTokens = hasAcceptedTokens ? 1U : 0U;
     ctx.stateDtype = ToGeStateDtype(state.scalar_type());
     ctx.aivNum = ascendcPlatform->GetCoreNumAiv();

@@ -8,6 +8,9 @@ device=${NPU_DEVICE_ID:-0}
 output=${ATK_OUTPUT_ROOT:-./arch22_results}
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
+# OMP_NUM_THREADS/MKL_NUM_THREADS are pinned to 1: ATK accuracy comparison requires
+# determinism, and multi-threaded BLAS reduction order introduces ~1e-6 jitter. They
+# only apply to this script's process and are not inherited by the caller.
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 case_file=atk_recurrent_gated_delta_rule_arch22.json
 case_args=()

@@ -1,3 +1,5 @@
+#include <cstring>
+
 #include "chunk_gated_delta_rule_bwd_finalize.h"
 
 #include "opdev/make_op_executor.h"
@@ -47,14 +49,21 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
     bool useExp2,
     const aclTensor *dqOut, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor, const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE_WITH_INVALID_ATTR("ChunkGatedDeltaRuleBwdFinalize", "layout", layout == nullptr ? "nullptr" : layout,
+                                  "BNSD, BSND, NTD or TND");
+        return {nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
     L0_DFX(ChunkGatedDeltaRuleBwdFinalize, q, k, v, vNew, dO, du, g, beta, h, dh, a,
            qRstdOptional, kRstdOptional, betaRawOptional,
            cuSeqlensOptional, chunkIndicesOptional,
            scale, chunkSize, useQkL2NormInKernel,
            useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
-           dqOut, dkOut, dvOut, dbetaOut, dgOut);
+           layout, dqOut, dkOut, dvOut, dbetaOut, dgOut);
 
     const aclTensor *cuSeqlens = ConvertIntArray(cuSeqlensOptional, executor);
     const aclTensor *chunkIndices = ConvertIntArray(chunkIndicesOptional, executor);
@@ -71,7 +80,8 @@ const std::array<const aclTensor *, 5> ChunkGatedDeltaRuleBwdFinalize(
                  cuSeqlens, chunkIndices),
         OP_OUTPUT(dqOut, dkOut, dvOut, dbetaOut, dgOut),
         OP_ATTR(scale, chunkSize, useQkL2NormInKernel,
-                useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2));
+                useBetaSigmoidInKernel, useGateInKernel, stateVFirst, useExp2,
+                layout));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE(OP_NAME, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr};

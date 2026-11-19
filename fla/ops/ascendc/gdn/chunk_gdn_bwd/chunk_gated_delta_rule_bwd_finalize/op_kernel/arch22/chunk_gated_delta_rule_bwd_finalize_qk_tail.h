@@ -16,6 +16,9 @@ struct A2FinalizeQkTailArgs {
     GM_ADDR dq;
     GM_ADDR dk;
     bool useQkL2norm;
+    int64_t qkHeads{1};
+    int64_t tokens{1};
+    bool sequenceMajor{false};
 };
 
 template <typename QT>
@@ -29,9 +32,15 @@ template <typename QT>
 struct A2FinalizeQkTailGm {
     AscendC::GlobalTensor<QT> qGm, kGm, dq1Gm, dk1Gm, dk2Gm, dqGm, dkGm;
     AscendC::GlobalTensor<float> qRstdGm, kRstdGm;
+    int64_t qkHeads{1};
+    int64_t tokens{1};
+    bool sequenceMajor{false};
 
     __aicore__ inline void Init(const A2FinalizeQkTailArgs &args, GM_ADDR dkWy)
     {
+        qkHeads = args.qkHeads;
+        tokens = args.tokens;
+        sequenceMajor = args.sequenceMajor;
         qGm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(args.q));
         kGm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(args.k));
         dq1Gm.SetGlobalBuffer(reinterpret_cast<__gm__ QT *>(args.dq1));
@@ -155,6 +164,9 @@ __aicore__ inline void A2FinalizeQkTailRows(
     constexpr uint32_t K = 128;
     const uint32_t count = rows * K;
     const int64_t offset = scalarOffset * K;
+    const int64_t publicOffset = gm.sequenceMajor ?
+        ((scalarOffset / (gm.qkHeads * gm.tokens) * gm.tokens + scalarOffset % gm.tokens) *
+         gm.qkHeads + scalarOffset / gm.tokens % gm.qkHeads) * K : offset;
     const auto &qInput = views.qInput;
     const auto &dqInput = views.dqInput;
     const auto &dkInput = views.dkInput;
@@ -180,8 +192,17 @@ __aicore__ inline void A2FinalizeQkTailRows(
     AscendC::DataCopy(dkInput, dk1Gm[offset], count);
     AscendC::DataCopy(dkWyInput, dk2Gm[dkWyOffset], count);
     if constexpr (USE_QK_L2NORM) {
-        AscendC::DataCopy(qInput, qGm[offset], count);
-        AscendC::DataCopy(kInput, kGm[offset], count);
+        if (gm.sequenceMajor) {
+            const AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(K * sizeof(QT)),
+                static_cast<uint32_t>((gm.qkHeads - 1) * K * sizeof(QT)), 0, 0};
+            const AscendC::DataCopyPadExtParams<QT> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(qInput, qGm[publicOffset], copy, pad);
+            AscendC::DataCopyPad(kInput, kGm[publicOffset], copy, pad);
+        } else {
+            AscendC::DataCopy(qInput, qGm[offset], count);
+            AscendC::DataCopy(kInput, kGm[offset], count);
+        }
         if constexpr (PREFETCH_RSTD) {
             A2FinalizeCopyIn(views.qRstdInput, qRstdGm, scalarOffset, rows);
             A2FinalizeCopyIn(views.kRstdInput, kRstdGm, scalarOffset, rows);
@@ -218,8 +239,16 @@ __aicore__ inline void A2FinalizeQkTailRows(
     }
     // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
     AscendC::PipeBarrier<PIPE_ALL>();
-    AscendC::DataCopy(dqGm[offset], dqInput, count);
-    AscendC::DataCopy(dkGm[offset], dkInput, count);
+    if (gm.sequenceMajor) {
+        const AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
+            static_cast<uint32_t>(K * sizeof(QT)), 0,
+            static_cast<uint32_t>((gm.qkHeads - 1) * K * sizeof(QT)), 0};
+        AscendC::DataCopyPad(dqGm[publicOffset], dqInput, copy);
+        AscendC::DataCopyPad(dkGm[publicOffset], dkInput, copy);
+    } else {
+        AscendC::DataCopy(dqGm[offset], dqInput, count);
+        AscendC::DataCopy(dkGm[offset], dkInput, count);
+    }
     AscendC::PipeBarrier<PIPE_ALL>();
 }
 

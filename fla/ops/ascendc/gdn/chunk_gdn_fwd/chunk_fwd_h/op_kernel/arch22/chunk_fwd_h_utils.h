@@ -46,10 +46,9 @@
 #define CATLASS_ARCH 2201
 #endif
 
-// ---- 内联自原 chunk_fwd_h_gated_struct.h：本尊算子 kernel 侧 tiling 结构体镜像
-// （字段序/类型对齐框架 BEGIN_TILING_DATA_DEF 宏生成的同名结构；fast kernel launch
-// 扩展独立编译 kernel 时无该自动生成头，故提供同构 plain struct，可按值经 <<<>>> 传入）
+// ---- gated preload 内部使用的本地 tiling 视图，由 FwdHKernelArgs 填充并按引用传递。
 struct ChunkGatedDeltaRuleFwdHTilingData {
+    int64_t layout;
     int64_t batch;
     int64_t seqlen;
     int64_t kNumHead;
@@ -383,6 +382,11 @@ public:
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
+        if (mActualThisSubBlock == 0) {
+            Arch::CrossCoreWaitFlag(cube1Done);
+            Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
+            return;
+        }
         uint32_t mOffset = subBlockIdx * mActualPerSubBlock;
         uint32_t nOffset = 0;
         // 当前场景内部一定连续
@@ -583,6 +587,7 @@ struct GDNFwdHStreamPreload {
     uint32_t kHeadIdx{0};
     uint32_t shapeBatchIdx{0};
     uint32_t tokenBatchIdx{0};
+    uint32_t stateBatchIdx{0};
      
     uint32_t chunkOffset{0};
     uint32_t tokenOffset{0};
@@ -608,6 +613,7 @@ struct BlockSchedulerGdnFwdHPreload {
     uint32_t vBlockSize{128};
     uint32_t isVariedLen{0};
     uint32_t tokenBatch{0};
+    uint32_t originalTokenBatch{0};
     bool useInitialState{false};
     bool storeFinalState{false};
     uint64_t numSeqWorkspaceOffset{0};
@@ -645,40 +651,66 @@ struct BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreload() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
+    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
 
-        batch = gdnFwdHTilingData->batch;
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        tokenBatch = gdnFwdHTilingData->tokenBatch;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        batch = tiling.batch;
+        seqlen = tiling.seqlen;
+        kNumHead = tiling.kNumHead;
+        vNumHead = tiling.vNumHead;
+        kHeadDim = tiling.kHeadDim;
+        vHeadDim = tiling.vHeadDim;
+        chunkSize = tiling.chunkSize;
+        isVariedLen = tiling.isVariedLen;
+        tokenBatch = tiling.tokenBatch;
+        originalTokenBatch = tokenBatch;
+        useInitialState = tiling.useInitialState;
+        storeFinalState = tiling.storeFinalState;
+        numSeqWorkspaceOffset = tiling.numSeqWorkspaceOffset;
+        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
         gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
         gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         if (isVariedLen) {
-            gmNumChunks.SetValue(0, 0);
-            gmNumSeq.SetValue(0, 0);
+            // The prefix tables are shared by every AIC/AIV block.  Building
+            // them independently lets one block read an entry while another
+            // block is still writing it, which can produce an invalid
+            // chunkOffset and subsequently out-of-range epilogue transfers.
+            if ASCEND_IS_AIC {
+                if (AscendC::GetBlockIdx() == 0) {
+                    gmNumChunks.SetValue(0, 0);
+                    gmNumSeq.SetValue(0, 0);
+                    uint32_t actualBatch = 0;
+                    int64_t prevSeq = 0, currSeq;
+                    int64_t chunkPrefix = 0;
+                    for (uint32_t b = 1; b <= tokenBatch; b++) {
+                        currSeq = gmSeqlen.GetValue(b);
+                        int64_t batchSeqLen = currSeq - prevSeq;
+                        if (batchSeqLen > 0) {
+                            actualBatch++;
+                            gmNumSeq.SetValue(actualBatch, currSeq);
+                            int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
+                            chunkPrefix += batchChunk;
+                            gmNumChunks.SetValue(actualBatch, chunkPrefix);
+                        }
+                        prevSeq = currSeq;
+                    }
+                    // SetValue writes through the scalar data cache. SyncAll
+                    // orders the cores but does not write back that cache.
+                    AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
+                }
+            }
+            // Publish both prefix tables before any scheduler computes offsets.
+            AscendC::SyncAll<false>();
+            AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
+
             uint32_t actualBatch = 0;
             int64_t prevSeq = 0, currSeq;
             for (uint32_t b = 1; b <= tokenBatch; b++) {
                 currSeq = gmSeqlen.GetValue(b);
-                int64_t batchSeqLen = currSeq - prevSeq;
-                if (batchSeqLen > 0) {
+                if (currSeq > prevSeq) {
                     actualBatch++;
-                    gmNumSeq.SetValue(actualBatch, currSeq);
-                    int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
-                    gmNumChunks.SetValue(actualBatch, gmNumChunks.GetValue(actualBatch - 1) + batchChunk);
                 }
                 prevSeq = currSeq;
             }
@@ -719,6 +751,25 @@ struct BlockSchedulerGdnFwdHPreload {
 
 
     CATLASS_DEVICE
+    uint32_t StateSequence(uint32_t compactSequence) const {
+        if (!isVariedLen || tokenBatch == originalTokenBatch) {
+            return compactSequence;
+        }
+        const int64_t tokenBegin = gmNumSeq.GetValue(compactSequence);
+        uint32_t begin = 0;
+        uint32_t end = originalTokenBatch;
+        while (begin < end) {
+            const uint32_t middle = begin + (end - begin) / 2;
+            if (gmSeqlen.GetValue(middle + 1) <= tokenBegin) {
+                begin = middle + 1;
+            } else {
+                end = middle;
+            }
+        }
+        return begin;
+    }
+
+    CATLASS_DEVICE
     void InitNewStream(GDNFwdHStreamPreload& newStream) {
         newStream.vIdx = taskIdx / (batch * vNumHead);
         newStream.batchIdx = (taskIdx - newStream.vIdx * batch * vNumHead) / vNumHead;
@@ -726,6 +777,7 @@ struct BlockSchedulerGdnFwdHPreload {
         newStream.kHeadIdx = newStream.vHeadIdx / headGroups;
         newStream.shapeBatchIdx = isVariedLen ? 0 : newStream.batchIdx;
         newStream.tokenBatchIdx = isVariedLen ? newStream.batchIdx : 0;
+        newStream.stateBatchIdx = StateSequence(newStream.batchIdx);
         newStream.chunkOffset = isVariedLen ? gmNumChunks.GetValue(newStream.tokenBatchIdx) : 0;
         newStream.batchChunks = isVariedLen ? (gmNumChunks.GetValue(newStream.tokenBatchIdx + 1) - newStream.chunkOffset) : totalChunks;
         newStream.tokenOffset = isVariedLen ? gmNumSeq.GetValue(newStream.tokenBatchIdx) : 0;
@@ -740,8 +792,8 @@ struct BlockSchedulerGdnFwdHPreload {
      
         offset.isInitialState = stream.chunkIdx == 0; 
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1); 
-        offset.initialStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim; 
-        offset.finalStateOffset = (stream.batchIdx * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim; 
+        offset.initialStateOffset = (static_cast<uint64_t>(stream.stateBatchIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
+        offset.finalStateOffset = offset.initialStateOffset;
         offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
         offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
         offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
@@ -841,7 +893,7 @@ struct BlockSchedulerGdnFwdHPreloadCube : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
     }
 
@@ -852,7 +904,7 @@ struct BlockSchedulerGdnFwdHPreloadVec : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, GM_ADDR tiling, GM_ADDR user) {
+    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, tiling, user, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
     }
 
@@ -1596,6 +1648,7 @@ public:
     using LayoutV = Catlass::layout::RowMajor;
     using LayoutK = Catlass::layout::ColumnMajor;
 
+    int64_t layout_{0};
     uint32_t seqlen{0};
     uint32_t kNumHead{0};
     uint32_t vNumHead{0};
@@ -1634,24 +1687,24 @@ public:
     __aicore__ inline GDNFwdHKernelPreload() {}
 
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR inital_state, GM_ADDR cu_seqlens,
-        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, GM_ADDR tiling, GM_ADDR user) {
+        GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
         
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict gdnFwdHTilingData = reinterpret_cast<__gm__ ChunkGatedDeltaRuleFwdHTilingData *__restrict>(tiling);
 
-        seqlen = gdnFwdHTilingData->seqlen;
-        kNumHead = gdnFwdHTilingData->kNumHead;
-        vNumHead = gdnFwdHTilingData->vNumHead;
-        kHeadDim = gdnFwdHTilingData->kHeadDim;
-        vHeadDim = gdnFwdHTilingData->vHeadDim;
-        chunkSize = gdnFwdHTilingData->chunkSize;
-        useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
-        isVariedLen = gdnFwdHTilingData->isVariedLen;
-        shapeBatch = gdnFwdHTilingData->shapeBatch;
-        vWorkspaceOffset = gdnFwdHTilingData->vWorkspaceOffset;
-        vUpdateWorkspaceOffset = gdnFwdHTilingData->vUpdateWorkspaceOffset;
-        hWorkspaceOffset = gdnFwdHTilingData->hWorkspaceOffset;
-        numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
+        layout_ = tiling.layout;
+        seqlen = tiling.seqlen;
+        kNumHead = tiling.kNumHead;
+        vNumHead = tiling.vNumHead;
+        kHeadDim = tiling.kHeadDim;
+        vHeadDim = tiling.vHeadDim;
+        chunkSize = tiling.chunkSize;
+        useInitialState = tiling.useInitialState;
+        storeFinalState = tiling.storeFinalState;
+        isVariedLen = tiling.isVariedLen;
+        shapeBatch = tiling.shapeBatch;
+        vWorkspaceOffset = tiling.vWorkspaceOffset;
+        vUpdateWorkspaceOffset = tiling.vUpdateWorkspaceOffset;
+        hWorkspaceOffset = tiling.hWorkspaceOffset;
+        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
         
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
@@ -1690,7 +1743,9 @@ public:
             auto hLayout = tla::MakeLayout<ElementH, LayoutH>(kHeadDim, vHeadDim);
             auto vLayout = tla::MakeLayout<ElementVWork, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
 
-            auto kLayout = tla::MakeLayout<ElementK, LayoutK>(kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens);
+            const uint32_t kStride = layout_ == GDN::FwdHLayout::BSND ? kNumHead * kHeadDim : kHeadDim;
+            auto kLayout = tla::MakeLayoutFromTag(LayoutK(
+                kHeadDim, shapeBatch * kNumHead * cubeBlockScheduler.totalTokens, kStride));
             auto vworkLayout = tla::MakeLayout<ElementV, LayoutV>(coreNum * chunkSize * PING_PONG_STAGES, vHeadDim);
             // C2 的 hWorkspace 输出恒 RowMajor；vfirst 时形状翻转 [V,K]（等价转置式产出）
             auto hworkLayout = STATE_V_FIRST_
@@ -1737,6 +1792,12 @@ public:
                         if (cubeBlockScheduler.NeedProcessStage2(stream)) {
                             // step 3: h[i+1] = k.T @ v_work
                             int64_t cube2OffsetK = cube2Offsets.wkOffset;
+                            if (layout_ == GDN::FwdHLayout::BSND) {
+                                const uint64_t token = static_cast<uint64_t>(stream.shapeBatchIdx) *
+                                    cubeBlockScheduler.totalTokens + stream.tokenOffset +
+                                    static_cast<uint64_t>(stream.chunkIdx) * chunkSize;
+                                cube2OffsetK = (token * kNumHead + stream.kHeadIdx) * kHeadDim;
+                            }
                             int64_t cube2OffsetVwork = cube2Offsets.vWorkOffset;
                             int64_t cube2OffsetH = cube2Offsets.hWorkOffset;
                             auto tensorHwork = tla::MakeTensor(gmHWorkspace[cube2OffsetH], hworkLayout, Catlass::Arch::PositionGM{});
@@ -1746,7 +1807,7 @@ public:
                                 // 用等待前置变体 BlockMmadKVVFirst 保证 A 读序。
                                 auto vworkALayout = tla::MakeLayout<ElementV, Catlass::layout::ColumnMajor>(vHeadDim, chunkSize);
                                 auto tensorVworkA = tla::MakeTensor(gmVUpdateWorkspace[cube2OffsetVwork], vworkALayout, Catlass::Arch::PositionGM{});
-                                auto kRowLayout = tla::MakeLayout<ElementK, Catlass::layout::RowMajor>(chunkSize, kHeadDim);
+                                auto kRowLayout = tla::MakeLayout<ElementK, Catlass::layout::RowMajor>(chunkSize, kStride);
                                 auto tensorKRow = tla::MakeTensor(gmK[cube2OffsetK], kRowLayout, Catlass::Arch::PositionGM{});
                                 GemmCoord cube2ShapeV{vHeadDim, kHeadDim, cube2Offsets.blockTokens};
                                 auto tensorBlockA = GetTile(tensorVworkA, tla::MakeCoord(0, 0), tla::MakeShape(cube2ShapeV.m(), cube2ShapeV.k()));
@@ -1811,7 +1872,8 @@ public:
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
                 uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
-                uint64_t initialStateOffset = initialStateBlockOffset * stateBlockSize;
+                const uint32_t stateBatchIdx = vecBlockScheduler.StateSequence(batchIdx);
+                uint64_t initialStateOffset = (static_cast<uint64_t>(stateBatchIdx) * vNumHead + vHeadIdx) * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                 uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
                 if (useInitialState) {
@@ -1958,57 +2020,57 @@ public:
 
 // ---- 自原 chunk_fwd_h.cpp 移入：gated 复用谓词与入口（RunFwdHTyped 分流调用）
 namespace GDN {
-// gated 复用谓词：g 模式即复用（vfirst 经 STATE_V_FIRST 模板维支持；storeFinal
-// 与 fp32/bf16 gate/state 均可）；g dtype 由 host 入口唯一校验。
+// gated preload 复用 BF16 state；FP32 state 由通用路径保留完整递推精度。
+// vfirst 经 STATE_V_FIRST 模板维支持；g dtype 由 host 入口唯一校验。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
     // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
     // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
     // 与 host 侧 gatedEligible 两处同条件。
-    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G;
+    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G && !CompilePolicy::STATE_FP32;
 }
 
-// gated 复用分支：构造 gated tiling 镜像（workspace gatedTilingOffset 段，各 AIC
-// 写入同值）后调 preload kernel；USE_EXP2 携带 g 域，STATE_V_FIRST 携带布局。
+// gated 复用分支：构造本地 tiling 后调用 preload kernel；
+// USE_EXP2 携带 g 域，STATE_V_FIRST 携带状态布局。
 template <typename GateT, typename StateT, bool USE_EXP2, bool STATE_V_FIRST>
 __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
 {
     using DataT = bfloat16_t;
     using GatedKernel = Catlass::Gemm::Kernel::GDNFwdHKernelPreload<DataT, GateT, StateT, float, USE_EXP2, STATE_V_FIRST>;
     __gm__ uint8_t *user = args.workspace;
-    __gm__ ChunkGatedDeltaRuleFwdHTilingData *gtiling = reinterpret_cast<
-        __gm__ ChunkGatedDeltaRuleFwdHTilingData *>(user + args.tiling.gatedTilingOffset);
+    ChunkGatedDeltaRuleFwdHTilingData gtiling{};
+    gtiling.layout = args.tiling.layout;
     {
-        gtiling->batch = args.tiling.batch;
-        gtiling->seqlen = args.tiling.seqlen;
-        gtiling->kNumHead = args.tiling.kNumHead;
-        gtiling->vNumHead = args.tiling.vNumHead;
-        gtiling->kHeadDim = args.tiling.kHeadDim;
-        gtiling->vHeadDim = args.tiling.vHeadDim;
-        gtiling->chunkSize = args.tiling.chunkSize;
-        gtiling->useInitialState = args.tiling.useInitialState;
-        gtiling->storeFinalState = args.tiling.storeFinalState;
-        gtiling->dataType = 1; // bf16 输入
-        gtiling->gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
-        gtiling->stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
-        gtiling->isVariedLen = args.tiling.isVariedLen;
-        gtiling->shapeBatch = args.tiling.shapeBatch;
-        gtiling->tokenBatch = args.tiling.tokenBatch;
-        gtiling->useG = true;
-        gtiling->useGk = false;
-        gtiling->vWorkspaceOffset = args.tiling.vWorkspaceOffset;
-        gtiling->vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
-        gtiling->kDecayWorkspaceOffset = 0;
-        gtiling->hWorkspaceOffset = args.tiling.hWorkspaceOffset;
-        gtiling->numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
-        gtiling->numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
+        gtiling.batch = args.tiling.batch;
+        gtiling.seqlen = args.tiling.seqlen;
+        gtiling.kNumHead = args.tiling.kNumHead;
+        gtiling.vNumHead = args.tiling.vNumHead;
+        gtiling.kHeadDim = args.tiling.kHeadDim;
+        gtiling.vHeadDim = args.tiling.vHeadDim;
+        gtiling.chunkSize = args.tiling.chunkSize;
+        gtiling.useInitialState = args.tiling.useInitialState;
+        gtiling.storeFinalState = args.tiling.storeFinalState;
+        gtiling.dataType = 1; // bf16 输入
+        gtiling.gDataType = std::is_same_v<GateT, float> ? 2 : 1; // 1=bf16, 2=fp32
+        gtiling.stateDataType = std::is_same_v<StateT, float> ? 2 : 1;
+        gtiling.isVariedLen = args.tiling.isVariedLen;
+        gtiling.shapeBatch = args.tiling.shapeBatch;
+        gtiling.tokenBatch = args.tiling.tokenBatch;
+        gtiling.useG = true;
+        gtiling.useGk = false;
+        gtiling.vWorkspaceOffset = args.tiling.vWorkspaceOffset;
+        gtiling.vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
+        gtiling.kDecayWorkspaceOffset = 0;
+        gtiling.hWorkspaceOffset = args.tiling.hWorkspaceOffset;
+        gtiling.numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
+        gtiling.numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
     }
     GatedKernel gatedKernel;
     gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,
                      args.cuSeqlens, args.h, args.vNew,
                      args.finalState,
-                     reinterpret_cast<GM_ADDR>(gtiling),
+                     gtiling,
                      user);
     gatedKernel.Process();
 }

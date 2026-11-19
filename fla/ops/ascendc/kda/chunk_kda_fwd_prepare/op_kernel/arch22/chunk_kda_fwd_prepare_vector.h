@@ -33,7 +33,7 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
             static_cast<uint32_t>(tokenMajor?(heads-1)*width*sizeof(T):0),0,0};
         DataCopyPadExtParams<T> pad{false,0,0,0};
         auto source=Gm<T>(ptr,offset);
-        if(streaming)source.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        if(streaming)source.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         DataCopyPad(dst,source,p,pad);
     }
     __aicore__ inline void DrainStores() {

@@ -99,6 +99,7 @@ struct PrepareWyReprBwdQkTailUbLayout {
 };
 
 struct PrepareWyReprBwdTilingData {
+    int64_t layout;
     int64_t B;
     int64_t HV;
     int64_t HK;

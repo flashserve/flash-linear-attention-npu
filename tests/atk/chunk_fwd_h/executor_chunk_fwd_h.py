@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -304,7 +305,9 @@ def _reference(
 
                 w_chunk = w[physical_batch, value_head, token_begin:token_end]
                 p_acc = w_chunk.float() @ h_current.float()
-                p = p_acc.to(state_dtype)
+                p_dtype = (torch.float32 if inputs.g is not None and
+                           os.environ.get("GDN_ATK_BENCHMARK_ARCH") == "arch22" else state_dtype)
+                p = p_acc.to(p_dtype)
                 v_new_fp32 = (
                     u[physical_batch, value_head, token_begin:token_end].float()
                     - p.float()

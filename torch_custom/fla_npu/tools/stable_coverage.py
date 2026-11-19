@@ -478,7 +478,25 @@ def enum_codes_match(table: dict[str, int], names: list[str]) -> bool:
             and values == list(range(len(names))))
 
 
+def l0_contract_problems(contract: dict, root: Path | None = None) -> list[str]:
+    """Check the separately recorded internal L0 source contract and default arguments."""
+    root = REPO_ROOT if root is None else root
+    problems = []
+    for name, expected in contract.get("internal_l0_signatures", {}).items():
+        header = root / expected["header"]
+        if not header.is_file():
+            problems.append(f"{name}: internal L0 header is missing")
+            continue
+        text = re.sub(r"/\*.*?\*/|//[^\n]*", "", header.read_text(encoding="utf-8"), flags=re.S)
+        declarations = re.findall(r"([^;{}]*\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*;)", text)
+        compact = lambda value: re.sub(r"\s+", "", value)
+        if len(declarations) != 1 or compact(declarations[0]) != compact(expected["declaration"]):
+            problems.append(f"{name}: internal L0 declaration/default differs from the contract")
+    return problems
+
+
 def evaluate() -> dict:
+    contract = json.loads(PUBLIC_CONTRACT.read_text(encoding="utf-8"))
     published = public_ops()
     wrapper_lines = wrappers()
     dispatches = wrapper_dispatches()
@@ -487,7 +505,7 @@ def evaluate() -> dict:
     enums = package_enums()
 
     rows = []
-    blockers = public_api_problems(published, dispatches)
+    blockers = public_api_problems(published, dispatches) + l0_contract_problems(contract)
     if not published:
         blockers.append("public API: operator inventory is empty")
     if len(published) != len(set(published)):
