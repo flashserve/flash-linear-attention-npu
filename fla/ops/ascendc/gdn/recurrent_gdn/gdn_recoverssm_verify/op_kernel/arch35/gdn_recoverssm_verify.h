@@ -177,36 +177,35 @@ __simd_vf__ inline void VerifyTokenVf(__ubuf__ float *stateDst, __ubuf__ float *
         Cast<float, inType, GRSV_B16_TO_FP32_ZERO>(valueNext, valuePackedNext, maskB16);
 
         Mul(state0, state0, scalarGate, maskFp32);
-        Mul(state1, state1, scalarGate, maskFp32);
         Mul(state2, state2, scalarGate, maskFp32);
+        Mul(state1, state1, scalarGate, maskFp32);
         Mul(state3, state3, scalarGate, maskFp32);
 
         Mul(dot, state0, key0, maskFp32);
-        MulAddDst(dot, state1, key1, maskFp32);
-        ReduceSum(dot, dot, maskFp32);
-        Duplicate(dot, dot, maskFp32);
-        Sub(correction, value, dot, maskFp32);
-        Mul(correction, correction, scalarBeta, maskFp32);
-        MulAddDst(state0, correction, key0, maskFp32);
-        MulAddDst(state1, correction, key1, maskFp32);
-
         Mul(dotNext, state2, key0, maskFp32);
+        MulAddDst(dot, state1, key1, maskFp32);
         MulAddDst(dotNext, state3, key1, maskFp32);
+        ReduceSum(dot, dot, maskFp32);
         ReduceSum(dotNext, dotNext, maskFp32);
+        Duplicate(dot, dot, maskFp32);
         Duplicate(dotNext, dotNext, maskFp32);
+        Sub(correction, value, dot, maskFp32);
         Sub(correctionNext, valueNext, dotNext, maskFp32);
+        Mul(correction, correction, scalarBeta, maskFp32);
         Mul(correctionNext, correctionNext, scalarBeta, maskFp32);
+        MulAddDst(state0, correction, key0, maskFp32);
         MulAddDst(state2, correctionNext, key0, maskFp32);
+        MulAddDst(state1, correction, key1, maskFp32);
         MulAddDst(state3, correctionNext, key1, maskFp32);
 
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(stateDst + offset, state0, state1, maskFp32);
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(stateDst + offset + GRSV_REQUIRED_DIM, state2, state3, maskFp32);
 
         Mul(out0, state0, query0, maskFp32);
-        MulAddDst(out0, state1, query1, maskFp32);
-        ReduceSum(outSum, out0, maskFp32);
         Mul(out1, state2, query0, maskFp32);
+        MulAddDst(out0, state1, query1, maskFp32);
         MulAddDst(out1, state3, query1, maskFp32);
+        ReduceSum(outSum, out0, maskFp32);
         ReduceSum(outSumNext, out1, maskFp32);
         Cast<outType, float, GRSV_FP32_TO_B16_ZERO>(valuePacked, outSum, maskFirst);
         Cast<outType, float, GRSV_FP32_TO_B16_ZERO>(valuePackedNext, outSumNext, maskFirst);
