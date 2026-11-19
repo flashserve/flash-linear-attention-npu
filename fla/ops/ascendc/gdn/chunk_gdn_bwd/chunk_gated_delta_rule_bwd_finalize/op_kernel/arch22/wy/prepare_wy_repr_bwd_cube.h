@@ -1068,35 +1068,50 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             }
 
             curSlot_ = windowStartSlot;
+            // Merged DA5 + DA6T pass: each head runs the DA5 chain (from the
+            // vector's DA4) followed immediately by the DA6T chain (reading
+            // back this head's own DA5 output). The two chains share all
+            // per-head address setup; the FIX_MTE2 event still gates the
+            // DA5 fixpipe -> DA5T load dependency per head.
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
                 GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
 
                 gmDA4.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da4Offset));
                 gmDA5.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da5Offset));
+                gmDA6T.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
 
                 auto tensorDA4 = tla::MakeTensor(gmDA4, layoutDA4, Arch::PositionGM{});
                 auto tensorDA5 = tla::MakeTensor(gmDA5, layoutDA5, Arch::PositionGM{});
+                auto tensorDA5T = tla::MakeTensor(gmDA5, layoutDA5T, Arch::PositionGM{});
+                auto tensorDA6T = tla::MakeTensor(gmDA6T, layoutDA6T, Arch::PositionGM{});
                 uint8_t fixpipeUnitFlag = 0b11;
 
                 auto blockDA4 =
                     GetTile(tensorDA4, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.k()));
                 auto blockDA5 =
                     GetTile(tensorDA5, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.n()));
+                auto blockDA5T =
+                    GetTile(tensorDA5T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.k()));
+                auto blockDA6T =
+                    GetTile(tensorDA6T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.n()));
 
                 CopyGmToL1A_DA5<decltype(blockDA4)> copyGmToL1A_DA4;
                 CopyL0CToGm_DA5<decltype(blockDA5)> copyL0CToGm_DA5;
+                CopyGmToL1A_DA6T<decltype(blockDA5T)> copyGmToL1A_DA5T;
+                CopyL0CToGm_DA6T<decltype(blockDA6T)> copyL0CToGm_DA6T;
 
-                WaitVecToCube();
                 int32_t da5FixToMte2Event =
                     residentSlot == 0 ? EVENT_FIX_TO_MTE2_PING : EVENT_FIX_TO_MTE2_PONG;
+
+                // === DA5 chain (formerly loop 3) ===
+                WaitVecToCube();
 
                 uint32_t da5L1AIdx = curL1_;
                 int32_t da5L1AEvent = da5L1AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
                 auto tensorL1A_DA4 = tla::MakeTensor(l1Scratch[da5L1AIdx], L1A_LAYOUT_DA4, Arch::PositionL1{});
-                uint32_t da5AResidentIdx = residentSlot;
                 auto tensorL1ResidentATForDA5 =
-                    tla::MakeTensor(aResident[da5AResidentIdx], L1B_LAYOUT_AT_FOR_DA5, Arch::PositionL1{});
+                    tla::MakeTensor(aResident[residentSlot], L1B_LAYOUT_AT_FOR_DA5, Arch::PositionL1{});
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(da5L1AEvent);
                 copyGmToL1A_DA4(tensorL1A_DA4, blockDA4);
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(da5L1AEvent);
@@ -1145,40 +1160,14 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 copyL0CToGm_DA5(blockDA5, tensorL0C_DA5, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(da5L0CEvent);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(da5FixToMte2Event);
-                curSlot_ ^= 1U;
-            }
 
-            curSlot_ = windowStartSlot;
-            for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
-                uint32_t residentSlot = curSlot_ & 1U;
-                uint64_t hv = hvBase + headIdx;
-                uint64_t valueBase = hv * tiling_.T + task.valueBos;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
-
-                gmDA5.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da5Offset));
-                gmDA6T.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
-
-                auto tensorDA5T = tla::MakeTensor(gmDA5, layoutDA5T, Arch::PositionGM{});
-                auto tensorDA6T = tla::MakeTensor(gmDA6T, layoutDA6T, Arch::PositionGM{});
-                uint8_t fixpipeUnitFlag = 0b11;
-
-                auto blockDA5T =
-                    GetTile(tensorDA5T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.k()));
-                auto blockDA6T =
-                    GetTile(tensorDA6T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.n()));
-
-                CopyGmToL1A_DA6T<decltype(blockDA5T)> copyGmToL1A_DA5T;
-                CopyL0CToGm_DA6T<decltype(blockDA6T)> copyL0CToGm_DA6T;
-                int32_t da5FixToMte2Event =
-                    residentSlot == 0 ? EVENT_FIX_TO_MTE2_PING : EVENT_FIX_TO_MTE2_PONG;
-
+                // === DA6T chain (formerly loop 4, shared setup eliminated) ===
                 uint32_t da6L1AIdx = curL1_;
                 int32_t da6L1AEvent = da6L1AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
                 auto tensorL1A_DA5T =
                     tla::MakeTensor(l1Scratch[da6L1AIdx], L1A_LAYOUT_DA5_T, Arch::PositionL1{});
-                uint32_t da6AResidentIdx = residentSlot;
                 auto tensorL1ResidentAForDA6T =
-                    tla::MakeTensor(aResident[da6AResidentIdx], L1B_LAYOUT_A_FOR_DA6T, Arch::PositionL1{});
+                    tla::MakeTensor(aResident[residentSlot], L1B_LAYOUT_A_FOR_DA6T, Arch::PositionL1{});
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(da5FixToMte2Event);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(da6L1AEvent);
                 copyGmToL1A_DA5T(tensorL1A_DA5T, blockDA5T);
@@ -1230,6 +1219,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 SetCubeToVec();
                 curSlot_ ^= 1U;
             }
+
+            // Old separate loop 4 (DA6T) was merged into the DA5+DA6T pass above.
 
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
