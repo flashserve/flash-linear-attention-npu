@@ -177,12 +177,55 @@ static __simd_vf__ inline void ComputeActivatedDyB16Vf(
     }
 }
 
+template <typename DyT>
+__simd_callee__ inline void AccumulateDxTap(
+    RegTensor<float> &dx, RegTensor<float> &weight, __ubuf__ DyT *dyAddr, MaskReg &mask)
+{
+    RegTensor<float> dy;
+    RegTensor<float> product;
+    if constexpr (std::is_same<DyT, float>()) {
+        LoadFloatOne(dy, dyAddr);
+    } else {
+        LoadB16AsFloat<DyT>(dy, dyAddr, mask);
+    }
+    Mul(product, dy, weight, mask);
+    Add(dx, dx, product, mask);
+}
+
+template <typename T, uint32_t BD, typename DyT>
+__simd_callee__ inline void ComputeDxW4Cached(
+    __ubuf__ DyT *dyAddr, __ubuf__ T *weightAddr, __ubuf__ float *dxAddr, uint32_t rows, MaskReg &mask)
+{
+    // Reuse the four filters across rows and preserve the reverse-tap F32 accumulation order.
+    RegTensor<float> w0, w1, w2, w3, dx;
+    LoadB16AsFloat<T>(w3, weightAddr + 3 * BD, mask);
+    LoadB16AsFloat<T>(w2, weightAddr + 2 * BD, mask);
+    LoadB16AsFloat<T>(w1, weightAddr + BD, mask);
+    LoadB16AsFloat<T>(w0, weightAddr, mask);
+    for (uint32_t row = 0; row < rows; ++row) {
+        Duplicate(dx, 0.0f, mask);
+        AccumulateDxTap(dx, w3, dyAddr + row * BD, mask);
+        AccumulateDxTap(dx, w2, dyAddr + (row + 1) * BD, mask);
+        AccumulateDxTap(dx, w1, dyAddr + (row + 2) * BD, mask);
+        AccumulateDxTap(dx, w0, dyAddr + (row + 3) * BD, mask);
+        StoreFloatOne(dxAddr + row * BD, dx, mask);
+    }
+}
+
 template <typename T, uint32_t BD = BWD_DIRECT_BD>
 static __simd_vf__ inline void ComputeDxActivatedB16Vf(
     __ubuf__ float *dyActAddr, __ubuf__ T *weightAddr, __ubuf__ float *dxAddr,
     uint32_t rows, uint32_t width)
 {
     MaskReg maskF32 = MaskF32ForBd<BD>();
+    if constexpr (BD == BWD_DIRECT_BD && std::is_same<T, bfloat16_t>()) {
+        if (width == 4) {
+            if (rows > 0) {
+                ComputeDxW4Cached<T, BD>(dyActAddr, weightAddr, dxAddr, rows, maskF32);
+            }
+            return;
+        }
+    }
 
     RegTensor<float> dy;
     RegTensor<float> weight;
@@ -256,6 +299,14 @@ static __simd_vf__ inline void ComputeDxDirectB16Vf(
     uint32_t rows, uint32_t width)
 {
     MaskReg maskF32 = MaskF32ForBd<BD>();
+    if constexpr (BD == BWD_DIRECT_BD && std::is_same<T, bfloat16_t>()) {
+        if (width == 4) {
+            if (rows > 0) {
+                ComputeDxW4Cached<T, BD>(dyAddr, weightAddr, dxAddr, rows, maskF32);
+            }
+            return;
+        }
+    }
 
     RegTensor<float> dy;
     RegTensor<float> weight;
