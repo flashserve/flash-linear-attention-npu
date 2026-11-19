@@ -92,13 +92,13 @@ aclnnStatus aclnnCausalConv1dBwd(
   | 参数名 | 输入/输出 | 描述 |
   | :-- | :--: | :-- |
   | x | 输入 | 前向输入 tensor。固定长度 shape 为 `[B, T, D]`，变长 shape 为 `[totalTokens, D]`，始终使用逻辑 layout。 |
-  | yOptional | 输入 | 前向预激活输出 tensor。物理 layout 由 `inputLayoutOptional` 指定，shape 与 `dy` 相同。`activation=0` 时可为 `nullptr`；`activation=1` 或 `activation=2` 时必须提供。 |
+  | yOptional | 输入 | 前向预激活输出 tensor。物理 layout 由 `inputLayoutOptional` 指定，shape 与 `dy` 相同。`activation=0` 时可为 `nullptr`；`activation` 为 `1`、`2` 或 `3` 时必须提供。 |
   | weight | 输入 | 卷积核权重 tensor，shape 为 `[W, D]`，数据类型与 `x` 相同，format 支持 `ND`。`W` 为卷积核宽度，`D` 为逻辑特征维度。 |
   | dy | 输入 | 前向输出梯度 tensor。数据类型、format、shape 与 `x` 相同。 |
   | initialStateOptional | 输入 | 初始卷积状态 tensor，shape 为 `[B, W, D]`，数据类型与 `x` 相同，format 支持 `ND`。可为 `nullptr`。 |
   | dhtOptional | 输入 | 最终卷积状态梯度 tensor，shape 为 `[B, W, D]`，数据类型与 `x` 相同，format 支持 `ND`。可为 `nullptr`。 |
   | queryStartLocOptional | 输入 | 变长序列起止位置数组，类型为 `aclIntArray`，元素类型为 `int64_t`，长度为 `B+1`。`TND`/`NTD` layout 下必须提供；固定长度 layout 下可为 `nullptr`。 |
-  | activation | 输入 | 激活反向模式，`int64_t` 类型。`0` 表示不使用激活函数；`1` 表示 SiLU；`2` 表示 Swish，当前与 SiLU 等价。 |
+  | activation | 输入 | 激活反向模式，`int64_t` 类型。`0` 表示不使用激活函数；`1` 表示 SiLU；`2` 表示 Swish，当前与 SiLU 等价；`3` 表示将 SiLU 梯度舍入 BF16 后再参与卷积梯度累加，仅支持 Ascend 950 BF16 输入。 |
   | inputLayoutOptional | 输入 | 输入 layout 字符串，可为 `nullptr`，默认值为 `BSND`。支持 `BSND`、`BSH`、`TND`、`BNSD`、`NTD`，其中 `BSH` 等价于 `BSND`。 |
   | dxOut | 输出 | 输入梯度 tensor。输出采用逻辑 layout：固定长度为 `[B, T, D]`，变长为 `[totalTokens, D]`。数据类型与 `x` 相同，format 支持 `ND`。 |
   | dwOutOptional | 输出 | 权重梯度 tensor，shape 为 `[W, D]`，数据类型与 `weight` 相同，format 支持 `ND`。 |
@@ -159,8 +159,8 @@ aclnnStatus aclnnCausalConv1dBwd(
   - `dxOut` 始终按逻辑 layout 输出，不输出 `BNSD` 或 `NTD` 物理排布。
   - `BNSD` 和 `NTD` layout 下，`D=N*Dh`，且 `Dh` 需要满足 16 对齐约束。
 - 激活函数：
-  - `activation` 仅支持 `0`、`1`、`2`。
-  - `activation=1` 或 `activation=2` 时必须提供 `yOptional`。
+  - `activation` 支持 `0`、`1`、`2`。Ascend 950 的 BF16 输入另支持 `3`。
+  - `activation` 为 `1`、`2` 或 `3` 时必须提供 `yOptional`。
 - 变长序列：
   - `TND`/`NTD` layout 下必须提供 `queryStartLocOptional`。
   - `queryStartLocOptional` 必须是 `int64_t` 数组，长度为 `B+1`，首元素为 0，末元素为 `totalTokens`，且单调非递减。
@@ -381,7 +381,7 @@ aclDestroyIntArray(queryStartLoc);
 
 ### Q4：什么时候必须提供 `yOptional`？
 
-当 `activation=1` 或 `activation=2` 时必须提供。SiLU/Swish 反向需要前向预激活输出 `yOptional` 计算有效梯度；`activation=0` 时可传 `nullptr`。
+当 `activation` 为 `1`、`2` 或 `3` 时必须提供。SiLU/Swish 反向需要前向预激活输出 `yOptional` 计算有效梯度；`activation=0` 时可传 `nullptr`。
 
 ### Q5：`initialStateOptional` 和 `dhtOptional` 的作用是什么？
 

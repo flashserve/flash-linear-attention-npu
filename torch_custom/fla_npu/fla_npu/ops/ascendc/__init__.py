@@ -585,6 +585,10 @@ for _name in _ASCENDC_OPS:
     globals()[_name] = _make_raw_wrapper(_name)
     globals().setdefault(_strip_npu_prefix(_name), globals()[_name])
 
+# The marker follows the selected operator when layered wheels replace a provider.
+globals()["npu_causal_conv1d_bwd"].SILU_BF16_GRAD = 3
+_stable.npu_causal_conv1d_bwd.SILU_BF16_GRAD = 3
+
 validate_backend_environment()
 _prepare_direct_runtime(raise_on_error=False)
 
