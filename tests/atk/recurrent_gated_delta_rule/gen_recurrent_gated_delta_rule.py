@@ -656,11 +656,24 @@ def main() -> None:
     )
     parser.add_argument("--summary", action="store_true")
     parser.add_argument("--tiling-key-only", action="store_true")
+    parser.add_argument(
+        "--a6",
+        action="store_true",
+        help="Emit the V2 (RGDR-V) cases retargeted to ascend960dt (A6, arch92).",
+    )
     args = parser.parse_args()
 
     specs = build_specs()
     if args.tiling_key_only:
         specs = [spec for spec in specs if spec["design_id"] >= "RGDR-V016"]
+    if args.a6:
+        # A6 dispatches the arch92 RGDRV2 kernel: only the V2 family applies,
+        # retargeted to ascend960dt. The A5 (arch35) and A2/A3 (arch22)
+        # families are not exercised on A6.
+        specs = [spec for spec in specs if spec["design_id"].startswith("RGDR-V")]
+        for spec in specs:
+            spec["platform_focus"] = "ascend960dt"
+            spec["soc"] = "ascend960dt"
     payloads = [
         _case_payload(int(spec["case_id"]), spec) for spec in specs
     ]

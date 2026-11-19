@@ -66,8 +66,23 @@ ASCENDC_TPL_ARGS_DECL(RecurrentGatedDeltaRule, ASCENDC_TPL_DTYPE_DECL(D_T_STATE,
         RGDR_TPL_SEL_FLAGS(STATE_TYPE, RGDR_TPL_FP32, RGDR_TPL_BF16),                                         \
         RGDR_TPL_SEL_FLAGS(STATE_TYPE, RGDR_TPL_FP32, RGDR_TPL_FP32)
 
-ASCENDC_TPL_SEL(RGDR_TPL_SEL_SCALARS(RGDR_TPL_BF16), RGDR_TPL_SEL_SCALARS(RGDR_TPL_FP32), );
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+// A6/arch92: RGDRV2 takes only the three dtype template parameters; the four
+// fusion switches are read from tilingData at runtime and tiling.cpp always
+// emits them as 0. Emit only that combination so the binary carries 1/16 of
+// the code (otherwise 128 keys per binary instead of 8).
+#define RGDR_TPL_SEL_ALL(STATE_TYPE)                                                                                \
+    RGDR_TPL_SEL_ONE(STATE_TYPE, RGDR_TPL_BF16, RGDR_TPL_BF16, 0, 0, 0, 0),                                         \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, RGDR_TPL_BF16, RGDR_TPL_FP32, 0, 0, 0, 0),                                     \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, RGDR_TPL_FP32, RGDR_TPL_BF16, 0, 0, 0, 0),                                     \
+        RGDR_TPL_SEL_ONE(STATE_TYPE, RGDR_TPL_FP32, RGDR_TPL_FP32, 0, 0, 0, 0)
+#else
+#define RGDR_TPL_SEL_ALL(STATE_TYPE) RGDR_TPL_SEL_SCALARS(STATE_TYPE)
+#endif
 
+ASCENDC_TPL_SEL(RGDR_TPL_SEL_ALL(RGDR_TPL_BF16), RGDR_TPL_SEL_ALL(RGDR_TPL_FP32), );
+
+#undef RGDR_TPL_SEL_ALL
 #undef RGDR_TPL_SEL_SCALARS
 #undef RGDR_TPL_SEL_FLAGS
 #undef RGDR_TPL_SEL_ONE
