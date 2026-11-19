@@ -1,4 +1,14 @@
-# flash-linear-attention-npu
+<h1 align="center">flash-linear-attention-npu</h1>
+
+<p align="center">
+  <a href="docs/op_list.md"><img src="https://img.shields.io/badge/docs-算子概览-brightgreen.svg?style=flat" alt="算子概览"></a>
+  <a href="docs/开发者指南.md"><img src="https://img.shields.io/badge/docs-开发者指南-green.svg?style=flat" alt="开发者指南"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-BSD_3--Clause_%26%26_CANN_OPEN_2.0-blue.svg?style=flat" alt="许可证：BSD 3-Clause &amp;&amp; CANN OPEN 2.0"></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/贡献指南-teal?style=flat" alt="贡献指南"></a>
+  <a href="examples/README.md"><img src="https://img.shields.io/badge/sample-样例实践-orange.svg?style=flat" alt="样例实践"></a>
+</p>
+
+---
 
 ## 🔥Latest News
 
@@ -11,6 +21,8 @@
 flash-linear-attention-npu 算子库由天津大学主导开发，是一个面向昇腾架构的高性能线性注意力算子库，对标 Flash-Linear-Attention 项目，旨在为昇腾平台提供高效的线性注意力计算实现。
 
 所有 AscendC 算子统一通过 Stable ABI 调用。wheel 声明 `torch>=2.7.1`、`torch_npu>=2.7.1` 运行时依赖；源码构建不自动安装框架，使用 `--no-deps` 安装 wheel 时也需自行准备与 CANN/Python 配套的 torch、torch_npu 和 triton-ascend。Stable launcher 构建仍需要 torch 的链接库；不需要 torchnpugen 或 legacy 扩展。依赖匹配关系与检查方式见下文 Step 1 / Step 2。
+
+<a id="quick-start"></a>
 
 ## ⚡️快速上手
 
@@ -105,6 +117,8 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 
 `-op` 使用 `tests/atk` 下的测试工程目录名；算子工程名及 ATK 使用说明见 [算子概览](docs/op_list.md#atk-op-options)。
 
+<a id="developer-guide"></a>
+
 ## 开发者指引
 
 开发者相关操作（单独编译单算子、一键编包、增加新算子、确认 wheel 来自最新源码）按场景拆分为独立文档；测试单算子和端到端验证见上文 Step 3：
@@ -170,9 +184,13 @@ bash tests/atk/run_test_cpu.sh -op=<算子名> -npu_device_id=0
 
 ## 📝相关信息
 
+- [算子概览与 API 索引](docs/op_list.md)
+- [贡献指南](CONTRIBUTING.md)
+- [样例实践](examples/README.md)
 - [安全声明](SECURITY.md)
 - [许可证](LICENSE)
 - [NOTICE](NOTICE)
+- [问题反馈](https://github.com/flashserve/flash-linear-attention-npu/issues)
 
 ## ⚖️许可证说明
 
