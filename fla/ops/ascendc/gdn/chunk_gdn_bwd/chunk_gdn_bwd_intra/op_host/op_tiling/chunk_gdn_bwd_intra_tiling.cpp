@@ -196,7 +196,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "invalid schedule or workspace overflow.");
         return ge::GRAPH_FAILED;
     }
-    if (arch22 || arch92) {
+    if (arch22) {
         uint64_t ubBytes = 0;
         uint64_t l1Bytes = 0;
         uint64_t l0aBytes = 0;
@@ -207,18 +207,14 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, l0aBytes);
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, l0bBytes);
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, l0cBytes);
-        const uint64_t requiredUb = arch92 ? GDN::Arch92::UB_BYTES : GDN::Arch22::UB_BYTES;
-        const uint64_t requiredL1 = arch92 ? GDN::Arch92::L1_BYTES :
-            GDN::Arch22::L1_SCORE_BYTES + schedule.cg * GDN::Arch22::L1_HEAD_BYTES;
-        const uint64_t requiredL0Ab = arch92 ? GDN::Arch92::L0_AB_BYTES : GDN::Arch22::L0_HOST_MIN_BYTES;
-        const uint64_t requiredL0C = arch92 ? GDN::Arch92::L0_C_BYTES : GDN::Arch22::L0_HOST_MIN_BYTES;
-        if (ubBytes < requiredUb || l1Bytes < requiredL1 || l0aBytes < requiredL0Ab ||
-            l0bBytes < requiredL0Ab || l0cBytes < requiredL0C) {
-            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-                                   "%s: insufficient on-chip memory for %s schedule.",
-                                   __func__, arch92 ? "DAV_9201" : "arch22");
-            return ge::GRAPH_FAILED;
-        }
+        if (ubBytes < GDN::Arch22::UB_BYTES ||
+                        l1Bytes < GDN::Arch22::L1_SCORE_BYTES + schedule.cg * GDN::Arch22::L1_HEAD_BYTES ||
+                        l0aBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
+                        l0bBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
+                        l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: insufficient on-chip memory for arch22 schedule.", __func__);
+        return ge::GRAPH_FAILED;
+    }
     }
     tiling->batch = batch;
     tiling->qkHeads = qkHeads;

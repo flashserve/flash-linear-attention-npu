@@ -6,6 +6,7 @@
 #define CHUNK_GDN_BWD_INTRA_ARCH92_VECTOR_H
 
 #include <type_traits>
+#include "kernel_utils/vector/regbase.hpp"
 
 #include "chunk_gdn_bwd_intra_common.h"
 #include "../chunk_gdn_bwd_intra_common.h"
@@ -15,47 +16,22 @@ namespace GDN::Arch92 {
 using namespace AscendC;
 using namespace AscendC::MicroAPI;
 
-constexpr CastTrait INTRA_B16_TO_F32 = {
-    RegLayout::ZERO, SatMode::UNKNOWN, MaskMergeMode::ZEROING, RoundMode::UNKNOWN
-};
-constexpr CastTrait INTRA_F32_TO_B16 = {
-    RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::ZEROING, RoundMode::CAST_RINT
-};
-
 template <typename T>
-__simd_callee__ inline void LoadRowFp32(RegTensor<float> &dst, __ubuf__ T *src, MaskReg &mask)
+__simd_callee__ inline void LoadIntraRow(
+    RegTensor<float> &even, RegTensor<float> &odd, __ubuf__ T *src, MaskReg &mask)
 {
-    if constexpr (std::is_same_v<T, float>) {
-        LoadAlign(dst, src);
+    if constexpr (std::is_same<T, float>()) {
+        RegTensor<float> row;
+        LoadIn<float, false>(row, src);
+        // One 64-element row fits exactly in the slot. Split that register
+        // into even/odd lanes without reading a second row from UB.
+        DeInterleave(even, odd, row, row);
     } else {
-        RegTensor<T> raw;
-        LoadAlign<T, LoadDist::DIST_UNPACK_B16>(raw, src);
-        Cast<float, T, INTRA_B16_TO_F32>(dst, raw, mask);
+        RegTensor<T> row;
+        // Masked block load covers just the first four C0 blocks of the register.
+        LoadAlign<T, DataCopyMode::DATA_BLOCK_COPY>(row, src, 1, mask);
+        CastHalf2Float<T>(even, odd, row, mask);
     }
-}
-
-template <typename T>
-__simd_callee__ inline void BroadcastFp32(RegTensor<float> &dst, __ubuf__ T *src, MaskReg &mask)
-{
-    if constexpr (std::is_same_v<T, float>) {
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(dst, src);
-    } else {
-        RegTensor<T> raw;
-        LoadAlign<T, LoadDist::DIST_BRC_B16>(raw, src);
-        Cast<float, T, INTRA_B16_TO_F32>(dst, raw, mask);
-    }
-}
-
-template <typename MainT>
-__simd_callee__ inline void StoreNzRecordRow(__ubuf__ MainT *dst, RegTensor<float> &src,
-                                             MaskReg &fp32Mask, MaskReg &nzMask)
-{
-    RegTensor<MainT> even, packed, odd;
-    Cast<MainT, float, INTRA_F32_TO_B16>(even, src, fp32Mask);
-    // The cast places values in the even lanes. Pack the 64 values into
-    // four C0 blocks before storing them at the full-tile NZ stride.
-    DeInterleave(packed, odd, even, even);
-    StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(dst, packed, TILE_ROWS, nzMask);
 }
 
 template <typename MainT, typename GateT, typename BetaT, bool USE_EXP2>
@@ -63,94 +39,125 @@ __simd_vf__ inline void ComputeRecordVF(
     __ubuf__ MainT *record, __ubuf__ MainT *a, __ubuf__ float *score,
     __ubuf__ GateT *g, __ubuf__ BetaT *beta, uint16_t validRows, float scale)
 {
-    constexpr float ln2 = 0.6931471805599453f;
+    constexpr float LN2 = 0.6931471805599453f;
     auto dOut = record + RECORD_D_OFFSET / sizeof(MainT);
     auto aBgOut = record + RECORD_A_BG_OFFSET / sizeof(MainT);
     auto aBetaOut = record + RECORD_A_BETA_OFFSET / sizeof(MainT);
 
-    MaskReg full = CreateMask<float, MaskPattern::ALL>();
-    uint32_t nzElements = TILE_ROWS;
-    MaskReg nzMask = UpdateMask<MainT>(nzElements);
-    RegTensor<float> gate, betaRow, bg, col, limit, rowIndex, zero;
-    MaskReg validCols;
-    Arange(col, 0.0f);
-    Duplicate(limit, static_cast<float>(validRows), full);
-    Duplicate(rowIndex, 0.0f, full);
-    Duplicate(zero, 0.0f, full);
-    Compare<float, CMPMODE::LT>(validCols, col, limit, full);
+    MaskReg maskFp32 = CreateMask<float, MaskPattern::ALL>();
+    MaskReg maskFp16 = CreateMask<half, MaskPattern::ALL>();
+    uint32_t mainElements = TILE_ROWS;
+    uint32_t gateElements = TILE_ROWS;
+    uint32_t betaElements = TILE_ROWS;
+    MaskReg maskMain = UpdateMask<MainT>(mainElements);
+    MaskReg maskGate = UpdateMask<GateT>(gateElements);
+    MaskReg maskBeta = UpdateMask<BetaT>(betaElements);
 
-    LoadRowFp32(gate, g, full);
-    LoadRowFp32(betaRow, beta, full);
-    Select(bg, gate, zero, validCols);
+    RegTensor<float> gZero, gOne, betaZero, betaOne, bgZero, bgOne;
+    RegTensor<float> colZero, colOne, rowIndex, validLimit, scaleReg, zeros;
+    RegTensor<half> colIndex;
+    MaskReg validTailZero, validTailOne;
+
+    Arange(colIndex, 0);
+    CastHalf2Float<half>(colZero, colOne, colIndex, maskFp16);
+    Duplicate(rowIndex, 0.0f, maskFp32);
+    Duplicate(validLimit, static_cast<float>(validRows), maskFp32);
+    Duplicate(scaleReg, scale, maskFp32);
+    Duplicate(zeros, 0.0f, maskFp32);
+    CompareTwoReg<float, CMPMODE::LT>(
+        validTailZero, validTailOne, colZero, colOne, validLimit, validLimit, maskFp32);
+
+    LoadIntraRow(gZero, gOne, g, maskGate);
+    LoadIntraRow(betaZero, betaOne, beta, maskBeta);
+    Select(bgZero, gZero, zeros, validTailZero);
+    Select(bgOne, gOne, zeros, validTailOne);
     if constexpr (USE_EXP2) {
-        Muls(bg, bg, ln2, validCols);
+        Muls(bgZero, bgZero, LN2, validTailZero);
+        Muls(bgOne, bgOne, LN2, validTailOne);
     }
-    Exp(bg, bg, validCols);
-    Mul(bg, bg, betaRow, validCols);
+    Exp(bgZero, bgZero, validTailZero);
+    Exp(bgOne, bgOne, validTailOne);
+    Mul(bgZero, bgZero, betaZero, validTailZero);
+    Mul(bgOne, bgOne, betaOne, validTailOne);
 
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t ndOffset = static_cast<uint32_t>(row) * TILE_ROWS;
         const uint32_t nzOffset = static_cast<uint32_t>(row) * C0_ELEMENTS;
-        RegTensor<float> aRow, scores, gRow, delta, result;
-        LoadRowFp32(aRow, a + ndOffset, full);
-        LoadAlign(scores, score + ndOffset);
+        RegTensor<MainT> aBgReg, aBetaReg, dReg;
+        RegTensor<GateT> gRawReg;
+        RegTensor<float> aZero, aOne, scoreZero, scoreOne, rowG;
+        RegTensor<float> deltaZero, deltaOne, resultZero, resultOne;
+        MaskReg causalZero, causalOne, validZero, validOne;
 
-        Mul(result, aRow, bg, validCols);
-        Select(result, result, zero, validCols);
-        StoreNzRecordRow(aBgOut + nzOffset, result, full, nzMask);
+        LoadIntraRow(aZero, aOne, a + ndOffset, maskMain);
+        LoadIntraRow(scoreZero, scoreOne, score + ndOffset, maskFp32);
 
-        Mul(result, aRow, betaRow, validCols);
-        Select(result, result, zero, validCols);
-        StoreNzRecordRow(aBetaOut + nzOffset, result, full, nzMask);
+        Mul(resultZero, aZero, bgZero, validTailZero);
+        Mul(resultOne, aOne, bgOne, validTailOne);
+        Select(resultZero, resultZero, zeros, validTailZero);
+        Select(resultOne, resultOne, zeros, validTailOne);
+        CastFloat2Half<MainT>(aBgReg, resultZero, resultOne, maskFp32);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(aBgOut + nzOffset, aBgReg, TILE_ROWS, maskMain);
 
-        MaskReg causal, valid;
-        Compare<float, CMPMODE::GE>(causal, col, rowIndex, full);
-        And(valid, causal, validCols, full);
-        BroadcastFp32(gRow, g + row, full);
-        Sub(delta, gate, gRow, valid);
+        Mul(resultZero, aZero, betaZero, validTailZero);
+        Mul(resultOne, aOne, betaOne, validTailOne);
+        Select(resultZero, resultZero, zeros, validTailZero);
+        Select(resultOne, resultOne, zeros, validTailOne);
+        CastFloat2Half<MainT>(aBetaReg, resultZero, resultOne, maskFp32);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(aBetaOut + nzOffset, aBetaReg, TILE_ROWS, maskMain);
+
+        LoadIn<GateT, true>(gRawReg, g + row);
+        HalfOrFloat2Float<GateT>(rowG, gRawReg, maskFp16, maskFp32);
+        CompareTwoReg<float, CMPMODE::GE>(
+            causalZero, causalOne, colZero, colOne, rowIndex, rowIndex, maskFp32);
+        And(validZero, causalZero, validTailZero, maskFp32);
+        And(validOne, causalOne, validTailOne, maskFp32);
+        Sub(deltaZero, gZero, rowG, validZero);
+        Sub(deltaOne, gOne, rowG, validOne);
         if constexpr (USE_EXP2) {
-            Muls(delta, delta, ln2, valid);
+            Muls(deltaZero, deltaZero, LN2, validZero);
+            Muls(deltaOne, deltaOne, LN2, validOne);
         }
-        Exp(delta, delta, valid);
-        Mul(result, scores, delta, valid);
-        Muls(result, result, scale, valid);
-        Select(result, result, zero, valid);
-        StoreNzRecordRow(dOut + nzOffset, result, full, nzMask);
-        Adds(rowIndex, rowIndex, 1.0f, full);
+        Exp(deltaZero, deltaZero, validZero);
+        Exp(deltaOne, deltaOne, validOne);
+        Mul(resultZero, scoreZero, deltaZero, validZero);
+        Mul(resultOne, scoreOne, deltaOne, validOne);
+        Mul(resultZero, resultZero, scaleReg, validZero);
+        Mul(resultOne, resultOne, scaleReg, validOne);
+        Select(resultZero, resultZero, zeros, validZero);
+        Select(resultOne, resultOne, zeros, validOne);
+        CastFloat2Half<MainT>(dReg, resultZero, resultOne, maskFp32);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(dOut + nzOffset, dReg, TILE_ROWS, maskMain);
+        Adds(rowIndex, rowIndex, 1.0f, maskFp32);
     }
 
     RegTensor<MainT> zeroRow;
-    Duplicate(zeroRow, static_cast<MainT>(0), nzMask);
+    Duplicate(zeroRow, static_cast<MainT>(0), maskMain);
     for (uint16_t row = validRows; row < TILE_ROWS; ++row) {
         const uint32_t offset = static_cast<uint32_t>(row) * C0_ELEMENTS;
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(dOut + offset, zeroRow, TILE_ROWS, nzMask);
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(aBgOut + offset, zeroRow, TILE_ROWS, nzMask);
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(aBetaOut + offset, zeroRow, TILE_ROWS, nzMask);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(dOut + offset, zeroRow, TILE_ROWS, maskMain);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(aBgOut + offset, zeroRow, TILE_ROWS, maskMain);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(aBetaOut + offset, zeroRow, TILE_ROWS, maskMain);
     }
 }
 
 template <typename MainT>
-__simd_vf__ inline void PackVdoVF(__ubuf__ MainT *nz, __ubuf__ MainT *v, __ubuf__ MainT *dO,
-                                  uint16_t validRows)
+__simd_vf__ inline void PackMatrixVF(__ubuf__ MainT *nz, __ubuf__ MainT *nd, uint16_t validRows)
 {
-    auto dONz = nz + HEAD_BYTES / sizeof(MainT);
-    MaskReg mask = CreateMask<MainT, MaskPattern::ALL>();
+    uint32_t elements = HEAD_DIM;
+    MaskReg mask = UpdateMask<MainT>(elements);
+    RegTensor<MainT> rowData;
     for (uint16_t row = 0; row < validRows; ++row) {
         const uint32_t ndOffset = static_cast<uint32_t>(row) * HEAD_DIM;
         const uint32_t nzOffset = static_cast<uint32_t>(row) * C0_ELEMENTS;
-        RegTensor<MainT> input;
-        LoadAlign(input, v + ndOffset);
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(nz + nzOffset, input, TILE_ROWS, mask);
-        LoadAlign(input, dO + ndOffset);
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(dONz + nzOffset, input, TILE_ROWS, mask);
+        LoadIn<MainT, false>(rowData, nd + ndOffset);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(nz + nzOffset, rowData, TILE_ROWS, mask);
     }
 
-    RegTensor<MainT> zeroRow;
-    Duplicate(zeroRow, static_cast<MainT>(0), mask);
+    Duplicate(rowData, static_cast<MainT>(0), mask);
     for (uint16_t row = validRows; row < TILE_ROWS; ++row) {
-        const uint32_t offset = static_cast<uint32_t>(row) * C0_ELEMENTS;
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(nz + offset, zeroRow, TILE_ROWS, mask);
-        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(dONz + offset, zeroRow, TILE_ROWS, mask);
+        const uint32_t nzOffset = static_cast<uint32_t>(row) * C0_ELEMENTS;
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(nz + nzOffset, rowData, TILE_ROWS, mask);
     }
 }
 
@@ -335,10 +342,10 @@ private:
             CrossCoreSetFlag<0x4, PIPE_V>(SCORE_FLAG_BASE + leader);
         }
 
-        PackVdoVF<MainT>(
-            reinterpret_cast<__ubuf__ MainT *>(vdo.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ MainT *>(v.GetPhyAddr()),
-            reinterpret_cast<__ubuf__ MainT *>(dO.GetPhyAddr()), validRows);
+        auto vNz = reinterpret_cast<__ubuf__ MainT *>(vdo.GetPhyAddr());
+        auto dONz = vNz + HEAD_BYTES / sizeof(MainT);
+        PackMatrixVF<MainT>(vNz, reinterpret_cast<__ubuf__ MainT *>(v.GetPhyAddr()), validRows);
+        PackMatrixVF<MainT>(dONz, reinterpret_cast<__ubuf__ MainT *>(dO.GetPhyAddr()), validRows);
         SetFlag<HardEvent::V_MTE2>(events.inputFree);
         SetFlag<HardEvent::V_MTE3>(events.outputReady);
     }

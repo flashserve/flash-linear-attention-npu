@@ -5,7 +5,19 @@
 #ifndef CHUNK_GDN_BWD_INTRA_ARCH92_CUBE_H
 #define CHUNK_GDN_BWD_INTRA_ARCH92_CUBE_H
 
+#ifndef CATLASS_ARCH
+#define CATLASS_ARCH 9201
+#endif
+
 #include <type_traits>
+#include "catlass/arch/arch.hpp"
+#include "catlass/arch/resource.hpp"
+#include "catlass/gemm/tile/tile_copy.hpp"
+#include "catlass/gemm/tile/tile_mmad.hpp"
+#include "catlass/gemm/tile/ascend950/copy_l0c_to_ub.hpp"
+#include "catlass/layout/layout.hpp"
+#include "tla/layout.hpp"
+#include "tla/tensor.hpp"
 
 #include "chunk_gdn_bwd_intra_common.h"
 #include "../chunk_gdn_bwd_intra_common.h"
@@ -45,7 +57,11 @@ public:
             ChunkGdnBwdIntraWorkMeta meta{};
             mapper_.ResolveChunkMajor(work, meta);
             RunStage0(meta);
-            RunStage2(meta);
+            if (meta.validTokens == TILE_ROWS) {
+                RunStage2<true>(meta);
+            } else {
+                RunStage2<false>(meta);
+            }
             if (stride >= tiling_->workCount - work) {
                 break;
             }
@@ -56,6 +72,21 @@ public:
 
 private:
     using HardEvent = AscendC::HardEvent;
+    using ArchTag = Catlass::Arch::Ascend960DT;
+    using LayoutRM = Catlass::layout::RowMajor;
+    using LayoutCM = Catlass::layout::ColumnMajor;
+    using ScoreTile = Catlass::Gemm::Tile::PackedTileCopyTlaToUB<
+        ArchTag, MainT, LayoutRM, MainT, LayoutCM, float, LayoutRM>;
+    using OutputTile = Catlass::Gemm::Tile::PackedTileCopyTla<
+        ArchTag, MainT, LayoutRM, MainT, LayoutRM, MainT, LayoutRM>;
+    template <class Tensor>
+    using CopyGmToL1A = typename ScoreTile::template CopyGmToL1A<Tensor>;
+    template <class Tensor>
+    using CopyGmToL1B = typename ScoreTile::template CopyGmToL1B<Tensor>;
+    template <class Tensor>
+    using CopyL0CToUb = typename ScoreTile::template CopyL0CToDst<Tensor>;
+    template <class Tensor>
+    using CopyL0CToGm = typename OutputTile::template CopyL0CToDst<Tensor>;
 
     struct SlotEvents {
         AscendC::TEventID qkReady;
@@ -137,25 +168,33 @@ private:
             AscendC::PipeBarrier<PIPE_MTE2>();
         }
 
-        AscendC::Nd2NzParams copy{};
-        copy.ndNum = 1;
-        copy.nValue = static_cast<uint16_t>(meta.validTokens);
-        copy.dValue = HEAD_DIM;
-        copy.srcDValue = HEAD_DIM;
-        copy.dstNzC0Stride = TILE_ROWS;
-        copy.dstNzNStride = 1;
-        AscendC::DataCopy(l1K, kGm_[offset], copy);
-        AscendC::DataCopy(l1Q, qGm_[offset], copy);
+        auto gmK = tla::MakeTensor(
+            kGm_[offset], tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, HEAD_DIM),
+            Catlass::Arch::PositionGM{});
+        auto gmQ = tla::MakeTensor(
+            qGm_[offset], tla::MakeLayout<MainT, LayoutCM>(HEAD_DIM, meta.validTokens),
+            Catlass::Arch::PositionGM{});
+        auto tensorL1K = tla::MakeTensor(
+            l1K, tla::MakeLayout<MainT, typename ScoreTile::LayoutTagL1A>(TILE_ROWS, HEAD_DIM),
+            Catlass::Arch::PositionL1{});
+        auto tensorL1Q = tla::MakeTensor(
+            l1Q, tla::MakeLayout<MainT, typename ScoreTile::LayoutTagL1B>(HEAD_DIM, TILE_ROWS),
+            Catlass::Arch::PositionL1{});
+        auto l1KTile = tla::GetTile(
+            tensorL1K, tla::MakeCoord(0, 0), tla::MakeShape(meta.validTokens, HEAD_DIM));
+        auto l1QTile = tla::GetTile(
+            tensorL1Q, tla::MakeCoord(0, 0), tla::MakeShape(HEAD_DIM, meta.validTokens));
+        CopyGmToL1A<decltype(gmK)>{}(l1KTile, gmK);
+        CopyGmToL1B<decltype(gmQ)>{}(l1QTile, gmQ);
         AscendC::SetFlag<HardEvent::MTE2_MTE1>(events_[slot].qkReady);
     }
 
     __aicore__ inline void ComputeScore(uint32_t leader, uint32_t l0Slot)
     {
         AscendC::WaitFlag<HardEvent::MTE2_MTE1>(events_[leader].qkReady);
-        // Both operands are stored as [64,128] NZ. The non-transposed L0B load
-        // presents Q as the right operand in K @ Q^T.
+        // Q uses a column-major logical view of the row-major GM data for K @ Q^T.
         Matmul<true>(l0Slot, L1(L1_K_BASE + leader * HEAD_BYTES),
-                     L1(L1_Q_BASE + leader * HEAD_BYTES));
+                     L1(L1_Q_BASE + leader * HEAD_BYTES), TILE_ROWS);
 
         const auto &events = events_[l0Slot];
         AscendC::WaitFlag<HardEvent::M_FIX>(events.resultReady);
@@ -163,29 +202,25 @@ private:
         if (scoreSlotUsed_[leader]) {
             AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(scoreFlag);
         }
-        AscendC::LocalTensor<float> score(AscendC::TPosition::VECIN,
-            SCORE_UB_BASE + leader * SCORE_SLOT_BYTES, SCORE_SLOT_BYTES / sizeof(float));
-        AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::ROW_MAJOR> params{};
-        params.nSize = TILE_ROWS;
-        params.mSize = TILE_ROWS;
-        params.srcStride = TILE_ROWS;
-        params.dstStride = TILE_ROWS;
-        params.quantPre = QuantMode_t::NoQuant;
-        params.dualDstCtl = 0;
-        params.subBlockId = 0;
-        params.params.ndNum = 1;
-        AscendC::Fixpipe<float, float, SCORE_FIXPIPE_CONFIG>(score, L0C(l0Slot), params);
+        auto score = resource_.ubBuf.template GetBufferByByte<float>(
+            SCORE_UB_BASE + leader * SCORE_SLOT_BYTES);
+        auto scoreTensor = tla::MakeTensor(
+            score, tla::MakeLayout<float, LayoutRM>(TILE_ROWS, TILE_ROWS), Catlass::Arch::PositionUB{});
+        auto scoreL0C = tla::MakeTensor(
+            L0C(l0Slot), tla::MakeLayoutL0C(TILE_ROWS, TILE_ROWS), Catlass::Arch::PositionL0C{});
+        CopyL0CToUb<decltype(scoreTensor)>{}(scoreTensor, scoreL0C, uint8_t{0}, uint8_t{0});
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(scoreFlag);
         AscendC::SetFlag<HardEvent::FIX_M>(events.resultFree);
     }
 
+    template <bool FULL_TOKENS>
     __aicore__ inline void RunStage2(const ChunkGdnBwdIntraWorkMeta &meta)
     {
         const uint64_t headStride = static_cast<uint64_t>(tiling_->seqlen) * HEAD_DIM;
         const uint64_t outputBase =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + meta.hvBegin) * headStride +
             static_cast<uint64_t>(meta.tokenStart) * HEAD_DIM;
-        const uint16_t rows = static_cast<uint16_t>(meta.validTokens);
+        const uint32_t rows = FULL_TOKENS ? TILE_ROWS : static_cast<uint32_t>(meta.validTokens);
         uint32_t issued = 0;
         for (uint32_t r = 0; r < meta.validHeads; ++r) {
             const uint32_t slot = r % SLOT_COUNT;
@@ -197,11 +232,11 @@ private:
             AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE1>(recordFlag);
 
             const uint32_t dvSlot = issued++ % SLOT_COUNT;
-            Matmul<false>(dvSlot, L1(record + RECORD_D_OFFSET), L1(L1_DO_BASE + slot * HEAD_BYTES));
+            Matmul<false>(dvSlot, L1(record + RECORD_D_OFFSET), L1(L1_DO_BASE + slot * HEAD_BYTES), rows);
             StoreOutput(dvSlot, dvLocalGm_[outputOffset], rows);
 
             const uint32_t wSlot = issued++ % SLOT_COUNT;
-            Matmul<false>(wSlot, L1(record + RECORD_A_BG_OFFSET), L1(L1_K_BASE + leader * HEAD_BYTES));
+            Matmul<false>(wSlot, L1(record + RECORD_A_BG_OFFSET), L1(L1_K_BASE + leader * HEAD_BYTES), rows);
             if (r + 1 == meta.validHeads ||
                 ChunkGdnBwdIntraScoreLeader<G>(meta.hvBegin, r + 1, tiling_->groupSize)) {
                 AscendC::SetFlag<HardEvent::MTE1_MTE2>(events_[leader].qkFree);
@@ -209,7 +244,7 @@ private:
             StoreOutput(wSlot, wGm_[outputOffset], rows);
 
             const uint32_t uSlot = issued++ % SLOT_COUNT;
-            Matmul<false>(uSlot, L1(record + RECORD_A_BETA_OFFSET), L1(L1_V_BASE + slot * HEAD_BYTES));
+            Matmul<false>(uSlot, L1(record + RECORD_A_BETA_OFFSET), L1(L1_V_BASE + slot * HEAD_BYTES), rows);
             // The U load is the last MTE1 consumer of this shared record slot.
             AscendC::CrossCoreSetFlag<0x4, PIPE_MTE1>(recordFlag);
             StoreOutput(uSlot, uGm_[outputOffset], rows);
@@ -218,73 +253,71 @@ private:
 
     template <bool SCORE>
     __aicore__ inline void Matmul(uint32_t slot, AscendC::LocalTensor<MainT> left,
-                                  AscendC::LocalTensor<MainT> right)
+                                  AscendC::LocalTensor<MainT> right, uint32_t rows)
     {
-        constexpr uint16_t rowFractals = TILE_ROWS / C0_ELEMENTS;
-        constexpr uint16_t headFractals = HEAD_DIM / C0_ELEMENTS;
-        auto l0A = AscendC::LocalTensor<MainT>(
-            AscendC::TPosition::A2, slot * L0_AB_SLOT_BYTES, L0_AB_SLOT_BYTES / sizeof(MainT));
-        auto l0B = AscendC::LocalTensor<MainT>(
-            AscendC::TPosition::B2, slot * L0_AB_SLOT_BYTES, L0_AB_SLOT_BYTES / sizeof(MainT));
+        using Tile = std::conditional_t<SCORE, ScoreTile, OutputTile>;
+        using CopyL1ToL0A = typename Tile::CopyL1ToL0A;
+        using CopyL1ToL0B = typename Tile::CopyL1ToL0B;
+        using TileMmad = Catlass::Gemm::Tile::TileMmadTla<ArchTag, MainT, typename Tile::LayoutTagL1A>;
+        constexpr uint32_t l1K = SCORE ? HEAD_DIM : TILE_ROWS;
+        constexpr uint32_t n = SCORE ? TILE_ROWS : HEAD_DIM;
+        const uint32_t k = SCORE ? HEAD_DIM : rows;
+
+        // L1 retains the fixed NZ stride. The C2 L0 tiles use the actual tail shape.
+        auto tensorL1A = tla::MakeTensor(
+            left, tla::MakeLayout<MainT, typename Tile::LayoutTagL1A>(TILE_ROWS, l1K),
+            Catlass::Arch::PositionL1{});
+        auto tensorL1B = tla::MakeTensor(
+            right, tla::MakeLayout<MainT, typename Tile::LayoutTagL1B>(l1K, n),
+            Catlass::Arch::PositionL1{});
+        auto tileL1A = tla::GetTile(tensorL1A, tla::MakeCoord(0, 0), tla::MakeShape(rows, k));
+        auto tileL1B = tla::GetTile(tensorL1B, tla::MakeCoord(0, 0), tla::MakeShape(k, n));
+        auto tensorL0A = tla::MakeTensor(
+            resource_.l0ABuf.template GetBufferByByte<MainT>(slot * L0_AB_SLOT_BYTES),
+            tla::MakeLayout<MainT, typename Tile::LayoutTagL0A>(rows, k), Catlass::Arch::PositionL0A{});
+        auto tensorL0B = tla::MakeTensor(
+            resource_.l0BBuf.template GetBufferByByte<MainT>(slot * L0_AB_SLOT_BYTES),
+            tla::MakeLayout<MainT, typename Tile::LayoutTagL0B>(k, n), Catlass::Arch::PositionL0B{});
+        auto tensorL0C = tla::MakeTensor(
+            L0C(slot), tla::MakeLayoutL0C(rows, n), Catlass::Arch::PositionL0C{});
+
         const auto &events = events_[slot];
         AscendC::WaitFlag<HardEvent::M_MTE1>(events.operandsFree);
-        AscendC::LoadData2DParamsV2 load{};
-        load.mStep = rowFractals;
-        load.kStep = SCORE ? headFractals : rowFractals;
-        load.srcStride = rowFractals;
-        load.dstStride = rowFractals;
-        AscendC::LoadData(l0A, left, load);
-
-        // C2 RHS is [K,N] NZ, so transpose the fractals for L0B. Score RHS
-        // already has [N,K] layout in L1.
-        load.kStep = headFractals;
-        load.dstStride = SCORE ? rowFractals : headFractals;
-        load.ifTranspose = !SCORE;
-        AscendC::LoadData(l0B, right, load);
+        CopyL1ToL0A{}(tensorL0A, tileL1A);
+        CopyL1ToL0B{}(tensorL0B, tileL1B);
         AscendC::SetFlag<HardEvent::MTE1_M>(events.operandsReady);
 
         AscendC::WaitFlag<HardEvent::MTE1_M>(events.operandsReady);
         AscendC::WaitFlag<HardEvent::FIX_M>(events.resultFree);
-        AscendC::MmadParams params{};
-        params.m = TILE_ROWS;
-        params.n = SCORE ? TILE_ROWS : HEAD_DIM;
-        params.k = SCORE ? HEAD_DIM : TILE_ROWS;
-        params.cmatrixInitVal = true;
-        AscendC::Mmad(L0C(slot), l0A, l0B, params);
+        TileMmad{}(tensorL0C, tensorL0A, tensorL0B, true, uint8_t{0});
         AscendC::SetFlag<HardEvent::M_MTE1>(events.operandsFree);
         AscendC::SetFlag<HardEvent::M_FIX>(events.resultReady);
     }
 
     __aicore__ inline void StoreOutput(uint32_t slot, AscendC::GlobalTensor<MainT> out,
-                                       uint16_t validRows)
+                                       uint32_t validRows)
     {
+        auto tensorL0C = tla::MakeTensor(
+            L0C(slot), tla::MakeLayoutL0C(validRows, HEAD_DIM), Catlass::Arch::PositionL0C{});
+        auto output = tla::MakeTensor(
+            out, tla::MakeLayout<MainT, LayoutRM>(validRows, HEAD_DIM), Catlass::Arch::PositionGM{});
         const auto &events = events_[slot];
         AscendC::WaitFlag<HardEvent::M_FIX>(events.resultReady);
-        AscendC::FixpipeParamsArch3510<AscendC::CO2Layout::ROW_MAJOR> params{};
-        params.nSize = HEAD_DIM;
-        params.mSize = validRows;
-        params.srcStride = TILE_ROWS;
-        params.dstStride = HEAD_DIM;
-        params.quantPre = std::is_same_v<MainT, half> ? QuantMode_t::F322F16 : QuantMode_t::F322BF16;
-        params.params.ndNum = 1;
-        AscendC::Fixpipe<MainT, float, AscendC::CFG_ROW_MAJOR>(out, L0C(slot), params);
+        CopyL0CToGm<decltype(output)>{}(output, tensorL0C, uint8_t{0});
         AscendC::SetFlag<HardEvent::FIX_M>(events.resultFree);
     }
 
-    __aicore__ inline AscendC::LocalTensor<MainT> L1(uint32_t byteOffset) const
+    __aicore__ inline AscendC::LocalTensor<MainT> L1(uint32_t byteOffset)
     {
-        return AscendC::LocalTensor<MainT>(
-            AscendC::TPosition::A1, byteOffset, (L1_BYTES - byteOffset) / sizeof(MainT));
+        return resource_.l1Buf.template GetBufferByByte<MainT>(byteOffset);
     }
 
-    __aicore__ inline AscendC::LocalTensor<float> L0C(uint32_t slot) const
+    __aicore__ inline AscendC::LocalTensor<float> L0C(uint32_t slot)
     {
-        return AscendC::LocalTensor<float>(
-            AscendC::TPosition::CO1, slot * L0_C_SLOT_BYTES, L0_C_SLOT_BYTES / sizeof(float));
+        return resource_.l0CBuf.template GetBufferByByte<float>(slot * L0_C_SLOT_BYTES);
     }
 
-    static constexpr AscendC::FixpipeConfig SCORE_FIXPIPE_CONFIG = {AscendC::CO2Layout::ROW_MAJOR, true};
-
+    Catlass::Arch::Resource<ArchTag> resource_;
     const ChunkGdnBwdIntraTilingData *tiling_ = nullptr;
     ChunkGdnBwdIntraWorkMapper mapper_;
     AscendC::GlobalTensor<MainT> qGm_;
