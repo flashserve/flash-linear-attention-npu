@@ -70,6 +70,67 @@ def gdn_recoverssm_verify(
 Python wrapper 返回 `out`。`replay_cache` 作为 mutation 输出保留调用者视角中的原对象，
 不与 `out`、`q`、`k`、`v` 或 `checkpoint_state` 发生部分重叠。
 
+## Python 调用示例
+
+```python
+import torch
+
+from fla_npu.ops.ascendc import gdn_recoverssm_verify
+
+
+batch = 2
+window = 4
+hk, hv = 2, 6
+k_dim = v_dim = 128
+offsets = [0, 3, 7]
+tokens = offsets[-1]
+device = "npu"
+
+q = torch.randn((1, tokens, hk, k_dim), dtype=torch.bfloat16, device=device)
+k = torch.randn_like(q)
+v = torch.randn((1, tokens, hv, v_dim), dtype=torch.bfloat16, device=device)
+a = torch.randn((tokens, hv), dtype=torch.bfloat16, device=device)
+b = torch.randn((1, tokens, hv), dtype=torch.bfloat16, device=device)
+A_log = torch.linspace(-0.4, 0.3, hv, dtype=torch.float32, device=device)
+dt_bias = torch.linspace(-0.2, 0.2, hv, dtype=torch.float32, device=device)
+
+checkpoint = torch.randn(
+    (batch + 1, hv, v_dim, k_dim), dtype=torch.float32, device=device
+) * 0.02
+replay = torch.empty(
+    (batch + 1, hv, window, v_dim + k_dim + 1),
+    dtype=torch.float32,
+    device=device,
+)
+
+out = gdn_recoverssm_verify(
+    A_log,
+    a,
+    b,
+    dt_bias,
+    q,
+    k,
+    v,
+    checkpoint,
+    replay,
+    torch.tensor(offsets, dtype=torch.int32, device=device),
+    torch.tensor([1, 2], dtype=torch.int32, device=device),
+    spec_query_len=window,
+    scale=k_dim**-0.5,
+    softplus_beta=0.5,
+    softplus_threshold=2.0,
+    use_qk_l2norm_in_kernel=True,
+)
+
+torch.npu.synchronize()
+assert out.shape == (1, tokens, hv, v_dim)
+assert out.dtype == torch.bfloat16
+assert replay.dtype == torch.float32
+```
+
+`gdn_recoverssm_verify` 是唯一公开 Python 入口。`GdnRecoverssmVerifyInnerGetWorkspaceSize`
+和 `GdnRecoverssmVerifyInner` 仅作为内部 launcher ABI，不安装公开头文件。
+
 ## 数学语义
 
 对请求 `r`、value head `hv` 和 token `t`，令：
