@@ -118,12 +118,14 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const auto arch = platform.GetCurNpuArch();
     const bool arch22 = arch == NpuArch::DAV_2201;
-    if (!arch22 && arch != NpuArch::DAV_3510) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: only DAV_2201 and DAV_3510 are supported.", __func__);
+    const bool arch92 = arch == NpuArch::DAV_9201;
+    if (!arch22 && !arch92 && arch != NpuArch::DAV_3510) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "%s: only DAV_2201, DAV_3510 and DAV_9201 are supported.", __func__);
         return ge::GRAPH_FAILED;
     }
-    // 上限统一取自 schedule.h 的 IntraMaxGvaRatio，与 aclnn 参数校验同源。
-    const int64_t maxRatio = IntraMaxGvaRatio(arch22);
+    // A6 uses fixed GVA keys; A2/A3 and A5 also support runtime GVA.
+    const int64_t maxRatio = IntraMaxGvaRatio(arch22, arch92);
     const int64_t headRatio = valueHeads / qkHeads;
     if (valueHeads % qkHeads != 0 || headRatio < 1 || headRatio > maxRatio) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
@@ -187,13 +189,14 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     }
 
     const uint32_t aicCores = platform.GetCoreNumAic();
+    const uint32_t cores = arch92 ? std::min<uint32_t>(aicCores, platform.GetCoreNumAiv()) : aicCores;
     IntraSchedule schedule;
-    if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
-                                    arch22, platform.GetLibApiWorkSpaceSize(), schedule)) {
+    if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, cores, arch22, arch92,
+                            platform.GetLibApiWorkSpaceSize(), schedule)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "invalid schedule or workspace overflow.");
         return ge::GRAPH_FAILED;
     }
-    if (arch22) {
+    if (arch22 || arch92) {
         uint64_t ubBytes = 0;
         uint64_t l1Bytes = 0;
         uint64_t l0aBytes = 0;
@@ -204,14 +207,18 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, l0aBytes);
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, l0bBytes);
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, l0cBytes);
-        if (ubBytes < GDN::Arch22::UB_BYTES ||
-                        l1Bytes < GDN::Arch22::L1_SCORE_BYTES + schedule.cg * GDN::Arch22::L1_HEAD_BYTES ||
-                        l0aBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
-                        l0bBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
-                        l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: insufficient on-chip memory for arch22 schedule.", __func__);
-        return ge::GRAPH_FAILED;
-    }
+        const uint64_t requiredUb = arch92 ? GDN::Arch92::UB_BYTES : GDN::Arch22::UB_BYTES;
+        const uint64_t requiredL1 = arch92 ? GDN::Arch92::L1_BYTES :
+            GDN::Arch22::L1_SCORE_BYTES + schedule.cg * GDN::Arch22::L1_HEAD_BYTES;
+        const uint64_t requiredL0Ab = arch92 ? GDN::Arch92::L0_AB_BYTES : GDN::Arch22::L0_HOST_MIN_BYTES;
+        const uint64_t requiredL0C = arch92 ? GDN::Arch92::L0_C_BYTES : GDN::Arch22::L0_HOST_MIN_BYTES;
+        if (ubBytes < requiredUb || l1Bytes < requiredL1 || l0aBytes < requiredL0Ab ||
+            l0bBytes < requiredL0Ab || l0cBytes < requiredL0C) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                   "%s: insufficient on-chip memory for %s schedule.",
+                                   __func__, arch92 ? "DAV_9201" : "arch22");
+            return ge::GRAPH_FAILED;
+        }
     }
     tiling->batch = batch;
     tiling->qkHeads = qkHeads;
