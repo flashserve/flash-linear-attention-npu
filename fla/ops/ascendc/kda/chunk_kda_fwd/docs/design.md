@@ -160,7 +160,7 @@ fla_npu.ops.ascendc.chunk_kda_fwd(chunk_size=32)
 
 host 负责连续化、公开 layout 转换、g/beta dtype 统一、state 形状适配和可选输出占位。
 dense BSND 将等长 batch 合成整齐 `cu_seqlens` 后走 packed varlen 直读；dense BNSD 拍平
-batch/head 后保持头连续。varlen 支持 BSND（要求 `B=1`）、TND 和 NTD，拒绝 BNSD。
+batch/head 后保持头连续。varlen 支持 BSND（`B=1`）、BNSD（`B=1`）、TND、NTD。
 `A_log` 的指数由 L0 host 的 `l0op::Exp` 完成，不是 fused kernel 内的 GM 预处理。
 
 TilingKey 必须按实际 L0 区分：
@@ -279,7 +279,7 @@ AIC 向两个 AIV 分别 set 基础 id 与 id+16，并在反向等待两个 id�
 | --- | --- |
 | 平台与 L0 | Ascend950；独立算子 `ChunkKdaFwdFused`，一次 mix launch。 |
 | dtype | q/k/v/o BF16；公开 V2 的 g/beta 各自可为 BF16/FP32，任一 FP32 时 host 将两者统一上转 FP32；A_log/dt_bias/state FP32。 |
-| layout | dense BSND/BNSD；varlen BSND(B=1)/TND/NTD；NTD 原生 head-major 寻址，输出仍 TND。 |
+| layout | dense BSND/BNSD；varlen BSND(B=1)/BNSD(B=1)/TND/NTD，输出仍 TND。 |
 | shape | K=V=128，T>0，128-token group 尾块，GVA `HV%H==0`；varlen 最多 1024 序列并覆盖空序列。 |
 | state | 无 state、initial/final state、dense/varlen state；Python 覆盖 K-first/V-first 适配。 |
 | gate/norm | safe gate、核内 gate/L2 norm/beta sigmoid、BF16 与 FP32 g/beta；chunk32 epsilon 固定为 `1e-6`。 |

@@ -9,7 +9,7 @@
 // (尾块核内钳制);HV % H == 0;dense batch 使用单启动任务循环;
 // 原始 g + a_log(fp32 [H]) + dt_bias(fp32 [H*K]);beta 核内 sigmoid、q/k 核内 L2 归一;
 // 产出 attn_out + 可选 final_state;可选 initial_state(fp32 [1,H,128,128],state_v_first=false);
-// varlen 支持 TND/NTD;不支持中间态导出。
+// varlen 支持 TND/NTD 及 B=1 的 BNSD( squeeze 为 NTD);不支持中间态导出。
 aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor *executor,
                                         const KdaShapeInfo &info);
 
@@ -575,6 +575,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
                                         const KdaShapeInfo &info)
 {
     const int64_t nSeq = static_cast<int64_t>(params.cuSeqlensOptional->Size()) - 1;
+    const bool bnsdVarlen = std::strcmp(params.layout, "BNSD") == 0;
 
     aclnnStatus contRet = ContiguousInputs(params, executor);
     if (!(contRet == ACLNN_SUCCESS)) {
@@ -588,12 +589,26 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
     const aclTensor *gTok = params.g;
     const aclTensor *betaTok = params.beta;
     const aclTensor *oTok = params.attnOut;
-    if (!info.isRank3) {   // BSND:[1,T,HV,*] → [T,HV,*](B==1 由外层契约卡住)
-        qTok = l0op::Reshape(params.q, MakeShape({info.seqlen, info.hNum, info.kDim}), executor);
-        kTok = l0op::Reshape(params.k, MakeShape({info.seqlen, info.hNum, info.kDim}), executor);
-        vTok = l0op::Reshape(params.v, MakeShape({info.seqlen, info.hvNum, info.vDim}), executor);
-        gTok = l0op::Reshape(params.g, MakeShape({info.seqlen, info.hvNum, info.kDim}), executor);
-        betaTok = l0op::Reshape(params.beta, MakeShape({info.seqlen, info.hvNum}), executor);
+    if (!info.isRank3) {
+        // BNSD [1,H,T,*] squeeze 为 NTD [H,T,*];BSND [1,T,H,*] squeeze 为
+        // token-major [T,H,*]。两者 attnOut 均保持公开 token-major [1,T,HV,V]。
+        const auto qkShape = bnsdVarlen
+            ? MakeShape({info.hNum, info.seqlen, info.kDim})
+            : MakeShape({info.seqlen, info.hNum, info.kDim});
+        const auto vShape = bnsdVarlen
+            ? MakeShape({info.hvNum, info.seqlen, info.vDim})
+            : MakeShape({info.seqlen, info.hvNum, info.vDim});
+        const auto gShape = bnsdVarlen
+            ? MakeShape({info.hvNum, info.seqlen, info.kDim})
+            : MakeShape({info.seqlen, info.hvNum, info.kDim});
+        const auto betaShape = bnsdVarlen
+            ? MakeShape({info.hvNum, info.seqlen})
+            : MakeShape({info.seqlen, info.hvNum});
+        qTok = l0op::Reshape(params.q, qkShape, executor);
+        kTok = l0op::Reshape(params.k, qkShape, executor);
+        vTok = l0op::Reshape(params.v, vShape, executor);
+        gTok = l0op::Reshape(params.g, gShape, executor);
+        betaTok = l0op::Reshape(params.beta, betaShape, executor);
         oTok = l0op::Reshape(params.attnOut, MakeShape({info.seqlen, info.hvNum, info.vDim}), executor);
         if (!(qTok != nullptr && kTok != nullptr && vTok != nullptr && gTok != nullptr && betaTok != nullptr && oTok != nullptr)) {
             OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qTok != nullptr && kTok != nullptr && vTok != nullptr && gTok != nullptr && betaTok != nullptr && oTok != nullptr failed", __func__);
@@ -618,8 +633,8 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
-    // beta 仅 token-major 需要转置为头连续 [HV,T]；NTD 输入已是该布局。
-    if (std::strcmp(params.layout, "NTD") != 0) {
+    // beta 仅 token-major 需要转置为头连续 [HV,T]；NTD 和 BNSD 输入已是该布局。
+    if (!bnsdVarlen && std::strcmp(params.layout, "NTD") != 0) {
         betaTok = Transpose(betaTok, {1, 0}, executor);
         if (!(betaTok != nullptr)) {
             OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: betaTok != nullptr failed", __func__);
@@ -669,7 +684,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         qTok, kTok, vTok, gTok, betaTok, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTok, finalStateTmp,
         params.cuSeqlensOptional, executor,
-        std::strcmp(params.layout, "NTD") == 0 ? "NTD" : "TND");
+        (bnsdVarlen || std::strcmp(params.layout, "NTD") == 0) ? "NTD" : "TND");
     if (!(fused != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: fused != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
@@ -705,10 +720,8 @@ aclnnStatus RunChunkKdaFwd32Fused(ChunkKdaFwdParams &params, aclOpExecutor *exec
     if (!(checkRet == ACLNN_SUCCESS)) {
         return checkRet;
     }
-    // varlen 支持 BSND/TND 的 token-major 布局和 NTD 的 head-major 布局;BNSD 使用 chunk64 路径
-    if (layout == KdaFwdLayout::BNSD) {
-        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "layout", "BNSD with cuSeqlensOptional", "BSND, TND or NTD for chunkSize=32 varlen");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+    // varlen 支持 BSND/TND 的 token-major 布局、NTD 的 head-major 布局，
+    // 以及 B=1 的 BNSD（在 RunChunkKdaFwd32FusedVarlen 中 squeeze 为 NTD）。
+    // rank-4 varlen 的 B!=1 已由 CheckChunkKdaFwd32Params 拒绝。
     return RunChunkKdaFwd32FusedVarlen(params, executor, info);
 }
