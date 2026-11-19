@@ -419,20 +419,3 @@ GWS 数值表示算子 workspace 申请量。C01 Event 回退 0.8690%，三例�
 
 A3/A5 设备回归、完整 Bwd 设备链路和全量 MSS52 继续等待相应实际验证。
 保留版本的四例相关 racecheck 结果按该原版本单独记录。
-
-### A5 UB 竞争修复回归（2026-11-19）
-
-`4759e2c0` 的 MSS racecheck 曾检出 S12 `doG` 与 S14 `q` 复用 UB 时的
-`Potential WAW hazard detected at UB` ERROR。修复仅在 arch35 的 S14 实际搬入
-`q` 前补齐一对 `V_MTE2` set/wait，复用既有事件，不改变计算或缓冲区分配。
-
-本轮基于 `cf61e433` 加上述修复，使用 A5 Ascend 950、CANN 9.2.0-beta.2、
-ATK 26.9.24 和 GitCode MR 39 工程 `c83051ec`，重建 Finalize 的 sanitizer 包，
-核对实际加载的 OPP、kernel 文件与调试信息后执行最小回归：
-
-- Finalize MSS 用例 0、5、10、39（GVA 1/3/5/16，含定长和变长）4/4 完成，
-  racecheck ERROR 为 0；仍有 167 条原始 WARNING，保留记录，未进行 WARNING 整改。
-- Finalize 精度用例 0、8、16、62（GVA 1/3/5/16）及完整 Bwd 用例 0、124
-  （GVA 1/16）共 6/6 通过；编号归属该 MR 工程，独立于仓内矩阵。
-
-上述结果为专项回归，不代表全量 MSS 无告警。本轮未重测性能，既有性能数据仍归属原测量版本。
