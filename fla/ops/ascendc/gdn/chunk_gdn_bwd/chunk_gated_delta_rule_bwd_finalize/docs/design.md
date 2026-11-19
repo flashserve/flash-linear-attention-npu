@@ -961,7 +961,10 @@ UB[247.5,248)  空闲；S12 已完成 bg 的末次消费
 
 操作流程：
 
-1. `q` 从 GM 搬入；本 Stage 不读取 `q_rstd/k_rstd`。
+1. `q` 从 GM 搬入；本 Stage 不读取 `q_rstd/k_rstd`。`q` 复用 S12 的
+   `do_g` 物理区，搬入前复用当前空闲的 `stateVToMte2[qSlot]` 成对
+   set/wait，保证 S12 的 V 消费及 MTE3 读完后，MTE2 才能覆盖该区；
+   `q` 驻留复用、不再次搬入时不增加事件。
 2. 单次 VF 完成 `dk_raw_hv`、三个点积和 `dg` reverse suffix sum；`dg` 以
    FP32 驻留。FP32 ABI 直接写回，BF16 ABI 仅在最终 MTE3 前打包。
 3. `dq_hv` 写入 `dqStage12Workspace`，`dk_raw_hv` 写入

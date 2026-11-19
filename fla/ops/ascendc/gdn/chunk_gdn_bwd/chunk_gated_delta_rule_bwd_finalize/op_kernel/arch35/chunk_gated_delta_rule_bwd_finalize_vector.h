@@ -2159,6 +2159,9 @@ public:
                     // 直接复用本 AIV 在 slot0 中已经驻留的 q，不重复读 GM。
                     qSlot = tiling_->headRatio >= 3 ? 0U : streamSlot_;
                     if (tiling_->headRatio < 3 || (GVA_GT4 ? headOffset : localHv) < AIV_COUNT_2) {
+                        // q reuses S12 doG: wait for its V consumer and MTE3 read before MTE2 overwrites it.
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[qSlot]);
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[qSlot]);
                         if ((tiling_->layout == GDN::FinalizeLayout::BSND)) {
                             AscendC::DataCopyPad(qStage14_[qSlot], qGm_[qOffset],
                                 {static_cast<uint16_t>(chunk.chunkLen),
