@@ -37,12 +37,11 @@ using fla_npu_stable::stable::scalar;
 using fla_npu_stable::stable::size_of;
 using fla_npu_stable::stable::tensor;
 
-constexpr const char* kCausalConv1dBwdInputLayoutNames[] = {"BSND", "BNSD",
-                                                            "TND", "NTD", "BSH"};
-
 // ---------------------------------------------------------------------------
 // npu_causal_conv1d_bwd
 // ---------------------------------------------------------------------------
+
+constexpr const char* kCausalConv1dBwdInputLayoutNames[] = {"BSND", "BNSD", "TND", "NTD", "BSH"};
 
 constexpr const char* kSchema_causal_conv1d_bwd =
     "npu_causal_conv1d_bwd(Tensor x, Tensor? y, Tensor weight, Tensor dy, "
@@ -55,37 +54,11 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> run_npu_causal_conv1d_bwd(
     std::optional<Tensor> initial_state, std::optional<Tensor> dht,
     std::optional<Tensor> query_start_loc, int64_t activation,
     int64_t input_layout, int64_t stream) {
-  const TensorMeta x_meta = meta_of(x);
-  const TensorMeta weight_meta = meta_of(weight);
-  const char* layout =
-      enum_name(kCausalConv1dBwdInputLayoutNames, input_layout);
-  const std::vector<int64_t> qsl = int_values(query_start_loc);
-
-  // TND/NTD carry one initial state per segment; the other layouts carry one
-  // per batch row.
-  const bool per_segment =
-      std::strcmp(layout, "TND") == 0 || std::strcmp(layout, "NTD") == 0;
-  const int64_t state_rows =
-      per_segment ? (qsl.empty() ? 0 : static_cast<int64_t>(qsl.size()) - 1)
-                  : SIZE_OF(x_meta, 0);
-
-  Tensor out_dx = allocate_like(x_meta);
-  Tensor out_dw = allocate_sizes(
-      {SIZE_OF(weight_meta, 0), SIZE_OF(weight_meta, 1)},
-      weight_meta.scalar_type, weight_meta);
-  Tensor out_db = allocate_sizes({SIZE_OF(weight_meta, 1)},
-                                 weight_meta.scalar_type, weight_meta);
-  Tensor out_dinit = allocate_sizes(
-      {state_rows, SIZE_OF(weight_meta, 0), SIZE_OF(weight_meta, 1)},
-      x_meta.scalar_type, x_meta);
-
-  FLA_STABLE_EXEC("aclnnCausalConv1dBwd", x_meta, stream, tensor(x_meta),
-                  optional_tensor(y), tensor(weight_meta), tensor(meta_of(dy)),
-                  optional_tensor(initial_state), optional_tensor(dht),
-                  int_array(qsl), scalar(activation), CStrArg(layout),
-                  out_tensor(meta_of(out_dx)), out_tensor(meta_of(out_dw)),
-                  out_tensor(meta_of(out_db)), out_tensor(meta_of(out_dinit)));
-  return std::make_tuple(out_dx, out_dw, out_db, out_dinit);
+  const char* layout = enum_name(kCausalConv1dBwdInputLayoutNames, input_layout);
+  auto [dx, dw, db, dh0] = launch_conv1d_backward(
+      x, y, weight, dy, initial_state, dht, query_start_loc, activation,
+      layout, stream, true);
+  return std::make_tuple(dx, dw, db.value(), dh0);
 }
 
 }  // namespace

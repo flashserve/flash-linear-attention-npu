@@ -73,7 +73,7 @@ $$
 | :-- | :-- | :-- | :--: | :-- |
 | dx | FLOAT/FLOAT16/BF16 | 固定长度 `[B, T, D]`；变长 `[totalTokens, D]` | 必选 | 输入梯度，始终按逻辑 layout 输出。 |
 | dw | FLOAT/FLOAT16/BF16 | `[W, D]` | 可选 | 权重梯度，数据类型与 `weight` 相同。 |
-| db | FLOAT/FLOAT16/BF16 | `[D]` | 可选 | 偏置梯度，数据类型与输入相同。 |
+| db | FLOAT/FLOAT16/BF16 | `[D]` | 可选 | 偏置梯度，数据类型与输入相同。传入空输出时跳过归约；Python 可用 `npu_causal_conv1d_bwd_no_bias` 直接取得 `dx`、`dw` 和 `dh0`。 |
 | dh0 | FLOAT/FLOAT16/BF16 | `[B, W, D]` | 可选 | 初始状态梯度。 |
 
 ### 属性

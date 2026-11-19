@@ -272,6 +272,32 @@ class TestCausalConv1dBwd(unittest.TestCase):
                         actual, expected, rtol=tolerance, atol=tolerance
                     )
 
+    def test_optional_bias_gradient_keeps_input_weight_and_state_gradients(self):
+        lengths = [0, 1, 4, 12]
+        x = torch.randn(12, 128, dtype=torch.bfloat16, device="npu")
+        weight = torch.randn(4, 128, dtype=x.dtype, device=x.device)
+        state = torch.randn(3, 4, 128, dtype=x.dtype, device=x.device)
+        kwargs = dict(x=x, y=torch.randn_like(x), weight=weight, dy=torch.randn_like(x),
+                      initial_state=state, query_start_loc=lengths, activation=1,
+                      input_layout="TND")
+        full = self.call_op(**kwargs)
+        dx, dw, dh0 = ascendc_ops.npu_causal_conv1d_bwd_no_bias(**kwargs)
+        self.assertEqual(full[2].shape, (128,))
+        for actual, expected in zip((dx, dw, dh0), (full[0], full[1], full[3])):
+            self.assertTrue(torch.equal(actual, expected))
+
+    def test_biasless_prefill_autograd_uses_the_required_gradients(self):
+        x = torch.randn(1, 8, 128, dtype=torch.bfloat16, device="npu", requires_grad=True)
+        weight = torch.randn(4, 128, dtype=x.dtype, device=x.device, requires_grad=True)
+        dy = torch.randn_like(x)
+        with self.assertWarns(FutureWarning):
+            out = ascendc_ops.causal_conv1d(x, weight, None, None, activation_mode=0)
+        dx, dw = torch.autograd.grad(out, (x, weight), grad_outputs=dy)
+        expected = self.call_op(x=x.detach(), weight=weight.detach(), y=None, dy=dy,
+                                activation=0, input_layout="BSH")
+        self.assertTrue(torch.equal(dx, expected[0]))
+        self.assertTrue(torch.equal(dw, expected[1]))
+
     def test_bnsd_matches_cpu_golden(self):
         batch, num_heads, seqlen, head_dim, width = 2, 2, 9, 16, 2
         dim = num_heads * head_dim

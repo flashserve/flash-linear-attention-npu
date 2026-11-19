@@ -1612,9 +1612,10 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectVector(bool reuseHalo)
 {
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+    LocalTensor<float> dbLocal = hasBias_ ? dbBuf_.Get<float>() : tempBuf_.Get<float>();
     NsCausalConv1dBwdArch32::ComputeTile(
         xBuf_.Get<float>(), dyBuf_.Get<float>(), yBuf_.Get<float>(), weightBuf_.Get<float>(),
-        dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbBuf_.Get<float>(),
+        dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbLocal,
         tempBuf_.Get<float>()[btBdCount_],
         BT_, BD_, W_, dyRows_, hasBias_, reuseHalo);
 #else
@@ -1672,10 +1673,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectReg
     LocalTensor<inputT> dyRaw = dyBuf_.Get<inputT>()[slot * dyBdCount_];
     LocalTensor<inputT> yRaw = (activation_ == ACTIVATION_SILU || activation_ == ACTIVATION_SWISH)
         ? yBuf_.Get<inputT>()[slot * dyBdCount_] : dyRaw;
+    LocalTensor<float> dbLocal = hasBias_ ? dbBuf_.Get<float>() : tempBuf_.Get<float>();
     LocalTensor<float> dh0Local = computeDh0 ? dh0Buf_.Get<float>() : tempBuf_.Get<float>();
     NsCausalConv1dBwd::ComputeTileDirectRegbase<inputT>(
         xRaw, dyRaw, yRaw, weightBuf_.Get<inputT>(),
-        tempBuf_.Get<float>(), dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbBuf_.Get<float>(), dh0Local,
+        tempBuf_.Get<float>(), dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbLocal, dh0Local,
         BT_, W_, dyRows_, activation_, validRows, useInit, computeDh0, hasBias_, BD_);
     PipeBarrier<PIPE_V>();
 #else
