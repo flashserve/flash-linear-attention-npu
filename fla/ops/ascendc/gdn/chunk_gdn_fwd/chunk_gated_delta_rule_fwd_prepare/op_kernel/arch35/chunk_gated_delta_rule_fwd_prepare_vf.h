@@ -822,8 +822,8 @@ __aicore__ inline void MulReduceScatterVF32(LocalTensor<float> &dst, LocalTensor
                 LoadAlign(srcReg1b, src1Addr + i1 * oneRepeatSize);
                 Mul(mulA, srcReg0, srcReg1a, inputMask);
                 Mul(mulB, srcReg0, srcReg1b, inputMask);
-                ReduceDataBlock<ReduceType::SUM>(blkA, mulA, inputMask);
-                ReduceDataBlock<ReduceType::SUM>(blkB, mulB, inputMask);
+                ReduceDataBlock<AscendC::Reg::ReduceType::SUM>(blkA, mulA, inputMask);
+                ReduceDataBlock<AscendC::Reg::ReduceType::SUM>(blkB, mulB, inputMask);
                 PairReduceElem<PairReduce::SUM>(pairA, blkA, inputMask);
                 PairReduceElem<PairReduce::SUM>(pairB, blkB, inputMask);
                 PairReduceElem<PairReduce::SUM>(pair2A, pairA, pairMask);
@@ -835,7 +835,7 @@ __aicore__ inline void MulReduceScatterVF32(LocalTensor<float> &dst, LocalTensor
                 const uint32_t i = static_cast<uint32_t>(nPair) * 2;
                 LoadAlign(srcReg1a, src1Addr + i * oneRepeatSize);
                 Mul(mulA, srcReg0, srcReg1a, inputMask);
-                ReduceDataBlock<ReduceType::SUM>(blkA, mulA, inputMask);
+                ReduceDataBlock<AscendC::Reg::ReduceType::SUM>(blkA, mulA, inputMask);
                 PairReduceElem<PairReduce::SUM>(pairA, blkA, inputMask);
                 PairReduceElem<PairReduce::SUM>(pair2A, pairA, pairMask);
                 Scatter(dstAddr + i * oneRepeatSize, pair2A, scatterIdxReg, scatterMask);
