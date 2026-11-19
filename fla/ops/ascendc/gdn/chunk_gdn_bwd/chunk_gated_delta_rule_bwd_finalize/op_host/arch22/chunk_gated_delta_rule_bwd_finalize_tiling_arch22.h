@@ -25,9 +25,6 @@ namespace gdn_finalize_arch22 {
 
 using namespace GDN;
 using GDN::FinalizeArch22::g_tilingDeclareParams;
-#ifdef ASCENDC_DEBUG
-using GDN::FinalizeArch22::g_tilingSelectParams;
-#endif
 using GDN::FinalizeHostArch22::ShapeString;
 
 constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdFinalize";
