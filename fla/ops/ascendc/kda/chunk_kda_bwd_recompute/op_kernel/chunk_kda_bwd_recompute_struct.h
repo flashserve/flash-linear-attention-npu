@@ -35,10 +35,12 @@ struct ChunkKdaBwdRecomputeTilingData {
     // Logical AIC count selected by host tiling (used by the arch35 task mapping).
     int64_t usedAic;
     int64_t reserved;
+    int64_t headGroup;
+    int64_t reservedV2;
 };
 
-static_assert(sizeof(ChunkKdaBwdRecomputeTilingData) == 144,
-              "TilingData is 18 int64 fields");
+static_assert(sizeof(ChunkKdaBwdRecomputeTilingData) == 160,
+              "TilingData is 20 int64 fields");
 
 } // namespace KDA
 

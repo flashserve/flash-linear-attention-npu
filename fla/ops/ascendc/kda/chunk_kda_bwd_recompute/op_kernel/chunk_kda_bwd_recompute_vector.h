@@ -1,418 +1,173 @@
-/**
- * Copyright (c) 2026 Tianjin University, Ltd.
- * Licensed under the BSD 3-Clause License.
- */
+/** Copyright (c) 2026 Tianjin University, Ltd. Licensed under BSD-3-Clause. */
 #ifndef CHUNK_KDA_BWD_RECOMPUTE_VECTOR_H
 #define CHUNK_KDA_BWD_RECOMPUTE_VECTOR_H
-
 #include "chunk_kda_bwd_recompute_struct.h"
 #include "chunk_kda_bwd_recompute_common.h"
-
 using namespace AscendC;
-
 namespace KDA {
-
-template <typename QkType, typename GateType, typename BetaType>
+template <typename QkType, typename GateType, typename BetaType, int HEAD_MODE=0>
 class ChunkKdaBwdRecomputeVectorProcess {
 public:
     __aicore__ inline ChunkKdaBwdRecomputeVectorProcess(
         GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR aLog, GM_ADDR dtBias,
-        GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR gk,
-        GM_ADDR workspace, const ChunkKdaBwdRecomputeTilingData *tiling)
-        : q_(q), k_(k), v_(v), g_(g), beta_(beta), aLog_(aLog), dtBias_(dtBias),
-          cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), w_(w), u_(u), qg_(qg), kg_(kg), gk_(gk),
-          workspace_(workspace), tiling_(tiling)
+        GM_ADDR cu, GM_ADDR indices, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR gk,
+        GM_ADDR workspace, const ChunkKdaBwdRecomputeTilingData *t)
+        : cu_(cu), indices_(indices), workspace_(workspace), t_(t)
     {
+        q_.SetGlobalBuffer((__gm__ QkType*)q); k_.SetGlobalBuffer((__gm__ QkType*)k);
+        v_.SetGlobalBuffer((__gm__ QkType*)v); g_.SetGlobalBuffer((__gm__ GateType*)g);
+        beta_.SetGlobalBuffer((__gm__ BetaType*)beta); alog_.SetGlobalBuffer((__gm__ float*)aLog);
+        bias_.SetGlobalBuffer((__gm__ float*)dtBias); qg_.SetGlobalBuffer((__gm__ QkType*)qg);
+        kg_.SetGlobalBuffer((__gm__ QkType*)kg); gk_.SetGlobalBuffer((__gm__ float*)gk);
     }
-
     __aicore__ inline void Init(TPipe *pipe)
     {
-        pipe_ = pipe;
-        qTensor_.SetGlobalBuffer((__gm__ QkType *)q_);
-        kTensor_.SetGlobalBuffer((__gm__ QkType *)k_);
-        vTensor_.SetGlobalBuffer((__gm__ QkType *)v_);
-        gTensor_.SetGlobalBuffer((__gm__ GateType *)g_);
-        betaTensor_.SetGlobalBuffer((__gm__ BetaType *)beta_);
-        if (aLog_ != nullptr) {
-            aLogTensor_.SetGlobalBuffer((__gm__ float *)aLog_);
-        }
-        if (dtBias_ != nullptr) {
-            dtBiasTensor_.SetGlobalBuffer((__gm__ float *)dtBias_);
-        }
-        gkTensor_.SetGlobalBuffer((__gm__ float *)gk_);
-        qgTensor_.SetGlobalBuffer((__gm__ QkType *)qg_);
-        kgTensor_.SetGlobalBuffer((__gm__ QkType *)kg_);
-
-        B_ = static_cast<uint64_t>(tiling_->B);
-        Hk_ = static_cast<uint64_t>(tiling_->Hk);
-        Hv_ = static_cast<uint64_t>(tiling_->Hv);
-        hvPerHk_ = static_cast<uint64_t>(tiling_->hvPerHk);
-        T_ = static_cast<uint64_t>(tiling_->T);
-        K_ = static_cast<uint64_t>(tiling_->K);
-        V_ = static_cast<uint64_t>(tiling_->V);
-        chunkNum_ = static_cast<uint64_t>(tiling_->chunkNum);
-        chunkSize_ = static_cast<uint64_t>(tiling_->chunkSize);
-        isVariable_ = tiling_->isVariable;
-        rowNum_ = static_cast<uint32_t>(tiling_->vecRow);
-        if (rowNum_ < 8 || rowNum_ > 64) {
-            rowNum_ = 8;
-        }
-        useGate_ = tiling_->useGateInKernel != 0;
-        useExp2_ = tiling_->useExp2 != 0;
-        hasALog_ = tiling_->hasALog != 0;
-        hasDtBias_ = tiling_->hasDtBias != 0;
-        lowerBound_ = KdaBwdRecomputeBitsToFloat(static_cast<uint32_t>(tiling_->lowerBoundBits));
-        gateScale_ = lowerBound_ * (useExp2_ ? KDA_BWD_RECOMPUTE_RCP_LN2 : 1.0f);
+        pipe_=pipe;
+        pipe->InitBuffer(qBuf_,8192); pipe->InitBuffer(kBuf_,8192);
+        pipe->InitBuffer(vBuf_,8192); pipe->InitBuffer(outBuf_,8192);
+        pipe->InitBuffer(gBuf_,16384);
+        pipe->InitBuffer(gFp32Buf_,16384); pipe->InitBuffer(tmpFp32Buf_,16384);
+        pipe->InitBuffer(kRawBuf_,16384); pipe->InitBuffer(workBuf_,16384); pipe->InitBuffer(qFpBuf_,16384);
+        pipe->InitBuffer(betaRaw_,256); pipe->InitBuffer(betaFp_,256); pipe->InitBuffer(betaBc_,2048);
+        pipe->InitBuffer(dtBiasBuf_,256); pipe->InitBuffer(expABuf_,256); pipe->InitBuffer(accBuf_,256);
+        useGate_=t_->useGateInKernel; useExp2_=t_->useExp2;
+        hasALog_=t_->hasALog; hasDtBias_=t_->hasDtBias;
+        gateScale_=KdaBwdRecomputeBitsToFloat(t_->lowerBoundBits)*(useExp2_?KDA_BWD_RECOMPUTE_RCP_LN2:1.f);
+        m2v_=pipe->AllocEventID<HardEvent::MTE2_V>();
+        v2m2_=pipe->AllocEventID<HardEvent::V_MTE2>();
+        v2m3_=pipe->AllocEventID<HardEvent::V_MTE3>();
+        m3v_=pipe->AllocEventID<HardEvent::MTE3_V>();
     }
-
     __aicore__ inline void Process()
     {
-        const uint32_t coreIdx = GetBlockIdx() / GetSubBlockNum();
-        const uint32_t coreNumAic = tiling_->usedAic;
-        if (coreIdx >= coreNumAic) return;
-        const uint64_t groupsPerChunk = (Hv_ + RECOMPUTE_HEADS_PER_GROUP - 1) / RECOMPUTE_HEADS_PER_GROUP;
-        const uint64_t groupCount = chunkNum_ * groupsPerChunk;
-        for (uint64_t group = coreIdx; group < groupCount; group += coreNumAic) {
-            const uint32_t loopIdx = group / groupsPerChunk;
-            const uint64_t firstHead = group % groupsPerChunk * RECOMPUTE_HEADS_PER_GROUP;
-            const uint64_t round = group / coreNumAic;
-            const uint32_t page = round % RECOMPUTE_PAGE_COUNT;
-            if (round >= RECOMPUTE_PAGE_COUNT) {
-                CrossCoreWaitFlag<0x2, PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE + page);
+        const uint64_t core=GetBlockIdx()/GetSubBlockNum(), cores=t_->usedAic;
+        if (core>=cores || cores==0) return;
+        const uint64_t cg=t_->headGroup, nh=(t_->Hv+cg-1)/cg, count=t_->chunkNum*nh;
+        const uint64_t channel=GetSubBlockIdx()*64;
+        for (uint64_t work=core, ordinal=0;work<count;work+=cores,++ordinal) {
+            const uint32_t page=ordinal%2;
+            if (ordinal>=2) CrossCoreWaitFlag<0x2,PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE+page);
+            uint64_t bos,eos;
+            KdaBwdRecomputeGetChunkOffset(cu_,indices_,t_->B,t_->Hv,t_->T,64,work/nh,bos,eos,t_->isVariable);
+            const uint32_t rows=eos-bos;
+            const uint64_t batch=t_->isVariable?0:(work/nh)/((t_->T+63)/64);
+            const uint64_t bosK=bos-batch*(t_->Hv-t_->Hk)*t_->T;
+            auto pageBase=(__gm__ QkType*)workspace_+KdaRecomputePageOffset(core,page,16384,cg);
+            GlobalTensor<QkType> vb,kbg; vb.SetGlobalBuffer(pageBase);kbg.SetGlobalBuffer(pageBase+8192);
+            uint64_t cached=~uint64_t(0);
+            for (uint64_t slot=0;slot<cg && (work%nh)*cg+slot<uint64_t(t_->Hv);++slot) {
+                const uint64_t h=(work%nh)*cg+slot;
+                uint64_t hk;
+                if constexpr (HEAD_MODE==0) hk=h;
+                else hk=h/t_->hvPerHk;
+                const uint64_t base=(h*t_->T+bos)*128+channel;
+                const uint64_t qbase=(hk*t_->T+bosK)*128+channel;
+                auto qr=qBuf_.Get<QkType>(),kr=kBuf_.Get<QkType>(),vr=vBuf_.Get<QkType>();
+                auto gr=gBuf_.Get<GateType>();
+                SetFlag<HardEvent::V_MTE2>(v2m2_);WaitFlag<HardEvent::V_MTE2>(v2m2_);
+                if (cached!=hk) {
+                    Load(qr,q_,qbase,rows,t_->Hk,2);
+                    Load(kr,k_,qbase,rows,t_->Hk,2);
+                }
+                Load(gr,g_,base,rows,t_->Hv,1); Load(vr,v_,base,rows,t_->Hv,4);
+                auto br=betaRaw_.Get<BetaType>();
+                DataCopyPad(br,beta_[h*t_->T+bos],{1,rows*uint32_t(sizeof(BetaType)),0,0,0},{false,0,0,0});
+                if (hasDtBias_) DataCopy(dtBiasBuf_.Get<float>(),bias_[h*128+channel],64);
+                if (hasALog_) {
+                    // Scalar read is only for this head's scalar, never tensor elements.
+                    Duplicate(expABuf_.Get<float>(),alog_.GetValue(h),64);
+                    PipeBarrier<PIPE_V>(); Exp(expABuf_.Get<float>(),expABuf_.Get<float>(),64);
+                }
+                SetFlag<HardEvent::MTE2_V>(m2v_);WaitFlag<HardEvent::MTE2_V>(m2v_);
+                auto gf=gFp32Buf_.Get<float>(), raw=kRawBuf_.Get<float>();
+                auto bf=betaFp_.Get<float>(), bc=betaBc_.Get<float>();
+                Duplicate(bf,0.0f,64);PipeBarrier<PIPE_V>();
+                Convert(gf,gr,rows*64); Convert(bf,br,rows);
+                if (cached!=hk) { Cast(raw,kr,RoundMode::CAST_NONE,rows*64);cached=hk; }
+                PipeBarrier<PIPE_V>();
+                if (useGate_) ApplySafeGate(gf,rows);
+                else if(useExp2_) { Muls(gf,gf,KDA_BWD_RECOMPUTE_RCP_LN2,rows*64);PipeBarrier<PIPE_V>(); }
+                auto acc=accBuf_.Get<float>(); Duplicate(acc,0.f,64);PipeBarrier<PIPE_V>();
+                CumsumRows(gf,acc,rows);
+                if(useGate_) Store(gk_,gf,base,rows);
+                auto exp=tmpFp32Buf_.Get<float>(),qf=qFpBuf_.Get<float>(),scratch=workBuf_.Get<float>();
+                ExpGate(gf,exp,rows); Cast(qf,qr,RoundMode::CAST_NONE,rows*64);PipeBarrier<PIPE_V>();
+                Mul(qf,qf,exp,rows*64);PipeBarrier<PIPE_V>();
+                CastStore(qg_,qf,base,rows,false);
+                Brcb(bc,bf,static_cast<uint8_t>(((rows+7)/8)),{1,8});PipeBarrier<PIPE_V>();
+                MulKByBetaExp(scratch,raw,bc,exp,rows);
+                CastStore(kbg,scratch,slot*16384+channel,rows,true);
+                Cast(qf,vr,RoundMode::CAST_NONE,rows*64);PipeBarrier<PIPE_V>();
+                Mul(qf,qf,bc,64,rows,{1,1,0,8,8,1});PipeBarrier<PIPE_V>();
+                CastStore(vb,qf,slot*16384+channel,rows,true);
+                ComputeKg(scratch,raw,gf,acc,rows);PipeBarrier<PIPE_V>();
+                CastStore(kg_,scratch,base,rows,false);
             }
-            auto pageBase = (__gm__ QkType *)workspace_ +
-                KdaRecomputePageOffset(coreIdx, page, chunkSize_ * (V_ + K_));
-            vbTensor_.SetGlobalBuffer(pageBase);
-            kbgTensor_.SetGlobalBuffer(pageBase + chunkSize_ * V_);
-            ProcessVb(loopIdx, firstHead);
-            PipeBarrier<PIPE_ALL>();
-            pipe_->Reset();
-            ProcessGateAndK(loopIdx, firstHead);
-            PipeBarrier<PIPE_ALL>();
-            CrossCoreSetFlag<0x2, PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE + page);
-            pipe_->Reset();
+            CrossCoreSetFlag<0x2,PIPE_MTE3>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE+page);
         }
+        pipe_->ReleaseEventID<HardEvent::MTE2_V>(m2v_);
+        pipe_->ReleaseEventID<HardEvent::V_MTE2>(v2m2_);
+        pipe_->ReleaseEventID<HardEvent::V_MTE3>(v2m3_);
+        pipe_->ReleaseEventID<HardEvent::MTE3_V>(m3v_);
     }
-
 private:
-    // flags: raw gate=1, q/k=2, v=4.
-    template <typename T>
-    __aicore__ inline void LoadModel(LocalTensor<T> dst, GlobalTensor<T> src,
-        uint64_t offset, uint32_t rows, uint64_t width, uint64_t heads, int64_t flag)
+    template<typename T> __aicore__ inline void Load(LocalTensor<T> dst,GlobalTensor<T> src,
+        uint64_t offset,uint32_t rows,uint64_t heads,int64_t flag)
     {
-        if (!(tiling_->reserved & flag)) { DataCopy(dst, src[offset], rows * width); return; }
-        const uint64_t token = offset / width;
-        const uint64_t bh = token / T_;
-        const uint64_t pos = token % T_;
-        const uint64_t base = ((bh / heads * T_ + pos) * heads + bh % heads) * width;
-        DataCopyPad(dst, src[base],
-            {static_cast<uint16_t>(rows), static_cast<uint32_t>(width * sizeof(T)),
-             static_cast<uint32_t>((heads - 1) * width * sizeof(T)), 0, 0},
-            {false, 0, 0, T(0)});
-    }
-
-    __aicore__ inline void AllocAuxEvents()
-    {
-        auxMte2ToVEvent_ = pipe_->AllocEventID<HardEvent::MTE2_V>();
-        auxMte3ToMte2Event_ = pipe_->AllocEventID<HardEvent::MTE3_MTE2>();
-    }
-
-    __aicore__ inline void ReleaseAuxEvents()
-    {
-        pipe_->ReleaseEventID<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-        pipe_->ReleaseEventID<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
-    }
-
-    __aicore__ inline void ProcessGateAndK(uint32_t loopIdx, uint64_t firstHead)
-    {
-        uint32_t bos = 0;
-        uint32_t eos = 0;
-
-        pipe_->InitBuffer(gInQue_, 1, rowNum_ * K_ * sizeof(GateType));
-        pipe_->InitBuffer(qInQue_, 1, rowNum_ * K_ * sizeof(QkType));
-        pipe_->InitBuffer(kInQue_, 1, rowNum_ * K_ * sizeof(QkType));
-        pipe_->InitBuffer(betaInQue_, 1, rowNum_ * sizeof(BetaType));
-        pipe_->InitBuffer(gkOutQue_, 1, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(qgOutQue_, 1, rowNum_ * K_ * sizeof(QkType));
-        pipe_->InitBuffer(kgOutQue_, 1, rowNum_ * K_ * sizeof(QkType));
-        pipe_->InitBuffer(kbgOutQue_, 1, rowNum_ * K_ * sizeof(QkType));
-        pipe_->InitBuffer(gFp32Buf_, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(tmpFp32Buf_, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(accFp32Buf_, K_ * sizeof(float));
-        pipe_->InitBuffer(qFp32Buf_, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(kFp32Buf_, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(kRawFp32Buf_, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(betaFp32Buf_, rowNum_ * sizeof(float));
-        pipe_->InitBuffer(betaBrcbBuf_, rowNum_ * KDA_BWD_RECOMPUTE_ONE_BLOCK_32);
-        pipe_->InitBuffer(dtBiasBuf_, K_ * sizeof(float));
-        pipe_->InitBuffer(scaleFp32Buf_, rowNum_ * K_ * sizeof(float));
-        pipe_->InitBuffer(expABuf_, K_ * sizeof(float));
-        pipe_->InitBuffer(scalarBuf_, 32);
-        AllocAuxEvents();
-
-        auto gFp32 = gFp32Buf_.Get<float>();
-        auto tmpFp32 = tmpFp32Buf_.Get<float>();
-        auto accFp32 = accFp32Buf_.Get<float>();
-        auto qFp32 = qFp32Buf_.Get<float>();
-        auto kFp32 = kFp32Buf_.Get<float>();
-        auto kRawFp32 = kRawFp32Buf_.Get<float>();
-        auto betaFp32 = betaFp32Buf_.Get<float>();
-        auto betaBrcb = betaBrcbBuf_.Get<float>();
-        auto dtBias = dtBiasBuf_.Get<float>();
-        auto expAVec = expABuf_.Get<float>();
-        Duplicate(scaleFp32Buf_.Get<float>(), gateScale_, rowNum_ * K_);
-        PipeBarrier<PIPE_V>();
-
-        for (uint64_t slot = GetSubBlockIdx(); slot < RECOMPUTE_HEADS_PER_GROUP;
-             slot += GetSubBlockNum()) {
-            const uint64_t h = firstHead + slot;
-            if (h >= Hv_) break;
-            KdaBwdRecomputeGetChunkOffset(cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos,
-                                          isVariable_);
-            uint32_t curChunkSize = eos - bos;
-            uint64_t hk = h / hvPerHk_;
-            uint64_t coreLoopsInB = (T_ + chunkSize_ - 1) / chunkSize_;
-            uint64_t bIdx = isVariable_ ? 0 : (loopIdx / coreLoopsInB);
-            uint64_t bosK = isVariable_ ? bos : (bos - bIdx * (Hv_ - Hk_) * T_);
-            uint64_t gBase = (h * T_ + bos) * K_;
-            uint64_t qkBase = (hk * T_ + bosK) * K_;
-            uint64_t outBase = (h * T_ + bos) * K_;
-            uint64_t betaBase = h * T_ + bos;
-
-            if (hasDtBias_) {
-                DataCopy(dtBias, dtBiasTensor_[h * K_], K_);
-                SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-            }
-            if (hasALog_) {
-                Duplicate(expAVec, aLogTensor_.GetValue(h), K_);
-                PipeBarrier<PIPE_V>();
-                Exp(expAVec, expAVec, K_);
-                PipeBarrier<PIPE_V>();
-            }
-            Duplicate(accFp32, 0.0f, K_);
-            PipeBarrier<PIPE_V>();
-
-            for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
-                uint32_t curRowNum = (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
-                {
-                    auto gIn = gInQue_.AllocTensor<GateType>();
-                    auto betaIn = betaInQue_.AllocTensor<BetaType>();
-                    LoadModel(gIn, gTensor_, gBase + rowOffset * K_, curRowNum, K_, Hv_, 1);
-                    DataCopyPad(betaIn, betaTensor_[betaBase + rowOffset],
-                                {1, curRowNum * static_cast<uint32_t>(sizeof(BetaType)), 0, 0, 0}, {false, 0, 0, 0});
-                    gInQue_.EnQue(gIn);
-                    betaInQue_.EnQue(betaIn);
-                }
-                {
-                    auto gIn = gInQue_.DeQue<GateType>();
-                    auto betaIn = betaInQue_.DeQue<BetaType>();
-                    if constexpr (std::is_same<GateType, float>::value) {
-                        DataCopy(gFp32, gIn, K_ * curRowNum);
-                    } else {
-                        Cast(gFp32, gIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                    }
-                    if constexpr (std::is_same<BetaType, float>::value) {
-                        DataCopy(betaFp32, betaIn, CeilDiv(curRowNum, 8U) * 8U);
-                    } else {
-                        Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
-                    }
-                    gInQue_.FreeTensor(gIn);
-                    betaInQue_.FreeTensor(betaIn);
-                }
-                PipeBarrier<PIPE_V>();
-                if (useGate_) {
-                    ApplySafeGate(gFp32, curRowNum);
-                } else if (useExp2_) {
-                    Muls(gFp32, gFp32, KDA_BWD_RECOMPUTE_RCP_LN2, K_ * curRowNum);
-                    PipeBarrier<PIPE_V>();
-                }
-                CumsumRows(gFp32, accFp32, curRowNum);
-                {
-                    auto gkOut = gkOutQue_.AllocTensor<float>();
-                    DataCopy(gkOut, gFp32, K_ * curRowNum);
-                    gkOutQue_.EnQue(gkOut);
-                }
-                ExpGate(gFp32, tmpFp32, curRowNum);
-                PipeBarrier<PIPE_V>();
-                {
-                    auto qIn = qInQue_.AllocTensor<QkType>();
-                    auto kIn = kInQue_.AllocTensor<QkType>();
-                    LoadModel(qIn, qTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
-                    LoadModel(kIn, kTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
-                    qInQue_.EnQue(qIn);
-                    kInQue_.EnQue(kIn);
-                }
-                {
-                    auto qIn = qInQue_.DeQue<QkType>();
-                    auto kIn = kInQue_.DeQue<QkType>();
-                    Cast(qFp32, qIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                    Cast(kRawFp32, kIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                    qInQue_.FreeTensor(qIn);
-                    kInQue_.FreeTensor(kIn);
-                }
-                PipeBarrier<PIPE_V>();
-                Mul(qFp32, qFp32, tmpFp32, K_ * curRowNum);
-                Brcb(betaBrcb, betaFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
-                PipeBarrier<PIPE_V>();
-                MulKByBetaExp(kFp32, kRawFp32, betaBrcb, tmpFp32, curRowNum);
-                {
-                    auto gkOut = gkOutQue_.DeQue<float>();
-                    DataCopy(gkTensor_[outBase + rowOffset * K_], gkOut, K_ * curRowNum);
-                    gkOutQue_.FreeTensor(gkOut);
-                    auto qgOut = qgOutQue_.AllocTensor<QkType>();
-                    auto kbgOut = kbgOutQue_.AllocTensor<QkType>();
-                    Cast(qgOut, qFp32, RoundMode::CAST_RINT, K_ * curRowNum);
-                    Cast(kbgOut, kFp32, RoundMode::CAST_RINT, K_ * curRowNum);
-                    qgOutQue_.EnQue(qgOut);
-                    kbgOutQue_.EnQue(kbgOut);
-                }
-                {
-                    auto qgOut = qgOutQue_.DeQue<QkType>();
-                    auto kbgOut = kbgOutQue_.DeQue<QkType>();
-                    DataCopy(qgTensor_[outBase + rowOffset * K_], qgOut, K_ * curRowNum);
-                    DataCopy(kbgTensor_[slot * chunkSize_ * (V_ + K_) + rowOffset * K_], kbgOut, K_ * curRowNum);
-                    qgOutQue_.FreeTensor(qgOut);
-                    kbgOutQue_.FreeTensor(kbgOut);
-                }
-            }
-            SetFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
-            WaitFlag<HardEvent::MTE3_MTE2>(auxMte3ToMte2Event_);
-            for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
-                uint32_t curRowNum = (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
-                {
-                    auto kIn = kInQue_.AllocTensor<QkType>();
-                    DataCopy(gFp32, gkTensor_[outBase + rowOffset * K_], K_ * curRowNum);
-                    LoadModel(kIn, kTensor_, qkBase + rowOffset * K_, curRowNum, K_, Hk_, 2);
-                    kInQue_.EnQue(kIn);
-                }
-                SetFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(auxMte2ToVEvent_);
-                {
-                    auto kIn = kInQue_.DeQue<QkType>();
-                    Cast(kRawFp32, kIn, RoundMode::CAST_NONE, K_ * curRowNum);
-                    kInQue_.FreeTensor(kIn);
-                    PipeBarrier<PIPE_V>();
-                    ComputeKg(kFp32, kRawFp32, gFp32, accFp32, curRowNum);
-                }
-                PipeBarrier<PIPE_V>();
-                {
-                    auto kgOut = kgOutQue_.AllocTensor<QkType>();
-                    Cast(kgOut, kFp32, RoundMode::CAST_RINT, K_ * curRowNum);
-                    kgOutQue_.EnQue(kgOut);
-                }
-                {
-                    auto kgOut = kgOutQue_.DeQue<QkType>();
-                    DataCopy(kgTensor_[outBase + rowOffset * K_], kgOut, K_ * curRowNum);
-                    kgOutQue_.FreeTensor(kgOut);
-                }
-            }
+        uint64_t stride=128;
+        if(t_->reserved & flag) {
+            const uint64_t token=offset/128, bh=token/t_->T,pos=token%t_->T;
+            offset=((bh/heads*t_->T+pos)*heads+bh%heads)*128+offset%128;
+            stride=heads*128;
         }
-        ReleaseAuxEvents();
+        DataCopyPad(dst,src[offset],{uint16_t(rows),uint32_t(64*sizeof(T)),uint32_t((stride-64)*sizeof(T)),0,0},{false,0,0,T(0)});
     }
-
-    __aicore__ inline void ProcessVb(uint32_t loopIdx, uint64_t firstHead)
+    template<typename T> __aicore__ inline void Convert(LocalTensor<float> dst,LocalTensor<T> src,uint32_t n)
     {
-        uint32_t bos = 0;
-        uint32_t eos = 0;
-
-        pipe_->InitBuffer(vInQue_, 1, rowNum_ * V_ * sizeof(QkType));
-        pipe_->InitBuffer(betaInQue_, 1, rowNum_ * sizeof(BetaType));
-        pipe_->InitBuffer(vbOutQue_, 1, rowNum_ * V_ * sizeof(QkType));
-        pipe_->InitBuffer(vFp32Buf_, rowNum_ * V_ * sizeof(float));
-        pipe_->InitBuffer(betaFp32Buf_, rowNum_ * sizeof(float));
-        pipe_->InitBuffer(betaBrcbBuf_, rowNum_ * KDA_BWD_RECOMPUTE_ONE_BLOCK_32);
-
-        auto vFp32 = vFp32Buf_.Get<float>();
-        auto betaFp32 = betaFp32Buf_.Get<float>();
-        auto betaBrcb = betaBrcbBuf_.Get<float>();
-
-        for (uint64_t slot = GetSubBlockIdx(); slot < RECOMPUTE_HEADS_PER_GROUP;
-             slot += GetSubBlockNum()) {
-            const uint64_t h = firstHead + slot;
-            if (h >= Hv_) break;
-            KdaBwdRecomputeGetChunkOffset(cuSeqlens_, chunkIndices_, B_, Hv_, T_, chunkSize_, loopIdx, bos, eos,
-                                          isVariable_);
-            uint32_t curChunkSize = eos - bos;
-            for (uint32_t rowOffset = 0; rowOffset < curChunkSize; rowOffset += rowNum_) {
-                uint32_t curRowNum = (rowOffset + rowNum_ > curChunkSize) ? (curChunkSize - rowOffset) : rowNum_;
-                uint64_t vOffset = (h * T_ + bos + rowOffset) * V_;
-                uint64_t betaOffset = h * T_ + bos + rowOffset;
-                {
-                    auto vIn = vInQue_.AllocTensor<QkType>();
-                    auto betaIn = betaInQue_.AllocTensor<BetaType>();
-                    LoadModel(vIn, vTensor_, vOffset, curRowNum, V_, Hv_, 4);
-                    DataCopyPad(betaIn, betaTensor_[betaOffset],
-                                {1, curRowNum * static_cast<uint32_t>(sizeof(BetaType)), 0, 0, 0}, {false, 0, 0, 0});
-                    vInQue_.EnQue(vIn);
-                    betaInQue_.EnQue(betaIn);
-                }
-                {
-                    auto vIn = vInQue_.DeQue<QkType>();
-                    auto betaIn = betaInQue_.DeQue<BetaType>();
-                    Cast(vFp32, vIn, RoundMode::CAST_NONE, V_ * curRowNum);
-                    if constexpr (std::is_same<BetaType, float>::value) {
-                        DataCopy(betaFp32, betaIn, CeilDiv(curRowNum, 8U) * 8U);
-                    } else {
-                        Cast(betaFp32, betaIn, RoundMode::CAST_NONE, curRowNum);
-                    }
-                    vInQue_.FreeTensor(vIn);
-                    betaInQue_.FreeTensor(betaIn);
-                }
-                PipeBarrier<PIPE_V>();
-                Brcb(betaBrcb, betaFp32, static_cast<uint8_t>(CeilDiv(curRowNum, 8)), {1, 8});
-                PipeBarrier<PIPE_V>();
-                uint64_t perchannelResOffset = 0;
-                uint8_t repeatStride = V_ * sizeof(float) / KDA_BWD_RECOMPUTE_ONE_BLOCK_32;
-                while (perchannelResOffset < V_) {
-                    Mul(vFp32[perchannelResOffset], vFp32[perchannelResOffset], betaBrcb,
-                        KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64, curRowNum, {1, 1, 0, repeatStride, repeatStride, 1});
-                    perchannelResOffset += KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64;
-                }
-                PipeBarrier<PIPE_V>();
-                {
-                    auto vbOut = vbOutQue_.AllocTensor<QkType>();
-                    Cast(vbOut, vFp32, RoundMode::CAST_RINT, V_ * curRowNum);
-                    vbOutQue_.EnQue(vbOut);
-                }
-                {
-                    auto vbOut = vbOutQue_.DeQue<QkType>();
-                    DataCopy(vbTensor_[slot * chunkSize_ * (V_ + K_) + rowOffset * V_], vbOut, V_ * curRowNum);
-                    vbOutQue_.FreeTensor(vbOut);
-                }
-            }
-        }
+        if constexpr(std::is_same<T,float>::value) DataCopy(dst,src,((n+7)/8)*8U);
+        else Cast(dst,src,RoundMode::CAST_NONE,n);
     }
-
+    template<typename T> __aicore__ inline void Store(GlobalTensor<T> dst,LocalTensor<T> src,uint64_t offset,uint32_t rows)
+    {
+        SetFlag<HardEvent::V_MTE3>(v2m3_);WaitFlag<HardEvent::V_MTE3>(v2m3_);
+        DataCopyPad(dst[offset],src,{uint16_t(rows),uint32_t(64*sizeof(T)),0,uint32_t(64*sizeof(T)),0});
+        SetFlag<HardEvent::MTE3_V>(m3v_);WaitFlag<HardEvent::MTE3_V>(m3v_);
+    }
+    __aicore__ inline void CastStore(GlobalTensor<QkType> dst,LocalTensor<float> src,uint64_t offset,uint32_t rows,bool pad)
+    {
+        auto out=outBuf_.Get<QkType>();
+        if(pad) {Duplicate(out,QkType(0),4096);PipeBarrier<PIPE_V>();}
+        Cast(out,src,RoundMode::CAST_RINT,rows*64);PipeBarrier<PIPE_V>();
+        Store(dst,out,offset,pad?64:rows);
+    }
     __aicore__ inline void ApplySafeGate(LocalTensor<float> &gate, uint32_t rows)
     {
-        const uint32_t n = rows * static_cast<uint32_t>(K_);
-        const uint8_t rowStride = K_ * sizeof(float) / KDA_BWD_RECOMPUTE_ONE_BLOCK_32;
+        const uint32_t n = rows * 64;
+        const uint8_t stride = 8;
         if (hasDtBias_) {
-            LocalTensor<float> bias = dtBiasBuf_.Get<float>();
-            for (uint32_t offset = 0; offset < K_; offset += KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64) {
-                Add(gate[offset], gate[offset], bias[offset], KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64,
-                    rows, {1, 1, 1, rowStride, rowStride, 0});
-            }
+            auto bias = dtBiasBuf_.Get<float>();
+            Add(gate, gate, bias, 64, rows, {1,1,1,stride,stride,0});
             PipeBarrier<PIPE_V>();
         }
         if (hasALog_) {
-            LocalTensor<float> expAVec = expABuf_.Get<float>();
-            for (uint32_t offset = 0; offset < K_; offset += KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64) {
-                Mul(gate[offset], gate[offset], expAVec[offset], KDA_BWD_RECOMPUTE_FP32_PER_REPEAT_64,
-                    rows, {1, 1, 1, rowStride, rowStride, 0});
-            }
+            auto expA = expABuf_.Get<float>();
+            Mul(gate, gate, expA, 64, rows, {1,1,1,stride,stride,0});
             PipeBarrier<PIPE_V>();
         }
-        LocalTensor<float> tmp = tmpFp32Buf_.Get<float>();
-        LocalTensor<float> scale = scaleFp32Buf_.Get<float>();
-        Muls(tmp, gate, -1.0f, n);
+        auto tmp = tmpFp32Buf_.Get<float>();
+        Abs(tmp, gate, n);
+        PipeBarrier<PIPE_V>();
+        Muls(tmp, tmp, -1.0f, n);
+        Mins(gate, gate, 0.0f, n);
         PipeBarrier<PIPE_V>();
         Exp(tmp, tmp, n);
+        Exp(gate, gate, n);
         PipeBarrier<PIPE_V>();
         Adds(tmp, tmp, 1.0f, n);
         PipeBarrier<PIPE_V>();
-        Div(gate, scale, tmp, n);
+        Div(gate, gate, tmp, n);
+        PipeBarrier<PIPE_V>();
+        Muls(gate, gate, gateScale_, n);
         PipeBarrier<PIPE_V>();
     }
 
@@ -494,83 +249,21 @@ private:
         Mul(kgOut, kRaw, delta, n);
     }
 
-    GM_ADDR q_;
-    GM_ADDR k_;
-    GM_ADDR v_;
-    GM_ADDR g_;
-    GM_ADDR beta_;
-    GM_ADDR aLog_;
-    GM_ADDR dtBias_;
-    GM_ADDR cuSeqlens_;
-    GM_ADDR chunkIndices_;
-    GM_ADDR gk_;
-    GM_ADDR w_;
-    GM_ADDR u_;
-    GM_ADDR qg_;
-    GM_ADDR kg_;
-    GM_ADDR workspace_;
-    const ChunkKdaBwdRecomputeTilingData *tiling_;
-    TPipe *pipe_ = nullptr;
 
-    GlobalTensor<QkType> qTensor_;
-    GlobalTensor<QkType> kTensor_;
-    GlobalTensor<QkType> vTensor_;
-    GlobalTensor<GateType> gTensor_;
-    GlobalTensor<BetaType> betaTensor_;
-    GlobalTensor<float> aLogTensor_;
-    GlobalTensor<float> dtBiasTensor_;
-    GlobalTensor<float> gkTensor_;
-    GlobalTensor<QkType> qgTensor_;
-    GlobalTensor<QkType> kgTensor_;
-    GlobalTensor<QkType> kbgTensor_;
-    GlobalTensor<QkType> vbTensor_;
-
-    uint64_t B_ = 0;
-    uint64_t Hk_ = 0;
-    uint64_t Hv_ = 0;
-    uint64_t hvPerHk_ = 1;
-    uint64_t T_ = 0;
-    uint64_t K_ = 128;
-    uint64_t V_ = 128;
-    uint64_t chunkNum_ = 0;
-    uint64_t chunkSize_ = 64;
-    int64_t isVariable_ = 0;
-    uint32_t rowNum_ = 64;
-    bool useGate_ = true;
-    bool useExp2_ = true;
-    bool hasALog_ = false;
-    bool hasDtBias_ = false;
-    float lowerBound_ = -5.0f;
-    float gateScale_ = 0.0f;
-
-    TEventID auxMte2ToVEvent_;
-    TEventID auxMte3ToMte2Event_;
-
-    TQue<TPosition::VECIN, 1> gInQue_;
-    TQue<TPosition::VECIN, 1> qInQue_;
-    TQue<TPosition::VECIN, 1> kInQue_;
-    TQue<TPosition::VECIN, 1> vInQue_;
-    TQue<TPosition::VECIN, 1> betaInQue_;
-    TQue<TPosition::VECOUT, 1> gkOutQue_;
-    TQue<TPosition::VECOUT, 1> qgOutQue_;
-    TQue<TPosition::VECOUT, 1> kgOutQue_;
-    TQue<TPosition::VECOUT, 1> kbgOutQue_;
-    TQue<TPosition::VECOUT, 1> vbOutQue_;
-    TBuf<TPosition::VECCALC> gFp32Buf_;
-    TBuf<TPosition::VECCALC> tmpFp32Buf_;
-    TBuf<TPosition::VECCALC> accFp32Buf_;
-    TBuf<TPosition::VECCALC> qFp32Buf_;
-    TBuf<TPosition::VECCALC> kFp32Buf_;
-    TBuf<TPosition::VECCALC> kRawFp32Buf_;
-    TBuf<TPosition::VECCALC> betaFp32Buf_;
-    TBuf<TPosition::VECCALC> betaBrcbBuf_;
-    TBuf<TPosition::VECCALC> dtBiasBuf_;
-    TBuf<TPosition::VECCALC> scaleFp32Buf_;
-    TBuf<TPosition::VECCALC> expABuf_;
-    TBuf<TPosition::VECCALC> vFp32Buf_;
-    TBuf<TPosition::VECCALC> scalarBuf_;
+    GM_ADDR cu_; GM_ADDR indices_; GM_ADDR workspace_;
+    const ChunkKdaBwdRecomputeTilingData *t_;
+    TPipe *pipe_;
+    GlobalTensor<QkType> q_,k_,v_,qg_,kg_;
+    GlobalTensor<GateType> g_;
+    GlobalTensor<BetaType> beta_;
+    GlobalTensor<float> alog_,bias_,gk_;
+    TBuf<TPosition::VECCALC> qBuf_,kBuf_,vBuf_,outBuf_,gBuf_;
+    TBuf<TPosition::VECCALC> gFp32Buf_,tmpFp32Buf_,kRawBuf_,workBuf_,qFpBuf_;
+    TBuf<TPosition::VECCALC> betaRaw_,betaFp_,betaBc_,dtBiasBuf_,expABuf_,accBuf_;
+    TEventID m2v_,v2m3_,m3v_,v2m2_;
+    static constexpr uint64_t K_=64;
+    bool useGate_,useExp2_,hasALog_,hasDtBias_;
+    float gateScale_;
 };
-
-} // namespace KDA
-
-#endif // CHUNK_KDA_BWD_RECOMPUTE_VECTOR_H
+}
+#endif
