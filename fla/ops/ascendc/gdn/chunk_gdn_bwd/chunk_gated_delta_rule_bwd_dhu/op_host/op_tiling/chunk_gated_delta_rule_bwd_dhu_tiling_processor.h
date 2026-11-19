@@ -86,6 +86,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     bool hasGk;
     bool useExp2;
     bool stateVFirst;
+    int64_t layout;
     bool hasDh0;
     bool isArch35;
     bool stage0Debug;
@@ -368,8 +369,16 @@ private:
 
     ge::graphStatus CommonTiling()
     {
-        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
-        const gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        gert::Shape qShape = ctx_.qShape->GetStorageShape();
+        gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        if ((ctx_.layout == GDN::DhuLayout::BSND)) {
+            const int64_t tokens = qShape.GetDim(DIM_1);
+            qShape.SetDim(DIM_1, qShape.GetDim(DIM_2));
+            qShape.SetDim(DIM_2, tokens);
+            const int64_t kTokens = kShape.GetDim(DIM_1);
+            kShape.SetDim(DIM_1, kShape.GetDim(DIM_2));
+            kShape.SetDim(DIM_2, kTokens);
+        }
         const gert::Shape wShape = ctx_.wShape->GetStorageShape();
         gert::Shape dOShape = ctx_.dOShape->GetStorageShape();
         const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
@@ -409,6 +418,7 @@ private:
             return ge::GRAPH_FAILED;
         }
 
+        tiling_.layout = ctx_.layout;
         tiling_.B = static_cast<int64_t>(qShape.GetDim(DIM_0));
         tiling_.HK = static_cast<int64_t>(qShape.GetDim(DIM_1));
         tiling_.T = static_cast<int64_t>(qShape.GetDim(DIM_2));

@@ -1,3 +1,4 @@
+#include <cstring>
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
 
 #include <algorithm>
@@ -61,7 +62,7 @@ bool CheckRank(const gert::StorageShape *shape, size_t rank)
 
 ge::graphStatus ValidateShapes(gert::TilingContext *context,
                                GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData &tiling,
-                               bool stateVFirst)
+                               bool stateVFirst, int64_t inputLayout)
 {
     // 先从真实输入 shape 提取运行时规格，再校验当前仅支持的 64/128 档位；
     // 禁止用编译期常量代替 shape 推导结果写入 tiling data。
@@ -94,10 +95,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     const gert::Shape h = hShape->GetStorageShape();
     const gert::Shape dh = dhShape->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = q.GetDim(1);
-    tiling.T = q.GetDim(2);
+    tiling.HK = (inputLayout == GDN::FinalizeLayout::BSND) ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = (inputLayout == GDN::FinalizeLayout::BSND) ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = v.GetDim(1);
+    tiling.HV = (inputLayout == GDN::FinalizeLayout::BSND) ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -122,12 +123,25 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
         return ge::GRAPH_FAILED;
     }
 
-    if (k.GetDim(0) != tiling.B || k.GetDim(1) != tiling.HK ||
-                    k.GetDim(2) != tiling.T || k.GetDim(3) != tiling.K) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "q", "invalid", "k must have the same shape as q.");
+    if (k.GetDim(0) != tiling.B ||
+                    ((inputLayout == GDN::FinalizeLayout::BSND) ?
+                         (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK) :
+                         (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
+                    k.GetDim(3) != tiling.K) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "q/k",
+                    std::string("q=") +
+                        (std::string("[") + std::to_string(q.GetDim(0)) + "," + std::to_string(q.GetDim(1)) + "," +
+                         std::to_string(q.GetDim(2)) + "," + std::to_string(q.GetDim(3)) + "]") +
+                        ", k=" +
+                        (std::string("[") + std::to_string(k.GetDim(0)) + "," + std::to_string(k.GetDim(1)) + "," +
+                         std::to_string(k.GetDim(2)) + "," + std::to_string(k.GetDim(3)) + "]"),
+                    "k must have the same shape as q in the selected layout");
         return ge::GRAPH_FAILED;
     }
-    if (v.GetDim(0) != tiling.B || v.GetDim(2) != tiling.T ||
+    if (v.GetDim(0) != tiling.B ||
+                    ((inputLayout == GDN::FinalizeLayout::BSND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
+                                       : (v.GetDim(1) != tiling.HV || v.GetDim(2) != tiling.T)) ||
                     vNew.GetDim(0) != tiling.B || vNew.GetDim(1) != tiling.HV ||
                     vNew.GetDim(2) != tiling.T || vNew.GetDim(3) != tiling.V ||
                     dO.GetDim(0) != tiling.B || dO.GetDim(1) != tiling.HV ||
@@ -174,6 +188,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(5);
     const bool stateVFirstValue = stateVFirst == nullptr ? false : *stateVFirst;
+    const char *qkvLayout = attrs->GetStr(7);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
+    }
+    if (std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0) {
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND");
+        return ge::GRAPH_FAILED;
+    }
+    const int64_t layoutValue =
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::FinalizeLayout::BSND : GDN::FinalizeLayout::BNSD;
+    tiling->layout = layoutValue;
     // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
     const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());
     const auto npuArch = routePlatform.GetCurNpuArch();
@@ -186,7 +213,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
             "ChunkGatedDeltaRuleBwdFinalize requires NpuArch::DAV_2201 or DAV_3510");
         return ge::GRAPH_FAILED;
     }
-    if (ValidateShapes(context, *tiling, stateVFirstValue) != ge::GRAPH_SUCCESS) {
+    if (ValidateShapes(context, *tiling, stateVFirstValue, layoutValue) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
 

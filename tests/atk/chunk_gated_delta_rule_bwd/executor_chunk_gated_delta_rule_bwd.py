@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,34 @@ _FINALIZE = _load_module(
     / "scripts"
     / "chunk_gated_delta_rule_bwd_finalize_cpu.py",
 )
+
+
+
+_FINALIZE_ARCH22 = _load_module(
+    "chunk_gated_delta_rule_bwd_finalize_arch22_reference",
+    Path(__file__).resolve().parents[1]
+    / "chunk_gated_delta_rule_bwd_finalize" / "scripts" / "arch22_cpu.py",
+)
+
+
+def _finalize_reference(*args, **kwargs):
+    # A2 retains FP32 gate partials; the generic chain reconstructs them after
+    # BF16 gradient stores. Use the existing A2 CPU model for that dataflow.
+    if os.environ.get("GDN_ATK_BENCHMARK_ARCH", "arch35") != "arch22" or args[0].dtype == torch.float64:
+        return _FINALIZE.chunk_gated_delta_rule_bwd_finalize_golden(*args, **kwargs)
+    names = ("q", "k", "v", "v_new", "do", "du", "g", "beta", "h", "dh", "a")
+    inputs = dict(zip(names, args))
+    inputs.update(kwargs)
+    gate_dtype = "bf16" if inputs["g"].dtype == torch.bfloat16 else "fp32"
+    inputs = {name: value.float().numpy() if isinstance(value, torch.Tensor) else value
+              for name, value in inputs.items()}
+    case, data, _ = _FINALIZE_ARCH22.prepare_inputs(
+        inputs, gate_dtype
+    )
+    outputs = _FINALIZE_ARCH22.finalize_cpu_lowp(case, data)
+    dtypes = (args[0].dtype, args[1].dtype, args[2].dtype, args[7].dtype, args[6].dtype)
+    return tuple(torch.from_numpy(outputs[name]).to(dtype)
+                 for name, dtype in zip(_FINALIZE_ARCH22.OUTPUT_NAMES, dtypes))
 
 
 def _as_bool(value: Any) -> bool:
@@ -246,7 +275,7 @@ def run_cpu(spec: dict[str, Any]):
     )
     dh = dh.to(torch.bfloat16)
     dh0 = dh0.to(torch.bfloat16) if dh0 is not None else None
-    outputs = _FINALIZE.chunk_gated_delta_rule_bwd_finalize_golden(
+    outputs = _finalize_reference(
         inputs["q"], inputs["k"], inputs["v"], v_new, inputs["d_o"], dv2,
         inputs["g"], inputs["beta"], h, dh, inputs["A"],
         q_rstd=inputs["q_rstd"], k_rstd=inputs["k_rstd"],
