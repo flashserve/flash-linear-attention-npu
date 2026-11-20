@@ -14,6 +14,7 @@
  */
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <cstdint>
 #include "register/op_impl_registry.h"
@@ -174,6 +175,7 @@ static ge::graphStatus TilingPrepareForChunkLocalCumsum(gert::TilingParseContext
 
 static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
 {
+    std::fprintf(stderr, "[FLA_CI_PACKAGE_PROBE_20261109] ChunkLocalCumsum tiling\n");
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputShape(G_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetInputDesc(G_INDEX));
     OP_CHECK_NULL_WITH_CONTEXT(context, context->GetOutputShape(OUT_INDEX));
