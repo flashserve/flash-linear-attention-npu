@@ -26,6 +26,61 @@
 
 ## 用例
 
+### A5 新路径双标杆
+
+`atk_chunk_gated_delta_rule_fwd_new_path.json` 固定 336 条 BF16 用例，`K=V=128`、
+`chunk_size=64`，覆盖 `Hv/Hk=1/2/3/4`（96/116/64/60 条）、定长、变长尾块、
+初态和可选最终状态。输入范围为 Q/K/Beta `[-5,5]`、V `[-1024,1024]`、g `[-100,0]`。
+专用执行器保留输入数值，只在调用 BSND 新路径和 GPU Triton 标杆时转换 Q/K/V
+布局；比较 O 与可选 final_state。当前固定 `use_exp2=false`、
+`use_qk_l2norm_in_kernel=false`、`disable_recompute=true`。
+
+GPU 环境需加载与测试匹配的上游 FLA Triton 源码，从本用例目录启动服务：
+先设置 `GPU_PORT`；NPU 侧设置 `GDN_GPU_HOST` 为可达的服务地址。
+
+```bash
+atk server --host 127.0.0.1 --port "$GPU_PORT" --devices 0 \
+  --name gpu_reference --plugin_path ./executor_chunk_gated_delta_rule_fwd_new_path.py \
+  --bind_cpu_type 1 --timeout 8000
+```
+
+在 NPU 环境加载当前源码的 Torch wrapper/OPP 与 CANN 后运行；GPU 地址可通过
+SSH 转发提供。默认三路按固定 case seed 独立生成，需核对有效输入；
+如需 ATK 跨节点同步，可设置 `GDN_ATK_SYNC_DATASET=1`：
+
+```bash
+GDN_GPU_PORT="$GPU_PORT" \
+  bash scripts/run_new_path_double_benchmark.sh 0
+```
+
+ATK `summary` 和 `statistic` 应同时核对执行成功、精度通过和各输出详情。
+`SpecialValueOnly` 表示特殊值检查通过但没有常规误差比例，不应计作非零数值覆盖。
+新路径内存/确定性/性能可在同一 JSON 中选取代表用例：
+运行内存检查前先设置 `MSS_LOG_PATH` 为可写的日志文件路径。
+
+```bash
+atk node --name npu_dut --backend npu --devices 0 task \
+  -c ./atk_chunk_gated_delta_rule_fwd_new_path.json \
+  -p ./executor_chunk_gated_delta_rule_fwd_new_path.py \
+  --task accuracy_dc --dc_loop_nums 50 -wl '[0,21,24,27,51,63,67,75,78,81]'
+
+touch "$MSS_LOG_PATH"
+mssanitizer --tool=memcheck -- atk node --name npu_dut --backend npu --devices 0 task \
+  -c ./atk_chunk_gated_delta_rule_fwd_new_path.json \
+  -p ./executor_chunk_gated_delta_rule_fwd_new_path.py \
+  --task run --mssanitizer -msl "$MSS_LOG_PATH" \
+  -wl '[0,21,24,27,51,63,67,75,78,81]'
+
+atk node --name npu_dut --backend npu --devices 0 task \
+  -c ./atk_chunk_gated_delta_rule_fwd_new_path.json \
+  -p ./executor_chunk_gated_delta_rule_fwd_new_path.py \
+  --task performance_device -wl '[0,21,24,67,75]'
+```
+
+正式 device task 耗时结论还需用 `msprof` 的 `op_summary` 核对；不能把
+ATK 精度通过视为内存、确定性或性能通过。上述范围只属于 A5 新路径，
+不替代下述旧路径 500 条矩阵。
+
 - `atk_chunk_gated_delta_rule_fwd.json`：既有泛化 500 条冻结矩阵，五种场景各 100 条，
   覆盖 BF16/FP16、MHA/GVA、V128/V256、chunk 64/128、定长/变长及状态组合。
 - `scripts/cases/legacy500_adapted.json`：既有 BF16/MHA 历史 500 条回归矩阵，不作为默认入口。
