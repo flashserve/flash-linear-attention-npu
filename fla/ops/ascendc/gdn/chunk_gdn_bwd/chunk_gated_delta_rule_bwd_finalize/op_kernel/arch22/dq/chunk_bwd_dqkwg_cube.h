@@ -269,6 +269,9 @@ public:
         // cube WaitCredit 总次数 == L (==4M); 与 vector 端预置 N + SetCredit L 对应, 末尾余 N 信用 (无害)。
         // 现按 chunk-group-major 组织: 外层按 G 个 chunk 一组, 组内 A->B->C->D 连着做 (组的输入在 L2 内复用)。
 
+        // P3: seq 元数据缓存（同序列相邻 loop 省 2 次 GM 标量读）。
+        DqkwgSeqCache dqSeqCache{0, 0, 0, false};
+
         // ========== A_cube: dw = dv @ h^T, 然后 mm5 = q @ k^T ==========
         for (ScheduleIndex taskIdx = coreIdx; taskIdx < taskCount; taskIdx += coreNum) {
             uint32_t loopIdx;
@@ -286,7 +289,7 @@ public:
             }
             const uint32_t workspaceHeadBase = workspaceHeads < params.HV ? hBegin : 0;
             GetChunkOffset(cuSeqlensTensor, chunkIndicesTensor, params.B, params.HV, params.T, params.BT,
-                            loopIdx, bos, eos, params.isVarLen);
+                            loopIdx, bos, eos, params.isVarLen, &dqSeqCache);
             uint32_t actual_chunk_len = eos - bos;
             uint32_t bIdx = loopIdx / scheduleNumChunks;
             uint32_t chunkIdx = loopIdx % scheduleNumChunks;

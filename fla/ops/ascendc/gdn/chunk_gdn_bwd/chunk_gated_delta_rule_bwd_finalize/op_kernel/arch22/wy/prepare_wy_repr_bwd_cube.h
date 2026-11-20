@@ -547,10 +547,20 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     uint32_t coreNum = AscendC::GetBlockNum();
     uint64_t groupSize = PrepareWyReprBwdGetGroupSize(tiling_);
     uint64_t windowIdx = 0;
+    // P3: seq 元数据缓存（同序列相邻 task 省 2 次 GM 标量读）。
+    PrepareWyReprBwdSeqCache seqCache{0, 0, 0, false};
+    // P3: core 级 slot/kkt 基址外提（原 GetSlotBase/GetKktBase 回退逻辑就地展开一次）。
+    uint64_t workspaceCoreSize = tiling_.workspaceCoreSize;
+    if (workspaceCoreSize == 0) {
+        workspaceCoreSize = tiling_.workspaceBufferCount * tiling_.workspaceSlotSize +
+                            tiling_.workspaceBufferCount * tiling_.mBytes;
+    }
+    GM_ADDR coreSlotBase = workspace_ + static_cast<uint64_t>(coreIdx) * workspaceCoreSize;
+    GM_ADDR coreKktBase = coreSlotBase + tiling_.kktOffset;
 
     for (uint32_t taskIdx = coreIdx; taskIdx < static_cast<uint32_t>(tiling_.chunkNum); taskIdx += coreNum) {
         PrepareWyReprBwdTaskInfo task;
-        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
+        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, taskIdx, task, &seqCache);
         GemmCoord shapeK{task.curChunkSize, K_DIM, task.curChunkSize};
         GemmCoord shapeV{task.curChunkSize, V_DIM, task.curChunkSize};
         GemmCoord shapeKkt{task.curChunkSize, task.curChunkSize, K_DIM};
@@ -574,6 +584,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                                    headWindow :
                                    static_cast<uint32_t>(hvTotal - hvBase);
             uint32_t windowStartSlot = static_cast<uint32_t>((windowIdx & 1U) * BUFFER_COUNT_2);
+            // P3: 窗口内两 slot 基址预计算，头循环内仅按奇偶选择。
+            GM_ADDR windowSlotBaseA = coreSlotBase + windowStartSlot * tiling_.workspaceSlotSize;
+            GM_ADDR windowSlotBaseB = windowSlotBaseA + tiling_.workspaceSlotSize;
 
             // Stage0 fills both workspace slots before later stages consume the first head.
             curSlot_ = windowStartSlot;
@@ -626,7 +639,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 uint64_t hk = hv / groupSize;
                 uint64_t valueBase = hv * tiling_.T + task.valueBos;
                 uint64_t keyBase = hk * tiling_.T + task.keyBos;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
                 bool needComputeKkt = cachedKktHk_ != hk;
                 bool needLoadKResident = cachedKResidentHk_ != hk;
                 if (needLoadKResident) {
@@ -642,7 +655,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 uint32_t kktSlot = cachedKktSlot_;
                 kResidentSlotForSlot_[curSlot_] = cachedKResidentSlot_;
                 kktSlotForSlot_[curSlot_] = kktSlot;
-                GM_ADDR kktBase = PrepareWyReprBwdGetKktBase(workspace_, coreIdx, kktSlot, tiling_);
+                GM_ADDR kktBase = coreKktBase + kktSlot * tiling_.mBytes;
 
                 gmAT.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
                 gmDw.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
@@ -889,7 +902,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
 
                 gmKbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbgOffset));
                 gmVb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.vbOffset));
@@ -1075,7 +1088,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             // DA5 fixpipe -> DA5T load dependency per head.
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
 
                 gmDA4.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da4Offset));
                 gmDA5.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da5Offset));
@@ -1226,7 +1239,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint64_t hv = hvBase + headIdx;
                 uint64_t hk = hv / groupSize;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
 
                 gmD.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
                 gmKbeta.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbetaOffset));

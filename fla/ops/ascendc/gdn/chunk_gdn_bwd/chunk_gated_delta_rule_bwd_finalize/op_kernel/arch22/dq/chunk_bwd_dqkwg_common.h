@@ -93,14 +93,36 @@ constexpr uint32_t FP32_PER_REPEAT = 64;
 
 #define CEIL_DIV(x, y) (((x) + (y) - 1) / (y))
 
+// P3: 同一序列的相邻 loop 复用起止，省 2 次 GM 标量读（seqIdx 相等判命中）。
+struct DqkwgSeqCache {
+    uint32_t lastSeqIdx;
+    uint32_t seqBegin;
+    uint32_t seqEnd;
+    bool valid;
+};
+
 __aicore__ inline void GetChunkOffset(GlobalTensor<uint64_t> cuSeqlensTensor, GlobalTensor<uint64_t> chunkIndicesTensor, uint64_t B, uint64_t HV, uint64_t T,
-                                      uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos, bool isVarLen)
+                                      uint64_t chunkSize, uint32_t loopIdx, uint32_t &bos, uint32_t &eos, bool isVarLen,
+                                      DqkwgSeqCache *seqCache = nullptr)
 {
     if (isVarLen) {
         uint32_t seqIdx = chunkIndicesTensor.GetValue(2 * loopIdx);
         uint32_t chunkIdx = chunkIndicesTensor.GetValue(2 * loopIdx + 1);
-        uint32_t curSeqBegin = cuSeqlensTensor.GetValue(seqIdx);
-        uint32_t curSeqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+        uint32_t curSeqBegin;
+        uint32_t curSeqEnd;
+        if (seqCache != nullptr && seqCache->valid && seqCache->lastSeqIdx == seqIdx) {
+            curSeqBegin = seqCache->seqBegin;
+            curSeqEnd = seqCache->seqEnd;
+        } else {
+            curSeqBegin = cuSeqlensTensor.GetValue(seqIdx);
+            curSeqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+            if (seqCache != nullptr) {
+                seqCache->valid = true;
+                seqCache->lastSeqIdx = seqIdx;
+                seqCache->seqBegin = curSeqBegin;
+                seqCache->seqEnd = curSeqEnd;
+            }
+        }
         bos = curSeqBegin + chunkIdx * chunkSize;
         eos = bos + chunkSize > curSeqEnd ? curSeqEnd : bos + chunkSize;
     } else {

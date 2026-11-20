@@ -1379,12 +1379,21 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     uint32_t coreNum = AscendC::GetBlockNum();
     uint64_t groupSize = PrepareWyReprBwdGetGroupSize(tiling_);
     uint64_t windowIdx = 0;
+    // P3: seq 元数据缓存 + core 级 slot 基址外提（回退逻辑就地展开一次）。
+    PrepareWyReprBwdSeqCache seqCache{0, 0, 0, false};
+    uint64_t workspaceCoreSize = tiling_.workspaceCoreSize;
+    if (workspaceCoreSize == 0) {
+        workspaceCoreSize = tiling_.workspaceBufferCount * tiling_.workspaceSlotSize +
+                            tiling_.workspaceBufferCount * tiling_.mBytes;
+    }
+    GM_ADDR coreSlotBase = workspace_ + static_cast<uint64_t>(coreIdx) * workspaceCoreSize;
 
     for (uint64_t taskIdx = coreIdx, ownedOrdinal = 0; taskIdx < static_cast<uint32_t>(tiling_.chunkNum);
          taskIdx += coreNum, ++ownedOrdinal) {
         curChunkDkSlot_ = chunkDkSlots_ == 2 ? static_cast<uint32_t>(ownedOrdinal & 1U) : 0;
         PrepareWyReprBwdTaskInfo task;
-        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, static_cast<uint32_t>(taskIdx), task);
+        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, static_cast<uint32_t>(taskIdx),
+                                    task, &seqCache);
         // Invalidate this chunk's tag, but retain the cursor for prior readers.
         cachedKktHk_ = static_cast<uint64_t>(-1);
         cachedKktFp32Hk_ = static_cast<uint64_t>(-1);
@@ -1398,13 +1407,16 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                                    headWindow :
                                    static_cast<uint32_t>(hvTotal - hvBase);
             uint32_t windowStartSlot = static_cast<uint32_t>((windowIdx & 1U) * BUFFER_COUNT_2);
+            // P3: 窗口内两 slot 基址预计算，头循环内仅按奇偶选择。
+            GM_ADDR windowSlotBaseA = coreSlotBase + windowStartSlot * tiling_.workspaceSlotSize;
+            GM_ADDR windowSlotBaseB = windowSlotBaseA + tiling_.workspaceSlotSize;
 
             // Stage0 fills both workspace slots before later stages consume the first head.
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint64_t hv = hvBase + headIdx;
                 uint64_t hk = hv / groupSize;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
                 if (cachedKktHk_ != hk) {
                     cachedKktHk_ = hk;
                     cachedKktSlot_ = nextKktSlot_;
@@ -1418,7 +1430,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
                 ProcessDa4Task(task, slotBase);
                 curSlot_ ^= 1U;
             }
@@ -1426,7 +1438,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint64_t hv = hvBase + headIdx;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
                 ProcessDTask(task, hv, slotBase);
                 curSlot_ ^= 1U;
             }
@@ -1435,7 +1447,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint64_t hv = hvBase + headIdx;
                 uint64_t hk = hv / groupSize;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
                 if (CanUseOutputHeadOwner(task, groupSize) && headCnt == BUFFER_COUNT_2) {
                     if (headIdx == AscendC::GetSubBlockIdx()) {
                         ProcessOutputTask<true>(task, hv, hk, groupSize, slotBase);
