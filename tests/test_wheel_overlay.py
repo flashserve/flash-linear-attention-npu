@@ -104,6 +104,47 @@ class WheelOverlayTests(unittest.TestCase):
         src = package(self.root / uuid_name(), kind=kind, exports=["npu_a"], opp={"aclnnDemo": kind} if full else None)
         return wheel(self.root / (uuid_name() + ".whl"), src, scheme=scheme, corrupt=corrupt)
 
+    def test_private_layer_requires_matching_pair_and_rejects_legacy_shadow(self):
+        base = self.base()
+        src = package(self.root / "adapter", exports=["npu_a"])
+        inner = contract("float", "DemoInner")
+        data = layers.manifest(src)
+        data.update(protocol=2)
+        data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+
+        abi = layers.abi_module(base)
+        provider = layers._vendor(base)
+        public = abi.validated_contracts(provider, require_manifest=True)
+        names = set(public) | set(inner) | {abi.private_stamp(inner)}
+        write_elf_exports(provider / abi.LIBRARY, names)
+        (provider / abi.MANIFEST_NAME).write_text(json.dumps({
+            "schema_version": 2, "files": abi._file_hashes(provider),
+            "contracts": public, "private_contracts": inner}))
+        update = wheel(self.root / "private.whl", src)
+        self.assertEqual(layers.install(base, update)["state"], "active")
+
+        data["operators"]["npu_a"]["private_requires"]["DemoInnerGetWorkspaceSize"][1] = "double"
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+        mismatch = layers.install(base, wheel(self.root / "changed.whl", src), force=True)
+        self.assertEqual(mismatch["state"], "pending")
+        self.assertTrue(any("DemoInnerGetWorkspaceSize" in err for err in mismatch["errors"]))
+
+        legacy = package(self.root / "legacy", opp={"aclnnDemo": "int64"})
+        shadow = layers._vendor(legacy)
+        names = set(contract()) | {"DemoInner"}
+        write_elf_exports(shadow / abi.LIBRARY, names)
+        with mock.patch.object(abi, "exported_symbols", return_value=set(contract())):
+            abi.write_manifest(shadow)
+        self.assertTrue(any("DemoInner" in err for err in abi.compare_overlay_to_base(shadow, provider)))
+        # The effective launch phase would resolve to the undeclared legacy symbol.
+        with mock.patch.object(layers, "component_vendors", return_value=([], [shadow])):
+            base_data = layers.manifest(base)
+            base_data["protocol"] = 2
+            base_data["operators"]["npu_a"] = {"requires": {}, "private_requires": contract("float", "DemoInner")}
+            (base / layers.MANIFEST).write_text(json.dumps(base_data))
+            self.assertTrue(any("DemoInner" in err for err in layers.resolve(base, layers.active(base))["errors"]))
+
     def test_full_wheel_changes_abi_and_preserves_base_b_and_files(self):
         base = self.base()
         before = {p.relative_to(base): p.read_bytes() for p in base.rglob("*") if p.is_file()}

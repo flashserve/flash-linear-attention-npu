@@ -9,6 +9,36 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+# Opt in at the op_api directory that actually contributes compiled sources.
+function(fla_register_private_abi directory target)
+  file(GLOB declaration CONFIGURE_DEPENDS "${directory}/private_abi.json")
+  if(NOT declaration)
+    return()
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${declaration}")
+  if(NOT ARGN)
+    message(FATAL_ERROR "Private ABI declaration has no op_api sources: ${declaration}")
+  endif()
+  set(helper "${CMAKE_SOURCE_DIR}/torch_custom/fla_npu/fla_npu/_op_abi.py")
+  execute_process(COMMAND "${Python3_EXECUTABLE}" "${helper}" --list-private-headers "${declaration}"
+                  OUTPUT_VARIABLE headers OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE status)
+  if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Invalid private ABI declaration: ${declaration}")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY FLA_PRIVATE_DECLARATIONS "${declaration}")
+  set_property(GLOBAL APPEND PROPERTY FLA_PRIVATE_HEADERS ${headers})
+  # Compile the definitions with the exact declarations used to generate the ABI.
+  list(REMOVE_DUPLICATES headers)
+  foreach(header IN LISTS headers)
+    if(CMAKE_VERSION VERSION_LESS 3.18)
+      target_compile_options(${target} PRIVATE "SHELL:-include \"${header}\"")
+    else()
+      set_property(SOURCE ${ARGN} TARGET_DIRECTORY ${target} APPEND PROPERTY
+                   COMPILE_OPTIONS "-include" "${header}")
+    endif()
+  endforeach()
+endfunction()
+
 # useage: add_modules_sources(DIR OPTYPE ACLNNTYPE)
 # ACLNNTYPE 支持类型aclnn/aclnn_inner/aclnn_exclude
 # ACLNNEXTRAVERSION 算子版本(ex., v2, v3, v5, etc.)
@@ -71,6 +101,8 @@ macro(add_modules_sources)
       )
     endif()
   endif()
+
+  fla_register_private_abi("${OP_API_SRC_DIR}" ${OPHOST_NAME}_opapi_obj ${OPAPI_SRCS})
 
   if (NOT MODULE_OP_MC2_ENABLE)
     file(GLOB OPAPI_HEADERS ${OP_API_SRC_DIR}/aclnn_*.h)
@@ -200,6 +232,7 @@ macro(add_modules_sources_with_soc)
       )
     endif()
   endif()
+  fla_register_private_abi("${OP_API_SRC_DIR}" ${OPHOST_NAME}_opapi_obj ${OPAPI_SRCS})
   file(GLOB OPAPI_HEADERS ${OP_API_SRC_DIR}/aclnn_*.h)
   if (OPAPI_HEADERS)
     target_sources(${OPHOST_NAME}_aclnn_exclude_headers INTERFACE ${OPAPI_HEADERS})

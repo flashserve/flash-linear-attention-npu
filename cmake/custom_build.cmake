@@ -1160,6 +1160,18 @@ if (NOT ENABLE_BUILT_IN AND BUILD_OPEN_PROJECT)
     set(CPACK_EXTERNAL_ENABLE_STAGING TRUE)
     set(CPACK_FLA_PYTHON "${Python3_EXECUTABLE}")
     set(CPACK_FLA_ABI_HELPER "${CMAKE_SOURCE_DIR}/torch_custom/fla_npu/fla_npu/_op_abi.py")
+    get_property(CPACK_FLA_PRIVATE_DECLARATIONS GLOBAL PROPERTY FLA_PRIVATE_DECLARATIONS)
+    if(CPACK_FLA_PRIVATE_DECLARATIONS)
+        list(REMOVE_DUPLICATES CPACK_FLA_PRIVATE_DECLARATIONS)
+        get_property(private_headers GLOBAL PROPERTY FLA_PRIVATE_HEADERS)
+        set(stamp_src "${CMAKE_CURRENT_BINARY_DIR}/fla_private_abi_stamp.cpp")
+        add_custom_command(OUTPUT "${stamp_src}"
+            COMMAND "${Python3_EXECUTABLE}" "${CPACK_FLA_ABI_HELPER}" --write-stamp-source "${stamp_src}"
+                    --private-declarations ${CPACK_FLA_PRIVATE_DECLARATIONS}
+            DEPENDS "${CPACK_FLA_ABI_HELPER}" ${CPACK_FLA_PRIVATE_DECLARATIONS} ${private_headers}
+            VERBATIM)
+        target_sources(cust_opapi PRIVATE "${stamp_src}")
+    endif()
     list(APPEND CPACK_PRE_BUILD_SCRIPTS "${CMAKE_SOURCE_DIR}/cmake/write_opp_abi_manifest.cmake")
     if (ENABLE_BUILD_PKG)
       if (EXISTS ${ASCEND_CMAKE_DIR}/makeself.cmake)

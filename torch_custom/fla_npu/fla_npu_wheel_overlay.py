@@ -192,13 +192,14 @@ def environment_vendors(package):
 
 def manifest(package):
     data = _json(package / MANIFEST)
-    if not isinstance(data, dict) or data.get("protocol") != 1:
-        raise RuntimeError("Wheel lacks layer protocol 1; rebuild its Python/Stable adapter package")
+    if not isinstance(data, dict) or data.get("protocol") not in (1, 2):
+        raise RuntimeError("Unsupported wheel layer protocol; rebuild its Python/Stable adapter package")
     exports, operators = data.get("exports"), data.get("operators")
     if (not isinstance(exports, list) or not exports or not all(isinstance(v, str) for v in exports)
             or len(exports) != len(set(exports))
             or not isinstance(operators, dict) or set(exports) - operators.keys()):
         raise RuntimeError("Invalid wheel layer operator inventory")
+    abi = abi_module(package) if data["protocol"] == 2 else None
     for name, value in operators.items():
         if (not re.fullmatch(r"npu_[a-z0-9_]+", name) or not isinstance(value, dict)
                 or not isinstance(value.get("requires"), dict)):
@@ -206,6 +207,16 @@ def manifest(package):
         for symbol, signature in value["requires"].items():
             if not re.fullmatch(r"aclnn\w+", symbol) or not isinstance(signature, list) or not all(isinstance(v, str) for v in signature):
                 raise RuntimeError("Invalid wheel layer ACLNN contract")
+        if "private_requires" in value:
+            private = value["private_requires"]
+            if (data["protocol"] != 2 or not isinstance(private, dict) or not private
+                    or private.keys() & value["requires"].keys()
+                    or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s)
+                           or not isinstance(sig, list) or not all(isinstance(k, str) for k in sig)
+                           for s, sig in private.items())):
+                raise RuntimeError("Invalid wheel layer private ABI requirements")
+            signatures = {s: tuple(sig) for s, sig in private.items()}
+            abi._validate_exports(set(signatures), signatures)
     assignments = {}
     for node in ast.parse((package / STAMP).read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
@@ -263,11 +274,21 @@ def resolve(package, layer):
     if not vendors:
         errors.append("No usable OPP vendor; provide a matching --opp-source")
     groups.append(("base", base, set(base["operators"]) - exports))
+    private_symbols = {s for _, data, names in groups for name in names
+                       for s in data["operators"][name].get("private_requires", {})}
+    # A legacy vendor can export an undeclared private symbol. dlsym would pick
+    # it first, so a later, compatible manifest cannot satisfy that binding.
+    provided = {p: set(contracts[str(p)]) for p in vendors}
+    if private_symbols:
+        for p in vendors:
+            provided[p].update(abi.elf_exported_symbols(p / LIBRARY, private_symbols) & private_symbols)
     for owner, data, names in groups:
         required = {}
         for name in sorted(names):
-            for symbol, expected in data["operators"][name]["requires"].items():
-                chosen = next((p for p in vendors if symbol in contracts[str(p)]), None)
+            op = data["operators"][name]
+            dependencies = {**op["requires"], **op.get("private_requires", {})}
+            for symbol, expected in dependencies.items():
+                chosen = next((p for p in vendors if symbol in provided[p]), None)
                 if owner == "base" and chosen not in overlay_vendors:
                     # This update does not change the existing binding. Do not
                     # turn installation into an unrelated full-base ABI audit.
@@ -281,7 +302,7 @@ def resolve(package, layer):
                     if owner == "overlay":
                         errors.append(f"{owner}/{name}: missing OPP symbol {symbol}")
                     continue  # A skeleton base may have unavailable, uncovered ops.
-                if tuple(expected) != contracts[str(chosen)][symbol]:
+                if tuple(expected) != contracts[str(chosen)].get(symbol):
                     errors.append(f"{owner}/{name}: {symbol} mismatches OPP {chosen}; include its matching adapter/OPP in the update")
     # Every selected adapter uses the same immutable, validated CANN order.
     return {"vendors": [str(p) for p in vendors],

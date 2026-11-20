@@ -553,6 +553,27 @@ class HeaderKindGateTest(unittest.TestCase):
                 with mock.patch.object(sys, "argv", argv):
                     self.assertEqual(tool.main(), 1)
 
+    def test_private_gate_checks_each_call_even_when_the_last_one_matches(self):
+        tool = _load_tool("op_abi_validate.py")
+        private = {
+            "DemoInnerGetWorkspaceSize": ("tensor", "float", "uint64*", "executor**"),
+            "DemoInner": ("void*", "uint64", "executor*", "stream"),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "stable_demo.cpp"
+            call = 'FLA_STABLE_EXEC("DemoInner", meta, stream, TensorArg(x, fmt), scalar(static_cast<float>(scale)));'
+            argv = ["op_abi_validate.py", "--vendor", tmp, "--opp-include", tmp,
+                    "--src-dir", tmp, "--ops", "demo"]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                tool._abi, "validated_contract_groups", return_value=({}, private)
+            ):
+                source.write_text(call)
+                self.assertEqual(tool.main(), 0)
+                for invalid in (call.replace("<float>", "<double>"), call.replace("TensorArg", "unknown")):
+                    source.write_text(invalid + "\n" + call)
+                    self.assertEqual(tool.main(), 1)
+
     def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         with tempfile.TemporaryDirectory() as temp_dir:

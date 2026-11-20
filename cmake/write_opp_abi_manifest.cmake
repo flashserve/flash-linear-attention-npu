@@ -8,6 +8,7 @@ foreach(FLA_LIBRARY IN LISTS FLA_VENDOR_LIBRARIES)
     get_filename_component(FLA_VENDOR "${FLA_LIBRARY}/../../.." ABSOLUTE)
     execute_process(
         COMMAND "${CPACK_FLA_PYTHON}" "${CPACK_FLA_ABI_HELPER}" --write-manifest "${FLA_VENDOR}"
+                --private-declarations ${CPACK_FLA_PRIVATE_DECLARATIONS}
         RESULT_VARIABLE FLA_ABI_RESULT)
     if(NOT FLA_ABI_RESULT EQUAL 0)
         message(FATAL_ERROR "ABI manifest generation failed for ${FLA_VENDOR}")
