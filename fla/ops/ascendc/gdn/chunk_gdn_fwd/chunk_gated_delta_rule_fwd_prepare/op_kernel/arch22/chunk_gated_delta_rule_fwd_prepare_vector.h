@@ -914,8 +914,9 @@ public:
             for (uint32_t h = 0; h < count; ++h) {
                 Select(out[h * rows * BT + rowBase], triangleMask, zero, out[h * rows * BT + rowBase],
                     SELMODE::VSEL_TENSOR_TENSOR_MODE, uint64_t(KktRows), static_cast<uint8_t>(rows), {1, 0, 1, rs, 0, rs});
+                // Select 复用 SDK 临时描述区，下一 head 使用前等待本次读取完成。
+                PipeBarrier<PIPE_V>();
             }
-            PipeBarrier<PIPE_V>();
             // 仍逐point保留FP32 -> InputT RINT -> FP32边界。
             Cast(typed, out, RoundMode::CAST_RINT, batchRows * BT);
             PipeBarrier<PIPE_V>();
