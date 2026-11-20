@@ -1048,6 +1048,20 @@ def npu_causal_conv1d_bwd(x, y, weight, dy, initial_state=None, dht=None, *,
     )
 
 
+def npu_causal_conv1d_bwd_no_bias(x, y, weight, dy, initial_state=None, dht=None, *,
+                          query_start_loc=None, activation=0,
+                          input_layout="BSND"):
+    """Return dx, dweight and d(initial_state), omitting the bias reduction."""
+
+    return _op("npu_causal_conv1d_bwd_no_bias")(
+        x, y, weight, dy, initial_state, dht,
+        _host_ints(query_start_loc),
+        activation,
+        _char_code("npu_causal_conv1d_bwd", "input_layout", str(input_layout)),
+        _current_stream_ptr(),
+    )
+
+
 def npu_chunk_fwd_o(q, k, v, h, scale, *, g=None, g_gamma=None,
                     cu_seqlens=None, chunk_indices=None, chunk_size=None,
                     transpose_state_layout=False, use_exp2=False,

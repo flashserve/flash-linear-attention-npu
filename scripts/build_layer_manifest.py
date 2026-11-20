@@ -68,8 +68,11 @@ def requirements():
     def cpp_symbols(path, seen):
         if path in seen or not path.is_file():
             return set()
-        text = abi.strip_comments(path.read_text(encoding="utf-8"))
-        result = set(re.findall(r"\baclnn[A-Z][A-Za-z0-9]+", text))
+        source = path.read_text(encoding="utf-8")
+        # An adapter can declare the ACLNN symbol invoked by a shared helper.
+        result = set(re.findall(r"^// aclnn: (aclnn[A-Z][A-Za-z0-9]+)[ \t]*$", source, re.M))
+        text = abi.strip_comments(source)
+        result.update(re.findall(r"\baclnn[A-Z][A-Za-z0-9]+", text))
         for include in re.findall(r'#include "(stable_\w+\.cpp)"', text):
             result.update(cpp_symbols(path.parent / include, seen | {path}))
         return result

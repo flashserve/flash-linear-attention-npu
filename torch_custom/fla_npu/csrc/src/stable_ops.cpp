@@ -16,6 +16,7 @@
 
 #include "stable_causal_conv1d.cpp"
 #include "stable_causal_conv1d_bwd.cpp"
+#include "stable_causal_conv1d_bwd_no_bias.cpp"
 #include "stable_causal_conv1d_fn.cpp"
 #include "stable_causal_conv1d_update.cpp"
 #include "stable_chunk_bwd_dqkwg.cpp"
@@ -117,6 +118,7 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_prepare_wy_repr_bwd);
   m.def(kSchema_recompute_w_u_fwd);
   m.def(kSchema_causal_conv1d_bwd);
+  m.def(kSchema_causal_conv1d_bwd_no_bias);
   m.def(kSchema_chunk_fwd_o);
   m.def(kSchema_chunk_gdn_bwd_intra);
   m.def(kSchema_causal_conv1d_fn);
@@ -186,6 +188,8 @@ static void register_implementations(StableLibrary& m) {
          &fla_npu_stable::stable::boxed_adapter<run_npu_recompute_w_u_fwd>);
   m.impl("npu_causal_conv1d_bwd",
          &fla_npu_stable::stable::boxed_adapter<run_npu_causal_conv1d_bwd>);
+  m.impl("npu_causal_conv1d_bwd_no_bias",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_causal_conv1d_bwd_no_bias>);
   m.impl("npu_chunk_fwd_o",
          &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_fwd_o>);
   m.impl("npu_chunk_gdn_bwd_intra",

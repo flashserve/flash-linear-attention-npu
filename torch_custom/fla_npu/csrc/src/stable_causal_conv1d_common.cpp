@@ -120,4 +120,44 @@ Tensor launch(Tensor x, Tensor weight, std::optional<Tensor> bias,
   return out;
 }
 
+// All backwards share the same aclnn call and output layouts. An omitted db
+// output suppresses its device reduction.
+std::tuple<Tensor, Tensor, std::optional<Tensor>, Tensor> launch_conv1d_backward(
+    Tensor x, std::optional<Tensor> y, Tensor weight, Tensor dy,
+    std::optional<Tensor> initial_state, std::optional<Tensor> dht,
+    std::optional<Tensor> query_start_loc, int64_t activation,
+    const char* layout, int64_t stream, bool compute_bias_grad) {
+  const TensorMeta x_meta = meta_of(x);
+  const TensorMeta weight_meta = meta_of(weight);
+  const std::vector<int64_t> qsl = int_values(query_start_loc);
+
+  // TND/NTD carry one initial state per segment; the other layouts carry one
+  // per batch row.
+  const bool per_segment =
+      std::strcmp(layout, "TND") == 0 || std::strcmp(layout, "NTD") == 0;
+  const int64_t state_rows =
+      per_segment ? (qsl.empty() ? 0 : static_cast<int64_t>(qsl.size()) - 1)
+                  : SIZE_OF(x_meta, 0);
+
+  Tensor out_dx = allocate_like(x_meta);
+  Tensor out_dw = allocate_sizes(
+      {SIZE_OF(weight_meta, 0), SIZE_OF(weight_meta, 1)},
+      weight_meta.scalar_type, weight_meta);
+  std::optional<Tensor> out_db;
+  if (compute_bias_grad) {
+    out_db = allocate_sizes({SIZE_OF(weight_meta, 1)}, weight_meta.scalar_type, weight_meta);
+  }
+  Tensor out_dinit = allocate_sizes(
+      {state_rows, SIZE_OF(weight_meta, 0), SIZE_OF(weight_meta, 1)},
+      x_meta.scalar_type, x_meta);
+
+  FLA_STABLE_EXEC("aclnnCausalConv1dBwd", x_meta, stream, tensor(x_meta),
+                  optional_tensor(y), tensor(weight_meta), tensor(meta_of(dy)),
+                  optional_tensor(initial_state), optional_tensor(dht),
+                  int_array(qsl), scalar(activation), CStrArg(layout),
+                  out_tensor(meta_of(out_dx)), out_tensor(meta_of(out_dw)),
+                  optional_tensor(out_db), out_tensor(meta_of(out_dinit)));
+  return std::make_tuple(out_dx, out_dw, out_db, out_dinit);
+}
+
 }  // namespace
