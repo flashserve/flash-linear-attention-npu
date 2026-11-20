@@ -1,0 +1,62 @@
+{
+  "name": "GdnRecoverssmCommit",
+  "public_entry": "gdn_recoverssm_commit",
+  "soc": "ascend950",
+  "attributes": {
+    "spec_query_len": {
+      "type": "int",
+      "min": 1,
+      "max": 32
+    },
+    "align_mode": {
+      "type": "bool",
+      "default": false
+    }
+  },
+  "inputs": [
+    {
+      "name": "state",
+      "dtype": ["bfloat16", "float32"],
+      "shape": ["P", "HV", 128, 128],
+      "mutable": true
+    },
+    {
+      "name": "replay",
+      "dtype": "float32",
+      "shape": ["P", "HV", "L", 257],
+      "mutable": false
+    },
+    {
+      "name": "state_commit_cache_address_stride_table",
+      "dtype": "int64",
+      "shape": [2, 2, "Layer"]
+    },
+    {
+      "name": "state_indices",
+      "dtype": ["int32", "int64"],
+      "shape": ["B"]
+    },
+    {
+      "name": "commit_lens",
+      "dtype": ["int32", "int64"],
+      "shape": ["B"]
+    },
+    {
+      "name": "final_state_indices",
+      "dtype": ["int32", "int64"],
+      "shape": ["B"]
+    },
+    {
+      "name": "boundary_state_indices",
+      "dtype": ["int32", "int64"],
+      "shape": ["B"]
+    },
+    {
+      "name": "boundary_recovery_lens",
+      "dtype": ["int32", "int64"],
+      "shape": ["B"]
+    }
+  ],
+  "returns": null,
+  "mutation": ["state"]
+}

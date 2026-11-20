@@ -67,6 +67,7 @@ _ASCENDC_OPS = (
     "npu_merge_fwd_bwd_kernel",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
+    "npu_gdn_recoverssm_commit",
     "npu_gdn_recoverssm_verify",
 )
 
@@ -92,6 +93,7 @@ MUTATED_ARGUMENTS = {
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
     "npu_merge_fwd_bwd_kernel": ("h",),
+    "npu_gdn_recoverssm_commit": ("state",),
     "npu_gdn_recoverssm_verify": ("replay_cache",),
 }
 
@@ -586,6 +588,26 @@ FALLBACKS: dict[str, int] = {}
 for _name in _ASCENDC_OPS:
     globals()[_name] = _make_raw_wrapper(_name)
     globals().setdefault(_strip_npu_prefix(_name), globals()[_name])
+
+
+def gdn_recoverssm_commit(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens, *,
+        spec_query_len, align_mode):
+    """Commit accepted GDN replay records in place.
+
+    The public reference contract returns ``None``; inspect ``state`` for the
+    committed checkpoints.
+    """
+
+    _get_direct_op("npu_gdn_recoverssm_commit")(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens,
+        int(spec_query_len), bool(align_mode),
+    )
+
 
 validate_backend_environment()
 _prepare_direct_runtime(raise_on_error=False)

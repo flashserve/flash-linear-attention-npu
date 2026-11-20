@@ -560,6 +560,21 @@ def _op(name: str):
     return op
 
 
+def npu_gdn_recoverssm_commit(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens, *, spec_query_len,
+        align_mode):
+    """Compose accepted replay records into paged GDN checkpoints."""
+
+    return _op("npu_gdn_recoverssm_commit")(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens,
+        int(spec_query_len), bool(align_mode), _current_stream_ptr(),
+    )
+
+
 def _bound_op(name: str):
     """Op handle for a hot path: one dict lookup, resolved on the first call.
 
