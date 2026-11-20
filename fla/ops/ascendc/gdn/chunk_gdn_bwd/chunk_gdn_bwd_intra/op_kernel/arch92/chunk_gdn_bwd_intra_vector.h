@@ -286,20 +286,32 @@ private:
     __aicore__ inline void PrefetchInput(const ChunkGdnBwdIntraWorkMeta &meta, uint32_t r)
     {
         const uint32_t slot = r % SLOT_COUNT;
-        const uint64_t offset = (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads +
-                                 meta.hvBegin + r) * tiling_->seqlen + meta.tokenStart;
+        const int64_t hv = meta.hvBegin + r;
+        // The fused launcher keeps A, g, beta and dO in head-major storage.
+        const uint64_t headOffset = (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
+            tiling_->seqlen + meta.tokenStart;
         const uint32_t rows = static_cast<uint32_t>(meta.validTokens);
         const uint32_t raw = RAW_UB_BASE + slot * RAW_SLOT_BYTES;
         const auto &events = events_[slot];
         WaitFlag<HardEvent::V_MTE2>(events.inputFree);
         DataCopy(Ub<MainT>(A_UB_BASE + slot * MATRIX_BYTES, MATRIX_BYTES),
-                 aGm_[offset * TILE_ROWS], rows * TILE_ROWS);
-        DataCopy(Ub<MainT>(V_INPUT_UB_BASE + slot * HEAD_BYTES, HEAD_BYTES),
-                 vGm_[offset * HEAD_DIM], rows * HEAD_DIM);
+                 aGm_[headOffset * TILE_ROWS], rows * TILE_ROWS);
+        auto vLocal = Ub<MainT>(V_INPUT_UB_BASE + slot * HEAD_BYTES, HEAD_BYTES);
+        if (tiling_->layout == GDN::IntraLayout::BSND) {
+            const uint64_t vOffset = ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
+                                       meta.tokenStart) * tiling_->valueHeads + hv) * HEAD_DIM;
+            constexpr uint32_t rowBytes = HEAD_DIM * sizeof(MainT);
+            const uint32_t rowGap = static_cast<uint32_t>((tiling_->valueHeads - 1) * rowBytes);
+            const DataCopyExtParams copy{static_cast<uint16_t>(rows), rowBytes, rowGap, 0, 0};
+            const DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+            DataCopyPad(vLocal, vGm_[vOffset], copy, pad);
+        } else {
+            DataCopy(vLocal, vGm_[headOffset * HEAD_DIM], rows * HEAD_DIM);
+        }
         DataCopy(Ub<MainT>(DO_INPUT_UB_BASE + slot * HEAD_BYTES, HEAD_BYTES),
-                 dOGm_[offset * HEAD_DIM], rows * HEAD_DIM);
-        CopyAux(Ub<GateT>(raw, RAW_BETA_OFFSET), gGm_[offset], rows);
-        CopyAux(Ub<BetaT>(raw + RAW_BETA_OFFSET, RAW_BETA_OFFSET), betaGm_[offset], rows);
+                 dOGm_[headOffset * HEAD_DIM], rows * HEAD_DIM);
+        CopyAux(Ub<GateT>(raw, RAW_BETA_OFFSET), gGm_[headOffset], rows);
+        CopyAux(Ub<BetaT>(raw + RAW_BETA_OFFSET, RAW_BETA_OFFSET), betaGm_[headOffset], rows);
         SetFlag<HardEvent::MTE2_V>(events.inputReady);
     }
 

@@ -156,8 +156,13 @@ private:
             AscendC::WaitFlag<HardEvent::MTE1_MTE2>(events_[slot].qkFree);
         }
         const int64_t hk = (meta.hvBegin + slot) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
-        const uint64_t offset = ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
-                                 tiling_->seqlen + meta.tokenStart) * HEAD_DIM;
+        const bool sequenceMajor = tiling_->layout == GDN::IntraLayout::BSND;
+        const uint64_t offset = sequenceMajor
+            ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen + meta.tokenStart) *
+                   tiling_->qkHeads + hk) * HEAD_DIM
+            : ((static_cast<uint64_t>(meta.batch) * tiling_->qkHeads + hk) *
+                   tiling_->seqlen + meta.tokenStart) * HEAD_DIM;
+        const uint32_t rowStride = sequenceMajor ? static_cast<uint32_t>(tiling_->qkHeads * HEAD_DIM) : HEAD_DIM;
         auto l1K = L1(L1_K_BASE + slot * HEAD_BYTES);
         auto l1Q = L1(L1_Q_BASE + slot * HEAD_BYTES);
         if (meta.validTokens < TILE_ROWS) {
@@ -169,10 +174,10 @@ private:
         }
 
         auto gmK = tla::MakeTensor(
-            kGm_[offset], tla::MakeLayout<MainT, LayoutRM>(meta.validTokens, HEAD_DIM),
+            kGm_[offset], tla::MakeLayoutFromTag(LayoutRM(meta.validTokens, HEAD_DIM, rowStride)),
             Catlass::Arch::PositionGM{});
         auto gmQ = tla::MakeTensor(
-            qGm_[offset], tla::MakeLayout<MainT, LayoutCM>(HEAD_DIM, meta.validTokens),
+            qGm_[offset], tla::MakeLayoutFromTag(LayoutCM(HEAD_DIM, meta.validTokens, rowStride)),
             Catlass::Arch::PositionGM{});
         auto tensorL1K = tla::MakeTensor(
             l1K, tla::MakeLayout<MainT, typename ScoreTile::LayoutTagL1A>(TILE_ROWS, HEAD_DIM),
