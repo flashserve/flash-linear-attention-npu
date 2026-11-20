@@ -10,7 +10,7 @@ CPU 标杆依次计算 `ChunkGdnBwdIntra`、`ChunkFwdH`、
 NPU 接口的数据类型量化，避免把 NPU 中间结果作为标杆。
 
 有效输出顺序为 `dq, dk, dv, d_beta, d_g`；传入 `initial_state` 时额外比较
-`dh0`。其中 `d_beta` 和 `d_g` 固定使用 BSND `[B,T,HV]`，其余有效输出跟随
+`dh0`。其中 `d_beta` 和 `d_g` 固定使用 BSN `[B,T,HV]`，其余有效输出跟随
 对应输入布局。保留接口输出 `d_a_log` 和 `d_dt_bias` 当前为空，不参与数值比较。
 
 ## 覆盖范围
