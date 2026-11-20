@@ -67,6 +67,7 @@ _ASCENDC_OPS = (
     "npu_merge_fwd_bwd_kernel",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
+    "npu_gdn_recoverssm_verify",
 )
 
 BACKWARD_OPS = {
@@ -91,6 +92,7 @@ MUTATED_ARGUMENTS = {
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
     "npu_merge_fwd_bwd_kernel": ("h",),
+    "npu_gdn_recoverssm_verify": ("replay_cache",),
 }
 
 # Some mutable operators only write the state tensor for some argument values,

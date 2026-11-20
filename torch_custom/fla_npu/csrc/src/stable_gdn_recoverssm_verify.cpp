@@ -21,14 +21,14 @@ using fla_npu_stable::stable::TensorArg;
 using fla_npu_stable::stable::TensorMeta;
 using torch::stable::Tensor;
 
-constexpr const char *kSchemaGdnRecoverssmVerify =
+constexpr const char* kSchema_gdn_recoverssm_verify =
     "npu_gdn_recoverssm_verify(Tensor A_log, Tensor a, Tensor b, Tensor dt_bias, "
     "Tensor q, Tensor k, Tensor v, Tensor checkpoint_state, "
     "Tensor(a!) replay_cache, Tensor query_start_loc, Tensor state_indices, "
     "float scale, float softplus_beta, float softplus_threshold, "
     "bool use_qk_l2norm_in_kernel, Tensor? out, int stream) -> Tensor";
 
-Tensor run_gdn_recoverssm_verify(Tensor A_log, Tensor a, Tensor b, Tensor dt_bias, Tensor q, Tensor k, Tensor v,
+Tensor run_npu_gdn_recoverssm_verify(Tensor A_log, Tensor a, Tensor b, Tensor dt_bias, Tensor q, Tensor k, Tensor v,
                                  Tensor checkpoint_state, Tensor replay_cache, Tensor query_start_loc,
                                  Tensor state_indices, double scale, double softplus_beta, double softplus_threshold,
                                  bool use_qk_l2norm_in_kernel, std::optional<Tensor> out, int64_t stream)
@@ -73,7 +73,7 @@ Tensor run_gdn_recoverssm_verify(Tensor A_log, Tensor a, Tensor b, Tensor dt_bia
     }
     Tensor result = out ? *out : allocate_like(v_meta);
     FLA_STABLE_EXEC(
-        "GdnRecoverssmVerifyInner", v_meta, stream, TensorArg(a_log_meta, kAclFormatNd),
+        "aclnnGdnRecoverssmVerify", v_meta, stream, TensorArg(a_log_meta, kAclFormatNd),
         TensorArg(a_meta, kAclFormatNd), TensorArg(b_meta, kAclFormatNd), TensorArg(bias_meta, kAclFormatNd),
         TensorArg(q_meta, kAclFormatNd), TensorArg(k_meta, kAclFormatNd), TensorArg(v_meta, kAclFormatNd),
         TensorArg(checkpoint_meta, kAclFormatNd), TensorArg(replay_meta, kAclFormatNd),
