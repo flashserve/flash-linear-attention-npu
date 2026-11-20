@@ -794,12 +794,18 @@ struct BlockSchedulerGdnFwdHPreload {
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1); 
         offset.initialStateOffset = (static_cast<uint64_t>(stream.stateBatchIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
         offset.finalStateOffset = offset.initialStateOffset;
-        offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
-        offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
-        offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
-        offset.wkOffset = (stream.shapeBatchIdx * kNumHead * totalTokens + stream.kHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
-        offset.wOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
-        offset.gOffset = stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize;
+        offset.hSrcOffset =
+            ((static_cast<uint64_t>(stream.shapeBatchIdx) * totalChunks + stream.chunkOffset + stream.chunkIdx) *
+                vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
+        offset.hDstOffset = offset.hSrcOffset + static_cast<uint64_t>(vNumHead) * kHeadDim * vHeadDim;
+        offset.uvOffset = ((static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) * totalTokens +
+                              stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
+        offset.wkOffset = ((static_cast<uint64_t>(stream.shapeBatchIdx) * kNumHead + stream.kHeadIdx) * totalTokens +
+                              stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
+        offset.wOffset = ((static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) * totalTokens +
+                             stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
+        offset.gOffset = (static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) * totalTokens +
+                         stream.tokenOffset + stream.chunkIdx * chunkSize;
         offset.hWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * kHeadDim * vHeadDim;
         offset.vWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * vHeadDim;
         offset.blockTokens = offset.isFinalState ? (stream.batchTokens - stream.chunkIdx * chunkSize) : chunkSize;
@@ -1875,7 +1881,9 @@ public:
                 const uint32_t stateBatchIdx = vecBlockScheduler.StateSequence(batchIdx);
                 uint64_t initialStateOffset = (static_cast<uint64_t>(stateBatchIdx) * vNumHead + vHeadIdx) * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
-                uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
+                uint64_t hOffset =
+                    ((static_cast<uint64_t>(shapeBatchIdx) * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
+                    stateBlockSize;
                 if (useInitialState) {
                     AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
                     AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
