@@ -119,7 +119,8 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto arch = platform.GetCurNpuArch();
     const bool arch22 = arch == NpuArch::DAV_2201;
     const bool arch92 = arch == NpuArch::DAV_9201;
-    if (!arch22 && !arch92 && arch != NpuArch::DAV_3510) {
+    const bool arch35 = arch == NpuArch::DAV_3510;
+    if (!arch22 && !arch92 && !arch35) {
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
                                "%s: only DAV_2201, DAV_3510 and DAV_9201 are supported.", __func__);
         return ge::GRAPH_FAILED;
