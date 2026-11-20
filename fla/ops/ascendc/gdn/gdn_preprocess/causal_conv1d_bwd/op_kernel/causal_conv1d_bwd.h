@@ -41,6 +41,13 @@
 #include "causal_conv1d_bwd_tiling_data.h"
 #include "causal_conv1d_bwd_tiling_key.h"
 
+#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#include "arch32/causal_conv1d_bwd_vector.h"
+#define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 1
+#else
+#define CAUSAL_CONV1D_BWD_ARCH32_VECTOR 0
+#endif
+
 #if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
 #include "arch35/causal_conv1d_bwd_regbase.h"
 #define CAUSAL_CONV1D_BWD_ARCH35_REGBASE 1
@@ -111,9 +118,17 @@ private:
     __aicore__ inline void ComputeDbRowsAccum(uint32_t dyRowOffset);
     __aicore__ inline void FinalizeDbRowsAccum();
     __aicore__ inline void ComputeDh0(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t i_b, uint32_t seqLen);
+    __aicore__ inline void CopyInDirectVectorTileRawAsync(uint64_t bos, uint32_t i_t, uint32_t i_d,
+                                                          uint32_t seqLen, bool reuseHalo,
+                                                          event_t mte2ToVEvent);
+    __aicore__ inline void CastDirectVectorTile(bool reuseHalo);
     __aicore__ inline void CopyInDirectTileRawAsync(uint64_t bos, uint32_t i_t, uint32_t i_d,
                                                     uint32_t seqLen, uint32_t slot, event_t mte2ToVEvent);
+    __aicore__ inline void ComputeTileDirectVector(bool reuseHalo);
     __aicore__ inline void ComputeTileDirectRegbase(uint32_t i_t, uint32_t seqLen, uint32_t slot);
+    __aicore__ inline void CopyOutDxDirectVectorAsync(uint64_t bos, uint32_t i_t, uint32_t i_d,
+                                                      uint32_t seqLen, uint32_t slot,
+                                                      event_t mte3ToVEvent);
     __aicore__ inline void CopyOutDx(uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen);
     __aicore__ inline void CopyOutDwDb(uint32_t i_d);
     __aicore__ inline void CopyOutPartialDwDb(uint32_t coreIdx, uint32_t i_d);
@@ -121,6 +136,7 @@ private:
     __aicore__ inline void ReduceRowsInplace(LocalTensor<float> tensor, uint32_t rows, uint32_t cols);
     __aicore__ inline bool ResolveChunk(uint32_t chunkIdx, uint32_t &i_b, uint32_t &i_t,
                                         uint64_t &bos, uint32_t &seqLen);
+    __aicore__ inline bool Arch32UseDirectVector() const;
     __aicore__ inline bool Arch35UseDirectRegbase() const;
 
     TPipe *pipe_;
@@ -228,6 +244,25 @@ template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitBuffer(TPipe *inputPipe)
 {
     pipe_ = inputPipe;
+    if (Arch32UseDirectVector()) {
+        pipe_->InitBuffer(xBuf_, btBdCount_ * FP32_DTYPE_SIZE);
+        pipe_->InitBuffer(dyBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
+        pipe_->InitBuffer(dxBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
+        pipe_->InitBuffer(yBuf_, dyBdCount_ * FP32_DTYPE_SIZE);
+        uint32_t xRawCount = (btBdCount_ > wBdCount_) ? btBdCount_ : wBdCount_;
+        pipe_->InitBuffer(castBuf_, xRawCount * sizeof(inputT));
+        pipe_->InitBuffer(wdyBuf_, dyBdCount_ * sizeof(inputT));
+        pipe_->InitBuffer(sigmoidBuf_, dyBdCount_ * sizeof(inputT));
+        pipe_->InitBuffer(tempBuf_, 2 * btBdCount_ * sizeof(inputT) + BD_ * FP32_DTYPE_SIZE);
+        if (hasWeight_) {
+            pipe_->InitBuffer(weightBuf_, wBdCount_ * FP32_DTYPE_SIZE);
+            pipe_->InitBuffer(dwBuf_, wBdCount_ * FP32_DTYPE_SIZE);
+        }
+        if (hasBias_) {
+            pipe_->InitBuffer(dbBuf_, BD_ * FP32_DTYPE_SIZE);
+        }
+        return;
+    }
     if (Arch35UseDirectRegbase()) {
         pipe_->InitBuffer(xBuf_, 2 * btBdCount_ * sizeof(inputT));
         pipe_->InitBuffer(dyBuf_, 2 * dyBdCount_ * sizeof(inputT));
@@ -543,6 +578,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInInputTileRawAs
     if (useGradLayout &&
         (inputLayout_ == INPUT_LAYOUT_BNSD || inputLayout_ == INPUT_LAYOUT_NTD)) {
         uint32_t channel = i_d * BD_;
+        if (BD_ == inputHeadDim_ && channel % inputHeadDim_ == 0) {
+            uint64_t base = GetInputOffset(bos, startRow, channel);
+            DataCopy(dst, srcGm[base], validRows * BD_);
+            return;
+        }
         uint32_t remain = BD_;
         uint32_t localOffset = 0;
         while (remain > 0) {
@@ -616,7 +656,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInWeight(uint32_
         SetFlag<HardEvent::MTE2_V>(ev);
         WaitFlag<HardEvent::MTE2_V>(ev);
     } else {
-        LocalTensor<inputT> wTemp = tempBuf_.Get<inputT>();
+        LocalTensor<inputT> wTemp;
+        if (Arch32UseDirectVector()) {
+            wTemp = castBuf_.Get<inputT>();
+        } else {
+            wTemp = tempBuf_.Get<inputT>();
+        }
         DataCopyPad(wTemp, weightGm_[off], copyParams, padParams);
         event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
         SetFlag<HardEvent::MTE2_V>(ev);
@@ -1064,6 +1109,75 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeDh0(
 }
 
 template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectVectorTileRawAsync(
+    uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen, bool reuseHalo,
+    event_t mte2ToVEvent)
+{
+#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+    LocalTensor<inputT> xRaw = castBuf_.Get<inputT>();
+    LocalTensor<inputT> dyRaw = wdyBuf_.Get<inputT>();
+    LocalTensor<inputT> yRaw = sigmoidBuf_.Get<inputT>();
+
+    event_t vMte2Event = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+    SetFlag<HardEvent::V_MTE2>(vMte2Event);
+    WaitFlag<HardEvent::V_MTE2>(vMte2Event);
+    CopyInInputTileRawAsync(xGm_, xRaw, bos, i_t * BT_, i_d, BT_, seqLen, false);
+    uint32_t haloRows = reuseHalo ? (W_ - 1) : 0;
+    uint32_t copyRows = reuseHalo ? BT_ : dyRows_;
+    uint32_t haloOffset = haloRows * BD_;
+    CopyInInputTileRawAsync(
+        dyGm_, dyRaw[haloOffset], bos, i_t * BT_ + haloRows, i_d, copyRows, seqLen, true);
+    CopyInInputTileRawAsync(
+        yGm_, yRaw[haloOffset], bos, i_t * BT_ + haloRows, i_d, copyRows, seqLen, true);
+    SetFlag<HardEvent::MTE2_V>(mte2ToVEvent);
+#else
+    (void)bos;
+    (void)i_t;
+    (void)i_d;
+    (void)seqLen;
+    (void)reuseHalo;
+    (void)mte2ToVEvent;
+#endif
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CastDirectVectorTile(bool reuseHalo)
+{
+#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+    Cast(xBuf_.Get<float>(), castBuf_.Get<inputT>(), RoundMode::CAST_NONE, btBdCount_);
+    if (reuseHalo) {
+        uint32_t haloCount = (W_ - 1) * BD_;
+        Adds(dyBuf_.Get<float>(), dyBuf_.Get<float>()[btBdCount_], float(0), haloCount);
+        PipeBarrier<PIPE_V>();
+        Cast(dyBuf_.Get<float>()[haloCount], wdyBuf_.Get<inputT>()[haloCount],
+             RoundMode::CAST_NONE, btBdCount_);
+        Cast(yBuf_.Get<float>()[haloCount], sigmoidBuf_.Get<inputT>()[haloCount],
+             RoundMode::CAST_NONE, btBdCount_);
+    } else {
+        Cast(dyBuf_.Get<float>(), wdyBuf_.Get<inputT>(), RoundMode::CAST_NONE, dyBdCount_);
+        Cast(yBuf_.Get<float>(), sigmoidBuf_.Get<inputT>(), RoundMode::CAST_NONE, dyBdCount_);
+    }
+    PipeBarrier<PIPE_V>();
+#else
+    (void)reuseHalo;
+#endif
+}
+
+template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectVector(bool reuseHalo)
+{
+#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+    NsCausalConv1dBwdArch32::ComputeTile(
+        xBuf_.Get<float>(), dyBuf_.Get<float>(), yBuf_.Get<float>(), weightBuf_.Get<float>(),
+        dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbBuf_.Get<float>(),
+        tempBuf_.Get<float>()[btBdCount_],
+        BT_, BD_, W_, dyRows_, hasBias_, reuseHalo);
+#else
+    (void)reuseHalo;
+#endif
+}
+
+template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyInDirectTileRawAsync(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen, uint32_t slot, event_t mte2ToVEvent)
 {
@@ -1126,6 +1240,45 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectReg
 }
 
 template <typename inputT, typename calT>
+__aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDxDirectVectorAsync(
+    uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen,
+    uint32_t slot, event_t mte3ToVEvent)
+{
+#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+    uint64_t startRow = static_cast<uint64_t>(i_t) * BT_;
+    uint32_t validRows = (startRow + BT_ <= seqLen) ? BT_ :
+                         ((startRow < seqLen) ? (seqLen - startRow) : 0);
+    if (validRows == 0) {
+        return;
+    }
+
+    LocalTensor<inputT> output = tempBuf_.Get<inputT>()[slot * btBdCount_];
+    Cast(output, dxBuf_.Get<float>(), RoundMode::CAST_RINT, validRows * BD_);
+    PipeBarrier<PIPE_V>();
+    event_t vMte3Event = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+    SetFlag<HardEvent::V_MTE3>(vMte3Event);
+    WaitFlag<HardEvent::V_MTE3>(vMte3Event);
+
+    uint64_t offset = bos * D_ + startRow * D_ + static_cast<uint64_t>(i_d) * BD_;
+    DataCopyExtParams outParams{
+        static_cast<uint16_t>(validRows),
+        static_cast<uint32_t>(BD_ * sizeof(inputT)),
+        0,
+        static_cast<uint32_t>((D_ - BD_) * sizeof(inputT)),
+        0};
+    DataCopyPad(dxGm_[offset], output, outParams);
+    SetFlag<HardEvent::MTE3_V>(mte3ToVEvent);
+#else
+    (void)bos;
+    (void)i_t;
+    (void)i_d;
+    (void)seqLen;
+    (void)slot;
+    (void)mte3ToVEvent;
+#endif
+}
+
+template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
     uint64_t bos, uint32_t i_t, uint32_t i_d, uint32_t seqLen)
 {
@@ -1148,7 +1301,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDx(
         SetFlag<HardEvent::MTE3_V>(evMte3V);
         WaitFlag<HardEvent::MTE3_V>(evMte3V);
     } else {
-        LocalTensor<inputT> dlIn = castBuf_.Get<inputT>();
+        LocalTensor<inputT> dlIn;
+        if (Arch32UseDirectVector()) {
+            dlIn = yBuf_.Get<inputT>();
+        } else {
+            dlIn = castBuf_.Get<inputT>();
+        }
         DataCopyExtParams outParams{
             static_cast<uint16_t>(validRows),
             static_cast<uint32_t>(BD_ * sizeof(inputT)),
@@ -1201,7 +1359,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutDwDb(uint32_t
         SetFlag<HardEvent::MTE3_V>(mte3ToV);
         WaitFlag<HardEvent::MTE3_V>(mte3ToV);
     } else {
-        LocalTensor<inputT> outputLocal = castBuf_.Get<inputT>();
+        LocalTensor<inputT> outputLocal;
+        if (Arch32UseDirectVector()) {
+            outputLocal = yBuf_.Get<inputT>();
+        } else {
+            outputLocal = castBuf_.Get<inputT>();
+        }
         if (hasWeight_) {
             Cast(outputLocal, dwBuf_.Get<float>(), RoundMode::CAST_RINT, wBdCount_);
             PipeBarrier<PIPE_V>();
@@ -1267,7 +1430,12 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::CopyOutPartialDwDb(u
 template <typename inputT, typename calT>
 __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ReducePartialDwDb(uint32_t i_d)
 {
-    LocalTensor<float> tmp = tempBuf_.Get<float>();
+    LocalTensor<float> tmp;
+    if (Arch32UseDirectVector()) {
+        tmp = yBuf_.Get<float>();
+    } else {
+        tmp = tempBuf_.Get<float>();
+    }
     if (hasWeight_) {
         LocalTensor<float> dwLocal = dwBuf_.Get<float>();
         Duplicate(dwLocal, float(0), wBdCount_);
@@ -1347,6 +1515,24 @@ __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::ResolveChunk(
 }
 
 template <typename inputT, typename calT>
+__aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch32UseDirectVector() const
+{
+#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+    if constexpr (!IsSameType<inputT, half>::value && !IsSameType<inputT, bfloat16_t>::value) {
+        return false;
+    } else {
+        return hasWeight_ && activation_ == ACTIVATION_SILU &&
+               !useInitialState_ && !useFinalState_ &&
+               (BD_ == NsCausalConv1dBwdArch32::DIRECT_BD ||
+                BD_ == NsCausalConv1dBwdArch32::DIRECT_WIDE_BD) &&
+               W_ == NsCausalConv1dBwdArch32::DIRECT_W;
+    }
+#else
+    return false;
+#endif
+}
+
+template <typename inputT, typename calT>
 __aicore__ inline bool CausalConv1dBwdKernel<inputT, calT>::Arch35UseDirectRegbase() const
 {
 #if CAUSAL_CONV1D_BWD_ARCH35_REGBASE
@@ -1370,10 +1556,24 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
 {
     uint32_t bIdx = GetBlockIdx();
     uint32_t blockNum = GetBlockNum();
+    bool useDirectVector = Arch32UseDirectVector();
     bool useDirectRegbase = Arch35UseDirectRegbase();
 
     uint32_t loopC = (bIdx < tailChunk_) ? (chunkPerCore_ + 1) : chunkPerCore_;
 
+    event_t directVectorMte2ToVEvent;
+    event_t directVectorMte3ToVEvent[2];
+    bool directVectorOutputPending[2] = {false, false};
+    if (useDirectVector) {
+        directVectorMte2ToVEvent = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
+        directVectorMte3ToVEvent[0] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>());
+        directVectorMte3ToVEvent[1] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>());
+#if CAUSAL_CONV1D_BWD_ARCH32_VECTOR
+        Duplicate(tempBuf_.Get<float>()[btBdCount_], float(1.0),
+                  NsCausalConv1dBwdArch32::FP32_VECTOR_ELEMENTS);
+#endif
+        PipeBarrier<PIPE_V>();
+    }
     event_t directMte2ToVEvent[2];
     if (useDirectRegbase) {
         directMte2ToVEvent[0] = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
@@ -1406,6 +1606,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
         }
 
         bool directTilePrefetched = false;
+        bool directVectorTilePrefetched = false;
+        bool directVectorPrefetchedReuseHalo = false;
 
         for (uint32_t loop = 0; loop < loopC; loop++) {
             uint32_t chunkIdx = (bIdx < tailChunk_)
@@ -1451,6 +1653,37 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
                 }
 
                 ComputeTileDirectRegbase(i_t, seqLen, slot);
+            } else if (useDirectVector) {
+                bool reuseHalo = directVectorTilePrefetched && directVectorPrefetchedReuseHalo;
+                if (!directVectorTilePrefetched) {
+                    CopyInDirectVectorTileRawAsync(
+                        bos, i_t, i_d, seqLen, false, directVectorMte2ToVEvent);
+                }
+                WaitFlag<HardEvent::MTE2_V>(directVectorMte2ToVEvent);
+                CastDirectVectorTile(reuseHalo);
+
+                directVectorTilePrefetched = false;
+                if (loop + 1U < loopC) {
+                    uint32_t nextChunkIdx = (bIdx < tailChunk_)
+                        ? (bIdx * (chunkPerCore_ + 1) + loop + 1U)
+                        : (bIdx * chunkPerCore_ + tailChunk_ + loop + 1U);
+                    if (nextChunkIdx < numChunks_) {
+                        uint32_t nextB = 0;
+                        uint32_t nextT = 0;
+                        uint32_t nextSeqLen = 0;
+                        uint64_t nextBos = 0;
+                        if (ResolveChunk(nextChunkIdx, nextB, nextT, nextBos, nextSeqLen)) {
+                            bool nextReuseHalo = (nextBos == bos && nextT == i_t + 1U);
+                            CopyInDirectVectorTileRawAsync(
+                                nextBos, nextT, i_d, nextSeqLen, nextReuseHalo,
+                                directVectorMte2ToVEvent);
+                            directVectorTilePrefetched = true;
+                            directVectorPrefetchedReuseHalo = nextReuseHalo;
+                        }
+                    }
+                }
+
+                ComputeTileDirectVector(reuseHalo);
             } else {
                 CopyInX(bos, i_t, i_d, seqLen);
 
@@ -1479,7 +1712,17 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
             }
 
             AccumulateDhtDx(i_t, i_d, i_b, seqLen);
-            CopyOutDx(bos, i_t, i_d, seqLen);
+            if (useDirectVector) {
+                uint32_t outputSlot = loop & 1U;
+                if (directVectorOutputPending[outputSlot]) {
+                    WaitFlag<HardEvent::MTE3_V>(directVectorMte3ToVEvent[outputSlot]);
+                }
+                CopyOutDxDirectVectorAsync(
+                    bos, i_t, i_d, seqLen, outputSlot, directVectorMte3ToVEvent[outputSlot]);
+                directVectorOutputPending[outputSlot] = true;
+            } else {
+                CopyOutDx(bos, i_t, i_d, seqLen);
+            }
         }
         if (!useDirectRegbase && hasWeight_ && activation_ == ACTIVATION_NONE) {
             FinalizeDwRowsAccum();
@@ -1488,6 +1731,14 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
             FinalizeDbRowsAccum();
         }
         CopyOutPartialDwDb(bIdx, i_d);
+    }
+
+    if (useDirectVector) {
+        for (uint32_t slot = 0; slot < 2; slot++) {
+            if (directVectorOutputPending[slot]) {
+                WaitFlag<HardEvent::MTE3_V>(directVectorMte3ToVEvent[slot]);
+            }
+        }
     }
 
     SyncAll();
@@ -1499,6 +1750,11 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::Process()
     if (useDirectRegbase) {
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[0]);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directMte2ToVEvent[1]);
+    }
+    if (useDirectVector) {
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(directVectorMte2ToVEvent);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(directVectorMte3ToVEvent[0]);
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(directVectorMte3ToVEvent[1]);
     }
 }
 
