@@ -126,8 +126,18 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
 | `dv_local` | 输出 | 与 `q` 相同 | `[B,HV,T,V]` |
 
 `q/k/v/A/d_o` 使用同一主 dtype；`g` 与 `beta` 可以分别选择 BF16 或 FP32，均不支持
-FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。`G=HV/HK`：
-A2/A3 上为 `1~16` 中的整数，A5 上为 `1~16` 中的整数，其中 G>4 仅支持 BF16 主输入。
+FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。
+以下范围适用于独立 Intra 入口，`G=HV/HK`：
+
+| 平台 | GVA 比例 | 主输入 dtype |
+| --- | --- | --- |
+| A2/A3（DAV_2201 / arch22） | `1~16` | BF16 或 FP16 |
+| A5（DAV_3510 / arch35） | `1~4` | BF16 或 FP16 |
+| A5（DAV_3510 / arch35） | `5~16` | 仅 BF16 |
+
+独立 Intra 的支持范围不等同于完整反向父链的准入范围。完整
+[`chunk_gated_delta_rule_bwd`](../../chunk_gated_delta_rule_bwd/README.md#支持范围)
+在 A2/A3 上仍限制为 `G=1~4`，A5 为 `G=1~16`；调用父链时还须满足其余组合约束。
 
 ## 支持范围
 

@@ -139,9 +139,19 @@ executor cache 的隔离方式见[设计说明](../chunk_gated_delta_rule_bwd_fi
 - 支持可选 initial state、dht、Q/K L2Norm 反向和 beta sigmoid 反向。
 - `aLogOptional`、`dtBiasOptional`、`dALog` 和 `dDtBias` 当前仅保留接口槽位。
 
-本组合的规格受 FwdH 等前序组件约束，`K=V=128`、`chunkSize=64`，
-`Hv/Hk` 上限在 A5 为 16，在 A2/A3 为 4。独立 A2/A3 Finalize 的 V=256、chunkSize=128 或更大头比例支持
-不代表整个 Bwd executor 已支持这些规格。
+GVA 比例按公开入口和平台分别维护：
+
+| 公开入口 | A2/A3（DAV_2201） | A5（DAV_3510） |
+| --- | --- | --- |
+| 本完整反向父链 | `1~4`，主输入 BF16 | `1~16`，主输入 BF16 |
+| 独立 [Intra](../chunk_gdn_bwd_intra/docs/api.md#输入与输出) | `1~16`，主输入 BF16/FP16 | `1~4` 支持 BF16/FP16，`5~16` 仅 BF16 |
+
+父链的 `CheckParams` 在 Host 侧按平台检查上述比例；A2/A3 的 `G>4` 会在调用子算子前被拒绝。
+独立 Intra 的 A2/A3 `1~16` 能力由其 arch22 路径提供，不会自动放宽父链准入。
+A5 的父链与独立 Intra 走各自的 A5 扩展路径，不修改 A2/A3 的比例限制。
+
+本组合还要求 `K=V=128`、`chunkSize=64`。独立 A2/A3 Finalize 的 V=256、chunkSize=128
+或更大头比例支持，也不代表整个 Bwd executor 已支持这些规格。
 
 A2/A3 与 A5 复用同一条 `ChunkGdnBwdIntra` 组合链。两个平台的 Intra 仍有不同的
 BF16 存储边界：arch22 先量化缩放后的 K/V 和 KQ score，arch35 先量化列缩放后的 A
