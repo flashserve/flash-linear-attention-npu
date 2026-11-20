@@ -1,9 +1,5 @@
 # ChunkGatedDeltaRuleBwdFinalize API
 
-A5 G>4 保留 S0～S14 的 BF16 partial，按 GVA 组内偶/奇 HV 各自以 FP32
-顺序累加，最后固定相加并一次转 BF16，再执行可选 Q/K norm。
-G≤4 和 A2/A3 的既有数值契约保持。
-
 ## Python
 
 ```python

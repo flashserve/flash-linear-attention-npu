@@ -275,7 +275,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         tiling->seqNum = tiling->B;
         tiling->chunkNumForT = CeilDiv(tiling->T, tiling->chunkSize);
         if (tiling->headRatio > 4 && tiling->B > std::numeric_limits<int64_t>::max() / tiling->chunkNumForT) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "chunk count overflows.");
+            const std::string actual = "B=" + std::to_string(tiling->B) +
+                ", chunksPerSequence=" + std::to_string(tiling->chunkNumForT);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk count", actual,
+                "B * chunksPerSequence must fit in int64_t");
             return ge::GRAPH_FAILED;
         }
         tiling->totalChunkNum = tiling->B * tiling->chunkNumForT;
@@ -291,8 +294,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     if (tiling->headRatio > 4 &&
         (!AddressFits({tiling->B, tiling->HV, tiling->T, tiling->K}) ||
          !AddressFits({tiling->B, stateChunkNum, tiling->HV, tiling->K, tiling->V}))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            context->GetNodeName(), "size", "invalid", "tensor address range overflows.");
+        const std::string actual = "B=" + std::to_string(tiling->B) + ", HV=" + std::to_string(tiling->HV) +
+            ", T=" + std::to_string(tiling->T) + ", K=" + std::to_string(tiling->K) +
+            ", NT=" + std::to_string(stateChunkNum) + ", V=" + std::to_string(tiling->V);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tensor byte count", actual,
+            "2*B*HV*T*K and 2*B*NT*HV*K*V must each fit in int64_t");
         return ge::GRAPH_FAILED;
     }
 
@@ -428,7 +434,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     const uint64_t userWorkspace = static_cast<uint64_t>(blockDim) *
         workspaceBufferCount * workspaceRegionCount * vectorBytes + privateBytes;
     if (userWorkspace > std::numeric_limits<size_t>::max() - platform.GetLibApiWorkSpaceSize()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "size", "invalid", "workspace size overflows.");
+        const std::string actual = "userBytes=" + std::to_string(userWorkspace) +
+            ", systemBytes=" + std::to_string(platform.GetLibApiWorkSpaceSize());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace bytes", actual,
+            "userBytes + systemBytes must fit in size_t");
         return ge::GRAPH_FAILED;
     }
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);
