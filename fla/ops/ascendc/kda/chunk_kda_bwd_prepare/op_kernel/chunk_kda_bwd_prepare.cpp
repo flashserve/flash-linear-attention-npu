@@ -7,7 +7,10 @@
 #include "lib/matmul_intf.h"
 #include "chunk_kda_bwd_prepare_struct.h"
 #include "chunk_kda_bwd_prepare_tiling_key.h"
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/chunk_kda_bwd_prepare_cube.h"
+#include "arch92/chunk_kda_bwd_prepare_vector.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_kda_bwd_prepare_cube.h"
 #include "arch35/chunk_kda_bwd_prepare_vector.h"
 #else
@@ -23,6 +26,27 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
 {
     REGISTER_TILING_DEFAULT(KDA::ChunkKdaBwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KDA::ChunkKdaBwdPrepareTilingData, tilingData, tiling);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+    (void)workspace;
+    if ASCEND_IS_AIC {
+        if (tilingData.stateVFirst != 0) {
+            KDA::Arch92::ChunkKdaBwdPrepareCube<true> cube;
+            cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices, &tilingData);
+            cube.Process();
+        } else {
+            KDA::Arch92::ChunkKdaBwdPrepareCube<false> cube;
+            cube.Init(aqk, vNew, dO, h, cuSeqlens, chunkIndices, &tilingData);
+            cube.Process();
+        }
+    }
+    if ASCEND_IS_AIV {
+        AscendC::TPipe pipe;
+        KDA::Arch92::ChunkKdaBwdPrepareVector vector;
+        vector.Init(cuSeqlens, chunkIndices, dAqk, dv, dqRaw, &tilingData, &pipe);
+        vector.Process();
+    }
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     (void)workspace;
@@ -64,5 +88,6 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
         vector.Init(cuSeqlens, chunkIndices, dAqk, scratch, &tilingData, &pipe);
         vector.Process();
     }
+#endif
 #endif
 }

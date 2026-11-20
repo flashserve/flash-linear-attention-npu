@@ -27,6 +27,7 @@ struct ChunkKdaBwdPrepareTilingContext {
     size_t sysWorkspaceSize;
     bool isA5 = false;
     bool doTokenMajor = false;
+    bool isA6 = false;
 };
 class ChunkKdaBwdPrepareTilingProcessor {
 public:
@@ -40,11 +41,19 @@ public:
             ctx_.dODataType != ge::DT_BF16 || ctx_.hDataType != ge::DT_BF16 ||
             ctx_.chunkSize != 64 || !std::isfinite(ctx_.scale) ||
             !std::isfinite(static_cast<float>(ctx_.scale)) ||
-            !KDA::ParseLayout(ctx_.layout, tiling_.inputLayout)) return Fail("dtype/layout/attributes");
+            !KDA::ParseLayout(ctx_.layout, tiling_.inputLayout)) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "dtype/layout/attributes");
+            return ge::GRAPH_FAILED;
+        }
         const bool rank3 = KDA::Rank3Layout(tiling_.inputLayout);
         const bool variable = ctx_.cuSeqlensShape != nullptr;
         if ((ctx_.cuSeqlensShape != nullptr) != variable ||
-            (ctx_.chunkIndicesShape != nullptr) != variable) return Fail("metadata presence");
+            (ctx_.chunkIndicesShape != nullptr) != variable) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "metadata presence");
+            return ge::GRAPH_FAILED;
+        }
         const auto vNewShape = ctx_.vNewShape->GetStorageShape();
         const auto dOShape = ctx_.dOShape->GetStorageShape();
         const size_t rank = vNewShape.GetDimNum();
@@ -61,22 +70,48 @@ public:
              (tiling_.inputLayout == KDA::NTD && variable));
         KDA::TokenShape a, v, o;
         if (!KDA::ParseTokenShape(ctx_.aqkShape->GetStorageShape(), tiling_.inputLayout, a) ||
-            !KDA::ParseTokenShape(vNewShape, tiling_.inputLayout, v)) return Fail("token shapes");
+            !KDA::ParseTokenShape(vNewShape, tiling_.inputLayout, v)) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "token shapes");
+            return ge::GRAPH_FAILED;
+        }
         if (ctx_.doTokenMajor) {
             o = v;
         } else if (!KDA::ParseTokenShape(dOShape, tiling_.inputLayout, o)) {
-            return Fail("token shapes");
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "token shapes");
+            return ge::GRAPH_FAILED;
         }
         if (a.D != 64 || v.D != 128 || o.D != 128 || a.B != v.B || a.B != o.B ||
-            a.H != v.H || a.H != o.H || a.T != v.T || a.T != o.T) return Fail("token shapes");
-        if (variable && a.B != 1) return Fail("variable lengths require B=1");
-        if (ctx_.isA5 && (KDA::SequenceMajorLayout(tiling_.inputLayout) || variable != rank3))
-            return Fail("A5 currently supports fixed BNSD and variable NTD only");
+            a.H != v.H || a.H != o.H || a.T != v.T || a.T != o.T) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "token shapes");
+            return ge::GRAPH_FAILED;
+        }
+        if (variable && a.B != 1) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "variable lengths require B=1");
+            return ge::GRAPH_FAILED;
+        }
+        if ((ctx_.isA5 || ctx_.isA6) &&
+            (KDA::SequenceMajorLayout(tiling_.inputLayout) || variable != rank3)) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "A5/A6 support fixed BNSD and variable NTD only");
+            return ge::GRAPH_FAILED;
+        }
         // CATLASS A5 TileCopy currently narrows the GM row stride to uint32_t.
         if (ctx_.isA5 && (KDA::SequenceMajorLayout(tiling_.inputLayout) || ctx_.doTokenMajor) &&
-            a.H > std::numeric_limits<uint32_t>::max() / 128) return Fail("A5 token row stride");
+            a.H > std::numeric_limits<uint32_t>::max() / 128) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "A5 token row stride");
+            return ge::GRAPH_FAILED;
+        }
         auto h = ctx_.hShape->GetStorageShape();
-        if (h.GetDimNum() != (rank3 ? 4 : 5)) return Fail("state rank");
+        if (h.GetDimNum() != (rank3 ? 4 : 5)) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "state rank");
+            return ge::GRAPH_FAILED;
+        }
         tiling_.B = a.B; tiling_.NV = a.H; tiling_.T = a.T;
         tiling_.K = 128; tiling_.V = 128; tiling_.chunkSize = 64;
         tiling_.isVariable = variable; tiling_.stateVFirst = ctx_.stateVFirst;
@@ -87,8 +122,16 @@ public:
         if (chunks <= 0 || h.GetDim(stateBase) != a.H ||
             h.GetDim(stateBase + 1) != 128 || h.GetDim(stateBase + 2) != 128 ||
             (!rank3 && h.GetDim(0) != a.B) ||
-            (!variable && chunks != tiling_.denseChunkNum)) return Fail("state shapes");
-        if (chunks > std::numeric_limits<int64_t>::max() / a.B) return Fail("chunk overflow");
+            (!variable && chunks != tiling_.denseChunkNum)) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "state shapes");
+            return ge::GRAPH_FAILED;
+        }
+        if (chunks > std::numeric_limits<int64_t>::max() / a.B) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "chunk overflow");
+            return ge::GRAPH_FAILED;
+        }
         tiling_.totalChunkNum = chunks * a.B;
         tiling_.seqNum = a.B;
         if (variable) {
@@ -97,20 +140,32 @@ public:
             if (cu.GetDimNum() != 1 || indices.GetDimNum() != 1 ||
                 cu.GetDim(0) < 2 ||
                 chunks > std::numeric_limits<int64_t>::max() / 2 ||
-                indices.GetDim(0) != 2 * chunks) return Fail("metadata shapes");
+                indices.GetDim(0) != 2 * chunks) {
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                    ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "metadata shapes");
+                return ge::GRAPH_FAILED;
+            }
             tiling_.seqNum = cu.GetDim(0) - 1;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;
-        tiling_.headWindowNum = a.H / 4 + (a.H % 4 != 0);
+        tiling_.headWindowNum = ctx_.isA6 ? a.H : a.H / 4 + (a.H % 4 != 0);
         if (tiling_.chunkTaskNum > std::numeric_limits<int64_t>::max() / tiling_.headWindowNum ||
-            tiling_.totalChunkNum > std::numeric_limits<int64_t>::max() / a.H / (128 * 128 * 2)) return Fail("work overflow");
+            tiling_.totalChunkNum > std::numeric_limits<int64_t>::max() / a.H / (128 * 128 * 2)) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "work overflow");
+            return ge::GRAPH_FAILED;
+        }
         tiling_.workTaskNum = tiling_.chunkTaskNum * tiling_.headWindowNum;
-        if (ctx_.aicCoreNum == 0) return Fail("no AIC cores");
+        if (ctx_.aicCoreNum == 0) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "ChunkKdaBwdPrepare", "invalid", "no available AIC core");
+            return ge::GRAPH_FAILED;
+        }
         blockDim_ = static_cast<uint32_t>(std::min<int64_t>(ctx_.aicCoreNum, tiling_.workTaskNum));
         tilingKey_ = GET_TPL_TILING_KEY(
             tiling_.inputLayout, tiling_.isVariable,
             static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0));
-        const size_t scratchSize = ctx_.isA5 ? 0 : static_cast<size_t>(blockDim_) * 65536;
+        const size_t scratchSize = (ctx_.isA5 || ctx_.isA6) ? 0 : static_cast<size_t>(blockDim_) * 65536;
         workspaceSize_ = ctx_.sysWorkspaceSize + scratchSize;
         OP_LOGD(ctx_.nodeName, "layout=%u variable=%u stateVFirst=%u key=%lu blocks=%u userScratch=%lu",
                 tiling_.inputLayout, tiling_.isVariable, tiling_.stateVFirst, tilingKey_,
@@ -121,12 +176,6 @@ public:
     uint64_t GetTilingKey() const { return tilingKey_; }
     size_t GetWorkspaceSize() const { return workspaceSize_; }
 private:
-    ge::graphStatus Fail(const char *reason)
-    {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(ctx_.nodeName, "layout", "invalid", "invalid KernelA :");
-
-        return ge::GRAPH_FAILED;
-    }
     ChunkKdaBwdPrepareTilingContext &ctx_;
     KDA::ChunkKdaBwdPrepareTilingData &tiling_;
     uint32_t blockDim_ = 0;

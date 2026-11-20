@@ -58,6 +58,7 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
         platform.GetCurNpuArch() == NpuArch::DAV_3510,
     };
+    ctx.isA6 = platform.GetCurNpuArch() == NpuArch::DAV_9201;
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
