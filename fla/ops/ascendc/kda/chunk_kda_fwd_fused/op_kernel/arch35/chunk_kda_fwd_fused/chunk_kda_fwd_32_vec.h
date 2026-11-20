@@ -2861,18 +2861,9 @@ template<uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
 
 		__VEC_SCOPE__{
 			MaskReg preg_all = CreateMask<uint8_t, MaskPattern::ALL>();
-			if constexpr (iter_id == 0) {
-				RegTensor<float> vreg_b32;
-				RegTensor<T> vreg_b16;
-				DataCopy(vreg_b32, (__ubuf__ float *)beta_ub);
-				Cast<T, float, f2bfZero>(vreg_b16, vreg_b32, preg_all);
-				//DataCopy((__ubuf__ T *)beta_ub, vreg_b16, preg_all);
-				DataCopy<uint32_t, StoreDist::DIST_PACK_B32>((__ubuf__ uint32_t *)beta_ub, (RegTensor<uint32_t> &)vreg_b16, preg_all);
-				LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
-			}
 			for(uint16_t i = 0; i < (uint16_t)(chunk_half_rows / row_pair); i ++) {
-				RegTensor<T> vreg_beta1, vreg_beta2, vreg_v1, vreg_v2, vreg_kplus_score1, vreg_kplus_score2, vreg_v_corr1, vreg_v_corr2;
-				// v_corr=(v−kds)·beta:sub/mul 全程 fp32 寄存器,单次 BF16 舍入写回
+				RegTensor<T> vreg_v1, vreg_v2, vreg_kplus_score1, vreg_kplus_score2, vreg_v_corr1, vreg_v_corr2;
+				// v_corr=(v−kds)·beta:beta_eff 保持 FP32,sub/mul 全程 FP32,仅写回时转 BF16。
 				RegTensor<float> vreg_v1l, vreg_v1h, vreg_v2l, vreg_v2h;
 				RegTensor<float> vreg_s1l, vreg_s1h, vreg_s2l, vreg_s2h;
 				RegTensor<float> vreg_beta1f, vreg_beta2f;
@@ -2880,13 +2871,12 @@ template<uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
 				DataCopy(vreg_kplus_score2, (__ubuf__ T *)kplus_score_ub + i*(row_pair*value_dim) + value_dim);
 				DataCopy(vreg_v1, (__ubuf__ T *)v_ub[vid] + i*(row_pair*value_dim));
 				DataCopy(vreg_v2, (__ubuf__ T *)v_ub[vid] + i*(row_pair*value_dim) + value_dim);
-				DataCopy<T, LoadDist::DIST_BRC_B16>(vreg_beta1, (__ubuf__ T *)beta_ub + i*row_pair + iter_id*chunk_size + subid*chunk_half_rows);
-				DataCopy<T, LoadDist::DIST_BRC_B16>(vreg_beta2, (__ubuf__ T *)beta_ub + i*row_pair + 1 + iter_id*chunk_size + subid*chunk_half_rows);
+				DataCopy<float, LoadDist::DIST_BRC_B32>(vreg_beta1f, (__ubuf__ float *)beta_ub + i*row_pair + iter_id*chunk_size + subid*chunk_half_rows);
+				DataCopy<float, LoadDist::DIST_BRC_B32>(vreg_beta2f, (__ubuf__ float *)beta_ub + i*row_pair + 1 + iter_id*chunk_size + subid*chunk_half_rows);
 				Cast<float, T, bf2fZero>(vreg_v1l, vreg_v1, preg_all);
 				Cast<float, T, bf2fOne >(vreg_v1h, vreg_v1, preg_all);
 				Cast<float, T, bf2fZero>(vreg_s1l, vreg_kplus_score1, preg_all);
 				Cast<float, T, bf2fOne >(vreg_s1h, vreg_kplus_score1, preg_all);
-				Cast<float, T, bf2fZero>(vreg_beta1f, vreg_beta1, preg_all);
 				Sub(vreg_v1l, vreg_v1l, vreg_s1l, preg_all);
 				Sub(vreg_v1h, vreg_v1h, vreg_s1h, preg_all);
 				Mul(vreg_v1l, vreg_v1l, vreg_beta1f, preg_all);
@@ -2898,7 +2888,6 @@ template<uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
 				Cast<float, T, bf2fOne >(vreg_v2h, vreg_v2, preg_all);
 				Cast<float, T, bf2fZero>(vreg_s2l, vreg_kplus_score2, preg_all);
 				Cast<float, T, bf2fOne >(vreg_s2h, vreg_kplus_score2, preg_all);
-				Cast<float, T, bf2fZero>(vreg_beta2f, vreg_beta2, preg_all);
 				Sub(vreg_v2l, vreg_v2l, vreg_s2l, preg_all);
 				Sub(vreg_v2h, vreg_v2h, vreg_s2h, preg_all);
 				Mul(vreg_v2l, vreg_v2l, vreg_beta2f, preg_all);
