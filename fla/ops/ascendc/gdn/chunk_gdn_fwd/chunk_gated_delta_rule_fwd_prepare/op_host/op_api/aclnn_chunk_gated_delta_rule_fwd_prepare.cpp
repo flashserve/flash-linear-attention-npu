@@ -294,7 +294,11 @@ static aclnnStatus CheckA2PrepareMetadata(const ChunkGatedDeltaRuleFwdPreparePar
     if (params.cuSeqlensOptional == nullptr) return ACLNN_SUCCESS;
     const auto &cu = *params.cuSeqlensOptional;
     const auto &indices = *params.chunkIndicesOptional;
-    if (!(cu.Size() >= 2 && cu[0] == 0 && cu[cu.Size() - 1] == tokens)) {
+    if (cu.Size() < 2) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "cuSeqlens", std::to_string(cu.Size()), ">= 2");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(cu[0] == 0 && cu[cu.Size() - 1] == tokens)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "cuSeqlens[0],cuSeqlens[last]",
             std::to_string(cu.Size()) + " entries, first=" + std::to_string(cu[0]) +
