@@ -70,8 +70,7 @@ public:
         const uint32_t end = WorkEnd(total, workgroup_, args_.tiling.usedCoreNum);
         // 与 AIC 使用相同的主体 chunk / 尾部 4-head 组映射和消费顺序。
         const uint32_t cores = args_.tiling.usedCoreNum;
-        const bool balanceTail = !args_.tiling.isVarLen &&
-            partitions == 1 && total >= cores && total % cores != 0;
+        const bool balanceTail = partitions == 1 && total >= cores && total % cores != 0;
         const uint32_t fullChunksPerCore = total / cores;
         const uint32_t headGroups = CeilDiv(args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
         const uint32_t tailGroups = (total % cores) * headGroups;
