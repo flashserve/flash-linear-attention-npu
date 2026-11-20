@@ -6,14 +6,22 @@
 
 - 本仓 `fla/ops/ascendc/**` 下的算子统一属于线性 Attention 算子域。接口、CPU 标杆、方案、
   kernel、host tiling 和性能优化直接使用
-  [`CANNBot linear_attention 工作流`](docs/算子自动开发工作流.md)。
+  [`CANNBot 六阶段工作流`](docs/算子自动开发工作流.md)。
+- 工作流以 [cannbot #281](https://gitcode.com/cann/cannbot/pull/281)、
+  [cannbot-skills #1651](https://gitcode.com/cann/cannbot-skills/pull/1651)、
+  [cannbot-knowledge #262](https://gitcode.com/cann/cannbot-knowledge/pull/262) 为最新代码；
+  三者合入后以各仓 master 为准。
 - 固定设置 `algorithm_family=linear_attention`、`workflow_id=catlass-linear-attention-v1`，直接作为
   family 分类结论。
 - CANNBot 04 使用直调 host 和 kernel 完成逐 Stage、整 kernel 定向验证。
 - CANNBot 05 继续使用直调工程完成全量精度、功能和性能验收；验收通过后 CANNBot workflow
   进入 `complete`。
+- CANNBot 06 只在不改变已验收设计的前提下按瓶颈证据调优；候选通过后回到 05 复验，不能在
+  06 直接标记完成。
 - CANNBot workflow 完成后，按本仓规则接入 op_api/aclnn、Stable-ABI、Python 导出和 ATK 包装；
   适配层冒烟和单 case ATK 通过后，执行本仓 ATK full 验收。
+- 适配层的 ACLNN 接口规则见 [`docs/算子自动开发工作流.md`](docs/算子自动开发工作流.md) 的
+  「本仓适配：ACLNN 接口层规则」：对外只暴露 aclnn，内部实现以 inner 命名。
 - CANNBot 02 生成的 CPU 标杆直接作为 `tests/atk/<op>/reference.py` 交付。CANNBot 直调测试和
   本仓 ATK executor 导入同一文件，数学公式集中在该文件维护。
 - CANNBot 可用且版本匹配是 Ascend C 算子研发的入口条件；缺少条件时记录并报告阻塞项。
