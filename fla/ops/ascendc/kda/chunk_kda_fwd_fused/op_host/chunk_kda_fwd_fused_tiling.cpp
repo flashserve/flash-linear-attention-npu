@@ -169,9 +169,9 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
         }
     }
 
-    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
-    const uint64_t aicCoreNum = static_cast<uint64_t>(ascendcPlatform.GetCoreNumAic());
-    const uint64_t blockNum = taskCount < aicCoreNum ? taskCount : aicCoreNum;
+    // 每个 block 只处理一个 task；超出物理核数的 block 由 runtime 调度，
+    // 避免软件多 task 共享同步状态时发生死锁。
+    const uint64_t blockNum = taskCount;
     context->SetBlockDim(static_cast<uint32_t>(blockNum));
     if (context->GetWorkspaceSizes(1) != nullptr) {
         context->GetWorkspaceSizes(1)[0] = 0;
