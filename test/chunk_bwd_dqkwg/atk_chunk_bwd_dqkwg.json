@@ -1,0 +1,5470 @@
+[
+    {
+        "id": 0,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.dense.small",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "regression"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 1,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.bf16.dense.small",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "regression"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    32,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    32,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "bf16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.0625,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "bf16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 2,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.dense.chunk128",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "boundary"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    32,
+                    2048
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    32,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.0442,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 128,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": true,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 3,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.bf16.dense.v256",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "boundary"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    512,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    512,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    512,
+                    256
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    2,
+                    8,
+                    512
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    8,
+                    128,
+                    256
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    512,
+                    256
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    8,
+                    128,
+                    256
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    2,
+                    8,
+                    512,
+                    256
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "bf16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "bf16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": true,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 4,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.varlen.small",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "boundary"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    260,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    260,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    260,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    16,
+                    260
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    5,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    260,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    5,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    260,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": true,
+                "dtype": "int64",
+                "shape": [
+                    4
+                ],
+                "range_values": [
+                    0,
+                    260
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": true,
+                "dtype": "int64",
+                "shape": [
+                    12
+                ],
+                "range_values": [
+                    0,
+                    260
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": true,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 5,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.gva.nratio2",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "boundary"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    16,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    16,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": true,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 6,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.bf16.varlen.tail",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "boundary",
+            "dirty_data"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    195,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    195,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    195,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    195
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    195,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    195,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": true,
+                "dtype": "int64",
+                "shape": [
+                    4
+                ],
+                "range_values": [
+                    0,
+                    195
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": true,
+                "dtype": "int64",
+                "shape": [
+                    10
+                ],
+                "range_values": [
+                    0,
+                    195
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "bf16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.03125,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "bf16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": true,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 7,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.aclnn.route",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "aclnn",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "regression"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 8,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.bf16.aclnn.route",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "aclnn",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "accuracy",
+            "regression"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    32,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    32,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    16,
+                    2048,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "bf16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.0625,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "bf16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 9,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.negative.k.invalid",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": "K must be 128",
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "negative"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    64,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    64,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.125,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 10,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.negative.v.invalid",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": "V must be 128 or 256",
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "negative"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    64
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 11,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.negative.hv.not.divisible",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": "HV must be divisible by HK",
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "negative"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    12,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    12,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    12,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    12,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    12,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    12,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 12,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.determinism",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "determinism",
+            "regression"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 13,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.bf16.performance",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "performance"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    64,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    64,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "bf16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.0442,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "bf16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 14,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.dirty_data.nan",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": "NaN detected in valid region",
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "dirty_data",
+            "negative"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp32",
+                "shape": [
+                    1,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": [
+                    "nan"
+                ]
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    1,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 15,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.fp16.large.batch",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "regression"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    1024
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    16,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "fp16",
+                "shape": [
+                    8,
+                    8,
+                    1024,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": false,
+                "dtype": "int64",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.088,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": true,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "fp16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": false,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    },
+    {
+        "id": 16,
+        "default_seed": 20260815,
+        "name": "aclnn.chunk.bwd.dqkwg.bf16.varlen.large",
+        "aclnn_name": "ChunkBwdDqkwg",
+        "triton_name": null,
+        "kernel_name": null,
+        "version": "v2.1",
+        "expected_error_msg": null,
+        "api": "pytorch",
+        "api_type": "executor_chunk_bwd_dqkwg",
+        "aclnn_api_type": "aclnn_function",
+        "triton_api_type": null,
+        "fusion_api_type": null,
+        "fusion_mode": null,
+        "dist_api_type": null,
+        "kernel_api_type": null,
+        "backward": false,
+        "standard": {
+            "acc": "cv_fused_double_benchmark",
+            "perf": "not_key"
+        },
+        "outputs": null,
+        "route": "ascendc",
+        "soc": [
+            "ascend910b",
+            "ascend910_93",
+            "ascend950"
+        ],
+        "tag": [
+            "regression",
+            "boundary"
+        ],
+        "inputs": [
+            {
+                "name": "q",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "k",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "v",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "h",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    64,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "do",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dh",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    64,
+                    128,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "dv",
+                "type": "tensor",
+                "required": true,
+                "dtype": "bf16",
+                "shape": [
+                    1,
+                    32,
+                    4096,
+                    128
+                ],
+                "range_values": [
+                    -5,
+                    5
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "cu_seqlens",
+                "type": "tensor",
+                "required": true,
+                "dtype": "int64",
+                "shape": [
+                    5
+                ],
+                "range_values": [
+                    0,
+                    4096
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_indices",
+                "type": "tensor",
+                "required": true,
+                "dtype": "int64",
+                "shape": [
+                    130
+                ],
+                "range_values": [
+                    0,
+                    4096
+                ],
+                "backward": true,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "w",
+                "type": "tensor",
+                "required": false,
+                "dtype": "bf16",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "g_gamma",
+                "type": "tensor",
+                "required": false,
+                "dtype": "fp32",
+                "shape": null,
+                "range_values": null,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "scale",
+                "type": "attr",
+                "required": true,
+                "dtype": "float",
+                "shape": null,
+                "range_values": 0.0442,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "chunk_size",
+                "type": "attr",
+                "required": true,
+                "dtype": "int",
+                "shape": null,
+                "range_values": 64,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_mix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "is_fix",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "use_exp2",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "transpose_state_layout",
+                "type": "attr",
+                "required": true,
+                "dtype": "bool",
+                "shape": null,
+                "range_values": false,
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            },
+            {
+                "name": "qkv_type",
+                "type": "attr",
+                "required": true,
+                "dtype": "string",
+                "shape": null,
+                "range_values": "bf16",
+                "backward": false,
+                "align_32B": null,
+                "outlier_values": null
+            }
+        ],
+        "acl_json": "",
+        "method_inputs": null,
+        "tensor_input": null,
+        "compute_times": null,
+        "save_name": null,
+        "uuid": null,
+        "downloaded": false,
+        "is_boundary": true,
+        "xrun_cs_name": null,
+        "xrun_data": null
+    }
+]
