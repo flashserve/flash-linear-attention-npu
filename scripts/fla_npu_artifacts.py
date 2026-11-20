@@ -185,9 +185,13 @@ def get_wheel_filename(repo_root: Path) -> str:
     public_version = read_public_version(repo_root)
     package_version = get_package_version(repo_root)
     build_tag = get_wheel_build_tag(repo_root, public_version)
+    # The wheel is not pure Python (it carries a host launcher and the OPP) but
+    # it is not CPython-versioned either, so only the platform tag is filled in.
+    platform_tag = get_platform_name()
     if build_tag:
-        return f"{WHEEL_DIST_NAME}-{package_version}-{build_tag}-py3-none-any.whl"
-    return f"{WHEEL_DIST_NAME}-{package_version}-py3-none-any.whl"
+        return (f"{WHEEL_DIST_NAME}-{package_version}-{build_tag}-"
+                f"py3-none-{platform_tag}.whl")
+    return f"{WHEEL_DIST_NAME}-{package_version}-py3-none-{platform_tag}.whl"
 
 
 def get_platform_name() -> str:

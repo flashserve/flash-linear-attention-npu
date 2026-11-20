@@ -21,6 +21,28 @@ contains purpose and redistribution restrictions tied to Huawei AI Processors
 and/or CANN Software, and requires recipients to receive a copy of the license
 and retained notices.
 
+This repository also contains a verbatim copy of PyTorch's Stable-ABI headers,
+at torch_custom/fla_npu/csrc/include/torch_stable_abi, taken from
+PyTorch 2.9.0 (https://github.com/pytorch/pytorch). Those files are the work of
+the PyTorch contributors and are provided under the BSD 3-Clause License:
+
+  Copyright (c) 2016-     Facebook, Inc            (Adam Paszke)
+  Copyright (c) 2014-     Facebook, Inc            (Soumith Chintala)
+  Copyright (c) 2011-2014 Idiap Research Institute (Ronan Collobert)
+  Copyright (c) 2012-2014 Deepmind Technologies    (Koray Kavukcuoglu)
+  Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
+  Copyright (c) 2011-2013 NYU                      (Clement Farabet)
+  Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon
+                        Bottou, Iain Melvin, Jason Weston)
+  Copyright (c) 2006      Idiap Research Institute (Samy Bengio)
+  Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy
+                        Bengio, Johnny Mariethoz)
+
+The full license text ships with the copy
+(torch_custom/fla_npu/csrc/include/torch_stable_abi/LICENSE), and
+MANIFEST.sha256 next to it records the digests of that revision, so the copy is
+verifiable and is not modified in place.
+
 Original flash-linear-attention-npu files that do not carry a more specific
 license notice are licensed under the BSD 3-Clause License; see LICENSE and
 LICENSES/BSD-3-Clause.txt.
