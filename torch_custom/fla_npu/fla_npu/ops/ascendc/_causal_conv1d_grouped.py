@@ -23,13 +23,22 @@ class _TrainingConvolution(torch.autograd.Function):
         from . import causal_conv1d_bwd
 
         x, weight, preactivation = ctx.saved_tensors
+        activation = (
+            getattr(causal_conv1d_bwd, "SILU_BF16_GRAD", None)
+            if x.dtype == torch.bfloat16
+            else None
+        )
+        if activation is None:
+            grad = torch.ops.aten.silu_backward(grad, preactivation)
+            preactivation = None
+            activation = 0
         dx, dw, _, _ = causal_conv1d_bwd(
             x,
             preactivation,
             weight,
             grad.contiguous(),
             query_start_loc=ctx.boundaries,
-            activation=1,
+            activation=activation,
             input_layout="TND",
         )
         return dx, dw, None
@@ -41,7 +50,8 @@ def causal_conv1d_grouped(inputs, weights, cu_seqlens=None):
     Each [T, C] tensor has its own [W, C] filter. Channel counts and widths can
     differ across groups. The groups share token positions and document
     boundaries. Inputs and weights must share a device. Each pair follows the
-    dtype, width and channel-alignment contract of causal_conv1d_fn.
+    dtype, width and channel-alignment contract of causal_conv1d_fn. The SiLU
+    gradient is rounded to the input dtype before convolution backward.
     """
     if not inputs or len(inputs) != len(weights):
         raise ValueError("Expected an input and a filter for each convolution")

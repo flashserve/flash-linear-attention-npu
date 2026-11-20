@@ -6,7 +6,11 @@ from itertools import accumulate
 import torch
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
-from fla_npu.ops.ascendc import causal_conv1d_grouped
+from fla_npu.ops.ascendc import (
+    causal_conv1d_bwd,
+    causal_conv1d_fn,
+    causal_conv1d_grouped,
+)
 
 
 def reference(inputs, weights, offsets, seeds):
@@ -38,7 +42,7 @@ def reference(inputs, weights, offsets, seeds):
                 seed[begin:end].float()
                 * sigmoid
                 * (1.0 + preactivation * (1.0 - sigmoid))
-            )
+            ).to(features.dtype).float()
             for tap in range(len(w)):
                 delay = len(w) - 1 - tap
                 rows = len(doc) - delay
@@ -126,6 +130,42 @@ class TestGroupedCausalConv(unittest.TestCase):
 
     def test_differing_lengths_empty_documents_and_channel_tail(self):
         self.run_case([0, 1, 2, 3, 4, 0, 7, 13, 65])
+
+    def test_bf16_gradients_match_packed_convolution(self):
+        generator = torch.Generator().manual_seed(3)
+        offsets = [0, 2, 5, 9]
+        inputs = tuple(
+            torch.randn(9, 256, generator=generator).bfloat16().npu().requires_grad_()
+            for _ in range(3)
+        )
+        weights = tuple(
+            torch.randn(4, 256, generator=generator).bfloat16().npu().requires_grad_()
+            for _ in range(3)
+        )
+        grad = torch.randn(9, 768, generator=generator).bfloat16().npu()
+        x, weight = torch.cat(inputs, dim=-1), torch.cat(weights, dim=-1)
+        preactivation = causal_conv1d_fn(
+            x, weight, None, query_start_loc_cpu=offsets, activation=None
+        )
+        activation = getattr(causal_conv1d_bwd, "SILU_BF16_GRAD", None)
+        if activation is None:
+            dy = torch.ops.aten.silu_backward(grad, preactivation)
+            saved_y, activation = None, 0
+        else:
+            dy, saved_y = grad, preactivation
+        dx, dw, _, _ = causal_conv1d_bwd(
+            x,
+            saved_y,
+            weight,
+            dy,
+            query_start_loc=offsets,
+            activation=activation,
+            input_layout="TND",
+        )
+        outputs = causal_conv1d_grouped(inputs, weights, offsets)
+        actual = torch.autograd.grad(outputs, (*inputs, *weights), grad.chunk(3, dim=-1))
+        expected = (*dx.chunk(3, dim=-1), *dw.chunk(3, dim=-1))
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
     def test_many_documents(self):
         self.run_case([i % 5 for i in range(267)])
