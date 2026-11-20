@@ -10,6 +10,7 @@
 
 ---
 
+
 ## 🔥Latest News
 
 - [2026/09] torch_npu 解耦；新增算子：KDA 正反向（`recurrent_kda` / `chunk_kda_fwd`）、GDN 大融合（fused forward / backward finalize）。
