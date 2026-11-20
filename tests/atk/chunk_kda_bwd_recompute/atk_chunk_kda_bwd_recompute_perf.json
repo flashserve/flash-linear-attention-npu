@@ -1,16 +1,30 @@
 [
   {
     "id": 0,
-    "default_seed": 20260817,
-    "name": "chunk_kda_bwd_recompute_0000_BSND_noGVA_V128_T512",
-    "aclnn_name": "",
+    "default_seed": 20261119,
+    "name": "chunk_kda_bwd_recompute_model_F",
+    "aclnn_name": null,
+    "triton_name": null,
+    "kernel_name": null,
     "version": "v2.1",
+    "expected_error_msg": null,
     "api": "pytorch",
     "api_type": "executor_chunk_kda_bwd_recompute",
-    "expected_error_msg": null,
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
     "backward": false,
     "standard": {
-      "acc": "mixed_tolerance_bm",
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
       "perf": "not_key",
       "mem": 1.1
     },
@@ -28,7 +42,9 @@
           0,
           0
         ],
-        "backward": false
+        "backward": true,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "fp32_marker",
@@ -42,7 +58,9 @@
           0,
           0
         ],
-        "backward": false
+        "backward": true,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "case_spec",
@@ -50,8 +68,10 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"name\":\"BSND_noGVA_V128_T512\",\"dtype\":\"bf16\",\"B\":1,\"HK\":4,\"HV\":4,\"T\":512,\"K\":128,\"V\":128,\"chunk_size\":64,\"g_dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"use_gate\":true,\"use_exp2\":true,\"has_dt_bias\":true,\"lower_bound\":-5.0,\"op\":\"chunk_kda_bwd_recompute\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend950\"}",
-        "backward": false
+        "range_values": "{\"name\":\"F\",\"dtype\":\"bf16\",\"B\":1,\"HK\":16,\"HV\":128,\"T\":11264,\"K\":128,\"V\":128,\"chunk_size\":64,\"g_dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"use_gate\":true,\"use_exp2\":true,\"has_dt_bias\":true,\"lower_bound\":-5.0,\"variable\":false,\"op\":\"chunk_kda_bwd_recompute\",\"case_id\":0,\"seed\":20261119,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "dtype",
@@ -60,7 +80,9 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "B",
@@ -69,7 +91,9 @@
         "dtype": "int",
         "shape": null,
         "range_values": 1,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "HK",
@@ -77,8 +101,10 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 4,
-        "backward": false
+        "range_values": 16,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "HV",
@@ -86,8 +112,10 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 4,
-        "backward": false
+        "range_values": 128,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "T",
@@ -95,8 +123,10 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 512,
-        "backward": false
+        "range_values": 11264,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "K",
@@ -105,7 +135,9 @@
         "dtype": "int",
         "shape": null,
         "range_values": 128,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "V",
@@ -114,7 +146,9 @@
         "dtype": "int",
         "shape": null,
         "range_values": 128,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "chunk_size",
@@ -123,7 +157,9 @@
         "dtype": "int",
         "shape": null,
         "range_values": 64,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "g_dtype",
@@ -132,7 +168,9 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "beta_dtype",
@@ -141,7 +179,9 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "use_gate",
@@ -150,7 +190,9 @@
         "dtype": "bool",
         "shape": null,
         "range_values": true,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "use_exp2",
@@ -159,7 +201,9 @@
         "dtype": "bool",
         "shape": null,
         "range_values": true,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "has_dt_bias",
@@ -168,7 +212,9 @@
         "dtype": "bool",
         "shape": null,
         "range_values": true,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "lower_bound",
@@ -177,7 +223,9 @@
         "dtype": "float",
         "shape": null,
         "range_values": -5.0,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "case_id",
@@ -186,7 +234,9 @@
         "dtype": "int",
         "shape": null,
         "range_values": 0,
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "seed",
@@ -194,8 +244,21 @@
         "required": true,
         "dtype": "int",
         "shape": null,
-        "range_values": 20260817,
-        "backward": false
+        "range_values": 20261119,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910b",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "route",
@@ -204,7 +267,272 @@
         "dtype": "string",
         "shape": null,
         "range_values": "ascendc",
-        "backward": false
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": null
+  },
+  {
+    "id": 1,
+    "default_seed": 20261119,
+    "name": "chunk_kda_bwd_recompute_model_V",
+    "aclnn_name": null,
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v2.1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_recompute",
+    "aclnn_api_type": "aclnn_function",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"name\":\"V\",\"dtype\":\"bf16\",\"B\":1,\"HK\":16,\"HV\":128,\"T\":16384,\"K\":128,\"V\":128,\"chunk_size\":64,\"g_dtype\":\"bf16\",\"beta_dtype\":\"bf16\",\"use_gate\":true,\"use_exp2\":true,\"has_dt_bias\":true,\"lower_bound\":-5.0,\"variable\":true,\"op\":\"chunk_kda_bwd_recompute\",\"case_id\":1,\"seed\":20261119,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"lengths\":[1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024]}",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "HK",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 16,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "HV",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 16384,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "g_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "beta_dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "use_gate",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "use_exp2",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "has_dt_bias",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "lower_bound",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -5.0,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261119,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       },
       {
         "name": "soc",
@@ -212,9 +540,33 @@
         "required": true,
         "dtype": "string",
         "shape": null,
-        "range_values": "ascend950",
-        "backward": false
+        "range_values": "ascend910b",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascendc",
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
       }
-    ]
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": null
   }
 ]

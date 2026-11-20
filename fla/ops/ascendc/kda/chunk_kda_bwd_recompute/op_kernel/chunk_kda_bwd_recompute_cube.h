@@ -68,6 +68,7 @@ public:
         uint64_t chunkSize;
         uint64_t usedAic;
         int64_t isVariable;
+        uint64_t headGroup;
     };
 
     template <int32_t CORE_TYPE = g_coreType>
@@ -81,76 +82,46 @@ public:
         const uint32_t coreNumAic = params.usedAic > 0 ? static_cast<uint32_t>(params.usedAic)
                                                         : AscendC::GetBlockNum();
         if (coreIdx >= coreNumAic) return;
-        uint32_t bos = 0;
-        uint32_t eos = 0;
-        const uint64_t groupsPerChunk = (params.Hv + RECOMPUTE_HEADS_PER_GROUP - 1) / RECOMPUTE_HEADS_PER_GROUP;
-        const uint64_t groupCount = params.chunkNum * groupsPerChunk;
-        for (uint64_t group = coreIdx; group < groupCount; group += coreNumAic) {
-            const uint32_t loopIdx = group / groupsPerChunk;
-            const uint64_t firstHead = group % groupsPerChunk * RECOMPUTE_HEADS_PER_GROUP;
-            const uint32_t page = (group / coreNumAic) % RECOMPUTE_PAGE_COUNT;
-            const uint64_t slotElements = params.chunkSize * (params.V + params.K);
-            auto pageBase = (__gm__ ElementVb *)params.workspace + KdaRecomputePageOffset(coreIdx, page, slotElements);
-            AscendC::CrossCoreWaitFlag<0x2, PIPE_MTE2>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE + page);
-            {
-                BlockMmadU blockMmadU(resource);
-                AscendC::GlobalTensor<ElementA> gmA;
-                AscendC::GlobalTensor<ElementVb> gmVb;
-                AscendC::GlobalTensor<ElementU> gmU;
-                for (uint64_t slot = 0; slot < RECOMPUTE_HEADS_PER_GROUP && firstHead + slot < params.Hv; ++slot) {
-                    const uint64_t h = firstHead + slot;
-                    KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
-                                                  params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
-                    uint32_t curChunkSize = eos - bos;
-                    gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
-                    uint32_t tileN = tla::get<1>(typename BlockMmadU::L1TileShape{});
-                    for (uint32_t nOffset = 0; nOffset < params.V; nOffset += tileN) {
-                        uint32_t curN = (nOffset + tileN > params.V) ? (params.V - nOffset) : tileN;
-                        GemmCoord actualBlockShape{curChunkSize, curN, curChunkSize};
-                        gmVb.SetGlobalBuffer(pageBase + slot * slotElements + nOffset);
-                        gmU.SetGlobalBuffer((__gm__ ElementU *)params.ptrU + (h * params.T + bos) * params.V + nOffset);
-                        auto tensorVb = tla::MakeTensor(gmVb, params.layoutVb, Arch::PositionGM{});
-                        auto tensorU = tla::MakeTensor(gmU, params.layoutU, Arch::PositionGM{});
-                        auto tensorBlockA = GetTile(tensorA, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                        auto tensorBlockVb = GetTile(tensorVb, tla::MakeCoord(0, 0),
-                                                     tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                        auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
-                                                    tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                        blockMmadU(tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
-                    }
+        const uint64_t cg=params.headGroup;
+        const uint64_t nh=(params.Hv+cg-1)/cg,total=params.chunkNum*nh;
+        for(uint64_t work=coreIdx,ordinal=0;work<total;work+=coreNumAic,++ordinal) {
+            uint64_t bos,eos;
+            KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens,params.ptrChunkIndices,params.B,params.Hv,
+                params.T,params.chunkSize,work/nh,bos,eos,params.isVariable);
+            uint32_t length=eos-bos;
+            uint16_t page=ordinal%2;
+            auto base=(__gm__ ElementVb*)params.workspace+KdaRecomputePageOffset(coreIdx,page,16384,cg);
+            AscendC::CrossCoreWaitFlag<0x2,PIPE_MTE2>(KDA_BWD_RECOMPUTE_PAGE_READY_BASE+page);
+            for(uint64_t slot=0;slot<cg && (work%nh)*cg+slot<params.Hv;++slot) {
+                const uint64_t h=(work%nh)*cg+slot;
+                // One instance per head: retain A across u/w, reset B residency before page address reuse.
+                if(length<64) {
+                    auto padding=resource.l1Buf.template GetBufferByByte<int16_t>(0);
+                    AscendC::InitConstValueParams<int16_t> init;
+                    init.repeatTimes=1;init.blockNum=768;init.dstGap=0;init.initValue=0;
+                    AscendC::InitConstValue(padding,init);
+                    AscendC::PipeBarrier<PIPE_MTE2>();
+                }
+                BlockMmadU block(resource);
+                AscendC::GlobalTensor<ElementA> ga;
+                AscendC::GlobalTensor<ElementVb> gb;
+                AscendC::GlobalTensor<ElementU> gc;
+                ga.SetGlobalBuffer((__gm__ ElementA*)params.ptrA+(h*params.T+bos)*64);
+                auto ta=tla::MakeTensor(ga,params.layoutA,Arch::PositionGM{});
+                GemmCoord shape{length,128,length};
+                auto at=GetTile(ta,tla::MakeCoord(0U,0U),tla::MakeShape(length,length));
+                for(uint32_t op=0;op<2;++op) {
+                    gb.SetGlobalBuffer(base+slot*16384+op*8192);
+                    gc.SetGlobalBuffer((__gm__ ElementU*)(op?params.ptrW:params.ptrU)+(h*params.T+bos)*128);
+                    auto tb=tla::MakeTensor(gb,params.layoutVb,Arch::PositionGM{});
+                    auto tc=tla::MakeTensor(gc,params.layoutU,Arch::PositionGM{});
+                    auto bt=GetTile(tb,tla::MakeCoord(0U,0U),tla::MakeShape(length,128));
+                    auto ct=GetTile(tc,tla::MakeCoord(0U,0U),tla::MakeShape(length,128));
+                    block(at,bt,ct,shape);
                 }
             }
-            {
-                BlockMmadW blockMmadW(resource);
-                AscendC::GlobalTensor<ElementA> gmA;
-                AscendC::GlobalTensor<ElementKbg> gmKbg;
-                AscendC::GlobalTensor<ElementW> gmW;
-                for (uint64_t slot = 0; slot < RECOMPUTE_HEADS_PER_GROUP && firstHead + slot < params.Hv; ++slot) {
-                    const uint64_t h = firstHead + slot;
-                    KdaBwdRecomputeGetChunkOffset(params.ptrCuSeqLens, params.ptrChunkIndices, params.B, params.Hv,
-                                                  params.T, params.chunkSize, loopIdx, bos, eos, params.isVariable);
-                    uint32_t curChunkSize = eos - bos;
-                    GemmCoord actualBlockShape{curChunkSize, static_cast<uint32_t>(params.K), curChunkSize};
-                    gmA.SetGlobalBuffer((__gm__ ElementA *)params.ptrA + (h * params.T + bos) * params.chunkSize);
-                    gmKbg.SetGlobalBuffer(pageBase + slot * slotElements + params.chunkSize * params.V);
-                    gmW.SetGlobalBuffer((__gm__ ElementW *)params.ptrW + (h * params.T + bos) * params.K);
-                    auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
-                    auto tensorKbg = tla::MakeTensor(gmKbg, params.layoutKbg, Arch::PositionGM{});
-                    auto tensorW = tla::MakeTensor(gmW, params.layoutW, Arch::PositionGM{});
-                    auto tensorBlockA =
-                        GetTile(tensorA, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.k()));
-                    auto tensorBlockKbg = GetTile(tensorKbg, tla::MakeCoord(0, 0),
-                                                  tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
-                    auto tensorBlockW =
-                        GetTile(tensorW, tla::MakeCoord(0, 0), tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-                    blockMmadW(tensorBlockA, tensorBlockKbg, tensorBlockW, actualBlockShape);
-                }
-            }
-            if (group + static_cast<uint64_t>(RECOMPUTE_PAGE_COUNT) * coreNumAic < groupCount) {
-                AscendC::PipeBarrier<PIPE_ALL>();
-                AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE + page);
+            if(work+2*coreNumAic<total) {
+                AscendC::CrossCoreSetFlag<0x2,PIPE_MTE2>(KDA_BWD_RECOMPUTE_PAGE_FREE_BASE+page);
             }
         }
     }
@@ -160,8 +131,8 @@ template <class... Dims>
 using KdaBwdRecomputeGemmTileShape = tla::Shape<Dims...>;
 
 struct KdaBwdRecomputeTileShapes128 {
-    using L1TileShape = KdaBwdRecomputeGemmTileShape<_128, _128, _256>;
-    using L0TileShape = KdaBwdRecomputeGemmTileShape<_128, _128, _128>;
+    using L1TileShape = KdaBwdRecomputeGemmTileShape<_64, _128, _64>;
+    using L0TileShape = KdaBwdRecomputeGemmTileShape<_64, _128, _64>;
 };
 
 template <typename QkType>
@@ -183,6 +154,7 @@ public:
         chunkNum_ = static_cast<uint64_t>(tiling->chunkNum);
         chunkSize_ = static_cast<uint64_t>(tiling->chunkSize);
         usedAic_ = static_cast<uint64_t>(tiling->usedAic);
+        headGroup_ = tiling->headGroup;
         isVariable_ = tiling->isVariable;
     }
 
@@ -205,7 +177,7 @@ public:
         using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true>;
 #else
         using ArchTag = Arch::AtlasA2;
-        using DispatchPolicy = Gemm::MmadPingpong<ArchTag, true, false, 1, false, 1, 1, 1, 1>;
+        using DispatchPolicy = Gemm::MmadPingpong<ArchTag, false, false, 1, true, 1, 1, 1, 1>;
 #endif
 
         using L1TileShape = typename KdaBwdRecomputeTileShapes128::L1TileShape;
@@ -224,7 +196,7 @@ public:
         typename MatmulKernel::Params param{
             a_, MakeLayoutFromTag(tagA), workspace_, MakeLayoutFromTag(tagVb), u_, MakeLayoutFromTag(tagU),
             MakeLayoutFromTag(tagKbg), w_, MakeLayoutFromTag(tagW),
-            cuSeqlens_, chunkIndices_, chunkNum_, B_, Hv_, T_, K_, V_, chunkSize_, usedAic_, isVariable_};
+            cuSeqlens_, chunkIndices_, chunkNum_, B_, Hv_, T_, K_, V_, chunkSize_, usedAic_, isVariable_, headGroup_};
         kernel(param);
     }
 
@@ -243,6 +215,7 @@ private:
     uint64_t chunkNum_ = 0;
     uint64_t chunkSize_ = 0;
     uint64_t usedAic_ = 0;
+    uint64_t headGroup_ = 4;
     int64_t isVariable_ = 0;
 };
 

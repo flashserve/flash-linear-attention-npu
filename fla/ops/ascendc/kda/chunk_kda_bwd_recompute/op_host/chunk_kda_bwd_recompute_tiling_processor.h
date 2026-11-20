@@ -104,10 +104,12 @@ private:
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be 64.");
         return ge::GRAPH_FAILED;
     }
-        if (ctx_.qShape->GetStorageShape().GetDimNum() != 4) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "q", std::to_string(ctx_.qShape->GetStorageShape().GetDimNum()), "q must be rank-4 BNSD.");
-        return ge::GRAPH_FAILED;
-    }
+        for (const auto *shape : {ctx_.qShape,ctx_.kShape,ctx_.vShape,ctx_.gShape,ctx_.aShape}) {
+            if (shape == nullptr || shape->GetStorageShape().GetDimNum() != 4) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"rank","invalid","q/k/v/g/A must have rank 4.");
+                return ge::GRAPH_FAILED;
+            }
+        }
         const gert::Shape q = ctx_.qShape->GetStorageShape();
         const gert::Shape k = ctx_.kShape->GetStorageShape();
         const gert::Shape v = ctx_.vShape->GetStorageShape();
@@ -130,6 +132,12 @@ private:
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "beta dtype must be BF16 or FP32.");
         return ge::GRAPH_FAILED;
     }
+        if (q != k || q.GetDim(0) < 1 || q.GetDim(2) < 0 || a.GetDim(0) != v.GetDim(0) ||
+            a.GetDim(2) != v.GetDim(2) || a.GetDim(3) != 64 || beta.GetDimNum() != 3 ||
+            beta.GetDim(0) != v.GetDim(0) || beta.GetDim(1) != v.GetDim(1) || beta.GetDim(2) != v.GetDim(2)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"shape","invalid","q/k, A and beta dimensions must match their declared head-major shapes.");
+            return ge::GRAPH_FAILED;
+        }
         tiling_.B = q.GetDim(0);
         tiling_.Hk = k.GetDim(1);
         tiling_.Hv = v.GetDim(1);
@@ -138,7 +146,30 @@ private:
             "Hv must be positive and divisible by Hk");
         return ge::GRAPH_FAILED;
     }
+        if (ctx_.useGateInKernel && (!ctx_.aLogShape || !std::isfinite(ctx_.lowerBound) ||
+            ctx_.lowerBound < -5.0f || ctx_.lowerBound >= 0.0f)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"A_log/lower_bound",
+                std::string(ctx_.aLogShape ? "present/" : "nullptr/") + std::to_string(ctx_.lowerBound),
+                "Gate requires A_log and finite lower_bound in [-5,0).");
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.aLogShape && (ctx_.aLogShape->GetStorageShape().GetDimNum()!=1 ||
+            ctx_.aLogShape->GetStorageShape().GetDim(0)!=tiling_.Hv)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName,"A_log","mismatch","A_log must have shape [HV].");
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.dtBiasShape) {
+            const auto &bias=ctx_.dtBiasShape->GetStorageShape();
+            const bool flat=bias.GetDimNum()==1 && bias.GetDim(0)==tiling_.Hv*128;
+            const bool matrix=bias.GetDimNum()==2 && bias.GetDim(0)==tiling_.Hv && bias.GetDim(1)==128;
+            if(!flat && !matrix) {
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName,"dt_bias","mismatch","dt_bias must be [HV,128] or flat HV*128.");
+                return ge::GRAPH_FAILED;
+            }
+        }
         tiling_.hvPerHk = tiling_.Hv / tiling_.Hk;
+        tiling_.headGroup = tiling_.hvPerHk == 3 ? 3 : std::min<int64_t>(4,tiling_.Hv);
+        tiling_.reservedV2 = 0;
         tiling_.T = q.GetDim(2);
         tiling_.K = 128;
         tiling_.V = 128;
@@ -179,14 +210,58 @@ private:
 
     ge::graphStatus ComputeChunkNum()
     {
+        // Stable ABI represents an empty int array as nullptr. A packed empty task
+        // has no chunk descriptors to access, so validate only its zero boundaries.
+        if (tiling_.T == 0 && ctx_.cuSeqlensShape != nullptr && ctx_.chunkIndicesShape == nullptr) {
+            const auto &shape=ctx_.cuSeqlensShape->GetStorageShape();
+            if(shape.GetDimNum()!=1 || shape.GetDim(0)<2 || !ctx_.cuSeqlensData || tiling_.B!=1) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"cu_seqlens",std::to_string(tiling_.B),"Empty packed input requires B=1 and rank-1 host boundaries.");
+                return ge::GRAPH_FAILED;
+            }
+            for(int64_t i=0;i<shape.GetDim(0);++i) if(ctx_.cuSeqlensData[i]!=0) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"cu_seqlens",std::to_string(ctx_.cuSeqlensData[i]),"All boundaries must be zero for T=0.");
+                return ge::GRAPH_FAILED;
+            }
+            tiling_.chunkNum=0;return ge::GRAPH_SUCCESS;
+        }
+        if ((ctx_.cuSeqlensShape != nullptr) != (ctx_.chunkIndicesShape != nullptr)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"metadata","invalid","cu_seqlens and chunk_indices must be paired.");
+            return ge::GRAPH_FAILED;
+        }
         if (ctx_.cuSeqlensShape != nullptr) {
-            if (ctx_.chunkIndicesShape == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices", "invalid", "chunk_indices required for varlen.");
-        return ge::GRAPH_FAILED;
-    }
-            tiling_.chunkNum = ctx_.chunkIndicesShape->GetStorageShape().GetDim(0) / 2;
-            tiling_.B = 1;
-            return ge::GRAPH_SUCCESS;
+            const auto &cuShape=ctx_.cuSeqlensShape->GetStorageShape();
+            const auto &ciShape=ctx_.chunkIndicesShape->GetStorageShape();
+            if (tiling_.B != 1 || cuShape.GetDimNum()!=1 || ciShape.GetDimNum()!=1 ||
+                cuShape.GetDim(0)<2 || ciShape.GetDim(0)%2 || !ctx_.cuSeqlensData || (ciShape.GetDim(0)!=0 && !ctx_.chunkIndicesData)) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"metadata","invalid","packed B=1 requires rank-1 host metadata and complete pairs.");
+                return ge::GRAPH_FAILED;
+            }
+            const auto *cu=ctx_.cuSeqlensData,*ci=ctx_.chunkIndicesData;
+            const int64_t n=cuShape.GetDim(0), pairs=ciShape.GetDim(0)/2;
+            if (cu[0]!=0 || cu[n-1]!=tiling_.T) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"cu_seqlens",
+                    std::to_string(cu[0])+"/"+std::to_string(cu[n-1])+"/T="+std::to_string(tiling_.T),"First boundary must be 0 and final boundary must equal T.");
+                return ge::GRAPH_FAILED;
+            }
+            int64_t index=0;
+            for(int64_t seq=0;seq<n-1;++seq) {
+                if(cu[seq]<0 || cu[seq+1]<cu[seq]) {
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"cu_seqlens",std::to_string(cu[seq])+"/"+std::to_string(cu[seq+1]),"Boundaries must be nonnegative and nondecreasing.");
+                    return ge::GRAPH_FAILED;
+                }
+                const int64_t count=(cu[seq+1]-cu[seq]+63)/64;
+                for(int64_t chunk=0;chunk<count;++chunk,++index) {
+                    if(index>=pairs || ci[2*index]!=seq || ci[2*index+1]!=chunk) {
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"chunk_indices","invalid","metadata must contain each sequence-major chunk once.");
+                        return ge::GRAPH_FAILED;
+                    }
+                }
+            }
+            if(index!=pairs) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"chunk_indices",std::to_string(pairs)+"/expected="+std::to_string(index),"Chunk descriptor count must exactly match sequence boundaries.");
+                return ge::GRAPH_FAILED;
+            }
+            tiling_.chunkNum=pairs;return ge::GRAPH_SUCCESS;
         }
         const int64_t chunksPerSeq = (tiling_.T + tiling_.chunkSize - 1) / tiling_.chunkSize;
         tiling_.chunkNum = tiling_.B * chunksPerSeq;
@@ -204,6 +279,16 @@ private:
             using namespace KdaBwdRecomputeArch92;
             tiling_.vecRow = kRows;
             workspaceBytesPerCore_ = 0;
+            return ge::GRAPH_SUCCESS;
+        }
+        if (!ctx_.enableCompactWorkspace) {
+            constexpr uint64_t requiredUb = 134400;
+            if (ctx_.ubSize != 0 && ctx_.ubSize < requiredUb) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName,"UB",std::to_string(ctx_.ubSize),"Recompute requires 134400 UB bytes per AIV.");
+                return ge::GRAPH_FAILED;
+            }
+            tiling_.vecRow = 64;
+            workspaceBytesPerCore_ = uint64_t(2) * tiling_.headGroup * 32768;
             return ge::GRAPH_SUCCESS;
         }
         constexpr uint64_t sizeofQk = 2;
@@ -255,7 +340,8 @@ private:
         return GET_TPL_TILING_KEY(
             DtypeToTemplateToken(ctx_.gateDtype),
             DtypeToTemplateToken(ctx_.betaDtype),
-            static_cast<uint64_t>(tiling_.K));
+            static_cast<uint64_t>(tiling_.K),
+            static_cast<uint64_t>(tiling_.hvPerHk > 1));
     }
 
     ChunkKdaBwdRecomputeTilingContext &ctx_;
