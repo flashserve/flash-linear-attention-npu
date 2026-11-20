@@ -37,6 +37,8 @@ $$
 g_t = dy_t \cdot \sigma(y_t) \cdot (1 + y_t \cdot (1 - \sigma(y_t)))
 $$
 
+对于 Ascend 950 的 BF16 输入，模式 `3` 在上述 SiLU 公式后把 $g_t$ 舍入到 BF16，再以 FP32 累积卷积梯度。它对应将 BF16 SiLU 和卷积分开执行的梯度边界。Python 调用者可通过所选 `ascendc.causal_conv1d_bwd.SILU_BF16_GRAD` 获取该枚举。
+
 反向传播计算：
 
 $$
@@ -60,7 +62,7 @@ $$
 | 参数名 | 数据类型 | Shape | 是否必选 | 描述 |
 | :-- | :-- | :-- | :--: | :-- |
 | x | FLOAT/FLOAT16/BF16 | 固定长度 `[B, T, D]`；变长 `[totalTokens, D]` | 必选 | 前向输入，始终使用逻辑 layout。 |
-| y | FLOAT/FLOAT16/BF16 | 由 `inputLayout` 决定 | 可选 | 前向预激活输出。`activation=1/2` 时必须提供。 |
+| y | FLOAT/FLOAT16/BF16 | 由 `inputLayout` 决定 | 可选 | 前向预激活输出。`activation=1/2/3` 时必须提供。 |
 | weight | FLOAT/FLOAT16/BF16 | `[W, D]` | 必选 | 卷积核权重。 |
 | dy | FLOAT/FLOAT16/BF16 | 与 `y` 相同 | 必选 | 前向输出梯度。 |
 | initial_state | FLOAT/FLOAT16/BF16 | `[B, W, D]` | 可选 | 初始卷积状态，与正向算子状态 layout 一致。 |
@@ -80,7 +82,7 @@ $$
 
 | 属性名 | 类型 | 默认值 | 取值 | 描述 |
 | :-- | :-- | :--: | :-- | :-- |
-| activation | int64 | 0 | 0, 1, 2 | 0：无激活；1：SiLU；2：Swish，当前与 SiLU 等价。 |
+| activation | int64 | 0 | 0, 1, 2, 3 | 0：无激活；1：SiLU；2：Swish，当前与 SiLU 等价；3：SiLU，激活梯度舍入到 BF16。 |
 | inputLayout | string | BSND | BSND, BSH, TND, BNSD, NTD | 输入 `y/dy` 的物理 layout。 |
 
 ## Layout 与 Shape

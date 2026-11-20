@@ -56,6 +56,7 @@ namespace {
     constexpr uint32_t ACTIVATION_NONE = 0;
     constexpr uint32_t ACTIVATION_SILU = 1;
     constexpr uint32_t ACTIVATION_SWISH = 2;
+    constexpr uint32_t ACTIVATION_SILU_BF16_GRAD = 3;
     constexpr uint32_t INPUT_LAYOUT_BSND = 0; // y/dy: [B, T, N*D].
     constexpr uint32_t INPUT_LAYOUT_TND = 1;  // y/dy: [total_tokens, N*D].
     constexpr uint32_t INPUT_LAYOUT_BNSD = 2; // y/dy: [B, N, T, D].
@@ -158,7 +159,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     uint32_t inputN = 1;
     uint32_t inputHeadDim = 0;
 
-    uint32_t activation = ACTIVATION_NONE;
+    uint32_t requestedActivation = ACTIVATION_NONE;
     auto attrs = context->GetAttrs();
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_ACTIVATION_INDEX) {
         const int64_t *activationPtr = attrs->GetAttrPointer<int64_t>(ATTR_ACTIVATION_INDEX);
@@ -166,12 +167,14 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "activation"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(*activationPtr != ACTIVATION_NONE && *activationPtr != ACTIVATION_SILU &&
-                        *activationPtr != ACTIVATION_SWISH,
+                        *activationPtr != ACTIVATION_SWISH && *activationPtr != ACTIVATION_SILU_BF16_GRAD,
                     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "activation", std::to_string(*activationPtr),
-                                                          "expected 0 (None), 1 (SiLU) or 2 (Swish)"),
+                                                          "expected 0 (None), 1 (SiLU), 2 (Swish), or 3 (SiLU BF16 gradient)"),
                     return ge::GRAPH_FAILED);
-        activation = static_cast<uint32_t>(*activationPtr);
+        requestedActivation = static_cast<uint32_t>(*activationPtr);
     }
+    const bool roundSiluGrad = requestedActivation == ACTIVATION_SILU_BF16_GRAD;
+    const uint32_t activation = roundSiluGrad ? ACTIVATION_SILU : requestedActivation;
     const char *inputLayoutStr = "BSND";
     if (attrs != nullptr && attrs->GetAttrNum() > ATTR_INPUT_LAYOUT_INDEX) {
         const char *attrLayout = attrs->GetAttrPointer<char>(ATTR_INPUT_LAYOUT_INDEX);
@@ -403,6 +406,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             return ge::GRAPH_FAILED);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        OP_CHECK_IF(roundSiluGrad && (xDtype != ge::DT_BF16 || npuArch != NpuArch::DAV_3510),
+                    OP_LOGE(OP_NAME, "SiLU BF16 gradient requires BF16 inputs on Ascend 950"),
+                    return ge::GRAPH_FAILED);
         isAscend910B = (npuArch == NpuArch::DAV_2201);
         if (npuArch == NpuArch::DAV_3510) {
             archPolicy = {true, true, true, true, false, DIRECT_FAST_BT_MAX, DIRECT_FAST_BT_STEP};
@@ -743,7 +749,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     tiling->T = T;
     tiling->D = D;
     tiling->W = W;
-    tiling->activation = activation;
+    tiling->activation = requestedActivation;
     tiling->hasWeight = 1;
     tiling->hasBias = 1;
     tiling->useInitialState = useInitialState ? 1 : 0;
