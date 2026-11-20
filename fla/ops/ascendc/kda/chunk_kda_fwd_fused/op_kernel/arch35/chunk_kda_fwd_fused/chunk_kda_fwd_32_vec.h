@@ -497,7 +497,13 @@ template<bool varlen>
 		b_gm.SetGlobalBuffer((__gm__ T *)b_base + seq_len*fh);
 		dt_gm.SetGlobalBuffer((__gm__ float *)dt_base + key_dim*bias_head);  // 每头 key_dim 个 dt_bias(按通道跳,不是按 token 组)
 		tmp_gm.SetGlobalBuffer((__gm__ T *)tmp_base + seq_len*value_dim*fh);
-		o_gm.SetGlobalBuffer((__gm__ T *)o_base + seq_len*value_dim*fh);
+		if (out_token_major) {
+			const uint32_t batch = fh / hv_real;
+			const uint32_t head = fh - batch * hv_real;
+			o_gm.SetGlobalBuffer((__gm__ T *)o_base + ((uint64_t)batch*seq_len*hv_real + head)*value_dim);
+		} else {
+			o_gm.SetGlobalBuffer((__gm__ T *)o_base + seq_len*value_dim*fh);
+		}
 		// state GM 按任务 + k 半幅寻址:[B*HV,K,V] fp32,本 AIV 取 k∈[subid*64,+64)
 		if (has_istate) {
 			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
@@ -3295,7 +3301,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 		if (HasTail && has_tail_) {
 			valid_rows = (int64_t)seq_len - row_base;
 		}
-		if constexpr (IsVarlen) {
+		if (IsVarlen || out_token_major) {
 			// valid_rows 可能超过 16(尾块第二组):UB 槽只有 16 行,先钳到 chunk_half_rows
 			const int64_t wr = valid_rows >= chunk_half_rows ? chunk_half_rows : valid_rows;
 			if (wr > 0) {

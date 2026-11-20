@@ -19,6 +19,7 @@ TILING_DATA_FIELD_DEF(uint64_t, taskCount);
 TILING_DATA_FIELD_DEF(uint64_t, hvNumReal);
 TILING_DATA_FIELD_DEF(uint64_t, blockNum);
 TILING_DATA_FIELD_DEF(uint64_t, varlenMode);
+TILING_DATA_FIELD_DEF(uint64_t, outTokenMajor);
 TILING_DATA_FIELD_DEF(uint64_t, epsilonBits);
 TILING_DATA_FIELD_DEF(uint64_t, gateFlags);
 TILING_DATA_FIELD_DEF_ARR(uint64_t, 1025, cuData);

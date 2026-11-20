@@ -190,6 +190,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
     tiling.set_hvNumReal(hvReal);
     tiling.set_blockNum(blockNum);
     tiling.set_varlenMode(headMajorVarlen ? 2 : (isVarlen ? 1 : 0));
+    tiling.set_outTokenMajor(!isVarlen && layout != nullptr && std::strcmp(layout, "BSND") == 0 ? 1 : 0);
     tiling.set_epsilonBits(Fp32Bits(KDA_FD32_EPSILON));
     const uint64_t gateFlags = (context->GetInputDesc(INPUT_G_IDX)->GetDataType() == ge::DT_FLOAT ? 1 : 0) |
                                (context->GetInputDesc(INPUT_BETA_IDX)->GetDataType() == ge::DT_FLOAT ? 2 : 0);

@@ -374,6 +374,20 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
         return contRet;
     }
 
+    // rank3 dense 只有一个序列，直接复用 varlen 的原生跨步读写，避免输入/输出大转置。
+    if (info.isRank3) {
+        const int64_t cuVals[] = {0, info.seqlen};
+        aclIntArray *cuArr = aclCreateIntArray(cuVals, 2);
+        if (!(cuArr != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: cuArr != nullptr failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
+        params.cuSeqlensOptional = cuArr;
+        const aclnnStatus ret = RunChunkKdaFwd32FusedVarlen(params, executor, info);
+        aclDestroyIntArray(cuArr);
+        return ret;
+    }
+
     // dense BSND:等长 batch 可表示为整齐 varlen,合成
     // cu=[0,T,2T,...],[B,S,H,*] 连续视图零成本压成 packed [B*S,H,*],走 varlen
     // 核内直读路径,省掉 q/k/v/g 的 host 大转置(实测占端到端 ~28%)与回拷。
@@ -481,10 +495,12 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
         }
     }
 
-    // 输出:attnOut 恒定序列主序(TND/BSND,见 CheckOutputShapes),kernel 产出
-    // [H,T,V] 头连续,统一写临时张量再转置回写。
-    const aclTensor *oTmp = AllocTensor(executor, MakeShape({info.batch * info.hvNum, info.seqlen, info.vDim}),
-                                        params.q->GetDataType());
+    // BNSD 输入保持 head-major，kernel 直接跨步写 V2 要求的 BSND attnOut，
+    // 不再分配 oTmp 并执行 host 大转置。
+    const bool directTokenOut = layout == KdaFwdLayout::BNSD;
+    const aclTensor *oTmp = directTokenOut ? params.attnOut :
+        AllocTensor(executor, MakeShape({info.batch * info.hvNum, info.seqlen, info.vDim}),
+                    params.q->GetDataType());
     if (!(oTmp != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: oTmp != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
@@ -524,32 +540,34 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
     const aclTensor *fused = l0op::KdaChunkForwardFused(
         qNtd, kNtd, vNtd, gNtd, betaNtd, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTmp, finalStateTmp,
-        nullptr /* dense 无 cu_seqlens */, executor);
+        nullptr /* dense 无 cu_seqlens */, executor, directTokenOut ? "BSND" : "TND");
     if (!(fused != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: fused != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
-    const aclTensor *oBack = nullptr;
-    if (info.isRank3) {  // TND/NTD:[H,T,V] → [T,H,V]
-        oBack = Transpose(oTmp, {1, 0, 2}, executor);
-    } else {             // BSND/BNSD:[B*HV,S,V] → [B,HV,S,V] → [B,S,HV,V]
-        const aclTensor *oRank4 =
-            l0op::Reshape(oTmp, MakeShape({info.batch, info.hvNum, info.seqlen, info.vDim}), executor);
-        if (!(oRank4 != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: oRank4 != nullptr failed", __func__);
+    if (!directTokenOut) {
+        const aclTensor *oBack = nullptr;
+        if (info.isRank3) {  // TND/NTD:[H,T,V] → [T,H,V]
+            oBack = Transpose(oTmp, {1, 0, 2}, executor);
+        } else {             // BSND:[B*HV,S,V] → [B,HV,S,V] → [B,S,HV,V]
+            const aclTensor *oRank4 =
+                l0op::Reshape(oTmp, MakeShape({info.batch, info.hvNum, info.seqlen, info.vDim}), executor);
+            if (!(oRank4 != nullptr)) {
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: oRank4 != nullptr failed", __func__);
+                return ACLNN_ERR_INNER_NULLPTR;
+            }
+            oBack = Transpose(oRank4, {0, 2, 1, 3}, executor);
+        }
+        if (!(oBack != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: oBack != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
-        oBack = Transpose(oRank4, {0, 2, 1, 3}, executor);
-    }
-    if (!(oBack != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: oBack != nullptr failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
-    }
-    auto copied = l0op::ViewCopy(oBack, params.attnOut, executor);
-    if (!(copied != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: copied != nullptr failed", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
+        auto copied = l0op::ViewCopy(oBack, params.attnOut, executor);
+        if (!(copied != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: copied != nullptr failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     if (params.finalStateOut != nullptr) {
         const aclTensor *fsBack = l0op::Reshape(
