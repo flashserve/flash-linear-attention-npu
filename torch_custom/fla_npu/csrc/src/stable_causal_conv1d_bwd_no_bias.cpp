@@ -1,4 +1,5 @@
 // Stable-ABI entry for callers that only require dx, dw and d(initial_state).
+// aclnn: aclnnCausalConv1dBwd
 // The existing dispatcher schema keeps its four gradient outputs.
 namespace {
 
