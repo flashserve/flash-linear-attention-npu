@@ -70,6 +70,7 @@ _EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
 
 _TENSOR_HOLDERS = {
     "tensor",
+    "TensorArg",
     "optional_tensor",
     "out_tensor",
     "nd_tensor",
@@ -165,14 +166,12 @@ def _scalar_kind(expression: str, params: dict[str, str]) -> str:
     if re.fullmatch(r"[-+]?\d+", expression):
         return "int64"
     if re.fullmatch(r"[-+]?[\d.]+(?:[eE][-+]?\d+)?[fF]?", expression):
-        return "double"
+        return "float" if expression.endswith(("f", "F")) else "double"
     return WILDCARD
 
 
-def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
-    """symbol -> (file, argument kinds) for every FLA_STABLE_EXEC call."""
-
-    calls: dict[str, tuple[Path, list[str]]] = {}
+def adapter_call_sites(src_dir: Path):
+    """Yield each literal FLA_STABLE_EXEC call, including repeated uses of a symbol."""
     for source in sorted(src_dir.glob("stable_*.cpp")):
         text = strip_comments(source.read_text(encoding="utf-8", errors="replace"))
         for match in _EXEC_CALL.finditer(text):
@@ -200,8 +199,11 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
                     kinds.append(TENSOR)
                 else:
                     kinds.append(WILDCARD)
-            calls[symbol] = (source, kinds)
-    return calls
+            yield symbol, (source, kinds)
+
+
+def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
+    return dict(adapter_call_sites(src_dir))
 
 
 def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
@@ -283,6 +285,7 @@ def main() -> int:
                         help="one or more op_api/include/aclnnop directories: "
                              "the vendor OPP's, and CANN's for the built-in "
                              "operators (FastGelu)")
+    parser.add_argument("--vendor", type=Path, help="staged vendor with verified public/private ABI")
     parser.add_argument("--src-dir", default=str(SRC_DIR))
     parser.add_argument(
         "--ops",
@@ -293,7 +296,8 @@ def main() -> int:
     parser.add_argument("--json", default="")
     args = parser.parse_args()
 
-    adapters = adapter_calls(Path(args.src_dir))
+    sites = list(adapter_call_sites(Path(args.src_dir)))
+    adapters = dict(sites)
     adapters.update(hand_written_calls(Path(args.src_dir)))
     adapters = filter_adapters(adapters, args.ops)
     wanted = set(adapters)
@@ -302,6 +306,17 @@ def main() -> int:
     for include_dir in args.opp_include:
         for symbol, kinds in parse_headers(Path(include_dir), wanted).items():
             headers.setdefault(symbol, kinds)
+
+    private = set()
+    if args.vendor:
+        public, internal = _abi.validated_contract_groups(args.vendor, require_manifest=True)
+        contracts = {**public, **internal}
+        for symbol in wanted:
+            workspace = symbol + "GetWorkspaceSize"
+            if workspace in contracts:
+                headers[symbol] = list(contracts[workspace][:-2])
+                if workspace in internal:
+                    private.add(symbol)
 
     report: dict[str, dict] = {}
     failures = 0
@@ -317,8 +332,20 @@ def main() -> int:
                 "call_site": kinds}
             if symbol not in KNOWN_HEADER_GAPS:
                 failures += 1
+                print(f"adapter {symbol} ({source_name}): no declared ABI prototype")
             continue
-        problems = compare(headers[symbol], kinds)
+        if symbol in private:
+            problems = []
+            matching = [site for callee, site in sites if callee == symbol]
+            for file, arguments in matching or [(source, kinds)]:
+                issues = compare(headers[symbol], arguments)
+                if WILDCARD in arguments:
+                    issues.append("unresolved argument type")
+                if issues and not problems:
+                    source_name, kinds = file.name, arguments
+                problems.extend(f"{file.name}: {issue}" for issue in issues)
+        else:
+            problems = compare(headers[symbol], kinds)
         report[f"adapter:{symbol}"] = {
             "source": source_name,
             "status": "ok" if not problems else "mismatch",
