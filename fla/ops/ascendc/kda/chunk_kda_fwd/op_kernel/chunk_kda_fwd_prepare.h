@@ -227,6 +227,12 @@ public:
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
         inputSequenceMajor_ = tiling.inputSequenceMajor;
+        qkBatchStride_ = tiling.qkBatchStride;
+        qkTokenStride_ = tiling.qkTokenStride;
+        qkHeadStride_ = tiling.qkHeadStride;
+        vBatchStride_ = tiling.vBatchStride;
+        vTokenStride_ = tiling.vTokenStride;
+        vHeadStride_ = tiling.vHeadStride;
         usedCoreNum_ = tiling.prepareUsedCoreNum;
         constexpr uint64_t solvePipelineDepth = SAFE_GATE ? KDA_SOLVE_PIPELINE_DEPTH : 1;
         const uint64_t solveBytes =
@@ -299,20 +305,16 @@ private:
         vectorEventsAllocated_ = false;
     }
 
+    // q/k 共用一组 pitch：调用方保证 q 与 k 的 stride 完全一致（tiling 侧二次校验）。
+    // dense 时 (qkBatch, qkToken, qkHead) 与旧的两种布局分支逐项相等。
     __aicore__ inline uint64_t QOffset(uint64_t b, uint64_t h, uint64_t t, uint64_t d) const
     {
-        if (inputSequenceMajor_) {
-            return ((b * T_ + t) * H_ + h) * K_ + d;
-        }
-        return ((b * H_ + h) * T_ + t) * K_ + d;
+        return b * qkBatchStride_ + t * qkTokenStride_ + h * qkHeadStride_ + d;
     }
 
     __aicore__ inline uint64_t VInputOffset(uint64_t b, uint64_t hv, uint64_t t, uint64_t d) const
     {
-        if (inputSequenceMajor_) {
-            return ((b * T_ + t) * HV_ + hv) * V_ + d;
-        }
-        return ((b * HV_ + hv) * T_ + t) * V_ + d;
+        return b * vBatchStride_ + t * vTokenStride_ + hv * vHeadStride_ + d;
     }
 
     __aicore__ inline uint64_t KVOffset(uint64_t b, uint64_t hv, uint64_t t, uint64_t d, uint64_t dim) const
@@ -561,10 +563,8 @@ private:
         LocalTensor<T> qTyped = GateQTyped(slot);
         LocalTensor<T> kTyped = GateKTyped(slot);
         LocalTensor<GK_T> gateTyped = GateGTyped(slot);
-        CopyRowsIn(qTyped, q_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
-        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
+        CopyRowsIn(qTyped, q_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
+        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
         CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
     }
@@ -575,8 +575,7 @@ private:
         const uint64_t rows = elems / K_;
         LocalTensor<T> kTyped = GateQTyped(slot);
         LocalTensor<GK_T> gateTyped = GateGTyped(slot);
-        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
+        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
         CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
     }
@@ -1849,17 +1848,17 @@ private:
     __aicore__ inline void ScaleRowsByBeta(GlobalTensor<T> &src, GlobalTensor<T> &dst, uint64_t b, uint64_t hv,
                                            uint64_t start, uint64_t rowBegin, uint64_t rowCount, uint64_t dim,
                                            LocalTensor<float> &betaLocal, LocalTensor<float> &betaBrcb,
-                                           LocalTensor<float> &matrixLocal, bool sourceSequenceMajor = false)
+                                           LocalTensor<float> &matrixLocal, bool sourceIsVInput = false)
     {
         constexpr uint64_t vecElemsPerRepeat = 64;
         constexpr uint64_t typedOffsetFloats = 20480;
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
         uint64_t elemCount = rowCount * dim;
         uint64_t baseOffset = KVOffset(b, hv, start + rowBegin, 0, dim);
-        uint64_t sourceOffset = sourceSequenceMajor
+        uint64_t sourceOffset = sourceIsVInput
                                     ? VInputOffset(b, hv, start + rowBegin, 0)
                                     : baseOffset;
-        uint64_t sourceStride = sourceSequenceMajor ? HV_ * dim : dim;
+        uint64_t sourceStride = sourceIsVInput ? vTokenStride_ : dim;
 
         if constexpr (IsSameType<T, float>::value) {
             CopyRowsIn(matrixLocal, src, sourceOffset, rowCount, dim, sourceStride);
@@ -1924,7 +1923,7 @@ private:
         PipeBarrier<PIPE_V>();
         ScaleRowsByBeta(w_, w_, b, hv, start, rowBegin, rowCount, K_, betaLocal, betaBrcb, matrixLocal);
         ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin, rowCount, V_, betaLocal, betaBrcb,
-                        matrixLocal, inputSequenceMajor_);
+                        matrixLocal, true);
     }
 
     __aicore__ inline void FinalizePrepareIntermediates(uint64_t b, uint64_t hv, uint64_t start,
@@ -2563,6 +2562,13 @@ private:
     bool hasInitial_ = false;
     bool isVarLen_ = false;
     bool inputSequenceMajor_ = false;
+    // q/k 与 v 的输入 pitch（元素数）。dense 时等价于 (B,T,H) 三个方向的步长。
+    uint64_t qkBatchStride_ = 0;
+    uint64_t qkTokenStride_ = 0;
+    uint64_t qkHeadStride_ = 0;
+    uint64_t vBatchStride_ = 0;
+    uint64_t vTokenStride_ = 0;
+    uint64_t vHeadStride_ = 0;
     bool isAivOnly_ = false;
     uint64_t usedCoreNum_ = 1;
     uint64_t solveCoreIdx_ = 0;

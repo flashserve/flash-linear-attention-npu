@@ -67,6 +67,17 @@ TILING_DATA_FIELD_DEF(int64_t, kDecayWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, numSeqWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, numChunksWorkspaceOffset);
+
+// 输入 pitch：q/k 共用一组（要求 q、k 的 stride 完全一致），v 单独一组。
+// dense 时取 {B:T*H*K, T:H*K, H:K}（序列主序）或 {B:H*T*K, T:K, H:T*K}（头主序），
+// kernel 侧统一按 b*B + t*T + h*H + d 寻址，不再区分布局分支。
+// 新增字段一律追加在末尾：旧 kernel 读新 tiling 时前面字段不会错位。
+TILING_DATA_FIELD_DEF(int64_t, qkBatchStride);
+TILING_DATA_FIELD_DEF(int64_t, qkTokenStride);
+TILING_DATA_FIELD_DEF(int64_t, qkHeadStride);
+TILING_DATA_FIELD_DEF(int64_t, vBatchStride);
+TILING_DATA_FIELD_DEF(int64_t, vTokenStride);
+TILING_DATA_FIELD_DEF(int64_t, vHeadStride);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaFwd, ChunkKdaFwdTilingData)

@@ -246,6 +246,9 @@ public:
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
         inputSequenceMajor_ = tiling.inputSequenceMajor;
+        qkBatchStride_ = tiling.qkBatchStride;
+        qkTokenStride_ = tiling.qkTokenStride;
+        qkHeadStride_ = tiling.qkHeadStride;
         usedCoreNum_ = tiling.postWuUsedCoreNum;
         if ASCEND_IS_AIV {
             uint64_t subBlockNum = static_cast<uint64_t>(GetSubBlockNum());
@@ -414,10 +417,7 @@ private:
 
     __aicore__ inline uint64_t QOffset(uint64_t b, uint64_t h, uint64_t t, uint64_t d) const
     {
-        if (inputSequenceMajor_) {
-            return ((b * T_ + t) * H_ + h) * K_ + d;
-        }
-        return ((b * H_ + h) * T_ + t) * K_ + d;
+        return b * qkBatchStride_ + t * qkTokenStride_ + h * qkHeadStride_ + d;
     }
 
     __aicore__ inline uint64_t KVOffset(uint64_t b, uint64_t hv, uint64_t t, uint64_t d, uint64_t dim) const
@@ -1149,7 +1149,7 @@ private:
         LocalTensor<T> kStage = TypicalGateK(slot);
         LocalTensor<GK_T> gateStage = TypicalGateG(slot);
         CopyRowsIn(kStage, k_, QOffset(b, h, token, 0), rows, K_,
-                   inputSequenceMajor_ ? H_ * K_ : K_);
+                   qkTokenStride_);
         DataCopy(gateStage, gk_[KVOffset(b, hv, token, 0, K_)], static_cast<uint32_t>(elems));
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
     }
@@ -1270,7 +1270,7 @@ private:
             LocalTensor<float> gateStage = TypicalGatePipelineG(slot);
             LocalTensor<float> refStage = TypicalGatePipelineRef(slot);
             CopyRowsIn(kStage, k_, QOffset(b, h, start + rowBegin, 0), rowEnd - rowBegin, K_,
-                       inputSequenceMajor_ ? H_ * K_ : K_);
+                       qkTokenStride_);
             DataCopy(gateStage, gk_[KVOffset(b, hv, start + rowBegin, 0, K_)],
                      static_cast<uint32_t>(elems));
             DataCopy(refStage, gk_[KVOffset(b, hv, start + curT - 1, 0, K_)],
@@ -1367,7 +1367,7 @@ private:
             LocalTensor<GK_T> gateTyped = vecBuf_.Get<GK_T>()[
                 (gateOffsetBytes + sizeof(GK_T) - 1) / sizeof(GK_T)];
             CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_,
-                       inputSequenceMajor_ ? H_ * K_ : K_);
+                       qkTokenStride_);
             LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gLocal, gateTyped, elemCount);
             Cast(kLocal, typedLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(elemCount));
             PipeBarrier<PIPE_V>();
@@ -1917,6 +1917,9 @@ private:
     bool isVarLen_ = false;
     bool isAivOnly_ = false;
     bool inputSequenceMajor_ = false;
+    uint64_t qkBatchStride_ = 0;
+    uint64_t qkTokenStride_ = 0;
+    uint64_t qkHeadStride_ = 0;
     uint64_t usedCoreNum_ = 1;
     uint64_t solveCoreIdx_ = 0;
     __gm__ int64_t *chunkIndicesAddr_ = nullptr;

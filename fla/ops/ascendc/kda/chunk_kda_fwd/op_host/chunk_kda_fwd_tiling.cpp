@@ -11,6 +11,7 @@
 namespace optiling {
 namespace {
 constexpr size_t INPUT_Q_IDX = 0;
+constexpr size_t INPUT_K_IDX = 1;
 constexpr size_t INPUT_V_IDX = 2;
 constexpr size_t INPUT_G_IDX = 3;
 constexpr size_t INPUT_A_LOG_IDX = 5;
@@ -87,8 +88,8 @@ bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &i
     if (qShapePtr == nullptr || vShapePtr == nullptr || layout == nullptr) {
         return false;
     }
-    const auto &qShape = qShapePtr->GetStorageShape();
-    const auto &vShape = vShapePtr->GetStorageShape();
+    const auto &qShape = qShapePtr->GetOriginShape();
+    const auto &vShape = vShapePtr->GetOriginShape();
     info.rank = qShape.GetDimNum();
     if (info.rank != vShape.GetDimNum() || (info.rank != 3 && info.rank != 4)) {
         return false;
@@ -158,6 +159,58 @@ bool ResolveSequenceInfo(gert::TilingContext *context, int64_t seqlen, int64_t c
     }
     return totalChunks > 0;
 }
+
+struct QkvStride {
+    int64_t batch = 0;
+    int64_t token = 0;
+    int64_t head = 0;
+};
+
+// 把输入张量的 view stride 归一化成 {batch, token, head} 三个 pitch。
+// 没有 stride 信息时按布局回退到 dense pitch：序列主序 {B:T*H*K, T:H*K, H:K}、
+// 头主序 {B:H*T*K, T:K, H:T*K}。两种回退值与旧地址公式逐项相等。
+bool ResolveQkvStride(gert::TilingContext *context, size_t index, const ShapeInfo &shape,
+                      int64_t heads, int64_t dim, QkvStride &out)
+{
+    if (heads <= 0 || dim <= 0 || shape.seqlen <= 0 || shape.rank < 3) {
+        return false;
+    }
+    const bool rank4 = shape.rank == 4;
+    const size_t featureDim = static_cast<size_t>(shape.rank - 1);
+    const size_t tokenDim = rank4 ? (shape.sequenceMajor ? 1 : 2) : (shape.sequenceMajor ? 0 : 1);
+    const size_t headDim = rank4 ? (shape.sequenceMajor ? 2 : 1) : (shape.sequenceMajor ? 1 : 0);
+
+    out.token = shape.sequenceMajor ? heads * dim : dim;
+    out.head = shape.sequenceMajor ? dim : shape.seqlen * dim;
+    out.batch = rank4 ? shape.seqlen * heads * dim : 0;
+
+    const auto *stride = context->GetInputStride(index);
+    if (stride != nullptr && stride->GetDimNum() == static_cast<size_t>(shape.rank)) {
+        if (stride->GetStride(featureDim) != 1) {
+            return false;
+        }
+        out.token = stride->GetStride(tokenDim);
+        out.head = stride->GetStride(headDim);
+        if (rank4) {
+            out.batch = stride->GetStride(0);
+        }
+    }
+
+    if (out.token <= 0 || out.head < dim) {
+        return false;
+    }
+    const int64_t minTokenStride = (heads - 1) * out.head + dim;
+    if (out.token < minTokenStride) {
+        return false;
+    }
+    if (rank4 && shape.batch > 1) {
+        const int64_t minBatchStride = (shape.seqlen - 1) * out.token + minTokenStride;
+        if (out.batch < minBatchStride) {
+            return false;
+        }
+    }
+    return true;
+}
 } // namespace
 
 ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
@@ -190,6 +243,20 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     int64_t totalChunks = 0;
     if (!ResolveSequenceInfo(context, shape.seqlen, chunkSize, shape.batch,
                              isVarLen, seqNum, totalChunks)) {
+        return ge::GRAPH_FAILED;
+    }
+
+    QkvStride qStride;
+    QkvStride kStride;
+    QkvStride vStride;
+    if (!ResolveQkvStride(context, INPUT_Q_IDX, shape, shape.qHeads, shape.kDim, qStride) ||
+        !ResolveQkvStride(context, INPUT_K_IDX, shape, shape.qHeads, shape.kDim, kStride) ||
+        !ResolveQkvStride(context, INPUT_V_IDX, shape, shape.vHeads, shape.vDim, vStride)) {
+        return ge::GRAPH_FAILED;
+    }
+    if (qStride.batch != kStride.batch || qStride.token != kStride.token ||
+        qStride.head != kStride.head) {
+        // aclnn 只在 q/k stride 完全一致时才透传视图；不一致的输入应已被连续化。
         return ge::GRAPH_FAILED;
     }
 
@@ -356,6 +423,12 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     tiling.set_storeVNew(storeVNew);
     tiling.set_storeH(storeH);
     tiling.set_stage(stage);
+    tiling.set_qkBatchStride(qStride.batch);
+    tiling.set_qkTokenStride(qStride.token);
+    tiling.set_qkHeadStride(qStride.head);
+    tiling.set_vBatchStride(vStride.batch);
+    tiling.set_vTokenStride(vStride.token);
+    tiling.set_vHeadStride(vStride.head);
     tiling.set_gateDataType(gDesc->GetDataType() == ge::DT_FLOAT ? 2 :
         (gDesc->GetDataType() == ge::DT_BF16 ? 1 : 0));
     tiling.set_gateUsedCoreNum(static_cast<int64_t>(blockDim) * 2);

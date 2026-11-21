@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "acl/acl.h"
@@ -534,11 +535,88 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor)
+namespace {
+
+// q/k/v 直通视图的 stride 白名单。要求：末维连续、head 维不重叠、token/batch 维
+// 覆盖完整 span。满足时内核按 b*B+t*T+h*H+d 直接寻址，无需在 L2 物化。
+bool IsSupportedQkvView(const aclTensor *tensor, KdaFwdLayout layout)
 {
-    CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    if (tensor == nullptr) {
+        return false;
+    }
+    const bool rank4 = layout == KdaFwdLayout::BSND || layout == KdaFwdLayout::BNSD;
+    const bool sequenceMajor = layout == KdaFwdLayout::BSND || layout == KdaFwdLayout::TND;
+    const size_t expectedRank = rank4 ? 4 : 3;
+    if (Rank(tensor) != expectedRank) {
+        return false;
+    }
+    const auto &strides = tensor->GetViewStrides();
+    if (strides.size() != expectedRank) {
+        return false;
+    }
+    const size_t tokenDim = rank4 ? (sequenceMajor ? 1 : 2) : (sequenceMajor ? 0 : 1);
+    const size_t headDim = rank4 ? (sequenceMajor ? 2 : 1) : (sequenceMajor ? 1 : 0);
+    const size_t featureDim = expectedRank - 1;
+    for (size_t i = 0; i < expectedRank; ++i) {
+        if (strides[i] <= 0) {
+            return false;
+        }
+    }
+    const int64_t heads = Dim(tensor, headDim);
+    const int64_t dim = Dim(tensor, featureDim);
+    if (heads <= 0 || dim <= 0 || strides[featureDim] != 1 || strides[headDim] < dim) {
+        return false;
+    }
+    const int64_t minTokenStride = (heads - 1) * strides[headDim] + dim;
+    if (strides[tokenDim] < minTokenStride) {
+        return false;
+    }
+    if (rank4 && Dim(tensor, 0) > 1) {
+        const int64_t seqLen = sequenceMajor ? Dim(tensor, 1) : Dim(tensor, 2);
+        const int64_t minBatchStride = (seqLen - 1) * strides[tokenDim] + minTokenStride;
+        if (strides[0] < minBatchStride) {
+            return false;
+        }
+    }
+    // DataCopyExtParams.srcStride 以字节计且为 uint32。
+    const int64_t gapBytes = (strides[tokenDim] - dim) * 2;
+    if (gapBytes > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+        return false;
+    }
+    return true;
+}
+
+bool SameQkvStrides(const aclTensor *lhs, const aclTensor *rhs)
+{
+    if (lhs == nullptr || rhs == nullptr) {
+        return false;
+    }
+    const auto &lhsStrides = lhs->GetViewStrides();
+    const auto &rhsStrides = rhs->GetViewStrides();
+    return lhsStrides.size() == rhsStrides.size() &&
+           std::equal(lhsStrides.begin(), lhsStrides.end(), rhsStrides.begin());
+}
+
+// 用 CreateView 把原始 view 的 stride/offset 带进算子描述符，tiling 才能读到真实 pitch。
+const aclTensor *MakeStridedView(const aclTensor *tensor, aclOpExecutor *executor)
+{
+    if (tensor == nullptr || IsContiguous(tensor)) {
+        return tensor;
+    }
+    return executor->CreateView(tensor, tensor->GetViewShape(), tensor->GetStorageShape(),
+                                tensor->GetViewStrides(), tensor->GetViewOffset());
+}
+
+} // namespace
+
+aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor,
+                             bool qkvHandled = false)
+{
+    if (!qkvHandled) {
+        CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+        CHECK_RET(MakeContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+        CHECK_RET(MakeContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    }
     CHECK_RET(MakeContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(MakeContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(MakeContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -712,7 +790,26 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     KdaFwdLayout parsedLayout = KdaFwdLayout::BSND;
     KdaShapeInfo info;
     CHECK_RET(CheckParams(params, parsedLayout, info) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(ContiguousInputs(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    // BSND/BNSD 不需要 host 侧转置：q/k/v 命中 stride 白名单时直接透传视图，
+    // 由 tiling 把 pitch 下给 kernel；其余情况保持原有连续化路径。
+    bool qkvDirect = false;
+    if ((parsedLayout == KdaFwdLayout::BSND || parsedLayout == KdaFwdLayout::BNSD) &&
+        IsSupportedQkvView(params.q, parsedLayout) &&
+        IsSupportedQkvView(params.k, parsedLayout) &&
+        IsSupportedQkvView(params.v, parsedLayout) &&
+        SameQkvStrides(params.q, params.k)) {
+        const aclTensor *qView = MakeStridedView(params.q, executorPtr);
+        const aclTensor *kView = MakeStridedView(params.k, executorPtr);
+        const aclTensor *vView = MakeStridedView(params.v, executorPtr);
+        if (qView != nullptr && kView != nullptr && vView != nullptr) {
+            params.q = qView;
+            params.k = kView;
+            params.v = vView;
+            qkvDirect = true;
+        }
+    }
+    CHECK_RET(ContiguousInputs(params, executorPtr, qkvDirect) == ACLNN_SUCCESS,
+              ACLNN_ERR_PARAM_INVALID);
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;

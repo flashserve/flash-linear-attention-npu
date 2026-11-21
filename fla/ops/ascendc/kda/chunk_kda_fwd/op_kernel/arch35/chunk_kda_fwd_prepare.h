@@ -908,6 +908,12 @@ public:
         hasInitial_ = tiling.hasInitialState;
         isVarLen_ = tiling.isVarLen;
         inputSequenceMajor_ = tiling.inputSequenceMajor;
+        qkBatchStride_ = tiling.qkBatchStride;
+        qkTokenStride_ = tiling.qkTokenStride;
+        qkHeadStride_ = tiling.qkHeadStride;
+        vBatchStride_ = tiling.vBatchStride;
+        vTokenStride_ = tiling.vTokenStride;
+        vHeadStride_ = tiling.vHeadStride;
         fusePostWu_ = tiling.fusePostWu;
         computeGateInPrepare_ = tiling.computeGateInPrepare;
         hasALog_ = tiling.hasALog;
@@ -1002,18 +1008,12 @@ private:
 
     __aicore__ inline uint64_t QOffset(uint64_t b, uint64_t h, uint64_t t, uint64_t d) const
     {
-        if (inputSequenceMajor_) {
-            return ((b * T_ + t) * H_ + h) * K_ + d;
-        }
-        return ((b * H_ + h) * T_ + t) * K_ + d;
+        return b * qkBatchStride_ + t * qkTokenStride_ + h * qkHeadStride_ + d;
     }
 
     __aicore__ inline uint64_t VInputOffset(uint64_t b, uint64_t hv, uint64_t t, uint64_t d) const
     {
-        if (inputSequenceMajor_) {
-            return ((b * T_ + t) * HV_ + hv) * V_ + d;
-        }
-        return ((b * HV_ + hv) * T_ + t) * V_ + d;
+        return b * vBatchStride_ + t * vTokenStride_ + hv * vHeadStride_ + d;
     }
 
     __aicore__ inline uint64_t RawGateOffset(uint64_t b, uint64_t hv, uint64_t t, uint64_t d) const
@@ -1336,8 +1336,8 @@ private:
         LocalTensor<T> qTyped = GateQTyped(slot);
         LocalTensor<T> kTyped = GateKTyped(slot);
         LocalTensor<GK_T> gateTyped = GateGTyped(slot);
-        CopyRowsIn(qTyped, q_, QOffset(b, h, token, 0), rows, K_, inputSequenceMajor_ ? H_ * K_ : K_);
-        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_, inputSequenceMajor_ ? H_ * K_ : K_);
+        CopyRowsIn(qTyped, q_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
+        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
         if (!computeGateInPrepare_) {
             CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
         }
@@ -1346,7 +1346,7 @@ private:
             LocalTensor<T> vTyped = GateVTyped(slot);
             LocalTensor<BETA_T> betaTyped = GateBetaTyped(slot);
             CopyRowsIn(vTyped, v_, VInputOffset(b, hv, token, 0), rows, V_,
-                       inputSequenceMajor_ ? HV_ * V_ : V_);
+                       vTokenStride_);
             CopyVectorIn(betaTyped, beta_, BetaOffset(b, hv, token), rows);
         }
 #endif
@@ -1509,7 +1509,7 @@ private:
         const uint64_t rows = elems / K_;
         LocalTensor<T> kTyped = GateQTyped(slot);
         LocalTensor<GK_T> gateTyped = GateGTyped(slot);
-        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_, inputSequenceMajor_ ? H_ * K_ : K_);
+        CopyRowsIn(kTyped, k_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
         if (!computeGateInPrepare_) {
             CopyVectorIn(gateTyped, gk_, KVOffset(b, hv, token, 0, K_), elems);
         }
@@ -4070,17 +4070,17 @@ private:
     __aicore__ inline void ScaleRowsByBeta(GlobalTensor<T> &src, GlobalTensor<T> &dst, uint64_t b, uint64_t hv,
                                            uint64_t start, uint64_t rowBegin, uint64_t rowCount, uint64_t dim,
                                            LocalTensor<float> &betaLocal, LocalTensor<float> &betaBrcb,
-                                           LocalTensor<float> &matrixLocal, bool sourceSequenceMajor = false)
+                                           LocalTensor<float> &matrixLocal, bool sourceIsVInput = false)
     {
         constexpr uint64_t vecElemsPerRepeat = 64;
         constexpr uint64_t typedOffsetFloats = 20480;
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
         uint64_t elemCount = rowCount * dim;
         uint64_t baseOffset = KVOffset(b, hv, start + rowBegin, 0, dim);
-        uint64_t sourceOffset = sourceSequenceMajor
+        uint64_t sourceOffset = sourceIsVInput
                                     ? VInputOffset(b, hv, start + rowBegin, 0)
                                     : baseOffset;
-        uint64_t sourceStride = sourceSequenceMajor ? HV_ * dim : dim;
+        uint64_t sourceStride = sourceIsVInput ? vTokenStride_ : dim;
 
         if constexpr (IsSameType<T, float>::value) {
             CopyRowsIn(matrixLocal, src, sourceOffset, rowCount, dim, sourceStride);
@@ -4167,7 +4167,7 @@ private:
                 ScaleRowsByBeta(w_, w_, b, hv, start, rowBegin + tileRow, tileCount, K_,
                                 betaLocal, betaBrcb, matrixLocal);
                 ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin + tileRow, tileCount, V_,
-                                betaLocal, betaBrcb, matrixLocal, inputSequenceMajor_);
+                                betaLocal, betaBrcb, matrixLocal, true);
             }
             return;
         }
@@ -4179,7 +4179,7 @@ private:
 #endif
         ScaleRowsByBeta(w_, w_, b, hv, start, rowBegin, rowCount, K_, betaLocal, betaBrcb, matrixLocal);
         ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin, rowCount, V_, betaLocal, betaBrcb,
-                        matrixLocal, inputSequenceMajor_);
+                        matrixLocal, true);
     }
 
     __aicore__ inline void FinalizePrepareIntermediates(uint64_t b, uint64_t hv, uint64_t chunkIdx,
@@ -4255,7 +4255,7 @@ private:
                 CopyVectorIn(kgRefRow, gk_, KVOffset(b, hv, start + curT - 1, 0, K_),
                              static_cast<uint64_t>(K_));
                 CopyRowsIn(kgTyped, k_, QOffset(b, kgHead, start + tileRow, 0), rows, K_,
-                           inputSequenceMajor_ ? H_ * K_ : K_);
+                           qkTokenStride_);
                 SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
                 WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
                 // 复用 post-wu 已调优的 regbase 实现（单循环内 load/compute/store），
@@ -5144,6 +5144,12 @@ private:
     bool isAivOnly_ = false;
     bool headPairMode_ = false;
     bool inputSequenceMajor_ = false;
+    uint64_t qkBatchStride_ = 0;
+    uint64_t qkTokenStride_ = 0;
+    uint64_t qkHeadStride_ = 0;
+    uint64_t vBatchStride_ = 0;
+    uint64_t vTokenStride_ = 0;
+    uint64_t vHeadStride_ = 0;
     bool fusePostWu_ = false;
     bool computeGateInPrepare_ = false;
     bool hasALog_ = false;
