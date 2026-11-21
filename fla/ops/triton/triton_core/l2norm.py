@@ -101,7 +101,11 @@ def l2norm_bwd_kernel(
     i_t_start = tl.program_id(0)
     num_blocks = bt_size
 
-    total_i_t = T // BT
+    # cdiv so the trailing partial block (T % BT != 0) is also processed;
+    # a plain floor divide drops those rows' dx entirely. This exact fix was
+    # introduced in 1222690d and lost in f567cf26's file-level revert of
+    # public-operator files; restore it.
+    total_i_t = triton.cdiv(T, BT)
     base_tasks_per_block = total_i_t // num_blocks
     remainder_tasks = total_i_t % num_blocks
 
