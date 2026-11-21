@@ -274,6 +274,9 @@ public:
             }
 
             const int64_t taskTokens = eos - bos;
+            if (taskTokens == 0) {
+                continue;
+            }
             const bool hasNextTask = task + coreNum < tiling_->taskCount;
             currentBank = (currentBank + 1U) % GRSV_STATE_BANKS_3;
             const uint32_t initialBank = currentBank;

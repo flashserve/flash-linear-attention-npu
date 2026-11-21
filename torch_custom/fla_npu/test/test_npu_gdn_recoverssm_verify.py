@@ -135,3 +135,59 @@ def test_gdn_recoverssm_verify_null_and_empty():
     assert out.numel() == 0
     torch.testing.assert_close(checkpoint, before_checkpoint, atol=0, rtol=0)
     torch.testing.assert_close(replay, before_replay, atol=0, rtol=0)
+
+
+def test_gdn_recoverssm_verify_padded_requests():
+    torch.manual_seed(1319)
+    device = "npu"
+    hk, hv, kd, vd, window = 8, 24, 128, 128, 4
+    total = 7
+    offsets = torch.tensor(
+        [0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 7, 7, 7],
+        dtype=torch.int32,
+        device=device,
+    )
+    indices_storage = torch.full((48,), -1, dtype=torch.int32, device=device)
+    indices_storage[::4].copy_(torch.arange(1, 13, dtype=torch.int32, device=device))
+    pages = indices_storage[::4]
+
+    q = torch.randn(1, total, hk, kd, dtype=torch.bfloat16, device=device)
+    k = torch.randn_like(q)
+    v = torch.randn(1, total, hv, vd, dtype=torch.bfloat16, device=device)
+    a = torch.randn(total, hv, dtype=torch.bfloat16, device=device)
+    b = torch.randn(total, hv, dtype=torch.bfloat16, device=device)
+    A_log = torch.randn(hv, dtype=torch.float32, device=device)
+    dt_bias = torch.randn(hv, dtype=torch.float32, device=device)
+
+    checkpoint_storage = torch.randn(
+        13, hv, vd, kd + 4, dtype=torch.bfloat16, device=device
+    )
+    checkpoint = checkpoint_storage[..., :kd]
+    payload = vd + kd + 1
+    replay_storage = torch.full(
+        (13, hv, window, payload + 3), -7.0, dtype=torch.float32, device=device
+    )
+    replay = replay_storage[..., :payload]
+
+    expected_out, expected_records = _cpu_reference(
+        A_log, a, b, dt_bias, q, k, v, checkpoint, offsets.tolist(),
+        pages.tolist(), window, 0.25, 0.5, 2.0, True,
+    )
+    actual = gdn_recoverssm_verify(
+        A_log, a, b, dt_bias, q, k, v, checkpoint, replay,
+        offsets, pages, spec_query_len=window, scale=0.25,
+        softplus_beta=0.5, softplus_threshold=2.0,
+        use_qk_l2norm_in_kernel=True,
+    )
+    _assert_close(actual, expected_out, "padded/out")
+    for page, records in expected_records.items():
+        valid = records.shape[1]
+        _assert_close(
+            replay[page, :, :valid], records, f"padded/replay/{page}"
+        )
+    torch.testing.assert_close(
+        replay_storage[..., payload:],
+        torch.full_like(replay_storage[..., payload:], -7.0),
+        atol=0,
+        rtol=0,
+    )
