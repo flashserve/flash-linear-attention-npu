@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "state": {
+    "dtype": ["bfloat16", "float32"],
+    "rtol": 0.015625,
+    "atol": 0.0000152587890625,
+    "matched_ratio": 0.999
+  },
+  "replay": {
+    "dtype": "float32",
+    "read_only": true
+  },
+  "compare_region": "final and non-null boundary checkpoint pages"
+}
