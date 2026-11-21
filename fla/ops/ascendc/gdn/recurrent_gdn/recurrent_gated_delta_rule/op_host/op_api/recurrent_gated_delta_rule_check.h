@@ -141,7 +141,7 @@ inline bool MatrixView(const aclTensor *t, size_t rowAxis)
         static_cast<uint64_t>(s[rowAxis] - 128) <= std::numeric_limits<uint32_t>::max() / ElementBytes(t);
 }
 
-inline bool Check(const Params &p)
+inline aclnnStatus Check(const Params &p)
 {
     using op::DataType;
     constexpr const char *entity = "aclnnRecurrentGatedDeltaRuleV2";
@@ -149,21 +149,21 @@ inline bool Check(const Params &p)
         {"query",p.q},{"key",p.k},{"value",p.v},{"beta",p.beta},{"state",p.state},
         {"actual_seq_lengths",p.lengths},{"ssm_state_indices",p.indices},{"out",p.out}};
     for (const auto &input : required) {
-        if (!input.second) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, input.first, "input argument must not be nullptr"); return false; }
+        if (!input.second) { OP_LOGE_WITH_INVALID_INPUT(entity, input.first); return ACLNN_ERR_PARAM_NULLPTR; }
     }
     if (p.gk) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, "gk", "gk is not supported");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (!std::isfinite(p.scale)) {
         OP_LOGE_FOR_INVALID_VALUE(entity, "scaleValue", std::to_string(p.scale), "finite float32");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (p.rawGate && (!p.g || !p.aLog)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity, "use_gate_in_kernel",
             std::string("true requires non-null g and A_log; g=") + (p.g ? "present" : "null") +
             ", A_log=" + (p.aLog ? "present" : "null"));
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     struct TensorRule {
         const char *first;
@@ -186,16 +186,16 @@ inline bool Check(const Params &p)
         {"ssm_state_indices",p.indices,{DataType::DT_INT32},"[int32]",0},
         {"num_accepted_tokens",p.accepted,{DataType::DT_INT32},"[int32]",1}};
     for (const auto &input : tensors) {
-        if (!Type(input.second,input.allowed,input.first,input.expected,entity)) return false;
+        if (!Type(input.second,input.allowed,input.first,input.expected,entity)) return ACLNN_ERR_PARAM_INVALID;
         if (input.second && input.second->GetStorageFormat() == op::Format::FORMAT_FRACTAL_NZ) {
             OP_LOGE_FOR_INVALID_FORMAT(entity, input.first, "FRACTAL_NZ", "any format except FRACTAL_NZ");
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
         if (!input.second || input.rank == 0) continue;
         const size_t rank = input.second->GetViewShape().GetDimNum();
         if (rank != input.rank) {
             OP_LOGE_FOR_INVALID_SHAPEDIM(entity,input.first,std::to_string(rank),std::to_string(input.rank));
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     const int64_t t = p.q->GetViewShape().GetDim(0), hk = p.q->GetViewShape().GetDim(1);
@@ -205,35 +205,35 @@ inline bool Check(const Params &p)
          std::make_pair("value.HV",hv),std::make_pair("state.Cstate",blocks),std::make_pair("actual_seq_lengths.B",b)}) {
         if (dim.second <= 0) {
             OP_LOGE_FOR_INVALID_VALUE(entity,dim.first,std::to_string(dim.second),">0");
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (hv % hk || hv / hk > 16) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(entity,"query.HK,value.HV",
             std::to_string(hk)+","+std::to_string(hv),"HV/HK must be an integer in [1,16]");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (b > std::numeric_limits<int64_t>::max() / hv) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(entity,"actual_seq_lengths.B,value.HV",
             std::to_string(b)+","+std::to_string(hv),"B*HV must fit int64 task addressing");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (!Shape(p.q,{t,hk,128},"query") || !Shape(p.k,{t,hk,128},"key") || !Shape(p.v,{t,hv,128},"value") ||
-        !Shape(p.beta,{t,hv},"beta") || !Shape(p.state,{blocks,hv,128,128},"state") || !Shape(p.out,{t,hv,128},"out")) return false;
+        !Shape(p.beta,{t,hv},"beta") || !Shape(p.state,{blocks,hv,128,128},"state") || !Shape(p.out,{t,hv,128},"out")) return ACLNN_ERR_PARAM_INVALID;
     if (p.indices->GetViewShape().GetDimNum() == 1) {
-        if (!Shape(p.indices,{t},"ssm_state_indices")) return false;
+        if (!Shape(p.indices,{t},"ssm_state_indices")) return ACLNN_ERR_PARAM_INVALID;
     } else if (p.indices->GetViewShape().GetDimNum() == 2) {
         if (p.indices->GetViewShape().GetDim(0) != b || p.indices->GetViewShape().GetDim(1) <= 0) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(entity,"ssm_state_indices",rgdn_error::ShapeText(p.indices->GetViewShape()),
                 "expected [B="+std::to_string(b)+",Ckpt] with Ckpt>0");
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
         OP_LOGE_FOR_INVALID_SHAPEDIM(entity,"ssm_state_indices",std::to_string(p.indices->GetViewShape().GetDimNum()),"1 or 2");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if ((p.g && !Shape(p.g,{t,hv},"g")) || (p.aLog && !Shape(p.aLog,{hv},"A_log")) ||
-        (p.bias && !Shape(p.bias,{hv},"dt_bias")) || (p.accepted && !Shape(p.accepted,{b},"num_accepted_tokens"))) return false;
+        (p.bias && !Shape(p.bias,{hv},"dt_bias")) || (p.accepted && !Shape(p.accepted,{b},"num_accepted_tokens"))) return ACLNN_ERR_PARAM_INVALID;
     for (const auto &input : tensors) {
         if (input.second && !ViewValid(input.second)) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,input.first,
@@ -241,7 +241,7 @@ inline bool Check(const Params &p)
                 rgdn_error::ShapeText(input.second->GetViewShape())+", strides="+
                 rgdn_error::StrideText(input.second->GetViewStrides())+", offset="+std::to_string(input.second->GetViewOffset())+
                 ", storage="+rgdn_error::ShapeText(input.second->GetStorageShape()));
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     for (const auto &input : required) {
@@ -250,12 +250,12 @@ inline bool Check(const Params &p)
             OP_LOGE_FOR_INVALID_STRIDE(entity,input.first,rgdn_error::StrideText(input.second->GetViewStrides()),
                 input.second == p.state ? "positive strides, K stride=1, V stride>=128, row byte gap<=UINT32_MAX" :
                 "positive strides, last stride=1, token stride>=128, token byte gap<=UINT32_MAX");
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (!op::IsContiguous(p.out)) {
         OP_LOGE_FOR_INVALID_STRIDE(entity,"out",rgdn_error::StrideText(p.out->GetViewStrides()),"contiguous [T,HV,128]");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     // Fast proof for padding and permutations; exact intervals admit legal
     // interleaved State views instead of treating an inconclusive proof as failure.
@@ -274,7 +274,7 @@ inline bool Check(const Params &p)
         for (size_t i=1;i<intervals.size();++i) if(intervals[i-1].second>intervals[i].first) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,"state",
                 "writable State elements overlap; strides="+rgdn_error::StrideText(p.state->GetViewStrides()));
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     for (const auto &input : tensors) {
@@ -282,14 +282,14 @@ inline bool Check(const Params &p)
         if (Alias(p.state,input.second) || Alias(p.out,input.second)) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,input.first,
                 std::string("read-only input overlaps writable ")+(Alias(p.state,input.second) ? "state" : "out"));
-            return false;
+            return ACLNN_ERR_PARAM_INVALID;
         }
     }
     if (Alias(p.state,p.out)) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(entity,"state,out","writable State and out storage overlap");
-        return false;
+        return ACLNN_ERR_PARAM_INVALID;
     }
-    return true;
+    return ACLNN_SUCCESS;
 }
 } // namespace rgdn_check
 #endif

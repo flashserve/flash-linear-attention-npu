@@ -123,7 +123,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++index) {
         if (requiredInputs[index] == nullptr) {
             const char *param_name = requiredInputNames[index];
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
@@ -132,7 +132,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         const char *param_name = dqOut == nullptr ? "dqOut" : dkOut == nullptr ? "dkOut" :
             dvOut == nullptr ? "dvOut" : dbetaOut == nullptr ? "dbetaOut" : dgOut == nullptr ? "dgOut" :
             workspaceSize == nullptr ? "workspaceSize" : "executor";
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, param_name, "input argument must not be nullptr");
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
@@ -155,7 +155,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
         const char *actual = cuSeqlensOptional == nullptr ? "cuSeqlens absent; chunkIndices present" :
             "cuSeqlens present; chunkIndices absent";
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual, "both present or both absent");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual, "both present or both absent");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -175,8 +175,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const aclTensor **contiguousInputs[] = {&q, &k, &v, &vNew, &dO, &du, &g, &beta, &h, &dh, &a,
                                             &qRstdOptional, &kRstdOptional, &betaRawOptional};
     for (auto **tensor : contiguousInputs) {
-        if (MakeContiguous(*tensor, executorPtr) != ACLNN_SUCCESS) {
-            return ACLNN_ERR_PARAM_INVALID;
+        // 连续化失败属于执行器/l0op 内部失败，透传 561103，不伪装成 161002。
+        const aclnnStatus contiguousStatus = MakeContiguous(*tensor, executorPtr);
+        if (contiguousStatus != ACLNN_SUCCESS) {
+            return contiguousStatus;
         }
     }
 
@@ -216,9 +218,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdFinalize);
-    if (CommonOpExecutorRun(workspace, workspaceSize, executor, stream) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkGatedDeltaRuleBwdFinalize launch failed.", __func__);
-        return ACLNN_ERR_INNER_NULLPTR;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

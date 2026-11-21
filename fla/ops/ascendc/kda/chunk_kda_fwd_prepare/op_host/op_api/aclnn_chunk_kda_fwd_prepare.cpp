@@ -332,29 +332,33 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         params.aqkOut, params.akkOut, params.wOut, params.uOut,
         params.qgOut, params.kgOut, params.qgScaledOut,
         params.qHatOut, params.kHatOut};
-    for (const aclTensor *output : bf16Outputs) {
-        if (output == nullptr) {
+    const char *bf16OutputNames[] = {"Aqk", "Akk", "w", "u", "qg", "kg", "qgScaled", "qHat", "kHat"};
+    for (size_t i = 0; i < sizeof(bf16Outputs) / sizeof(bf16Outputs[0]); ++i) {
+        if (bf16Outputs[i] == nullptr) {
             continue;
         }
-        if (!(output->GetDataType() == DataType::DT_BF16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-            OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
-            "Aqk/Akk/w/u/qg/kg/qgScaled/qHat/kHat 输出必须为 BF16");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
+        if (!(bf16Outputs[i]->GetDataType() == DataType::DT_BF16)) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, bf16OutputNames[i],
+                ge::TypeUtils::DataTypeToSerialString(bf16Outputs[i]->GetDataType()),
+                "output must be bf16");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const aclTensor *fp32Outputs[] = {
         params.gkOut, params.qRstdOut, params.kRstdOut, params.betaEffOut};
-    for (const aclTensor *output : fp32Outputs) {
-        if (output == nullptr) {
+    const char *fp32OutputNames[] = {"gk", "qRstd", "kRstd", "betaEff"};
+    for (size_t i = 0; i < sizeof(fp32Outputs) / sizeof(fp32Outputs[0]); ++i) {
+        if (fp32Outputs[i] == nullptr) {
             continue;
         }
-        if (!(output->GetDataType() == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-            OP_NAME, "output", ge::TypeUtils::DataTypeToSerialString(output->GetDataType()),
-            "gk/qRstd/kRstd/betaEff 输出必须为 FP32");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
+        if (!(fp32Outputs[i]->GetDataType() == DataType::DT_FLOAT)) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, fp32OutputNames[i],
+                ge::TypeUtils::DataTypeToSerialString(fp32Outputs[i]->GetDataType()),
+                "output must be fp32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     return ACLNN_SUCCESS;
 }
@@ -501,7 +505,7 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             OP_NAME, "q.K,v.V",
             std::to_string(info.kDim) + "," + std::to_string(info.vDim),
             "K=V=128 is required by the current implementation");
-        return ACLNN_ERR_PARAM_NULLPTR;
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (info.valueHeadNum < info.qkHeadNum || info.valueHeadNum % info.qkHeadNum != 0) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -606,7 +610,8 @@ aclnnStatus CheckVariableLengthInputs(
 {
     if (params.cuSeqlensOptional == nullptr) {
         if (params.chunkIndicesOptional != nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "chunkIndicesOptional");
+            // 配对缺失按“必填为空”处理，与其他算子保持 161001 + EZ0004。
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "cuSeqlensOptional");
             return ACLNN_ERR_PARAM_NULLPTR;
         }
         return ACLNN_SUCCESS;
@@ -979,10 +984,11 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwdPrepare);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) ==
-            ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdPrepare AI Core 启动失败。", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

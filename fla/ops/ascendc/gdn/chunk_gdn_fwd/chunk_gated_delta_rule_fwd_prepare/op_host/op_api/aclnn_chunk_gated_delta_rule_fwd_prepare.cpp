@@ -433,7 +433,7 @@ static aclnnStatus CheckShape(const ChunkGatedDeltaRuleFwdPrepareParams &params)
     }
     const int64_t ratio = HV / HK;
     if (!(ratio >= 1 && ratio <= 16)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "Hv/Hk", std::to_string(ratio),
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "Hv/Hk", std::to_string(ratio),
                                              "Hv/Hk must be in [1,16]");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -557,32 +557,32 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdPrepareParams &params, aclOpExecutor *executorPtr)
 {
     if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous q failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous q failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous k failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous v failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous v failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous g failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous beta failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous beta failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(OptionalDataContiguous(params.aLogOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous aLog failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous aLog failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(OptionalDataContiguous(params.dtBiasOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous dtBias failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dtBias failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
 }
@@ -719,6 +719,15 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         chunkSize, allowNegEigval, useExp2, outputA, gOut, wOut, uOut, aOut,
         qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, betaEffOptional};
 
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdPrepare,
                    DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, cuSeqlensOptional,
                           chunkIndicesOptional, chunkSize, allowNegEigval, useExp2, outputA),
@@ -739,9 +748,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
             return checkStatus;
         }
     };
-    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus contigParams = ParamsDataContiguous(params, executorPtr);
+    if (contigParams != ACLNN_SUCCESS) {
+        return contigParams;
     }
 
     const bool a2 = IsA2PrepareSoc();
@@ -763,25 +772,25 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepareGetWorkspaceSize(
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[1] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[2] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[3] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
 
     if (!(ViewCopyIfPresent(result[0], params.gOut, executorPtr) == ACLNN_SUCCESS)) {
@@ -832,9 +841,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdPrepare(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleFwdPrepare);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in ChunkGatedDeltaRuleFwdPrepare launch aicore.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

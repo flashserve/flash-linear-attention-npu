@@ -154,12 +154,12 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
         const std::string actual = ShapeString({tiling.B, tiling.HK, tiling.HV, tiling.T});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HK/HV/T", actual.c_str(), "all dimensions > 0");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B/HK/HV/T", actual.c_str(), "all dimensions > 0");
         return ge::GRAPH_FAILED;
     }
     if (tiling.K != K_SIZE_128 || (tiling.V != V_SIZE_128 && tiling.V != V_SIZE_256)) {
         const std::string actual = ShapeString({tiling.K, tiling.V});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K/V", actual.c_str(), "K=128; V=128 or 256");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K/V", actual.c_str(), "K=128; V=128 or 256");
         return ge::GRAPH_FAILED;
     }
     if (tiling.chunkSize != CHUNK_SIZE_64 && tiling.chunkSize != CHUNK_SIZE_128) {
@@ -169,19 +169,19 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     }
     if (tiling.HV % tiling.HK != 0) {
         const std::string actual = ShapeString({tiling.HV, tiling.HK});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "HV % HK == 0");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "HV % HK == 0");
         return ge::GRAPH_FAILED;
     }
     tiling.headRatio = tiling.HV / tiling.HK;
     if (tiling.headRatio < 1) {
         const std::string actual = std::to_string(tiling.headRatio);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "HV/HK must be >= 1");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "HV/HK must be >= 1");
         return ge::GRAPH_FAILED;
     }
     if (!FitsProduct({tiling.B, tiling.HV, tiling.T, std::max({tiling.K, tiling.V, tiling.chunkSize}), 128})) {
         const std::string actual = ShapeString({tiling.B, tiling.HV, tiling.T,
                                                std::max({tiling.K, tiling.V, tiling.chunkSize}), 128});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HV/T/max(K,V,BT)/128", actual.c_str(), "positive factors with product <= INT64_MAX for A2/A3 address arithmetic");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B/HV/T/max(K,V,BT)/128", actual.c_str(), "positive factors with product <= INT64_MAX for A2/A3 address arithmetic");
         return ge::GRAPH_FAILED;
     }
     if (ValidateShape(context, "k.shape", shapes[INPUT_K_IDX]->GetStorageShape(),
@@ -270,7 +270,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     if (actualChunkSize != tiling->chunkSize) {
         const std::string actual = std::to_string(actualChunkSize);
         const std::string expected = "a.BT=" + std::to_string(tiling->chunkSize);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_size", actual.c_str(), expected.c_str());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", actual.c_str(), expected.c_str());
         return ge::GRAPH_FAILED;
     }
     if (scale != nullptr && (!std::isfinite(*scale) || !std::isfinite(static_cast<float>(*scale)))) {
@@ -287,7 +287,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     if ((cuShape == nullptr) != (chunkIndicesShape == nullptr)) {
         const std::string actual = std::string(cuShape == nullptr ? "absent/" : "present/") +
             (chunkIndicesShape == nullptr ? "absent" : "present");
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens/chunk_indices", actual.c_str(), "both present or both absent");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "cu_seqlens/chunk_indices", actual.c_str(), "both present or both absent");
         return ge::GRAPH_FAILED;
     }
     tiling->isVariable = cuShape != nullptr ? 1 : 0;
@@ -311,7 +311,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         // [seqIdx0, chunkIdx0, seqIdx1, chunkIdx1, ...] 两两分组。
         if (cu.GetDim(0) < 2 || chunks.GetDim(0) <= 0 || chunks.GetDim(0) % 2 != 0) {
             const std::string actual = ShapeString({cu.GetDim(0), chunks.GetDim(0)});
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens.size/chunk_indices.size", actual.c_str(), "cu_seqlens.size >= 2; positive even chunk_indices.size");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "cu_seqlens.size/chunk_indices.size", actual.c_str(), "cu_seqlens.size >= 2; positive even chunk_indices.size");
             return ge::GRAPH_FAILED;
         }
         tiling->seqNum = cu.GetDim(0) - 1;
@@ -322,7 +322,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         if (!GDN::FinalizeHostArch22::ChunkEndFitsUint32(lastStart, static_cast<uint64_t>(tiling->chunkSize))) {
             const std::string actual = "T=" + std::to_string(tiling->T) +
                 ", last chunk start=" + std::to_string(lastStart) + ", BT=" + std::to_string(tiling->chunkSize);
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "T/BT", actual.c_str(), "last chunk start + BT <= UINT32_MAX on A2/A3");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "T/BT", actual.c_str(), "last chunk start + BT <= UINT32_MAX on A2/A3");
             return ge::GRAPH_FAILED;
         }
         tiling->seqNum = tiling->B;
@@ -330,7 +330,10 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         tiling->totalChunkNum = tiling->B * tiling->chunkNumForT;
     }
     const auto hShape = context->GetRequiredInputShape(INPUT_H_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
+    if (hShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t stateChunkNum = tiling->isVariable != 0 ? tiling->totalChunkNum : tiling->chunkNumForT;
     if (hShape->GetStorageShape().GetDim(1) != stateChunkNum) {
         const std::string actual = "h/dh.NT=" + std::to_string(hShape->GetStorageShape().GetDim(1));
@@ -342,7 +345,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
             static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
         const std::string actual = ShapeString({tiling->B, tiling->HK, tiling->HV, tiling->T,
                                                tiling->totalChunkNum, tiling->seqNum});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HK/HV/T/totalChunkNum/seqNum", actual.c_str(), "each dimension <= UINT32_MAX on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B/HK/HV/T/totalChunkNum/seq_num", actual.c_str(), "each dimension <= UINT32_MAX on A2/A3");
         return ge::GRAPH_FAILED;
     }
 
@@ -363,17 +366,50 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     const auto hDesc = context->GetInputDesc(INPUT_H_IDX);
     const auto dhDesc = context->GetInputDesc(INPUT_DH_IDX);
     const auto aDesc = context->GetInputDesc(INPUT_A_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, kDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vNewDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dODesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, duDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, hDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dhDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, aDesc);
+    if (qDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
+    if (kDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "k");
+        return ge::GRAPH_FAILED;
+    }
+    if (vDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v");
+        return ge::GRAPH_FAILED;
+    }
+    if (gDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "g");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "beta");
+        return ge::GRAPH_FAILED;
+    }
+    if (vNewDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v_new");
+        return ge::GRAPH_FAILED;
+    }
+    if (dODesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dO");
+        return ge::GRAPH_FAILED;
+    }
+    if (duDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "du");
+        return ge::GRAPH_FAILED;
+    }
+    if (hDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
+    if (dhDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dh");
+        return ge::GRAPH_FAILED;
+    }
+    if (aDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "a");
+        return ge::GRAPH_FAILED;
+    }
     const int qKey = DTypeKey(qDesc->GetDataType());
     const int gKey = DTypeKey(gDesc->GetDataType());
     decltype(qDesc) mainDescs[] = {qDesc, kDesc, vDesc, vNewDesc, dODesc, duDesc,
@@ -381,21 +417,25 @@ ge::graphStatus Tiling(gert::TilingContext *context,
     const char *mainNames[] = {"q", "k", "v", "v_new", "do", "du", "h", "dh", "a"};
     for (size_t index = 0; index < 9; ++index) {
         if (mainDescs[index]->GetDataType() != ge::DT_BF16) {
-            const std::string parameter = std::string(mainNames[index]) + ".dtype";
-            const std::string actual = std::to_string(static_cast<int>(mainDescs[index]->GetDataType()));
-            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, parameter.c_str(), actual.c_str(), "BF16");
+            OP_LOGE_FOR_INVALID_DTYPE(
+                OP_NAME, mainNames[index],
+                ge::TypeUtils::DataTypeToSerialString(mainDescs[index]->GetDataType()).c_str(),
+                "BF16");
             return ge::GRAPH_FAILED;
         }
     }
     if (gKey != TPL_BF16 && gKey != TPL_FP32) {
-        const std::string actual = std::to_string(static_cast<int>(gDesc->GetDataType()));
-        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "g.dtype", actual.c_str(), "BF16 or FP32");
+        OP_LOGE_FOR_INVALID_DTYPE(
+            OP_NAME, "g",
+            ge::TypeUtils::DataTypeToSerialString(gDesc->GetDataType()).c_str(),
+            "BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
     if (gDesc->GetDataType() != betaDesc->GetDataType()) {
-        const std::string actual = std::to_string(static_cast<int>(betaDesc->GetDataType()));
-        const std::string expected = "g.dtype=" + std::to_string(static_cast<int>(gDesc->GetDataType()));
-        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta.dtype", actual.c_str(), expected.c_str());
+        const std::string actual = ge::TypeUtils::DataTypeToSerialString(betaDesc->GetDataType());
+        const std::string expected = std::string("same as g (") +
+            ge::TypeUtils::DataTypeToSerialString(gDesc->GetDataType()) + ")";
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta", actual.c_str(), expected.c_str());
         return ge::GRAPH_FAILED;
     }
 
@@ -420,9 +460,8 @@ ge::graphStatus Tiling(gert::TilingContext *context,
                 return ge::GRAPH_FAILED;
             }
             if (rstdDescs[index]->GetDataType() != ge::DT_FLOAT) {
-                const std::string parameter = std::string(rstdNames[index]) + ".dtype";
-                const std::string actual = std::to_string(static_cast<int>(rstdDescs[index]->GetDataType()));
-                OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, parameter.c_str(), actual.c_str(), "FP32");
+                const std::string actual = ge::TypeUtils::DataTypeToSerialString(rstdDescs[index]->GetDataType());
+                OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, rstdNames[index], actual.c_str(), "FP32");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -437,9 +476,10 @@ ge::graphStatus Tiling(gert::TilingContext *context,
             return ge::GRAPH_FAILED;
         }
         if (betaRawDesc->GetDataType() != betaDesc->GetDataType()) {
-            const std::string actual = std::to_string(static_cast<int>(betaRawDesc->GetDataType()));
-            const std::string expected = "beta.dtype=" + std::to_string(static_cast<int>(betaDesc->GetDataType()));
-            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta_raw.dtype", actual.c_str(), expected.c_str());
+            const std::string actual = ge::TypeUtils::DataTypeToSerialString(betaRawDesc->GetDataType());
+            const std::string expected = std::string("same as beta (") +
+                ge::TypeUtils::DataTypeToSerialString(betaDesc->GetDataType()) + ")";
+            OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta_raw", actual.c_str(), expected.c_str());
             return ge::GRAPH_FAILED;
         }
     }
@@ -454,7 +494,7 @@ ge::graphStatus Tiling(gert::TilingContext *context,
         const std::string actual =
             "state=" + ShapeString({tiling->totalChunkNum, tiling->HV, tiling->K, tiling->V, 128}) +
             ", workspace=" + ShapeString({blockDim, tiling->HV, tiling->chunkSize, maxDimension, 256});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "state/workspace factors", actual.c_str(), "positive factors with product <= INT64_MAX on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "state/workspace factors", actual.c_str(), "positive factors with product <= INT64_MAX on A2/A3");
         return ge::GRAPH_FAILED;
     }
     const GDN::A2FinalizeWorkspaceLayout layout(*tiling, blockDim, gKey == TPL_FP32);

@@ -17,6 +17,7 @@
 #include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transpose.h"
 #include "opdev/common_types.h"
+#include "opdev/platform.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
@@ -32,9 +33,24 @@
 
 #include "external/aclnn_kernels/aclnn_platform.h"
 
+
 using namespace op;
 
 static constexpr const char *OP_NAME = "aclnnChunkGatedDeltaRuleBwd";
+
+// 本地实现：避免新增公共头（PR 范围约束）；如后续抽公共 helper 再合并。
+static std::string NpuArchName()
+{
+    switch (op::GetCurrentPlatformInfo().GetCurNpuArch()) {
+        case NpuArch::DAV_2201:
+            return "DAV_2201";
+        case NpuArch::DAV_3510:
+            return "DAV_3510";
+        default:
+            return std::to_string(
+                static_cast<int32_t>(op::GetCurrentPlatformInfo().GetCurNpuArch()));
+    }
+}
 
 namespace {
 
@@ -114,6 +130,13 @@ bool HasShape(const aclTensor *tensor, std::initializer_list<int64_t> dims)
     return true;
 }
 
+// Null-safe shape description for error messages.
+static std::string ShapeText(const aclTensor *tensor)
+{
+    return tensor == nullptr ? std::string("<missing>")
+                             : std::string(op::ToString(tensor->GetViewShape()).GetString());
+}
+
 bool SameShape(const aclTensor *lhs, const aclTensor *rhs)
 {
     if (lhs == nullptr || rhs == nullptr) {
@@ -184,7 +207,7 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -196,18 +219,23 @@ aclnnStatus CheckRequiredInputs(const Params &params)
         params.q, params.k, params.v, params.g, params.beta, params.a,
         params.dO, params.dqOut, params.dkOut, params.dvOut,
         params.dBetaOut, params.dGOut};
-    const char *names[] = {"q", "k", "v", "g", "beta", "A", "d_o", "dq", "dk", "dv", "d_beta", "d_g"};
-    for (size_t index = 0; index < required.size(); ++index) {
-        if (required[index] == nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, names[index]);
+    const std::array<const char *, 12> names = {
+        "q", "k", "v", "g", "beta", "A", "dO", "dq", "dk", "dv", "dBeta", "dG"};
+    for (size_t i = 0; i < required.size(); ++i) {
+        if (required[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, names[i]);
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
+    // 配对/按开关的判空放在 CheckZeroShape 之后（见 CheckParams 开头），
+    // 以保持“空输入零 shape 短路不校验可选参数配对”的既有语义。
     return ACLNN_SUCCESS;
 }
 
 aclnnStatus CheckZeroShape(const Params &params, uint64_t *workspaceSize)
 {
+    // 空输入是合法的零 shape 短路：调用方在 CheckZeroShape 返回后直接
+    // return ACLNN_SUCCESS（workspace=0），这里不能报错，否则会对合法路径打错误日志。
     if (params.q->IsEmpty() || params.k->IsEmpty() || params.v->IsEmpty() ||
         params.g->IsEmpty() || params.beta->IsEmpty() || params.a->IsEmpty() ||
         params.dO->IsEmpty()) {
@@ -220,11 +248,11 @@ aclnnStatus CheckZeroShape(const Params &params, uint64_t *workspaceSize)
 aclnnStatus ViewCopy(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
     if (!(src != nullptr && dst != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ViewCopy source and destination must not be nullptr.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopy source and destination must not be nullptr.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(l0op::ViewCopy(src, dst, executor) != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ViewCopy failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ViewCopy failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -251,14 +279,8 @@ int64_t SequenceCount(const Params &params, int64_t batch)
 aclnnStatus CheckMetadata(const Params &params, int64_t tokens)
 {
     const bool varied = params.cuSeqlens != nullptr;
-    if (varied != (params.chunkIndices != nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "cu_seqlens,chunk_indices",
-            std::string(varied ? "cu_seqlens=present" : "cu_seqlens=absent") + "," +
-                (params.chunkIndices != nullptr ? "chunk_indices=present" : "chunk_indices=absent"),
-            "cu_seqlens and chunk_indices must be provided together");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+    // 配对检查已前移到 CheckParams 开头（161001 + EZ0004）；此处只做形状/计数，
+    // 避免同一约束同时存在 161001 与 161002 两种口径。
     if (!varied) {
         return ACLNN_SUCCESS;
     }
@@ -333,7 +355,7 @@ aclnnStatus ResolveShapeInfo(const Params &params, ShapeInfo &info)
     }
     info.sequenceMajor = info.layout == Layout::BSND;
     if (!(params.q->GetViewShape().GetDimNum() == 4 && params.v->GetViewShape().GetDimNum() == 4)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
             OP_NAME, "q,v",
             std::to_string(params.q->GetViewShape().GetDimNum()) + "," +
                 std::to_string(params.v->GetViewShape().GetDimNum()),
@@ -372,51 +394,47 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
                                  : HasShape(params.v, {info.batch, info.hv, info.tokens, info.valueDim});
     if (!validVShape) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "v", std::string(op::ToString(params.v->GetViewShape()).GetString()),
+            OP_NAME, "v", ShapeText(params.v),
             "v shape must follow layout (BNSD/NTD or BSND/TND)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(HasShape(params.g, {info.batch, info.tokens, info.hv}) &&
           HasShape(params.beta, {info.batch, info.tokens, info.hv}))) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "g,beta",
-            "g=" + std::string(op::ToString(params.g->GetViewShape()).GetString()) +
-                ",beta=" + std::string(op::ToString(params.beta->GetViewShape()).GetString()),
+            "g=" + ShapeText(params.g) +
+                ",beta=" + ShapeText(params.beta),
             "g and beta must be BSN [B,T,HV]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!HasShape(params.dO, {info.batch, info.tokens, info.hv, info.valueDim})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "dO", std::string(op::ToString(params.dO->GetViewShape()).GetString()),
+            OP_NAME, "dO", ShapeText(params.dO),
             "d_o must be BSND [B,T,HV,V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!HasShape(params.a, {info.batch, info.hv, info.tokens, params.chunkSize})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "A", std::string(op::ToString(params.a->GetViewShape()).GetString()),
+            OP_NAME, "A", ShapeText(params.a),
             "[B,HV,T,chunkSize]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(HasShape(params.dBetaOut, {info.batch, info.tokens, info.hv}) &&
           HasShape(params.dGOut, {info.batch, info.tokens, info.hv}))) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "dBeta,dG",
-            "dBeta=" + std::string(op::ToString(params.dBetaOut->GetViewShape()).GetString()) +
-                ",dG=" + std::string(op::ToString(params.dGOut->GetViewShape()).GetString()),
+            "dBeta=" + ShapeText(params.dBetaOut) +
+                ",dG=" + ShapeText(params.dGOut),
             "dBeta and dG must be [B,T,HV]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.qRstd != nullptr || params.kRstd != nullptr) {
         if (!(HasShape(params.qRstd, {info.batch, info.hk, info.tokens}) &&
               HasShape(params.kRstd, {info.batch, info.hk, info.tokens}))) {
-            const std::string qRstdShape = params.qRstd == nullptr
-                                               ? "nullptr"
-                                               : op::ToString(params.qRstd->GetViewShape()).GetString();
-            const std::string kRstdShape = params.kRstd == nullptr
-                                               ? "nullptr"
-                                               : op::ToString(params.kRstd->GetViewShape()).GetString();
-            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                OP_NAME, "qRstd,kRstd", "qRstd=" + qRstdShape + ",kRstd=" + kRstdShape,
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                OP_NAME, "qRstd,kRstd",
+                "qRstd=" + ShapeText(params.qRstd) +
+                    ",kRstd=" + ShapeText(params.kRstd),
                 "q_rstd and k_rstd must both be present with BNS [B,HK,T]");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -424,7 +442,7 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
     if (params.betaRaw != nullptr) {
         if (!HasShape(params.betaRaw, {info.batch, info.tokens, info.hv})) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                OP_NAME, "betaRaw", std::string(op::ToString(params.betaRaw->GetViewShape()).GetString()),
+                OP_NAME, "betaRaw", ShapeText(params.betaRaw),
                 "beta_raw must be BSN [B,T,HV]");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -435,8 +453,10 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
     if (params.initialState != nullptr) {
         if (!(HasShape(params.initialState, {sequences, info.hv, stateDim0, stateDim1}) &&
               HasShape(params.dh0Out, {sequences, info.hv, stateDim0, stateDim1}))) {
-            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                OP_NAME, "initialState,dh0", "shape mismatch",
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                OP_NAME, "initialState,dh0",
+                "initialState=" + ShapeText(params.initialState) +
+                    ",dh0=" + ShapeText(params.dh0Out),
                 "initial_state and dh0 shapes must match state_v_first");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -444,7 +464,7 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
     if (params.dht != nullptr) {
         if (!HasShape(params.dht, {sequences, info.hv, stateDim0, stateDim1})) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                OP_NAME, "dht", std::string(op::ToString(params.dht->GetViewShape()).GetString()),
+                OP_NAME, "dht", ShapeText(params.dht),
                 "dht shape must match state_v_first");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -454,6 +474,28 @@ aclnnStatus CheckLayoutShapes(const Params &params, const ShapeInfo &info)
 
 aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
 {
+    // 可选参数一旦“成对/按开关”要求存在，缺失同样属于必填为空（161001），
+    // 必须放在形状校验之前，否则形状分支会把缺参报成 161002。
+    if ((params.qRstd == nullptr) != (params.kRstd == nullptr) ||
+        (params.useQkL2normInKernel && params.qRstd == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, params.qRstd == nullptr ? "q_rstd" : "k_rstd");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if ((params.initialState == nullptr) != (params.dh0Out == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, params.initialState == nullptr ? "initial_state" : "dh0");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if ((params.cuSeqlens == nullptr) != (params.chunkIndices == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, params.cuSeqlens == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.useBetaSigmoidInKernel && params.betaRaw == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "beta_raw");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (!IsAscend950() && !IsDav2201Device()) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "soc", "unsupported",
@@ -467,13 +509,15 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
     }
     if (params.dALogOut != nullptr || params.dDtBiasOut != nullptr) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "dALogOut,dDtBiasOut", "present",
+            OP_NAME, "dALogOut,dDtBiasOut",
+            std::string("dA_log=") + (params.dALogOut != nullptr ? "present" : "absent") +
+                ",dDt_bias=" + (params.dDtBiasOut != nullptr ? "present" : "absent"),
             "d_a_log and d_dt_bias are reserved and must be nullptr");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.chunkSize != CHUNK_64) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "chunk_size", std::to_string(params.chunkSize), "chunk_size must be 64");
+            OP_NAME, "chunkSize", std::to_string(params.chunkSize), "chunkSize must be 64");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!std::isfinite(params.scale)) {
@@ -481,12 +525,15 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             OP_NAME, "scale", std::to_string(params.scale), "scale must be finite");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(ResolveShapeInfo(params, info) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkRet = ResolveShapeInfo(params, info);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
     }
     if (!(info.batch > 0 && info.hk > 0 && info.hv > 0 && info.tokens > 0)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "B,HK,HV,T",
+            OP_NAME, "B/HK/HV/T",
             std::to_string(info.batch) + "," + std::to_string(info.hk) + "," +
                 std::to_string(info.hv) + "," + std::to_string(info.tokens),
             "B/HK/HV/T must be positive");
@@ -494,7 +541,7 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
     }
     if (!(info.keyDim == DIM_128 && info.valueDim == DIM_128)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "K,V", std::to_string(info.keyDim) + "," + std::to_string(info.valueDim),
+            OP_NAME, "K/V", std::to_string(info.keyDim) + "," + std::to_string(info.valueDim),
             "K and V must both be 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -591,19 +638,12 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             "g/beta must use BF16 or FP32, and each gradient must match its input dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.useQkL2normInKernel && (params.qRstd == nullptr || params.kRstd == nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "qRstd,kRstd");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
+    // 重复的空值检查已前移到 CheckRequiredInputs（形状校验之前）。
     if (!params.useQkL2normInKernel && (params.qRstd != nullptr || params.kRstd != nullptr)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "qRstd,kRstd", "present",
             "q_rstd and k_rstd require Q/K L2Norm backward");
         return ACLNN_ERR_PARAM_INVALID;
-    }
-    if (params.useBetaSigmoidInKernel && params.betaRaw == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "betaRaw");
-        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!params.useBetaSigmoidInKernel && params.betaRaw != nullptr) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -662,7 +702,7 @@ aclnnStatus MakeOutputContiguousArch22(const aclTensor *&tensor, aclOpExecutor *
     if (tensor != nullptr && !IsContiguous(tensor)) {
         tensor = executor->AllocTensor(tensor->GetViewShape(), tensor->GetDataType(), Format::FORMAT_ND);
         if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "allocating A2/A3 contiguous output failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: allocating A2/A3 contiguous output failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -682,14 +722,19 @@ namespace gdn_bwd {
 aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     Params params, uint64_t finalizeOutputTemporaryMask, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
     const aclTensor *dh0OutOptional = params.dh0Out;
-    if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const aclnnStatus requiredStatus = CheckRequiredInputs(params);
+    if (requiredStatus != ACLNN_SUCCESS) {
+        return requiredStatus;
     }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -713,41 +758,55 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     };
     const char *qkvLayout = info.sequenceMajor ? "BSND" : "BNSD";
 
-    if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    // 保持内部错误原码：Contiguous 失败是执行器/l0op 内部失败（561103），
+    // 不能改写成“参数非法”（161002），否则调用方会把内部失败误判为入参问题。
+    const aclnnStatus qContiguous = MakeContiguous(params.q, executorPtr);
+    if (qContiguous != ACLNN_SUCCESS) {
+        return qContiguous;
     }
-    if (!(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus kContiguous = MakeContiguous(params.k, executorPtr);
+    if (kContiguous != ACLNN_SUCCESS) {
+        return kContiguous;
     }
-    if (!(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus vContiguous = MakeContiguous(params.v, executorPtr);
+    if (vContiguous != ACLNN_SUCCESS) {
+        return vContiguous;
     }
-    if (!(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus gContiguous = MakeContiguous(params.g, executorPtr);
+    if (gContiguous != ACLNN_SUCCESS) {
+        return gContiguous;
     }
-    if (!(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus betaContiguous = MakeContiguous(params.beta, executorPtr);
+    if (betaContiguous != ACLNN_SUCCESS) {
+        return betaContiguous;
     }
-    if (!(MakeContiguous(params.a, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus aContiguous = MakeContiguous(params.a, executorPtr);
+    if (aContiguous != ACLNN_SUCCESS) {
+        return aContiguous;
     }
-    if (!(MakeContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus dOContiguous = MakeContiguous(params.dO, executorPtr);
+    if (dOContiguous != ACLNN_SUCCESS) {
+        return dOContiguous;
     }
-    if (!(MakeContiguous(params.initialState, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus initialStateContiguous = MakeContiguous(params.initialState, executorPtr);
+    if (initialStateContiguous != ACLNN_SUCCESS) {
+        return initialStateContiguous;
     }
-    if (!(MakeContiguous(params.dht, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus dhtContiguous = MakeContiguous(params.dht, executorPtr);
+    if (dhtContiguous != ACLNN_SUCCESS) {
+        return dhtContiguous;
     }
-    if (!(MakeContiguous(params.qRstd, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus qRstdContiguous = MakeContiguous(params.qRstd, executorPtr);
+    if (qRstdContiguous != ACLNN_SUCCESS) {
+        return qRstdContiguous;
     }
-    if (!(MakeContiguous(params.kRstd, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus kRstdContiguous = MakeContiguous(params.kRstd, executorPtr);
+    if (kRstdContiguous != ACLNN_SUCCESS) {
+        return kRstdContiguous;
     }
-    if (!(MakeContiguous(params.betaRaw, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus betaRawContiguous = MakeContiguous(params.betaRaw, executorPtr);
+    if (betaRawContiguous != ACLNN_SUCCESS) {
+        return betaRawContiguous;
     }
 
     const aclTensor *qHead = params.q;
@@ -777,13 +836,13 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && dOHead != nullptr &&
                    gHead != nullptr && betaHead != nullptr &&
                    (!params.useBetaSigmoidInKernel || betaRawHead != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "input layout conversion failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input layout conversion failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.stateVFirst) {
         initialStateKv = TransposeContiguous(params.initialState, {0, 1, 3, 2}, executorPtr);
         if (!(params.initialState == nullptr || initialStateKv != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "state layout conversion failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: state layout conversion failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -811,7 +870,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
     if (!(w != nullptr && u != nullptr && dvLocal != nullptr && h != nullptr &&
                    vNew != nullptr && dh != nullptr && dv2 != nullptr && dqHead != nullptr &&
                    dkHead != nullptr && dvHead != nullptr && dBetaHead != nullptr && dGHead != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "allocating composite intermediate tensors failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: allocating composite intermediate tensors failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -842,7 +901,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         params.useExp2, w, u, dvLocal, executorPtr, qkvLayout);
     if (!(intraResult[0] != nullptr && intraResult[1] != nullptr &&
                    intraResult[2] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGdnBwdIntra composition failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkGdnBwdIntra composition failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -851,7 +910,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         params.cuSeqlens, params.chunkIndices, false, params.chunkSize, true,
         params.useExp2, false, h, vNew, nullptr, executorPtr, qkvLayout);
     if (!(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkFwdH composition failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkFwdH composition failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -862,7 +921,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         dv2, executorPtr, qkvLayout);
     if (!(dhuResult[0] != nullptr && dhuResult[1] != nullptr &&
                    dhuResult[2] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGatedDeltaRuleBwdDhu composition failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkGatedDeltaRuleBwdDhu composition failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -885,7 +944,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdGetWorkspaceSize(
         kernelOutputs[0], kernelOutputs[1], kernelOutputs[2], kernelOutputs[3], kernelOutputs[4], executorPtr, qkvLayout);
     for (const aclTensor *tensor : finalizeResult) {
         if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGatedDeltaRuleBwdFinalize composition failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkGatedDeltaRuleBwdFinalize composition failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -1003,9 +1062,11 @@ extern "C" aclnnStatus aclnnChunkGatedDeltaRuleBwd(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwd);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGatedDeltaRuleBwd launch failed.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

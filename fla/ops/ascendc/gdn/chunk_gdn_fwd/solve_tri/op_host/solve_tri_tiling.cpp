@@ -7,6 +7,7 @@
  #include "register/op_impl_registry.h"
  #include "log/log.h"
  #include "tiling/platform/platform_ascendc.h"
+#include "graph/utils/type_utils.h"
  #include <string>
 #include <algorithm>
 #include <limits>
@@ -26,7 +27,7 @@ static void InvalidMetadata(const char *node, const char *name, const std::strin
 #ifdef OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON
     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(node, name, reason);
 #else
-    OP_LOGE_WITH_INVALID_ATTR(node, name, "invalid", reason.c_str());
+    OP_LOGE_WITHOUT_REPORT(node, "%s: invalid %s: %s", __func__, name, reason.c_str());
 #endif
 }
 
@@ -60,13 +61,13 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     const auto *cuTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
     const auto *indexTensor = context->GetOptionalInputTensor(INPUT_CHUNK_INDICES_IDX);
     if (cuTensor == nullptr || indexTensor == nullptr) {
-        OP_LOGE(context->GetNodeName(), "varlen metadata tensors are unavailable during tiling.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "varlen metadata tensors are unavailable during tiling.");
         return ge::GRAPH_FAILED;
     }
     const int64_t *cu = cuTensor->GetData<int64_t>();
     const int64_t *indices = indexTensor->GetData<int64_t>();
     if (cu == nullptr || indices == nullptr) {
-        OP_LOGE(context->GetNodeName(), "varlen metadata value-depend data is null.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "varlen metadata value-depend data is null.");
         return ge::GRAPH_FAILED;
     }
     if (cu[0] != 0 || cu[seqCount] != totalTokens) {
@@ -114,7 +115,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
         }
         std::unique_ptr<ChunkPair[]> sorted(new (std::nothrow) ChunkPair[pairCount]);
         if (!sorted) {
-            OP_LOGE(context->GetNodeName(), "Cannot allocate chunk_indices validation buffer.");
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Cannot allocate chunk_indices validation buffer.");
             return ge::GRAPH_FAILED;
         }
         for (size_t i = 0; i < pairCount; ++i) {
@@ -149,7 +150,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      int64_t coreNum = ascendcPlatform.GetCoreNumAic();
      if (coreNum == 0) {
          if constexpr (IsA2A3) {
-             OP_LOGE(context->GetNodeName(), "SolveTri requires at least one AIC core.");
+             OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri requires at least one AIC core.");
          }
          return ge::GRAPH_FAILED;
      }
@@ -162,7 +163,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      auto inputShape = context->GetInputShape(INPUT_X_IDX);
      if (inputShape == nullptr) {
          if constexpr (IsA2A3) {
-             OP_LOGE(context->GetNodeName(), "SolveTri input x shape is unavailable.");
+             OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri input x shape is unavailable.");
          }
          return ge::GRAPH_FAILED;
      }
@@ -170,7 +171,9 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      int64_t ndim = shape.GetDimNum();
      if (ndim != 3 && ndim != 4) {
          if constexpr (IsA2A3) {
-             OP_LOGE(context->GetNodeName(), "SolveTri input x must have rank 3 or 4, got %ld.", ndim);
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context->GetNodeName(), "x", std::to_string(ndim),
+                "rank must be 3 or 4");
          }
          return ge::GRAPH_FAILED;
      }
@@ -179,7 +182,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      auto attrs = context->GetAttrs();
     if constexpr (IsA2A3) {
         if (attrs == nullptr) {
-            OP_LOGE(context->GetNodeName(), "SolveTri layout attributes are unavailable.");
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri layout attributes are unavailable.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -198,15 +201,17 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      } else if (layout == "ntd") {
          layoutMode = 3;
     } else if constexpr (IsA2A3) {
-        OP_LOGE(context->GetNodeName(),
-                "layout must be one of bsnd, bnsd, bhtd, tnd, ntd, but got %s.", layout.c_str());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "layout", layout,
+            "layout must be one of bsnd, bnsd, bhtd, tnd, ntd");
         return ge::GRAPH_FAILED;
     }
     if constexpr (IsA2A3) {
         if ((layoutMode == 0 || layoutMode == 1) != (ndim == 4)) {
-            OP_LOGE(context->GetNodeName(),
-                    "layout %s requires rank %s, but got rank %ld.", layout.c_str(),
-                    (layoutMode == 0 || layoutMode == 1) ? "4" : "3", ndim);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "layout,x",
+                "layout=" + layout + ",rank=" + std::to_string(ndim),
+                "bnsd/bsnd require rank 4 and tnd/ntd require rank 3");
             return ge::GRAPH_FAILED;
         }
     }
@@ -247,10 +252,11 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     if constexpr (IsA2A3) {
         if (B <= 0 || H <= 0 || T <= 0 ||
             !(chunkSize == 16 || chunkSize == 32 || chunkSize == 64 || chunkSize == 128)) {
-            OP_LOGE(context->GetNodeName(),
-                    "SolveTri requires positive B/H/T and chunkSize in {16,32,64,128}, "
-                    "but got B=%ld, H=%ld, T=%ld, chunkSize=%ld.",
-                    B, H, T, chunkSize);
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                context->GetNodeName(), "B,H,T,chunkSize",
+                "B=" + std::to_string(B) + ",H=" + std::to_string(H) +
+                    ",T=" + std::to_string(T) + ",chunkSize=" + std::to_string(chunkSize),
+                "B/H/T must be positive and chunkSize must be 16, 32, 64 or 128");
             return ge::GRAPH_FAILED;
         }
     }
@@ -322,11 +328,19 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     if constexpr (IsA2A3) {
         const auto *outputDesc = context->GetOutputDesc(OUTPUT_X_OUT_IDX);
         if (inputDesc == nullptr || outputDesc == nullptr) {
-            OP_LOGE(context->GetNodeName(), "SolveTri input or output descriptor is null.");
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri input or output descriptor is null.");
             return ge::GRAPH_FAILED;
         }
         if (outputDesc->GetDataType() != inputDesc->GetDataType()) {
-            OP_LOGE(context->GetNodeName(), "SolveTri input and output dtype must match.");
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), "x,xOut",
+                std::string("x=") +
+                    ge::TypeUtils::DataTypeToSerialString(
+                        static_cast<ge::DataType>(inputDesc->GetDataType())) +
+                    ",xOut=" +
+                    ge::TypeUtils::DataTypeToSerialString(
+                        static_cast<ge::DataType>(outputDesc->GetDataType())),
+                "input and output dtype must match");
             return ge::GRAPH_FAILED;
         }
     }
@@ -335,8 +349,10 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     if (inputDtype == ge::DT_BF16) {
         dtypeMode = 1;
     } else if (IsA2A3 && inputDtype != ge::DT_FLOAT16) {
-        OP_LOGE(context->GetNodeName(), "SolveTri input dtype must be FP16 or BF16, got %d.",
-                static_cast<int>(inputDtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x",
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(inputDtype)),
+            "dtype must be FP16 or BF16");
         return ge::GRAPH_FAILED;
     }
 

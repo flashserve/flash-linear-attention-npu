@@ -22,17 +22,35 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     auto *vNewDesc = context->GetInputDesc(KDA_PREPARE_INPUT_V_NEW);
     auto *dODesc = context->GetInputDesc(KDA_PREPARE_INPUT_D_O);
     auto *hDesc = context->GetInputDesc(KDA_PREPARE_INPUT_H);
-    OP_CHECK_NULL_WITH_CONTEXT(context, aqkDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vNewDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dODesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, hDesc);
+    if (aqkDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "aqk");
+        return ge::GRAPH_FAILED;
+    }
+    if (vNewDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v_new");
+        return ge::GRAPH_FAILED;
+    }
+    if (dODesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dO");
+        return ge::GRAPH_FAILED;
+    }
+    if (hDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
 
     const float *scale = attrs->GetAttrPointer<float>(KDA_PREPARE_ATTR_SCALE);
     const int64_t *chunkSize = attrs->GetAttrPointer<int64_t>(KDA_PREPARE_ATTR_CHUNK_SIZE);
     const char *layout = attrs->GetStr(KDA_PREPARE_ATTR_LAYOUT);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(KDA_PREPARE_ATTR_STATE_V_FIRST);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale);
-    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
+    if (scale == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "scale");
+        return ge::GRAPH_FAILED;
+    }
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
     if (!std::isfinite(*scale)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "scale", std::to_string(*scale), "scale must be finite");

@@ -76,9 +76,9 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     const double *scale = context->GetAttrs()->GetAttrPointer<double>(ATTR_SCALE);
     if (chunkSize == nullptr || *chunkSize != CHUNK_SIZE || scale == nullptr) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                    OP_NAME, "chunk_size,scale",
-                    chunkSize == nullptr ? "chunk_size=null" : std::to_string(*chunkSize),
-                    "chunk_size=32 and a scale attribute are required");
+                    OP_NAME, "chunkSize,scale",
+                    chunkSize == nullptr ? "chunkSize=null" : std::to_string(*chunkSize),
+                    "chunkSize=32 and a scale attribute are required");
         return ge::GRAPH_FAILED;
     }
 
@@ -100,7 +100,8 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     stateShape == nullptr || qDesc == nullptr || kDesc == nullptr ||
                     vDesc == nullptr || betaDesc == nullptr || gDesc == nullptr ||
                     stateDesc == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,g,o,final_state");
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: tiling metadata of q/k/v/beta/g/o/final_state is missing", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -170,7 +171,7 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     !IsShape(betaShape, {batch, valueHeads, tokens}) ||
                     !IsShape(gShape, {batch, valueHeads, tokens}) ||
                     !(IsShape(oShape, {batch, valueHeads, tokens, valueDim}) || oFlat)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                     OP_NAME, "k,v,beta,g,o", "storage shape mismatch",
                     "Chunk32 input or output storage shape is invalid");
         return ge::GRAPH_FAILED;
