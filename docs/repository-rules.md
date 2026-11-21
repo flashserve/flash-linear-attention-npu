@@ -60,6 +60,8 @@ A5 job 使用 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5` �
 
 A2/A5 共用 Git 源码获取流程：首次 checkout 直连，失败后启用主机 `CI_PROXY_SCRIPT` 的 `proxyon` 并重试；fetch 目标分支和 PR head、补充浅克隆历史也有有限超时及代理重试。源码现场合并后、启动容器前，设备只读取本地 Git，核对 prepare 固定的 base/head SHA、已获取的分支 ref 及两个 commit 的合并祖先关系，不调用 GitHub API。运行中的远程 head 监控通过 Git ref 尽力查询，连接失败只告警并继续。PR 是否仍 open、非草稿、未合并及目标分支是否变化，由 GitHub-hosted prepare/finalize 检查；本地 Git 无法证明这些实时元数据，finalize 无法确认时不发布成功。
 
+平台结果 artifact 上传失败后，按 10、30、60 秒间隔最多重试 3 次（含首次共 4 次），只重新上传已有报告，不重新编译；重试覆盖同名 artifact。汇总端下载失败或双平台报告文件不齐全时采用相同重试策略，兼容仅重跑失败 job 时复用同一次 run 中另一平台的已有报告。重试耗尽仍失败；报告内容、身份、精度和执行矩阵的校验规则不变。该重试仅针对结果报告，不改变 `debug` 完整日志上传。
+
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
 新版 CI 在复用成功结果或等待已有任务前，还会读取该任务的运行信息，确认目标分支及 base commit 与本次请求一致；无法确认时启动新验证。最终发布结果前再次检查 PR 状态和 head/base，运行期间目标分支切换或 base commit 更新会使本次结果失效。
