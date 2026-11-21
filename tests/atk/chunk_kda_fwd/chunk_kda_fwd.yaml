@@ -137,10 +137,11 @@ inputs:
     dtypes:
       values: [int]
     ranges:
+      # K/V 只交付两档且必须同档：K=V=64 或 K=V=128；固化精度矩阵使用 K=V=128。
       valid:
-        values: [64]
+        values: [32, 64]
       invalid:
-        values: [32, 128]
+        values: [128]
   - name: layout
     type: attr
     required: true
