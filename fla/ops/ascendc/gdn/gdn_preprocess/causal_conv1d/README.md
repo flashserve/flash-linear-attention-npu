@@ -20,8 +20,12 @@
 计算为：
 
 ```text
-y[t] = activation(sum(weight[j] * x[t-j]) + bias)
+y[t] = activation(sum(weight[j] * x[t - (W-1) + j]) + bias)
 ```
+
+`weight` 按 `(W,D)` 存储，`weight[W-1]` 对应当前 token `x[t]`，`weight[0]` 对应窗口内最早的
+token `x[t-(W-1)]`。该索引方向与 `fla/ops/triton/triton_core/causal_conv1d.py` 的参考实现
+（按 `i_w + W - 1` 取权重）一致。
 
 卷积宽度支持 2、3、4，`D` 必须是 16 的倍数，数据 dtype 支持 FP16 和 BF16。
 
