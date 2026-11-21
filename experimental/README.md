@@ -4,6 +4,7 @@
 
 - [构建、安装与装载设计](docs/architecture/experimental%20构建适配设计.md)
 - [当前验证记录](validation.md)
+- [Issue #931 验收核对与逐项命令](docs/issue-931-acceptance.md)
 - [RWKV8 接口和实现](ops/fused_recurrent_rwkv8/README.md)
 
 ## 方案状态
