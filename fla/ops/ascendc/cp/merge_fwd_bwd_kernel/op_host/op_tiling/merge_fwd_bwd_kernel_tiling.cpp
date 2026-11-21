@@ -53,7 +53,7 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const gert::Shape ag = agShapePtr->GetStorageShape();
+    const gert::Shape ag = agShapePtr->GetOriginShape();
     if (ag.GetDimNum() != 4) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "HV", std::to_string(ag.GetDimNum()), "ag_hm must be rank-4 [S,HV,K,V+K].");
         return ge::GRAPH_FAILED;
@@ -71,8 +71,8 @@ ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const gert::Shape hIn = hInShapePtr->GetStorageShape();
-    const gert::Shape h = hShapePtr->GetStorageShape();
+    const gert::Shape hIn = hInShapePtr->GetOriginShape();
+    const gert::Shape h = hShapePtr->GetOriginShape();
     // state_v_first only swaps the last two axes. K = V = 128, so both layouts are [HV,128,128].
     const auto hOk = [](const gert::Shape &shape, int64_t hv) {
         return shape.GetDimNum() == 3 && shape.GetDim(0) == hv && shape.GetDim(1) == kK &&

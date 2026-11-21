@@ -117,11 +117,11 @@ bool ResolveShape(gert::TilingContext *context, PrepareLayout layout,
         return false;
     }
 
-    const auto &q = qShapePtr->GetStorageShape();
-    const auto &k = kShapePtr->GetStorageShape();
-    const auto &v = vShapePtr->GetStorageShape();
-    const auto &g = gShapePtr->GetStorageShape();
-    const auto &beta = betaShapePtr->GetStorageShape();
+    const auto &q = qShapePtr->GetOriginShape();
+    const auto &k = kShapePtr->GetOriginShape();
+    const auto &v = vShapePtr->GetOriginShape();
+    const auto &g = gShapePtr->GetOriginShape();
+    const auto &beta = betaShapePtr->GetOriginShape();
     if (!SameShape(q, k)) {
         return false;
     }

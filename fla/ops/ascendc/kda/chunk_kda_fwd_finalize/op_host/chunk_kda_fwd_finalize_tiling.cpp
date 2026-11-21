@@ -105,11 +105,11 @@ bool ResolveInputs(gert::TilingContext *context, FinalizeShape &info)
         h == nullptr || out == nullptr) {
         return false;
     }
-    const gert::Shape &qShape = q->GetStorageShape();
-    const gert::Shape &aShape = aqk->GetStorageShape();
-    const gert::Shape &vShape = vNew->GetStorageShape();
-    const gert::Shape &hShape = h->GetStorageShape();
-    const gert::Shape &oShape = out->GetStorageShape();
+    const gert::Shape &qShape = q->GetOriginShape();
+    const gert::Shape &aShape = aqk->GetOriginShape();
+    const gert::Shape &vShape = vNew->GetOriginShape();
+    const gert::Shape &hShape = h->GetOriginShape();
+    const gert::Shape &oShape = out->GetOriginShape();
     if (info.packed) {
         if (qShape.GetDimNum() != 3 || qShape.GetDim(2) != 128) {
             return false;
@@ -323,7 +323,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
         return ge::GRAPH_FAILED;
     }
-    const auto &h = context->GetInputShape(FINALIZE_INPUT_H)->GetStorageShape();
+    const auto &h = context->GetInputShape(FINALIZE_INPUT_H)->GetOriginShape();
     const int64_t hBatch = static_cast<int64_t>(info.batch);
     if (!HasShape(h, {hBatch, static_cast<int64_t>(totalChunks),
                       static_cast<int64_t>(info.heads), 128, 128})) {
