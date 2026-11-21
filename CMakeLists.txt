@@ -128,6 +128,7 @@ set_directory_properties(PROPERTIES
 )
 
 include(cmake/third_party/opbase.cmake)
+include(cmake/third_party/metadef.cmake)
 include(cmake/third_party/catlass.cmake)
 include(cmake/config.cmake)
 include(cmake/third_party/json.cmake)
