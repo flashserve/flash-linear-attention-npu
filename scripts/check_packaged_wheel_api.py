@@ -19,7 +19,48 @@ import sys
 from pathlib import Path
 
 
-ASCENDC_NAMES = ('fast_gelu_custom', 'fast_gelu_custom_backward', 'causal_conv1d', 'causal_conv1d_fn', 'causal_conv1d_update', 'causal_conv1d_bwd', 'prepare_wy_repr_bwd_full', 'prepare_wy_repr_bwd', 'chunk_gated_delta_rule_bwd_dhu', 'chunk_gated_delta_rule_bwd', 'chunk_gated_delta_rule_fwd_prepare', 'chunk_gated_delta_rule_bwd_finalize', 'chunk_bwd_dv_local', 'pre_process_bwd_kernel_merged', 'chunk_gdn_bwd_intra', 'prepare_wy_repr_bwd_da', 'chunk_bwd_dqkwg', 'chunk_fwd_o', 'chunk_gated_delta_rule_fwd_h', 'pre_process_fwd_kernel_merged', 'chunk_fwd_h', 'chunk_kda_fwd_finalize', 'chunk_kda_fwd_prepare', 'recompute_w_u_fwd', 'recurrent_gated_delta_rule', 'chunk_gated_delta_rule_fwd', 'chunk_local_cumsum', 'chunk_scaled_dot_kkt', 'solve_tri', 'chunk_kda_fwd', 'chunk_kda_bwd', 'chunk_kda_bwd_intra', 'chunk_kda_bwd_recompute', 'chunk_kda_bwd_prepare', 'chunk_kda_bwd_finalize', 'merge_fwd_bwd_kernel', 'kda_gate_cumsum', 'recurrent_kda')
+ASCENDC_NAMES = (
+    'fast_gelu_custom',
+    'fast_gelu_custom_backward',
+    'causal_conv1d',
+    'causal_conv1d_fn',
+    'causal_conv1d_update',
+    'causal_conv1d_bwd',
+    'prepare_wy_repr_bwd_full',
+    'prepare_wy_repr_bwd',
+    'chunk_gated_delta_rule_bwd_dhu',
+    'chunk_gated_delta_rule_bwd',
+    'chunk_gated_delta_rule_fwd_prepare',
+    'chunk_gated_delta_rule_bwd_finalize',
+    'chunk_bwd_dv_local',
+    'pre_process_bwd_kernel_merged',
+    'chunk_gdn_bwd_intra',
+    'prepare_wy_repr_bwd_da',
+    'chunk_bwd_dqkwg',
+    'chunk_fwd_o',
+    'chunk_gated_delta_rule_fwd_h',
+    'pre_process_fwd_kernel_merged',
+    'chunk_fwd_h',
+    'chunk_kda_fwd_finalize',
+    'chunk_kda_fwd_prepare',
+    'recompute_w_u_fwd',
+    'recurrent_gated_delta_rule',
+    'chunk_gated_delta_rule_fwd',
+    'chunk_local_cumsum',
+    'chunk_scaled_dot_kkt',
+    'solve_tri',
+    'chunk_kda_fwd',
+    'chunk_kda_bwd',
+    'chunk_kda_bwd_intra',
+    'chunk_kda_bwd_recompute',
+    'chunk_kda_bwd_prepare',
+    'chunk_kda_bwd_finalize',
+    'merge_fwd_bwd_kernel',
+    'kda_gate_cumsum',
+    'recurrent_kda',
+    'gdn_recoverssm_commit',
+    'gdn_recoverssm_verify',
+)
 
 
 TRITON_NAMES = (
