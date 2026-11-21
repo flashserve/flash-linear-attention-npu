@@ -52,7 +52,7 @@
 | `T` | packed token 总数，`query_start_loc[B]=T` |
 | `HK/HV` | TP-local key/value head 数，`G=HV/HK` |
 | `K/V` | 输入 key/value 宽度，均为 128 |
-| `L` | `spec_query_len`，窗口容量，1 到 32 |
+| `L` | `replay_cache.shape[2]` 给出的窗口容量，1 到 32 |
 | `Nwork` | 独立递推任务数，`B*HV` |
 | `blockDim` | 实际启动 AIV 数，`ceil(Nwork/ceil(Nwork/GetCoreNumAiv()))` |
 | `slot` | 双缓冲槽，0/1，按跨 work 的全局 tile 顺序取反 |
@@ -115,7 +115,8 @@ kh = k otherwise
 load v[0,token,hv,:] and cast to FP32
 ```
 
-S0 按调用方保证的非空 token span 读取数据；kernel 不为 page 或空请求增加防御分支。
+S0 对零长度 token span 直接跳过，不读取 checkpoint，也不写 output/replay；非空 work
+继续按调用方保证的正整数 page 读取数据。
 
 **本 Stage 产生/写出**
 
@@ -210,7 +211,7 @@ work 和输出区间互不重叠，不增加跨核同步。
 | 数据边 | Producer | Consumer | ready | free/复用条件 | 本地 pipe 完成 | 回绕/退出处理 |
 | --- | --- | --- | --- | --- | --- | --- |
 | checkpoint/state bank | MTE2 | S0 Vector | `STATE_MUTEX[2]` 的 `PIPE_MTE2` unlock | 每个 token 只获取目标 bank 的 `PIPE_V` mutex，并按三 bank 轮转 | Mutex lock/unlock 成对 | 每个 work 从 bank2 raw 重新开始，work 完成后全部释放 |
-| S0 QKV resident | S0 Vector | S1 Vector | S0 末次 VF 后按程序顺序就绪 | 当前 work 全部 token 完成后释放 resident | 同 pipe 依赖使用 `PipeBarrier<PIPE_V>()`，不跨硬事件冒充 | 调用方保证请求非空；work 循环退出后不保留等待 |
+| S0 QKV resident | S0 Vector | S1 Vector | S0 末次 VF 后按程序顺序就绪 | 当前 work 全部 token 完成后释放 resident | 同 pipe 依赖使用 `PipeBarrier<PIPE_V>()`，不跨硬事件冒充 | 零长度 work 不进入 S0；非空 work 完成后不保留等待 |
 | input tile | MTE2 | S1 Vector | `INPUT_MUTEX[tile]` 的 `PIPE_MTE2` unlock | Vector 获取同一 mutex 后消费 tile | Mutex lock/unlock 成对 | 双 slot 回绕；尾 tile 只搬有效行 |
 | output/replay tile | S1 Vector | MTE3 | Vector 释放 `OUTPUT_MUTEX[tile]` | MTE3 获取同一 mutex 后写回 | Mutex lock/unlock 成对 | 下一个复用者等待 mutex；work 尾自然释放 |
 | 下一 work state 预取 | Vector | 下一 work MTE2 | 单 token work 搬入完成时，或多 token work 倒数第二个 token 完成时发布 `V_MTE2(EVENT_ID0)` | 下一 work MTE2 在 `MTE2_V(EVENT_ID0)` 后写目标 bank | `SetFlag/WaitFlag<HardEvent::V_MTE2/MTE2_V>` | 仅存在同核下一 work 时发布；最后一个 work 不发布 |

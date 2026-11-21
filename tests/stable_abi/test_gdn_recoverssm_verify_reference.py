@@ -135,7 +135,6 @@ def _make_inputs(
         "replay_cache": replay,
         "query_start_loc": offsets,
         "state_indices": pages,
-        "spec_query_len": window,
     }, state_storage, replay_storage
 
 
@@ -161,7 +160,6 @@ def test_manual_single_token() -> None:
         replay,
         torch.tensor([0, 1], dtype=torch.int32),
         torch.tensor([1], dtype=torch.int32),
-        1,
         scale=1.0,
         softplus_beta=1.0,
         softplus_threshold=20.0,

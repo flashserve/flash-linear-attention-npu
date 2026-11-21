@@ -36,7 +36,6 @@ def gdn_recoverssm_verify(
     replay_cache: Tensor,
     query_start_loc: Tensor,
     state_indices: Tensor,
-    spec_query_len: int,
     scale: float | None,
     softplus_beta: float,
     softplus_threshold: float,
@@ -60,15 +59,15 @@ def gdn_recoverssm_verify(
 | 8 | `replay_cache` | 输出、原地写 | `[P,HV,L,V+K+1]` | FP32 | commit 所需紧凑记录 |
 | 9 | `query_start_loc` | 输入 | `[B+1]` | INT32 或 INT64 | 请求 token 起止位置 |
 | 10 | `state_indices` | 输入 | `[B]` | INT32 或 INT64 | 每个请求的 checkpoint 页号 |
-| 11 | `spec_query_len` | 属性 | 标量 | INT64 | 每请求记录容量 `L` |
-| 12 | `scale` | 属性 | 标量 | FLOAT | Query 缩放，`None` 使用 `K**-0.5` |
-| 13 | `softplus_beta` | 属性 | 标量 | FLOAT | Softplus beta，默认 `1.0` |
-| 14 | `softplus_threshold` | 属性 | 标量 | FLOAT | Softplus 线性分支阈值，默认 `20.0` |
-| 15 | `use_qk_l2norm_in_kernel` | 属性 | 标量 | BOOL | 是否在 kernel 内归一化 Q/K，默认 `True` |
-| 16 | `out` | 可选输出 | `[1,T,HV,V]` | BF16 | 未提供时由接口分配 |
+| 11 | `scale` | 属性 | 标量 | FLOAT | Query 缩放，`None` 使用 `K**-0.5` |
+| 12 | `softplus_beta` | 属性 | 标量 | FLOAT | Softplus beta，默认 `1.0` |
+| 13 | `softplus_threshold` | 属性 | 标量 | FLOAT | Softplus 线性分支阈值，默认 `20.0` |
+| 14 | `use_qk_l2norm_in_kernel` | 属性 | 标量 | BOOL | 是否在 kernel 内归一化 Q/K，默认 `True` |
+| 15 | `out` | 可选输出 | `[1,T,HV,V]` | BF16 | 未提供时由接口分配 |
 
 Python wrapper 返回 `out`。`replay_cache` 作为 mutation 输出保留调用者视角中的原对象，
 不与 `out`、`q`、`k`、`v` 或 `checkpoint_state` 发生部分重叠。
+每请求记录容量 `L` 由 `replay_cache.shape[2]` 推导。
 
 ## Python 调用示例
 
@@ -115,7 +114,6 @@ out = gdn_recoverssm_verify(
     replay,
     torch.tensor(offsets, dtype=torch.int32, device=device),
     torch.tensor([1, 2], dtype=torch.int32, device=device),
-    spec_query_len=window,
     scale=k_dim**-0.5,
     softplus_beta=0.5,
     softplus_threshold=2.0,
@@ -174,8 +172,8 @@ replay_cache[page,hv,t,V+K] = d
   BF16 量化不回灌后续 token。
 - `replay_cache` 写入 FP32 correction、有效 normalized key 和标量 decay。
 - `query_start_loc` 定义的有效 token 区间内逐 token 递推；区间外不写输出或 replay。
-- 调用方必须为每个请求提供正整数 page；kernel 不执行设备端 page 防御检查。
-- 调用方必须保证每个请求的 token span 非空；kernel 不执行设备端空请求防御检查。
+- 零长度请求不读取 checkpoint、不写 output/replay，也不改变同一核后续请求的执行状态。
+- 调用方必须为非空请求提供正整数 page；kernel 不执行设备端 page 防御检查。
 
 ## 布局与步进
 
@@ -198,20 +196,20 @@ stride，其中 payload 维 stride 必须为 1。所有 stride 必须为正，�
 - checkpoint：BF16 或 FP32；replay 与输出：分别为 FP32、BF16。
 - `K`、`V`：固定为 128。首版仅验证 Qwen3.6-35B-A3B 与 Qwen3.8-27B 的模型宽度。
 - `HK >= 1`、`HV % HK == 0`、`1 <= HV/HK <= 16`。
-- `1 <= spec_query_len <= 32`；每个请求有效长度不大于 `spec_query_len`。
-- `query_start_loc[0] == 0`、末项等于 `T`、序列非递减，且 `T <= B * spec_query_len`。
-- 每个请求的 page 必须位于 `[1,P)`；页号随请求在调用内唯一，保证 replay 写区间不冲突。
-- 每个请求的 token span 必须非空。
+- `replay_cache.shape[2]` 必须位于 `[1,32]`；每个请求有效长度不大于该值。
+- `query_start_loc[0] == 0`、末项等于 `T`，且序列非递减。
+- 每个非空请求的 page 必须位于 `[1,P)`；页号随请求在调用内唯一，保证 replay 写区间不冲突。
+- 零长度请求可与普通请求混排，作为 padding 请求支持。
 - 支持 BF16/FP32 checkpoint padding、输出 view、INT32/INT64 metadata 和空 batch。
 
 ## 边界行为
 
-- `spec_query_len < 1`、`softplus_beta <= 0`、非有限 `scale` 或维度超限由 host 拒绝。
+- replay window 小于 1、`softplus_beta <= 0`、非有限 `scale` 或维度超限由 host 拒绝。
 - Q 与 K 的 shape、dtype、device 必须一致；V、checkpoint、replay、metadata 的 shape
   和 dtype 必须满足上表。
 - 空 batch 或 `T == 0` 时不启动 kernel，返回形状正确的空/零输出，checkpoint 和 replay
   不变。
-- 空请求和非正 page 号不属于支持范围，kernel 不为其增加防御分支。
+- 空请求不执行读取或写回；非空请求仍要求正整数 page。
 - 对任意输入路径，checkpoint 字节内容在调用前后完全一致。
 - 支持范围内不允许 NaN/Inf gate 属性；输入中的非有限值遵循 IEEE 浮点运算，不另行
   静默替换。

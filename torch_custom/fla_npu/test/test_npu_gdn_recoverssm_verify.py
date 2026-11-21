@@ -20,10 +20,11 @@ def _cpu_reference(A_log, a, b, dt_bias, q, k, v, checkpoint, offsets, pages,
         k = k * torch.rsqrt(k.square().sum(-1, keepdim=True) + 1e-6)
     q = q[0].repeat_interleave(ratio, dim=1) * scale
     k = k[0].repeat_interleave(ratio, dim=1)
-    raw = a.reshape_as(b[0]) + bias
+    b = b.reshape(-1, v.shape[2])
+    raw = a.reshape_as(b) + bias
     gate = -a_log.exp() * torch.nn.functional.softplus(raw, beta=beta, threshold=threshold)
     decay = gate.exp()
-    beta_eff = b[0].sigmoid()
+    beta_eff = b.sigmoid()
     out = torch.zeros_like(v)
     records = {}
     for row, page in enumerate(pages):
@@ -97,7 +98,7 @@ def test_gdn_recoverssm_verify_small_ragged(state_dtype):
     )[:, ::2]
     actual = gdn_recoverssm_verify(
         A_log, a, b, dt_bias, q, k, v, checkpoint, replay,
-        offsets, pages, spec_query_len=window, scale=0.25,
+        offsets, pages, scale=0.25,
         softplus_beta=0.5, softplus_threshold=2.0,
         use_qk_l2norm_in_kernel=True, out=supplied_out,
     )
@@ -130,7 +131,6 @@ def test_gdn_recoverssm_verify_null_and_empty():
         A_log, a, b, dt_bias, q, k, v, checkpoint, replay,
         torch.tensor([0], dtype=torch.int32, device=device),
         torch.empty(0, dtype=torch.int32, device=device),
-        spec_query_len=window,
     )
     assert out.numel() == 0
     torch.testing.assert_close(checkpoint, before_checkpoint, atol=0, rtol=0)
@@ -175,7 +175,7 @@ def test_gdn_recoverssm_verify_padded_requests():
     )
     actual = gdn_recoverssm_verify(
         A_log, a, b, dt_bias, q, k, v, checkpoint, replay,
-        offsets, pages, spec_query_len=window, scale=0.25,
+        offsets, pages, scale=0.25,
         softplus_beta=0.5, softplus_threshold=2.0,
         use_qk_l2norm_in_kernel=True,
     )

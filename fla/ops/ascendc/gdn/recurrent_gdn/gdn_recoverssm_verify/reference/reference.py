@@ -49,7 +49,6 @@ def gdn_recoverssm_verify_reference(
     replay_cache: torch.Tensor,
     query_start_loc: torch.Tensor,
     state_indices: torch.Tensor,
-    spec_query_len: int,
     scale: float | None = None,
     softplus_beta: float = 1.0,
     softplus_threshold: float = 20.0,
@@ -84,8 +83,9 @@ def gdn_recoverssm_verify_reference(
         raise ValueError("HV/HK must be an integer in [1,16]")
     if not (1 <= key_dim <= 128 and 1 <= value_dim <= 128):
         raise ValueError("K and V must be in [1,128]")
+    spec_query_len = replay_cache.shape[2]
     if not 1 <= spec_query_len <= 32:
-        raise ValueError("spec_query_len must be in [1,32]")
+        raise ValueError("replay_cache window must be in [1,32]")
     if A_log.shape != (hv,) or dt_bias.shape != (hv,):
         raise ValueError("A_log and dt_bias must be [HV]")
     if a.numel() != total_tokens * hv or b.numel() != total_tokens * hv:
