@@ -118,12 +118,15 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const auto arch = platform.GetCurNpuArch();
     const bool arch22 = arch == NpuArch::DAV_2201;
-    if (!arch22 && arch != NpuArch::DAV_3510) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: only DAV_2201 and DAV_3510 are supported.", __func__);
+    const bool arch92 = arch == NpuArch::DAV_9201;
+    const bool arch35 = arch == NpuArch::DAV_3510;
+    if (!arch22 && !arch92 && !arch35) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "%s: only DAV_2201, DAV_3510 and DAV_9201 are supported.", __func__);
         return ge::GRAPH_FAILED;
     }
-    // 上限统一取自 schedule.h 的 IntraMaxGvaRatio，与 aclnn 参数校验同源。
-    const int64_t maxRatio = IntraMaxGvaRatio(arch22);
+    // A6 uses fixed GVA keys; A2/A3 and A5 also support runtime GVA.
+    const int64_t maxRatio = IntraMaxGvaRatio(arch22, arch92);
     const int64_t headRatio = valueHeads / qkHeads;
     if (valueHeads % qkHeads != 0 || headRatio < 1 || headRatio > maxRatio) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
@@ -187,9 +190,10 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     }
 
     const uint32_t aicCores = platform.GetCoreNumAic();
+    const uint32_t cores = arch92 ? std::min<uint32_t>(aicCores, platform.GetCoreNumAiv()) : aicCores;
     IntraSchedule schedule;
-    if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, aicCores,
-                                    arch22, platform.GetLibApiWorkSpaceSize(), schedule)) {
+    if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, cores, arch22, arch92,
+                            platform.GetLibApiWorkSpaceSize(), schedule)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "invalid schedule or workspace overflow.");
         return ge::GRAPH_FAILED;
     }

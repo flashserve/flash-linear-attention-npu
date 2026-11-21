@@ -134,6 +134,7 @@ FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。
 | A2/A3（DAV_2201 / arch22） | `1~16` | BF16 或 FP16 |
 | A5（DAV_3510 / arch35） | `1~4` | BF16 或 FP16 |
 | A5（DAV_3510 / arch35） | `5~16` | 仅 BF16 |
+| A6（DAV_9201 / arch92） | `1~4` | BF16 或 FP16 |
 
 独立 Intra 的支持范围不等同于完整反向父链的准入范围。完整
 [`chunk_gated_delta_rule_bwd`](../../chunk_gated_delta_rule_bwd/README.md#支持范围)
@@ -142,12 +143,12 @@ FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。
 ## 支持范围
 
 ```text
-SoC                 A2 / Ascend 910B、A3 / Ascend 910C（ascend910_93）、A5 / Ascend 950
+SoC                 A2 / Ascend 910B、A3 / Ascend 910C（ascend910_93）、A5 / Ascend 950、A6 / Ascend 960DT（ascend960dt）
 layout              BNSD [B,H,T,D]
 B/HK/HV/T           正整数
 K/V                 固定为 128/128
 chunk_size          固定为 64
-G=HV/HK             A2/A3（DAV_2201）：1~16；A5：1~16（G>4 仅 BF16 主输入）
+G=HV/HK             A2/A3（DAV_2201）：1~16；A5：1~16（G>4 仅 BF16 主输入）；A6：1~4
 ```
 
 A2 与 A3（Ascend 910C，`ascend910_93`）同走 arch22（`DAV_2201`）路径，GVA 支持范围一致。
@@ -155,6 +156,7 @@ A2/A3 上 `G>4` 的取值不再实例化新的编译期模板，而是统一落�
 实例：host tiling 把实际比例写入 `tilingData.groupSize`，kernel 在每个 work 的
 head 级循环中按该值完成 `hv -> hk` 映射、Score leader 判定与 k 预取门控；`G<=4`
 仍走原编译期模板实例。A5 上 `G>4` 统一选择 `G_KEY=5`，主输入必须为 BF16。
+A6 继续使用 `G_KEY=1~4` 的编译期模板，并在 Host 校验阶段拒绝 `G>4`。
 
 定长场景支持任意正 `B`；变长场景使用 `B=1` 的输入容器，由 `cu_seqlens` 描述多个
 sequence 的边界。所有输出保持输入的 BNSD 逻辑排布。
