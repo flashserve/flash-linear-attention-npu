@@ -14,6 +14,7 @@
 #include "chunk_fwd_h.h"
 #include <dlfcn.h>
 #include <new>
+#include <initializer_list>
 
 #include "aclnn_kernels/contiguous.h"
 #include "acl/acl.h"
@@ -32,6 +33,24 @@
 
 
 using namespace op;
+
+namespace {
+
+void SetTensorOriginalShape(const aclTensor *tensor)
+{
+    if (tensor != nullptr) {
+        tensor->SetOriginalShape(tensor->GetViewShape());
+    }
+}
+
+void NormalizeOriginalShapes(std::initializer_list<const aclTensor *> tensors)
+{
+    for (const aclTensor *tensor : tensors) {
+        SetTensorOriginalShape(tensor);
+    }
+}
+
+} // namespace
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,10 +118,9 @@ static aclnnStatus CheckFormat(ChunkFwdHParams params)
         }
         const auto storageFormat = tensors[idx]->GetStorageFormat();
         const auto viewFormat = tensors[idx]->GetViewFormat();
-        CHECK_COND(storageFormat == Format::FORMAT_ND && viewFormat == Format::FORMAT_ND &&
-                       !IsPrivateFormat(storageFormat),
+        CHECK_COND(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat),
                    ACLNN_ERR_PARAM_INVALID,
-                   "%s must use non-private ND storage/view format, but got storage=%d and view=%d.",
+                   "%s must use non-private public storage/view formats, but got storage=%d and view=%d.",
                    tensorNames[idx], static_cast<int>(storageFormat),
                    static_cast<int>(viewFormat));
     }
@@ -444,6 +462,10 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
+    NormalizeOriginalShapes({
+        params.k, params.w, params.u, params.gOptional, params.gkOptional,
+        params.initialStateOptional, params.hOut, params.vNewOut,
+        params.finalStateOut});
     // gated 引擎经 STATE_V_FIRST 模板维原生产出 [K,V]/[V,K] state（cube 等价
     // 转置式，见 arch22/chunk_fwd_h_utils.h），aclnn 层无需布局翻译，参数原样直达。
     auto result = l0op::ChunkFwdH(

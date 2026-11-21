@@ -80,6 +80,21 @@ struct ChunkKdaFwdPrepareParams {
     const aclTensor *betaEffOut = nullptr;
 };
 
+
+void SetTensorOriginalShape(const aclTensor *tensor)
+{
+    if (tensor != nullptr) {
+        tensor->SetOriginalShape(tensor->GetViewShape());
+    }
+}
+
+void NormalizeOriginalShapes(std::initializer_list<const aclTensor *> tensors)
+{
+    for (const aclTensor *tensor : tensors) {
+        SetTensorOriginalShape(tensor);
+    }
+}
+
 struct PrepareShapeInfo {
     bool packed = false;
     int64_t batch = 0;
@@ -949,6 +964,13 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     if (status != ACLNN_SUCCESS) {
         return status;
     }
+    NormalizeOriginalShapes({
+        params.q, params.k, params.v, params.g, params.beta,
+        params.aLogOptional, params.dtBiasOptional,
+        params.gkOut, params.aqkOut, params.akkOut, params.wOut,
+        params.uOut, params.qgOut, params.kgOut, params.qgScaledOut,
+        params.qHatOut, params.kHatOut, params.qRstdOut, params.kRstdOut,
+        params.betaEffOut});
 
     const auto result = l0op::ChunkKdaFwdPrepare(
         params.q, params.k, params.v, params.g, params.beta,
