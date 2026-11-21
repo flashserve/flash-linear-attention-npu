@@ -58,7 +58,18 @@ def _prepared(input_data: InputDataset, spec):
     batch, key_heads, total_tokens, dim = q.shape
     value_heads = values[2].shape[1]
     if bool(spec.get("varlen", False)):
-        cu_seqlens, chunk_indices = _make_varlen(total_tokens)
+        if spec.get("cu_seqlens") is not None:
+            cu_seqlens = [int(value) for value in spec["cu_seqlens"]]
+            if cu_seqlens[0] != 0 or cu_seqlens[-1] != total_tokens:
+                raise ValueError("cu_seqlens must span T")
+            chunk_indices = []
+            for seq, (begin, end) in enumerate(zip(cu_seqlens, cu_seqlens[1:])):
+                if end < begin:
+                    raise ValueError("cu_seqlens must be nondecreasing")
+                for chunk in range((end - begin + CHUNK_SIZE - 1) // CHUNK_SIZE):
+                    chunk_indices.extend((seq, chunk))
+        else:
+            cu_seqlens, chunk_indices = _make_varlen(total_tokens)
         state_chunk_num = len(chunk_indices) // 2
     else:
         cu_seqlens, chunk_indices = None, None

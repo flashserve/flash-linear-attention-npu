@@ -12,11 +12,9 @@
 
 namespace optiling {
 
-// GVA 比例（HV/HK）上限的唯一来源：A2/A3（arch22，DAV_2201）支持 1~16，
-// A5（DAV_3510）上限 4。aclnn 参数校验与 host tiling 共用本函数，
-// 不要在其它位置另行展开 16/4，否则两处判据会漂移。
+// A2/A3（DAV_2201）和 A5（DAV_3510）的 Intra GVA 上限。
 constexpr int64_t INTRA_MAX_GVA_RATIO_ARCH22 = 16;
-constexpr int64_t INTRA_MAX_GVA_RATIO_ARCH35 = 4;
+constexpr int64_t INTRA_MAX_GVA_RATIO_ARCH35 = 16;
 
 constexpr int64_t IntraMaxGvaRatio(bool arch22)
 {

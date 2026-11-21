@@ -100,13 +100,13 @@ kernel 的每个使用点经 `ChunkGdnBwdIntraGroup<G>(tiling->groupSize)` 读�
 - `G_KEY=0` 的 16 个实例（2 种定长/变长策略 × 2 种主 dtype × 2 种 g dtype ×
   2 种 beta dtype）保留在全平台共用的实例表中。A5（DAV_3510）的 dispatch 使用
   `if constexpr (G_KEY != CHUNK_GDN_BWD_INTRA_G_RUNTIME)`，使共享表中的 0 实例
-  可编译而不实例化 A5 Cube/Vector 计算路径。A5 host tiling（上限 4）永不选择
-  0，aclnn 也在参数校验层拒绝超限比例；编译期隔离与运行期拒绝分别保证构建和调用安全。
+  可编译而不实例化 A5 Cube/Vector 计算路径。
+- A5 的 G>4 选择 `G_KEY=5`，主 dtype 为 BF16，定长和变长共用 `STRATEGY=0`，
+  实际模式由 `isVarlen` 解码。该 key 在 A5 映射到读取 `tilingData.groupSize` 的运行时
+  模板参数，arch22 不实例化该 key 的计算路径。
 
-GVA 比例上限只在 `op_host/chunk_gdn_bwd_intra_schedule.h` 的
-`IntraMaxGvaRatio(arch22)` 定义一处（arch22 为 16、其余为 4），aclnn 参数校验、
-host tiling 校验和 `BuildIntraSchedule` 中的比例检查共同引用它。新增平台或调整
-档位时只改该函数，避免多层判据各自展开导致放行与拒绝不一致。
+A2/A3 和 A5 的 Intra GVA 比例上限均为 16，由
+`op_host/chunk_gdn_bwd_intra_schedule.h` 的 `IntraMaxGvaRatio(arch22)` 提供。
 
 模型 case 有 `Nwork=1408`、`blockDim=28`：`block_idx=0..7` 各处理 51 个完整 work，
 其余 20 个核各处理 50 个完整 work；每个完整 work 处理 4 个 value head。

@@ -4,6 +4,7 @@
  */
 #include "aclnn_chunk_gdn_bwd_intra.h"
 #include "chunk_gdn_bwd_intra.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
 
 #include <array>
 #include <set>
@@ -25,8 +26,6 @@ namespace {
 
 constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
 
-// GVA 比例（HV/HK）上限：DAV_2201（A2/A3）为 16，其他（含 DAV_3510/A5）为 4。
-constexpr int64_t GVA_RATIO_MAX_DAV_2201 = 16;
 constexpr int64_t GVA_RATIO_MAX_OTHER = 4;
 
 struct Params {
@@ -121,15 +120,18 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "q/k and value tensors must share B and T.");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // GVA 上限在 aclnn 参数校验层拦截：DAV_2201（A2/A3）支持 1~16，其他 1~4。
-    const int64_t gvaLimit = GetCurrentPlatformInfo().GetCurNpuArch() ==
-        NpuArch::DAV_2201 ? GVA_RATIO_MAX_DAV_2201 : GVA_RATIO_MAX_OTHER;
-    if (hv % hk != 0 || hv / hk < 1 || hv / hk > gvaLimit) {
+    const auto arch = GetCurrentPlatformInfo().GetCurNpuArch();
+    const bool isAscend950 = arch == NpuArch::DAV_3510;
+    const bool arch22 = arch == NpuArch::DAV_2201;
+    const int64_t gvaLimit = arch22 || isAscend950 ? optiling::IntraMaxGvaRatio(arch22) : GVA_RATIO_MAX_OTHER;
+    const int64_t ratio = hv / hk;
+    if (hv % hk != 0 || ratio < 1 || ratio > gvaLimit) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "hv/hk",
             std::to_string(hv) + "/" + std::to_string(hk),
-            "HV/HK ratio must be an integer in [1, 16] on DAV_2201 (A2/A3), "
-            "or [1, 4] on other SoC archs.");
+            isAscend950 ? "HV/HK ratio must be an integer in [1, 16] on DAV_3510 (A5)." :
+                "HV/HK ratio must be an integer in [1, 16] on DAV_2201 (A2/A3), "
+                "or [1, 4] on other SoC archs.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t)) {
@@ -150,6 +152,12 @@ aclnnStatus Check(const Params &p)
     }
 
     const DataType mainType = p.q->GetDataType();
+    if (isAscend950 && ratio > 4 && mainType != DataType::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv) +
+            ", q dtype=" + (mainType == DataType::DT_FLOAT16 ? "FP16" : std::to_string(static_cast<int>(mainType)));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q dtype", actual, "BF16 for HV/HK > 4 on A5");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (!(mainType == DataType::DT_BF16 || mainType == DataType::DT_FLOAT16)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q", "invalid", "q/k/v/A/d_o must be BF16 or FP16.");
         return ACLNN_ERR_PARAM_INVALID;
@@ -199,11 +207,23 @@ aclnnStatus Check(const Params &p)
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must span [0,T].");
         return ACLNN_ERR_PARAM_INVALID;
     }
+        const bool requireCompleteChunks = isAscend950 && ratio > 4;
+        uint64_t expectedChunks = 0;
         for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
             if (!(cu[seq] >= 0 && cu[seq + 1] >= cu[seq])) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be nonnegative and nondecreasing.");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be nonnegative and nondecreasing.");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+            if (requireCompleteChunks) {
+                const int64_t length = cu[seq + 1] - cu[seq];
+                expectedChunks += length / p.chunkSize + (length % p.chunkSize != 0);
+            }
+        }
+        if (requireCompleteChunks && indices.Size() / 2 != expectedChunks) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_NAME, "chunk_indices pair count", std::to_string(indices.Size() / 2),
+                "expected " + std::to_string(expectedChunks) + " to cover all nonempty sequence chunks");
+            return ACLNN_ERR_PARAM_INVALID;
         }
         std::set<std::pair<int64_t, int64_t>> seen;
         for (size_t offset = 0; offset < indices.Size(); offset += 2) {

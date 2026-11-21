@@ -126,8 +126,18 @@ const std::array<const aclTensor *, 3> ChunkGdnBwdIntra(
 | `dv_local` | 输出 | 与 `q` 相同 | `[B,HV,T,V]` |
 
 `q/k/v/A/d_o` 使用同一主 dtype；`g` 与 `beta` 可以分别选择 BF16 或 FP32，均不支持
-FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。`G=HV/HK`：
-A2/A3 上为 `1~16` 中的整数，A5 上属于 `{1,2,3,4}`。
+FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。
+以下范围适用于独立 Intra 入口，`G=HV/HK`：
+
+| 平台 | GVA 比例 | 主输入 dtype |
+| --- | --- | --- |
+| A2/A3（DAV_2201 / arch22） | `1~16` | BF16 或 FP16 |
+| A5（DAV_3510 / arch35） | `1~4` | BF16 或 FP16 |
+| A5（DAV_3510 / arch35） | `5~16` | 仅 BF16 |
+
+独立 Intra 的支持范围不等同于完整反向父链的准入范围。完整
+[`chunk_gated_delta_rule_bwd`](../../chunk_gated_delta_rule_bwd/README.md#支持范围)
+在 A2/A3 上仍限制为 `G=1~4`，A5 为 `G=1~16`；调用父链时还须满足其余组合约束。
 
 ## 支持范围
 
@@ -137,15 +147,14 @@ layout              BNSD [B,H,T,D]
 B/HK/HV/T           正整数
 K/V                 固定为 128/128
 chunk_size          固定为 64
-G=HV/HK             A2/A3（DAV_2201）：1~16；A5：1、2、3 或 4
+G=HV/HK             A2/A3（DAV_2201）：1~16；A5：1~16（G>4 仅 BF16 主输入）
 ```
 
 A2 与 A3（Ascend 910C，`ascend910_93`）同走 arch22（`DAV_2201`）路径，GVA 支持范围一致。
 A2/A3 上 `G>4` 的取值不再实例化新的编译期模板，而是统一落入 `G_KEY=0` 的运行时 G
 实例：host tiling 把实际比例写入 `tilingData.groupSize`，kernel 在每个 work 的
 head 级循环中按该值完成 `hv -> hk` 映射、Score leader 判定与 k 预取门控；`G<=4`
-仍走原编译期模板实例，行为与历史版本完全一致。A5 上 `G>4` 在 aclnn 参数校验层
-即被拒绝（错误信息携带当前平台合法范围），不会进入 tiling。
+仍走原编译期模板实例。A5 上 `G>4` 统一选择 `G_KEY=5`，主输入必须为 BF16。
 
 定长场景支持任意正 `B`；变长场景使用 `B=1` 的输入容器，由 `cu_seqlens` 描述多个
 sequence 的边界。所有输出保持输入的 BNSD 逻辑排布。
@@ -165,6 +174,8 @@ sequence 的边界。所有输出保持输入的 BNSD 逻辑排布。
 - 变长场景：`cu_seqlens` 和 `chunk_indices` 必须同时提供；输入容器 `B=1`。
   `cu_seqlens` 从 0 开始、以物理 token 总数结束并单调不减；`chunk_indices` 每行是
   `(sequence_index, local_chunk_index)`，且不能超出对应 sequence 的 chunk 范围。
+  A5 上 `G>4` 的独立 ACLNN 入口要求 `chunk_indices` 完整且唯一地列出所有非空序列的 chunk，
+  允许调整 pair 顺序。缺块返回 `ACLNN_ERR_PARAM_INVALID`，报错包含实际和预期的 pair 数。
 - 尾 chunk 只计算有效 token；输出仍按原输入的 `T` 维写回。
 
 对变长 pair `(seq, lc)`：

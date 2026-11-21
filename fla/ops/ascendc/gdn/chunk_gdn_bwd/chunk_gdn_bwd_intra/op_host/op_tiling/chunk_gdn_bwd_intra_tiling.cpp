@@ -122,7 +122,6 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: only DAV_2201 and DAV_3510 are supported.", __func__);
         return ge::GRAPH_FAILED;
     }
-    // A2/A3 上 G 超过 4 走 G_KEY=0 的运行时 G 桶；A5 维持模板上限 4。
     // 上限统一取自 schedule.h 的 IntraMaxGvaRatio，与 aclnn 参数校验同源。
     const int64_t maxRatio = IntraMaxGvaRatio(arch22);
     const int64_t headRatio = valueHeads / qkHeads;
@@ -132,6 +131,13 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
             std::to_string(valueHeads) + "/" + std::to_string(qkHeads),
             "unsupported HV/HK head ratio, must be an integer in [1, " +
                 std::to_string(maxRatio) + "] on this SoC.");
+        return ge::GRAPH_FAILED;
+    }
+    if (!arch22 && headRatio > static_cast<int64_t>(kGTemplateMax) && mainDtype != ge::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads) +
+            ", q dtype=" + DtypeName(mainDtype);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "q dtype", actual, "BF16 for HV/HK > 4 on A5");
         return ge::GRAPH_FAILED;
     }
     if (keyDim != 128 || valueDim != 128) {
@@ -225,11 +231,11 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->scale = static_cast<float>(*scale);
     tiling->reserved = arch22 ? 2201 : 0;
     tiling->groupSize = headRatio;
-    const uint64_t strategyKey = isVarlen ?
+    const bool isA5RuntimeGroup = !arch22 && headRatio > static_cast<int64_t>(kGTemplateMax);
+    const uint64_t strategyKey = isVarlen && !isA5RuntimeGroup ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
-    // G 1~4 仍走编译期模板；超过 4（仅 arch22 可达）落到 G_KEY=0 的运行时桶。
-    const uint64_t gKey = headRatio <= static_cast<int64_t>(kGTemplateMax) ?
-        static_cast<uint64_t>(headRatio) : CHUNK_GDN_BWD_INTRA_G_RUNTIME;
+    const uint64_t gKey = headRatio <= static_cast<int64_t>(kGTemplateMax) ? static_cast<uint64_t>(headRatio) :
+        (arch22 ? CHUNK_GDN_BWD_INTRA_G_RUNTIME : G_KEY_GT4);
     const uint64_t mainKey = mainDtype == ge::DT_BF16 ?
         CHUNK_GDN_BWD_INTRA_MAIN_BF16 : CHUNK_GDN_BWD_INTRA_MAIN_FP16;
     const uint64_t gateKey = DataTypeKey(
