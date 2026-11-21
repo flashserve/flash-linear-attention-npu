@@ -1,0 +1,13 @@
+/.publish.env
+/.venv/
+/.deps/
+/repos/
+/out/
+/logs/
+/plans/
+/tmp/
+/.deploy/
+/.codex-backups/
+/*.lock
+__pycache__/
+*.pyc
