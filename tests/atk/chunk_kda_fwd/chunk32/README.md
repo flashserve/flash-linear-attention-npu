@@ -9,7 +9,7 @@ FP64 golden 和同精度 benchmark。
 
 - `chunk_size=32` 仅用于 Ascend950 / A5；由独立 L0 算子 `ChunkKdaFwdFused` 承载（默认 TilingKey，自己的 `ChunkKdaFwdFusedTilingData`），经 `aclnnChunkKdaFwdV2` 路由；`ChunkKdaFwd`（V1）不再包含 chunk32 实现。
 - q/k/v/o 为 BF16，`K=V=128`；公开 V2 的 g/beta 各自可为 BF16 或 FP32，任一为 FP32 时统一上转。
-- 支持 dense batch、varlen、GVA、非 128 对齐尾块、initial/final state 和 NTD 原生布局。
+- 支持 dense batch、varlen、GVA、非 128 对齐尾块、initial/final state；varlen 支持 BSND（`B=1`）、BNSD（`B=1`）、TND、NTD。
 - `safe_gate=true`、`use_gate_in_kernel=true`，必须提供 `A_log`；`dt_bias=None` 等价于零偏置。
 - `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
   `allow_neg_eigval=false`、`use_exp2=true`，epsilon 固定为 `1e-6`。

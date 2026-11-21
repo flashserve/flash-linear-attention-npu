@@ -11,8 +11,8 @@ Ascend950 专用的 KDA 前向 chunk32 单 kernel 大融合算子（L0）。由
   a_log/dt_bias/initial_state/final_state 为 FP32。
 - 形状：q/k 头连续 [H,T,K]，v [HV,T,V]，g [HV,T,K]，beta [HV,T]；K=V=128；
   HV % H == 0；a_log [HV_real] 且 HV % HV_real == 0；T > 0 任意（尾块核内钳制）。
-- 布局：dense 由路由侧统一转置到头连续后传入；varlen 支持 token-major（TND）
-  与 head-major（NTD），经 cu_seqlens（int64，host ValueDepend 进 tiling）驱动，
+- 布局：dense 由路由侧统一转置到头连续后传入；varlen 支持 BSND（`B=1`）、
+  BNSD（`B=1`）、TND、NTD，经 cu_seqlens（int64，host ValueDepend 进 tiling）驱动，（int64，host ValueDepend 进 tiling）驱动，
   序列数 1..1024，允许空序列。
 - 语义固定：chunk_size=32、核内 q/k L2 归一（epsilon 固定 1e-6，由 tiling 写入）、
   核内 beta sigmoid、safe_gate（lower_bound 经 sigmoid 下界）、exp2 gate。

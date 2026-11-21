@@ -80,7 +80,7 @@ outputs = chunk_kda_fwd(
 - q/k/v 为 BF16，`K=V=128`；g/beta 各自可为 BF16 或 FP32，任一为 FP32 时 host 将两者
   统一上转 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
 - `T>0`，kernel 处理非 128 对齐尾块；支持 dense batch、varlen，以及 `HV` 为 `H` 正整数倍的 GVA。
-  varlen 支持 BSND（`B=1`）、TND、NTD，不支持 BNSD；最多 1024 个序列并允许空序列。
+  varlen 支持 BSND（`B=1`）、BNSD（`B=1`）、TND、NTD；最多 1024 个序列并允许空序列。
 - 支持可选 `initial_state` 和 `output_final_state`；`state_v_first=true` 由 host 转置适配。
 - 必须 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；`dt_bias=None` 等价于零偏置。
   gate 语义为 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
@@ -273,7 +273,7 @@ V2 chunk64 的形参尾部另有 5 个可选输出指针
 - fused 不导出 `Aqk/Akk`，Python 对 `aqkOut/akkOut` 均传 `nullptr`，返回槽也为 `None`。
   当前 L2 对非空 `Aqk/Akk` 直接返回 `ACLNN_ERR_PARAM_INVALID`；调用方不能把非空指针
   理解为请求了有效中间输出。
-- `attnOut` 始终为 BF16 sequence-major（rank-4 BSND、rank-3 TND），包括 NTD 输入。
+- `attnOut` 始终为 BF16 sequence-major（rank-4 BSND、rank-3 TND），包括 NTD 和 BNSD 输入。
 
 #### chunk32 参数错误与返回码
 
@@ -282,7 +282,7 @@ Python/stable 包装层会在发起 aclnn 前以自身异常拒绝不符合 chun
 `aclnnChunkKdaFwdGetWorkspaceSize` 或 V2 时，fused guard 覆盖：非 Ascend950 平台；
 必需指针缺失；非法 layout、rank/shape/dtype；`T<=0`、`H/HV>128`、`K!=128` 或 `V!=128`、
 非 GVA；非递减 varlen 元数据或 canonical `chunkIndices` 不满足、序列数超过 1024、
-rank-4 varlen `B!=1`、BNSD varlen；非 `1e-6` 的 `epsilon`；`lowerBound` 非有限或不在
+rank-4 varlen `B!=1`；非 `1e-6` 的 `epsilon`；`lowerBound` 非有限或不在
 `[-5, 0)`；`safeGate/useGateInKernel` 未打开或缺少 `A_log/dt_bias`；L2 state V-first；以及
 上述不支持的中间输出/反向保存值。V2 还要求 `useQkL2normInKernel=true`、
 `useBetaSigmoidInKernel=true`、`allowNegEigval=false`、`useExp2=true`。
