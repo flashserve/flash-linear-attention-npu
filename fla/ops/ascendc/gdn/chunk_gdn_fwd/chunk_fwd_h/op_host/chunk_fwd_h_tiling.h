@@ -42,13 +42,11 @@ TILING_DATA_FIELD_DEF(int64_t, hWorkspaceOffset);
 TILING_DATA_FIELD_DEF(int64_t, coreBoundCount);
 // 容量与 CHUNK_FWD_H_MAX_CORE_BOUNDS 同步（宏体需整型字面量位置，保持互指注释）
 TILING_DATA_FIELD_DEF_ARR(int64_t, 32, coreTaskBounds);
-// ===== gated 复用路径（GATED_REUSE）追加段 =====
-// gated kernel（chunk_gated_delta_rule_fwd_h preload）运行时分支复用：kernel
-// 入口在核内构造私有 tiling view 后调用，不通过共享 GM 镜像传递。
-// 三个 offset 为 workspace 内的段偏移（8B 对齐）；首段保留原预留空间。
-TILING_DATA_FIELD_DEF(int64_t, gatedTilingOffset);
-TILING_DATA_FIELD_DEF(int64_t, gatedNumSeqOffset);
-TILING_DATA_FIELD_DEF(int64_t, gatedNumChunksOffset);
+// gated 引擎启用位：host gatedEligible 的原样落盘（1=启用）。kernel 分派
+// RunFwdHGatedDispatch 以它为充分条件——资源形状（blockDim 恒全核、workspace
+// 段）由本值决定，kernel 服从 host，两侧谓词失配时安全降级通用路径而非
+// blockDim/workspace 错配（flag 配对残致死锁/越界）。
+TILING_DATA_FIELD_DEF(int64_t, gatedEngine);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkFwdH, ChunkFwdHTilingData)
