@@ -6,15 +6,18 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+#include "err/ops_err.h"
 
 /*!
  * \file recurrent_kda_tiling.cpp
  * \brief
  */
 #include "recurrent_kda_tiling.h"
+
+#include <initializer_list>
 #include "../op_kernel/recurrent_kda_tiling_key.h"
 
-#include "err/ops_err.h"
+#include "graph/utils/type_utils.h"
 #include "platform/soc_spec.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_def_registry.h"
@@ -58,7 +61,8 @@ void RecurrentKdaTiling::InitCompileInfo()
 {
     auto platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "platform_info");
+        OP_LOGE_WITHOUT_REPORT(
+            context_->GetNodeName(), "%s: platform metadata is unavailable during tiling", __func__);
         return;
     }
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
@@ -68,9 +72,9 @@ void RecurrentKdaTiling::InitCompileInfo()
     compileInfo_.isA6 = ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201;
 
     if (compileInfo_.aivNum <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "platform_info.aiv_num", "0",
-            "InitCompileInfo requires at least one AIV core; verify the target platform configuration. UB bytes=" +
-            std::to_string(compileInfo_.ubSize));
+        OPS_REPORT_VECTOR_INNER_ERR(context_->GetNodeName(),
+                                   "%s: platform reported 0 AIV cores (UB bytes=%llu).", __func__,
+                                   static_cast<unsigned long long>(compileInfo_.ubSize));
         return;
     }
     tilingData_.vectorCoreNum = static_cast<uint32_t>(compileInfo_.aivNum);
@@ -273,7 +277,7 @@ ge::graphStatus RecurrentKdaTiling::PostTiling()
             "; requiredBytes=" + std::to_string(tilingDataSize) +
             "; capacityBytes=" + std::to_string(rawTilingData->GetCapacity()) +
             "; tilingKey=" + std::to_string(tilingKey_) +
-            ". Provide a writable tiling buffer with sufficient capacity.");
+            ". Provide a writable tiling buffer with sufficient capacity");
         return ge::GRAPH_FAILED;
     }
     rawTilingData->SetDataSize(tilingDataSize);
@@ -296,22 +300,45 @@ ge::graphStatus RecurrentKdaTiling::CheckContext()
     };
     for (const auto &item : required) {
         if (context_->GetInputShape(item.first) == nullptr ||
-                    context_->GetInputDesc(item.first) == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), item.second, "input argument must not be nullptr");
-        return ge::GRAPH_FAILED;
+            context_->GetInputDesc(item.first) == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), item.second);
+            return ge::GRAPH_FAILED;
+        }
     }
-    }
-     return ge::GRAPH_SUCCESS;
+    return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
 {
+    // 可选输入的 dtype 校验统一走这里：空 desc 视为未提供；不匹配时报真实 dtype。
+    const auto checkOptionalDtype = [this](size_t index, const char *name,
+                                           std::initializer_list<ge::DataType> allowed,
+                                           const char *expected) -> ge::graphStatus {
+        const auto *desc = context_->GetOptionalInputDesc(index);
+        if (desc == nullptr) {
+            return ge::GRAPH_SUCCESS;
+        }
+        const ge::DataType dtype = desc->GetDataType();
+        for (const ge::DataType candidate : allowed) {
+            if (dtype == candidate) {
+                return ge::GRAPH_SUCCESS;
+            }
+        }
+        OP_LOGE_FOR_INVALID_DTYPE(
+            context_->GetNodeName(), name,
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(dtype)), expected);
+        return ge::GRAPH_FAILED;
+    };
     auto queryDtype = context_->GetInputDesc(QUERY_INDEX)->GetDataType();
     auto keyDtype = context_->GetInputDesc(KEY_INDEX)->GetDataType();
     auto valueDtype = context_->GetInputDesc(VALUE_INDEX)->GetDataType();
     if (queryDtype != ge::DT_BF16 || keyDtype != ge::DT_BF16 || valueDtype != ge::DT_BF16) {
+        const std::string qkvDtypeName =
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(queryDtype)) + "/" +
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(keyDtype)) + "/" +
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(valueDtype));
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "query/key/value",
-                    std::to_string(queryDtype) + "/" + std::to_string(keyDtype) + "/" + std::to_string(valueDtype),
+                    qkvDtypeName,
                     "all three inputs must be BF16");
         return ge::GRAPH_FAILED;
     }
@@ -321,53 +348,45 @@ ge::graphStatus RecurrentKdaTiling::AnalyzeDtype()
     auto stateDtype = context_->GetInputDesc(STATE_INDEX)->GetDataType();
     if ((gateDtype != ge::DT_FLOAT && gateDtype != ge::DT_BF16 && gateDtype != ge::DT_FLOAT16) ||
                     (betaDtype != ge::DT_FLOAT && betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT16)) {
+        const std::string gateBetaDtypeName =
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(gateDtype)) + "/" +
+            ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(betaDtype));
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context_->GetNodeName(), "gate/beta",
-                    std::to_string(gateDtype) + "/" + std::to_string(betaDtype),
+                    gateBetaDtypeName,
                     "both inputs must be FP32/BF16/FP16");
         return ge::GRAPH_FAILED;
     }
     if (stateDtype != ge::DT_FLOAT && stateDtype != ge::DT_BF16) {
         OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "initial_state",
-                    std::to_string(stateDtype), "BF16/FP32");
+                    ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(stateDtype)), "BF16/FP32");
         return ge::GRAPH_FAILED;
     }
-    if (context_->GetOptionalInputDesc(CU_SEQLENS_INDEX) != nullptr) {
-        auto dtype = context_->GetOptionalInputDesc(CU_SEQLENS_INDEX)->GetDataType();
-        if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "cu_seqlens",
-                        std::to_string(dtype), "INT32/INT64");
-        return ge::GRAPH_FAILED;
+    const ge::graphStatus cuStatus = checkOptionalDtype(
+        CU_SEQLENS_INDEX, "cu_seqlens", {ge::DT_INT32, ge::DT_INT64}, "INT32/INT64");
+    if (cuStatus != ge::GRAPH_SUCCESS) {
+        return cuStatus;
     }
+    const ge::graphStatus ssmStatus = checkOptionalDtype(
+        SSM_STATE_INDICES_INDEX, "ssm_state_indices", {ge::DT_INT32, ge::DT_INT64}, "INT32/INT64");
+    if (ssmStatus != ge::GRAPH_SUCCESS) {
+        return ssmStatus;
     }
-    if (context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX) != nullptr) {
-        auto dtype = context_->GetOptionalInputDesc(SSM_STATE_INDICES_INDEX)->GetDataType();
-        if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "ssm_state_indices",
-                        std::to_string(dtype), "INT32/INT64");
-        return ge::GRAPH_FAILED;
-    }
-    }
-    if (context_->GetOptionalInputDesc(A_LOG_INDEX) != nullptr) {
-        if (context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType() != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "A_log",
-                        std::to_string(context_->GetOptionalInputDesc(A_LOG_INDEX)->GetDataType()), "FP32");
-        return ge::GRAPH_FAILED;
-    }
+    const ge::graphStatus aLogStatus =
+        checkOptionalDtype(A_LOG_INDEX, "A_log", {ge::DT_FLOAT}, "FP32");
+    if (aLogStatus != ge::GRAPH_SUCCESS) {
+        return aLogStatus;
     }
     if (tilingData_.hasDtBias) {
-        if (context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType() != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "dt_bias",
-                        std::to_string(context_->GetOptionalInputDesc(DT_BIAS_INDEX)->GetDataType()), "FP32");
-        return ge::GRAPH_FAILED;
+        const ge::graphStatus dtBiasStatus =
+            checkOptionalDtype(DT_BIAS_INDEX, "dt_bias", {ge::DT_FLOAT}, "FP32");
+        if (dtBiasStatus != ge::GRAPH_SUCCESS) {
+            return dtBiasStatus;
+        }
     }
-    }
-    if (context_->GetOptionalInputDesc(ACC_TOKEN_INDEX) != nullptr) {
-        auto dtype = context_->GetOptionalInputDesc(ACC_TOKEN_INDEX)->GetDataType();
-        if (dtype != ge::DT_INT32 && dtype != ge::DT_INT64) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "num_accepted_tokens",
-                        std::to_string(dtype), "INT32/INT64");
-        return ge::GRAPH_FAILED;
-    }
+    const ge::graphStatus accStatus = checkOptionalDtype(
+        ACC_TOKEN_INDEX, "num_accepted_tokens", {ge::DT_INT32, ge::DT_INT64}, "INT32/INT64");
+    if (accStatus != ge::GRAPH_SUCCESS) {
+        return accStatus;
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -432,20 +451,46 @@ ge::graphStatus RecurrentKdaTiling::GetAttrsInfo()
     } else if (std::strcmp(layout, "TND") == 0) {
         tilingData_.layout = RKDA_LAYOUT_TND;
     } else {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "layout",
-            "layout must be BSND or TND");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "layout",
+            layout, "must be BSND or TND");
         return ge::GRAPH_FAILED;
     }
-    tilingData_.scale = *attrs->GetAttrPointer<float>(ATTR_SCALE_INDEX);
-    tilingData_.outputFinalState = *attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE_INDEX) ? 1 : 0;
-    tilingData_.inplaceFinalState = *attrs->GetAttrPointer<bool>(ATTR_INPLACE_FINAL_STATE_INDEX) ? 1 : 0;
-    tilingData_.useQkL2norm = *attrs->GetAttrPointer<bool>(ATTR_USE_QK_L2NORM_INDEX) ? 1 : 0;
-    tilingData_.useGateInKernel = *attrs->GetAttrPointer<bool>(ATTR_USE_GATE_INDEX) ? 1 : 0;
-    tilingData_.useBetaSigmoid = *attrs->GetAttrPointer<bool>(ATTR_USE_BETA_SIGMOID_INDEX) ? 1 : 0;
-    tilingData_.allowNegEigval = *attrs->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL_INDEX) ? 1 : 0;
-    tilingData_.safeGate = *attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE_INDEX) ? 1 : 0;
-    tilingData_.lowerBound = *attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND_INDEX);
-    tilingData_.stateVFirst = *attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_INDEX) ? 1 : 0;
+    // 以下属性在 def 中均注册为 OPTIONAL 且带默认值：指针为空表示调用方未显式
+    // 传入，应回退到默认值，而不是把合法缺省当成错误。
+    const auto *scaleAttr = attrs->GetAttrPointer<float>(ATTR_SCALE_INDEX);
+    tilingData_.scale = scaleAttr != nullptr ? *scaleAttr : 1.0f;
+
+    const auto *outputFinalStateAttr = attrs->GetAttrPointer<bool>(ATTR_OUTPUT_FINAL_STATE_INDEX);
+    tilingData_.outputFinalState =
+        (outputFinalStateAttr != nullptr && *outputFinalStateAttr) ? 1 : 0;
+
+    const auto *inplaceFinalStateAttr = attrs->GetAttrPointer<bool>(ATTR_INPLACE_FINAL_STATE_INDEX);
+    tilingData_.inplaceFinalState =
+        (inplaceFinalStateAttr == nullptr || *inplaceFinalStateAttr) ? 1 : 0;
+
+    const auto *useQkL2normAttr = attrs->GetAttrPointer<bool>(ATTR_USE_QK_L2NORM_INDEX);
+    tilingData_.useQkL2norm =
+        (useQkL2normAttr != nullptr && *useQkL2normAttr) ? 1 : 0;
+
+    const auto *useGateAttr = attrs->GetAttrPointer<bool>(ATTR_USE_GATE_INDEX);
+    tilingData_.useGateInKernel = (useGateAttr != nullptr && *useGateAttr) ? 1 : 0;
+
+    const auto *useBetaSigmoidAttr = attrs->GetAttrPointer<bool>(ATTR_USE_BETA_SIGMOID_INDEX);
+    tilingData_.useBetaSigmoid =
+        (useBetaSigmoidAttr != nullptr && *useBetaSigmoidAttr) ? 1 : 0;
+
+    const auto *allowNegEigvalAttr = attrs->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL_INDEX);
+    tilingData_.allowNegEigval =
+        (allowNegEigvalAttr != nullptr && *allowNegEigvalAttr) ? 1 : 0;
+
+    const auto *safeGateAttr = attrs->GetAttrPointer<bool>(ATTR_SAFE_GATE_INDEX);
+    tilingData_.safeGate = (safeGateAttr != nullptr && *safeGateAttr) ? 1 : 0;
+
+    const auto *lowerBoundAttr = attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND_INDEX);
+    tilingData_.lowerBound = lowerBoundAttr != nullptr ? *lowerBoundAttr : -5.0f;
+
+    const auto *stateVFirstAttr = attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_INDEX);
+    tilingData_.stateVFirst = (stateVFirstAttr != nullptr && *stateVFirstAttr) ? 1 : 0;
     return ge::GRAPH_SUCCESS;
 }
 

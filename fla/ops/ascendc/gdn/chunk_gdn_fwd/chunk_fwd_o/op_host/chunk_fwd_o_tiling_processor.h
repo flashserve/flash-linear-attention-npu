@@ -73,6 +73,23 @@ static constexpr int64_t CHUNK_FWD_O_DTYPE_FP16 = 0;
 static constexpr int64_t CHUNK_FWD_O_DTYPE_BF16 = 1;
 static constexpr int64_t CHUNK_FWD_O_DTYPE_FP32 = 2;
 
+// 本文件的 DTYPE_* 是 kernel tiling 私有枚举，数值与 ge::DataType 不同
+// （FP16=0/BF16=1/FP32=2 vs DT_FLOAT=0/DT_FLOAT16=1/DT_INT8=2）。
+// 打印 actual 时必须经此映射，不能 static_cast<ge::DataType>，否则报错会显示成 FLOAT/FLOAT16/INT8。
+static inline const char *ChunkFwdODtypeName(int64_t dtype)
+{
+    switch (dtype) {
+        case CHUNK_FWD_O_DTYPE_FP16:
+            return "FLOAT16";
+        case CHUNK_FWD_O_DTYPE_BF16:
+            return "BFLOAT16";
+        case CHUNK_FWD_O_DTYPE_FP32:
+            return "FLOAT";
+        default:
+            return "unknown";
+    }
+}
+
 static constexpr size_t CHUNK_FWD_O_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t CHUNK_FWD_O_GM_ALIGN = 512;
 static constexpr int64_t CHUNK_FWD_O_PINGPONG_STAGES = 2;
@@ -167,27 +184,22 @@ public:
     {
         if (RequiredInputDimNumCheck(ctx_.qShape, CHUNK_FWD_O_QKV_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_Q_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.kShape, CHUNK_FWD_O_QKV_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_K_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.vShape, CHUNK_FWD_O_QKV_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_V_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.hShape, CHUNK_FWD_O_H_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_H_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         if (RequiredInputDimNumCheck(ctx_.gShape, CHUNK_FWD_O_G_DIM_NUM,
                                              CHUNK_FWD_O_INPUT_G_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
         return ge::GRAPH_SUCCESS;
@@ -281,20 +293,18 @@ public:
 
         if (tiling_.chunkSize <= 0) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                        ctx_.nodeName, "chunk_size", std::to_string(tiling_.chunkSize),
-                        "chunk_size should be positive");
+                        ctx_.nodeName, "chunkSize", std::to_string(tiling_.chunkSize),
+                        "chunkSize should be positive");
         return ge::GRAPH_FAILED;
     }
 
         if (IsVariableLength()) {
             if (RequiredInputDimNumCheck(ctx_.cuSeqlensShape, CHUNK_FWD_O_SEQLENS_DIM_NUM,
                                                  CHUNK_FWD_O_INPUT_SEQLENS_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
             if (RequiredInputDimNumCheck(ctx_.chunkOffsetsShape, CHUNK_FWD_O_CHUNK_OFFSETS_DIM_NUM,
                                                  CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME) != ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
@@ -328,32 +338,34 @@ public:
     {
         if (tiling_.chunkSize != CHUNK_FWD_O_A5_BT) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                        ctx_.nodeName, "chunk_size", std::to_string(tiling_.chunkSize),
-                        "A5 requires chunk_size=" + std::to_string(CHUNK_FWD_O_A5_BT));
+                        ctx_.nodeName, "chunkSize", std::to_string(tiling_.chunkSize),
+                        "A5 requires chunkSize=" + std::to_string(CHUNK_FWD_O_A5_BT));
         return ge::GRAPH_FAILED;
     }
         if (tiling_.kHeadDim != CHUNK_FWD_O_A5_K || tiling_.vHeadDim != CHUNK_FWD_O_A5_V) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                        ctx_.nodeName, "K,V",
+                        ctx_.nodeName, "K/V",
                         std::to_string(tiling_.kHeadDim) + "," + std::to_string(tiling_.vHeadDim),
                         "A5 requires K=V=" + std::to_string(CHUNK_FWD_O_A5_K));
         return ge::GRAPH_FAILED;
     }
         if (ctx_.dataType != CHUNK_FWD_O_DTYPE_BF16) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-                        ctx_.nodeName, "q,k,v,h", std::to_string(ctx_.dataType),
+        const std::string mainDtype = ChunkFwdODtypeName(ctx_.dataType);
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        ctx_.nodeName, "q/k/v/h", mainDtype,
                         "A5 chunk_fwd_o requires q/k/v/h in bf16");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.gDataType != CHUNK_FWD_O_DTYPE_FP32 && ctx_.gDataType != CHUNK_FWD_O_DTYPE_BF16) {
+        const std::string gateDtype = ChunkFwdODtypeName(ctx_.gDataType);
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-                        ctx_.nodeName, "g", std::to_string(ctx_.gDataType),
+                        ctx_.nodeName, "g", gateDtype,
                         "A5 chunk_fwd_o requires g in fp32 or bf16");
         return ge::GRAPH_FAILED;
     }
         const int64_t headRatio = tiling_.vNumHead / tiling_.kNumHead;
         if (headRatio < CHUNK_FWD_O_A5_MIN_GVA_RATIO || headRatio > CHUNK_FWD_O_A5_MAX_GVA_RATIO) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 ctx_.nodeName, "HV/HK", std::to_string(headRatio),
                 "A5 chunk_fwd_o requires HV/HK in [" + std::to_string(CHUNK_FWD_O_A5_MIN_GVA_RATIO) + "," +
                     std::to_string(CHUNK_FWD_O_A5_MAX_GVA_RATIO) + "]");
@@ -425,7 +437,8 @@ public:
     ge::graphStatus A5ChunkTilingVarLen()
     {
         if (tiling_.shapeBatch != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "size", "invalid", "A5 varlen chunk_fwd_o requires batch=1.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "batch",
+            std::to_string(tiling_.shapeBatch), "A5 varlen chunk_fwd_o requires batch=1");
         return ge::GRAPH_FAILED;
     }
         const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();

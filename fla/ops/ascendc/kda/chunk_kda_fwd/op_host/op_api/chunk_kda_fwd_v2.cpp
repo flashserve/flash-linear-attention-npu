@@ -74,7 +74,7 @@ const aclTensor *AllocTensor(aclOpExecutor *executor, const op::Shape &shape, Da
 aclnnStatus CopyToOutput(const aclTensor *src, const aclTensor *dst, aclOpExecutor *executor)
 {
     if (!(l0op::ViewCopy(src, dst, executor) != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: ViewCopy failed.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: ViewCopy failed.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -217,7 +217,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
                                          qRstdCompute != nullptr && kRstdCompute != nullptr &&
                                          betaEffCompute != nullptr)) &&
                    (!needSavedQ || qgCompute != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to allocate Prepare output tensors.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to allocate Prepare output tensors.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -232,7 +232,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
     if (!(prepareResult[0] != nullptr && prepareResult[1] != nullptr &&
                    prepareResult[3] != nullptr && prepareResult[4] != nullptr &&
                    prepareResult[6] != nullptr && prepareResult[7] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to launch ChunkKdaFwdPrepare.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to launch ChunkKdaFwdPrepare.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -245,7 +245,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
     const aclTensor *gkHead = MaybeReshapeToHeadMajor4(gkCompute, packed, valueHeads, args.seqLen,
                                                        args.kDim, "gk", executor);
     if (!(wHead != nullptr && uHead != nullptr && kgHead != nullptr && gkHead != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to reorder to head-major.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to reorder to head-major.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -260,7 +260,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
                      MakeShape({args.batch, valueHeads, args.seqLen, args.vDim}), DataType::DT_BF16,
                      executor);
     if (!(hCompute != nullptr && vNewCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to allocate FwdH output tensors.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to allocate FwdH output tensors.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -270,7 +270,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         vNewCompute, outputFinalState ? args.finalStateOut : nullptr, executor);
     if (!(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr &&
                    (!outputFinalState || fwdHResult[2] != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to launch ChunkFwdH.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to launch ChunkFwdH.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -280,7 +280,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         qgScaledCompute, aqkCompute, vNewCompute, hCompute, args.cuSeqlens, args.chunkIndices,
         args.attnLayout, args.stateVFirst, args.attnOut, executor);
     if (!(finalizeResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to launch ChunkKdaFwdFinalize.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to launch ChunkKdaFwdFinalize.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -291,7 +291,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
             vNewDst = l0op::Reshape(
                 vNewDst, MakeShape({1, valueHeads, args.seqLen, args.vDim}), executor);
             if (!(vNewDst != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to reorder v_new.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to reorder v_new.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
         }
@@ -308,7 +308,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
                 hDst, MakeShape({args.batch, args.totalChunks, valueHeads, args.kDim, args.vDim}),
                 executor);
             if (!(hDst != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdV2: failed to reorder hOut.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to reorder hOut.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
         }

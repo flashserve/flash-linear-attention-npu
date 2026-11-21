@@ -229,7 +229,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
 
     int64_t chunkSize = *chunkSizePtr;
     OP_CHECK_IF(!IsPowerOfTwo(chunkSize),
-                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "chunk_size must be a power of two, but got %ld.",
+                OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "chunkSize must be a power of two, but got %ld.",
                                             chunkSize),
                 return ge::GRAPH_FAILED);
 
@@ -276,7 +276,7 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     int64_t blockT = NextPowerOfTwo(btBase);
     OP_CHECK_IF(blockT < chunkSize,
                 OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(),
-                                            "BLOCK_T=%ld is smaller than chunk_size=%ld.", blockT, chunkSize),
+                                            "BLOCK_T=%ld is smaller than chunkSize=%ld.", blockT, chunkSize),
                 return ge::GRAPH_FAILED);
 
     int64_t nt = (t + blockT - 1) / blockT;

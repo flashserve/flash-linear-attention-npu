@@ -27,9 +27,18 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     auto kShapePtr = context->GetInputShape(INPUT_K_IDX);
     auto wShapePtr = context->GetInputShape(INPUT_W_IDX);
     auto uShapePtr = context->GetInputShape(INPUT_U_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, kShapePtr);
-    OP_CHECK_NULL_WITH_CONTEXT(context, wShapePtr);
-    OP_CHECK_NULL_WITH_CONTEXT(context, uShapePtr);
+    if (kShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "k");
+        return ge::GRAPH_FAILED;
+    }
+    if (wShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "w");
+        return ge::GRAPH_FAILED;
+    }
+    if (uShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "u");
+        return ge::GRAPH_FAILED;
+    }
     const gert::Shape kShape = kShapePtr->GetStorageShape();
     const gert::Shape uShape = uShapePtr->GetStorageShape();
 
@@ -42,27 +51,34 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const int64_t chunkSize = *(attrPtr->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE_IDX));
 
     if (B != 1) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B", std::to_string(B), "B must be 1 (varlen packed)d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "B", std::to_string(B), "B must be 1 (varlen packed)");
         return ge::GRAPH_FAILED;
     }
     if (K != PPFM_FIXED_K || V != PPFM_FIXED_V) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "K", "invalid", "K/V must be 128d/d");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "K/V",
+            std::to_string(K) + "," + std::to_string(V), "K/V must be 128");
         return ge::GRAPH_FAILED;
     }
     if (chunkSize != PPFM_FIXED_CHUNK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk_size", std::to_string(chunkSize), "chunk_size must be 64d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunkSize", std::to_string(chunkSize), "chunkSize must be 64");
         return ge::GRAPH_FAILED;
     }
     if (Hk <= 0 || Hv <= 0 || Hv % Hk != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "GVA requires Hv % Hk == 0d");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "Hv,Hk",
+            std::to_string(Hv) + "," + std::to_string(Hk), "GVA requires Hv % Hk == 0");
         return ge::GRAPH_FAILED;
     }
     if (wShapePtr->GetStorageShape().GetDim(1) != Hv) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "w head dim must equal Hv");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "w",
+            std::to_string(wShapePtr->GetStorageShape().GetDim(1)),
+            "w head dim must equal Hv=" + std::to_string(Hv));
         return ge::GRAPH_FAILED;
     }
     if (uShape.GetDim(0) != 1 || uShape.GetDim(2) != T || uShape.GetDim(3) != V) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "Hv", "invalid", "u must be [1,Hv,T,V] and match k's T");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "u",
+            std::to_string(uShape.GetDim(0)) + "," + std::to_string(uShape.GetDim(1)) + "," +
+                std::to_string(uShape.GetDim(2)) + "," + std::to_string(uShape.GetDim(3)),
+            "u must be [1,Hv,T,V] and match k's T");
         return ge::GRAPH_FAILED;
     }
 
@@ -75,7 +91,10 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     const bool hasBg = bgTensor != nullptr;
     const bool hasV = context->GetOptionalInputTensor(INPUT_V_IDX) != nullptr;
     if (hasG == hasGk) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "g", "invalid", "exactly one of g / gk must be given");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "g,gk",
+            std::string(hasG ? "g=present" : "g=absent") + "," +
+                (hasGk ? "gk=present" : "gk=absent"),
+            "exactly one of g / gk must be given");
         return ge::GRAPH_FAILED;
     }
     if (hasBg) {
@@ -104,12 +123,16 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, cuData);
     for (int64_t i = 0; i < cuNumel; ++i) {
         if (cuData[i] < 0 || cuData[i] > T) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", "invalid", "cu_seqlens[d]d out of range [0,d]");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens",
+            std::to_string(i) + "," + std::to_string(cuData[i]) + "," + std::to_string(T),
+            "cu_seqlens[i] out of range [0, T]");
         return ge::GRAPH_FAILED;
     }
         if (i > 0) {
             if (cuData[i] <= cuData[i - 1]) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens", std::to_string(i), "cu_seqlens must be strictly increasing at d");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "cu_seqlens",
+            std::to_string(i) + "," + std::to_string(cuData[i]) + "," + std::to_string(cuData[i - 1]),
+            "cu_seqlens must be strictly increasing");
         return ge::GRAPH_FAILED;
     }
         }
@@ -214,11 +237,11 @@ inline ge::graphStatus PreProcessFwdTilingProcessor(gert::TilingContext *context
     if (context->GetRawTilingData() == nullptr ||
                     context->GetRawTilingData()->GetCapacity() <
                         sizeof(GDN::PreProcessFwdKernelMergedTilingData)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "tiling buffer too small for tcube tiling");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: tiling buffer too small for tcube tiling", __func__);
         return ge::GRAPH_FAILED;
     }
     if (!BuildCubeTiling(ascendcPlatform, tiling)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "build cube(TCubeTiling) tiling failed");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: build cube(TCubeTiling) tiling failed", __func__);
         return ge::GRAPH_FAILED;
     }
 

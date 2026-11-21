@@ -169,7 +169,7 @@ Python 主入口由 Stable 适配层分配五个输出。完整 Bwd 的布局、
 | --- | --- |
 | `ACLNN_SUCCESS` | workspace 查询或执行成功 |
 | `ACLNN_ERR_PARAM_NULLPTR` | 必传输入/输出、`workspaceSize` 或 `executor` 为空 |
-| `ACLNN_ERR_PARAM_INVALID` | shape、dtype、format、属性或变长元数据不合法 |
+| `ACLNN_ERR_PARAM_INVALID` | shape、dtype、format、属性或变长元数据不合法；`cu_seqlens`/`chunk_indices` 只给一个（配对缺失） |
 | `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
 | `ACLNN_ERR_INNER_NULLPTR` | Contiguous/ViewCopy 或内部算子返回空 tensor |
 | `ACLNN_ERR_INNER` | kernel executor 执行失败 |

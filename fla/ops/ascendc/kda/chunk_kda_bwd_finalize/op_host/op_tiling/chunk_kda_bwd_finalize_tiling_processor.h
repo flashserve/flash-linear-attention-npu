@@ -48,28 +48,42 @@ public:
 
     ge::graphStatus Process()
     {
-        if (ctx_.q == nullptr || ctx_.k == nullptr || ctx_.v == nullptr ||
-            ctx_.gk == nullptr || ctx_.beta == nullptr || ctx_.akk == nullptr ||
-            ctx_.h == nullptr || ctx_.dh == nullptr || ctx_.dvScan == nullptr) {
-            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "inputs", "invalid", "required Stage0--2 input shape is null");
-
-            return ge::GRAPH_FAILED;
+        const std::pair<const void *, const char *> requiredInputs[] = {
+            {ctx_.q, "q"}, {ctx_.k, "k"}, {ctx_.v, "v"}, {ctx_.gk, "gk"},
+            {ctx_.beta, "beta"}, {ctx_.akk, "akk"}, {ctx_.h, "h"},
+            {ctx_.dh, "dh"}, {ctx_.dvScan, "dv_scan"}};
+        for (const auto &item : requiredInputs) {
+            if (item.first == nullptr) {
+                OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, item.second);
+                return ge::GRAPH_FAILED;
+            }
         }
         if (ctx_.chunkSize != 64 || !ctx_.safeGate || !ctx_.useGateInKernel ||
             !ctx_.useExp2 || ctx_.stateVFirst) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "A5 v1 requires chunk_size=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "chunkSize,attrs",
+                std::to_string(ctx_.chunkSize) + ",safe_gate=" + (ctx_.safeGate ? "true" : "false") +
+                    ",use_gate=" + (ctx_.useGateInKernel ? "true" : "false") + ",use_exp2=" +
+                    (ctx_.useExp2 ? "true" : "false") + ",state_v_first=" +
+                    (ctx_.stateVFirst ? "true" : "false"),
+                "A5 v1 requires chunkSize=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
 
             return ge::GRAPH_FAILED;
         }
         const bool hasRstd = ctx_.qRstd != nullptr || ctx_.kRstd != nullptr;
         if ((ctx_.qRstd == nullptr) != (ctx_.kRstd == nullptr)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "k_rstd", "invalid", "q_rstd and k_rstd must appear together");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "q_rstd,k_rstd",
+                std::string("q_rstd=") + (ctx_.qRstd != nullptr ? "present" : "absent") +
+                    ",k_rstd=" + (ctx_.kRstd != nullptr ? "present" : "absent"),
+                "q_rstd and k_rstd must appear together");
 
             return ge::GRAPH_FAILED;
         }
         const bool variable = ctx_.cuSeqlens != nullptr || ctx_.chunkIndices != nullptr;
         if ((ctx_.cuSeqlens == nullptr) != (ctx_.chunkIndices == nullptr)) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "cu_seqlens", "invalid", "cu_seqlens and chunk_indices must appear together");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "cu_seqlens,chunk_indices",
+                std::string("cu_seqlens=") + (ctx_.cuSeqlens != nullptr ? "present" : "absent") +
+                    ",chunk_indices=" + (ctx_.chunkIndices != nullptr ? "present" : "absent"),
+                "cu_seqlens and chunk_indices must appear together");
 
             return ge::GRAPH_FAILED;
         }
@@ -89,7 +103,11 @@ public:
             v.GetDimNum() != tokenRank || gk.GetDimNum() != tokenRank ||
             akk.GetDimNum() != tokenRank || beta.GetDimNum() != scalarRank ||
             h.GetDimNum() != stateRank || dh.GetDimNum() != stateRank) {
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "rank", "invalid", "dense/varlen rank does not match KernelC contract");
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "ranks",
+                std::to_string(q.GetDimNum()) + "," + std::to_string(akk.GetDimNum()) + "," +
+                    std::to_string(beta.GetDimNum()) + "," + std::to_string(h.GetDimNum()) + "," +
+                    std::to_string(dh.GetDimNum()),
+                "dense/varlen rank does not match KernelC contract");
 
             return ge::GRAPH_FAILED;
         }
@@ -109,7 +127,10 @@ public:
             const gert::Shape indices = ctx_.chunkIndices->GetStorageShape();
             if (cu.GetDimNum() != 1 || indices.GetDimNum() != 1 || cu.GetDim(0) < 2 ||
                 indices.GetDim(0) != 2 * tiling_.totalChunkNum) {
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "metadata", "invalid", "invalid varlen metadata shape");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "metadata",
+                    std::to_string(cu.GetDimNum()) + "," + std::to_string(cu.GetDim(0)) + "," +
+                        std::to_string(indices.GetDimNum()) + "," + std::to_string(indices.GetDim(0)),
+                    "invalid varlen metadata shape");
 
                 return ge::GRAPH_FAILED;
             }
@@ -122,7 +143,10 @@ public:
         if (tiling_.B <= 0 || tiling_.NQ != tiling_.NV || tiling_.NV <= 0 ||
             tiling_.T <= 0 || tiling_.K != 128 || tiling_.V != 128 ||
             tiling_.totalChunkNum <= 0) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "K", "invalid", "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "K,V,chunkNum",
+                std::to_string(tiling_.K) + "," + std::to_string(tiling_.V) + "," +
+                    std::to_string(tiling_.totalChunkNum),
+                "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
 
             return ge::GRAPH_FAILED;
         }
@@ -134,7 +158,10 @@ public:
             dh.GetDim(base + 3) == tiling_.V &&
             (variable || chunks == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize);
         if (!validStates) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "h", "invalid", "expected NT-first h and dh");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "h,dh",
+                "chunks=" + std::to_string(chunks) + ",h.rank=" + std::to_string(h.GetDimNum()) +
+                    ",dh.rank=" + std::to_string(dh.GetDimNum()),
+                "expected NT-first h and dh");
 
             return ge::GRAPH_FAILED;
         }
