@@ -32,6 +32,13 @@ constexpr int64_t kVK = kV + kK;
 constexpr int64_t kSMax = 1024;
 constexpr int64_t kHvMax = 256;
 
+void SetTensorOriginalShape(const aclTensor *tensor)
+{
+    if (tensor != nullptr) {
+        tensor->SetOriginalShape(tensor->GetViewShape());
+    }
+}
+
 bool MatchesShape(const Shape &shape, std::initializer_list<int64_t> expect)
 {
     if (shape.GetDimNum() != expect.size()) {
@@ -113,7 +120,7 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
             "K must be 128 and VK must be 256");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // Tiling reads the storage shape. Both must be the dense [HV,128,128] buffer.
+    // Tiling reads logical dimensions; storage only needs enough contiguous capacity.
     const auto &hViewShape = h->GetViewShape();
     const auto &hStorageShape = h->GetStorageShape();
     const auto shapeText = [](const op::Shape &shape) {
@@ -128,9 +135,11 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
             "view=" + shapeText(hViewShape), "h view shape must be [HV,128,128]");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!MatchesShape(hStorageShape, {hv, kK, kV})) {
+    const int64_t hElements = hv * kK * kV;
+    if (hStorageShape.GetShapeSize() < hElements) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "h",
-            "storage=" + shapeText(hStorageShape), "h storage shape must be [HV,128,128]");
+            "storage elements=" + std::to_string(hStorageShape.GetShapeSize()),
+            "h contiguous storage must contain at least " + std::to_string(hElements) + " elements");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -212,6 +221,8 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: agContig != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
+    SetTensorOriginalShape(h);
+    SetTensorOriginalShape(agContig);
 
     auto outputs = l0op::MergeFwdBwdKernel(
         h, agContig, preOrPostNumRanks, rank, forward, stateVFirst, executorPtr);
