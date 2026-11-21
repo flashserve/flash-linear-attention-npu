@@ -70,7 +70,8 @@ B 与 C 的 L2 写法相同，区别只在"本算子是否还有自己的 kernel
 算子目录里没有 `tests/`，也不要自造未在 `tests/atk/README.md` 登记的测试子目录）。
 
 DFX 示例保留普通 `CHECK_RET` / `CHECK_COND` 调用，用于展示检视 skill 需要识别的现状风险，不表示
-仓库已经完成结构化报错整改。实际实现 PR 中，public 参数约束应优先按
+仓库已经完成结构化报错整改。`ADD_TO_LAUNCHER_LIST_AICORE` 与 `INFER_SHAPE` 的失败出口必须使用
+`OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON`，不得使用任何 `*_WITHOUT_REPORT`。实际实现 PR 中，public 参数约束应优先按
 [`dfx-error-review.md`](../dfx-error-review.md) 选择 typed
 `OP_LOGE_FOR_*`，并同步负向测试和文档。
 

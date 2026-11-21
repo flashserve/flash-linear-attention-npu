@@ -71,7 +71,10 @@ metadata:
 规则和逐文件样例。
 
 重点检查目录职责、必需文件、平台目录、调用层归属、测试位置、冗余文件和构建依赖。新增文件必须
-能在工程样例中找到对应角色；不能解释职责的文件应先删除或归档。
+能在工程样例中找到对应角色；不能解释职责的文件应先删除或归档。Stable-ABI 适配层只能做参数拆栈、
+类型/视图转换、默认值补齐、stream 获取和按文档化 V1/V2 能力选择 aclnn 入口并透传；不得在
+Stable 或 Python wrapper 中拦截参数、shape、dtype、layout、属性、输出组合或支持范围，也不得抛出
+参数错误。V1/V2 都不支持时仍须下发到 aclnn，由 aclnn L2/tiling 返回结构化错误。
 
 只要 diff 涉及 `fla_npu.ops.ascendc` 公开入口、Stable-ABI schema、Python wrapper、参数或返回
 tuple，都必须执行公开接口兼容性检查。以改动前的已发布 tag/基线提交为准，逐项比较入口名、参数名与
@@ -88,7 +91,10 @@ legacy 入口是否继续提供同一调用形状。只证明当前代码、当�
 
 aclnn 与 tiling 的公开约束必须在 host 侧拦截，并通过 `op_common/log/log.h` 的结构化宏向调用方
 返回实际值、期望值和原因。仅返回 `161002`、仅打印日志但未 report、使用 `CHECK_RET`/`CHECK_COND`
-丢失上下文，均按 DFX 问题报告。核对代码拦截、返回码、报错文本、负向测试和文档约束是否闭环。
+丢失上下文，均按 DFX 问题报告。`ADD_TO_LAUNCHER_LIST_AICORE` 和 `INFER_SHAPE` 的失败出口必须
+使用 `OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON`，携带失败阶段、实际状态、期望状态和具体原因；
+任何场景都不使用 `OP_LOGE_WITHOUT_REPORT` 或其他 `*_WITHOUT_REPORT`。核对代码拦截、返回码、报错
+文本、负向测试和文档约束是否闭环。
 
 ### 4. 文档正确性与易用性
 
@@ -126,7 +132,7 @@ python3 docs/agents/skills/operator-review/scripts/check_issue_coverage.py
 
 1. issue corpus 覆盖全部 `COMPLETED` issue，且每条至少有一个规则；
 2. 目标算子的相关 issue 规则逐条检查，结论能落到文件行号；
-3. 工程结构、DFX、文档检查完成；
+3. 工程结构、Stable 适配边界、DFX、文档检查完成；
 4. diff 涉及公开接口时，已与改动前的已发布基线逐项比较 Python 签名、默认值、返回值和各后端入口；
 5. 每条意见说明问题分类、位置、问题、可能导致的结果和可执行修改方法；
 6. 不把“未发现问题”写成问题项，不用无问题总结代替具体检视条目。

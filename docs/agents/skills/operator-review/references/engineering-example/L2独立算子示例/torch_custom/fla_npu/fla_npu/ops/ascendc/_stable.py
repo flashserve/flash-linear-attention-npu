@@ -9,8 +9,8 @@
 注意事项：
   1. 函数名 = schema 里的算子名（`npu_<op>`）；短名由 `__init__.py` 的 `_strip_npu_prefix()` 统一导出，
      不需要在这里额外写一份短名函数。
-  2. 参数校验只放"schema 表达不了、且两条后端要保持一致"的判据（例如正数校验、档位互斥）；
-     张量契约（shape/dtype/layout）仍由 aclnn L2 校验，避免两处规则漂移。
+  2. wrapper 只做拆栈、类型/视图转换、默认值补齐与透传，不做参数、shape、dtype、layout、属性、
+     输出组合或支持范围拦截；所有契约校验由 aclnn L2/tiling 完成，避免两处规则漂移。
   3. 新增关键字参数只能追加在**末尾**并带默认值；默认值等于本算子的历史行为。
   4. 本示例只展示本次新增的函数；实际交付时把函数追加到仓库的 `_stable.py` 里。
   5. 原地算子：wrapper 要按上游 FLA 语义把被改写的张量**原对象**返回/透传（例如 npu_chunk_kda_fwd 的
@@ -29,11 +29,7 @@ def npu_op_name(x, g, *, a_log=None, initial_state=None, cu_seqlens=None,
     """
 
     epsilon_value = 1e-6 if epsilon is None else float(epsilon)
-    if not epsilon_value > 0.0:
-        raise RuntimeError("npu_op_name: epsilon must be a positive finite number.")
     scale_value = 1.0 if scale is None else float(scale)
-    if not scale_value > 0.0:
-        raise RuntimeError("npu_op_name: scale must be a positive finite number.")
 
     return _op("npu_op_name")(
         x,
