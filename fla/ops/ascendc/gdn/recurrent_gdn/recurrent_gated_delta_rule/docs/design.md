@@ -5,9 +5,12 @@
 ## 1. 目标
 
 接口契约见 [api.md](api.md)。将既有融合实现迁入 arch22，移除历史 A2/A3 kernel，
-保留两个 host ABI。该迁移不改变融合实现的计算、任务划分、地址规划和同步协议。
+使用原 ACLNN 接口名承载完整融合契约，仅保留一套 host ABI。接口收敛不改变融合实现的计算、
+任务划分、地址规划和同步协议。
 host 统一按融合契约校验 dtype 与属性，不再设置版本选择字段或隐藏属性。A2/A3 与 A5
-分别编译 arch22 和 arch35，各架构内部的两个 host ABI 进入同一实现。
+分别编译 arch22 和 arch35，各架构均由同一完整参数表进入既有融合实现。
+原 V2 的描述符校验就地保留在 `aclnn_recurrent_gated_delta_rule.cpp`，在 DFX 缓存检查前执行；
+Q/K/V/State 的 strided view 和 storage offset、辅助输入的 Contiguous 路径均沿用原 V2 实现。
 CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；保持原输入值域及 ATK 原生双标杆标准。
 性能采用 msprof `Task Duration(us)`，本次没有额外性能提升目标。
 
@@ -108,9 +111,6 @@ A6 回归使用 `tests/atk/recurrent_gated_delta_rule/atk_recurrent_gated_delta_
 `gen_recurrent_gated_delta_rule.py --a6` 生成。该矩阵的 `soc` 属性为 `ascend960dt`，
 已列入 `recurrent_gated_delta_rule.yaml` 的合法取值。
 
-执行前需确认 Python 侧入口能力，当前稳定入口
-`fla_npu.ops.ascendc.recurrent_gated_delta_rule` 只暴露 V1 主机 ABI：
-它不接受 `A_log` / `dt_bias` 与四个融合开关参数，也要求 `g` 或 `gk` 至少提供一个，
-且 dtype 白名单为 beta=BF16、g=FP32。因此矩阵中依赖这些能力的用例必须先打通
-`aclnnRecurrentGatedDeltaRuleV2` 的 Python 绑定，否则会在进入算子前失败，
-不能计入 A6 验收结果。kernel 侧（arch92）本身已支持无 gate 与全部 8 组 dtype 组合。
+稳定入口 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 通过共用的 Stable adapter
+调用原名 ACLNN 接口，参数覆盖 `A_log` / `dt_bias`、四个融合开关、无 gate 与全部
+8 组 State/g/beta dtype 组合。A6 的 arch92 路径沿用相同的完整参数契约。

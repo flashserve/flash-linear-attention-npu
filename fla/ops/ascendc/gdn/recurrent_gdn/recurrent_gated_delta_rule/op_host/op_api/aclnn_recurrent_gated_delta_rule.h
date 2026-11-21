@@ -7,8 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
-#ifndef OP_API_ACLNN_RECURRENT_GETED_DELTA_RULE_H
-#define OP_API_ACLNN_RECURRENT_GETED_DELTA_RULE_H
+#ifndef OP_API_ACLNN_RECURRENT_GATED_DELTA_RULE_H
+#define OP_API_ACLNN_RECURRENT_GATED_DELTA_RULE_H
 
 #include "aclnn/aclnn_base.h"
 #include "aclnn_util.h"
@@ -18,44 +18,33 @@ extern "C" {
 #endif
 
 /**
- * @brief RecurrentGatedDeltaRule 的第一段接口，根据具体的计算流程，计算workspace大小。
- * @param [in] query: 数据类型支持：bfloat16。
- * @param [in] key: 数据类型支持：bfloat16。
- * @param [in] value: 数据类型支持：bfloat16。
- * @param [in] beta: 数据类型支持：bfloat16。
- * @param [in] state: 数据类型支持：bfloat16。
- * @param [in] actualSeqLengths: 数据类型支持：int32。
- * @param [in] ssmStateIndices: 数据类型支持：int32。
- * @param [in] g: 数据类型支持：float32。
- * @param [in] gk: ABI 保留参数，必须为 nullptr。
- * @param [in] numAcceptedTokens: 数据类型支持：int32。
- * @param [in] scaleValue: 数据类型支持：float32。
- * @param [out] out: 数据类型支持：bfloat16。
- * @param [out] 返回需要在npu device侧申请的workspace大小。
- * @param [out] executor: 返回op执行器，包含了算子计算流程。
- * @return aclnnStatus: 返回状态码
+ * @brief First phase: validate descriptors and prepare the fused recurrence.
+ * @param [in] query BF16 [T, HK, 128]; positive strides, last stride 1.
+ * @param [in] key Same dtype, shape and view constraints as query.
+ * @param [in] value BF16 [T, HV, 128]; positive strides, last stride 1.
+ * @param [in] beta BF16/FP32 [T, HV].
+ * @param [in,out] stateRef BF16/FP32 [Cstate, HV, 128, 128], updated in place.
+ * @param [in] actualSeqLengths INT32 [B+1]: prefix, then per-request lengths.
+ * @param [in] ssmStateIndices INT32 packed [T] or checkpoint table [B, Ckpt].
+ * @param [in] g Optional BF16/FP32 [T, HV].
+ * @param [in] gk Reserved; must be nullptr.
+ * @param [in] numAcceptedTokens Optional INT32 [B].
+ * @param [in] aLog FP32 [HV]; required when useGateInKernel is true.
+ * @param [in] dtBias Optional FP32 [HV].
+ * @param [in] scaleValue Finite FP32 query scale.
+ * @param [in] useQkL2NormInKernel Normalize Q/K in the kernel.
+ * @param [in] useGateInKernel Apply the fused gate transform; requires g/aLog.
+ * @param [in] useBetaSigmoidInKernel Apply sigmoid to beta.
+ * @param [in] allowNegEigval Double sigmoid(beta); ignored without sigmoid.
+ * @param [out] out Contiguous BF16 [T, HV, 128].
+ * @param [out] workspaceSize Required device workspace size in bytes.
+ * @param [out] executor Prepared operator executor.
+ * @return aclnnStatus
+ *
+ * This is the full formerly-V2 signature. Callers of the historical reduced
+ * signature must be rebuilt; there is no separate V2 entry point.
  */
 ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(
-    const aclTensor *query, const aclTensor *key, const aclTensor *value, const aclTensor *beta, aclTensor *stateRef,
-    const aclTensor *actualSeqLengths, const aclTensor *ssmStateIndices, const aclTensor *g, const aclTensor *gk,
-    const aclTensor *numAcceptedTokens, float scaleValue, aclTensor *out, uint64_t *workspaceSize,
-    aclOpExecutor **executor);
-
-/**
- * @brief
- * @param [in] workspace: 在npu device侧申请的workspace内存起址。
- * @param [in] workspace_size: 在npu
- * device侧申请的workspace大小，由第一段接口aclnnRecurrentGatedDeltaRuleGetWorkspaceSize获取。
- * @param [in] exector: op执行器，包含了算子计算流程。
- * @param [in] stream: acl stream流。
- * @return aclnnStatus: 返回状态码
- */
-ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRule(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
-                                                   aclrtStream stream);
-
-// V2 supports fused Q/K normalization, gate and beta transforms, two-dimensional
-// state tables and strided Q/K/V/State views. The original ABI above is preserved.
-ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
     const aclTensor *query, const aclTensor *key, const aclTensor *value, const aclTensor *beta,
     aclTensor *stateRef, const aclTensor *actualSeqLengths, const aclTensor *ssmStateIndices,
     const aclTensor *g, const aclTensor *gk, const aclTensor *numAcceptedTokens,
@@ -63,11 +52,12 @@ ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
     bool useQkL2NormInKernel, bool useGateInKernel, bool useBetaSigmoidInKernel,
     bool allowNegEigval, aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor);
 
-ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRuleV2(void *workspace, uint64_t workspaceSize,
-                                                      aclOpExecutor *executor, aclrtStream stream);
+/** Second phase: execute the prepared recurrence on stream. */
+ACLNN_API aclnnStatus aclnnRecurrentGatedDeltaRule(void *workspace, uint64_t workspaceSize,
+                                                   aclOpExecutor *executor, aclrtStream stream);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // OP_API_ACLNN_RECURRENT_GETED_DELTA_RULE_H
+#endif // OP_API_ACLNN_RECURRENT_GATED_DELTA_RULE_H
