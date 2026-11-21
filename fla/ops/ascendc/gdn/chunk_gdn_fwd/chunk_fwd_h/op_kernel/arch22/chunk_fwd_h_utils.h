@@ -9,13 +9,8 @@
 
 /*!
  * \file arch22/chunk_fwd_h_utils.h
- * \brief gated 复用引擎（仅 A2/arch22，由 chunk_fwd_h.cpp 非 arch35 分支引入）：
- * 复用 chunk_gated_delta_rule_fwd_h 的 preload kernel 链。原六个文件
- * （chunk_fwd_h_gated_struct.h、epilogue/gdn_fwd_h_epilogue_policies.hpp、
- * epilogue/block/block_epilogue_gdn_fwdh_{update,vnew}_preload.hpp、
- * gemm/block/block_scheduler_gdn_fwd_h_preload.hpp、gemm/kernel/gdn_fwd_h_kernel_preload.hpp）
- * 按原 include 展开顺序内联为单文件，芯片目录回归 cube.h/vec.h + 本文件布局；
- * 另将 chunk_fwd_h.cpp 的 gated 复用谓词/入口/分流移至文末。纯搬移，无代码语义变化。
+ * \brief gated preload 引擎（仅 A2/arch22，由 chunk_fwd_h.cpp 非 arch35 分支引入，
+ * 供 SCALAR_G 模式运行时分支复用）。
  */
 
 #ifndef ARCH22_CHUNK_FWD_H_UTILS_H
@@ -70,17 +65,12 @@ struct ChunkGatedDeltaRuleFwdHTilingData {
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
-    int64_t numSeqWorkspaceOffset;
-    int64_t numChunksWorkspaceOffset;
 };
 
-// ---- 内联自原 epilogue/gdn_fwd_h_epilogue_policies.hpp（仅保留 preload 策略——
-// 非 preload 两策略 EpilogueAtlasGDNFwdH{Vnew,Update} 供原版非 preload 链使用，
-// 本拷贝未引入该链，零引用，已删）
 namespace Catlass::Epilogue {
 
-// 域模板维（2026-11-10 exp 域复用释放）：USE_EXP2_=true（log2 域，2^x）/
-// false（ln 域，e^x）——epilogue 内两处 LN2 换算按此 if constexpr 取舍。
+// 域模板维：USE_EXP2_=true（log2 域，2^x）/false（ln 域，e^x）——
+// epilogue 内两处 LN2 换算按此 if constexpr 取舍。
 template <bool USE_EXP2_>
 struct EpilogueAtlasGDNFwdHVnewPreload {
     using ArchTag = Arch::AtlasA2;
@@ -93,7 +83,6 @@ struct EpilogueAtlasGDNFwdHUpdatePreload {
 
 }  // namespace Catlass::Epilogue
 
-// ---- 内联自原 epilogue/block/block_epilogue_gdn_fwdh_update_preload.hpp
 namespace Catlass::Epilogue::Block {
 
 template <
@@ -157,6 +146,7 @@ public:
         AscendC::GlobalTensor<GElementInput> gInput,
         AscendC::GlobalTensor<HElementInput> hInput,
         AscendC::GlobalTensor<float> hUpdateInput,
+        AscendC::GlobalTensor<FinalStateElement> initialState,
         uint32_t chunkSize,
         uint32_t kHeadDim,
         uint32_t vHeadDim,
@@ -164,6 +154,7 @@ public:
         bool isInitialState,
         bool isFinalState,
         bool storeFinalState,
+        bool useInitialState,
         bool isPing
     )
     {
@@ -195,11 +186,15 @@ public:
         } else {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
         }
-        AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
-
-        AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
+        // fp32 存终态时全块直读 state：首块读初态，其余块读上块写入 finalState 槽，免 bf16 往返
+        const bool directStateLoad = std::is_same<FinalStateElement, float>::value &&
+            storeFinalState && (!isInitialState || useInitialState);
+        if (!directStateLoad) {
+            AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
+        }
         AscendC::PipeBarrier<PIPE_V>();
         if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
@@ -231,9 +226,22 @@ public:
         float muls = glastUbTensor.GetValue(0);
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
+        Arch::CrossCoreWaitFlag(cube2Done);
+        if constexpr (std::is_same<FinalStateElement, float>::value) {
+            if (directStateLoad) {
+                // 须在 cube2Done 后直读：calcUb 与 V1 共用该区。本 DataCopy 是 MTE2
+                // 对 calcUb 的写，前置双保险缺一不可：上方 WaitFlag<V_S>(ID3) 已阻塞
+                // 标量发射至 V 队列整体排空（覆盖另一槽位 Vnew 的 calcUb 使用）；
+                // cube2Done→vec1Done 链保证同槽 V1 排空。
+                AscendC::GlobalTensor<FinalStateElement> stateSrc =
+                    isInitialState ? initialState[offsetH] : finalStateThisSubBlock;
+                AscendC::DataCopy(calcUbTensor, stateSrc, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            }
+        }
         AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
         AscendC::PipeBarrier<PIPE_V>();
-        Arch::CrossCoreWaitFlag(cube2Done);
 
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::DataCopy(hUpdateUbTensor, hUpdateInputThisSubBlock, mActualThisSubBlock * nActual);
@@ -244,11 +252,25 @@ public:
 
         if constexpr(std::is_same<FinalStateElement, float>::value) {
             if (storeFinalState && isFinalState) {
+                // 终块：直写 finalState（原逻辑不变）
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+            } else if (storeFinalState) {
+                // 中间块：state 落 finalState 槽传下块（事件同终块，释放改 MTE3_MTE2 等两处读完成）
+                AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
+                AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                AscendC::DataCopy(hOutputThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
             } else {
+                // 不存终值：原路径不变
                 AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
@@ -289,7 +311,6 @@ private:
 };
 }
 
-// ---- 内联自原 epilogue/block/block_epilogue_gdn_fwdh_vnew_preload.hpp
 namespace Catlass::Epilogue::Block {
 
 template <
@@ -382,7 +403,20 @@ public:
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
         uint32_t mActualPerSubBlock = CeilDiv(mActual, subBlockNum);
         uint32_t mActualThisSubBlock = (subBlockIdx == 0) ? mActualPerSubBlock : (mActual - mActualPerSubBlock);
+        // 尾块 mActual=1 时 sub1 无有效行，跳过全部计算/搬运：零长度 DataCopy 会在
+        // GM 张量末边界发出退化访问（mssanitizer 曾报非法读写）。但跨核模式 2 要求
+        // 两个 AIV 都 SetFlag 后 AIC 的 WaitFlag 才放行，空行核必须先完成
+        // wait(cube1Done)/set(vec1Done) 握手再退出，否则 C2 侧 AIC 永久挂起。
         if (mActualThisSubBlock == 0) {
+            // fp32 直传的中间块链里，空行 AIV 须在每一块完成
+            // MTE3_MTE2(ID0)→V_MTE2(ID0) 信用循环（条件无 isInitialState，
+            // 对齐 V1 等待）——漏发 V_MTE2(ID0) 会让 V2 的 hUpdate 装载
+            // 等信用死锁（T%64==1 尾块早退形态）。
+            if (storeFinalState && std::is_same<FinalStateElement, float>::value) {
+                const uint32_t event = EVENT_ID0 + (isPing ? 0 : pongBaseEvent);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(event);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(event);
+            }
             Arch::CrossCoreWaitFlag(cube1Done);
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
             return;
@@ -434,10 +468,7 @@ public:
 
     
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag); // wait v_c2
-        // 尾块 mActual=1 时 sub1 计数为 0：零长度 DataCopy 会在 GM 张量末边界发出退化访问
-        if (mActualThisSubBlock > 0) {
-            AscendC::DataCopy(uUbTensor, uInputThisSubBlock, mActualThisSubBlock * nvActual); // mte2 u
-        }
+        AscendC::DataCopy(uUbTensor, uInputThisSubBlock, mActualThisSubBlock * nvActual); // mte2 u
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag); // set u
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1 + pingpongFlag); // wait u
         AscendC::Cast(calcUbTensor, uUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nvActual); // cast u
@@ -480,14 +511,13 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
         Arch::CrossCoreWaitFlag(cube1Done);
 
-        if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
+        // fp32 存终态：等上块 MTE3 写完再装载 ws（该区与 V2 共用）
+        if (storeFinalState && std::is_same<FinalStateElement, float>::value) {
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
         } else {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         }
-        if (mActualThisSubBlock > 0) {
-            AscendC::DataCopy(wsUbTensor, wsInputThisSubBlock, mActualThisSubBlock * nvActual);
-        }
+        AscendC::DataCopy(wsUbTensor, wsInputThisSubBlock, mActualThisSubBlock * nvActual);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0 + pingpongFlag);
         
@@ -506,9 +536,7 @@ public:
         
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
-        if (mActualThisSubBlock > 0) {
-            AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
-        }
+        AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
 
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
@@ -518,9 +546,7 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
-        if (mActualThisSubBlock > 0) {
-            AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
-        }
+        AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
 
     }
@@ -552,11 +578,9 @@ private:
 }
 
 
-// ---- 内联自原 gemm/block/block_scheduler_gdn_fwd_h_preload.hpp
 using namespace Catlass;
 
-// gated 复用拷贝仅引入 preload 链：原版经非 preload scheduler（本拷贝未引入）
-// 传递的 PING_PONG_STAGES 在此兜底定义。
+// 本引擎仅含 preload 链，无外部传入的 PING_PONG_STAGES 定义，在此兜底。
 #ifndef PING_PONG_STAGES
 constexpr uint32_t PING_PONG_STAGES = 2;
 #endif
@@ -602,6 +626,18 @@ struct GDNFwdHRunningQPreload {
     uint32_t head{0};
 };
 
+// varlen 序列解析结果：origIdx 为原始序列编号（initial/final state 按原始
+// batch 布局寻址），chunkOffset/tokenBegin 为紧凑 chunk/token 前缀（H 与
+// token 流按压缩布局寻址）——两类编号经增量游标一次性解出，替代原
+// GM 前缀表 + StateSequence 二分。
+struct GDNFwdHVarlenSpan {
+    uint32_t origIdx{0};
+    uint32_t chunkOffset{0};
+    uint32_t chunkCount{0};
+    uint32_t tokenBegin{0};
+    uint32_t tokenCount{0};
+};
+
 struct BlockSchedulerGdnFwdHPreload {
     uint32_t batch{0};
     uint32_t seqlen{0};
@@ -616,8 +652,6 @@ struct BlockSchedulerGdnFwdHPreload {
     uint32_t originalTokenBatch{0};
     bool useInitialState{false};
     bool storeFinalState{false};
-    uint64_t numSeqWorkspaceOffset{0};
-    uint64_t numChunksWorkspaceOffset{0};
 
     uint32_t taskIdx{0};
     uint32_t taskLoops{0};
@@ -639,8 +673,19 @@ struct BlockSchedulerGdnFwdHPreload {
     bool isRunning{false};
 
     AscendC::GlobalTensor<int64_t> gmSeqlen;
-    AscendC::GlobalTensor<int64_t> gmNumSeq;
-    AscendC::GlobalTensor<int64_t> gmNumChunks;
+
+    // varlen 增量游标（替代 GM 前缀表 + StateSequence 二分）：只读 cu_seqlens
+    // 的纯函数式推进，无核间共享状态——免去单写者构造、DCache 清理与全核屏障
+    // 发布协议。单调性审计（InitTasks 全路径）：taskIdx 严格递增（流替换 +1；
+    // loop 重基两分支均前向跳变），batchIdx 随 vIdx 轮锯齿单调，预装切片连续
+    // 递增；回退仅出现于轮归零/预装→主循环切换，触发重扫（只读幂等，结果恒同）。
+    static constexpr uint32_t VARLEN_CURSOR_INVALID = 0xFFFFFFFFu;
+    uint32_t cursorCompact{VARLEN_CURSOR_INVALID};
+    uint32_t cursorOrig{0};
+    uint64_t cursorPrefixBefore{0};
+    uint64_t cursorPrefixAfter{0};
+    int64_t cursorTokenBegin{0};
+    int64_t cursorTokenEnd{0};
 
     Arch::CrossCoreFlag cube1Done{0};
     Arch::CrossCoreFlag vec1Done{1};
@@ -651,7 +696,7 @@ struct BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreload() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user, uint32_t coreIdx, uint32_t coreNum) {
+    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, uint32_t coreIdx, uint32_t coreNum) {
 
         batch = tiling.batch;
         seqlen = tiling.seqlen;
@@ -665,59 +710,28 @@ struct BlockSchedulerGdnFwdHPreload {
         originalTokenBatch = tokenBatch;
         useInitialState = tiling.useInitialState;
         storeFinalState = tiling.storeFinalState;
-        numSeqWorkspaceOffset = tiling.numSeqWorkspaceOffset;
-        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
-        gmNumSeq.SetGlobalBuffer((__gm__ int64_t *)(user + numSeqWorkspaceOffset));
-        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
 
         if (isVariedLen) {
-            // The prefix tables are shared by every AIC/AIV block.  Building
-            // them independently lets one block read an entry while another
-            // block is still writing it, which can produce an invalid
-            // chunkOffset and subsequently out-of-range epilogue transfers.
-            if ASCEND_IS_AIC {
-                if (AscendC::GetBlockIdx() == 0) {
-                    gmNumChunks.SetValue(0, 0);
-                    gmNumSeq.SetValue(0, 0);
-                    uint32_t actualBatch = 0;
-                    int64_t prevSeq = 0, currSeq;
-                    int64_t chunkPrefix = 0;
-                    for (uint32_t b = 1; b <= tokenBatch; b++) {
-                        currSeq = gmSeqlen.GetValue(b);
-                        int64_t batchSeqLen = currSeq - prevSeq;
-                        if (batchSeqLen > 0) {
-                            actualBatch++;
-                            gmNumSeq.SetValue(actualBatch, currSeq);
-                            int64_t batchChunk = (batchSeqLen + chunkSize - 1) / chunkSize;
-                            chunkPrefix += batchChunk;
-                            gmNumChunks.SetValue(actualBatch, chunkPrefix);
-                        }
-                        prevSeq = currSeq;
-                    }
-                    // SetValue writes through the scalar data cache. SyncAll
-                    // orders the cores but does not write back that cache.
-                    AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
-                }
-            }
-            // Publish both prefix tables before any scheduler computes offsets.
-            AscendC::SyncAll<false>();
-            AscendC::DataCacheCleanAndInvalid<int64_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(gmNumSeq);
-
+            // 每核只读扫一遍 cu_seqlens：压缩空序列并就地累加 totalChunks/
+            // totalTokens。前缀与原始编号由 ResolveSequence 增量游标按需解析，
+            // 不再写 GM 前缀表（无核间共享写，无需发布协议）。
             uint32_t actualBatch = 0;
             int64_t prevSeq = 0, currSeq;
+            uint64_t chunkSum = 0;
             for (uint32_t b = 1; b <= tokenBatch; b++) {
                 currSeq = gmSeqlen.GetValue(b);
                 if (currSeq > prevSeq) {
                     actualBatch++;
+                    chunkSum += (static_cast<uint64_t>(currSeq - prevSeq) + chunkSize - 1) / chunkSize;
                 }
                 prevSeq = currSeq;
             }
             tokenBatch = actualBatch;
             batch = actualBatch;
-            totalChunks = gmNumChunks.GetValue(tokenBatch);
-            totalTokens = gmNumSeq.GetValue(tokenBatch);
+            totalChunks = static_cast<uint32_t>(chunkSum);
+            totalTokens = static_cast<uint32_t>(prevSeq); // cu_seqlens 末项 = 总 token 数
         } else {
             totalChunks = (seqlen + chunkSize - 1) / chunkSize;
             totalTokens = seqlen;
@@ -751,22 +765,46 @@ struct BlockSchedulerGdnFwdHPreload {
 
 
     CATLASS_DEVICE
-    uint32_t StateSequence(uint32_t compactSequence) const {
-        if (!isVariedLen || tokenBatch == originalTokenBatch) {
-            return compactSequence;
+    GDNFwdHVarlenSpan ResolveSequence(uint32_t compactSeq) {
+        // 仅 varlen 模式调用（调用方均已按 isVariedLen 分支）。回退（锯齿轮
+        // 归零/预装→主循环切换）触发重置重扫：只读幂等，任意访问序下结果恒正确；
+        // 同 compactSeq 连续命中（同 batchIdx 的 H 个连续任务/预装块）零推进。
+        GDNFwdHVarlenSpan span{};
+        if (cursorCompact != VARLEN_CURSOR_INVALID && compactSeq < cursorCompact) {
+            cursorCompact = VARLEN_CURSOR_INVALID;
         }
-        const int64_t tokenBegin = gmNumSeq.GetValue(compactSequence);
-        uint32_t begin = 0;
-        uint32_t end = originalTokenBatch;
-        while (begin < end) {
-            const uint32_t middle = begin + (end - begin) / 2;
-            if (gmSeqlen.GetValue(middle + 1) <= tokenBegin) {
-                begin = middle + 1;
-            } else {
-                end = middle;
-            }
+        while (cursorCompact == VARLEN_CURSOR_INVALID || cursorCompact < compactSeq) {
+            AdvanceCursorOne();
         }
-        return begin;
+        span.origIdx = cursorOrig;
+        span.chunkOffset = static_cast<uint32_t>(cursorPrefixBefore);
+        span.chunkCount = static_cast<uint32_t>(cursorPrefixAfter - cursorPrefixBefore);
+        span.tokenBegin = static_cast<uint32_t>(cursorTokenBegin);
+        span.tokenCount = static_cast<uint32_t>(cursorTokenEnd - cursorTokenBegin);
+        return span;
+    }
+
+    CATLASS_DEVICE
+    void AdvanceCursorOne() {
+        // 消费下一个非空序列：跳过 gmSeqlen[o+1] == tokenBegin 的空原始序列
+        // （token 游标不推进）。调用方保证 compactSeq < actualBatch，故扫描
+        // 必在 originalTokenBatch 内命中下一个非空序列。
+        const bool first = (cursorCompact == VARLEN_CURSOR_INVALID);
+        uint32_t orig = first ? 0 : cursorOrig + 1;
+        const int64_t tokenBegin = first ? 0 : cursorTokenEnd;
+        const uint64_t prefixBefore = first ? 0 : cursorPrefixAfter;
+        while (orig < originalTokenBatch && gmSeqlen.GetValue(orig + 1) <= tokenBegin) {
+            ++orig;
+        }
+        const int64_t tokenEnd = gmSeqlen.GetValue(orig + 1);
+        const uint64_t chunkCount =
+            (static_cast<uint64_t>(tokenEnd - tokenBegin) + chunkSize - 1) / chunkSize;
+        cursorCompact = first ? 0 : cursorCompact + 1;
+        cursorOrig = orig;
+        cursorPrefixBefore = prefixBefore;
+        cursorPrefixAfter = prefixBefore + chunkCount;
+        cursorTokenBegin = tokenBegin;
+        cursorTokenEnd = tokenEnd;
     }
 
     CATLASS_DEVICE
@@ -777,11 +815,22 @@ struct BlockSchedulerGdnFwdHPreload {
         newStream.kHeadIdx = newStream.vHeadIdx / headGroups;
         newStream.shapeBatchIdx = isVariedLen ? 0 : newStream.batchIdx;
         newStream.tokenBatchIdx = isVariedLen ? newStream.batchIdx : 0;
-        newStream.stateBatchIdx = StateSequence(newStream.batchIdx);
-        newStream.chunkOffset = isVariedLen ? gmNumChunks.GetValue(newStream.tokenBatchIdx) : 0;
-        newStream.batchChunks = isVariedLen ? (gmNumChunks.GetValue(newStream.tokenBatchIdx + 1) - newStream.chunkOffset) : totalChunks;
-        newStream.tokenOffset = isVariedLen ? gmNumSeq.GetValue(newStream.tokenBatchIdx) : 0;
-        newStream.batchTokens = isVariedLen ? (gmNumSeq.GetValue(newStream.tokenBatchIdx + 1) - newStream.tokenOffset) : totalTokens;
+        if (isVariedLen) {
+            // 建流序与游标锯齿序一致：同 batchIdx 的 H 个连续任务零推进命中，
+            // 换序列 O(增量) 推进；一次解析同时给出原始编号与紧凑前缀。
+            const GDNFwdHVarlenSpan span = ResolveSequence(newStream.batchIdx);
+            newStream.stateBatchIdx = span.origIdx;
+            newStream.chunkOffset = span.chunkOffset;
+            newStream.batchChunks = span.chunkCount;
+            newStream.tokenOffset = span.tokenBegin;
+            newStream.batchTokens = span.tokenCount;
+        } else {
+            newStream.stateBatchIdx = newStream.batchIdx;
+            newStream.chunkOffset = 0;
+            newStream.batchChunks = totalChunks;
+            newStream.tokenOffset = 0;
+            newStream.batchTokens = totalTokens;
+        }
         newStream.chunkIdx = 0;
     }
      
@@ -794,12 +843,18 @@ struct BlockSchedulerGdnFwdHPreload {
         offset.isFinalState = stream.chunkIdx == (stream.batchChunks - 1); 
         offset.initialStateOffset = (static_cast<uint64_t>(stream.stateBatchIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
         offset.finalStateOffset = offset.initialStateOffset;
-        offset.hSrcOffset = ((stream.shapeBatchIdx * totalChunks + stream.chunkOffset + stream.chunkIdx) * vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
-        offset.hDstOffset = offset.hSrcOffset + vNumHead * kHeadDim * vHeadDim;
-        offset.uvOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
-        offset.wkOffset = (stream.shapeBatchIdx * kNumHead * totalTokens + stream.kHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
-        offset.wOffset = (stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
-        offset.gOffset = stream.shapeBatchIdx * vNumHead * totalTokens + stream.vHeadIdx * totalTokens + stream.tokenOffset + stream.chunkIdx * chunkSize;
+        offset.hSrcOffset =
+            ((static_cast<uint64_t>(stream.shapeBatchIdx) * totalChunks + stream.chunkOffset + stream.chunkIdx) *
+                vNumHead + stream.vHeadIdx) * kHeadDim * vHeadDim;
+        offset.hDstOffset = offset.hSrcOffset + static_cast<uint64_t>(vNumHead) * kHeadDim * vHeadDim;
+        offset.uvOffset = ((static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) * totalTokens +
+                              stream.tokenOffset + stream.chunkIdx * chunkSize) * vHeadDim;
+        offset.wkOffset = ((static_cast<uint64_t>(stream.shapeBatchIdx) * kNumHead + stream.kHeadIdx) * totalTokens +
+                              stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
+        offset.wOffset = ((static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) * totalTokens +
+                             stream.tokenOffset + stream.chunkIdx * chunkSize) * kHeadDim;
+        offset.gOffset = (static_cast<uint64_t>(stream.shapeBatchIdx) * vNumHead + stream.vHeadIdx) * totalTokens +
+                         stream.tokenOffset + stream.chunkIdx * chunkSize;
         offset.hWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * kHeadDim * vHeadDim;
         offset.vWorkOffset = (cubeCoreIdx * PING_PONG_STAGES + streamId) * chunkSize * vHeadDim;
         offset.blockTokens = offset.isFinalState ? (stream.batchTokens - stream.chunkIdx * chunkSize) : chunkSize;
@@ -893,8 +948,8 @@ struct BlockSchedulerGdnFwdHPreloadCube : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadCube() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
-        BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, tiling, user, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling) {
+        BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, tiling, AscendC::GetBlockIdx(), AscendC::GetBlockNum());
     }
 
 };
@@ -904,15 +959,14 @@ struct BlockSchedulerGdnFwdHPreloadVec : public BlockSchedulerGdnFwdHPreload {
     BlockSchedulerGdnFwdHPreloadVec() {}
 
     CATLASS_DEVICE
-    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling, GM_ADDR user) {
-        BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, tiling, user, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
+    void Init(GM_ADDR cu_seqlens, const ChunkGatedDeltaRuleFwdHTilingData &tiling) {
+        BlockSchedulerGdnFwdHPreload::Init(cu_seqlens, tiling, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(), AscendC::GetBlockNum());
     }
 
 };
 
 }  // namespace Catlass::Gemm::Block
 
-// ---- 内联自原 gemm/kernel/gdn_fwd_h_kernel_preload.hpp（using 与类主体）
 using namespace Catlass;
 using namespace tla;
 
@@ -946,8 +1000,8 @@ struct MmadPingpongTlaPreload {
 
 namespace Catlass::Gemm::Block {
 
-// ===== 本地 MMAD 块（2026-11-12 评审约定：公共块
-// block_mmad_pingpong_tla_preload.hpp 零改动、与本文件解耦）：
+// ===== 本地 MMAD 块（约定：公共块 block_mmad_pingpong_tla_preload.hpp
+// 保持零改动、与本文件解耦）：
 // fork 共享 BlockMmadTla 的 MmadPingpongTlaPreload 特化并增策略位
 // WAIT_A_BEFORE_LOAD（见上方本地 MmadPingpongTlaPreload 注释）——
 // A=Vwork（V1 输出）形态等待前置到 A 装载前，其余行为与共享实现逐行
@@ -1662,8 +1716,7 @@ public:
     uint64_t vWorkspaceOffset{0};
     uint64_t vUpdateWorkspaceOffset{0};
     uint64_t hWorkspaceOffset{0};
-    uint64_t numChunksWorkspaceOffset{0};
-    
+
     AscendC::GlobalTensor<ElementK> gmK;
     AscendC::GlobalTensor<ElementW> gmW;
     AscendC::GlobalTensor<ElementU> gmU;
@@ -1675,8 +1728,6 @@ public:
     AscendC::GlobalTensor<ElementVWork> gmVWorkspace;
     AscendC::GlobalTensor<ElementV> gmVUpdateWorkspace;
     AscendC::GlobalTensor<ElementHWork> gmHWorkspace;
-
-    AscendC::GlobalTensor<int64_t> gmNumChunks;
 
     CubeScheduler cubeBlockScheduler;
     VecScheduler vecBlockScheduler;
@@ -1704,8 +1755,7 @@ public:
         vWorkspaceOffset = tiling.vWorkspaceOffset;
         vUpdateWorkspaceOffset = tiling.vUpdateWorkspaceOffset;
         hWorkspaceOffset = tiling.hWorkspaceOffset;
-        numChunksWorkspaceOffset = tiling.numChunksWorkspaceOffset;
-        
+
         gmK.SetGlobalBuffer((__gm__ ElementK *)k);
         gmW.SetGlobalBuffer((__gm__ ElementW *)w);
         gmU.SetGlobalBuffer((__gm__ ElementU *)u);
@@ -1718,14 +1768,12 @@ public:
         gmVUpdateWorkspace.SetGlobalBuffer((__gm__ ElementV *)(user + vUpdateWorkspaceOffset));
         gmHWorkspace.SetGlobalBuffer((__gm__ ElementHWork *)(user + hWorkspaceOffset));
 
-        gmNumChunks.SetGlobalBuffer((__gm__ int64_t *)(user + numChunksWorkspaceOffset));
-
         if ASCEND_IS_AIC {
-            cubeBlockScheduler.Init(cu_seqlens, tiling, user);
+            cubeBlockScheduler.Init(cu_seqlens, tiling);
         }
 
         if ASCEND_IS_AIV {
-            vecBlockScheduler.Init(cu_seqlens, tiling, user);
+            vecBlockScheduler.Init(cu_seqlens, tiling);
         }
     }
     
@@ -1871,11 +1919,20 @@ public:
             {   
                 uint32_t batchIdx = initialStateBlockOffset / vNumHead;
                 uint32_t vHeadIdx = initialStateBlockOffset % vNumHead;
-                uint32_t chunkOffset = isVariedLen ? gmNumChunks.GetValue(batchIdx) : 0; 
-                const uint32_t stateBatchIdx = vecBlockScheduler.StateSequence(batchIdx);
+                // 预装切片 batchIdx 连续递增，游标 O(增量) 推进且同 batchIdx 的
+                // vNumHead 个连续块零推进命中；一次解析给出原始编号与 chunk 前缀。
+                uint32_t chunkOffset = 0;
+                uint32_t stateBatchIdx = batchIdx;
+                if (isVariedLen) {
+                    const Block::GDNFwdHVarlenSpan span = vecBlockScheduler.ResolveSequence(batchIdx);
+                    stateBatchIdx = span.origIdx;
+                    chunkOffset = span.chunkOffset;
+                }
                 uint64_t initialStateOffset = (static_cast<uint64_t>(stateBatchIdx) * vNumHead + vHeadIdx) * stateBlockSize;
                 uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
-                uint64_t hOffset = ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) * stateBlockSize;
+                uint64_t hOffset =
+                    ((static_cast<uint64_t>(shapeBatchIdx) * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
+                    stateBlockSize;
                 if (useInitialState) {
                     AscendC::LocalTensor<ElementInitialState> stateUbTensor = pingpongFlag ? stateUbTensorPing : stateUbTensorPong;
                     AscendC::LocalTensor<ElementH> hUbTensor = pingpongFlag ? hUbTensorPing : hUbTensorPong;
@@ -1980,9 +2037,10 @@ public:
                                 gmG[vec2Offsets.gOffset],
                                 gmH[vec2Offsets.hSrcOffset],
                                 gmHWorkspace[vec2Offsets.hWorkOffset],
+                                gmInitialState[vec2Offsets.finalStateOffset],
                                 vec2Offsets.blockTokens, kHeadDim, vHeadDim, vecBlockScheduler.cube2Done,
                                 // isPing 按槽位取（同 V1，防流迁移换组断链）
-                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState,
+                                vec2Offsets.isInitialState, vec2Offsets.isFinalState, storeFinalState, useInitialState,
                                 (vecBlockScheduler.GetStreamSlot(i) == 0)
                             );
                         } else {
@@ -2018,17 +2076,13 @@ public:
 
 }
 
-// ---- 自原 chunk_fwd_h.cpp 移入：gated 复用谓词与入口（RunFwdHTyped 分流调用）
+// ---- gated 分支谓词与入口（RunFwdHTyped 分流调用）
 namespace GDN {
-// gated preload 复用 BF16 state；FP32 state 由通用路径保留完整递推精度。
-// vfirst 经 STATE_V_FIRST 模板维支持；g dtype 由 host 入口唯一校验。
+// gated preload 复用，与 host 侧 gatedEligible 两处同条件。
 template <typename GateT, typename CompilePolicy, bool STATE_V_FIRST>
 __aicore__ inline constexpr bool FwdHGatedReusable()
 {
-    // 域不限（2026-11-10 exp 域复用释放）：log2（USE_EXP2=true）/ln（false）均
-    // 可——域经模板维进 gated kernel（epilogue 内 LN2 换算 if constexpr 取舍）；
-    // 与 host 侧 gatedEligible 两处同条件。
-    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G && !CompilePolicy::STATE_FP32;
+    return CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G;
 }
 
 // gated 复用分支：构造本地 tiling 后调用 preload kernel；
@@ -2063,8 +2117,6 @@ __aicore__ inline void RunFwdHGatedReuse(const FwdHKernelArgs &args)
         gtiling.vUpdateWorkspaceOffset = args.tiling.vUpdateWorkspaceOffset;
         gtiling.kDecayWorkspaceOffset = 0;
         gtiling.hWorkspaceOffset = args.tiling.hWorkspaceOffset;
-        gtiling.numSeqWorkspaceOffset = args.tiling.gatedNumSeqOffset;
-        gtiling.numChunksWorkspaceOffset = args.tiling.gatedNumChunksOffset;
     }
     GatedKernel gatedKernel;
     gatedKernel.Init(args.k, args.w, args.u, args.g, args.initialState,

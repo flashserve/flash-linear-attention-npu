@@ -178,11 +178,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
     // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
-    // 域不限（2026-11-10 exp 域复用释放）：useExp2 true/false 均可（域随 tiling
-    // key 的 USE_EXP2 维选实例，epilogue 内 LN2 换算按域取舍）。
-    // vfirst 不限：state 布局经 STATE_V_FIRST 模板维进 kernel，aclnn 层免翻译；
-    // gate dtype 的唯一门为函数头部入口校验；FP32 state 走通用路径保留递推精度。
-    tilingCtx.gatedEligible = useG && resolvedStateDataType == ge::DT_BF16 &&
+    tilingCtx.gatedEligible = useG &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -284,9 +280,6 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
     tiling.set_coreBoundCount(plainTiling.coreBoundCount);
     tiling.set_coreTaskBounds(plainTiling.coreTaskBounds);
-    tiling.set_gatedTilingOffset(plainTiling.gatedTilingOffset);
-    tiling.set_gatedNumSeqOffset(plainTiling.gatedNumSeqOffset);
-    tiling.set_gatedNumChunksOffset(plainTiling.gatedNumChunksOffset);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 
