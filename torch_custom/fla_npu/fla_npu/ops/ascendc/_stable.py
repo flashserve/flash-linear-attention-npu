@@ -2397,4 +2397,3 @@ def npu_gdn_recoverssm_verify(
         scale_value, float(softplus_beta), float(softplus_threshold),
         bool(use_qk_l2norm_in_kernel), out, _current_stream_ptr(),
     )
-
