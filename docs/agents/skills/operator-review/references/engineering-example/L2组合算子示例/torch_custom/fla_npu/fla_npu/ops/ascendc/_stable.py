@@ -5,11 +5,12 @@
 
 注意事项：
   1. **场景选择不在 Python 层做**：V1/V2 是同一个 schema 的两条 aclnn 入口，由 C++ 适配层
-     `run_<op>` 内部选择（见 `stable_op_name.cpp`）；Python wrapper 只做拆栈、转换、默认值补齐与透传。
+     `run_<op>` 内部选择（见 `stable_op_name.cpp`）；Python wrapper 只负责接收参数、整理成 aclnn 所需形式、
+     补齐默认值并调用。
   2. wrapper 不做参数、shape、dtype、layout、属性、输出组合或支持范围拦截；即使新开关或场景不支持，
      也不得直接抛错，必须让所选 aclnn L2/tiling 返回结构化错误。
   3. 新增参数追加在末尾、带默认值；默认值等于历史语义。V2 的 `tail_scale` 也必须沿同一
-     schema 透传，不能因回落 V1 而丢失。
+     schema 继续传递，不能因回落 V1 而丢失。
   4. 组合算子（形态 C）单独一个真签名 wrapper，名字与 schema 一致，不做场景回落
      （范围不满足时由 L2 返回 `ACLNN_ERR_PARAM_INVALID`）。
   5. 本示例只展示本次新增/修改的函数；实际交付时改仓库中的 `_stable.py`。

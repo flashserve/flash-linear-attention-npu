@@ -30,13 +30,13 @@ torch_custom/fla_npu/                  # 交付件布局与 torch_custom/fla_npu
 |-- csrc/src/stable_<算子>.cpp        # 新建：组合算子同样要 schema + 适配（一算子一文件）
 |-- csrc/src/stable_ops.cpp           # 改：include 一行 + m.def/m.impl 两行
 `-- fla_npu/ops/ascendc/
-    |-- _stable.py                    # 改：真签名 wrapper（拆栈、转换、默认值与透传）
+    |-- _stable.py                    # 改：真签名 wrapper（接收参数、处理默认值并转发；不做支持范围拦截）
     `-- __init__.py                   # 改：_ASCENDC_OPS 加一行 public 名
 ```
 
 一个容易写错的点：**V1/V2 的场景选择在 C++ 适配层的 `run_` 里**，不在 Python wrapper 里
 （仓内真实例子：`csrc/src/stable_chunk_kda_fwd.cpp` 内部在 `aclnnChunkKdaFwdV2` 与 `aclnnChunkKdaFwd`
-之间分支）。Python wrapper 只做拆栈、类型/视图转换、默认值补齐与透传，不做参数或支持范围拦截。
+之间分支）。Python wrapper 只负责接收参数、整理成 aclnn 所需形式、补齐默认值并调用，不做参数或支持范围拦截。
 当输入既不满足 V1 也不满足 V2 时，`run_` 仍须调用约定的 aclnn 入口，由 aclnn L2/tiling 返回
 `ACLNN_ERR_PARAM_INVALID` 和结构化错误。
 

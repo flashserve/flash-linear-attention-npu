@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | L0 kernel + host tiling | `fla/ops/ascendc/<模块>/<算子>/` | 数学怎么在 AiCore 上分核、分 Stage 执行 | 解释 autograd 重计算策略；按调用方决定要不要算 |
 | L2 aclnn | `op_host/op_api/aclnn_<op>.{h,cpp}` | 公开 C 接口：张量契约、可选输出、场景拦截 | 决定 Python 侧默认值；读调用方框架状态 |
-| Stable-ABI 适配 | `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` | 把 torch 参数拆栈、完成类型/视图转换、补默认值、按文档化能力选择并下发 aclnn | 任何参数/shape/dtype/layout/属性/输出组合拦截；直接抛支持范围错误或伪造参数错误码 |
+| Stable-ABI 适配 | `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` | 接收 torch 参数、整理成 aclnn 所需格式、补默认值、按文档化能力选择并调用 aclnn | 任何参数/shape/dtype/layout/属性/输出组合拦截；直接抛支持范围错误或伪造参数错误码 |
 | Python 公开接口 | `torch_custom/fla_npu/fla_npu/ops/ascendc/` | 入参名/默认值/返回 tuple 的 FLA 语义 | import `torch_npu` 作为默认路径、注册 `torch.ops.npu` |
 
 层间契约的详细设计见 [`适配层设计.md`](../../../../../architecture/适配层设计.md)，新增适配的逐步操作见
@@ -269,7 +269,8 @@ add_ops_compile_options(
    host 侧校验通过后，kernel 只消费"已判定合法"的输入与 tiling 数据，**不再重复校验、不返回错误码、
    不做运行期报错**（参考 §4.1 第 9 条的 kernel 侧禁令与特殊情况登记要求）。跨层核对方式：
    从文档逐条找 aclnn/host 拦截、从 aclnn/host 新增拦截逐条找文档说明（§3 末节的双向核对）。
-   Stable-ABI/Python 适配层只能拆栈、转换、补默认值并按文档化能力选择 V1/V2 aclnn；不得做任何
+   Stable-ABI/Python 适配层只能接收上层参数、整理成 aclnn 所需格式、补齐默认值并按文档化能力选择
+   V1/V2 aclnn 入口转发；不得做任何
    参数、shape、dtype、layout、属性、输出组合或支持范围拦截。若 V1/V2 均不支持，适配层仍须调用
    约定的 aclnn 入口，由 aclnn L2/tiling 返回结构化参数错误。
 9. 上游 `CHECK_RET`/`CHECK_COND` 只返回状态，无法把条件、实际值和原因完整返回上层；通用
@@ -495,7 +496,7 @@ add_ops_compile_options(
 8. **场景选择在适配层 `run_`**：V1/V2 是同一个 schema 的两条 aclnn 入口，由
    `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` 的 `run_<op>` 内部按参数/形状分支选择
    （参考 `stable_chunk_kda_fwd.cpp` 在 `aclnnChunkKdaFwdV2` 与 `aclnnChunkKdaFwd` 之间的分支）；
-   Python wrapper 只做拆栈、类型/视图转换、默认值补齐与透传，调用方也只面对一套 Python 签名。
+   Python wrapper 只负责接收参数、整理成 aclnn 所需形式、补齐默认值并调用，调用方也只面对一套 Python 签名。
 9. **交付同步**：`docs/api.md` 必须同时记录两个入口的签名、关系表、场景差异与返回码；`docs/design.md` 记录
    组合关系；ATK 用例覆盖 V1、V2 与回退路径；`tools/op_abi_validate.py` 能对 OPP 头文件校验所有 `FLA_STABLE_EXEC` 调用点。
 10. **ABI 重检**：只新增 V2 文件、不动 def 和 V1 aclnn 时，不触发额外 ABI 检视；一旦改动 def 或既有 aclnn 的
@@ -527,7 +528,7 @@ add_ops_compile_options(
      （默认值必须与签名一致，包装时会校验，写错首次调用即报错）；判据需要**多个参数**组合时才用
      `MUTATION_PREDICATES`；无条件写回只登记 `MUTATED_ARGUMENTS`，不要硬塞开关。
      wrapper 判定为"不写回"时跳过 `requires_grad` 拒绝与 version 推进，判定为"写回"时拒绝
-     `requires_grad=True` 并在成功后 `increment_version()`；被改写张量按上游语义原对象返回/透传。
+     `requires_grad=True` 并在成功后 `increment_version()`；被改写张量按上游语义返回原对象。
      若契约已由 `_stable.py` 的 `_fla_npu_inplace_contract` 热路径 wrapper 自带，则不要再走中央包装（避免重复 bump）；
    - 回归与边界：`tests/stable_abi/regression_mutation_contract.py`；Stable schema 与 Python 原地登记须一致；
      当前无 FakeTensor/functionalization，不能作为 compiler-visible op 入图。
@@ -633,7 +634,7 @@ ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明�
 2. **文件头**：新增源文件保留仓库文件头许可声明（跟随同目录相邻文件的 BSD 3-Clause 或 CANN 2.0 版本）；
    头文件用 include guard（全大写下划线）。
 3. **参数校验集中在 aclnn/host**：校验函数只判断、不计算；空 tensor、空序列、非法 `cu_seqlens`、不支持的
-   dtype/layout/shape 组合都在 aclnn L2/tiling 拦截并返回明确错误信息，Stable/Python 只做适配与透传。
+   dtype/layout/shape 组合都在 aclnn L2/tiling 拦截并返回明确错误信息，Stable/Python 只做参数整理与调用。
 4. **报错文本**：写出实际触发的条件与实参值（`Kdim/Vdim`、`layout`、`outputMask`、实际 `chunk_size`），
    并指明当前支持的取值；不写"参数错误"这类无上下文文本。
 5. **同步**：跨 pipe/核同步只用当前 CANN 头文件支持的成对 `SetFlag`/`WaitFlag`、`CrossCoreSetFlag`/
@@ -667,7 +668,7 @@ ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明�
 - [ ] 可选输出的缺席语义只在 L2 表达，且档位/掩码组合有显式枚举与非法组合拦截。
 - [ ] L1 与 L2 的职责边界清楚：L2 不解释上层保留策略，但校验"入参属性 + 可选输出指针"组合是否合法；
       连续性按逐输入契约处理（该连续的才 Contiguous，state 类保持 view）；报错带实际值。
-- [ ] Stable/Python 适配层只拆栈、转换、补默认值、选择 V1/V2 aclnn 并透传；没有参数/shape/dtype/layout/
+- [ ] Stable/Python 适配层只接收参数、整理成 aclnn 所需格式、补默认值、选择 V1/V2 aclnn 并转发；没有参数/shape/dtype/layout/
       属性/输出组合/支持范围拦截、提前抛错或伪造参数错误码；V1/V2 均不支持时仍由 aclnn L2/tiling 报错。
 - [ ] 根目录 kernel 是默认（arch22）实现，`arch35/` 只放差异文件，架构选择用
       `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)`；
