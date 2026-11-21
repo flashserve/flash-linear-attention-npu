@@ -29,6 +29,7 @@ struct ChunkKdaBwdPrepareTilingContext {
     size_t sysWorkspaceSize;
     bool isA5 = false;
     bool doTokenMajor = false;
+    bool isA6 = false;
 };
 class ChunkKdaBwdPrepareTilingProcessor {
 public:
@@ -162,7 +163,7 @@ public:
             tiling_.seqNum = cu.GetDim(0) - 1;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;
-        tiling_.headWindowNum = a.H / 4 + (a.H % 4 != 0);
+        tiling_.headWindowNum = ctx_.isA6 ? a.H : a.H / 4 + (a.H % 4 != 0);
         if (tiling_.chunkTaskNum > std::numeric_limits<int64_t>::max() / tiling_.headWindowNum ||
             tiling_.totalChunkNum > std::numeric_limits<int64_t>::max() / a.H / (128 * 128 * 2)) {
             return FailValue("workTaskNum", std::to_string(tiling_.chunkTaskNum) + "," +
@@ -177,7 +178,7 @@ public:
         tilingKey_ = GET_TPL_TILING_KEY(
             tiling_.inputLayout, tiling_.isVariable,
             static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0));
-        const size_t scratchSize = ctx_.isA5 ? 0 : static_cast<size_t>(blockDim_) * 65536;
+        const size_t scratchSize = (ctx_.isA5 || ctx_.isA6) ? 0 : static_cast<size_t>(blockDim_) * 65536;
         workspaceSize_ = ctx_.sysWorkspaceSize + scratchSize;
         OP_LOGD(ctx_.nodeName, "layout=%u variable=%u stateVFirst=%u key=%lu blocks=%u userScratch=%lu",
                 tiling_.inputLayout, tiling_.isVariable, tiling_.stateVFirst, tilingKey_,

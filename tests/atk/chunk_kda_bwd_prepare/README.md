@@ -32,7 +32,8 @@ Dense Nc=ceil(T/64); packed Nc=sum(ceil(seq_len/64)), and packed rank-4 B=1.
 | Overflow-safe work/shape multiplication, positive dimensions | tiling processor Process and ParseTokenShape | bounded YAML candidates; no oversized allocation cases |
 
 A2/A3 implement all listed layout/mode combinations. **A5 currently supports
-fixed BNSD and packed NTD only**; filter candidates accordingly before A5 use.
+fixed BNSD and packed NTD only**; A6 supports the same two layout/mode pairs.
+Filter candidates accordingly before A5/A6 use.
 Source TilingKey is selected by `(inputLayout,isVariable)`; no device selection
 has been observed. Arithmetic scan found explicit int64/uint64 guards and
 size_t workspace multiplication; this bounded generation is not an overflow test.
@@ -109,6 +110,36 @@ python scripts/archive_cases.py
 ATK CPU CLI smoke (`atk node -b cpu task`, JSON slice `[0,1)`) completed
 with `success 1, failed 0`. This verifies dataset creation and plugin execution;
 no NPU comparison or numerical accuracy conclusion was made.
+
+## A6 implementation development (2026-11-18)
+
+`scripts/prepare_a6_smoke.py` uses `make_case` from the independent
+`tests/stable_abi/test_chunk_kda_bwd_prepare.py` reference. It does not use the
+zero CPU placeholder above. Integer BF16 inputs and scale=0.125 make all expected
+outputs exact, so this diagnostic compares all three outputs with zero tolerance
+and checks repeated calls. It is not a calibrated ATK accuracy baseline.
+
+After building/installing the A6 operator and preparing the target runtime, run
+from the repository root:
+
+```bash
+python tests/atk/chunk_kda_bwd_prepare/scripts/prepare_a6_smoke.py --tokens 65 --heads 3
+python tests/atk/chunk_kda_bwd_prepare/scripts/prepare_a6_smoke.py --tokens 129 --heads 5 --batch 2
+python tests/atk/chunk_kda_bwd_prepare/scripts/prepare_a6_smoke.py --varlen --tokens 129 --heads 5 --state-v-first
+```
+
+Use `--save <file.pt>` to save inputs, CPU expected outputs and actual outputs.
+Repeat both state directions and tokens=1/15/16/17/63/64/65/127/128/129. With
+64 available core pairs, `--heads 1 --tokens 36864` produces 576 tasks (9 per
+core), covering two four-slot wraps; first confirm the actual blockDim/core count.
+This larger diagnostic is deliberately opt-in for camodel.
+
+`host/tiling_contract_test.cpp` extends the existing SDK host contract test with
+A6 CG1 task counts, AIC-limited blockDim with equal AIC/AIV counts assumed, zero-core rejection, workspace, scale
+and unsupported layout/mode combinations. It requires CANN headers/libraries;
+it has not been built with the target SDK in this development environment.
+A6 SDK compilation, device smoke, resource/flag verification and formal ATK
+acceptance remain pending. See the operator's `docs/validation.md` for local evidence.
 
 This project uses the `api_type` Python executor for CPU/NPU dispatch. It does
 not implement a direct `pyaclnn` executor: test-control attrs and canonical host
