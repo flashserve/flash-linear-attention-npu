@@ -41,16 +41,13 @@ bool ReadStride(const gert::TilingContext *context, size_t index, size_t rank, u
 {
     const auto *shape = context->GetInputShape(index);
     const auto *stride = context->GetInputStride(index);
-    if (shape == nullptr || (stride != nullptr && stride->GetDimNum() != 0 &&
-                             stride->GetDimNum() != rank)) {
+    if (shape == nullptr || (stride != nullptr && stride->GetDimNum() != 0 && stride->GetDimNum() != rank)) {
         return false;
     }
     uint64_t dense = 1U;
     for (size_t dim = rank; dim > 0; --dim) {
         const int64_t value =
-            stride != nullptr && stride->GetDimNum() != 0 ?
-                stride->GetStride(dim - 1) :
-                static_cast<int64_t>(dense);
+            stride != nullptr && stride->GetDimNum() != 0 ? stride->GetStride(dim - 1) : static_cast<int64_t>(dense);
         if (value <= 0) {
             return false;
         }
@@ -64,21 +61,18 @@ bool ReadStride(const gert::TilingContext *context, size_t index, size_t rank, u
 
 REGISTER_OPS_TILING_TEMPLATE(GdnRecoverssmCommit, GdnRecoverssmCommitTiling, 0);
 
-void GdnRecoverssmCommitTiling::InitCompileInfo()
+ge::graphStatus GdnRecoverssmCommitTiling::GetPlatformInfo()
 {
     auto *platformInfo = context_->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        return;
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "platform",
+                                                 "platform information must not be nullptr");
+        return ge::GRAPH_FAILED;
     }
     const auto platform = platform_ascendc::PlatformAscendC(platformInfo);
-    platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfo_.ubSize);
-    compileInfo_.aivNum = platform.GetCoreNumAiv();
-    compileInfo_.isA5 = platform.GetCurNpuArch() == NpuArch::DAV_3510;
-}
-
-ge::graphStatus GdnRecoverssmCommitTiling::GetPlatformInfo()
-{
-    if (!compileInfo_.isA5 || compileInfo_.aivNum == 0 || compileInfo_.ubSize == 0) {
+    uint64_t ubSize = 0U;
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    if (platform.GetCurNpuArch() != NpuArch::DAV_3510 || platform.GetCoreNumAiv() == 0U || ubSize == 0U) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             context_->GetNodeName(), "platform",
             "GdnRecoverssmCommit requires Ascend 950 with runtime AIV and UB information");
@@ -90,18 +84,14 @@ ge::graphStatus GdnRecoverssmCommitTiling::GetPlatformInfo()
 ge::graphStatus GdnRecoverssmCommitTiling::CheckContext()
 {
     for (size_t index = STATE; index <= BOUNDARY_LENS; ++index) {
-        if (context_->GetInputShape(index) == nullptr ||
-            context_->GetInputDesc(index) == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                context_->GetNodeName(), "input[" + std::to_string(index) + "]",
-                "input shape and descriptor must not be nullptr");
+        if (context_->GetInputShape(index) == nullptr || context_->GetInputDesc(index) == nullptr) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input[" + std::to_string(index) + "]",
+                                                     "input shape and descriptor must not be nullptr");
             return ge::GRAPH_FAILED;
         }
     }
-    if (context_->GetOutputShape(0) == nullptr ||
-        context_->GetOutputDesc(0) == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "state_out", "output must not be nullptr");
+    if (context_->GetOutputShape(0) == nullptr || context_->GetOutputDesc(0) == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "state_out", "output must not be nullptr");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -109,50 +99,42 @@ ge::graphStatus GdnRecoverssmCommitTiling::CheckContext()
 
 ge::graphStatus GdnRecoverssmCommitTiling::AnalyzeDtype()
 {
-    const auto dtype = [&](size_t index) {
-        return context_->GetInputDesc(index)->GetDataType();
-    };
+    const auto dtype = [&](size_t index) { return context_->GetInputDesc(index)->GetDataType(); };
     const auto stateType = dtype(STATE);
     if (stateType != ge::DT_BF16 && stateType != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "state",
-                                  ge::TypeUtils::DataTypeToSerialString(stateType),
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "state", ge::TypeUtils::DataTypeToSerialString(stateType),
                                   "[bfloat16,float32]");
         return ge::GRAPH_FAILED;
     }
     if (dtype(REPLAY) != ge::DT_FLOAT || dtype(TABLE) != ge::DT_INT64) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "replay/table",
-                                  "unsupported", "[replay=float32,table=int64]");
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "replay/table", "unsupported",
+                                  "[replay=float32,table=int64]");
         return ge::GRAPH_FAILED;
     }
     const auto isIntegerMeta = [&](size_t index) {
         const auto value = dtype(index);
         return value == ge::DT_INT32 || value == ge::DT_INT64;
     };
-    if (!isIntegerMeta(STATE_INDICES) || !isIntegerMeta(COMMIT_LENS) ||
-        !isIntegerMeta(FINAL_INDICES) || !isIntegerMeta(BOUNDARY_INDICES) ||
-        !isIntegerMeta(BOUNDARY_LENS)) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "metadata",
-                                  "unsupported", "[int32,int64]");
+    if (!isIntegerMeta(STATE_INDICES) || !isIntegerMeta(COMMIT_LENS) || !isIntegerMeta(FINAL_INDICES) ||
+        !isIntegerMeta(BOUNDARY_INDICES) || !isIntegerMeta(BOUNDARY_LENS)) {
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "metadata", "unsupported", "[int32,int64]");
         return ge::GRAPH_FAILED;
     }
     const auto planType = dtype(COMMIT_LENS);
-    if (dtype(FINAL_INDICES) != planType || dtype(BOUNDARY_INDICES) != planType ||
-        dtype(BOUNDARY_LENS) != planType) {
-        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "plan metadata",
-                                  "mismatched", "all plan tensors share int32 or int64");
+    if (dtype(FINAL_INDICES) != planType || dtype(BOUNDARY_INDICES) != planType || dtype(BOUNDARY_LENS) != planType) {
+        OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "plan metadata", "mismatched",
+                                  "all plan tensors share int32 or int64");
         return ge::GRAPH_FAILED;
     }
     if (context_->GetOutputDesc(0)->GetDataType() != stateType) {
         OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "state_out",
-                                  ge::TypeUtils::DataTypeToSerialString(
-                                      context_->GetOutputDesc(0)->GetDataType()),
+                                  ge::TypeUtils::DataTypeToSerialString(context_->GetOutputDesc(0)->GetDataType()),
                                   "same as state");
         return ge::GRAPH_FAILED;
     }
-    stateDtypeTemplate_ =
-        stateType == ge::DT_FLOAT ? GRSC_TPL_FP32 : GRSC_TPL_BF16;
-    tilingData_.stateIndicesDtype = dtype(STATE_INDICES) == ge::DT_INT64 ? 64U : 32U;
-    tilingData_.planDtype = planType == ge::DT_INT64 ? 64U : 32U;
+    stateDtypeTemplate_ = stateType == ge::DT_FLOAT ? GRSC_TPL_FP32 : GRSC_TPL_BF16;
+    stateIndexDtypeTemplate_ = dtype(STATE_INDICES) == ge::DT_INT64 ? GRSC_TPL_INT64 : GRSC_TPL_INT32;
+    planDtypeTemplate_ = planType == ge::DT_INT64 ? GRSC_TPL_INT64 : GRSC_TPL_INT32;
     return ge::GRAPH_SUCCESS;
 }
 
@@ -164,19 +146,14 @@ ge::graphStatus GdnRecoverssmCommitTiling::AnalyzeShapesAndStrides()
     const auto &source = context_->GetInputShape(STATE_INDICES)->GetOriginShape();
     const auto &lengths = context_->GetInputShape(COMMIT_LENS)->GetOriginShape();
     const auto &final = context_->GetInputShape(FINAL_INDICES)->GetOriginShape();
-    const auto &boundary =
-        context_->GetInputShape(BOUNDARY_INDICES)->GetOriginShape();
-    const auto &recovery =
-        context_->GetInputShape(BOUNDARY_LENS)->GetOriginShape();
+    const auto &boundary = context_->GetInputShape(BOUNDARY_INDICES)->GetOriginShape();
+    const auto &recovery = context_->GetInputShape(BOUNDARY_LENS)->GetOriginShape();
 
-    if (state.GetDimNum() != 4 || replay.GetDimNum() != 4 ||
-        table.GetDimNum() != 3 || source.GetDimNum() != 1 ||
-        lengths.GetDimNum() != 1 || final.GetDimNum() != 1 ||
-        boundary.GetDimNum() != 1 || recovery.GetDimNum() != 1) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "shapes",
-            "state=" + ShapeText(state) + ", replay=" + ShapeText(replay) +
-                ", table=" + ShapeText(table) + ", source=" + ShapeText(source));
+    if (state.GetDimNum() != 4 || replay.GetDimNum() != 4 || table.GetDimNum() != 3 || source.GetDimNum() != 1 ||
+        lengths.GetDimNum() != 1 || final.GetDimNum() != 1 || boundary.GetDimNum() != 1 || recovery.GetDimNum() != 1) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "shapes",
+                                                 "state=" + ShapeText(state) + ", replay=" + ShapeText(replay) +
+                                                     ", table=" + ShapeText(table) + ", source=" + ShapeText(source));
         return ge::GRAPH_FAILED;
     }
 
@@ -187,89 +164,72 @@ ge::graphStatus GdnRecoverssmCommitTiling::AnalyzeShapesAndStrides()
     const int64_t window = replay.GetDim(2);
     const int64_t layers = table.GetDim(2);
     const int64_t batch = source.GetDim(0);
-    if (pages <= 0 || heads <= 0 || valueDim != 128 || keyDim != 128 ||
-        replay.GetDim(0) != pages || replay.GetDim(1) != heads ||
-        window < 1 || window > 32 ||
-        replay.GetDim(3) != valueDim + keyDim + 1 ||
-        table.GetDim(0) != 2 || table.GetDim(1) != 2 || layers <= 0 ||
-        batch < 0 || lengths.GetDim(0) != batch ||
-        final.GetDim(0) != batch || boundary.GetDim(0) != batch ||
-        recovery.GetDim(0) != batch) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "shape contract",
-            "state=" + ShapeText(state) + ", replay=" + ShapeText(replay) +
-                ", table=" + ShapeText(table) + ", batch=" +
-                std::to_string(batch));
+    if (pages <= 0 || heads <= 0 || valueDim != 128 || keyDim != 128 || replay.GetDim(0) != pages ||
+        replay.GetDim(1) != heads || window < 1 || window > 32 || replay.GetDim(3) != valueDim + keyDim + 1 ||
+        table.GetDim(0) != 2 || table.GetDim(1) != 2 || layers <= 0 || batch < 0 || lengths.GetDim(0) != batch ||
+        final.GetDim(0) != batch || boundary.GetDim(0) != batch || recovery.GetDim(0) != batch) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "shape contract",
+                                                 "state=" + ShapeText(state) + ", replay=" + ShapeText(replay) +
+                                                     ", table=" + ShapeText(table) +
+                                                     ", batch=" + std::to_string(batch));
         return ge::GRAPH_FAILED;
     }
 
     uint64_t stateStrides[4] = {};
     uint64_t replayStrides[4] = {};
     uint64_t tableStrides[3] = {};
-    if (!ReadStride(context_, STATE, 4, stateStrides) ||
-        !ReadStride(context_, REPLAY, 4, replayStrides) ||
+    if (!ReadStride(context_, STATE, 4, stateStrides) || !ReadStride(context_, REPLAY, 4, replayStrides) ||
         !ReadStride(context_, TABLE, 3, tableStrides)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "strides", "state/replay/table strides invalid");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "strides",
+                                                 "state/replay/table strides invalid");
         return ge::GRAPH_FAILED;
     }
-    if (stateStrides[3] != 1U || replayStrides[3] != 1U ||
-        tableStrides[0] != static_cast<uint64_t>(2 * layers) ||
-        tableStrides[1] != static_cast<uint64_t>(layers) ||
+    if (stateStrides[3] != 1U || replayStrides[3] != 1U || replayStrides[2] < 2ULL * 128ULL + 1ULL ||
+        tableStrides[0] != static_cast<uint64_t>(2 * layers) || tableStrides[1] != static_cast<uint64_t>(layers) ||
         tableStrides[2] != 1U) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             context_->GetNodeName(), "inner strides",
-            "state key, replay payload must be contiguous and the address table must be contiguous");
+            "state key and replay payload must be contiguous, replay position stride must cover one payload, "
+            "and the address table must be contiguous");
         return ge::GRAPH_FAILED;
     }
 
-    const auto metaStride = [&](size_t index, uint64_t *value) -> bool {
-        const auto *stride = context_->GetInputStride(index);
-        *value = stride != nullptr && stride->GetDimNum() != 0 ?
-                     static_cast<uint64_t>(stride->GetStride(0)) :
-                     1U;
-        return *value > 0;
+    const auto isDenseMetadata = [&](size_t index) -> bool {
+        if (batch == 0) {
+            return true;
+        }
+        uint64_t stride = 0U;
+        return ReadStride(context_, index, 1, &stride) && stride == 1U;
     };
-    if (!metaStride(STATE_INDICES, &tilingData_.stateIndicesStride) ||
-        !metaStride(COMMIT_LENS, &tilingData_.commitLensStride) ||
-        !metaStride(FINAL_INDICES, &tilingData_.finalStateIndicesStride) ||
-        !metaStride(BOUNDARY_INDICES,
-                    &tilingData_.boundaryStateIndicesStride) ||
-        !metaStride(BOUNDARY_LENS, &tilingData_.boundaryRecoveryLensStride)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "metadata strides", "positive stride required");
+    if (!isDenseMetadata(STATE_INDICES) || !isDenseMetadata(COMMIT_LENS) || !isDenseMetadata(FINAL_INDICES) ||
+        !isDenseMetadata(BOUNDARY_INDICES) || !isDenseMetadata(BOUNDARY_LENS)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "metadata strides",
+                                                 "metadata tensors must be contiguous");
         return ge::GRAPH_FAILED;
     }
 
-    const uint64_t taskCount =
-        static_cast<uint64_t>(batch) * static_cast<uint64_t>(heads) *
-        static_cast<uint64_t>(layers);
+    const uint64_t taskCount = static_cast<uint64_t>(batch) * static_cast<uint64_t>(heads) *
+                               static_cast<uint64_t>(layers) * GRSC_VALUE_TILES_2;
     if (taskCount > std::numeric_limits<uint32_t>::max()) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "task count", "B*HV*layers exceeds uint32");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "task count",
+                                                 "B*HV*layers*value_tiles exceeds uint32");
         return ge::GRAPH_FAILED;
     }
 
-    tilingData_.batchSize = static_cast<uint32_t>(batch);
     tilingData_.valueHeads = static_cast<uint32_t>(heads);
-    tilingData_.valueDim = static_cast<uint32_t>(valueDim);
-    tilingData_.keyDim = static_cast<uint32_t>(keyDim);
     tilingData_.layerCount = static_cast<uint32_t>(layers);
     tilingData_.taskCount = static_cast<uint32_t>(taskCount);
     tilingData_.stateHeadStride = stateStrides[1];
     tilingData_.stateValueStride = stateStrides[2];
-    tilingData_.stateKeyStride = stateStrides[3];
     tilingData_.replayHeadStride = replayStrides[1];
     tilingData_.replayPosStride = replayStrides[2];
-    tilingData_.replayDimStride = replayStrides[3];
 
-    const uint64_t rounds =
-        std::max<uint64_t>(1U, (taskCount + compileInfo_.aivNum - 1U) /
-                                   compileInfo_.aivNum);
-    const uint64_t used =
-        std::max<uint64_t>(1U, (taskCount + rounds - 1U) / rounds);
-    tilingData_.vectorCoreNum =
-        static_cast<uint32_t>(std::min<uint64_t>(used, compileInfo_.aivNum));
+    const auto platformInfo = context_->GetPlatformInfo();
+    const auto platform = platform_ascendc::PlatformAscendC(platformInfo);
+    const uint64_t aivNum = platform.GetCoreNumAiv();
+    const uint64_t rounds = std::max<uint64_t>(1U, (taskCount + aivNum - 1U) / aivNum);
+    const uint64_t used = std::max<uint64_t>(1U, (taskCount + rounds - 1U) / rounds);
+    context_->SetBlockDim(static_cast<uint32_t>(std::min<uint64_t>(used, aivNum)));
     return ge::GRAPH_SUCCESS;
 }
 
@@ -277,32 +237,25 @@ ge::graphStatus GdnRecoverssmCommitTiling::AnalyzeAttributes()
 {
     const auto *attrs = context_->GetAttrs();
     if (attrs == nullptr) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "attrs", "null");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attrs", "null");
         return ge::GRAPH_FAILED;
     }
-    const int64_t *window =
-        attrs->GetAttrPointer<int64_t>(0);
+    const int64_t *window = attrs->GetAttrPointer<int64_t>(0);
     const bool *align = attrs->GetAttrPointer<bool>(1);
     const auto &replay = context_->GetInputShape(REPLAY)->GetOriginShape();
-    if (window == nullptr || align == nullptr || *window < 1 || *window > 32 ||
-        *window != replay.GetDim(2)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "attributes",
-            "spec_query_len must equal replay.shape[2] and be in [1,32]");
+    if (window == nullptr || align == nullptr || *window < 1 || *window > 32 || *window != replay.GetDim(2)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "attributes",
+                                                 "spec_query_len must equal replay.shape[2] and be in [1,32]");
         return ge::GRAPH_FAILED;
     }
-    tilingData_.specQueryLen = static_cast<uint32_t>(*window);
-    tilingData_.alignMode = *align ? 1U : 0U;
+    alignMode_ = *align;
     return ge::GRAPH_SUCCESS;
 }
 
 ge::graphStatus GdnRecoverssmCommitTiling::GetShapeAttrsInfo()
 {
-    if (CheckContext() != ge::GRAPH_SUCCESS ||
-        AnalyzeDtype() != ge::GRAPH_SUCCESS ||
-        AnalyzeShapesAndStrides() != ge::GRAPH_SUCCESS ||
-        AnalyzeAttributes() != ge::GRAPH_SUCCESS) {
+    if (CheckContext() != ge::GRAPH_SUCCESS || AnalyzeDtype() != ge::GRAPH_SUCCESS ||
+        AnalyzeShapesAndStrides() != ge::GRAPH_SUCCESS || AnalyzeAttributes() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -310,21 +263,22 @@ ge::graphStatus GdnRecoverssmCommitTiling::GetShapeAttrsInfo()
 
 ge::graphStatus GdnRecoverssmCommitTiling::CheckUb()
 {
-    constexpr uint64_t matrixBytes =
-        128ULL * 128ULL * sizeof(float);
-    constexpr uint64_t rowBytes = 128ULL * sizeof(float);
-    uint64_t total = matrixBytes + 1028U + 5U * rowBytes + 4096U;
-    if (tilingData_.alignMode != 0U) {
-        total += matrixBytes + 4U * rowBytes;
+    constexpr uint64_t recordBytes = 2ULL * 32ULL * GRSC_RECORD_STRIDE_264 * sizeof(float);
+    const uint64_t stateBytes =
+        2ULL * GRSC_VALUE_TILE_64 * 128ULL * (stateDtypeTemplate_ == GRSC_TPL_FP32 ? sizeof(float) : sizeof(uint16_t));
+    uint64_t total = recordBytes + stateBytes + 4096U;
+    if (alignMode_) {
+        total += stateBytes;
     }
-    if (total > compileInfo_.ubSize) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-            context_->GetNodeName(), "UB",
-            "required=" + std::to_string(total) +
-                ", available=" + std::to_string(compileInfo_.ubSize));
+    uint64_t ubSize = 0U;
+    const auto platform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    if (total > ubSize) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "UB",
+                                                 "required=" + std::to_string(total) +
+                                                     ", available=" + std::to_string(ubSize));
         return ge::GRAPH_FAILED;
     }
-    tilingData_.ubCalSize = static_cast<uint32_t>(total);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -335,8 +289,7 @@ ge::graphStatus GdnRecoverssmCommitTiling::DoOpTiling()
 
 ge::graphStatus GdnRecoverssmCommitTiling::DoLibApiTiling()
 {
-    tilingKey_ =
-        GET_TPL_TILING_KEY(stateDtypeTemplate_, tilingData_.alignMode != 0U);
+    tilingKey_ = GET_TPL_TILING_KEY(stateDtypeTemplate_, alignMode_, planDtypeTemplate_, stateIndexDtypeTemplate_);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -353,10 +306,8 @@ ge::graphStatus GdnRecoverssmCommitTiling::GetWorkspaceSize()
 
 ge::graphStatus GdnRecoverssmCommitTiling::PostTiling()
 {
-    context_->SetBlockDim(std::max<uint32_t>(1U, tilingData_.vectorCoreNum));
     const size_t size = sizeof(tilingData_);
-    if (memcpy_s(context_->GetRawTilingData()->GetData(),
-                 context_->GetRawTilingData()->GetCapacity(), &tilingData_,
+    if (memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(), &tilingData_,
                  size) != EOK) {
         return ge::GRAPH_FAILED;
     }
@@ -374,8 +325,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context)
     if (context == nullptr) {
         return ge::GRAPH_FAILED;
     }
-    return Ops::Transformer::OpTiling::TilingRegistry::GetInstance().DoTilingImpl(
-        context);
+    return Ops::Transformer::OpTiling::TilingRegistry::GetInstance().DoTilingImpl(context);
 }
 
 static ge::graphStatus TilingPrepare(gert::TilingParseContext *context)
@@ -383,8 +333,6 @@ static ge::graphStatus TilingPrepare(gert::TilingParseContext *context)
     return context == nullptr ? ge::GRAPH_FAILED : ge::GRAPH_SUCCESS;
 }
 
-IMPL_OP_OPTILING(GdnRecoverssmCommit)
-    .Tiling(TilingFunc)
-    .TilingParse<GdnRecoverssmCommitCompileInfo>(TilingPrepare);
+IMPL_OP_OPTILING(GdnRecoverssmCommit).Tiling(TilingFunc).TilingParse<GdnRecoverssmCommitCompileInfo>(TilingPrepare);
 
 } // namespace optiling

@@ -29,14 +29,26 @@ struct GrscStateType<GRSC_TPL_FP32> {
     using type = float;
 };
 
+template <int D_T_META>
+struct GrscMetaType;
+
+template <>
+struct GrscMetaType<GRSC_TPL_INT32> {
+    using type = int32_t;
+};
+
+template <>
+struct GrscMetaType<GRSC_TPL_INT64> {
+    using type = int64_t;
+};
+
 } // namespace GDN
 
-template <int D_T_STATE, bool ALIGN_MODE>
-__global__ __aicore__ void gdn_recoverssm_commit(
-    GM_ADDR state, GM_ADDR replay, GM_ADDR stateCommitCacheAddressStrideTable,
-    GM_ADDR stateIndices, GM_ADDR commitLens, GM_ADDR finalStateIndices,
-    GM_ADDR boundaryStateIndices, GM_ADDR boundaryRecoveryLens, GM_ADDR stateOut,
-    GM_ADDR workspace, GM_ADDR tiling_gm)
+template <int D_T_STATE, bool ALIGN_MODE, int D_T_PLAN, int D_T_STATE_INDEX>
+__global__ __aicore__ void
+gdn_recoverssm_commit(GM_ADDR state, GM_ADDR replay, GM_ADDR stateCommitCacheAddressStrideTable, GM_ADDR stateIndices,
+                      GM_ADDR commitLens, GM_ADDR finalStateIndices, GM_ADDR boundaryStateIndices,
+                      GM_ADDR boundaryRecoveryLens, GM_ADDR stateOut, GM_ADDR workspace, GM_ADDR tiling_gm)
 {
     (void)stateOut;
     (void)workspace;
@@ -44,9 +56,10 @@ __global__ __aicore__ void gdn_recoverssm_commit(
     GET_TILING_DATA(tilingData, tiling_gm);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     using StateType = typename GDN::GrscStateType<D_T_STATE>::type;
-    GDN::GdnRecoverssmCommitVector<StateType, ALIGN_MODE> op(&tilingData);
-    op.Init(state, replay, stateCommitCacheAddressStrideTable, stateIndices,
-            commitLens, finalStateIndices, boundaryStateIndices,
-            boundaryRecoveryLens);
+    using PlanType = typename GDN::GrscMetaType<D_T_PLAN>::type;
+    using StateIndexType = typename GDN::GrscMetaType<D_T_STATE_INDEX>::type;
+    GDN::GdnRecoverssmCommitVector<StateType, PlanType, StateIndexType, ALIGN_MODE> op;
+    op.Init(&tilingData, state, replay, stateCommitCacheAddressStrideTable, stateIndices, commitLens, finalStateIndices,
+            boundaryStateIndices, boundaryRecoveryLens);
     op.Process();
 }

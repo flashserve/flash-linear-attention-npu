@@ -76,25 +76,27 @@ def gdn_recoverssm_commit_reference(
     if any(t.numel() != rows for t in (lengths, final, boundary, recovery)):
         raise ValueError("all commit metadata vectors must have the same length")
     if rows and (
-        int(source.min()) < 0
+        int(source.min()) <= 0
         or int(source.max()) >= state.shape[0]
-        or int(final.min()) < 0
+        or int(final.min()) <= 0
         or int(final.max()) >= state.shape[0]
         or int(boundary.min()) < 0
         or int(boundary.max()) >= state.shape[0]
+        or int(lengths.min()) < 1
+        or int(lengths.max()) > spec_query_len
+        or int(recovery.min()) < 0
+        or bool((recovery > lengths).any())
     ):
-        raise ValueError("page ids must be null (0) or inside the state cache")
+        raise ValueError("commit metadata values are outside the supported contract")
 
     committed = state64.clone()
     for row in range(rows):
         source_page = int(source[row])
         final_page = int(final[row])
-        commit_len = min(max(int(lengths[row]), 0), spec_query_len)
-        if source_page <= 0 or final_page <= 0 or commit_len == 0:
-            continue
+        commit_len = int(lengths[row])
 
         boundary_page = int(boundary[row])
-        recovery_len = min(int(recovery[row]), commit_len)
+        recovery_len = int(recovery[row])
         need_boundary = (
             align_mode
             and boundary_page > 0

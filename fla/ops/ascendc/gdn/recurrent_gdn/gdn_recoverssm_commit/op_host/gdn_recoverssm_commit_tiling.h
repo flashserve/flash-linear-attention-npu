@@ -16,18 +16,13 @@
 namespace optiling {
 using namespace GDN;
 
-struct GdnRecoverssmCommitCompileInfo {
-    uint64_t aivNum{0};
-    uint64_t ubSize{0};
-    bool isA5{false};
-};
+struct GdnRecoverssmCommitCompileInfo {};
 
 class GdnRecoverssmCommitTiling : public Ops::Transformer::OpTiling::TilingBaseClass {
 public:
     explicit GdnRecoverssmCommitTiling(gert::TilingContext *context)
         : Ops::Transformer::OpTiling::TilingBaseClass(context)
     {
-        InitCompileInfo();
     }
 
 protected:
@@ -44,18 +39,19 @@ protected:
     ge::graphStatus PostTiling() override;
 
 private:
-    void InitCompileInfo();
     ge::graphStatus CheckContext();
     ge::graphStatus AnalyzeDtype();
     ge::graphStatus AnalyzeShapesAndStrides();
     ge::graphStatus AnalyzeAttributes();
     ge::graphStatus CheckUb();
 
-    GdnRecoverssmCommitCompileInfo compileInfo_;
     GdnRecoverssmCommitTilingData tilingData_{};
     uint64_t tilingKey_{0};
     int64_t workspaceSize_{0};
     uint64_t stateDtypeTemplate_{0};
+    uint64_t planDtypeTemplate_{0};
+    uint64_t stateIndexDtypeTemplate_{0};
+    bool alignMode_{false};
 };
 
 } // namespace optiling

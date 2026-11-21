@@ -605,7 +605,7 @@ def gdn_recoverssm_commit(
         state, replay, state_commit_cache_address_stride_table,
         state_indices, commit_lens, final_state_indices,
         boundary_state_indices, boundary_recovery_lens,
-        int(spec_query_len), bool(align_mode),
+        spec_query_len=int(spec_query_len), align_mode=bool(align_mode),
     )
 
 

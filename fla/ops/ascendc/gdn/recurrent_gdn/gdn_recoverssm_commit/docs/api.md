@@ -46,8 +46,8 @@ GdnRecoverssmCommitInner
 | 1 | `replay` | 输入、只读 | `[P,HV,L,257]` | FP32 | `[correction 128, normalized key 128, decay 1]` |
 | 2 | `state_commit_cache_address_stride_table` | 输入 | `[2,2,Layer]` | INT64 | checkpoint/replay 的基地址与 block stride（元素计） |
 | 3 | `state_indices` | 输入 | `[B]` | INT32 或 INT64 | replay 来源页 |
-| 4 | `commit_lens` | 输入 | `[B]` | INT32 或 INT64 | 接受 token 数；超过窗口的值在计算中截断 |
-| 5 | `final_state_indices` | 输入 | `[B]` | INT32 或 INT64 | final checkpoint 目标页 |
+| 4 | `commit_lens` | 输入 | `[B]` | INT32 或 INT64 | 接受 token 数，调用方保证位于 `[1,L]` |
+| 5 | `final_state_indices` | 输入 | `[B]` | INT32 或 INT64 | final checkpoint 目标页，必须为正数 |
 | 6 | `boundary_state_indices` | 输入 | `[B]` | INT32 或 INT64 | boundary 目标页；`0` 表示无目标 |
 | 7 | `boundary_recovery_lens` | 输入 | `[B]` | INT32 或 INT64 | 从窗口起点恢复的 boundary 记录数 |
 | 8 | `spec_query_len` | 属性 | 标量 | INT64 | `1 <= L <= 32` |
@@ -109,22 +109,28 @@ state[final, h] = result
 - `K=V=128`，`1 <= spec_query_len <= 32`，`Layer >= 1`。
 - checkpoint：BF16 或 FP32；replay：FP32。
 - `state` 的 key 维和 `replay` 的 payload 维 stride 为 1。
+- `replay` 的 position stride 必须至少为 `257`，用于一次多 block `DataCopyPad`
+  搬运整个 window。
 - page、head、value/position 维允许正 stride；不允许内部重叠。
 - 地址表必须连续，INT64，shape 为 `[2,2,Layer]`。
-- page `0` 为 null page；非正 source/final 行不写 checkpoint。
+- `state_indices`、`commit_lens`、`final_state_indices`、
+  `boundary_state_indices` 和 `boundary_recovery_lens` 必须为连续的一维张量。
+- `state_indices`、`final_state_indices` 和有效 boundary 目标页必须在
+  `[1,P)`；kernel 不执行设备侧页号回退。
 
 ## 边界与错误行为
 
-- 空 batch、所有 commit 长度为 0 时正常返回，不启动有效 work。
-- 非正 commit 长度和 non-positive final page 被跳过。
-- `commit_lens > spec_query_len` 时按 `spec_query_len` 处理。
-- `boundary_recovery_lens > commit_lens` 时只使用有效记录。
+- 调用方保证每个 request 的 `1 <= commit_lens <= spec_query_len`。
+- 调用方保证 source/final page 合法且写区间不冲突。
+- `boundary_state_indices == 0` 表示该 request 不写 boundary；非零值必须在
+  `[1,P)`，且 `boundary_recovery_lens <= commit_lens`。
 - host 在 descriptor 创建前检查 shape、dtype、stride、设备、地址表布局和 UB。
 - 地址表中的设备指针值无法在 host 做内容校验，必须由上下文创建者保证合法。
-- 调用方保证同一批请求的 source/final 写区间不冲突，以及目标页已经分配。
+- kernel 对上述合法契约不增加运行期防御分支。
 
 ## 性能口径
 
-正确性首版以一个 AIV 处理一个 `(request, layer, value head)`。性能结论使用
-`msprof` 的 `Task Duration(us)`，不以 Python wall time 作为结论。PR 的主场景为
+正确性首版以一个 AIV 处理一个 `(request, layer, value head, value tile)`，
+每个 value tile 覆盖 64 行。性能结论使用 `msprof` 的
+`Task Duration(us)`，不以 Python wall time 作为结论。PR 的主场景为
 `B=12, HV=8` 且若干层；正式性能基线需在部署环境用同一 run 包和输入采集。

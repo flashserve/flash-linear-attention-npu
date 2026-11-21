@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,7 +31,7 @@ def _make_case(
         "state": state,
         "replay": replay,
         "state_indices": torch.tensor([1, 2, 3], dtype=torch.int32),
-        "commit_lens": torch.tensor([5, 3, 0], dtype=torch.int32),
+        "commit_lens": torch.tensor([5, 3, 1], dtype=torch.int32),
         "final_state_indices": torch.tensor([4, 2, 5], dtype=torch.int32),
         "boundary_state_indices": torch.tensor([0, 6, 0], dtype=torch.int32),
         "boundary_recovery_lens": torch.tensor([0, 2, 0], dtype=torch.int32),
@@ -84,12 +85,11 @@ def test_align_boundary_uses_accepted_prefix() -> None:
     )
 
 
-def test_zero_length_and_null_pages_are_unchanged() -> None:
+def test_invalid_metadata_is_rejected() -> None:
     kwargs = _make_case(seed=19)
-    before = kwargs["state"].clone()
-    committed = gdn_recoverssm_commit_reference(**kwargs)
-    torch.testing.assert_close(committed[5], before[5].double())
-    torch.testing.assert_close(committed[0], before[0].double())
+    kwargs["commit_lens"][2] = 0
+    with pytest.raises(ValueError, match="supported contract"):
+        gdn_recoverssm_commit_reference(**kwargs)
 
 
 def test_same_final_and_boundary_page_writes_once() -> None:
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     tests = (
         test_reverse_composition_matches_forward_records,
         test_align_boundary_uses_accepted_prefix,
-        test_zero_length_and_null_pages_are_unchanged,
+        test_invalid_metadata_is_rejected,
         test_same_final_and_boundary_page_writes_once,
         test_bf16_state_converts_only_on_store,
         test_reference_is_deterministic,
