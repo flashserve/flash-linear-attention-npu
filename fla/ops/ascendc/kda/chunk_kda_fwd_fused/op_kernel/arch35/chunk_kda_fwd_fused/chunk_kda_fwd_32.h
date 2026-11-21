@@ -566,6 +566,7 @@ public:
 	// 落到 GM(attr 打包,免 H2D);逐任务解析 (token_begin, len)。
 	// 任务空头 = len<=0:不进流水,仅在请求时写 final=initial(或 0)。
 	uint64_t is_varlen = 0, nheads_qk = 0, total_tokens = 0;  // total_tokens = varlen 的 T_total(beta 头连续行距)
+	uint64_t out_token_major = 0;  // dense BNSD 直接写 BSND attnOut，省去 host 大转置
 	uint64_t cu_base = 0;          // tiling GM 上 cu_seqlens 数组的裸地址
 	uint64_t task_empty = 0;       // BindTask 产出:本任务是否空序列
 	uint64_t task_tokens = 0;      // 本任务 token 起点(packed 空间)
@@ -1123,6 +1124,7 @@ __aicore__ inline void Run(
                         td->varlenMode,
                         (uint64_t)((__gm__ uint8_t *)tiling + offsetof(KdaFd32TilingData, cuData)),
                         td->epsilonBits, td->gateFlags);
+        kda.out_token_major = td->outTokenMajor;
         kda.Process((int)td->nChunks);
     } else if (td->varlenMode == 0) {
         Kernel<bfloat16_t, false, true> kda;
@@ -1133,6 +1135,7 @@ __aicore__ inline void Run(
                         td->varlenMode,
                         (uint64_t)((__gm__ uint8_t *)tiling + offsetof(KdaFd32TilingData, cuData)),
                         td->epsilonBits, td->gateFlags);
+        kda.out_token_major = td->outTokenMajor;
         kda.Process((int)td->nChunks);
     } else {
         Kernel<bfloat16_t, true, true> kda;
@@ -1143,6 +1146,7 @@ __aicore__ inline void Run(
                         td->varlenMode,
                         (uint64_t)((__gm__ uint8_t *)tiling + offsetof(KdaFd32TilingData, cuData)),
                         td->epsilonBits, td->gateFlags);
+        kda.out_token_major = td->outTokenMajor;
         kda.Process((int)td->nChunks);
     }
 #endif
