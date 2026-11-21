@@ -20,6 +20,7 @@ using torch::stable::Tensor;
 using fla_npu_stable::stable::TensorMeta;
 using fla_npu_stable::stable::at_shim::kBFloat16;
 using fla_npu_stable::stable::at_shim::kFloat;
+using fla_npu_stable::stable::at_shim::kHalf;
 using fla_npu_stable::stable::allocate_like;
 using fla_npu_stable::stable::allocate_sizes;
 using fla_npu_stable::stable::cstr;
@@ -35,8 +36,12 @@ using fla_npu_stable::stable::tensor;
 // npu_chunk_local_cumsum
 // ---------------------------------------------------------------------------
 
+// Codes must match _stable._ENUM["npu_chunk_local_cumsum"]["output_dtype"].
+// The two original codes keep their values so an older launcher still agrees
+// on them; float16 is appended for the ACLNN contract that always had it.
 constexpr const char* kChunkLocalCumsumOutputDtypeNames[] = {"float32",
-                                                             "bfloat16"};
+                                                             "bfloat16",
+                                                             "float16"};
 
 constexpr const char* kSchema_chunk_local_cumsum =
     "npu_chunk_local_cumsum(Tensor g, Tensor? cu_seqlens, "
@@ -49,8 +54,13 @@ Tensor run_npu_chunk_local_cumsum(Tensor g, std::optional<Tensor> cu_seqlens,
                                   bool head_first, int64_t output_dtype,
                                   int64_t stream) {
   const TensorMeta g_meta = meta_of(g);
-  Tensor out = allocate_sizes(g_meta.sizes,
-                              output_dtype == 0 ? kFloat : kBFloat16, g_meta);
+  int32_t out_scalar_type = kFloat;
+  if (output_dtype == 1) {
+    out_scalar_type = kBFloat16;
+  } else if (output_dtype == 2) {
+    out_scalar_type = kHalf;
+  }
+  Tensor out = allocate_sizes(g_meta.sizes, out_scalar_type, g_meta);
   FLA_STABLE_EXEC("aclnnChunkLocalCumsum", g_meta, stream, tensor(g_meta),
                   int_array(cu_seqlens), int_array(chunk_indices_out),
                   scalar(chunk_size), scalar(reverse), scalar(scale),

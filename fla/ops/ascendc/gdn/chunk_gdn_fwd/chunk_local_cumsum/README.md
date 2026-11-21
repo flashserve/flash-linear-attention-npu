@@ -64,7 +64,7 @@ aclnnStatus aclnnChunkLocalCumsum(
 |------|----------|----------|------|
 | g | FLOAT32 / FLOAT16 / BF16 | 是 | 输入张量，shape 为 `[B, H, T]` |
 | cu_seqlens | INT64 | 否 | 变长序列累积长度。固定长度模式传空 tensor |
-| chunk_indices_out | INT64 | 否 | 变长模式下 block 到 `(seq_id, block_id)` 的映射，按二元组连续存储 |
+| chunk_indices_out | INT64 | 变长模式必须 | 变长模式下 block 到 `(seq_id, block_id)` 的映射，按二元组连续存储；Python 入口在 `chunk_indices_out` 缺省时会按 `cu_seqlens`、`chunk_size` 自动生成 |
 | chunk_size | int64 | 是 | chunk 长度，必须为 2 的幂 |
 | reverse | bool | 否 | 是否执行反向 chunk 内累加，默认 `false` |
 | scale | double | 否 | 输出缩放系数，默认 `1.0` |
@@ -79,7 +79,7 @@ aclnnStatus aclnnChunkLocalCumsum(
 2. **输入维度**：`g` 必须为 rank 3 的 tensor，shape 为 `[B, H, T]`。
 3. **chunk_size**：必须为 2 的幂，且 host tiling 计算得到的 `block_t` 不小于 `chunk_size`。
 4. **数据布局**：当前 AscendC kernel 仅支持 `[B, H, T]`，`head_first=false` 会被显式拒绝。
-5. **变长模式**：当 `cu_seqlens` 非空时，`B` 必须为 1，且 `chunk_indices_out` 必须非空、元素数为偶数。
+5. **变长模式**：当 `cu_seqlens` 非空时，`B` 必须为 1，且 `chunk_indices_out` 必须非空、元素数为偶数（ACLNN 直调）；Python 入口 `npu_chunk_local_cumsum` 在省略 `chunk_indices_out` 时会自动生成该列表，无需调用方复刻 tiling 的分块数。
 
 ---
 

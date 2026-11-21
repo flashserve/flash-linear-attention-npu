@@ -94,8 +94,13 @@ _ENUM = {
     # accepts, so this op's table is the (BSND, TND) subset.
     "npu_recurrent_kda": {"layout": {"BSND": 0, "TND": 1}},
     "npu_chunk_gated_delta_rule_bwd": {"layout": _LAYOUT_CODES},
+    # The ACLNN contract accepts float32/float16/bfloat16 and the aliases the
+    # legacy op_plugin entry understood; the codes keep the two original
+    # values and add float16 last so an older launcher still agrees on the
+    # two spellings it already knew.
     "npu_chunk_local_cumsum": {"output_dtype": {"float32": 0,
-                                                "bfloat16": 1}},
+                                                "bfloat16": 1,
+                                                "float16": 2}},
     "npu_solve_tri": {"layout": {"bsnd": 0, "bnsd": 1, "tnd": 2, "ntd": 3}},
 }
 
@@ -872,6 +877,43 @@ def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
     )
 
 
+_CUMSUM_OUTPUT_DTYPES = {
+    "float32": "float32", "float": "float32", "fp32": "float32",
+    "torch.float32": "float32", "torch.float": "float32",
+    "float16": "float16", "half": "float16", "fp16": "float16",
+    "torch.float16": "float16", "torch.half": "float16",
+    "bfloat16": "bfloat16", "bf16": "bfloat16", "torch.bfloat16": "bfloat16",
+}
+
+_CUMSUM_OUTPUT_FOLLOW_INPUT = frozenset({
+    "same", "same_as_input", "input", "none", "null"})
+
+
+def _chunk_local_cumsum_output_dtype(g, output_dtype):
+    """Resolve every documented spelling to one of the three enum names.
+
+    ``same``/``input``/``none`` follow ``g.dtype``.  The ACLNN contract and the
+    legacy op_plugin entry accept the aliases listed here; the stable schema
+    carries only the three int codes, so the mapping has to happen before the
+    call.
+    """
+
+    if output_dtype is None:
+        return "float32"
+    text = str(output_dtype).strip().lower()
+    if not text:
+        return "float32"
+    if text in _CUMSUM_OUTPUT_FOLLOW_INPUT:
+        text = str(getattr(g, "dtype", "")).lower()
+    name = _CUMSUM_OUTPUT_DTYPES.get(text)
+    if name is None:
+        raise RuntimeError(
+            "npu_chunk_local_cumsum: output_dtype must be float32, float16 or "
+            "bfloat16 (or a torch dtype name), or same/input/none; got "
+            f"{output_dtype!r}")
+    return name
+
+
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
@@ -885,6 +927,15 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
         stacklevel=4,
     )
 
+    cu_seqlens, chunk_indices_out = _normalize_chunk_metadata(
+        cu_seqlens, chunk_indices_out)
+    if cu_seqlens and not chunk_indices_out:
+        # The operator needs the sequence-major (seq, block) list to build its
+        # varlen tasks; a caller that only has the boundaries should not have
+        # to reproduce the tiling's chunk count.  Same convention as
+        # npu_chunk_fwd_h and the other varlen wrappers in this module.
+        chunk_indices_out = _canonical_chunk_indices(cu_seqlens, int(chunk_size))
+
     return _op("npu_chunk_local_cumsum")(
         g,
         _host_ints(cu_seqlens),
@@ -893,7 +944,8 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
         reverse,
         scale,
         head_first,
-        _char_code("npu_chunk_local_cumsum", "output_dtype", output_dtype),
+        _char_code("npu_chunk_local_cumsum", "output_dtype",
+                   _chunk_local_cumsum_output_dtype(g, output_dtype)),
         _current_stream_ptr(),
     )
 
