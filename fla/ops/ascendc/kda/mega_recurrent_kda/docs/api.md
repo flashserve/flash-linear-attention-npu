@@ -1,6 +1,6 @@
 # MegaRecurrentKda 接口
 
-Ascend 950 推理接口。固定隐藏维 H=7168，head 维 D=128，head 数 N 由权重和状态形状确定。令 P=N×D，B 为序列数，T 为 token 总数。
+Atlas A2/A3 和 Ascend 950 共用的推理接口。固定隐藏维 H=7168，head 维 D=128，head 数 N 由权重和状态形状确定。令 P=N×D，B 为序列数，T 为 token 总数。
 
 ```python
 out, conv_state, replay_u, replay_k, replay_decay = npu_mega_recurrent_kda(

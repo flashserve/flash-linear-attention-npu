@@ -3,7 +3,7 @@
 #include "tiling/platform/platform_ascendc.h"
 #include "err/ops_err.h"
 #include "kda_workspace.h"
-#include "../op_kernel/mega_recurrent_kda_tiling_data.h"
+#include "../op_kernel/arch22/tiling_data.h"
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -59,7 +59,7 @@ ge::graphStatus tile(gert::TilingContext *ctx) {
         if(packed) expect(dimensions(ctx,18),{batch+1},"cu_seqlens shape");
         uint32_t rows=count(packed?x[0]:kda::checkedProduct(batch,seq));
         if(info[9]<=0 || (info[10]!=0 && info[10]!=1)) throw std::invalid_argument("invalid workspace plan");
-        const auto bytes=static_cast<uint64_t>(info[9]);
+        auto bytes=static_cast<uint64_t>(info[9]);
         auto scale=attrs?attrs->GetAttrPointer<float>(0):nullptr;
         auto lower=attrs?attrs->GetAttrPointer<float>(1):nullptr;
         auto eps=attrs?attrs->GetAttrPointer<float>(2):nullptr;
@@ -72,12 +72,28 @@ ge::graphStatus tile(gert::TilingContext *ctx) {
         auto raw=ctx->GetRawTilingData(); auto sizes=ctx->GetWorkspaceSizes(1);
         auto platform=platform_ascendc::PlatformAscendC(ctx->GetPlatformInfo());
         uint32_t cores=platform.GetCoreNumAic();
-        if(!cores || !raw || raw->GetCapacity()<sizeof(t) || !sizes) return ge::GRAPH_FAILED;
+        if(!cores || !raw || !sizes) return ge::GRAPH_FAILED;
+        const auto soc=platform.GetSocVersion();
+        const bool arch22 = soc == platform_ascendc::SocVersion::ASCEND910B || soc == platform_ascendc::SocVersion::ASCEND910_93;
+        MegaRecurrentKdaArch22TilingData a2{};
+        if(arch22){
+            using namespace MegaRecurrentKdaV2;
+            a2.common=t; a2.poolSlots=count(slots); a2.convLength=count(length);
+            if(rows>INT32_MAX || n>65535/24 || (t.crosses && uint64_t(batch)*n*16384>UINT32_MAX/4) ||
+               uint64_t(rows)*n*1536>UINT32_MAX) return ge::GRAPH_FAILED;
+            KdaProblem shape{t.batch,seq,t.heads,a2.poolSlots,a2.convLength,t.capacity,rows,kTileRows};
+            a2.arch22=ComputeTiling(shape,cores,2*cores,t.crosses);
+            if(a2.arch22.overflow) return ge::GRAPH_FAILED;
+            bytes=a2.arch22.workspaceBytes+(uint64_t(batch)+1)*4;
+        }
         auto system=platform.GetLibApiWorkSpaceSize();
         if(bytes>UINT64_MAX-system) return ge::GRAPH_FAILED;
         sizes[0]=bytes+system;
-        std::memcpy(raw->GetData(),&t,sizeof(t)); raw->SetDataSize(sizeof(t));
-        ctx->SetBlockDim(cores); ctx->SetTilingKey(t.crosses?2:1);
+        const size_t size = arch22 ? sizeof(a2) : sizeof(t);
+        if (raw->GetCapacity() < size) return ge::GRAPH_FAILED;
+        std::memcpy(raw->GetData(), arch22 ? static_cast<const void*>(&a2) : &t, size);
+        raw->SetDataSize(size);
+        ctx->SetBlockDim(cores); ctx->SetTilingKey(arch22 ? 0 : (t.crosses ? 2 : 1));
         return ge::GRAPH_SUCCESS;
     } catch(const std::exception &e) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx->GetNodeName(),"MegaRecurrentKda",e.what());

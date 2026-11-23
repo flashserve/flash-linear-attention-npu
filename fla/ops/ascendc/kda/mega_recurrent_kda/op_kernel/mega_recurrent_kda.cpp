@@ -1,5 +1,12 @@
 #include "kernel_operator.h"
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
+#define CATLASS_ARCH 3510
 #include "mega_kernel.h"
+#else
+#define CATLASS_ARCH 2201
+#include "lib/matmul_intf.h"
+#include "arch22/entry.h"
+#endif
 #include "mega_recurrent_kda_tiling_data.h"
 
 extern "C" __global__ __aicore__ void mega_recurrent_kda(
@@ -7,9 +14,20 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(
     GM_ADDR wo, GM_ADDR convW, GM_ADDR conv, GM_ADDR checkpoint, GM_ADDR u, GM_ADDR key, GM_ADDR decay,
     GM_ADDR indices, GM_ADDR accepted, GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR out,
     GM_ADDR convOut, GM_ADDR uOut, GM_ADDR keyOut, GM_ADDR decayOut, GM_ADDR workspace, GM_ADDR tiling) {
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ != 3510
+    REGISTER_TILING_DEFAULT(MegaRecurrentKdaArch22TilingData);
+    GET_TILING_DATA_WITH_STRUCT(MegaRecurrentKdaArch22TilingData,t,tiling);
+    using namespace MegaRecurrentKdaV2;
+    V2Params p{};
+    p.hiddenStates=x; p.qkvWeight=qkv; p.decayAWeight=wa; p.decayBWeight=wb;
+    p.betaWeight=beta; p.gateWeight=gate; p.wOut=wo; p.convWeight=convW;
+    p.convState=convOut; p.checkpoint=checkpoint; p.replayU=uOut; p.replayK=keyOut; p.replayDecay=decayOut;
+    p.stateIndices=indices; p.accepted=accepted; p.aLog=alphaLog; p.dtBias=bias; p.gamma=gamma; p.out=out;
+    runArch22(t,p,prefix,AscendC::GetUserWorkspace(workspace));
+#else
     REGISTER_TILING_DEFAULT(MegaRecurrentKdaTilingData);
     GET_TILING_DATA_WITH_STRUCT(MegaRecurrentKdaTilingData,t,tiling);
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     kda::MegaParams p{};
     p.x=x; p.qkv=qkv; p.wa=wa; p.wb=wb; p.beta=beta; p.gate=gate;
     p.rows=t.tokens; p.heads=t.heads; p.decayRing=AscendC::GetUserWorkspace(workspace);
@@ -29,4 +47,5 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(
         kda::MegaKernel<true> op;
         op(p);
     }
+#endif
 }
