@@ -58,8 +58,14 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
 
     auto qInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_Q_IDX);
     auto gInputDesc = context->GetInputDesc(CHUNK_FWD_O_INPUT_G_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gInputDesc);
+    if (qInputDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
+    if (gInputDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "g");
+        return ge::GRAPH_FAILED;
+    }
 
     ge::DataType qDtype = qInputDesc->GetDataType();
     ge::DataType gDtype = gInputDesc->GetDataType();

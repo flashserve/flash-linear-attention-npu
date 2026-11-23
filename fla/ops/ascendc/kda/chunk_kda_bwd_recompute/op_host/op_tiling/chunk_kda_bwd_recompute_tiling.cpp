@@ -23,7 +23,9 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const char *inputLayout = attrPtr->GetStr(KDA_RECOMPUTE_INPUT_LAYOUT_ATTR);
     if (inputLayout == nullptr ||
                     (std::strcmp(inputLayout, "BNSD") != 0 && std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "input_layout", "invalid", "Recompute input_layout must be BNSD or NTD.");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "input_layout",
+            inputLayout == nullptr ? "<null>" : inputLayout,
+            "Recompute input_layout must be BNSD or NTD");
         return ge::GRAPH_FAILED;
     }
 
@@ -33,8 +35,14 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
 
     const auto *gDesc = context->GetInputDesc(KDA_RECOMPUTE_G_IDX);
     const auto *betaDesc = context->GetInputDesc(KDA_RECOMPUTE_BETA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaDesc);
+    if (gDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "g");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "beta");
+        return ge::GRAPH_FAILED;
+    }
 
     auto cuSeqlensTensor = context->GetOptionalInputTensor(KDA_RECOMPUTE_CU_SEQLENS_IDX);
     auto chunkIndicesTensor = context->GetOptionalInputTensor(KDA_RECOMPUTE_CHUNK_INDICES_IDX);
@@ -56,7 +64,9 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
     const bool qkTm = modelTm && !(qkHeadAttr && *qkHeadAttr);
     if (mixed && (!modelTm && std::strcmp(modelLayout, "BNSD") != 0 &&
                     std::strcmp(modelLayout, "NTD") != 0)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", "invalid", "Unsupported Recompute model_layout on this platform.");
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "model_layout",
+            modelLayout == nullptr ? "<null>" : modelLayout,
+            "Unsupported Recompute model_layout on this platform");
         return ge::GRAPH_FAILED;
     }
     if (mixed && isAscend960) {
@@ -69,16 +79,27 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         if (canonical.GetDimNum() != 4) {
             return ge::GRAPH_FAILED;
         }
+        static const char *kMixedInputNames[] = {"q", "k", "v", "g"};
         for (size_t i = 0; i < 4; ++i) {
             const auto *input = context->GetRequiredInputShape(i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, input);
+            if (input == nullptr) {
+                OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), kMixedInputNames[i]);
+                return ge::GRAPH_FAILED;
+            }
             auto expected = canonical;
             const bool tm = i < 2 ? qkTm : (i == 2 ? modelTm : true);
             if (tm) { expected.SetDim(1, canonical.GetDim(2)); expected.SetDim(2, canonical.GetDim(1)); }
-            if (input->GetStorageShape() != expected) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "layout", "invalid", "Invalid mixed-layout Recompute input.");
-        return ge::GRAPH_FAILED;
-    }
+            const auto actualShape = input->GetStorageShape();
+            if (actualShape != expected) {
+                std::string actual = std::to_string(actualShape.GetDimNum());
+                for (size_t d = 0; d < actualShape.GetDimNum(); ++d) {
+                    actual += "," + std::to_string(actualShape.GetDim(d));
+                }
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), kMixedInputNames[i], actual,
+                    "mixed-layout Recompute input must match the canonical output shape");
+                return ge::GRAPH_FAILED;
+            }
         }
     }
     ChunkKdaBwdRecomputeTilingContext ctx{
@@ -152,8 +173,8 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         }
     }
     if (aicNum == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Mix core count", "invalid",
-            "Platform reports no available AIC for recompute.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "aic_num",
+            std::to_string(aicNum), "Platform reports no available AIC for recompute");
         return ge::GRAPH_FAILED;
     }
     const int64_t headTasks = (isAscend950 || isAscend960) ? tiling->Hv :

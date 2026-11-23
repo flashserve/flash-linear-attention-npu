@@ -158,7 +158,7 @@ descriptor 占位；空/非空组合必须恰好落在 `none/forward/recompute/s
 | 返回码 | 触发条件 |
 | --- | --- |
 | `ACLNN_SUCCESS` | workspace 查询或执行成功 |
-| `ACLNN_ERR_PARAM_NULLPTR` | 必传输入、六项正向必需输出、`workspaceSize` 或 `executor` 为空 |
+| `ACLNN_ERR_PARAM_NULLPTR` | 必传输入、六项正向必需输出、`workspaceSize` 或 `executor` 为空，或只给 `chunk_indices` 未给 `cu_seqlens` |
 | `ACLNN_ERR_PARAM_INVALID` | dtype、shape、format、属性、四档输出指针组合或变长元数据不合法 |
 | `ACLNN_ERR_INNER_CREATE_EXECUTOR` | executor 创建失败 |
 | `ACLNN_ERR_INNER_NULLPTR` | 连续化、元数据转换或 L0 调用未返回有效 tensor |

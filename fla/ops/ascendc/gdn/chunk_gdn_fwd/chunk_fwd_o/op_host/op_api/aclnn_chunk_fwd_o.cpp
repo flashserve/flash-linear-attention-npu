@@ -111,19 +111,19 @@ static aclnnStatus CheckShape(ChunkFwdOParams params)
     if (qShape.GetDimNum() != CHUNK_FWD_O_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             OP_NAME, "q", std::to_string(qShape.GetDimNum()),
-            "q should be 4D [B, HK, T, K].");
+            "q should be 4D [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (kShape.GetDimNum() != CHUNK_FWD_O_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             OP_NAME, "k", std::to_string(kShape.GetDimNum()),
-            "k should be 4D [B, HK, T, K].");
+            "k should be 4D [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (vShape.GetDimNum() != CHUNK_FWD_O_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             OP_NAME, "v", std::to_string(vShape.GetDimNum()),
-            "v should be 4D [B, HV, T, V].");
+            "v should be 4D [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (hShape.GetDimNum() != CHUNK_FWD_O_H_DIM_NUM) {
@@ -400,6 +400,15 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
     ChunkFwdOParams params{q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize,
                            useExp2, stateVFirst, outputLayout, oOut};
     // Standard syntax, Check parameters.
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkFwdO,
                    DFX_IN(q, k, v, h, g, cuSeqlensOptional, chunkOffsetsOptional, scale, chunkSize,
                           useExp2, stateVFirst, outputLayout),
@@ -418,6 +427,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
         return ret;
     }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::ChunkFwdO(params.q, params.k, params.v, params.h, params.g, params.cuSeqlensOptional,
@@ -427,7 +437,7 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
@@ -447,9 +457,11 @@ aclnnStatus aclnnChunkFwdOGetWorkspaceSize(
 aclnnStatus aclnnChunkFwdO(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkFwdO);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in ChunkFwdO launch aicore.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

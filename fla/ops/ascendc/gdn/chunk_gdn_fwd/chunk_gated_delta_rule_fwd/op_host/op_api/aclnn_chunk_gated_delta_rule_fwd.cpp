@@ -344,7 +344,7 @@ static aclnnStatus CheckStateShape(const aclTensor *state, const char *name, int
           shape.GetDim(2) == kDim && shape.GetDim(3) == vDim)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             OP_NAME, name, std::string(op::ToString(shape).GetString()),
-            "[seqNum,Hv,K,V]");
+            "[seq_num,Hv,K,V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;
@@ -418,16 +418,22 @@ static aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus CheckRequiredInputs(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    if (params.q == nullptr || params.k == nullptr || params.v == nullptr || params.g == nullptr ||
-        params.beta == nullptr || params.oOut == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,g,beta,oOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const aclTensor *required[] = {
+        params.q, params.k, params.v, params.g, params.beta, params.oOut};
+    const char *requiredNames[] = {"q", "k", "v", "g", "beta", "oOut"};
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (required[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, requiredNames[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckZeroShape(const ChunkGatedDeltaRuleFwdParams &params, uint64_t *workspaceSize)
 {
+    // 空输入是合法的零 shape 短路：调用方在 CheckZeroShape 返回后直接
+    // return ACLNN_SUCCESS（workspace=0），这里不能报错，否则会对合法路径打错误日志。
     if (params.q->IsEmpty() || params.k->IsEmpty() || params.v->IsEmpty() || params.g->IsEmpty() ||
         params.beta->IsEmpty()) {
         *workspaceSize = 0UL;
@@ -566,7 +572,7 @@ static aclnnStatus ResolveShapeInfo(const ChunkGatedDeltaRuleFwdParams &params, 
     }
     if (!(HasShape(params.g, {info.batch, info.seqlen, info.hv}) &&
           HasShape(params.beta, {info.batch, info.seqlen, info.hv}))) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "g,beta",
             "g=" + std::string(op::ToString(params.g->GetViewShape()).GetString()) +
                 ",beta=" + std::string(op::ToString(params.beta->GetViewShape()).GetString()),
@@ -947,7 +953,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
     if (!(info.kDim == HEAD_DIM_128 &&
           (info.vDim == HEAD_DIM_128 || info.vDim == CHUNK_GATED_DELTA_RULE_FWD_V256))) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "K,V", std::to_string(info.kDim) + "," + std::to_string(info.vDim),
+            OP_NAME, "K/V", std::to_string(info.kDim) + "," + std::to_string(info.vDim),
             "composite GDN core supports K=128 and V=128/256");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -1149,7 +1155,8 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                     gateParam->GetDataType() == DataType::DT_FLOAT16 ||
                     gateParam->GetDataType() == DataType::DT_BF16)))) {
                 OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-                    OP_NAME, "aLog,dtBias",
+                    OP_NAME,
+                    gateParam == params.aLogOptional ? "aLog" : "dtBias",
                     gateParam == nullptr ? "nullptr" : std::string(op::ToString(gateParam->GetViewShape()).GetString()),
                     "aLog/dtBias must be floating-point vectors of shape [Hv]");
                 return ACLNN_ERR_PARAM_INVALID;
@@ -1230,8 +1237,12 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         useQkL2norm, allowNegEigval, stateVFirst, oOut, finalStateOutOptional, qHatOutOptional,
         kHatOutOptional, qRstdOutOptional, kRstdOutOptional, betaEffOutOptional,
         gCumsumOutOptional, aOutOptional, hOutOptional};
-    if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!(CheckRequiredInputs(params) == ACLNN_SUCCESS)) {
@@ -1256,23 +1267,29 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         return paramStatus;
     }
 
-    if (!(MakeContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus qContiguous = MakeContiguous(params.q, executorPtr);
+    if (qContiguous != ACLNN_SUCCESS) {
+        return qContiguous;
     }
-    if (!(MakeContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus kContiguous = MakeContiguous(params.k, executorPtr);
+    if (kContiguous != ACLNN_SUCCESS) {
+        return kContiguous;
     }
-    if (!(MakeContiguous(params.v, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus vContiguous = MakeContiguous(params.v, executorPtr);
+    if (vContiguous != ACLNN_SUCCESS) {
+        return vContiguous;
     }
-    if (!(MakeContiguous(params.g, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus gContiguous = MakeContiguous(params.g, executorPtr);
+    if (gContiguous != ACLNN_SUCCESS) {
+        return gContiguous;
     }
-    if (!(MakeContiguous(params.beta, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus betaContiguous = MakeContiguous(params.beta, executorPtr);
+    if (betaContiguous != ACLNN_SUCCESS) {
+        return betaContiguous;
     }
-    if (!(MakeContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus initialStateOptionalContiguous = MakeContiguous(params.initialStateOptional, executorPtr);
+    if (initialStateOptionalContiguous != ACLNN_SUCCESS) {
+        return initialStateOptionalContiguous;
     }
 
     if (useChunk32) {
@@ -1499,12 +1516,14 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const aclTensor *dtBias = params.dtBiasOptional;
         const aclTensor *initialState = params.initialStateOptional;
         if (IsDav2201Device()) {
-            if (!(MakeContiguous(aLog, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-            if (!(MakeContiguous(dtBias, executorPtr) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+            const aclnnStatus aLogContiguous = MakeContiguous(aLog, executorPtr);
+            if (aLogContiguous != ACLNN_SUCCESS) {
+                return aLogContiguous;
+            }
+            const aclnnStatus dtBiasContiguous = MakeContiguous(dtBias, executorPtr);
+            if (dtBiasContiguous != ACLNN_SUCCESS) {
+                return dtBiasContiguous;
+            }
             if (aLog != nullptr && aLog->GetDataType() != DataType::DT_FLOAT) {
                 aLog = l0op::Cast(aLog, DataType::DT_FLOAT, executorPtr);
             }
@@ -1757,9 +1776,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwd(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleFwd);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGatedDeltaRuleFwd launch failed.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

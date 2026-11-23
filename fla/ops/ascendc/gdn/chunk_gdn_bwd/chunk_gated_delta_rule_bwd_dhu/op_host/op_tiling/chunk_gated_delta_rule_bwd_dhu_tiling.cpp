@@ -88,7 +88,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
     auto gInputShape = context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_G_IDX);
     auto gkInputShape = context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_GK_IDX);
     auto h0InputShape = context->GetOptionalInputShape(CGDR_BWD_DHU_INPUT_H0_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
+    if (qInputDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
 
     const bool hasG = gInputShape != nullptr;
     const bool hasGk = gkInputShape != nullptr;

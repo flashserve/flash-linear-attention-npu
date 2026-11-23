@@ -276,7 +276,7 @@ public:
         OP_CHECK_IF(dwShape.GetDim(PREPARE_WY_REPR_BWD_DIM_3) != kShape.GetDim(PREPARE_WY_REPR_BWD_DIM_3),
                     OP_LOGE(ctx_.nodeName, "dw last dim must match k last dim K."), return ge::GRAPH_FAILED);
         OP_CHECK_IF(aShape.GetDim(PREPARE_WY_REPR_BWD_DIM_3) != static_cast<size_t>(ctx_.chunkSize),
-                    OP_LOGE(ctx_.nodeName, "A last dim must equal chunk_size."), return ge::GRAPH_FAILED);
+                    OP_LOGE(ctx_.nodeName, "A last dim must equal chunkSize."), return ge::GRAPH_FAILED);
 
         tiling_.B = static_cast<int64_t>(vShape.GetDim(PREPARE_WY_REPR_BWD_DIM_0));
         tiling_.HV = static_cast<int64_t>(vShape.GetDim(PREPARE_WY_REPR_BWD_DIM_1));
@@ -294,7 +294,7 @@ public:
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(tiling_.chunkSize != PREPARE_WY_REPR_BWD_CHUNK_SIZE_64 &&
                         tiling_.chunkSize != PREPARE_WY_REPR_BWD_CHUNK_SIZE_128,
-                    OP_LOGE(ctx_.nodeName, "chunk_size must be 64 or 128, but got %ld.", tiling_.chunkSize),
+                    OP_LOGE(ctx_.nodeName, "chunkSize must be 64 or 128, but got %ld.", tiling_.chunkSize),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(tiling_.HV <= 0 || tiling_.HK <= 0 || tiling_.HV % tiling_.HK != 0,
                     OP_LOGE(ctx_.nodeName, "HV must be a positive multiple of HK, got HV=%ld, HK=%ld.", tiling_.HV,

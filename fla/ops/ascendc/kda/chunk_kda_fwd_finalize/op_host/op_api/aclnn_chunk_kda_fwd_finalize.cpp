@@ -299,10 +299,13 @@ aclnnStatus CheckOutputShape(const FinalizeParams &params,
 
 aclnnStatus CheckParams(const FinalizeParams &params)
 {
-    if (!(params.qgScaled != nullptr && params.aqk != nullptr && params.vNew != nullptr &&
-          params.h != nullptr && params.attnOut != nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "qgScaled,aqk,vNew,h,attnOut");
-        return ACLNN_ERR_PARAM_NULLPTR;
+    const aclTensor *required[] = {params.qgScaled, params.aqk, params.vNew, params.h, params.attnOut};
+    const char *requiredNames[] = {"qgScaled", "aqk", "vNew", "h", "attnOut"};
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (required[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, requiredNames[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
     }
     FinalizeShape shape;
     aclnnStatus status = ResolveLayout(params, shape);
@@ -361,8 +364,12 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
-    if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     L2_DFX_PHASE_1(
@@ -408,10 +415,11 @@ aclnnStatus aclnnChunkKdaFwdFinalize(
     aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaFwdFinalize);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor,
-                                   stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaFwdFinalize AI Core 启动失败。", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

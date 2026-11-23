@@ -88,7 +88,7 @@ def build_inputs(spec: dict, device: torch.device) -> dict:
         "gk": None,
     }
     gate = str(spec.get("gate", "none"))
-    # gate="both" 用于反向用例：同时给出 g 与 gk，校验算子必须按互斥拦截（返回 161001）。
+    # gate="both" 用于反向用例：同时给出 g 与 gk，校验算子必须按互斥拦截（返回 ACLNN_ERR_PARAM_INVALID = 161002）。
     if gate in ("g", "both"):
         gate_dtype = (torch.float32 if spec.get("g_dtype") == "fp32" else model_dtype)
         # 反向用例 neg_07：g 按 [B,Hk,T] 构造（正常 GVA 路径要求 [B,Hv,T]），必须被拦截。
@@ -118,8 +118,8 @@ def _validate_outputs(outputs, spec: dict, tensors: dict) -> None:
 
 
 _ACLNN_CODES = {
-    "ACLNN_ERR_PARAM_INVALID": 161001,
-    "ACLNN_ERR_PARAM_NULLPTR": 161002,
+    "ACLNN_ERR_PARAM_NULLPTR": 161001,
+    "ACLNN_ERR_PARAM_INVALID": 161002,
 }
 
 
@@ -134,7 +134,7 @@ def _negative_expected_code(spec: dict):
             raise RuntimeError(f"{OP_NAME}: unknown expected_return_code {text!r}")
         return _ACLNN_CODES[text]
     # 期望码缺失时用 case_key 兜底识别反向用例（本算子的反向用例统一以 neg_ 命名，
-    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161001）；避免依赖 ATK 传递哪些字段。
+    # 期望码统一是 ACLNN_ERR_PARAM_INVALID = 161002）；避免依赖 ATK 传递哪些字段。
     if "neg_" in str(spec.get("case_key", "")):
         return _ACLNN_CODES["ACLNN_ERR_PARAM_INVALID"]
     return None
@@ -191,13 +191,40 @@ def run_npu(spec: dict, input_data: InputDataset):
         try:
             _call_op(tensors, spec, npu=True)
         except Exception as exc:  # aclnn 抛 RuntimeError，取其中的 aclnnStatus
-            match = re.search(r"aclnnStatus=(\d+)", str(exc))
-            got = int(match.group(1)) if match else None
+            # stable 包装层是 "... failed: <code>"，raw probe 是 "aclnnStatus=<code>"，两种都认。
+            match = re.search(r"(?:aclnnStatus=|failed:\s*)(\d{6})\b", str(exc))
+            if match is None:
+                raise RuntimeError(
+                    f"{OP_NAME}: negative case {spec.get('case_key')} raised without "
+                    f"an aclnnStatus code; raw exception: {exc}"
+                ) from exc
+            got = int(match.group(1))
             if got != want:
                 raise RuntimeError(
                     f"{OP_NAME}: negative case {spec.get('case_key')} returned {got}, "
                     f"expected {want}: {exc}"
                 ) from exc
+            # 报文断言 1：优先检查结构化 EZ；CANN 运行时自带报文可能不含本仓 EZ 编号，
+            # 此时只告警不阻塞（返回码已在上方强校验）。
+            if re.search(r"EZ\d{4}", str(exc)) is None:
+                print(
+                    f"WARN {OP_NAME}: negative case {spec.get('case_key')} has no structured "
+                    f"EZ code; raw exception: {exc}"
+                )
+            # 报文断言 2：expected_error_msg 里写了 EZ 编号/参数名时必须出现在实际异常文本里。
+            expected_text = str(spec.get("expected_error_msg") or "")
+            ez = re.search(r"EZ(\d{4})", expected_text)
+            if ez is not None and ez.group(0) not in str(exc):
+                raise RuntimeError(
+                    f"{OP_NAME}: negative case {spec.get('case_key')} message missing "
+                    f"{ez.group(0)}; raw exception: {exc}"
+                ) from exc
+            for param in re.findall(r"Parameter\s+(\w+)\s+of", expected_text):
+                if f"Parameter {param} " not in str(exc):
+                    raise RuntimeError(
+                        f"{OP_NAME}: negative case {spec.get('case_key')} message missing "
+                        f"parameter name {param}; raw exception: {exc}"
+                    ) from exc
             # 返回码与声明一致：抛出与用例 expected_error_msg **完全一致**的文本，
             # 交由 ATK 的"预期失败"判定（照 tests/atk/chunk_kda_fwd 的口径）。
             print(f"NPU negative case intercepted as expected: {spec['case_key']} code={got}", flush=True)

@@ -170,7 +170,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
     if (qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
                     aDesc == nullptr || gDesc == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,A,beta,raw_g");
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: tiling descriptors of q/k/v/A/beta/raw_g are missing", __func__);
         return ge::GRAPH_FAILED;
     }
     const ge::DataType inputDtype = qDesc->GetDataType();
@@ -251,19 +252,19 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
                                   cuShape->GetStorageShape().GetDim(0) < 2 ||
                                   !GetChunkCount(chunkShape, &varlenChunks)))) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                    OP_NAME, "chunk_size,cu_seqlens,chunk_indices",
+                    OP_NAME, "chunkSize,cu_seqlens,chunk_indices",
                     "chunkSize=" + std::to_string(*chunkSize),
-                    "chunk_size must be 64/128 and varlen metadata must be paired and valid");
+                    "chunkSize must be 64/128 and varlen metadata must be paired and valid");
         return ge::GRAPH_FAILED;
     }
     if (!IsShape(aShape, {batch, valueHeads, tokens, *chunkSize})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
                     OP_NAME, "a_storage", "shape mismatch",
-                    "a_storage must be [B,Hv,T,chunk_size]");
+                    "a_storage must be [B,Hv,T,chunkSize]");
         return ge::GRAPH_FAILED;
     }
     if (Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(context) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "Reuse", "invalid", "Reuse of the accepted Phase 5 suffix tiling failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Reuse of the accepted Phase 5 suffix tiling failed.", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -284,7 +285,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
     if (workspaceSizes[0] < systemWorkspace) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Phase 5 workspace is smaller than system workspace.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Phase 5 workspace is smaller than system workspace.", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -340,7 +341,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     coefficient.totalTokens = isVarlen ? tokens : 0;
     if (BuildCoefficientCubeTiling(coefficient.BT, coefficient.K, inputDtype,
                                            coefficient.cubeTilingData) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Failed to build the Phase 6 KKT Matmul tiling.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Failed to build the Phase 6 KKT Matmul tiling.", __func__);
         return ge::GRAPH_FAILED;
     }
     uint64_t workspaceOffset = AlignUp(workspaceSizes[0] - systemWorkspace, WORKSPACE_ALIGNMENT);
@@ -370,13 +371,13 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     const uint64_t rawTilingSize = phase6TrailerOffset + sizeof(trailer);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tiling", "invalid", "Phase 6 combined tiling exceeds raw tiling capacity.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Phase 6 combined tiling exceeds raw tiling capacity.", __func__);
         return ge::GRAPH_FAILED;
     }
     if (memcpy_s(static_cast<uint8_t *>(rawTiling->GetData()) + phase6TrailerOffset,
                          rawTiling->GetCapacity() - phase6TrailerOffset,
                          &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "trailer", "invalid", "Serialize Phase 6 coefficient trailer failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Serialize Phase 6 coefficient trailer failed.", __func__);
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);
