@@ -153,23 +153,24 @@ ge::graphStatus CompactConvStateTiling::AnalyzeShapesAndStrides()
     if (channels > std::numeric_limits<uint32_t>::max() || layers > std::numeric_limits<uint32_t>::max()) {
         return ge::GRAPH_FAILED;
     }
-    uint64_t stateStrides[3] = {};
     const auto *stateStride = context_->GetInputStride(CONV_STATE);
     if (stateStride != nullptr && stateStride->GetDimNum() != 0) {
         if (stateStride->GetDimNum() != 3 || stateStride->GetStride(1) <= 0 || stateStride->GetStride(2) <= 0) {
             return ge::GRAPH_FAILED;
         }
-        stateStrides[1] = static_cast<uint64_t>(stateStride->GetStride(1));
-        stateStrides[2] = static_cast<uint64_t>(stateStride->GetStride(2));
-    } else {
-        stateStrides[1] = static_cast<uint64_t>(state.GetDim(2));
-        stateStrides[2] = 1U;
     }
-    const uint64_t dimStride = dimStride_ > 0 ? static_cast<uint64_t>(dimStride_) : stateStrides[1];
     const uint64_t tileChannels =
         std::min<uint64_t>(static_cast<uint64_t>(channels), static_cast<uint64_t>(CCS_CHANNEL_TILE_256));
-    tilingData_.bufferElements =
-        dimStride == 1 ? static_cast<uint64_t>(tilingData_.historyLen) * tileChannels : tileChannels * dimStride;
+    constexpr uint64_t copyAlignment = 32U;
+    const uint64_t elementBytes = stateDtypeTemplate_ == CCS_TPL_FP32 ? sizeof(float) : sizeof(uint16_t);
+    const auto alignUp = [](uint64_t value, uint64_t alignment) {
+        return (value + alignment - 1U) / alignment * alignment;
+    };
+    const uint64_t channelLastBytes =
+        static_cast<uint64_t>(tilingData_.historyLen) * alignUp(tileChannels * elementBytes, copyAlignment);
+    const uint64_t channelFirstBytes =
+        tileChannels * alignUp(static_cast<uint64_t>(tilingData_.historyLen) * elementBytes, copyAlignment);
+    tilingData_.bufferElements = std::max(channelLastBytes, channelFirstBytes) / elementBytes;
     if (tilingData_.bufferElements > std::numeric_limits<uint32_t>::max()) {
         return ge::GRAPH_FAILED;
     }

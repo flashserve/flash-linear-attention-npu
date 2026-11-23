@@ -123,7 +123,7 @@ private:
             meta.copyBlockLen = static_cast<uint32_t>(tiling_->historyLen * sizeof(stateType));
             meta.copyBlockGap = static_cast<int64_t>((meta.dimStride - tiling_->historyLen) * sizeof(stateType));
         }
-        meta.copyLocalGap = meta.dimStride == 1 ? 0 : meta.copyBlockGap;
+        meta.copyLocalGap = 0;
         if constexpr (ALIGN_MODE) {
             meta.needBoundary = meta.boundaryPage > tiling_->nullBlockId && meta.recoveryLen > 0U &&
                                 !(meta.boundaryPage == meta.finalPage && meta.recoveryLen == meta.effectiveLen);
