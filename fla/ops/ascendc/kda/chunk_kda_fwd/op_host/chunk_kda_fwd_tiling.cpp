@@ -88,8 +88,14 @@ bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &i
     if (qShapePtr == nullptr || vShapePtr == nullptr || layout == nullptr) {
         return false;
     }
-    const auto &qShape = qShapePtr->GetOriginShape();
-    const auto &vShape = vShapePtr->GetOriginShape();
+    // origin shape 在两类输入上并不可靠：CreateView 出来的 view 它是逻辑形状，
+    // 而普通张量上可能退化成 1 维 numel。取"维度数合法"的那个，两类输入都能正确解析。
+    const auto &qOrigin = qShapePtr->GetOriginShape();
+    const auto &qStorage = qShapePtr->GetStorageShape();
+    const auto &vOrigin = vShapePtr->GetOriginShape();
+    const auto &vStorage = vShapePtr->GetStorageShape();
+    const auto &qShape = (qOrigin.GetDimNum() == 3 || qOrigin.GetDimNum() == 4) ? qOrigin : qStorage;
+    const auto &vShape = (vOrigin.GetDimNum() == 3 || vOrigin.GetDimNum() == 4) ? vOrigin : vStorage;
     info.rank = qShape.GetDimNum();
     if (info.rank != vShape.GetDimNum() || (info.rank != 3 && info.rank != 4)) {
         return false;
