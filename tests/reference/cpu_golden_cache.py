@@ -58,7 +58,9 @@ def _restore_outputs(outputs, inputs, state_names):
     if not state_names:
         return outputs
     restored = [outputs[0]]
-    for name, value in zip(state_names, outputs[1:], strict=True):
+    if len(outputs) != len(state_names) + 1:
+        raise ValueError("Unexpected CPU reference output count")
+    for name, value in zip(state_names, outputs[1:]):
         inputs[name].copy_(value)
         restored.append(inputs[name])
     return tuple(restored)
