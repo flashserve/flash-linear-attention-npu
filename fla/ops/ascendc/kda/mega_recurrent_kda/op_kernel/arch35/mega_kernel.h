@@ -268,6 +268,21 @@ private:
             matmulToGm<TileN,256,L0K,TileM>(gated,p.recurrence.outWeight,p.recurrence.output,
                 0,j*TileN,0,j*TileN,7168,p.rows,width,TileN);
     }
+    // Each worker produces and consumes the same row range, so decay-B need not wait for Q/K/V.
+    CATLASS_DEVICE void projectDecayRows(const Params &p, GM_ADDR output, uint32_t worker, uint32_t workers) {
+        const uint32_t blocks = (p.rows + 15) / 16;
+        const uint32_t first = 16 * (blocks * worker / workers);
+        const uint32_t boundary = 16 * (blocks * (worker + 1) / workers);
+        const uint32_t end = boundary < p.rows ? boundary : p.rows;
+        if (first >= end) return;
+        const uint32_t width = p.heads * kHeadDim;
+        matmulToGm<128,384,64,80>(p.x, p.wa, p.decayRing, first, 0, first, 0, 128, end-first, 7168);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        for (uint32_t col = 0; col < width; col += 256) {
+            const uint32_t count = width-col < 256 ? width-col : 256;
+            matmulToGm<256,128,64,80>(p.decayRing, p.wb, output, first, col, first, col, width, end-first, 128, count);
+        }
+    }
     CATLASS_DEVICE void headPipeline(const Params &p,const Waves &shape,uint32_t id,uint32_t groups,
                                     bool decayAReady,uint32_t globalBase=0,bool reuseQ=false) {
         const uint32_t width=p.heads*128,betaStride=(p.heads+15)/16*16,planeRows=shape.firstCapacity;
@@ -283,18 +298,32 @@ private:
                     uint32_t count=uint64_t(p.heads)*(tick+1)/waves-firstHead;
                     uint64_t part=uint64_t(count)*128,betaBase=4*part+128;
                     uint64_t total=tick?4*part:betaBase+p.heads,blocks=(total+15)/16;
+                    constexpr uint32_t workers = 4;
+                    // Reserve one core for beta and divide the rest across Q, K, V and gate.
+                    // A third 128-column panel would force another complete read of hidden_states.
+                    const bool localDecay = !tick && !SpansTile && !reuseQ && !decayAReady &&
+                        p.rows >= 64 && p.rows <= 160 && groups >= workers + 6 &&
+                        count <= 2 * ((groups - workers - 1) / 4);
+                    const uint32_t team=localDecay?groups-workers:groups;
                     uint64_t cursor=(blocks*id/groups)*16,stop=(blocks*(id+1)/groups)*16;
                     if(stop>total) stop=total;
                     // Keep each Cube core on one projection to avoid a second matrix pipeline setup.
+                    if(localDecay && id>=team) {
+                        cursor=stop;
+                        projectDecayRows(p, planes + uint64_t(3)*planeRows*width*2, id-team, workers);
+                    }
                     const uint32_t kinds=tick?4:6;
-                    if(groups>=kinds) {
+                    if(id<team && team>=kinds) {
                         uint32_t groupStart=0;
                         uint64_t columnStart=0;
                         for(uint32_t kind=0;kind<kinds;++kind) {
                             const uint64_t columns=kind<4?part:(kind==4?128:p.heads);
                             const uint64_t end=columnStart+columns;
-                            uint32_t groupEnd=static_cast<uint32_t>((end*groups+total/2)/total);
-                            const uint32_t limit=groups-(kinds-kind-1);
+                            if(localDecay && kind==4) {columnStart=end; continue;}
+                            const uint64_t grouped = localDecay ? total-128 : total;
+                            const uint64_t at = localDecay && kind==5 ? end-128 : end;
+                            uint32_t groupEnd=static_cast<uint32_t>((at*team+grouped/2)/grouped);
+                            const uint32_t limit=team-(kinds-kind-1)+(localDecay && kind<4?1:0);
                             if(groupEnd>limit) groupEnd=limit;
                             if(groupEnd<=groupStart) groupEnd=groupStart+1;
                             if(id<groupEnd) {
@@ -329,7 +358,7 @@ private:
                         else matmulToGm<128,256,64>(p.x,weight,dest,0,weightCol,0,col,stride,p.rows,7168,n);
                         cursor+=n;
                     }
-                    if(!tick) {
+                    if(!tick && !localDecay) {
                         AscendC::CrossCoreSetFlag<0,PIPE_FIX>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
                         AscendC::CrossCoreWaitFlag<0,PIPE_MTE2>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
                         for(uint32_t h=id;h<p.heads;h+=groups)

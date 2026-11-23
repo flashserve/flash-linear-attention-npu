@@ -110,6 +110,7 @@ __simd_vf__ inline void step(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf_
         readBf(x,dr+j*64,m); LoadAlign(b,bias+j*64); Add(x,x,b,m); Mul(x,x,alpha,m);
         logistic(b,x,m); Muls(b,b,lower,m); Exp(dec[j],b,m); StoreAlign(d+j*64,dec[j],m);
     }
+    #pragma unroll 4
     for(uint16_t row=0;row<128;++row) {
         F h0,h1,p0,p1,total,dot,v,corr,bc;
         LoadAlign(h0,state+row*128); LoadAlign(h1,state+row*128+64);
@@ -168,6 +169,7 @@ __simd_vf__ inline void shortPrepare(__ubuf__ float *qkv,__ubuf__ float *dec,
 __simd_vf__ inline void shortProject(__ubuf__ float *state,__ubuf__ float *weighted,
         __ubuf__ float *u,__ubuf__ float *y,uint16_t count) {
     auto m=CreateMask<float,MaskPattern::ALL>();
+    #pragma unroll 2
     for(uint16_t row=0;row<128;++row) {
         F h0,h1; LoadAlign(h0,state+128*row); LoadAlign(h1,state+128*row+64);
         for(uint16_t t=0;t<count;++t) {
