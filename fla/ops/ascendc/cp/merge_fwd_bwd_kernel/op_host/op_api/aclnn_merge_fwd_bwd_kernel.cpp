@@ -32,13 +32,6 @@ constexpr int64_t kVK = kV + kK;
 constexpr int64_t kSMax = 1024;
 constexpr int64_t kHvMax = 256;
 
-void SetTensorOriginalShape(const aclTensor *tensor)
-{
-    if (tensor != nullptr) {
-        tensor->SetOriginalShape(tensor->GetViewShape());
-    }
-}
-
 bool MatchesShape(const Shape &shape, std::initializer_list<int64_t> expect)
 {
     if (shape.GetDimNum() != expect.size()) {
@@ -221,8 +214,8 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: agContig != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
-    SetTensorOriginalShape(h);
-    SetTensorOriginalShape(agContig);
+    h->SetOriginalShape(h->GetViewShape());
+    agContig->SetOriginalShape(agContig->GetViewShape());
 
     auto outputs = l0op::MergeFwdBwdKernel(
         h, agContig, preOrPostNumRanks, rank, forward, stateVFirst, executorPtr);

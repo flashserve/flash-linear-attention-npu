@@ -27,20 +27,6 @@ namespace {
 constexpr int64_t FINALIZE_CHUNK_ROWS = 64;
 
 
-void SetTensorOriginalShape(const aclTensor *tensor)
-{
-    if (tensor != nullptr) {
-        tensor->SetOriginalShape(tensor->GetViewShape());
-    }
-}
-
-void NormalizeOriginalShapes(std::initializer_list<const aclTensor *> tensors)
-{
-    for (const aclTensor *tensor : tensors) {
-        SetTensorOriginalShape(tensor);
-    }
-}
-
 struct FinalizeParams {
     const aclTensor *qgScaled;
     const aclTensor *aqk;
@@ -410,8 +396,11 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     if (status != ACLNN_SUCCESS) {
         return status;
     }
-    NormalizeOriginalShapes({
-        params.qgScaled, params.aqk, params.vNew, params.h, params.attnOut});
+    params.qgScaled->SetOriginalShape(params.qgScaled->GetViewShape());
+    params.aqk->SetOriginalShape(params.aqk->GetViewShape());
+    params.vNew->SetOriginalShape(params.vNew->GetViewShape());
+    params.h->SetOriginalShape(params.h->GetViewShape());
+    params.attnOut->SetOriginalShape(params.attnOut->GetViewShape());
     const aclTensor *result = l0op::ChunkKdaFwdFinalize(
         params.qgScaled, params.aqk, params.vNew, params.h,
         params.cuSeqlens, params.chunkIndices, params.outputLayout,

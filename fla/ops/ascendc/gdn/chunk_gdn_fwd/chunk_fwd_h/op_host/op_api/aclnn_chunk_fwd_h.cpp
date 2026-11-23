@@ -15,7 +15,6 @@
 #include <dlfcn.h>
 #include <new>
 #include <string>
-#include <initializer_list>
 
 #include "aclnn_kernels/contiguous.h"
 #include "acl/acl.h"
@@ -48,24 +47,6 @@ static std::string ShapeText(const op::Shape &shape)
     }
     return text + "]";
 }
-
-namespace {
-
-void SetTensorOriginalShape(const aclTensor *tensor)
-{
-    if (tensor != nullptr) {
-        tensor->SetOriginalShape(tensor->GetViewShape());
-    }
-}
-
-void NormalizeOriginalShapes(std::initializer_list<const aclTensor *> tensors)
-{
-    for (const aclTensor *tensor : tensors) {
-        SetTensorOriginalShape(tensor);
-    }
-}
-
-} // namespace
 
 #ifdef __cplusplus
 extern "C" {
@@ -671,10 +652,23 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     if (ret != ACLNN_SUCCESS) {
         return ret;
     }
-    NormalizeOriginalShapes({
-        params.k, params.w, params.u, params.gOptional, params.gkOptional,
-        params.initialStateOptional, params.hOut, params.vNewOut,
-        params.finalStateOut});
+    params.k->SetOriginalShape(params.k->GetViewShape());
+    params.w->SetOriginalShape(params.w->GetViewShape());
+    params.u->SetOriginalShape(params.u->GetViewShape());
+    if (params.gOptional != nullptr) {
+        params.gOptional->SetOriginalShape(params.gOptional->GetViewShape());
+    }
+    if (params.gkOptional != nullptr) {
+        params.gkOptional->SetOriginalShape(params.gkOptional->GetViewShape());
+    }
+    if (params.initialStateOptional != nullptr) {
+        params.initialStateOptional->SetOriginalShape(params.initialStateOptional->GetViewShape());
+    }
+    params.hOut->SetOriginalShape(params.hOut->GetViewShape());
+    params.vNewOut->SetOriginalShape(params.vNewOut->GetViewShape());
+    if (params.finalStateOut != nullptr) {
+        params.finalStateOut->SetOriginalShape(params.finalStateOut->GetViewShape());
+    }
     // gated 引擎经 STATE_V_FIRST 模板维原生产出 [K,V]/[V,K] state（cube 等价
     // 转置式，见 arch22/chunk_fwd_h_utils.h），aclnn 层无需布局翻译，参数原样直达。
     auto result = l0op::ChunkFwdH(
