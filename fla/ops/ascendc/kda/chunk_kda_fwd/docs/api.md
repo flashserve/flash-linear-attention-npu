@@ -278,6 +278,32 @@ V2 入口新增五个可选开关，Python 侧以关键字参数暴露，默认�
 
 完整 Shape 表见 [KDA 模型符号表](../../README.md#model-shape-symbols)。
 
+## 输入 stride 契约
+
+`q/k/v` 允许以**非连续的 view** 传入（典型来源：`qkv` 拼接后按尾轴切分）。算子按张量自身的
+stride 直接寻址，不要求调用方预先 `contiguous`。
+
+设输入的 view stride 为 `S`，`dim` 为该路的 head 维长度（q/k 为 `K`，v 为 `V`）：
+
+| # | 条件 | 含义 |
+| --- | --- | --- |
+| 1 | `S[rank-1] == 1` | 最后一维连续（DMA 按行整段搬） |
+| 2 | `S[i] > 0` | 无负 stride |
+| 3 | 序列主序（BSND/TND）：`S[tokenDim] >= (H-1)*S[headDim] + dim` | head 不重叠 |
+| 4 | 头主序（BNSD/NTD）：`S[headDim] >= (T-1)*S[tokenDim] + dim` | token 不重叠 |
+| 5 | rank-4 且 `B>1` 时，`S[0]` 不小于对应布局的 span 下界 | batch 不重叠 |
+| 6 | `(S[tokenDim] - dim) * sizeof(dtype) <= UINT32_MAX` | `DataCopyExtParams.srcStride` 上限 |
+| 7 | `S^q == S^k`（逐项相等） | q/k 共用一套寻址 |
+
+满足时按 `off = b*P_B + t*P_T + h*P_H + d` 直接寻址，结果与"调用方先 `contiguous` 再调用"
+**逐位一致**。
+
+不满足时算子内部自动连续化，行为与历史版本一致，**不报错**。当前直通范围为 `BSND`/`BNSD`；
+`TND`/`NTD`、`g`、`beta` 以及输出张量仍走连续化，后续版本再扩展。
+
+`P_B/P_T/P_H` 的取值：连续输入为 `(T*H*K, H*K, K)`（序列主序）或 `(H*T*K, K, T*K)`（头主序）；
+视图输入取张量自身的 stride，因此上述两类是同一个公式在 dense 下的特例。
+
 ## Gate 语义
 
 ```text
