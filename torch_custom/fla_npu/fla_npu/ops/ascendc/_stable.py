@@ -613,6 +613,80 @@ def npu_recurrent_gated_delta_rule(
     return result
 
 
+def npu_mega_recurrent_kda(
+    hidden_states,
+    qkv_projection_weight,
+    decay_projection_a_weight,
+    decay_projection_b_weight,
+    beta_projection_weight,
+    output_gate_projection_weight,
+    output_norm_weight,
+    output_projection_weight,
+    conv1d_weight,
+    conv_state,
+    checkpoint_state,
+    replay_u,
+    replay_k,
+    replay_decay,
+    state_indices,
+    conv_num_accepted_tokens,
+    a_log,
+    dt_bias,
+    *,
+    cu_seqlens=None,
+    scale,
+    lower_bound,
+    rms_norm_eps,
+):
+    """Return projected output, convolution state and the three replay tensors."""
+    import torch
+
+    if any(tensor.requires_grad for tensor in (conv_state, replay_u, replay_k, replay_decay)):
+        raise ValueError("Mutable state buffers must be inference-only tensors")
+    transfers = []
+
+    def host_metadata(tensor, allowed):
+        if tensor.ndim != 1 or tensor.dtype not in allowed or not tensor.is_contiguous():
+            raise ValueError("Expected a contiguous one-dimensional integer metadata tensor")
+        if tensor.device.type == "cpu":
+            return tensor
+        if tensor.device != hidden_states.device:
+            raise ValueError("Device metadata must be on the hidden_states device")
+        host = torch.empty_like(tensor, device="cpu", pin_memory=True)
+        host.copy_(tensor, non_blocking=True)
+        transfers.append(host)
+        return host
+
+    state_indices = host_metadata(state_indices, (torch.int32,))
+    conv_num_accepted_tokens = host_metadata(conv_num_accepted_tokens, (torch.int32,))
+    if cu_seqlens is not None:
+        cu_seqlens = host_metadata(cu_seqlens, (torch.int32, torch.int64))
+    if transfers:
+        torch.npu.current_stream(hidden_states.device).synchronize()
+    return _op("npu_mega_recurrent_kda")(
+        hidden_states,
+        qkv_projection_weight,
+        decay_projection_a_weight,
+        decay_projection_b_weight,
+        beta_projection_weight,
+        output_gate_projection_weight,
+        output_norm_weight,
+        output_projection_weight,
+        conv1d_weight,
+        conv_state,
+        checkpoint_state,
+        replay_u,
+        replay_k,
+        replay_decay,
+        state_indices,
+        conv_num_accepted_tokens,
+        a_log,
+        dt_bias,
+        cu_seqlens,
+        scale, lower_bound, rms_norm_eps, _current_stream_ptr(),
+    )
+
+
 def npu_recurrent_kda(
     q,
     k,

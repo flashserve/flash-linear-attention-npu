@@ -1,0 +1,23 @@
+# MegaRecurrentKda 方案设计
+
+方案设计规则版本：V2
+
+## 1. 目标
+
+在 Ascend 950 上，以一次混合 Cube/Vector kernel 调用完成投影、卷积、递推、门控和输出投影。形状与写入范围见[接口](api.md)。主用例为 B40/N8/S4 的 BSH 和 TH，目标为预热后五次完整融合 kernel 耗时的中位数 39.96 µs。实测结论见 [ATK 验收](../../../../../../tests/atk/mega_recurrent_kda/README.md)。
+
+主用例含 160 行，矩阵乘有效工作量约 12.10 GFLOP。在 378.47 TFLOP/s 的 BF16 峰值下，仅 Cube 的数学下界约 31.97 µs。目标假定权重保持热缓存。75,612,160 B 权重若按 1.6 TB/s 从外存重新读取，单次读取已需 47.26 µs。
+
+## 2. Stage 0–2 完整详设
+
+Host 遍历序列的半开行区间 [start,end)。任一区间满足 `start/64 != (end-1)/64`（整数除法）时，整批选择跨块模板 T02，其余选择 T01。这条规则同时适用于 BSH 和 TH。
+
+| Stage | 任务与计算 | 数据所在位置及交接 |
+|---|---|---|
+| 0 输入投影 | 行主序 X 与行主序权重相乘，逻辑式为 `Y = X @ W.T`。QKV、gate、beta、decay-A 各自投影；decay-B 使用已舍入的 BF16 decay-A。所有投影为 BF16 输入、FP32 累加、BF16 写出 | Cube 经 L1、L0A/B 和 L0C 计算，由 Fixpipe 输出。T01 可在有界 GM 工作区暂存投影。T02 按 64 行推进并经配对 Vector 的 UB 交接 |
+| 1 卷积、递推与门控 | 每个序列/head 读取独立 checkpoint。四抽头卷积及 SiLU 后转 BF16，再用 FP32 归一化 Q/K、计算 sigmoid beta 和逐 K 衰减。每步先衰减状态，再计算校正向量、更新状态并生成输出 | Vector 在 UB 中计算，写活动槽的 conv/replay。短序列最多四个 token 时，用 checkpoint 批量得到投影并按 token 次序施加校正。跨块时把块末 FP32 状态交到下一个块 |
+| 2 输出投影 | Vector 对递推结果作 RMS 归一化并乘输出门，转 BF16。Cube 执行 `out = gated @ W_out.T`，累加 FP32，Fixpipe 写 BF16 | gated 通过 GM 工作区交接。输出各列独立写入调用方结果 |
+
+主用例的有界整批路径将 head 均分为两轮。每轮的 Cube 核按投影分组并切输出列，同一核负责同一种投影，减少矩阵流水反复启动。第二轮投影与第一轮 Vector 递推重叠。核间同步保护共享 decay-A、已生成的投影以及输出投影使用的 gated 数据。通用分块路径在槽复用前等待消费者写回完成。
+
+用户 workspace 按输入和模板计算。主用例 T01 的 2,012,160 B 包含 40,960 B decay-A 区、327,680 B gated 区和 1,643,520 B 投影区。T02 在 N=8 时为 819,200 B，包含跨块 FP32 状态。ACLNN 查询返回值还计入运行库要求的系统 workspace。

@@ -67,6 +67,7 @@ _ASCENDC_OPS = (
     "npu_merge_fwd_bwd_kernel",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
+    "npu_mega_recurrent_kda",
 )
 
 BACKWARD_OPS = {
@@ -88,6 +89,7 @@ MUTATED_ARGUMENTS = {
     "npu_causal_conv1d_fn": ("conv_states",),
     "npu_causal_conv1d_update": ("conv_state",),
     "npu_recurrent_kda": ("initial_state",),
+    "npu_mega_recurrent_kda": ("conv_state", "replay_u", "replay_k", "replay_decay"),
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
     "npu_merge_fwd_bwd_kernel": ("h",),
