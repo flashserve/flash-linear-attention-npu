@@ -290,6 +290,9 @@ public:
 
         for (; task < tiling_->taskCount; task += coreNum) {
             PrepareTaskMeta(task, taskMeta);
+            if (taskMeta.effectiveLen == 0U || taskMeta.sourcePage <= 0 || taskMeta.finalPage <= 0) {
+                continue;
+            }
             CopyIn(buffer, taskMeta);
             Compute(buffer, taskMeta);
             CopyOut(buffer, taskMeta);
