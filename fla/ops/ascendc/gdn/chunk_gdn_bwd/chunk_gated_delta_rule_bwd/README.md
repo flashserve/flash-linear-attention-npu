@@ -170,18 +170,3 @@ NPU 节点调用公开融合接口，CPU 节点独立串联上述四个阶段的
 `aLogOptional/dtBiasOptional` 需要覆盖非空传入但不参与计算；`dALog/dDtBias` 必须验证为
 空输出而不是 shape 为 `[0]` 的 Tensor。
 在 A5 上还需覆盖 `Hv/Hk` 为 5～16 的定长和变长用例。
-
-### 性能
-
-[Issue #661](https://github.com/flashserve/flash-linear-attention-npu/issues/661) 的 A2/A3 性能验收使用
-Python 入口 `fla_npu.ops.ascendc.npu_chunk_gated_delta_rule_bwd`。两组典型用例共用 `B=1`、
-`Hk=16`、`Hv=32`、`K=V=128` 和 `chunk_size=64`。Q/K/V 使用 BF16，g/beta 使用 FP32。
-
-| 场景 | T | 序列长度 |
-| --- | --- | --- |
-| 定长 | 11264 | 11264 |
-| 变长 | 65536 | 平均 1K |
-
-在 A2、A3 和 A5 上使用相同输入和调用参数。变长场景固定并记录 `cu_seqlens`。
-使用 `msprof` 采集 `op_summary`，按 `Task Duration(us)` 汇总完整融合调用的计算和布局转换任务。
-记录各平台的软件版本、设备信息和原始采样，以 A5 的同口径结果作为对照。
