@@ -51,8 +51,8 @@ def requirements():
     for symbol, (source, kinds) in validator.adapter_call_sites(SOURCE / "csrc/src"):
         calls_by_file.setdefault(source, set()).add(symbol)
         if symbol in private:
-            problems = validator.compare(private[symbol + "GetWorkspaceSize"][:-2], kinds)
-            if problems or validator.WILDCARD in kinds:
+            problems = validator.compare(private[symbol + "GetWorkspaceSize"][:-2], kinds, strict=True)
+            if problems:
                 raise RuntimeError(f"{source}: private call {symbol} {kinds} disagrees with its declaration: {problems}")
         elif symbol.startswith("aclnn") and "?" not in kinds:
             headers.setdefault(symbol + "GetWorkspaceSize", kinds + list(abi._WORKSPACE_TAIL))

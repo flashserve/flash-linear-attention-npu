@@ -558,6 +558,42 @@ a = npu_a
             self.assertTrue(description["dispatch"], name)
             self.assertFalse(any("?" in signature for signature in description["requires"].values()), name)
 
+    def test_wheel_records_private_macro_calls_and_rejects_unresolved_ones(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_layer_manifest as builder
+
+        api = self.root / "fla/ops/ascendc/demo/op_host/op_api"
+        api.mkdir(parents=True)
+        (api / "private_abi.json").write_text('{"DemoInner": "inner.h"}')
+        (api / "inner.h").write_text(
+            "aclnnStatus DemoInnerGetWorkspaceSize(const aclTensor *x, float scale, "
+            "uint64_t *size, aclOpExecutor **executor);\n"
+            "aclnnStatus DemoInner(void *ws, uint64_t size, aclOpExecutor *executor, aclrtStream stream);")
+        source = self.root / "launcher"
+        for name in ("fla_npu/_op_abi.py", "tools/op_abi_validate.py"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SETUP / name, source / name)
+        wrappers = source / "fla_npu/ops/ascendc"
+        wrappers.mkdir(parents=True)
+        (wrappers / "__init__.py").write_text('_ASCENDC_OPS = ("npu_demo",)\n')
+        (wrappers / "_stable.py").write_text('def npu_demo(): return _op("npu_demo")()\n')
+        adapter = source / "csrc/src/stable_demo.cpp"
+        adapter.parent.mkdir(parents=True)
+        call = '("DemoInner", meta, stream, tensor(x), scalar(static_cast<float>(scale)));'
+        with mock.patch.object(builder, "ROOT", self.root), mock.patch.object(builder, "SOURCE", source):
+            for gap in ("", " ", "\n", " /* note */\n  "):
+                with self.subTest(gap=gap):
+                    adapter.write_text("FLA_STABLE_EXEC" + gap + call)
+                    result = builder.requirements()["npu_demo"]
+                    self.assertEqual(result["private_requires"], contract("float", "DemoInner"))
+                    self.assertEqual(result["requires"], {})
+            adapter.write_text("FLA_STABLE_EXEC " + call.replace("(scale)", "(scale) + (0.0)"))
+            with self.assertRaisesRegex(RuntimeError, r"DemoInner.*param 1: unresolved argument type"):
+                builder.requirements()
+            adapter.write_text("FLA_STABLE_EXEC " + call.replace('"DemoInner"', "api_name"))
+            with self.assertRaisesRegex(ValueError, r"stable_demo.cpp:1: cannot parse FLA_STABLE_EXEC"):
+                builder.requirements()
+
     def test_installed_cli_wheel_install_status_remove_without_root_import(self):
         site = self.root / "cli"
         base = package(site / "fla_npu", opp={"aclnnDemo": "int64", "aclnnOther": "int64"})

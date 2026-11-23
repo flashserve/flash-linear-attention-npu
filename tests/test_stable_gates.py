@@ -553,6 +553,20 @@ class HeaderKindGateTest(unittest.TestCase):
                 with mock.patch.object(sys, "argv", argv):
                     self.assertEqual(tool.main(), 1)
 
+    def test_scalar_expressions_have_a_provable_result_type(self):
+        tool = _load_tool("op_abi_validate.py")
+        params = {"scale": "const double", "count": "uint64_t", "optional": "float*"}
+        cases = {
+            "scale": "double", "count": "uint64", "optional": "?",
+            "1": "int32", "2147483648": "int64", "1.25e-2F": "float",
+            "static_cast<float>(scale + (0.0))": "float", "(float)scale": "float",
+            "static_cast<float>(scale) + 0.0": "?", "(float)scale + 0.0": "?",
+            "static_cast<float>(scale) + (0.0)": "?", "unknown(scale)": "?",
+        }
+        for expression, expected in cases.items():
+            with self.subTest(expression=expression):
+                self.assertEqual(tool._scalar_kind(expression, params), expected)
+
     def test_private_gate_checks_each_call_even_when_the_last_one_matches(self):
         tool = _load_tool("op_abi_validate.py")
         private = {
@@ -570,9 +584,18 @@ class HeaderKindGateTest(unittest.TestCase):
             ):
                 source.write_text(call)
                 self.assertEqual(tool.main(), 0)
-                for invalid in (call.replace("<float>", "<double>"), call.replace("TensorArg", "unknown")):
-                    source.write_text(invalid + "\n" + call)
-                    self.assertEqual(tool.main(), 1)
+                report = root / "report.json"
+                argv.extend(["--json", str(report)])
+                for old, new, diagnostic in (
+                    ("<float>", "<double>", "param 1: header float != call site double"),
+                    ("(scale)", "(scale) + 0.0", "param 1: unresolved argument type"),
+                    ("TensorArg", "unknown", "param 0: unresolved argument type"),
+                ):
+                    with self.subTest(replacement=new):
+                        source.write_text(call.replace(old, new) + "\n" + call)
+                        self.assertEqual(tool.main(), 1)
+                        issues = json.loads(report.read_text())["adapter:DemoInner"]["problems"]
+                        self.assertIn(f"stable_demo.cpp: {diagnostic}", issues)
 
     def test_scoped_cli_fails_on_selected_header_drift(self) -> None:
         tool = _load_tool("op_abi_validate.py")
