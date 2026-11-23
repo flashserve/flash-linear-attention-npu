@@ -199,12 +199,23 @@ bool ResolveQkvStride(gert::TilingContext *context, size_t index, const ShapeInf
     if (out.token <= 0 || out.head < dim) {
         return false;
     }
-    const int64_t minTokenStride = (heads - 1) * out.head + dim;
-    if (out.token < minTokenStride) {
+    // 不重叠校验必须按布局分两类：序列主序下 head 内嵌在一个 token 里
+    // （token pitch 要覆盖全部 head），头主序下 token 内嵌在一个 head 里
+    // （head pitch 要覆盖全部 token）。用同一组不等式会把 BNSD/NTD 的
+    // 合法 dense 输入误判为重叠。
+    const int64_t tokenSpan = (shape.seqlen - 1) * out.token + dim;
+    const int64_t headSpan = (heads - 1) * out.head + dim;
+    if (shape.sequenceMajor) {
+        if (out.token < headSpan) {
+            return false;
+        }
+    } else if (out.head < tokenSpan) {
         return false;
     }
     if (rank4 && shape.batch > 1) {
-        const int64_t minBatchStride = (shape.seqlen - 1) * out.token + minTokenStride;
+        const int64_t minBatchStride = shape.sequenceMajor
+            ? (shape.seqlen - 1) * out.token + headSpan
+            : (heads - 1) * out.head + tokenSpan;
         if (out.batch < minBatchStride) {
             return false;
         }

@@ -567,13 +567,23 @@ bool IsSupportedQkvView(const aclTensor *tensor, KdaFwdLayout layout)
     if (heads <= 0 || dim <= 0 || strides[featureDim] != 1 || strides[headDim] < dim) {
         return false;
     }
-    const int64_t minTokenStride = (heads - 1) * strides[headDim] + dim;
-    if (strides[tokenDim] < minTokenStride) {
+    const int64_t seqLen = rank4 ? (sequenceMajor ? Dim(tensor, 1) : Dim(tensor, 2))
+                                 : (sequenceMajor ? Dim(tensor, 0) : Dim(tensor, 1));
+    // 与 tiling 侧同一口径：序列主序看 token 是否覆盖全部 head，
+    // 头主序看 head 是否覆盖全部 token。
+    const int64_t tokenSpan = (seqLen - 1) * strides[tokenDim] + dim;
+    const int64_t headSpan = (heads - 1) * strides[headDim] + dim;
+    if (sequenceMajor) {
+        if (strides[tokenDim] < headSpan) {
+            return false;
+        }
+    } else if (strides[headDim] < tokenSpan) {
         return false;
     }
     if (rank4 && Dim(tensor, 0) > 1) {
-        const int64_t seqLen = sequenceMajor ? Dim(tensor, 1) : Dim(tensor, 2);
-        const int64_t minBatchStride = (seqLen - 1) * strides[tokenDim] + minTokenStride;
+        const int64_t minBatchStride = sequenceMajor
+            ? (seqLen - 1) * strides[tokenDim] + headSpan
+            : (heads - 1) * strides[headDim] + tokenSpan;
         if (strides[0] < minBatchStride) {
             return false;
         }
