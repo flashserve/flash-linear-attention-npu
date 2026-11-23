@@ -1,4 +1,4 @@
-// Stable-ABI adapter for the fused RecurrentGDN V2 contract.
+// Stable-ABI adapter for the fused RecurrentGDN contract.
 // Included by stable_ops.cpp; no ATen/c10 or libtorch C++ ABI dependencies.
 #include "stable/boxed.h"
 #include "stable/exec.h"
@@ -79,7 +79,7 @@ Tensor run_recurrent_gated_delta_rule(
   // TensorArg's default logical_storage=false preserves the storage base plus
   // the offset exactly once; nd_tensor's logical storage is unsuitable here.
   FLA_STABLE_EXEC(
-      "aclnnRecurrentGatedDeltaRuleV2", value_meta, stream,
+      "aclnnRecurrentGatedDeltaRule", value_meta, stream,
       TensorArg(query_meta, kAclFormatNd),
       TensorArg(key_meta, kAclFormatNd),
       TensorArg(value_meta, kAclFormatNd),

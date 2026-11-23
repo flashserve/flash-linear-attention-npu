@@ -37,7 +37,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/两段式接口.md)，必须先调用“aclnnRecurrentGatedDeltaRuleGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnRecurrentGatedDeltaRule”接口执行计算。
+每个算子分为两段式接口，必须先调用“aclnnRecurrentGatedDeltaRuleGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnRecurrentGatedDeltaRule”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(
@@ -51,7 +51,13 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(
     const aclTensor *g,
     const aclTensor *gk,
     const aclTensor *numAcceptedTokens,
+    const aclTensor *aLog,
+    const aclTensor *dtBias,
     float           scaleValue,
+    bool            useQkL2NormInKernel,
+    bool            useGateInKernel,
+    bool            useBetaSigmoidInKernel,
+    bool            allowNegEigval,
     aclTensor       *out,
     uint64_t        *workspaceSize,
     aclOpExecutor   **executor)
@@ -64,6 +70,9 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     aclOpExecutor *executor,
     aclrtStream   stream)
 ```
+
+仅保留原名接口，参数表覆盖原 V2 功能；使用历史精简签名的调用方需按新头文件重新编译。
+完整契约见 [api.md](api.md)。
 
 ## aclnnRecurrentGatedDeltaRuleGetWorkspaceSize
 
@@ -127,7 +136,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>输入</td>
       <td>公式中的β。</td>
       <td><ul><li>不支持空Tensor。</li></td>
-      <td>BFLOAT16</td>
+      <td>BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>(T, Nv)</td>
       <td>√</td>
@@ -136,7 +145,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>stateRef</td>
       <td>输入&输出</td>
       <td>状态矩阵，公式中的S。</td>
-      <td><ul><li>不支持空Tensor。cann版本大于等于9.1.0后支持非连续 Tensor，其余版本不支持</li></td>
+      <td><ul><li>不支持空Tensor。支持 K 轴连续、无内部重叠的正 stride Tensor，不得与其他输入或 out 重叠。</li></td>
       <td>BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>(BlockNum, Nv, Dv, Dk)</td>
@@ -146,7 +155,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>actualSeqLengths</td>
       <td>输入</td>
       <td>无效前缀长度及不同 batch 的有效序列长度。</td>
-      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，取值范围为[0, 8]，全部元素之和等于 T。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>首元素为不小于0的无效前缀长度，其余 B 个元素为各 batch 的有效序列长度，长度不小于0，全部元素之和等于 T。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
       <td>(B+1,)</td>
@@ -156,18 +165,18 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>ssmStateIndices</td>
       <td>输入</td>
       <td>输入序列到状态矩阵的映射索引。</td>
-      <td><ul><li>不支持空Tensor。</li><li>state[ssmStateIndices[i]]表示第i个token的状态矩阵。</li><li>取值范围为[0, BlockNum)，且所有元素互不重复。</li></td>
+      <td><ul><li>不支持空Tensor。</li><li>一维按 token 顺序存储索引；二维每行对应一个请求，W 需覆盖有效长度和初始 State 索引位置。</li><li>有效索引位于[0, BlockNum)；请求间不得重叠写 State，也不得覆盖其他请求的初始 State。</li></td>
       <td>INT32</td>
       <td>ND</td>
-      <td>(T,)</td>
+      <td>(T,) 或 (B, W)</td>
       <td>√</td>
     </tr>
     <tr>
       <td>g</td>
       <td>输入</td>
       <td>衰减系数，公式中的α=e^g。</td>
-      <td><ul><li>不支持空Tensor。</li><li>如果传入nullptr，则表示全0的tensor。</li></td>
-      <td>FLOAT32</td>
+      <td><ul><li>不支持空Tensor。</li><li>传入nullptr时不衰减；useGateInKernel为true时必须提供，并与aLog一起计算融合 gate。</li></td>
+      <td>BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>(T, Nv)</td>
       <td>√</td>
@@ -186,10 +195,30 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>numAcceptedTokens</td>
       <td>输入</td>
       <td>每个序列接受的token数量。</td>
-      <td><ul><li>不支持空Tensor。</li><li>每项取值范围为[1, actualSeqLengths[i+1]]。</li></td>
+      <td><ul><li>可传入nullptr，默认每个请求取1。</li><li>非空请求的一维索引范围为[1, actualSeqLengths[i+1]]，二维索引范围为[1, W]；空请求不读取该值。</li></td>
       <td>INT32</td>
       <td>ND</td>
       <td>(B,)</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>aLog</td>
+      <td>输入</td>
+      <td>融合 gate 的逐 head 参数。</td>
+      <td>FLOAT32 (Nv,)；useGateInKernel为true时必须提供。</td>
+      <td>FLOAT32</td>
+      <td>ND</td>
+      <td>(Nv,)</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>dtBias</td>
+      <td>输入</td>
+      <td>融合 gate 的可选逐 head 偏置。</td>
+      <td>可传入nullptr，按0处理；仅useGateInKernel为true时使用。</td>
+      <td>FLOAT32</td>
+      <td>ND</td>
+      <td>(Nv,)</td>
       <td>√</td>
     </tr>
     <tr>
@@ -203,14 +232,54 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>-</td>
     </tr>
     <tr>
+      <td>useQkL2NormInKernel</td>
+      <td>输入</td>
+      <td>是否在 kernel 内归一化 Q/K。</td>
+      <td>true时使用FP32计算 x / sqrt(sum(x*x) + 1e-6)。</td>
+      <td>BOOL</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>useGateInKernel</td>
+      <td>输入</td>
+      <td>是否在 kernel 内计算融合 gate。</td>
+      <td>true时使用 g_eff = -exp(aLog) * softplus(g + dtBias)，必须提供g和aLog。</td>
+      <td>BOOL</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>useBetaSigmoidInKernel</td>
+      <td>输入</td>
+      <td>是否在 kernel 内对 beta 使用 sigmoid。</td>
+      <td>true时使用FP32计算sigmoid(beta)。</td>
+      <td>BOOL</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>allowNegEigval</td>
+      <td>输入</td>
+      <td>是否允许负特征值。</td>
+      <td>仅useBetaSigmoidInKernel为true时有效，将sigmoid(beta)再乘2。</td>
+      <td>BOOL</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>out</td>
       <td>输出</td>
       <td>公式中的o。</td>
-      <td>-</td>
+      <td>连续Tensor，不得与输入或State重叠；无效前缀的输出没有数值语义。</td>
       <td>BFLOAT16</td>
       <td>ND</td>
       <td>(T, Nv, Dv)</td>
-      <td>√</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>workspaceSize</td>
@@ -224,13 +293,13 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     </tr>
   </tbody>
   </table>
-  
+
   其中 $B$ 表示 batch size，$L_0$ 表示无效前缀长度，$L_i$（$i \in [1, B]$）表示第 $i$ 个 batch 的有效序列长度，则 $T=L_0+\sum_{i=1}^{B}L_i$ 表示累积 token 数。$N_k$ 表示 key 的头数，$N_v$ 表示 value 的头数，$D_k$ 表示 key 向量的维度，$D_v$ 表示 value 向量的维度。
 
 - 返回值
 
-  aclnnStatus： 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
-  
+  aclnnStatus： 返回状态码，参数约束与错误行为见[接口文档](api.md#校验与异常)。
+
   第一段接口完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 1050px"><colgroup>
   <col style="width: 250px">
@@ -246,6 +315,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
   </thead>
   <tbody>
     <tr>
+      <td>ACLNN_ERR_PARAM_NULLPTR</td>
+      <td>161001</td>
+      <td>workspaceSize或executor为空指针。</td>
+    </tr>
+    <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="5">161002</td>
       <td>query、key、value、beta、stateRef、actualSeqLengths、ssmStateIndices 或 out 存在空指针。</td>
@@ -257,14 +331,16 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>输入Tensor的数据格式不在支持范围内。</td>
     </tr>
     <tr>
-      <td>输入Tensor的shape不在支持范围内，或 Dk、Dv 不等于 128。</td>
+      <td>输入Tensor的shape、stride、storage边界或内存重叠不满足约束，或 Dk、Dv 不等于 128。</td>
     </tr>
     <tr>
-      <td>actualSeqLengths、ssmStateIndices、numAcceptedTokens 或 scaleValue 的值不满足约束。</td>
+      <td>gk非空、scaleValue不是有限浮点数，或useGateInKernel为true但缺少g/aLog。</td>
     </tr>
   </tbody>
   </table>
 
+
+actualSeqLengths、ssmStateIndices和numAcceptedTokens的设备端数值约束由调用方保证，host不回读这些值进行检查。
 
 ## aclnnRecurrentGatedDeltaRule
 
@@ -293,12 +369,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
       <td>在Device侧申请的workspace大小，由第一段接口aclnnRecurrentGatedDeltaRuleGetWorkspaceSize获取。</td>
     </tr>
     <tr>
-      <td>workspace (void*)</td>
+      <td>executor (aclOpExecutor*)</td>
       <td>输入</td>
       <td>op执行器，包含算子计算流程。</td>
     </tr>
     <tr>
-      <td>workspace (void*)</td>
+      <td>stream (aclrtStream)</td>
       <td>输入</td>
       <td>指定执行任务的Stream。</td>
     </tr>
@@ -306,24 +382,26 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
   </table>
 
 - 返回值
-  aclnnStatus： 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn返回码.md)。
+  aclnnStatus： 返回状态码，参数约束与错误行为见[接口文档](api.md#校验与异常)。
 
 
 ## 约束说明
 - 确定性计算：
   - aclnnRecurrentGatedDeltaRule默认确定性实现。
-- 输入 shape 大小需满足约束： $L_i \le 8$， $N_k \le 256$， $N_v \le 256$，$D_k = 128$，$D_v = 128$，且 $N_v$ 是 $N_k$ 的整数倍。
+- 输入 shape 大小需满足约束：$D_k = 128$，$D_v = 128$，且 $N_v/N_k$ 是[1, 16]范围内的整数。
+- Q/K/V的最后一维stride为1，token stride不小于128；State的K轴stride为1、行stride不小于128，详细view约束见[api.md](api.md)。
 
 
 ## 调用示例
 
-示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/编译与运行样例.md)。
+编译时优先使用本包 vendor 的头文件并链接配套的libcust_opapi.so，避免使用CANN自带的历史精简签名。
+示例代码如下，仅供参考，具体编译和执行过程请参考[开发者指南](../../../../../../../docs/开发者指南.md)。
 
 ```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
-#include "aclnnop/aclnn_recurrent_gated_delta_rule.h"
+#include "aclnn_recurrent_gated_delta_rule.h"
 
 #define CHECK_RET(cond, return_expr)                                                                                   \
     do {                                                                                                               \
@@ -435,15 +513,16 @@ int main()
     int32_t mtp = 2;
     int32_t headKNum = 4;
     int32_t headVNum = 8;
-    int32_t dimV = 32;
-    int32_t dimK = 32;
+    int32_t dimV = 128;
+    int32_t dimK = 128;
 
 
     std::vector<int64_t> stateShape = {batchSize * mtp, headVNum, dimV, dimK};
     std::vector<int64_t> qkShape = {batchSize * mtp, headKNum, dimK};
     std::vector<int64_t> vShape = {batchSize * mtp, headVNum, dimV};
     std::vector<int64_t> gamaShape = {batchSize * mtp, headVNum};
-    std::vector<int64_t> actSeqLenShape = {batchSize};
+    std::vector<int64_t> actSeqLenShape = {batchSize + 1};
+    std::vector<int64_t> numAccTokShape = {batchSize};
     std::vector<int64_t> ssmStaIdShape = {batchSize * mtp};
     std::vector<int16_t> stateRefHostData(GetShapeSize(stateShape));
     std::vector<int16_t> queryHostData(GetShapeSize(qkShape));
@@ -451,7 +530,8 @@ int main()
     std::vector<int16_t> valueHostData(GetShapeSize(vShape));
     std::vector<float> gamaHostData(GetShapeSize(gamaShape));
     std::vector<int16_t> betaHostData(GetShapeSize(gamaShape));
-    std::vector<int32_t> actSeqLenHostData(batchSize, mtp);
+    std::vector<int32_t> actSeqLenHostData(batchSize + 1, mtp);
+    actSeqLenHostData[0] = 0;
     std::vector<int32_t> ssmStaIdHostData(batchSize * mtp);
     std::vector<int32_t> numAccTokHostData(batchSize, 1);
     for (int i = 0; i < stateRefHostData.size(); i++) {
@@ -491,7 +571,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(ssmStaIdHostData, ssmStaIdShape, &ssmStaIdDeviceAddr, aclDataType::ACL_INT32, &ssmStaId);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(numAccTokHostData, actSeqLenShape, &numAccTokDeviceAddr, aclDataType::ACL_INT32, &numAccTok);
+    ret = CreateAclTensor(numAccTokHostData, numAccTokShape, &numAccTokDeviceAddr, aclDataType::ACL_INT32, &numAccTok);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(attnOutHostData, vShape, &attnOutDeviceAddr, aclDataType::ACL_BF16, &attnOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -502,7 +582,8 @@ int main()
     aclOpExecutor *executor;
     // 调用aclnnRecurrentGatedDeltaRuleGetWorkspaceSize第一段接口
     ret = aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(query, key, value, beta, stateRef, actSeqLen, ssmStaId, gama,
-                                                       gamak, numAccTok, scale, attnOut, &workspaceSize, &executor);
+                                                       gamak, numAccTok, nullptr, nullptr, scale,
+                                                       false, false, false, false, attnOut, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnRecurrentGatedDeltaRuleGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
 
@@ -538,16 +619,16 @@ int main()
     aclDestroyTensor(attnOut);
 
     // 7. 释放device资源
-    aclrtFree(query);
-    aclrtFree(key);
-    aclrtFree(value);
-    aclrtFree(gama);
-    aclrtFree(beta);
-    aclrtFree(stateRef);
-    aclrtFree(actSeqLen);
-    aclrtFree(ssmStaId);
-    aclrtFree(numAccTok);
-    aclrtFree(attnOut);
+    aclrtFree(queryDeviceAddr);
+    aclrtFree(keyDeviceAddr);
+    aclrtFree(valueDeviceAddr);
+    aclrtFree(gamaDeviceAddr);
+    aclrtFree(betaDeviceAddr);
+    aclrtFree(stateRefDeviceAddr);
+    aclrtFree(actSeqLenDeviceAddr);
+    aclrtFree(ssmStaIdDeviceAddr);
+    aclrtFree(numAccTokDeviceAddr);
+    aclrtFree(attnOutDeviceAddr);
     if (workspaceSize > 0) {
         aclrtFree(workspaceAddr);
     }
