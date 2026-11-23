@@ -232,9 +232,14 @@ def main():
     sync_validation_comment(github, issue, plan["errors"])
     if plan["add"] or plan["remove"]:
         # GITHUB_TOKEN label changes do not trigger the other issues workflow.
-        repository = github.request("GET", "")
-        github.request("POST", "actions/workflows/requirements-index.yml/dispatches",
-                       {"ref": repository["default_branch"]})
+        workflow_path = "actions/workflows/requirements-index.yml"
+        workflow = github.request("GET", workflow_path)
+        if workflow.get("state") == "active":
+            repository = github.request("GET", "")
+            github.request("POST", f"{workflow_path}/dispatches",
+                           {"ref": repository["default_branch"]})
+        else:
+            print("需求汇总工作流未启用，跳过刷新。")
     for error in plan["errors"]:
         print(error)
     print("Issue 标签检查未通过。" if plan["errors"] else "Issue 分类和目标分支标签检查通过。")

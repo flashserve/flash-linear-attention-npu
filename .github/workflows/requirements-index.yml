@@ -248,6 +248,39 @@ jobs:
                 })
               ).filter((issue) => !issue.pull_request);
 
+            // 同名标签也用于手工总览；必须先识别自动区，再执行任何写入。
+            const autoBounds = (body) => {
+              const text = body || '';
+              const begins = text.split(AUTO_BEGIN).length - 1;
+              const ends = text.split(AUTO_END).length - 1;
+              if (begins === 0 && ends === 0) return null;
+              const begin = text.indexOf(AUTO_BEGIN);
+              const end = text.indexOf(AUTO_END);
+              if (begins !== 1 || ends !== 1 || end <= begin) {
+                throw new Error('自动区标记残缺、重复或顺序错误');
+              }
+              return { begin, end };
+            };
+            const candidates = await listIssues({ state: 'all', labels: indexLabel });
+            const automatic = [];
+            for (const candidate of candidates) {
+              try {
+                if (autoBounds(candidate.body)) automatic.push(candidate);
+              } catch (error) {
+                core.setFailed(`需求汇总 #${candidate.number} 的${error.message}，已停止刷新。`);
+                return;
+              }
+            }
+            if (automatic.length > 1) {
+              core.setFailed('存在多个带完整自动区的需求汇总，无法确定刷新目标，已停止刷新。');
+              return;
+            }
+            if (candidates.length && automatic.length === 0) {
+              core.notice('仅发现手工维护的需求总览，跳过自动刷新，不修改正文、标签或置顶状态。');
+              return;
+            }
+            let indexIssue = automatic[0];
+
             await ensureLabel(indexLabel, '0e8a16', '需求汇总置顶 issue 标识，请勿手工删除');
             await ensureLabel(pendingLabel, 'fbca04', 'bug 尚未指定目标分支，需要补充 main 或版本分支标签');
 
@@ -572,25 +605,12 @@ jobs:
             ]);
             const mergeBody = (current, block) => {
               const text = (current || '').split('\n').map((line) => legacyGuidance.get(line) || line).join('\n');
-              const begin = text.indexOf(AUTO_BEGIN);
-              const end = text.indexOf(AUTO_END);
-              if (begin !== -1 && end !== -1 && end > begin) {
-                return `${text.slice(0, begin)}${block}${text.slice(end + AUTO_END.length)}`;
-              }
-              const prefix = text.trim() ? `${text.trimEnd()}\n\n` : '';
-              return `${prefix}${block}\n`;
+              const bounds = autoBounds(text);
+              if (!bounds) throw new Error('需求汇总缺少完整自动区，拒绝追加或覆盖正文。');
+              return `${text.slice(0, bounds.begin)}${block}${text.slice(bounds.end + AUTO_END.length)}`;
             };
 
-            // 定位置顶汇总 issue，不存在则创建
-            const existing = (
-              await github.paginate(github.rest.issues.listForRepo, {
-                ...repoRef,
-                state: 'all',
-                labels: indexLabel,
-                per_page: 50,
-              })
-            ).filter((issue) => !issue.pull_request);
-            let indexIssue = existing[0];
+            // 完全没有候选时才创建，已有自动汇总只替换其完整自动区。
             if (!indexIssue) {
               const created = await github.rest.issues.create({
                 ...repoRef,

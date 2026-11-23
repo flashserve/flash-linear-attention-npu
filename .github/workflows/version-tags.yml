@@ -198,12 +198,19 @@ jobs:
             // 触发置顶需求汇总刷新，让新版本立刻出现在汇总里
             if (indexWorkflow) {
               try {
-                const { data: repository } = await github.rest.repos.get(repoRef);
-                await github.rest.actions.createWorkflowDispatch({
-                  ...repoRef,
-                  workflow_id: indexWorkflow,
-                  ref: repository.default_branch,
+                const { data: workflow } = await github.rest.actions.getWorkflow({
+                  ...repoRef, workflow_id: indexWorkflow,
                 });
+                if (workflow.state === 'active') {
+                  const { data: repository } = await github.rest.repos.get(repoRef);
+                  await github.rest.actions.createWorkflowDispatch({
+                    ...repoRef,
+                    workflow_id: indexWorkflow,
+                    ref: repository.default_branch,
+                  });
+                } else {
+                  core.notice(`${indexWorkflow} 未启用，跳过刷新。`);
+                }
               } catch (error) {
                 core.warning(`触发 ${indexWorkflow} 失败：${error.message}`);
               }
@@ -375,12 +382,21 @@ jobs:
               [process.env.INDEX_WORKFLOW, {}],
             ]) {
               if (!workflow_id) continue;
-              await github.rest.actions.createWorkflowDispatch({
-                ...repoRef,
-                workflow_id,
-                ref: repository.default_branch,
-                inputs,
-              }).catch((error) => core.warning(`触发 ${workflow_id} 失败：${error.message}`));
+              try {
+                const { data: workflow } = await github.rest.actions.getWorkflow({ ...repoRef, workflow_id });
+                if (workflow.state !== 'active') {
+                  core.notice(`${workflow_id} 未启用，跳过刷新。`);
+                  continue;
+                }
+                await github.rest.actions.createWorkflowDispatch({
+                  ...repoRef,
+                  workflow_id,
+                  ref: repository.default_branch,
+                  inputs,
+                });
+              } catch (error) {
+                core.warning(`触发 ${workflow_id} 失败：${error.message}`);
+              }
             }
 
             await reply(
