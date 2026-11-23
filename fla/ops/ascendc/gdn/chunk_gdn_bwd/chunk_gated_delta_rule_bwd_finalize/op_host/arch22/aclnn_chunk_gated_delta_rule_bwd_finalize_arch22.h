@@ -129,7 +129,7 @@ aclnnStatus GetWorkspaceSize(
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
         const std::string actualValue = std::string(cuSeqlensOptional == nullptr ? "absent/" : "present/") +
             (chunkIndicesOptional == nullptr ? "absent" : "present");
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actualValue.c_str(), "both present or both absent");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actualValue.c_str(), "both present or both absent");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const aclTensor *requiredInputs[] = {q, k, v, vNew, dO, du, g, beta, h, dh, a};
@@ -157,13 +157,13 @@ aclnnStatus GetWorkspaceSize(
     const int64_t valueDim = v->GetViewShape().GetDim(3);
     if (batch <= 0 || keyHeads <= 0 || valueHeads <= 0) {
         const std::string actualValue = GDN::FinalizeHostArch22::DimensionsString({batch, keyHeads, valueHeads});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HK/HV", actualValue.c_str(), "all dimensions > 0");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B/HK/HV", actualValue.c_str(), "all dimensions > 0");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t maxScheduleDimension = static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
     if (batch > maxScheduleDimension || keyHeads > maxScheduleDimension || valueHeads > maxScheduleDimension) {
         const std::string actualValue = GDN::FinalizeHostArch22::DimensionsString({batch, keyHeads, valueHeads});
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B/HK/HV", actualValue.c_str(), "each dimension <= UINT32_MAX on A2/A3");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B/HK/HV", actualValue.c_str(), "each dimension <= UINT32_MAX on A2/A3");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (keyDim != 128) {
@@ -178,7 +178,7 @@ aclnnStatus GetWorkspaceSize(
     }
     if (valueHeads % keyHeads != 0) {
         const std::string actualValue = "HV=" + std::to_string(valueHeads) + ", HK=" + std::to_string(keyHeads);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "v.HV/q.HK", actualValue.c_str(), "HV % HK == 0 with positive heads");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "v.HV/q.HK", actualValue.c_str(), "HV % HK == 0 with positive heads");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (cuSeqlensOptional == nullptr) {
@@ -186,7 +186,7 @@ aclnnStatus GetWorkspaceSize(
         if (!GDN::FinalizeHostArch22::ChunkEndFitsUint32(lastStart, static_cast<uint64_t>(chunkSize))) {
             const std::string actualValue = "T=" + std::to_string(tokens) +
                 ", last chunk start=" + std::to_string(lastStart) + ", chunkSize=" + std::to_string(chunkSize);
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.T/chunkSize", actualValue.c_str(), "last chunk start + chunkSize <= UINT32_MAX on A2/A3");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "q.T/chunkSize", actualValue.c_str(), "last chunk start + chunkSize <= UINT32_MAX on A2/A3");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
@@ -257,13 +257,13 @@ aclnnStatus GetWorkspaceSize(
     const auto gateType = g->GetDataType();
     if (gateType != DataType::DT_BF16 && gateType != DataType::DT_FLOAT) {
         const std::string actualValue = std::to_string(static_cast<int>(gateType));
-        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "g.dtype", actualValue.c_str(), "BF16 or FP32");
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "g", actualValue.c_str(), "BF16 or FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (beta->GetDataType() != gateType) {
         const std::string actualValue = std::to_string(static_cast<int>(beta->GetDataType()));
         const std::string expectedValue = "g.dtype=" + std::to_string(static_cast<int>(gateType));
-        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta.dtype", actualValue.c_str(), expectedValue.c_str());
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta", actualValue.c_str(), expectedValue.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (useQkL2NormInKernel && (qRstdOptional == nullptr || kRstdOptional == nullptr)) {
@@ -289,7 +289,7 @@ aclnnStatus GetWorkspaceSize(
     if (betaRawOptional != nullptr && betaRawOptional->GetDataType() != beta->GetDataType()) {
         const std::string actualValue = std::to_string(static_cast<int>(betaRawOptional->GetDataType()));
         const std::string expectedValue = "beta.dtype=" + std::to_string(static_cast<int>(beta->GetDataType()));
-        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "betaRawOptional.dtype", actualValue.c_str(), expectedValue.c_str());
+        OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "beta_raw", actualValue.c_str(), expectedValue.c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
 

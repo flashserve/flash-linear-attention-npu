@@ -18,7 +18,8 @@ recompute_w_u_fwd(k, v, beta, A, g, cu_seqlens) -> w, u
 chunk_bwd_dv_local(q, k, d_o, g, scale, cu_seqlens, chunk_size) -> dv_local
 ```
 
-目标 SoC 为 A5（Ascend 950），A2/A3（Ascend 910B/910C）走同一 arch22 路径。
+本节 SoC 目标以 A5（Ascend 950）为准。A2/A3（Ascend 910B/910C）走同一 arch22 路径，
+A6（Ascend 960DT）走第 3 节所述的 arch92 路径。
 模型 case 为 `B=1`、`HK=16`、`HV=32`、`T=11K`、
 `K=V=128`、`chunk_size=64`。该 case 在 H20 上的设备耗时为 300 us；融合算子的性能
 目标是达到 H20 性能的 0.8 倍，即 A5 设备耗时不超过 `300 us / 0.8 = 375 us`。
@@ -53,6 +54,8 @@ dtype。`g/beta` 进入 Vector 计算后统一转 FP32。上述 W/U 变换来自
 `A @ (diag(bg) @ k) = (A * bg[None,:]) @ k`，U 同理，不改变外部数学语义。
 
 ## 2. Stage 0--2 完整详设
+
+本节的半片布局和流水以 A5 实现为基准。A6 的整片布局和调度见第 3 节。
 
 下文所有计算均针对输入中的一个 chunk 和一个 value head `hv`。`q/k` 通过
 `hk=floor(hv/G)` 读取；A、v、g、beta、d_o 使用当前 `hv`。无效行按 `M` 屏蔽，
@@ -100,13 +103,13 @@ kernel 的每个使用点经 `ChunkGdnBwdIntraGroup<G>(tiling->groupSize)` 读�
 - `G_KEY=0` 的 16 个实例（2 种定长/变长策略 × 2 种主 dtype × 2 种 g dtype ×
   2 种 beta dtype）保留在全平台共用的实例表中。A5（DAV_3510）的 dispatch 使用
   `if constexpr (G_KEY != CHUNK_GDN_BWD_INTRA_G_RUNTIME)`，使共享表中的 0 实例
-  可编译而不实例化 A5 Cube/Vector 计算路径。A5 host tiling（上限 4）永不选择
-  0，aclnn 也在参数校验层拒绝超限比例；编译期隔离与运行期拒绝分别保证构建和调用安全。
+  可编译而不实例化 A5 Cube/Vector 计算路径。
+- A5 的 G>4 选择 `G_KEY=5`，主 dtype 为 BF16，定长和变长共用 `STRATEGY=0`，
+  实际模式由 `isVarlen` 解码。该 key 在 A5 映射到读取 `tilingData.groupSize` 的运行时
+  模板参数，arch22 不实例化该 key 的计算路径。
 
-GVA 比例上限只在 `op_host/chunk_gdn_bwd_intra_schedule.h` 的
-`IntraMaxGvaRatio(arch22)` 定义一处（arch22 为 16、其余为 4），aclnn 参数校验、
-host tiling 校验和 `BuildIntraSchedule` 中的比例检查共同引用它。新增平台或调整
-档位时只改该函数，避免多层判据各自展开导致放行与拒绝不一致。
+A2/A3 和 A5 的 Intra GVA 比例上限均为 16，由
+`op_host/chunk_gdn_bwd_intra_schedule.h` 的 `IntraMaxGvaRatio(arch22)` 提供。
 
 模型 case 有 `Nwork=1408`、`blockDim=28`：`block_idx=0..7` 各处理 51 个完整 work，
 其余 20 个核各处理 50 个完整 work；每个完整 work 处理 4 个 value head。
@@ -477,3 +480,22 @@ template Process<G>:
           Stage1AIV(part,item,next_item)                   # 当前后半对期间可预取下一 work 前半对。
         release 7 AIV MutexID
 ```
+
+## 3. A6（arch92）实现
+
+A6（`ascend960dt`，`DAV_9201`）使用 `MIX_AIC_1_1`。每个 work 最多处理 3 个
+连续 value head，`blockDim = min(AIC 核数, AIV 核数, work 数)`。若一组共享 hk 的
+value head 跨 work，各 work 独立计算 Score，组内按 leader 复用 K 和 Score。
+GVA 1–4 继续使用编译期 TilingKey。
+
+| Stage | A6 实现 |
+| --- | --- |
+| C0 | Cube 使用 CATLASS 完成 Q/K 的 tile 搬运及 `K @ Qᵀ`，将完整 `64×64` FP32 Score 经过一次 Fixpipe 写给单个 AIV。 |
+| V1 | 单 AIV 用与 A5 一致的 regbase 转换和掩码方式计算整片 `D/A_bg/A_beta`，将它们和 `v/dO` 打包成 64 行 stride 的 NZ，写入共享 L1。尾块无效行列置零。 |
+| C2 | Cube 使用 CATLASS 从共享 L1 装载整块 NZ，依次计算 `dv_local`、`w` 和 `u`。L1 保持固定物理 stride，尾块的 MMAD 和输出按实际有效行数 M，计算形状为 `[M,M] @ [M,128]`。 |
+
+UB、共享 L1、L0A、L0B、L0C 均以三槽规划。
+C0 与 V1 间的 Score 使用 mode 4 flag `0–2`，
+V1 与 C2 间的共享 L1 使用 mode 4 flag `8–10`。每槽按 ready / free 循环回收。
+核内各 pipe 使用逐槽 HardEvent，Q/K 槽在同一 leader 的最后一次 W 装载完成后归还。
+Score 和 V1 的中间量均在片上交接，A6 workspace 仅包含平台系统开销。

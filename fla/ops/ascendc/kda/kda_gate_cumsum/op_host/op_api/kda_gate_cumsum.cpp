@@ -54,7 +54,7 @@ const std::array<const aclTensor *, 1> KdaGateCumsum(
         OP_ATTR(chunkSize, useGateInKernel, safeGate, static_cast<float>(lowerBound),
                 rank, batch, seqlen, heads, headDim));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE KdaGateCumsum failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE KdaGateCumsum failed.");
         return {nullptr};
     }
     return {gkOut};

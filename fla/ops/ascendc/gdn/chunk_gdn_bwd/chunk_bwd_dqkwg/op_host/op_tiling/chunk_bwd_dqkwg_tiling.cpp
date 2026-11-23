@@ -69,7 +69,10 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     int64_t BT = CONST_BT;
     // GVA: HV = n_ratio * HK, n_ratio 由 q/v shape 自动推导
     if (HK == 0 || HV % HK != 0) {
-        OP_LOGE(context->GetNodeName(), "HV must be a multiple of HK, but HV = %ld, HK = %ld.", HV, HK);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "HV/HK",
+            "HV=" + std::to_string(HV) + ",HK=" + std::to_string(HK),
+            "HV must be a multiple of HK");
         return ge::GRAPH_FAILED;
     }
     auto attr = context->GetAttrs();
@@ -77,16 +80,23 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     if (chunkSizePtr != nullptr) {
         BT = *chunkSizePtr;
         if (BT != 64 && BT != 128) {
-            OP_LOGE(context->GetNodeName(), "BT should be 64 or 128, but got %ld.", BT);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context->GetNodeName(), "chunk_size", "chunk_size=" + std::to_string(BT),
+                "chunk_size must be 64 or 128");
             return ge::GRAPH_FAILED;
         }
 
     }
 
 
-    if (context->GetOptionalInputTensor(INPUT_W_IDX) != nullptr ||
-        context->GetOptionalInputTensor(INPUT_G_GAMMA_IDX) != nullptr) {
-        OP_LOGE(context->GetNodeName(), "w and g_gamma should be set at nullptr.");
+    const bool hasW = context->GetOptionalInputTensor(INPUT_W_IDX) != nullptr;
+    const bool hasGGamma = context->GetOptionalInputTensor(INPUT_G_GAMMA_IDX) != nullptr;
+    if (hasW || hasGGamma) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "w,g_gamma",
+            std::string("w=") + (hasW ? "present" : "absent") +
+                ",g_gamma=" + (hasGGamma ? "present" : "absent"),
+            "w and g_gamma must be nullptr");
         return ge::GRAPH_FAILED;
     }
 
@@ -101,14 +111,19 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
         const gert::Shape chunkIndicesStorageShape = chunkIndicesShape->GetStorageShape();
         numChunks = chunkIndicesStorageShape.GetDim(0);
         if (numChunks % 2 != 0) {
-            OP_LOGE(context->GetNodeName(), "numChunks should be even, but now is %ld.", numChunks);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context->GetNodeName(), "chunk_indices",
+                "chunk_indices=" + std::to_string(numChunks),
+                "chunk_indices length must be even");
             return ge::GRAPH_FAILED;
         }
         numChunks /= 2;
         isVarLen = 1;
     }
     if (isVarLen == 1 && B != 1) {
-        OP_LOGE(context->GetNodeName(), "varlen mode only support B = 1, but now B = %ld.", B);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "B", "B=" + std::to_string(B),
+            "varlen mode requires B=1");
         return ge::GRAPH_FAILED;
     }
     {
@@ -122,17 +137,33 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
             doxStorageShape.GetDim(0) != B || doxStorageShape.GetDim(1) != HV || doxStorageShape.GetDim(2) != T || doxStorageShape.GetDim(3) != V ||
             dhStorageShape.GetDim(0) != B || dhStorageShape.GetDim(1) != numChunks || dhStorageShape.GetDim(2) != HV || dhStorageShape.GetDim(3) != K || dhStorageShape.GetDim(4) != V ||
             dvStorageShape.GetDim(0) != B || dvStorageShape.GetDim(1) != HV || dvStorageShape.GetDim(2) != T || dvStorageShape.GetDim(3) != V) {
-            OP_LOGE(context->GetNodeName(),
-                "Input tensor shapes do not match expected dimensions. Expected: q,k [B,HK,T,K], "
-                "v,dox,dv [B,HV,T,V], g [B,HV,T], h,dh [B,NC,HV,K,V].");
+            const auto shapeText = [](const gert::Shape &shape) {
+                std::string text = "[";
+                for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+                    if (i != 0) {
+                        text += ",";
+                    }
+                    text += std::to_string(shape.GetDim(i));
+                }
+                return text + "]";
+            };
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "q,k,v,g,h,dox,dh,dv",
+                "q=" + shapeText(qStorageShape) + ",k=" + shapeText(kStorageShape) +
+                    ",v=" + shapeText(vStorageShape) + ",g=" + shapeText(gStorageShape) +
+                    ",h=" + shapeText(hStorageShape) + ",dox=" + shapeText(doxStorageShape) +
+                    ",dh=" + shapeText(dhStorageShape) + ",dv=" + shapeText(dvStorageShape),
+                "shapes must be q/k [B,HK,T,K], v/dox/dv [B,HV,T,V], g [B,HV,T], h/dh [B,NC,HV,K,V]");
             return ge::GRAPH_FAILED;
         }
         if (K != 128) {
-            OP_LOGE(context->GetNodeName(), "K should be 128, but now K = %ld.", K);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context->GetNodeName(), "K", "K=" + std::to_string(K), "K must be 128");
             return ge::GRAPH_FAILED;
         }
         if (V != 128 && V != 256) {
-            OP_LOGE(context->GetNodeName(), "V should be 128 or 256, but now V = %ld.", V);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                context->GetNodeName(), "V", "V=" + std::to_string(V), "V must be 128 or 256");
             return ge::GRAPH_FAILED;
         }
 
@@ -144,7 +175,7 @@ ASCENDC_EXTERN_C ge::graphStatus TilingChunkBwdDqkwg(gert::TilingContext* contex
     // float scale = 1.0f / std::sqrt(static_cast<float>(K));
     const float* scalePtr = attr->GetAttrPointer<float>(ATTR_SCALE_ITEM);
     if (scalePtr == nullptr) {
-        OP_LOGE(context->GetNodeName(), "scale should not be nullptr.");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "scale");
         return ge::GRAPH_FAILED;
     }
     float scale = *scalePtr;

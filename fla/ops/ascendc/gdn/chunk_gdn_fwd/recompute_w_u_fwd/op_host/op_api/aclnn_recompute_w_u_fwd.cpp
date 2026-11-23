@@ -6,6 +6,10 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "aclnn_recompute_w_u_fwd.h"
 #include "recompute_w_u_fwd.h"
 #include <dlfcn.h>
@@ -30,6 +34,8 @@
 
 using namespace op;
 
+static constexpr const char *OP_NAME = "aclnnRecomputeWUFwd";
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,16 +56,44 @@ struct RecomputeWUFwdParams {
 
 static aclnnStatus CheckNotNull(RecomputeWUFwdParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.beta != nullptr, ACLNN_ERR_PARAM_NULLPTR, "beta must not be nullptr.");
-    CHECK_COND(params.a != nullptr, ACLNN_ERR_PARAM_NULLPTR, "a must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.gk == nullptr, ACLNN_ERR_PARAM_NULLPTR, "gk must be nullptr.");
+    // 示例改造：必选判空统一为 161001 + EZ0004，逐个报参数名。
+    if (params.k == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.beta == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.a == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "a");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    // gk 是“不支持的输入必须为空”，属取值约束（不是空指针缺失）。
+    if (params.gk != nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            "aclnnRecomputeWUFwd", "gk",
+            ge::TypeUtils::DataTypeToSerialString(params.gk->GetDataType()),
+            "gk is not supported; pass nullptr");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
-
-    CHECK_COND(params.wOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "wOut must not be nullptr.");
-    CHECK_COND(params.uOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "uOut must not be nullptr.");
+    if (params.wOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "wOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.uOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnRecomputeWUFwd", "uOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -124,16 +158,26 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(RecomputeWUFwdParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.beta, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous beta failed.");
-    CHECK_COND(DataContiguous(params.a, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous a failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    if (DataContiguous(params.k, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous k failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.v, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous v failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.beta, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous beta failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.a, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous a failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.g, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous g failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -181,6 +225,15 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
 {
     RecomputeWUFwdParams params{k, v, beta, a, g, gk,cuSeqlensOptional, chunkIndicesOptional, chunkSize, wOut, uOut};
     // Standard syntax, Check parameters.
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnRecomputeWUFwd,
                    DFX_IN(k, v, beta, a, g, gk, cuSeqlensOptional, chunkIndicesOptional, chunkSize),
                    DFX_OUT(wOut, uOut));
@@ -197,18 +250,28 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
     // 固定写法，参数检查
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: input contiguous conversion failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     auto result = l0op::RecomputeWUFwd(params.k, params.v, params.beta, params.a, params.g, params.gk, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.wOut, params.uOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (result[0] == nullptr || result[1] == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: operator returned no output", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.wOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: view copy of w failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     viewCopyResult = l0op::ViewCopy(result[1], params.uOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: view copy of u failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
 
     // Standard syntax, get the size of workspace needed during computation.
@@ -221,8 +284,12 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
 aclnnStatus aclnnRecomputeWUFwd(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnRecomputeWUFwd);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in RecomputeWUFwd launch aicore.");
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
     return ACLNN_SUCCESS;
 }
 

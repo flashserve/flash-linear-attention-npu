@@ -119,6 +119,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
 |---|---|---|
 | ACLNN_ERR_PARAM_NULLPTR | 161001 | 不为空的参数是空指针 |
 | ACLNN_ERR_PARAM_INVALID | 161002 | 参数的数据类型、shape不满足约束 |
+| ACLNN_ERR_INNER_NULLPTR | 561103 | 连续化失败或 l0op 未返回有效 tensor |
 
 ---
 

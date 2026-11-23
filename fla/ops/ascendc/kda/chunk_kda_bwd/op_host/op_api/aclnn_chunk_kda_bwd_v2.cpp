@@ -53,6 +53,13 @@ bool MatchesTensor(const aclTensor *tensor, const op::Shape &shape, DataType dty
         tensor->GetDataType() == dtype && IsContiguous(tensor);
 }
 
+// Null-safe shape description for error messages.
+std::string ShapeDesc(const aclTensor *tensor)
+{
+    return tensor == nullptr ? std::string("<missing>")
+                             : std::string(op::ToString(tensor->GetViewShape()).GetString());
+}
+
 // Head/token exchange for both Token tensors and their scalar gradients.
 const aclTensor *SwapHeadToken(const aclTensor *tensor, bool packed, aclOpExecutor *executor)
 {
@@ -132,8 +139,37 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         DFX_OUT(dqOut, dkOut, dvOut, dbOut, dgOut, dh0OutOptional,
                 dAOutOptional, dBiasOutOptional));
 
-    if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    const aclTensor *required[] = {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut};
+    const char *requiredNames[] = {"q", "k", "v", "beta", "aqk", "akk", "dO",
+                                   "dqOut", "dkOut", "dvOut", "dbOut", "dgOut"};
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (required[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, requiredNames[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+    }
+    if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, cuSeqlensOptional == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    // q_rstd/k_rstd 保持“可选、成对”：两者同为 null 合法，只给一侧才报必填为空。
+    if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, qRstdOptional == nullptr ? "q_rstd" : "k_rstd");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (useGateInKernel && (rawGOptional == nullptr || aLogOptional == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, rawGOptional == nullptr ? "raw_g" : "a_log");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (!useGateInKernel) {
@@ -162,14 +198,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
             OP_NAME, "lowerBound", std::to_string(lowerBound), "A5 V2 requires -5 <= lower_bound < 0");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    for (const auto *tensor : {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut}) {
-        if (tensor == nullptr) {
-            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q,k,v,beta,aqk,akk,dO,dq,dk,dv,d_beta,d_g");
-            return ACLNN_ERR_PARAM_NULLPTR;
-        }
-    }
     if (!(chunkSize == 64 && safeGate && useExp2 && !stateVFirst)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "A5 V2 requires C=64, safe_gate=true, use_exp2=true and K-first state.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "chunkSize,attrs",
+            std::to_string(chunkSize) + ",safe_gate=" + (safeGate ? "true" : "false") +
+                ",use_exp2=" + (useExp2 ? "true" : "false") + ",stateVFirst=" +
+                (stateVFirst ? "true" : "false"),
+            "A5 V2 requires C=64, safe_gate=true, use_exp2=true and K-first state");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (initialStateOptional != nullptr || dhtOptional != nullptr || dh0OutOptional != nullptr) {
@@ -179,22 +213,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
                 (dhtOptional != nullptr ? "dht=present" : "dht=absent") + "," +
                 (dh0OutOptional != nullptr ? "dh0=present" : "dh0=absent"),
             "initial_state/dht/dh0 are not supported");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-    if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "cuSeqlens,chunkIndices",
-            std::string(cuSeqlensOptional == nullptr ? "cuSeqlens=absent" : "cuSeqlens=present") + "," +
-                (chunkIndicesOptional == nullptr ? "chunkIndices=absent" : "chunkIndices=present"),
-            "cuSeqlens and chunkIndices must be supplied together");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-    if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "q_rstd,k_rstd",
-            std::string(qRstdOptional == nullptr ? "q_rstd=absent" : "q_rstd=present") + "," +
-                (kRstdOptional == nullptr ? "k_rstd=absent" : "k_rstd=present"),
-            "q_rstd and k_rstd must appear together");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (allowNegEigval && !useBetaSigmoidInKernel) {
@@ -279,16 +297,16 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
           MatchesTensor(akk, matrix, DataType::DT_BF16))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "q,k,v,dO,aqk,akk",
-            "q=" + std::string(op::ToString(q->GetViewShape()).GetString()) +
-                ",v=" + std::string(op::ToString(v->GetViewShape()).GetString()) +
-                ",aqk=" + std::string(op::ToString(aqk->GetViewShape()).GetString()),
+            "q=" + ShapeDesc(q) +
+                ",v=" + ShapeDesc(v) +
+                ",aqk=" + ShapeDesc(aqk),
             "BF16 inputs and fixed head-major caches must match the layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(MatchesTensor(beta, betaShape, DataType::DT_BF16) ||
           MatchesTensor(beta, betaShape, DataType::DT_FLOAT))) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "beta", std::string(op::ToString(beta->GetViewShape()).GetString()),
+            OP_NAME, "beta", ShapeDesc(beta),
             "beta must be the original token-major BF16/FP32 input");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -305,8 +323,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
           MatchesTensor(kRstdOptional, scalar, DataType::DT_FLOAT))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "q_rstd,k_rstd",
-            "q_rstd=" + std::string(op::ToString(qRstdOptional->GetViewShape()).GetString()) +
-                ",k_rstd=" + std::string(op::ToString(kRstdOptional->GetViewShape()).GetString()),
+            "q_rstd=" + ShapeDesc(qRstdOptional) +
+                ",k_rstd=" + ShapeDesc(kRstdOptional),
             "rstd must be a head-major FP32 pair");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -314,8 +332,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
           MatchesTensor(dkOut, outputToken, k->GetDataType()))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "dq,dk",
-            "dq=" + std::string(op::ToString(dqOut->GetViewShape()).GetString()) +
-                ",dk=" + std::string(op::ToString(dkOut->GetViewShape()).GetString()),
+            "dq=" + ShapeDesc(dqOut) +
+                ",dk=" + ShapeDesc(dkOut),
             "dq/dk must match the layout and q/k dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -324,9 +342,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
           MatchesTensor(dgOut, gateToken, rawGOptional ? rawGOptional->GetDataType() : DataType::DT_FLOAT))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "dv,db,dg",
-            "dv=" + std::string(op::ToString(dvOut->GetViewShape()).GetString()) +
-                ",db=" + std::string(op::ToString(dbOut->GetViewShape()).GetString()) +
-                ",dg=" + std::string(op::ToString(dgOut->GetViewShape()).GetString()),
+            "dv=" + ShapeDesc(dvOut) +
+                ",db=" + ShapeDesc(dbOut) +
+                ",dg=" + ShapeDesc(dgOut),
             "dv/db/dg must match the layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -336,8 +354,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
           MatchesTensor(aLogOptional, MakeShape({H}), DataType::DT_FLOAT))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "raw_g,a_log",
-            "raw_g=" + std::string(op::ToString(rawGOptional->GetViewShape()).GetString()) +
-                ",a_log=" + std::string(op::ToString(aLogOptional->GetViewShape()).GetString()),
+            "raw_g=" + ShapeDesc(rawGOptional) +
+                ",a_log=" + ShapeDesc(aLogOptional),
             "raw_g must be BF16/FP32 and a_log must be FP32 for gate backward");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -345,14 +363,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         !(dtBiasOptional->GetDataType() == DataType::DT_FLOAT && IsContiguous(dtBiasOptional) &&
           dtBiasOptional->GetViewShape().GetShapeSize() == H * 128)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "dt_bias", std::string(op::ToString(dtBiasOptional->GetViewShape()).GetString()),
+            OP_NAME, "dt_bias", ShapeDesc(dtBiasOptional),
             "dt_bias must be contiguous FP32 with H*K elements");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dAOutOptional != nullptr &&
         !(aLogOptional != nullptr && MatchesTensor(dAOutOptional, MakeShape({H}), DataType::DT_FLOAT))) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "dA", std::string(op::ToString(dAOutOptional->GetViewShape()).GetString()),
+            OP_NAME, "dA", ShapeDesc(dAOutOptional),
             "dA must be FP32 [H] and requires a_log");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -361,7 +379,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
           dBiasOutOptional->GetDataType() == DataType::DT_FLOAT &&
           dBiasOutOptional->GetViewShape().GetShapeSize() == H * 128)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
-            OP_NAME, "dbias", std::string(op::ToString(dBiasOutOptional->GetViewShape()).GetString()),
+            OP_NAME, "dbias", ShapeDesc(dBiasOutOptional),
             "dbias must be contiguous FP32 with H*K elements and requires dt_bias");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -371,14 +389,18 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         const auto *indices = chunkIndicesOptional;
         if (!(cu->Size() >= 2 &&
                        (*cu)[0] == 0 && (*cu)[cu->Size()-1] == T)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "Invalid cu_seqlens.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens",
+            std::to_string((*cu)[0]) + "," + std::to_string((*cu)[cu->Size() - 1]) + "," + std::to_string(T),
+            "Invalid cu_seqlens");
         return ACLNN_ERR_PARAM_INVALID;
     }
         nc = 0;
         for (size_t seq = 0; seq + 1 < cu->Size(); ++seq) {
             const int64_t begin = (*cu)[seq], end = (*cu)[seq+1];
             if (!(begin >= 0 && end > begin && end <= T)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "sequence boundaries are invalid");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens",
+            std::to_string(begin) + "," + std::to_string(end) + "," + std::to_string(T),
+            "sequence boundaries are invalid");
         return ACLNN_ERR_PARAM_INVALID;
     }
             for (int64_t c = 0; c < (end - begin + 63) / 64; ++c, ++nc) {
@@ -405,11 +427,15 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     }
     const auto state = packed ? MakeShape({nc,H,128,128}) : MakeShape({B,nc,H,128,128});
     if (disableRecompute) {
+        if (gk == nullptr || hOptional == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, gk == nullptr ? "gk" : "h");
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
         for (const auto *cache : {wOptional, qgOptional, kgOptional, vNewOptional}) {
             if (!MatchesTensor(cache, token, DataType::DT_BF16)) {
-                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                     OP_NAME, "w,qg,kg,v_new",
-                    cache == nullptr ? "nullptr" : std::string(op::ToString(cache->GetViewShape()).GetString()),
+                    ShapeDesc(cache),
                     "saved Token cache must be BF16 with the head-major token shape");
                 return ACLNN_ERR_PARAM_INVALID;
             }
@@ -418,8 +444,8 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
               MatchesTensor(hOptional, state, DataType::DT_BF16))) {
             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                 OP_NAME, "gk,h",
-                "gk=" + std::string(op::ToString(gk->GetViewShape()).GetString()) +
-                    ",h=" + std::string(op::ToString(hOptional->GetViewShape()).GetString()),
+                "gk=" + ShapeDesc(gk) +
+                    ",h=" + ShapeDesc(hOptional),
                 "saved gk must be FP32 token-major and h must be BF16 chunk-major");
             return ACLNN_ERR_PARAM_INVALID;
         }
@@ -594,7 +620,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
         }
     }
     if (!(!dBiasOutOptional || CopyGradient(dBias, dBiasOutOptional, ex))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Unable to adapt KDA backward outputs.", __func__);
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Unable to adapt KDA backward outputs.", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();

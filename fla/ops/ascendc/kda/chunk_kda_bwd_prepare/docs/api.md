@@ -40,6 +40,11 @@ B、H、T 必须为正。layout 只决定 rank 和轴顺序，`cu_seqlens` 决�
 ACLNN 两段式入口中，`const char *layout` 位于两项可选元数据之后、`double scale` 之前。
 保留 A2/A3/950 的算子注册；arch22 使用 GM 中转，arch35 保留 L0C→UB 路径。
 A5 接口一致，目前只开放定长 BNSD、变长 NTD，其余组合由 Host 拒绝，功能后续适配。
+A6（ascend960dt / DAV_9201）同样只开放定长 BNSD、变长 NTD，两种
+`state_v_first` 均支持。变长允许空 sequence，但总 T 必须为正。
+A6 三路结果经 UB 交给 AIV 写出，用户 workspace 为 0；ACLNN workspace
+仍包含 SDK 系统 workspace。A6 按 AIC/AIV 核数相同的约定，仅查询 AIC 核数；
+AIC 核数为 0 时 tiling 拒绝发射，不以固定默认核数替代平台查询。
 原提交的 A2 设备验证、A3 编译记录不代表当前整合版本已经通过回归。
 A5 的 BSND/TND 要求 H*128 不超过 uint32_t 上限（CATLASS 的行距字段限制），
 不满足时 host tiling 拒绝；常规模型 head 数不受影响。
@@ -74,4 +79,11 @@ python tests/stable_abi/test_chunk_kda_bwd_prepare_errors.py --device 0
 多任务 slot 复用输入；另补充全部 layout × 定变长 × 状态方向 × 自动元数据组合。
 实际 slot 回绕仍需设备 trace 证明。
 另外执行四布局的非有限上三角/尾列掩码检查。
-纯 CPU 标杆自检：`python tests/test_chunk_kda_bwd_prepare_reference.py`。
+A6 功能 smoke（整数 BF16 输入、独立 CPU 标杆、逐位比较；不是 ATK 精度验收）：
+
+```bash
+python tests/atk/chunk_kda_bwd_prepare/scripts/prepare_a6_smoke.py --tokens 65 --heads 3
+python tests/atk/chunk_kda_bwd_prepare/scripts/prepare_a6_smoke.py --varlen --state-v-first --tokens 129 --heads 5
+```
+
+上面的四布局 Stable-ABI 扩展脚本用于 A2/A3 回归；A5/A6 设备验证只选择对应平台支持的组合。

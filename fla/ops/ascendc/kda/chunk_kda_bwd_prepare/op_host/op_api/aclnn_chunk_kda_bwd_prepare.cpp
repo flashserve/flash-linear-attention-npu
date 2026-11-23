@@ -153,7 +153,7 @@ aclnnStatus Check(
     if (!std::isfinite(scale) || !std::isfinite(static_cast<float>(scale))) {
         return InvalidValue("scale", std::to_string(scale), "a finite FP32 value");
     }
-    if (chunkSize != 64) return InvalidValue("chunk_size", std::to_string(chunkSize), "64");
+    if (chunkSize != 64) return InvalidValue("chunkSize", std::to_string(chunkSize), "64");
     if (layout == nullptr) return Missing("layout");
     uint32_t inputLayout;
     if (!KDA::ParseLayout(layout, inputLayout)) {

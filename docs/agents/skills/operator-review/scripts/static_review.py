@@ -405,6 +405,12 @@ def check_dfx(root: Path, operator_roots: list[Path]) -> list[Finding]:
     findings = []
     patterns = [
         (
+            "DFX-WITHOUT-REPORT",
+            re.compile(r"\b[A-Z][A-Z0-9_]*WITHOUT_REPORT\s*\("),
+            "failure path uses a WITHOUT_REPORT logging macro and drops structured context",
+            "use a typed OP_LOGE_FOR_* report; for launcher or InferShape failures use OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON",
+        ),
+        (
             "DFX-MESSAGE",
             re.compile(r"\b(CHECK_RET|CHECK_COND)\s*\("),
             "legacy guard may return only a status code without parameter context",
@@ -436,6 +442,42 @@ def check_dfx(root: Path, operator_roots: list[Path]) -> list[Finding]:
                             line_number(text, match.start()),
                             message,
                             suggestion,
+                        )
+                    )
+    return findings
+
+
+def check_failure_reports(root: Path, operator_roots: list[Path]) -> list[Finding]:
+    """Require structured reports after launcher and InferShape calls."""
+    findings = []
+    required = (
+        ("ADD_TO_LAUNCHER_LIST_AICORE", "DFX-LAUNCHER-REPORT"),
+        ("INFER_SHAPE", "DFX-INFER-SHAPE-REPORT"),
+    )
+    typed = "OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON"
+    for operator_root in operator_roots:
+        for path in files_under(operator_root):
+            if path.suffix not in HOST_SOURCE_SUFFIXES or not is_host_surface(path):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "TORCH_MODE" in text or "/tests/" in f"/{path.as_posix()}/":
+                continue
+            for macro, rule in required:
+                starts = [match.start() for match in re.finditer(rf"\b{macro}\s*\(", text)]
+                for start in starts:
+                    next_start = text.find(macro, start + len(macro))
+                    window = text[start:next_start if next_start >= 0 else len(text)]
+                    if typed in window:
+                        continue
+                    findings.append(
+                        Finding(
+                            "dfx",
+                            rule,
+                            "error",
+                            relative(path, root),
+                            line_number(text, start),
+                            f"{macro} failure path has no {typed} structured report",
+                            f"report the {macro} stage, actual status, expected ACLNN_SUCCESS, and failure reason with {typed}",
                         )
                     )
     return findings
@@ -594,6 +636,7 @@ def main() -> int:
     if args.diff_base:
         findings.extend(check_environment_contracts(root, args.diff_base))
     findings.extend(check_dfx(root, operator_roots))
+    findings.extend(check_failure_reports(root, operator_roots))
     architecture_paths = selected_paths or operator_roots
     findings.extend(check_architecture(root, architecture_paths, args.diff_base))
     findings.extend(check_docs(root, markdown_paths, operator_roots))

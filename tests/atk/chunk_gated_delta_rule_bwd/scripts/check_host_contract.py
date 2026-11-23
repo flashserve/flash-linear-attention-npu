@@ -35,16 +35,17 @@ class Case:
 
 def cases():
     return [
-        Case("q_only_norm_on", INVALID, ("qRstd,kRstd", "kRstd=nullptr", "both be present"),
+        # 配对缺失按“必填为空”处理：161001 + EZ0004，报文带具体参数名。
+        Case("q_only_norm_on", NULLPTR, ("EZ0004", "k_rstd"),
              q_rstd=True, norm=True),
-        Case("k_only_norm_on", INVALID, ("qRstd,kRstd", "qRstd=nullptr", "both be present"),
+        Case("k_only_norm_on", NULLPTR, ("EZ0004", "q_rstd"),
              k_rstd=True, norm=True),
-        Case("q_only_norm_off", INVALID, ("qRstd,kRstd", "kRstd=nullptr", "both be present"),
+        Case("q_only_norm_off", NULLPTR, ("EZ0004", "k_rstd"),
              q_rstd=True),
-        Case("k_only_norm_off", INVALID, ("qRstd,kRstd", "qRstd=nullptr", "both be present"),
+        Case("k_only_norm_off", NULLPTR, ("EZ0004", "q_rstd"),
              k_rstd=True),
-        Case("both_absent_norm_on", NULLPTR, ("qRstd,kRstd",), norm=True),
-        Case("both_present_norm_off", INVALID, ("qRstd,kRstd", "require Q/K L2Norm backward"),
+        Case("both_absent_norm_on", NULLPTR, ("EZ0004", "q_rstd"), norm=True),
+        Case("both_present_norm_off", INVALID, ("q_rstd,k_rstd", "require Q/K L2Norm backward"),
              q_rstd=True, k_rstd=True),
         Case("empty_pairs", INVALID, ("chunk_indices", "0", "at least 2"),
              cu=(0, 64), pairs=()),

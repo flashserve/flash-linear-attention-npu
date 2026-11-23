@@ -17,9 +17,15 @@ constexpr size_t ATTR_STATE_V_FIRST = 3;
 static ge::graphStatus InferShapeMergeFwdBwdKernel(gert::InferShapeContext *context)
 {
     const gert::Shape *agShape = context->GetInputShape(AG_HM_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, agShape);
+    if (agShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "ag_hm");
+        return ge::GRAPH_FAILED;
+    }
     gert::Shape *hShape = context->GetOutputShape(H_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, hShape);
+    if (hShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
     if (agShape->GetDimNum() != 4) {
         return GRAPH_FAILED;
     }

@@ -273,7 +273,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
     }
     auto gateDtype = params.gOptional != nullptr ? params.gOptional->GetDataType() : params.gkOptional->GetDataType();
     if (!(gateDtype == DataType::DT_FLOAT || gateDtype == inputDtype)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "g/gk", ge::TypeUtils::DataTypeToSerialString(gateDtype),
             std::string("g/gk dtype must be float32 or match k dtype ") +
                 ge::TypeUtils::DataTypeToSerialString(inputDtype));
@@ -292,7 +292,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleFwdHParams params)
     if (params.outputFinalState) {
         if (params.finalStateOut == nullptr) {
             OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "finalStateOut");
-            return ACLNN_ERR_PARAM_INVALID;
+            return ACLNN_ERR_PARAM_NULLPTR;
         }
         auto stateDtype = params.initialStateOptional != nullptr ? params.initialStateOptional->GetDataType()
                                                                 : DataType::DT_FLOAT;
@@ -320,33 +320,33 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleFwdHParams &params, aclOpExecutor *executorPtr)
 {
     if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous k failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous w failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous w failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.u, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous u failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous u failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.gOptional != nullptr) {
         if (!(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous gOptional failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous gOptional failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     }
     if (params.gkOptional != nullptr) {
         if (!(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous gkOptional failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous gkOptional failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     }
     if (params.initialStateOptional != nullptr) {
         if (!(DataContiguous(params.initialStateOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "Contiguous initialStateOptional failed.", __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous initialStateOptional failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     }
 
@@ -573,6 +573,15 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
                                          vNewOut,
                                          finalStateOut};
     // Standard syntax, Check parameters.
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleFwdH,
                    DFX_IN(k, w, u, gOptional, gkOptional, initialStateOptional, outputFinalState, chunkSize,
                           cuSeqlensOptional, chunkIndicesOptional, stateVFirst),
@@ -588,9 +597,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
     if (!(ret == ACLNN_SUCCESS)) {
         return ret;
     }
-    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        
-        return ACLNN_ERR_PARAM_INVALID;
+    const aclnnStatus contigParams = ParamsDataContiguous(params, executorPtr);
+    if (contigParams != ACLNN_SUCCESS) {
+        return contigParams;
     }
     const auto kShape = params.k->GetViewShape();
     const auto uShape = params.u->GetViewShape();
@@ -640,7 +649,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
 
     const aclTensor *hResult = result[0];
@@ -687,9 +696,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
 aclnnStatus aclnnChunkGatedDeltaRuleFwdH(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleFwdH);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in ChunkGatedDeltaRuleFwdH launch aicore.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

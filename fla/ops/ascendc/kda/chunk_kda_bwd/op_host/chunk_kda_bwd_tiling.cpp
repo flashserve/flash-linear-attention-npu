@@ -94,9 +94,18 @@ ge::graphStatus BuildKernelBTiling(
     const auto *qShapeStorage = context->GetRequiredInputShape(INPUT_Q);
     const auto *vShapeStorage = context->GetRequiredInputShape(INPUT_V);
     OP_CHECK_NULL_WITH_CONTEXT(context, qgDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gkDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qShapeStorage);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vShapeStorage);
+    if (gkDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "gk");
+        return ge::GRAPH_FAILED;
+    }
+    if (qShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
+    if (vShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v");
+        return ge::GRAPH_FAILED;
+    }
     if (qgDesc->GetDataType() != ge::DT_FLOAT16 &&
                     qgDesc->GetDataType() != ge::DT_BF16) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -129,7 +138,10 @@ ge::graphStatus BuildKernelBTiling(
     b.seqNum = b.B;
     if (a.isVarLen) {
         const auto *cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
-        OP_CHECK_NULL_WITH_CONTEXT(context, cuShape);
+        if (cuShape == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cu_seqlens");
+            return ge::GRAPH_FAILED;
+        }
         b.seqNum = static_cast<int64_t>(
             cuShape->GetOriginShape().GetDim(0) - 1);
     }
@@ -225,15 +237,42 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
     const auto *deferGatePost =
         attrs->GetAttrPointer<bool>(ATTR_DEFER_GATE_POST);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale);
-    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
-    OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
-    OP_CHECK_NULL_WITH_CONTEXT(context, useGate);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
-    OP_CHECK_NULL_WITH_CONTEXT(context, disableRecompute);
-    OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
-    OP_CHECK_NULL_WITH_CONTEXT(context, deferGatePost);
+    if (scale == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "scale");
+        return ge::GRAPH_FAILED;
+    }
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
+    if (safeGate == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "safe_gate");
+        return ge::GRAPH_FAILED;
+    }
+    if (useGate == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "use_gate");
+        return ge::GRAPH_FAILED;
+    }
+    if (lowerBound == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "lower_bound");
+        return ge::GRAPH_FAILED;
+    }
+    if (disableRecompute == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "disableRecompute");
+        return ge::GRAPH_FAILED;
+    }
+    if (useExp2 == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "use_exp2");
+        return ge::GRAPH_FAILED;
+    }
+    if (stateVFirst == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "state_v_first");
+        return ge::GRAPH_FAILED;
+    }
+    if (deferGatePost == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "defer_gate_post");
+        return ge::GRAPH_FAILED;
+    }
     if (!*disableRecompute) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                     OP_NAME, "disable_recompute", std::to_string(*disableRecompute),
@@ -268,7 +307,8 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
                     hShape == nullptr || wDesc == nullptr ||
                     qgDesc == nullptr || kgDesc == nullptr ||
                     vNewDesc == nullptr || hDesc == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w,qg,kg,v_new,h");
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: tiling metadata of w/qg/kg/v_new/h is missing", __func__);
         return ge::GRAPH_FAILED;
     }
 
@@ -305,7 +345,6 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
                     context, aTiling, ubSize, blockDim,
                     tiling->kernelB, bUserWorkspace, *scale) !=
                     ge::GRAPH_SUCCESS) {
-        ;
         return ge::GRAPH_FAILED;
     }
 
@@ -358,7 +397,8 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
     if (cTotalWorkspace < systemWorkspace) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "Kernel C workspace is smaller than system workspace");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: Kernel C workspace is smaller than system workspace.", __func__);
         return ge::GRAPH_FAILED;
     }
     const uint64_t cUserWorkspace = cTotalWorkspace - systemWorkspace;
@@ -413,7 +453,8 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
     if (cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace", "invalid", "single-launch private workspace exceeds the 2 TiB");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: single-launch private workspace exceeds the 2 TiB limit.", __func__);
         return ge::GRAPH_FAILED;
     }
     const uint64_t totalWorkspace = systemWorkspace + cursor;
@@ -456,9 +497,15 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     const auto *aLogShapeStorage =
         context->GetRequiredInputShape(INPUT_A_LOG);
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dgShapeStorage);
+    if (dgShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dg");
+        return ge::GRAPH_FAILED;
+    }
     OP_CHECK_NULL_WITH_CONTEXT(context, rawShapeStorage);
-    OP_CHECK_NULL_WITH_CONTEXT(context, aLogShapeStorage);
+    if (aLogShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "a_log");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *chunkSize =
         attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
@@ -467,14 +514,23 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
         attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND);
     const auto *inputScanned =
         attrs->GetAttrPointer<bool>(ATTR_INPUT_SCANNED);
-    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
-    OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
+    if (safeGate == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "safe_gate");
+        return ge::GRAPH_FAILED;
+    }
+    if (lowerBound == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "lower_bound");
+        return ge::GRAPH_FAILED;
+    }
     OP_CHECK_NULL_WITH_CONTEXT(context, inputScanned);
     if (*chunkSize != 64) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                    OP_NAME, "chunk_size", std::to_string(*chunkSize),
-                    "KdaGateBwdPost requires chunk_size=64");
+                    OP_NAME, "chunkSize", std::to_string(*chunkSize),
+                    "KdaGateBwdPost requires chunkSize=64");
         return ge::GRAPH_FAILED;
     }
 
@@ -544,7 +600,10 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     if (isVarLen) {
         const auto *chunkShape =
             context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
-        OP_CHECK_NULL_WITH_CONTEXT(context, chunkShape);
+        if (chunkShape == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunk");
+            return ge::GRAPH_FAILED;
+        }
         const int64_t metadataElems =
             chunkShape->GetOriginShape().GetShapeSize();
         if (metadataElems <= 0 || metadataElems % 2 != 0) {
@@ -597,8 +656,14 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
         OP_CHECK_NULL_WITH_CONTEXT(context, chunkTensor);
         const int64_t *cu = cuTensor->GetData<int64_t>();
         const int64_t *chunks = chunkTensor->GetData<int64_t>();
-        OP_CHECK_NULL_WITH_CONTEXT(context, cu);
-        OP_CHECK_NULL_WITH_CONTEXT(context, chunks);
+        if (cu == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cu_seqlens");
+            return ge::GRAPH_FAILED;
+        }
+        if (chunks == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunk_indices");
+            return ge::GRAPH_FAILED;
+        }
         const int64_t cuElems =
             cuTensor->GetStorageShape().GetShapeSize();
         int64_t packedCursor = 0;

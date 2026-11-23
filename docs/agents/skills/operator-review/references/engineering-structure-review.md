@@ -59,6 +59,22 @@
    `__CCE_AICORE__`、`__DAV_C310__` 等架构别名。自造
    `GDN_BWD_ENABLE_ARCH22` 一类平台别名宏同样不能作为替代判据。
 
+### 2.1 Stable-ABI 适配边界
+
+Stable-ABI 层是适配层，不是参数校验层。检视 `stable_*.cpp`、`_stable.py` 和相关 schema 时，必须确认：
+
+1. 只负责接收上层参数、把参数整理成 aclnn 能接收的形式、补齐默认值、获取当前执行流，以及按文档化
+   V1/V2 支持范围选择 aclnn 入口并转发参数；
+2. 不得拦截参数、shape、dtype、layout、属性、可选输出组合或平台支持范围，不得在 Stable/Python
+   wrapper 中抛出支持范围错误或生成参数错误码；
+3. 当输入既不满足 V1 也不满足 V2 时，`run_` 仍须调用 aclnn，让 aclnn L2/tiling 产生
+   `ACLNN_ERR_PARAM_INVALID` 和结构化错误；不能在适配层静默返回、伪造错误或绕过 aclnn；
+4. V1/V2 的路由判据必须与 aclnn 头文件、README、API 文档和测试中的支持范围一致。适配层只负责选择
+   入口，所有合法性拦截、返回码和报错文本仍由 aclnn L2/tiling 统一维护。
+
+发现 Stable/Python wrapper 中的 `raise`、`CHECK_*`、`OP_LOGE*`、显式支持范围 `if` 或提前返回时，
+先确认它是否只是默认值处理或参数格式整理；若实际拒绝了输入或改变了 aclnn 的错误路径，应按工程结构问题报告。
+
 ## 5. 公开接口兼容性
 
 公开接口兼容性按**编码红线问题**处理。只有以下情况需要完整检查：

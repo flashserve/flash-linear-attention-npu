@@ -78,7 +78,10 @@ ASCENDC_EXTERN_C ge::graphStatus Tiling4PreProcessBwdKernelMerged(gert::TilingCo
     const auto gInputDesc = context->GetOptionalInputDesc(CDHP_INPUT_G_IDX);
     const auto gkInputDesc = context->GetOptionalInputDesc(CDHP_INPUT_GK_IDX);
     const auto qInputDesc = context->GetInputDesc(CDHP_INPUT_Q_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qInputDesc);
+    if (qInputDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
 
     const gert::StorageShape *gShapePtr = context->GetOptionalInputShape(CDHP_INPUT_G_IDX);
     const gert::StorageShape *cuSeqlensShapePtr = context->GetOptionalInputShape(CDHP_INPUT_CU_SEQLENS_IDX);

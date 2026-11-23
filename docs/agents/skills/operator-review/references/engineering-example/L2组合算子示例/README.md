@@ -30,13 +30,15 @@ torch_custom/fla_npu/                  # 交付件布局与 torch_custom/fla_npu
 |-- csrc/src/stable_<算子>.cpp        # 新建：组合算子同样要 schema + 适配（一算子一文件）
 |-- csrc/src/stable_ops.cpp           # 改：include 一行 + m.def/m.impl 两行
 `-- fla_npu/ops/ascendc/
-    |-- _stable.py                    # 改：真签名 wrapper（校验与默认值；场景选择不在这层）
+    |-- _stable.py                    # 改：真签名 wrapper（接收参数、处理默认值并转发；不做支持范围拦截）
     `-- __init__.py                   # 改：_ASCENDC_OPS 加一行 public 名
 ```
 
 一个容易写错的点：**V1/V2 的场景选择在 C++ 适配层的 `run_` 里**，不在 Python wrapper 里
 （仓内真实例子：`csrc/src/stable_chunk_kda_fwd.cpp` 内部在 `aclnnChunkKdaFwdV2` 与 `aclnnChunkKdaFwd`
-之间分支）。Python wrapper 只做"schema 表达不了的参数校验 + 默认值补齐 + 透传"。
+之间分支）。Python wrapper 只负责接收参数、整理成 aclnn 所需形式、补齐默认值并调用，不做参数或支持范围拦截。
+当输入既不满足 V1 也不满足 V2 时，`run_` 仍须调用约定的 aclnn 入口，由 aclnn L2/tiling 返回
+`ACLNN_ERR_PARAM_INVALID` 和结构化错误。
 
 ATK 侧组合算子不需要自己的 TilingKey 覆盖表（没有自己的 kernel），但仍要有端到端用例：至少一条
 走组合路径、一条走回落路径，并覆盖缺依赖时报错可定位的场景（见 §4）。
@@ -57,6 +59,7 @@ ATK 侧组合算子不需要自己的 TilingKey 覆盖表（没有自己的 kern
 3. 不要把可选性写进 def（形态 C 根本没有 def）；可选输出仍然只在 L2 用可空描述符表达；
 4. 不要在 L2 里解释上层保留策略（策略由 Python/Stable 适配层翻译成"入参属性 + 哪些输出指针非空"），
    但 L2 必须校验该组合是否合法（属性与可空输出指针一一对应，含输出指针是否与入参同一 view）；
+   Stable/Python 不得提前拦截或抛出支持范围错误。
 5. 不要在缺依赖时静默降级：依赖没编译出来要在 tiling/launch 阶段明确报错，并指向缺失依赖算子。
 
 ## 4. 依赖闭包与过滤构建（最容易被漏掉的一条）

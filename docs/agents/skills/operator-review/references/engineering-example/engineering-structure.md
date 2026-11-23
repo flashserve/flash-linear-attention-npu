@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | L0 kernel + host tiling | `fla/ops/ascendc/<模块>/<算子>/` | 数学怎么在 AiCore 上分核、分 Stage 执行 | 解释 autograd 重计算策略；按调用方决定要不要算 |
 | L2 aclnn | `op_host/op_api/aclnn_<op>.{h,cpp}` | 公开 C 接口：张量契约、可选输出、场景拦截 | 决定 Python 侧默认值；读调用方框架状态 |
-| Stable-ABI 适配 | `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` | 把 torch 参数拆栈并下发 aclnn | 判定布局能力、补 dense 拷贝、缓存 stream |
+| Stable-ABI 适配 | `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` | 接收 torch 参数、整理成 aclnn 所需格式、补默认值、按文档化能力选择并调用 aclnn | 任何参数/shape/dtype/layout/属性/输出组合拦截；直接抛支持范围错误或伪造参数错误码 |
 | Python 公开接口 | `torch_custom/fla_npu/fla_npu/ops/ascendc/` | 入参名/默认值/返回 tuple 的 FLA 语义 | import `torch_npu` 作为默认路径、注册 `torch.ops.npu` |
 
 层间契约的详细设计见 [`适配层设计.md`](../../../../../architecture/适配层设计.md)，新增适配的逐步操作见
@@ -264,11 +264,15 @@ add_ops_compile_options(
    `aclnn_chunk_gated_delta_rule_fwd.cpp` 的平台分支、`aclnn_recurrent_kda.cpp` 的
    `*_TYPE_SUPPORT_LIST` + `OP_CHECK_DTYPE_NOT_SUPPORT`）；输出与输入的 dtype 跟随关系
    （例如 `y` 跟随 `x`、中间量固定 FP32）也在这一层校验。报错要说明"哪张张量、允许哪些 dtype、实际是什么"。
-8. **拦截的落点只有 host 侧**：所有参数/契约/规模拦截都由 L2 `CheckParams`（含档位组合）与
+8. **拦截的落点只有 aclnn/host 侧**：所有参数/契约/规模拦截都由 L2 `CheckParams`（含档位组合）与
    tiling 校验（含 shape/dtype/平台差异与规模上限）完成，二者合计覆盖算子 README「已知限制」的每一条；
    host 侧校验通过后，kernel 只消费"已判定合法"的输入与 tiling 数据，**不再重复校验、不返回错误码、
    不做运行期报错**（参考 §4.1 第 9 条的 kernel 侧禁令与特殊情况登记要求）。跨层核对方式：
-   从文档逐条找 host 拦截、从 host 新增拦截逐条找文档说明（§3 末节的双向核对）。
+   从文档逐条找 aclnn/host 拦截、从 aclnn/host 新增拦截逐条找文档说明（§3 末节的双向核对）。
+   Stable-ABI/Python 适配层只能接收上层参数、整理成 aclnn 所需格式、补齐默认值并按文档化能力选择
+   V1/V2 aclnn 入口转发；不得做任何
+   参数、shape、dtype、layout、属性、输出组合或支持范围拦截。若 V1/V2 均不支持，适配层仍须调用
+   约定的 aclnn 入口，由 aclnn L2/tiling 返回结构化参数错误。
 9. 上游 `CHECK_RET`/`CHECK_COND` 只返回状态，无法把条件、实际值和原因完整返回上层；通用
    `OP_LOGE` 也不能代替 public 参数级 report。检视时发现这些 guard 承载可定位的 public 约束，
    应报告 DFX 问题。实际整改由独立实现 PR 使用具体的 `OP_LOGE_FOR_*`，并让返回码、结构化消息和
@@ -486,12 +490,13 @@ add_ops_compile_options(
 5. **新增可选输出只加在 V2 形参尾部**，def 不新增输出（§3.2）；缺席时语义与 §5.1 一致。
 6. **默认值等于历史语义**：V2 新增开关的默认值必须复现 V1 行为（例如 `epsilon=1e-6`、
    `useQkL2normInKernel=false`、`useBetaSigmoidInKernel=false`、`useExp2=true`）。
-7. **不得静默忽略开关**：开关被显式打开但当前场景不在 V2 支持范围内时，Python 入口直接报错并提示场景要求，
-   不允许静默降级到 V1 或忽略该开关。
+7. **Stable 不拦截场景差异**：显式开关或场景不在 V2 支持范围内时，Stable/Python 不拦截、不抛错、不伪造
+   参数错误码，也不静默吞掉开关；由适配层 `run_` 按文档化能力选择 V1/V2 入口，并把参数交给所选
+   aclnn 校验。若 V1/V2 均不支持，仍须调用约定的 aclnn 入口，由 aclnn 返回结构化参数错误。
 8. **场景选择在适配层 `run_`**：V1/V2 是同一个 schema 的两条 aclnn 入口，由
    `torch_custom/fla_npu/csrc/src/stable_<op>.cpp` 的 `run_<op>` 内部按参数/形状分支选择
    （参考 `stable_chunk_kda_fwd.cpp` 在 `aclnnChunkKdaFwdV2` 与 `aclnnChunkKdaFwd` 之间的分支）；
-   Python wrapper 只做参数校验、默认值补齐与透传，调用方也只面对一套 Python 签名。
+   Python wrapper 只负责接收参数、整理成 aclnn 所需形式、补齐默认值并调用，调用方也只面对一套 Python 签名。
 9. **交付同步**：`docs/api.md` 必须同时记录两个入口的签名、关系表、场景差异与返回码；`docs/design.md` 记录
    组合关系；ATK 用例覆盖 V1、V2 与回退路径；`tools/op_abi_validate.py` 能对 OPP 头文件校验所有 `FLA_STABLE_EXEC` 调用点。
 10. **ABI 重检**：只新增 V2 文件、不动 def 和 V1 aclnn 时，不触发额外 ABI 检视；一旦改动 def 或既有 aclnn 的
@@ -504,8 +509,9 @@ add_ops_compile_options(
    `install_torch_npu_ops_compat()` 安装的 Python 别名进入同一 Stable 后端，不依赖 legacy 扩展。
 2. **只追加关键字参数**：新增参数一律加在参数表末尾并带默认值；默认值等于本算子的历史行为，已有调用结果不变。
 3. **返回 tuple 稳定**：返回值的个数、顺序、语义固定；新增输出只追加在末尾，未请求时返回 `None`（schema 的 `Tensor?`）。
-4. **可选输出的策略留在这层**：Python 与 Stable 适配层决定"要不要中间量、要不要最终状态"，并把它翻译成
-   "设置哪些入参属性、给哪些可选输出指针"；策略本身不下沉到 L2，L2 只按 §3.4 校验"属性 + 指针组合"是否合法。
+4. **可选输出的请求留在这层，合法性拦截留在 aclnn**：Python 与 Stable 适配层只把"要不要中间量、
+   要不要最终状态"翻译成"设置哪些入参属性、给哪些可选输出指针"；不在适配层拦截组合，L2 按 §3.4
+   校验"属性 + 指针组合"是否合法并返回结构化错误。
 5. **三处参数顺序一致**：`kSchema_<op>` 形参 = `run_<op>` 形参 = `FLA_STABLE_EXEC` 下发的 aclnn 实参顺序；
    由 `tools/op_abi_parity.py` 与 `tools/op_abi_validate.py` 离线门禁检查。
 6. **跨边界类型**：枚举/layout 走"名表 + int code"（名表顺序与 `_stable._ENUM` 一致）；`int[]` 只走 host int64 CPU 张量；
@@ -522,7 +528,7 @@ add_ops_compile_options(
      （默认值必须与签名一致，包装时会校验，写错首次调用即报错）；判据需要**多个参数**组合时才用
      `MUTATION_PREDICATES`；无条件写回只登记 `MUTATED_ARGUMENTS`，不要硬塞开关。
      wrapper 判定为"不写回"时跳过 `requires_grad` 拒绝与 version 推进，判定为"写回"时拒绝
-     `requires_grad=True` 并在成功后 `increment_version()`；被改写张量按上游语义原对象返回/透传。
+     `requires_grad=True` 并在成功后 `increment_version()`；被改写张量按上游语义返回原对象。
      若契约已由 `_stable.py` 的 `_fla_npu_inplace_contract` 热路径 wrapper 自带，则不要再走中央包装（避免重复 bump）；
    - 回归与边界：`tests/stable_abi/regression_mutation_contract.py`；Stable schema 与 Python 原地登记须一致；
      当前无 FakeTensor/functionalization，不能作为 compiler-visible op 入图。
@@ -561,8 +567,9 @@ add_ops_compile_options(
    依赖闭包展开构建（构建侧）——`cmake/custom_build.cmake` 会按同一份变量打包依赖产物（打包侧）。
    只声明不展开时，过滤构建产出的包不自洽：跑到组合入口才以 `561103` + `EZ1013`（缺 JSON 配置）失败，
    容易被误判为数值问题；详见 §3.1 第 3–4 条与 Issue #695。
-5. 组合入口要显式声明支持范围（哪些 dtype/layout/shape 走组合、其余回落哪个入口），不满足时返回
-   `ACLNN_ERR_PARAM_INVALID`；支持范围与回落规则写进 `docs/api.md`。
+5. 组合入口要显式声明支持范围（哪些 dtype/layout/shape 走组合、其余回落哪个入口），不满足时由
+   aclnn L2/tiling 返回 `ACLNN_ERR_PARAM_INVALID`；Stable/Python 不提前拦截，支持范围与回落规则写进
+   `docs/api.md`。
 6. C 形态仍必须交付：schema 与公开名、Stable-ABI 适配（`csrc/src/stable_<算子>.cpp`）、`docs/api.md`、
    ATK 用例；被组合算子各自的 TilingKey 覆盖表由它们自己维护，组合入口只记录"调用了哪些 key"。
 
@@ -626,8 +633,8 @@ ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明�
    `_common.h`、`_tiling_key.h`、`_output_mask.h`。不要自创后缀。
 2. **文件头**：新增源文件保留仓库文件头许可声明（跟随同目录相邻文件的 BSD 3-Clause 或 CANN 2.0 版本）；
    头文件用 include guard（全大写下划线）。
-3. **参数校验集中在 host**：校验函数只判断、不计算；空 tensor、空序列、非法 `cu_seqlens`、不支持的
-   dtype/layout/shape 组合都在这里拦截并返回明确错误信息。
+3. **参数校验集中在 aclnn/host**：校验函数只判断、不计算；空 tensor、空序列、非法 `cu_seqlens`、不支持的
+   dtype/layout/shape 组合都在 aclnn L2/tiling 拦截并返回明确错误信息，Stable/Python 只做参数整理与调用。
 4. **报错文本**：写出实际触发的条件与实参值（`Kdim/Vdim`、`layout`、`outputMask`、实际 `chunk_size`），
    并指明当前支持的取值；不写"参数错误"这类无上下文文本。
 5. **同步**：跨 pipe/核同步只用当前 CANN 头文件支持的成对 `SetFlag`/`WaitFlag`、`CrossCoreSetFlag`/
@@ -661,6 +668,8 @@ ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明�
 - [ ] 可选输出的缺席语义只在 L2 表达，且档位/掩码组合有显式枚举与非法组合拦截。
 - [ ] L1 与 L2 的职责边界清楚：L2 不解释上层保留策略，但校验"入参属性 + 可选输出指针"组合是否合法；
       连续性按逐输入契约处理（该连续的才 Contiguous，state 类保持 view）；报错带实际值。
+- [ ] Stable/Python 适配层只接收参数、整理成 aclnn 所需格式、补默认值、选择 V1/V2 aclnn 并转发；没有参数/shape/dtype/layout/
+      属性/输出组合/支持范围拦截、提前抛错或伪造参数错误码；V1/V2 均不支持时仍由 aclnn L2/tiling 报错。
 - [ ] 根目录 kernel 是默认（arch22）实现，`arch35/` 只放差异文件，架构选择用
       `defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)`；
       host 用 `GetCurNpuArch() == NpuArch::DAV_3510`，没有使用 SoC 枚举或自定义平台别名宏替代。
@@ -673,6 +682,9 @@ ATK 仓的 `skill/atk-quality-guard` 只作为**内容**指导（YAML 只声明�
 - [ ] `tests/atk/<算子>/` 三份 JSON、README、yaml、gen、executor 齐全，TilingKey 覆盖表有实际选择证据。
 - [ ] SoC 覆盖（A2/A3/A5）与 varlen/tail/边界用例齐备。
 - [ ] 文档（README/api/design）与代码、结构化报错、返回码一致。
+- [ ] `ADD_TO_LAUNCHER_LIST_AICORE` 与 `INFER_SHAPE` 失败出口使用
+      `OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON`，reason 含实际状态、期望状态和具体原因；没有任何
+      `*_WITHOUT_REPORT`。
 - [ ] 新增或修改的环境变量、CMake cache 开关或编译定义已在 PR 中预警，并登记默认值、范围、
       异常行为、测试组合和回退方式。
 - [ ] `git status --short`、`git diff --check` 干净，无生成物与敏感信息。

@@ -26,7 +26,7 @@ OpNameFused(x, g, ...) =
 | 参数 | 必选/可选 | 说明 |
 | --- | --- | --- |
 | `x`、`g` | 必选 | 与 `OpName` 相同 |
-| `a_log`、`initial_state`、`cu_seqlens`、`chunk_indices` | 可选 | 直接透传给 `OpName` |
+| `a_log`、`initial_state`、`cu_seqlens`、`chunk_indices` | 可选 | 直接传给 `OpName` |
 | `layout`、`scale`、`chunk_size`、`epsilon` | 属性 | 与 `OpName` 相同 |
 | `y` | 必选输出 | 来自 `OpName` |
 | `state`、`x_norm` | 可选输出 | 来自 `OpName`；同时给出或同时为空 |

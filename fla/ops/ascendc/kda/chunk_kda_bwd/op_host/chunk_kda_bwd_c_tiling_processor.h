@@ -76,8 +76,8 @@ public:
         }
         if (ctx_.chunkSize != 64) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                        ctx_.nodeName, "chunk_size", std::to_string(ctx_.chunkSize),
-                        "Kernel C requires chunk_size=64");
+                        ctx_.nodeName, "chunkSize", std::to_string(ctx_.chunkSize),
+                        "Kernel C requires chunkSize=64");
         return ge::GRAPH_FAILED;
     }
         const bool hasCu = ctx_.shapes[KDA_C_CU_SEQLENS] != nullptr;
@@ -138,7 +138,8 @@ public:
         if (ctx_.useGateInKernel) {
             if (ctx_.shapes[KDA_C_RAW_G] == nullptr ||
                             ctx_.shapes[KDA_C_A_LOG] == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, "raw_g,a_log");
+        OP_LOGE_WITHOUT_REPORT(
+            ctx_.nodeName, "%s: tiling metadata of raw_g/a_log is missing", __func__);
         return ge::GRAPH_FAILED;
     }
             if ((ctx_.types[KDA_C_RAW_G] != ge::DT_FLOAT &&
@@ -199,7 +200,7 @@ public:
         tiling_.scale = ctx_.scale;
         if (tiling_.keyDim != 128 || tiling_.valueDim != 128) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                        ctx_.nodeName, "K,V",
+                        ctx_.nodeName, "K/V",
                         std::to_string(tiling_.keyDim) + "," + std::to_string(tiling_.valueDim),
                         "Kernel C P0 requires K=128 and V=128");
         return ge::GRAPH_FAILED;

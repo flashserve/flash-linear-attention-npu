@@ -5,7 +5,7 @@
 #undef OP_LOGE
 #define OP_LOGD(...) ((void)0)
 #define OP_LOGE(...) ((void)0)
-#include "../op_tiling/chunk_kda_bwd_prepare_tiling_processor.h"
+#include "fla/ops/ascendc/kda/chunk_kda_bwd_prepare/op_host/op_tiling/chunk_kda_bwd_prepare_tiling_processor.h"
 
 int main()
 {
@@ -28,7 +28,8 @@ int main()
             state = gert::StorageShape({1, 2, 5, 128, 128}, {1, 2, 5, 128, 128});
         }
         gert::StorageShape cu({3}, {3}), indices({4}, {4});
-        for (bool a5 : {false, true}) {
+        for (uint32_t platform = 0; platform < 3; ++platform) {
+            const bool a5 = platform == 1, a6 = platform == 2;
             for (bool direction : {false, true}) {
                 KDA::ChunkKdaBwdPrepareTilingData data{};
                 optiling::ChunkKdaBwdPrepareTilingContext ctx{
@@ -36,18 +37,40 @@ int main()
                     variable ? &cu : nullptr, variable ? &indices : nullptr,
                     ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
                     0.125, 64, direction, layouts[layout], 24, 4096, a5};
+                ctx.isA6 = a6;
                 optiling::ChunkKdaBwdPrepareTilingProcessor processor(ctx, data);
-                if (a5 && (seq || variable != packed)) {
+                if ((a5 || a6) && (seq || variable != packed)) {
                     assert(processor.Process() == ge::GRAPH_FAILED);
                     continue;
                 }
                 assert(processor.Process() == ge::GRAPH_SUCCESS);
                 assert(processor.GetTilingKey() == (layout + (variable ? 4 : 0)));
-                assert(processor.GetBlockDim() == 4);
-                assert(processor.GetWorkspaceSize() == 4096 + (a5 ? 0 : processor.GetBlockDim() * 65536));
+                assert(processor.GetBlockDim() == (a6 ? 10 : 4));
+                assert(processor.GetWorkspaceSize() == 4096 + ((a5 || a6) ? 0 : processor.GetBlockDim() * 65536));
+                assert(data.headWindowNum == (a6 ? 5 : 2));
+                assert(data.workTaskNum == (a6 ? 10 : 4));
                 assert(data.inputLayout == layout && data.isVariable == variable);
                 assert(data.stateVFirst == direction);
                 assert(data.NV == 5 && data.T == 65 && data.B == 1);
+                if (a6) {
+                    // A6 assumes equal AIC/AIV counts and uses AIC directly.
+                    for (uint32_t aic : {1U, 4U, 32U}) {
+                        ctx.aicCoreNum = aic;
+                        assert(processor.Process() == ge::GRAPH_SUCCESS);
+                        assert(processor.GetBlockDim() == std::min(10U, aic));
+                    }
+                    ctx.aicCoreNum = 3;
+                    assert(processor.Process() == ge::GRAPH_SUCCESS);
+                    assert(processor.GetBlockDim() == 3);
+                    ctx.aicCoreNum = 0;
+                    assert(processor.Process() == ge::GRAPH_FAILED);
+                    ctx.aicCoreNum = 24;
+                    ctx.scale = -0.25;
+                    assert(processor.Process() == ge::GRAPH_SUCCESS && data.scale == -0.25f);
+                    ctx.scale = 0;
+                    assert(processor.Process() == ge::GRAPH_SUCCESS && data.scale == 0.0f);
+                    ctx.scale = 0.125;
+                }
                 if (variable) {
                     for (int64_t size : {2, 1025, 1028, 1029, 65537}) {
                         gert::StorageShape metadata({size}, {size});

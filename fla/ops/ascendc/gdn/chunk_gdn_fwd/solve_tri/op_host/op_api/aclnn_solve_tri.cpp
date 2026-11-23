@@ -100,7 +100,7 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
 #ifdef OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON
     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, name, reason);
 #else
-    OP_LOGE_WITH_INVALID_ATTR(OP_NAME, name, "invalid", reason.c_str());
+    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: invalid %s: %s", __func__, name, reason.c_str());
 #endif
     return ACLNN_ERR_PARAM_INVALID;
 }
@@ -331,6 +331,7 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
     }
  
      if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
  
@@ -340,7 +341,7 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
@@ -357,10 +358,12 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
  aclnnStatus aclnnSolveTri(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
  {
      L2_DFX_PHASE_2(aclnnSolveTri);
-     if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "SolveTri launch failed.", __func__);
-        return ACLNN_ERR_INNER;
-    }
+              const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+         if (runRet != ACLNN_SUCCESS) {
+             OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                                    static_cast<int>(runRet));
+             return runRet;
+         }
      return ACLNN_SUCCESS;
  }
  

@@ -16,6 +16,7 @@
  */
 
 #include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "register/op_def_registry.h"
 #include "tiling_base/tiling_templates_registry.h"
 #include "tiling_base/tiling_util.h"
@@ -92,8 +93,8 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
             return ge::GRAPH_FAILED);
         OP_CHECK_IF(desc->GetDataType() != xDtype,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, requiredInputNames[i],
-                                              std::to_string(static_cast<int>(desc->GetDataType())),
-                                              std::to_string(static_cast<int>(xDtype))),
+                                              ge::TypeUtils::DataTypeToSerialString(desc->GetDataType()),
+                                              ge::TypeUtils::DataTypeToSerialString(xDtype)),
                     return ge::GRAPH_FAILED);
     }
 
@@ -103,8 +104,8 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
         const auto *desc = context->GetOptionalInputDesc(optionalInputIndices[i]);
         OP_CHECK_IF(desc != nullptr && desc->GetDataType() != xDtype,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, optionalInputNames[i],
-                                              std::to_string(static_cast<int>(desc->GetDataType())),
-                                              std::to_string(static_cast<int>(xDtype))),
+                                              ge::TypeUtils::DataTypeToSerialString(desc->GetDataType()),
+                                              ge::TypeUtils::DataTypeToSerialString(xDtype)),
                     return ge::GRAPH_FAILED);
     }
 
@@ -113,8 +114,8 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
         const auto *desc = context->GetOutputDesc(i);
         OP_CHECK_IF(desc != nullptr && desc->IsExist() && desc->GetDataType() != xDtype,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, outputNames[i],
-                                              std::to_string(static_cast<int>(desc->GetDataType())),
-                                              std::to_string(static_cast<int>(xDtype))),
+                                              ge::TypeUtils::DataTypeToSerialString(desc->GetDataType()),
+                                              ge::TypeUtils::DataTypeToSerialString(xDtype)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -125,12 +126,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     CausalConv1dBwdTilingData *tiling = context->GetTilingData<CausalConv1dBwdTilingData>();
     OP_CHECK_IF(
         tiling == nullptr,
-        OP_LOGE(OP_NAME, "%s",
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                 std::string("tiling data: actual=null; expected=valid CausalConv1dBwdTilingData buffer").c_str()),
         return ge::GRAPH_FAILED);
     const auto memsetRc = memset_s(tiling, sizeof(CausalConv1dBwdTilingData), 0, sizeof(CausalConv1dBwdTilingData));
     OP_CHECK_IF(memsetRc != EOK,
-                OP_LOGE(OP_NAME, "%s",
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                         std::string("memset_s(tiling): rc=" + std::to_string(memsetRc) +
                                     "; expected rc=0 (EOK); failed to initialize tiling data")
                             .c_str()),
@@ -235,7 +236,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     return ge::GRAPH_FAILED);
     } else if (inputLayout == INPUT_LAYOUT_TND) {
         OP_CHECK_IF(xShape.GetDimNum() != 2 || dyShape.GetDimNum() != 2,
-                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                         OP_NAME, "x/dy", "x=" + ShapeToString(xShape) + "; dy=" + ShapeToString(dyShape),
                         "expected rank 2 [total_tokens, D] for TND"),
                     return ge::GRAPH_FAILED);
@@ -251,7 +252,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         inputHeadDim = D;
     } else if (inputLayout == INPUT_LAYOUT_BSND) {
         OP_CHECK_IF(xShape.GetDimNum() != 3 || dyShape.GetDimNum() != 3,
-                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                         OP_NAME, "x/dy", "x=" + ShapeToString(xShape) + "; dy=" + ShapeToString(dyShape),
                         "expected rank 3 [B, T, D] for BSND/BSH"),
                     return ge::GRAPH_FAILED);
@@ -321,8 +322,8 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "queryStartLoc",
-                                              std::to_string(static_cast<int>(qslDesc->GetDataType())),
-                                              std::to_string(static_cast<int>(ge::DT_INT64))),
+                                              ge::TypeUtils::DataTypeToSerialString(qslDesc->GetDataType()),
+                                              "DT_INT64"),
                     return ge::GRAPH_FAILED);
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
         const int64_t *qslData = (qslTensor != nullptr) ? qslTensor->GetData<int64_t>() : nullptr;
@@ -397,7 +398,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_IF(
             platformInfoPtr == nullptr,
-            OP_LOGE(OP_NAME, "%s",
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                     std::string("platformInfo: actual=null; expected=valid platform metadata for resource queries")
                         .c_str()),
             return ge::GRAPH_FAILED);
@@ -411,12 +412,12 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0,
-                    OP_LOGE(OP_NAME, "%s",
+                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                             std::string("coreNum: actual=0; expected > 0 AIV cores from platform metadata").c_str()),
                     return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
         OP_CHECK_IF(ubSize == 0,
-                    OP_LOGE(OP_NAME, "%s",
+                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                             std::string("ubSize: actual=0 bytes; expected > 0 bytes from platform metadata").c_str()),
                     return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
@@ -427,7 +428,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
 
     uint32_t alignDim = (inputLayout == INPUT_LAYOUT_BNSD || inputLayout == INPUT_LAYOUT_NTD) ? inputHeadDim : D;
     OP_CHECK_IF(alignDim % 16 != 0,
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                     OP_NAME, "D/headDim", std::to_string(alignDim),
                     std::string("expected dimension divisible by 16 for inputLayout=") + inputLayoutStr),
                 return ge::GRAPH_FAILED);
@@ -675,7 +676,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     OP_CHECK_IF(need > ubSize,
-                OP_LOGE(OP_NAME, "%s",
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                         std::string("UB capacity: requiredBytes=" + std::to_string(need) +
                                     "; availableBytes=" + std::to_string(ubSize) +
                                     "; expected requiredBytes <= availableBytes for selected tile")
@@ -733,7 +734,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     context->SetBlockDim(mainCoreNum);
     const auto scheduleRc = context->SetScheduleMode(1);
     OP_CHECK_IF(scheduleRc != ge::GRAPH_SUCCESS,
-                OP_LOGE(OP_NAME, "%s",
+                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
                         std::string("SetScheduleMode: mode=1; rc=" + std::to_string(scheduleRc) +
                                     "; expected rc=0 (GRAPH_SUCCESS)")
                             .c_str()),

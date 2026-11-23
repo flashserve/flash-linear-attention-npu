@@ -57,8 +57,96 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    if (workspaceSize == nullptr || executor == nullptr) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (q == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (k == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (v == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (gk == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "gk");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (rawG == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (aLog == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "a_log");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dtBias == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dt_bias");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (akk == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "akk");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (vNew == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "v_new");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (h == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "h");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dh == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dh");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dvScan == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dv_scan");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dAqk == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "d_aqk");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dqRaw == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dq_raw");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dqOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dqOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dkOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dkOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dvOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dvOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dBetaOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dBetaOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dGOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dGOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dALogOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dALogOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (dDtBiasOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dDtBiasOut");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (allowNegEigval && !useBetaSigmoidInKernel) {
@@ -242,9 +330,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkKdaBwdFinalize(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaBwdFinalize launch failed", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

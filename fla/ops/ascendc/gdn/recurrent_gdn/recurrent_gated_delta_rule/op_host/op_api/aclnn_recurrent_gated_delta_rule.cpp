@@ -170,7 +170,9 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
 
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
-    if (!(CheckNotNull(params))) { return ACLNN_ERR_PARAM_INVALID; };
+    if (!(CheckNotNull(params))) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     {
         const aclnnStatus checkStatus = CheckParams(params);
         if (checkStatus != ACLNN_SUCCESS) {
@@ -251,7 +253,11 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
     const rgdn_check::Params params{query, key, value, beta, stateRef, actualSeqLengths,
         ssmStateIndices, g, gk, numAcceptedTokens, aLog, dtBias, scaleValue,
         useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, out};
-    if (!(rgdn_check::Check(params))) { return ACLNN_ERR_PARAM_INVALID; };
+    // V1/V2 的必选判空统一由 rgdn_check::Check 负责，避免同一缺参两个入口两种返回码。
+    const aclnnStatus checkRet = rgdn_check::Check(params);
+    if (checkRet != ACLNN_SUCCESS) {
+        return checkRet;
+    }
 
     L2_DFX_PHASE_1(aclnnRecurrentGatedDeltaRuleV2,
                   DFX_IN(query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices,

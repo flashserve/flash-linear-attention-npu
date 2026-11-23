@@ -154,6 +154,15 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
 {
     PreProcessBwdKernelMergedParams params{q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional, scale, chunkSize,
                                           dhmOut};
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnPreProcessBwdKernelMerged,
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional), DFX_OUT(dhmOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -168,16 +177,19 @@ aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
         return ret;
     }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
                                                  params.gkOptional, params.cuSeqlensOptional, params.scale,
                                                  params.chunkSize, params.dhmOut, executorPtr);
     if (!(result != nullptr)) {
+        // 与 fwd/_dhu 统一：l0op 未返回输出按内部失败上报（561103），
+        // 参数类根因以 tiling 的结构化报文为准。
         OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
-            __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error "
+                     "for the root cause", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -188,9 +200,11 @@ aclnnStatus aclnnPreProcessBwdKernelMerged(void *workspace, uint64_t workspaceSi
                                          aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnPreProcessBwdKernelMerged);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in aclnnPreProcessBwdKernelMerged launch aicore.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

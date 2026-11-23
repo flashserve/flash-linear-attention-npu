@@ -243,12 +243,12 @@ private:
     __aicore__ inline void ComputeLeader(
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t r)
     {
-        // 按切片内唯一 hk 的序号选 L0 乒乓槽：A5 执行域（G<=4，hvBegin 为 cg
-        // 的倍数且 cg 为 G 的倍数）下与 r/G 恒等；若未来扩展 G>4 实例，该式
-        // 在 hvBegin 非对齐时仍正确轮转槽位。
-        const uint32_t leaderIndex = static_cast<uint32_t>(
-            (meta.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize) -
-            meta.hvBegin / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize));
+        uint32_t leaderIndex = 0;
+        if constexpr (G != 0) {
+            // 小比例模板沿用切片内 hk 序号；A5 运行时组沿用原来的 L0 槽选择。
+            leaderIndex = static_cast<uint32_t>(
+                (meta.hvBegin + r) / G - meta.hvBegin / G);
+        }
         const uint32_t l0Slot = leaderIndex & 1U;
         auto l1K = resource_.l1Buf.template GetBufferByByte<MainT>(
             L1_K_BASE + r * L1_SLOT_BYTES);

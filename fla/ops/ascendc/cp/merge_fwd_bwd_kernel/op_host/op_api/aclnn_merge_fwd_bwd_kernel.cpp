@@ -18,6 +18,7 @@
 #include "opdev/tensor_view_utils.h"
 #include "op_common/log/log.h"
 #include <string>
+#include "graph/utils/type_utils.h"
 
 static constexpr const char *OP_NAME = "aclnnMergeFwdBwdKernel";
 
@@ -52,7 +53,10 @@ aclnnStatus CheckPublicFormat(const aclTensor *tensor, const char *name)
     const auto viewFormat = tensor->GetViewFormat();
     // ND/NCHW/NCL/NHWC name the same packed layout. NZ and other private formats do not.
     if (!(!IsPrivateFormat(storageFormat) && !IsPrivateFormat(viewFormat))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "format", "private",
+        const std::string actual = std::string("storage=") +
+            ge::TypeUtils::FormatToSerialString(storageFormat) + ",view=" +
+            ge::TypeUtils::FormatToSerialString(viewFormat);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, name, actual,
             "storage and view format must be public (ND/NCHW/NCL/NHWC), private formats such as NZ are not supported");
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -72,23 +76,25 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
     }
     // h is inplace. A contiguous copy would be written and then dropped.
     if (!(IsContiguous(h))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "and", std::to_string(IsContiguous(h)), "h is written in place and must be contiguous.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "h", "not contiguous", "h is written in place and must be contiguous");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     const DataType dtype = agHm->GetDataType();
     if (!(dtype == DataType::DT_FLOAT || dtype == DataType::DT_BF16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "agHm dtype must be FP32 or BF16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "agHm",
+            ge::TypeUtils::DataTypeToSerialString(dtype), "agHm dtype must be FP32 or BF16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(h->GetDataType() == dtype)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "h dtype must match agHm.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "h",
+            ge::TypeUtils::DataTypeToSerialString(h->GetDataType()), "h dtype must match agHm");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     const Shape agView = agHm->GetViewShape();
     if (!(agView.GetDimNum() == 4)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "HV", std::to_string(agView.GetDimNum()), "agHm must be rank-4 [S,HV,128,256].");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "agHm", std::to_string(agView.GetDimNum()), "agHm must be rank-4 [S,HV,128,256]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t s = agView.GetDim(0);
@@ -96,37 +102,64 @@ aclnnStatus CheckMergeFwdBwdKernelParams(
     const int64_t k = agView.GetDim(2);
     const int64_t vk = agView.GetDim(3);
     if (!(s >= 1 && s <= kSMax && hv >= 1 && hv <= kHvMax)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "S must be in [1,1024] and HV must be in [1,256].");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "S,HV",
+            "S=" + std::to_string(s) + ",HV=" + std::to_string(hv),
+            "S must be in [1,1024] and HV must be in [1,256]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(k == kK && vk == kVK)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "K must be 128 and the last dim must be 256.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K,VK",
+            "K=" + std::to_string(k) + ",VK=" + std::to_string(vk),
+            "K must be 128 and VK must be 256");
         return ACLNN_ERR_PARAM_INVALID;
     }
     // Tiling reads the storage shape. Both must be the dense [HV,128,128] buffer.
-    if (!(MatchesShape(h->GetViewShape(), {hv, kK, kV}) && MatchesShape(h->GetStorageShape(), {hv, kK, kV}))) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(OP_NAME, "HV", "invalid", "h must be [HV,128,128] for both state layouts.");
+    const auto &hViewShape = h->GetViewShape();
+    const auto &hStorageShape = h->GetStorageShape();
+    const auto shapeText = [](const op::Shape &shape) {
+        if (shape.GetDimNum() != 3) {
+            return "rank=" + std::to_string(shape.GetDimNum());
+        }
+        return "[" + std::to_string(shape.GetDim(0)) + "," + std::to_string(shape.GetDim(1)) +
+            "," + std::to_string(shape.GetDim(2)) + "]";
+    };
+    if (!MatchesShape(hViewShape, {hv, kK, kV})) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "h",
+            "view=" + shapeText(hViewShape), "h view shape must be [HV,128,128]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!MatchesShape(hStorageShape, {hv, kK, kV})) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "h",
+            "storage=" + shapeText(hStorageShape), "h storage shape must be [HV,128,128]");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     if (!(preOrPostNumRanks >= 1 && preOrPostNumRanks <= s)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "preOrPostNumRanks", "invalid", "preOrPostNumRanks must be in [1, S].");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "preOrPostNumRanks,S",
+            std::to_string(preOrPostNumRanks) + "," + std::to_string(s),
+            "preOrPostNumRanks must be in [1, S]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(rank >= 0 && rank < s)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", "invalid", "rank must be in [0, S).");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "rank,S",
+            std::to_string(rank) + "," + std::to_string(s),
+            "rank must be in [0, S)");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const bool unitWorld = (s == 1 && preOrPostNumRanks == 1 && rank == 0);
     if (!unitWorld) {
         if (forward) {
             if (!(rank >= preOrPostNumRanks)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", "invalid", "forward merge requires rank >= N.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "rank,N",
+            std::to_string(rank) + "," + std::to_string(preOrPostNumRanks),
+            "forward merge requires rank >= N");
         return ACLNN_ERR_PARAM_INVALID;
     }
         } else {
             if (!(rank + preOrPostNumRanks < s)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(OP_NAME, "rank", "invalid", "backward merge requires rank + N < S.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "rank,N,S",
+            std::to_string(rank) + "," + std::to_string(preOrPostNumRanks) + "," + std::to_string(s),
+            "backward merge requires rank + N < S");
         return ACLNN_ERR_PARAM_INVALID;
     }
         }
@@ -144,11 +177,19 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     const aclTensor *h, const aclTensor *agHm, int64_t preOrPostNumRanks, int64_t rank, bool forward,
     bool stateVFirst, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    if (!(agHm != nullptr && h != nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "agHm/h");
+    if (agHm == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "agHm");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
-    if (!(workspaceSize != nullptr && executor != nullptr)) {
+    if (h == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "h");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
