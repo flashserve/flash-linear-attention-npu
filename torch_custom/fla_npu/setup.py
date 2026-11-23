@@ -47,6 +47,8 @@ class CleanBuildPy(_build_py):
         if built_package_dir.exists():
             shutil.rmtree(built_package_dir)
         super().run()
+        from build_vdn_910b import stage_optional_vdn
+        stage_optional_vdn(built_package_dir)
         from build_layer_manifest import write_layer_manifest
         write_layer_manifest(built_package_dir)
         writer = runpy.run_path(str(REPO_ROOT / "scripts/package/ops_transformer/scripts/finalize_wheel_opp.py"))

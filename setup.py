@@ -527,6 +527,8 @@ class FlaNpuBuildPy(_build_py):
         super().run()
         run_package = _RUN_PACKAGE or _find_single_run_package()
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")
+        from build_vdn_910b import stage_optional_vdn
+        stage_optional_vdn(built_package_dir)
         from build_layer_manifest import write_layer_manifest
         write_layer_manifest(built_package_dir)
         _stage_offline_bundle(Path(self.build_lib))

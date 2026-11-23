@@ -2,6 +2,10 @@
 
 Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带前缀的入口。各算子的参数和支持范围见名称链接，安装见根 [README](../README.md)，旧调用方式迁移见 [兼容与迁移指南](兼容与迁移指南.md)。
 
+## 视频线性注意力
+
+[VDN 视频线性注意力前向](../torch_custom/fla_npu/fla_npu/ops/vdn/README.md) 使用组合入口 `fla_npu.ops.vdn.vdn_forward`，支持 Cholesky 和 FP32 Newton–Schulz 求解、双向帧状态递推及 alpha 窗口合并。
+
 <a id="atk-op-options"></a>
 
 ## Ascend C 算子

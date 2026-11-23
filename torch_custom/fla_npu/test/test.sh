@@ -160,6 +160,7 @@ echo "timeout:   ${TIMEOUT_SEC}s/每个测试"
 echo "=========================================="
 echo ""
 
+run_test "vdn_forward"                     "python3 test_npu_vdn_forward.py"
 run_test "prepare_wy_repr_bwd_full"        "python3 test_npu_prepare_wy_repr_bwd_full.py"
 run_test "chunk_gated_delta_rule_bwd_dhu"  "python3 test_npu_chunk_gated_delta_rule_bwd_dhu.py"
 run_test "chunk_bwd_dv_local"              "python3 test_npu_chunk_bwd_dv_local.py"
