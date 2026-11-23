@@ -131,6 +131,10 @@ overlay wheel 显示 `artifact=wheel`；standalone 未携带 OPP，会显示本�
 
 ## 4. 如何构建这三类包
 
+**跨协议版本的 wheel overlay 只支持全量构建。** 当基础 wheel 和增量 wheel 的 `layer_manifest.json` 协议版本不同（v1 与 v2）时，不支持将 `FLA_NPU_OPS` 或 `FLA_NPU_OVERLAY_OPS` 设为部分算子。构建这类 wheel 时请取消设置这两个变量。下面按算子构建 wheel 的示例适用于双方协议版本相同的情况。
+
+例如，源码中同时有依赖私有接口的 GDN 和只用公开接口的 `chunk_fwd_o`。即使两个变量都只选 `chunk_fwd_o`，生成器仍按源码中全部适配入口的依赖生成 v2 清单。只支持 v1 的基础安装器会拒绝 v2 wheel，即使对方是全量包。此时应先按第 1 节通过 pip 安装支持 v2 的基础 wheel，再使用 overlay。
+
 以下以 A2 的 `chunk_fwd_o` 为例。将算子名换成实际更新对象；
 目标 SoC 可选 `ascend910b`（A2）、`ascend910_93`（A3）或 `ascend950`（A5），
 使用本机 Host 架构及对应的构建环境。
