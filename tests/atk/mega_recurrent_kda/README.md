@@ -6,6 +6,8 @@
 bash tests/atk/run_test_cpu.sh -op=mega_recurrent_kda -soc=ascend950 -npu_device_id=0 -scope=accuracy
 ```
 
+开发时，CPU 标杆的五项输出默认缓存在仓库的 `build/cpu-golden-cache`，可通过 `FLA_KDA_GOLDEN_CACHE` 指定复用目录。输入张量内容、布局、标量、标杆源码或 CPU 计算配置变化时重新计算。每次验证仍执行当前设备实现并比较输出。
+
 九个用例覆盖 BSH、TH、不等长序列跨越 64 行、卷积权重的三种布局、物理状态槽间隙、缓冲区复用及 4096 token。CPU 与设备由相同种子生成输入，CPU 执行独立的 PyTorch 参考。设备调用公开 Stable ABI，检查四个状态输出与输入共用地址，以及 checkpoint 保持原值。
 
 精度边界回归可另行运行 `python -m pytest -q tests/atk/mega_recurrent_kda/test_precision_boundaries.py`。用例覆盖单行 decay 投影、跨块卷积历史交接，整批 66 行但末组仅余 3 行时的 decay 计算，以及变长序列在非对齐位置切换分组。

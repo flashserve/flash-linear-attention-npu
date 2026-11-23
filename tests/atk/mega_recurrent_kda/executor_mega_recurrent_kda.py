@@ -1,5 +1,6 @@
 """ATK precision coverage for the fused Ascend 950 KDA operator."""
 import json
+import os
 import sys
 from itertools import accumulate
 from pathlib import Path
@@ -11,8 +12,15 @@ from atk.tasks.api_execute.base_api import BaseApi
 TESTS = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(TESTS / "reference"))
 sys.path.insert(0, str(TESTS / "atk" / "common"))
+from cpu_golden_cache import cached_cpu_outputs
 from mega_recurrent_kda_reference import _make_case, mega_recurrent_kda_golden
 from _ascendc_common_executor import _finite_tuple, _marker_device
+
+
+def expected_outputs(inputs):
+    directory = os.environ.get("FLA_KDA_GOLDEN_CACHE", TESTS.parent / "build" / "cpu-golden-cache")
+    return cached_cpu_outputs(mega_recurrent_kda_golden, inputs, directory,
+                              ("conv_state", "replay_u", "replay_k", "replay_decay"))
 
 
 def build_inputs(spec):
@@ -59,7 +67,7 @@ class FunctionApi(BaseApi):
         spec = json.loads(item.range_values)
         inputs = build_inputs(spec)
         if self.device == "cpu":
-            return _finite_tuple(mega_recurrent_kda_golden(**inputs), golden=True)
+            return _finite_tuple(expected_outputs(inputs), golden=True)
         if self.device != "npu":
             raise ValueError(f"Unsupported ATK backend {self.device}")
         from fla_npu.ops.ascendc import npu_mega_recurrent_kda

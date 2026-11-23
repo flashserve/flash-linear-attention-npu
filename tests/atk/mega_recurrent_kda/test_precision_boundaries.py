@@ -3,7 +3,7 @@ import pytest
 import torch
 
 pytest.importorskip("torch_npu")
-from executor_mega_recurrent_kda import build_inputs, mega_recurrent_kda_golden, to_device
+from executor_mega_recurrent_kda import build_inputs, expected_outputs, to_device
 
 
 @pytest.mark.parametrize("lengths,heads,layout,output,atol,rtol", [
@@ -23,7 +23,7 @@ def test_projection_and_history_handoff(lengths, heads, layout, output, atol, rt
     args["a_log"] = args.pop("A_log")
     mutable = ("conv_state", "replay_u", "replay_k", "replay_decay")
     initial = {k: args[k].clone() for k in mutable}
-    expected = mega_recurrent_kda_golden(**host)[output]
+    expected = expected_outputs(host)[output]
     slots = host["state_indices"].long()
     def active_rows(tensor):
         return torch.cat([tensor[slot, :, :length].reshape(-1) for slot, length in zip(slots, lengths)])
