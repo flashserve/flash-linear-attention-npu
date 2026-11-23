@@ -4,6 +4,7 @@
 namespace KdaPrepare::Arch22 {
 constexpr FixpipeConfig NzOutput={CO2Layout::NZ,false};
 template<uint32_t Norm,uint32_t Gate> class Cube {
+    KdaPrepare::ChunkCursor chunkCursor_{};
     const PrepareKernelArgs &a_;TPipe *pipe_;uint32_t core_,slot_;bool identityReady_[2],leafFast_[2];Work w_;
     TBuf<TPosition::A1> l1_;TBuf<TPosition::A2> la_;
     TBuf<TPosition::B2> lb_;TBuf<TPosition::CO1> lc_;
@@ -412,7 +413,7 @@ public:
         for(uint64_t job=core_;job<WorkCount(a_.tiling);job+=a_.tiling.usedCoreNum,++generation) {
             uint64_t workJob=job;
             if constexpr(Norm!=0 && Gate!=0)workJob=RotateWork(a_.tiling,job,core_,generation);
-            slot_=generation&1;w_=Describe(a_,workJob);
+            slot_=generation&1;w_=Describe(a_,workJob,chunkCursor_);
             CrossCoreWaitFlag<0x2,PIPE_MTE2>(slot_);
             if(w_.rows) {
                 for(uint32_t lane=0;lane<2;++lane)if(w_.active[lane])Scores(lane);

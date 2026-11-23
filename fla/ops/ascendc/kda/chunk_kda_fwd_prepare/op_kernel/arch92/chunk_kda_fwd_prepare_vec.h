@@ -899,7 +899,7 @@ public:
                 DecodeWorkItem(
                     args_.tiling, work, globalChunk, headPartition);
                 ChunkRange chunk{};
-                if (!ResolveChunk(args_, globalChunk, chunk)) {
+                if (!ResolveChunk(args_, globalChunk, chunk, chunkCursor_)) {
                     continue;
                 }
                 uint32_t headBegin = 0;
@@ -917,7 +917,7 @@ public:
             for (uint32_t globalChunk = bodyBegin;
                  globalChunk < bodyEnd; ++globalChunk) {
                 ChunkRange chunk{};
-                if (!ResolveChunk(args_, globalChunk, chunk)) {
+                if (!ResolveChunk(args_, globalChunk, chunk, chunkCursor_)) {
                     continue;
                 }
                 ProcessChunkHeadRange(
@@ -954,7 +954,7 @@ public:
                 }
                 ChunkRange chunk{};
                 if (ResolveChunk(
-                        args_, bodyChunkCount + tailChunk, chunk)) {
+                        args_, bodyChunkCount + tailChunk, chunk, chunkCursor_)) {
                     ProcessChunkHeadRange(chunk, headBegin, headEnd);
                 }
                 tailTask = segmentEnd;
@@ -972,6 +972,7 @@ public:
     }
 
 private:
+    KdaPrepare::ChunkCursor chunkCursor_{};
     __aicore__ inline void ProcessChunkHeadRange(
         const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
     {

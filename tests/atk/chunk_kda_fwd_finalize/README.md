@@ -576,3 +576,46 @@ racecheck 的目标结论限于本算子。Cast/IsFinite/ReduceAll 等 ATK 辅�
 远程证据根：`/data/huangjunzhe/GDN/work/kda_finalize_sanitizer_keys_20261015`。正式 DC 证据为 `attempt_03/determinism`；44 条有效 sanitizer 原始记录的逐例来源、工具日志和 XLSX SHA 位于 `sanitizer_case_origins.json`（保留原 attempt 路径，不复制冒充完整运行）。共享设备占用导致的部分尝试和前期 runner 失败均单独保存，不计作通过。
 
 完整结果与复核：`a2a3_tiling_key_quality_report_20261015.md`、`independent_cross_attempt_validation_v2.json`、`deliverables/a2a3_tiling_key_quality_cases_20261015.csv`。证据归档为 `deliverables/a2a3_tiling_key_quality_evidence_20261015.zip`；其中保留正常包原生 DC XLSX、逐轮位比较记录、两工具各 22 份原始日志/XLSX、冻结资产/runner、18 源文件及实际 normal/san 对象的前后 SHA 核验。
+
+
+## 核内游标回归（#1164）
+
+与 PR #1194 在同一 main 基线 `3b24b56d` 上比较。使用原生 ACLNN 空表入参，
+覆盖真正的 kernel fallback；常规 Python 包装层自动补表行为保持兼容。
+数学计算、调度、buffer、同步、ABI 和 TilingKey 均未修改。
+
+A2 原始精度套件 200/200 通过。补充原生无表/显式表对比覆盖
+8 种输出布局与 state_v_first 组合、尾块和千级序列；
+总 token=524288、4684 段、4 heads、K=V=128 的有效输出亦逐位一致。
+
+性能使用相同 A2、输入和采集参数，串行测量；总 token=524288，
+序列数覆盖 1/128/512/1024/4684，4 heads，K=V=128，chunk_size=64。
+每例预热 5 次后采集 1 次，不报告均值或稳定性统计。下表为 4684 段结果，单位 us。
+host 与整次调用来自 msprof API 时间线，kernel 来自 op_summary 的 Task Duration(us)。
+整次调用范围为 GetWorkspaceSize 开始至随后的同步结束，包含采集开销；
+描述符构造、输入生成和 workspace 分配不在统计范围内。
+
+| 方案 | host GetWorkspaceSize | kernel | 整次调用 |
+| --- | ---: | ---: | ---: |
+| PR #1194 host 建表 | 276.840 | 3463.509 | 3903.890 |
+| kernel 游标 | 115.180 | 3449.168 | 3644.930 |
+
+完整段数扫描：下表为游标相对 PR #1194 的时延变化百分比，负值表示更快。
+
+| 入口 | 序列数 | GetWorkspaceSize 变化 | kernel 变化 | 整次调用变化 |
+| --- | ---: | ---: | ---: | ---: |
+| finalize | 1 | -94.15% | -0.24% | -7.33% |
+| finalize | 128 | -95.30% | +0.29% | -7.16% |
+| finalize | 512 | -94.79% | +0.23% | -7.25% |
+| finalize | 1024 | -68.27% | -0.63% | -5.81% |
+| finalize | 4684 | -58.39% | -0.41% | -6.63% |
+
+### 文件组织调整复验（2026-11-24）
+
+游标实现归入各算子已有头文件，未新增公共头文件或测试文件。
+A2、A5 的三个相关算子及依赖均编译通过，Stable-ABI 调用点检查通过。
+A2 全量精度用例重新执行通过：Fwd 48 条、Finalize 200 条，Prepare 198 条直接通过，
+另 2 条既有数值误差用例各执行 50 轮并通过 CT 双标杆复检；原始混合容差结果保留。
+原生空表补充用例及 524288 token、4684 段的四个入口均与显式表有效输出逐位一致。
+V1、Prepare、Finalize 三份游标分别通过 1658 组配置、4787524 次查询的 CPU oracle。
+调整后 A2 的 19 个 kernel 二进制与调整前逐字节一致，上述性能数据对应相同二进制。

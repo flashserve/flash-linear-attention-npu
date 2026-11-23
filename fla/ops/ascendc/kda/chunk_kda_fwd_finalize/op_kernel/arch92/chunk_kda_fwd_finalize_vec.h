@@ -96,7 +96,7 @@ public:
                 }
             }
             FinalizeChunk chunk{};
-            if (!ResolveChunk(args_, chunkId, chunk)) {
+            if (!ResolveChunk(args_, chunkId, chunk, chunkCursor_)) {
                 continue;
             }
             if (headEnd > args_.tiling.valueHeadNum) {
@@ -135,6 +135,7 @@ public:
     }
 
 private:
+    KdaFinalize::ChunkCursor chunkCursor_{};
     __aicore__ inline void LoadQhInputsToUb(const FinalizeChunk &chunk,
                                             uint32_t head, uint32_t ubSlot)
     {

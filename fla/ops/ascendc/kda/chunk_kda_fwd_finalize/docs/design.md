@@ -418,3 +418,10 @@ token/head 轴，`TND/NTD` 交换 rank-3 的 token/head 轴。
 公开 intermediate states。稳定 `fla_npu.ops.ascendc` 入口通过 ctypes
 直接调用 aclnn，不注册 legacy `torch.ops.npu` 接口。算子私有 ATK
 直调只验证设备实现，不能替代稳定 Python 入口验证。
+
+## 缺省 chunk_indices 的核内游标（规则 V2，局部复核）
+
+无表路径使用当前 kernel 实例独占的 `KdaFinalize::ChunkCursor`，缓存序列边界与 chunk 前缀；
+显式表沿用原有查表路径。游标支持重复、跨步和回退查询，数学计算、buffer、同步与 ABI 不变。
+完整状态、不变量、复杂度及验证计划见
+[Fwd 游标设计](../../chunk_kda_fwd/docs/design.md#缺省-chunk_indices-的核内游标规则-v2局部复核)。

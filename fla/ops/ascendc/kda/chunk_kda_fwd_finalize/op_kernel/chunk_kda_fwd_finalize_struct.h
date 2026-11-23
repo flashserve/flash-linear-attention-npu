@@ -13,6 +13,62 @@
 
 namespace KdaFinalize {
 
+// One cursor per kernel instance. cu_seqlens is immutable for the launch.
+// Ascend C address-space/function decorations are supplied by the caller.
+class ChunkCursor {
+public:
+    __aicore__ inline bool Resolve(
+        const __gm__ int64_t *cu, uint64_t seqNum, uint64_t totalTokens,
+        uint64_t chunkSize, uint64_t flatChunk,
+        uint64_t &seq, uint64_t &begin, uint64_t &end)
+    {
+        if (cu == nullptr || chunkSize == 0) {
+            return false;
+        }
+        // Backward queries within the cached sequence need no reset. This also
+        // handles prefetch/revisit and a valid query after an exhausted search.
+        if (flatChunk < chunkPrefix_) {
+            sequence_ = 0;
+            chunkPrefix_ = 0;
+            valid_ = false;
+        }
+        while (sequence_ < seqNum) {
+            if (!valid_) {
+                const int64_t start = cu[sequence_];
+                const int64_t finish = cu[sequence_ + 1];
+                if (start < 0 || finish < start ||
+                    static_cast<uint64_t>(finish) > totalTokens) {
+                    return false;
+                }
+                sequenceBegin_ = static_cast<uint64_t>(start);
+                sequenceEnd_ = static_cast<uint64_t>(finish);
+                const uint64_t length = sequenceEnd_ - sequenceBegin_;
+                sequenceChunks_ = length / chunkSize + (length % chunkSize != 0);
+                valid_ = true;
+            }
+            const uint64_t localChunk = flatChunk - chunkPrefix_;
+            if (localChunk < sequenceChunks_) {
+                seq = sequence_;
+                begin = sequenceBegin_ + localChunk * chunkSize;
+                end = sequenceEnd_ - begin > chunkSize ? begin + chunkSize : sequenceEnd_;
+                return begin < end;
+            }
+            chunkPrefix_ += sequenceChunks_;
+            ++sequence_;
+            valid_ = false;
+        }
+        return false;
+    }
+
+private:
+    uint64_t sequence_ = 0;
+    uint64_t chunkPrefix_ = 0;
+    uint64_t sequenceBegin_ = 0;
+    uint64_t sequenceEnd_ = 0;
+    uint64_t sequenceChunks_ = 0;
+    bool valid_ = false;
+};
+
 // 三段门控的唯一判定点：把全工程统一用 __NPU_ARCH__ 门控（9201/3510/2201），
 // 收敛到这一处。struct/cube/kernel 的 per-arch 判定一律从这里的 bool 取，不再各自 #if。
 // MIX 实例核型仍在 tiling_key.h 内以数值宏表达（ASCENDC_TPL_PRE 阶段只接受可展开成
@@ -131,7 +187,8 @@ __aicore__ inline uint32_t WorkEnd(uint32_t total, uint32_t core, uint32_t cores
     return static_cast<uint32_t>((static_cast<uint64_t>(total) * (core + 1)) / cores);
 }
 
-__aicore__ inline bool ResolveChunk(const FinalizeArgs &args, uint32_t chunkId, FinalizeChunk &chunk)
+__aicore__ inline bool ResolveChunk(const FinalizeArgs &args, uint32_t chunkId, FinalizeChunk &chunk,
+                                    KdaFinalize::ChunkCursor &cursor)
 {
     chunk.globalChunk = chunkId;
     if (!args.tiling.isVarLen) {
@@ -153,17 +210,15 @@ __aicore__ inline bool ResolveChunk(const FinalizeArgs &args, uint32_t chunkId, 
         sequence = static_cast<uint32_t>(indices[chunkId * 2]);
         localChunk = static_cast<uint32_t>(indices[chunkId * 2 + 1]);
     } else {
-        uint32_t prefix = 0;
-        for (uint32_t seq = 0; seq < args.tiling.seqNum; ++seq) {
-            const uint32_t length = static_cast<uint32_t>(cu[seq + 1] - cu[seq]);
-            const uint32_t count = CeilDiv(length, Shape::kChunkRows);
-            if (chunkId < prefix + count) {
-                sequence = seq;
-                localChunk = chunkId - prefix;
-                break;
-            }
-            prefix += count;
+        uint64_t seq = 0, begin = 0, end = 0;
+        if (!cursor.Resolve(cu, args.tiling.seqNum, args.tiling.seqLen,
+                            Shape::kChunkRows, chunkId, seq, begin, end)) {
+            return false;
         }
+        chunk.batch = 0;
+        chunk.tokenBegin = static_cast<uint32_t>(begin);
+        chunk.validRows = static_cast<uint32_t>(end - begin);
+        return true;
     }
     const uint32_t begin = static_cast<uint32_t>(cu[sequence]) + localChunk * Shape::kChunkRows;
     const uint32_t end = static_cast<uint32_t>(cu[sequence + 1]);

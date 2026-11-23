@@ -248,6 +248,7 @@ public:
     }
 
 private:
+    KdaVarlen::ChunkCursor chunkCursor_{};
     __aicore__ inline void AllocVectorEvents()
     {
         mte2ToVEvent_ = pipe_->AllocEventID<HardEvent::MTE2_V>();
@@ -1233,7 +1234,7 @@ private:
         } else {
             if (!KdaVarlen::ResolveChunkRange(
                     cuSeqlensAddr_, chunkIndicesAddr_, N_, T_, BT_, flatChunk,
-                    seq, start, end)) {
+                    seq, start, end, chunkCursor_)) {
                 return false;
             }
             b = 0;

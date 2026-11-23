@@ -4,6 +4,7 @@
 
 namespace KdaPrepare::Arch22 {
 template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
+    KdaPrepare::ChunkCursor chunkCursor_{};
     const PrepareKernelArgs &a_; TPipe *pipe_; uint32_t core_,lane_;
     TBuf<TPosition::VECCALC> ub_;
     LocalTensor<bfloat16_t> q_,k_,v_;
@@ -710,7 +711,7 @@ public:
         for(uint64_t job=core_;job<WorkCount(a_.tiling);job+=a_.tiling.usedCoreNum,++generation) {
             uint64_t workJob=job;
             if constexpr(Norm!=0 && Gate!=0)workJob=RotateWork(a_.tiling,job,core_,generation);
-            uint32_t slot=generation&1;w_=Describe(a_,workJob);base_=GmLane(core_,slot,lane_);
+            uint32_t slot=generation&1;w_=Describe(a_,workJob,chunkCursor_);base_=GmLane(core_,slot,lane_);
             CrossCoreWaitFlag<0x2,PIPE_MTE3>(6+slot);
             if(w_.active[lane_]&&w_.rows) {
                 Prepare();

@@ -156,3 +156,53 @@ python3 -m py_compile \
   tests/atk/chunk_kda_fwd_prepare/gen_chunk_kda_fwd_prepare.py \
   tests/atk/chunk_kda_fwd_prepare/executor_chunk_kda_fwd_prepare.py
 ```
+
+
+## 核内游标回归（#1164）
+
+与 PR #1194 在同一 main 基线 `3b24b56d` 上比较。使用原生 ACLNN 空表入参，
+覆盖真正的 kernel fallback；常规 Python 包装层自动补表行为保持兼容。
+数学计算、调度、buffer、同步、ABI 和 TilingKey 均未修改。
+
+A2 原始精度套件 200/200 执行成功，198 条直接通过。
+case_id=123、195（需要复检）在两种实现中均出现相同的原生 mixed_tolerance_bm
+失败；两条都是 dense 用例。保留原始 range、数据分布和阈值，保存输出并通过
+CT viz 排查后，对每条固定结构执行 accuracy_lt 50 组不同随机数值。
+以原有 FP64 CPU golden 为真值、PR #1194 的同精度输出为 benchmark，
+游标版所有输出均与 benchmark 逐位一致，CT L2 和 ct dual analyze 统计均通过。
+原始 mixed_tolerance_bm 失败结果保留；复检结论表示本次寻址优化无精度退化。
+
+补充无表/显式表对比覆盖空序列、尾块、不同 head 数、最多 4096 段，
+以及总 token=524288、4684 段、4 heads、K=V=128；有效输出逐位一致。
+
+性能使用相同 A2、输入和采集参数，串行测量；总 token=524288，
+序列数覆盖 1/128/512/1024/4684，4 heads，K=V=128，chunk_size=64。
+每例预热 5 次后采集 1 次，不报告均值或稳定性统计。下表为 4684 段结果，单位 us。
+host 与整次调用来自 msprof API 时间线，kernel 来自 op_summary 的 Task Duration(us)。
+整次调用范围为 GetWorkspaceSize 开始至随后的同步结束，包含采集开销；
+描述符构造、输入生成和 workspace 分配不在统计范围内。
+
+| 方案 | host GetWorkspaceSize | kernel | 整次调用 |
+| --- | ---: | ---: | ---: |
+| PR #1194 host 建表 | 331.040 | 16124.262 | 16670.500 |
+| kernel 游标 | 115.800 | 15897.458 | 16185.230 |
+
+完整段数扫描：下表为游标相对 PR #1194 的时延变化百分比，负值表示更快。
+
+| 入口 | 序列数 | GetWorkspaceSize 变化 | kernel 变化 | 整次调用变化 |
+| --- | ---: | ---: | ---: | ---: |
+| prepare | 1 | -92.17% | +0.38% | -1.87% |
+| prepare | 128 | -93.49% | -1.29% | -3.45% |
+| prepare | 512 | -94.60% | -1.74% | -4.25% |
+| prepare | 1024 | -63.55% | -1.21% | -2.79% |
+| prepare | 4684 | -65.02% | -1.41% | -2.91% |
+
+### 文件组织调整复验（2026-11-24）
+
+游标实现归入各算子已有头文件，未新增公共头文件或测试文件。
+A2、A5 的三个相关算子及依赖均编译通过，Stable-ABI 调用点检查通过。
+A2 全量精度用例重新执行通过：Fwd 48 条、Finalize 200 条，Prepare 198 条直接通过，
+另 2 条既有数值误差用例各执行 50 轮并通过 CT 双标杆复检；原始混合容差结果保留。
+原生空表补充用例及 524288 token、4684 段的四个入口均与显式表有效输出逐位一致。
+V1、Prepare、Finalize 三份游标分别通过 1658 组配置、4787524 次查询的 CPU oracle。
+调整后 A2 的 19 个 kernel 二进制与调整前逐字节一致，上述性能数据对应相同二进制。

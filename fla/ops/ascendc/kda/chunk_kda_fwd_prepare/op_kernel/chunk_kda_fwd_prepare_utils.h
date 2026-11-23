@@ -159,7 +159,8 @@ __aicore__ inline uint32_t TokenBalancedWorkBoundary(
 }
 
 __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
-                                    uint32_t globalChunk, ChunkRange &chunk)
+                                    uint32_t globalChunk, ChunkRange &chunk,
+                                    KdaPrepare::ChunkCursor &cursor)
 {
     chunk.globalChunk = globalChunk;
     if (!args.tiling.isVarLen) {
@@ -180,7 +181,7 @@ __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
     }
 
     // 变长路径沿用仓内 chunkIndices[globalChunk] = {sequence, localChunk} 合同；
-    // chunkIndices 可空，此时按 cuSeqlens 顺序扫描到 globalChunk。
+    // chunkIndices 可空，此时复用当前 kernel 实例的序列游标。
     const __gm__ int64_t *indices =
         reinterpret_cast<const __gm__ int64_t *>(args.chunkIndices);
     const __gm__ int64_t *cu =
@@ -194,24 +195,18 @@ __aicore__ inline bool ResolveChunk(const PrepareKernelArgs &args,
         sequence = indices[globalChunk * 2];
         localChunk = indices[globalChunk * 2 + 1];
     } else {
-        uint32_t chunkPrefix = 0;
-        for (uint32_t seq = 0; seq < args.tiling.seqNum; ++seq) {
-            const int64_t sequenceBegin = cu[seq];
-            const int64_t sequenceEnd = cu[seq + 1];
-            if (sequenceBegin < 0 || sequenceEnd < sequenceBegin) {
-                return false;
-            }
-            const uint32_t sequenceChunks = CeilDiv(
-                static_cast<uint32_t>(sequenceEnd - sequenceBegin),
-                Shape::kChunkRows);
-            if (globalChunk < chunkPrefix + sequenceChunks) {
-                sequence = static_cast<int64_t>(seq);
-                localChunk = static_cast<int64_t>(globalChunk - chunkPrefix);
-                break;
-            }
-            chunkPrefix += sequenceChunks;
+        uint64_t seq = 0, begin = 0, end = 0;
+        if (!cursor.Resolve(cu, args.tiling.seqNum, args.tiling.seqLen,
+                            Shape::kChunkRows, globalChunk, seq, begin, end)) {
+            return false;
         }
+        chunk.sequence = static_cast<uint32_t>(seq);
+        chunk.batchIndex = 0;
+        chunk.tokenBegin = static_cast<uint32_t>(begin);
+        chunk.validRows = static_cast<uint32_t>(end - begin);
+        return true;
     }
+
     if (sequence < 0 || localChunk < 0 ||
         sequence >= static_cast<int64_t>(args.tiling.seqNum)) {
         return false;
