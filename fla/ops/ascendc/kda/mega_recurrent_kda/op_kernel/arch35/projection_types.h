@@ -18,10 +18,10 @@ using L1Tile = tla::Shape<tla::Int<16>, tla::Int<128>, tla::Int<128>>;
 using L0Tile = tla::Shape<tla::Int<16>, tla::Int<128>, tla::Int<64>>;
 using Policy = Catlass::Gemm::MmadPingpong<Arch, true, false>;
 using Copy = Catlass::Gemm::Tile::PackedTileCopyTlaToUB<Arch, Bf, Row, Bf, Col, Bf, Row, void,
-    Catlass::Gemm::Tile::CopyL0CToUBMode::NO_SPLIT>;
+                                                        Catlass::Gemm::Tile::CopyL0CToUBMode::NO_SPLIT>;
 using TileMmad = Catlass::Gemm::Tile::TileMmadTla<Arch, Bf, Copy::LayoutTagL1A>;
 using Projection = Catlass::Gemm::Block::BlockMmadTla<Policy, L1Tile, L0Tile, Bf, Bf, Bf, void, Copy, TileMmad>;
-using ObserveProjection = Catlass::Epilogue::Block::BlockEpilogue<
-    Catlass::Epilogue::EpilogueAscend950Fixpipe<2, false>, L0Tile, Bf, Bf>;
+using ObserveProjection =
+    Catlass::Epilogue::Block::BlockEpilogue<Catlass::Epilogue::EpilogueAscend950Fixpipe<2, false>, L0Tile, Bf, Bf>;
 
 } // namespace kda

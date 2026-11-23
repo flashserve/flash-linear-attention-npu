@@ -1,4 +1,5 @@
 """Run against the installed A5 wheel with ASCEND_LAUNCH_BLOCKING=1."""
+
 import pytest
 import torch
 
@@ -9,11 +10,21 @@ pytestmark = pytest.mark.skipif(not torch.npu.is_available(), reason="requires a
 from executor_mega_recurrent_kda import build_inputs, to_device
 
 
-@pytest.mark.parametrize("invalid", [
-    "duplicate_slot", "slot_outside_pool", "accepted_overflow", "invalid_prefix",
-    "wrong_index_dtype", "inner_stride", "invalid_scale", "invalid_lower_bound",
-    "invalid_epsilon", "requires_grad",
-])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "duplicate_slot",
+        "slot_outside_pool",
+        "accepted_overflow",
+        "invalid_prefix",
+        "wrong_index_dtype",
+        "inner_stride",
+        "invalid_scale",
+        "invalid_lower_bound",
+        "invalid_epsilon",
+        "requires_grad",
+    ],
+)
 def test_invalid_inputs_preserve_state(invalid):
     from fla_npu.ops.ascendc import npu_mega_recurrent_kda
 

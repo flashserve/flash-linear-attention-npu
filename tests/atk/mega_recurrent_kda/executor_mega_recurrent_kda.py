@@ -1,4 +1,5 @@
 """ATK precision coverage for the fused Ascend 950 KDA operator."""
+
 import json
 import os
 import sys
@@ -19,8 +20,9 @@ from _ascendc_common_executor import _finite_tuple, _marker_device
 
 def expected_outputs(inputs):
     directory = os.environ.get("FLA_KDA_GOLDEN_CACHE", TESTS.parent / "build" / "cpu-golden-cache")
-    return cached_cpu_outputs(mega_recurrent_kda_golden, inputs, directory,
-                              ("conv_state", "replay_u", "replay_k", "replay_decay"))
+    return cached_cpu_outputs(
+        mega_recurrent_kda_golden, inputs, directory, ("conv_state", "replay_u", "replay_k", "replay_decay")
+    )
 
 
 def build_inputs(spec):
@@ -28,10 +30,12 @@ def build_inputs(spec):
     batch, sequence, heads = len(lengths), max(lengths), spec["heads"]
     slots = batch if spec["name"].startswith("main") else batch + 1
     inputs, hidden, _ = _make_case(batch, sequence, heads, slots, spec["conv"], seed=spec["seed"])
-    hidden = torch.cat([hidden[i * sequence:i * sequence + n] for i, n in enumerate(lengths)])
+    hidden = torch.cat([hidden[i * sequence : i * sequence + n] for i, n in enumerate(lengths)])
     inputs["hidden_states"] = hidden.reshape(batch, sequence, -1) if spec["layout"] == "BSH" else hidden
     prefix_dtype = torch.int64 if spec["name"] == "cross" else torch.int32
-    inputs["cu_seqlens"] = torch.tensor([0, *accumulate(lengths)], dtype=prefix_dtype) if spec["layout"] == "TH" else None
+    inputs["cu_seqlens"] = (
+        torch.tensor([0, *accumulate(lengths)], dtype=prefix_dtype) if spec["layout"] == "TH" else None
+    )
     inputs["state_indices"] = torch.arange(slots - batch, slots, dtype=torch.int32).flip([0])
     inputs["conv_num_accepted_tokens"] = torch.arange(batch, dtype=torch.int32) % min(sequence + 1, 4)
     inputs["A_log"] = torch.linspace(-0.75, 0.65, heads)

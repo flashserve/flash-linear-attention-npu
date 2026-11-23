@@ -27,7 +27,7 @@
 namespace MegaRecurrentKdaV2 {
 namespace Sync {
 
-constexpr uint32_t kMaxAddPerDma = 8;  // aux constant blocks 1..8
+constexpr uint32_t kMaxAddPerDma = 8; // aux constant blocks 1..8
 // Poll backoff: one dcci read, then a growing number of cheap reads.
 constexpr uint32_t kFirstSpin = 8u;
 constexpr uint32_t kMaxSpin = 512u;
@@ -44,8 +44,8 @@ __aicore__ inline int32_t Load(GM_ADDR base, uint32_t byteOffset)
     __asm__ __volatile__("");
     AscendC::GlobalTensor<int32_t> t;
     t.SetGlobalBuffer(p);
-    AscendC::DataCacheCleanAndInvalid<int32_t, AscendC::CacheLine::SINGLE_CACHE_LINE,
-        AscendC::DcciDst::CACHELINE_OUT>(t);
+    AscendC::DataCacheCleanAndInvalid<int32_t, AscendC::CacheLine::SINGLE_CACHE_LINE, AscendC::DcciDst::CACHELINE_OUT>(
+        t);
     __asm__ __volatile__("");
     return *reinterpret_cast<__gm__ int32_t *>(p);
 }
@@ -63,8 +63,7 @@ __aicore__ inline int32_t LoadLoose(GM_ADDR base, uint32_t byteOffset)
 /// `bailAfter` > 0 bounds the poll rounds: it is only used by the diagnostic
 /// MK_SKIP_SYNC=4 mode so a missed notification shows up as a wrong value in the
 /// host-side counter dump instead of a kernel timeout.
-__aicore__ inline void WaitEq(GM_ADDR base, uint32_t byteOffset, int32_t want,
-    uint32_t bailAfter = 0u)
+__aicore__ inline void WaitEq(GM_ADDR base, uint32_t byteOffset, int32_t want, uint32_t bailAfter = 0u)
 {
     uint32_t spin = 0u;
     uint32_t rounds = 0u;
@@ -100,7 +99,7 @@ __aicore__ inline void AicLoadConst32(AscendC::LocalTensor<int32_t> const &l1, _
     g.SetGlobalBuffer(src);
     AscendC::DataCopyParams params;
     params.blockCount = 1;
-    params.blockLen = 1;  // one 32 B block
+    params.blockLen = 1; // one 32 B block
     params.srcStride = 0;
     params.dstStride = 0;
     AscendC::DataCopy(l1, g, params);
@@ -123,8 +122,8 @@ __aicore__ inline void AicDma32(AscendC::LocalTensor<int32_t> const &l1, __gm__ 
 }
 
 /// counter += n via the aux constant blocks (n = 0 is a no-op).
-__aicore__ inline void AicAdd(AscendC::LocalTensor<int32_t> const &l1, GM_ADDR constBase,
-    GM_ADDR countBase, uint32_t byteOffset, uint32_t n)
+__aicore__ inline void AicAdd(AscendC::LocalTensor<int32_t> const &l1, GM_ADDR constBase, GM_ADDR countBase,
+                              uint32_t byteOffset, uint32_t n)
 {
     __gm__ int32_t *src = Word(constBase, 0);
     __gm__ int32_t *dst = Word(countBase, byteOffset);
@@ -163,8 +162,8 @@ __aicore__ inline void AivDma32(AscendC::LocalTensor<int32_t> const &stg, __gm__
 }
 
 /// counter += n (n = 0 is a no-op).
-__aicore__ inline void AivAdd(AscendC::LocalTensor<int32_t> const &stg, GM_ADDR countBase,
-    uint32_t byteOffset, uint32_t n)
+__aicore__ inline void AivAdd(AscendC::LocalTensor<int32_t> const &stg, GM_ADDR countBase, uint32_t byteOffset,
+                              uint32_t n)
 {
     __gm__ int32_t *dst = Word(countBase, byteOffset);
     while (n > 0u) {
@@ -175,7 +174,7 @@ __aicore__ inline void AivAdd(AscendC::LocalTensor<int32_t> const &stg, GM_ADDR 
     }
 }
 
-}  // namespace Sync
-}  // namespace MegaRecurrentKdaV2
+} // namespace Sync
+} // namespace MegaRecurrentKdaV2
 
-#endif  // MEGA_RECURRENT_KDA_V2_SYNC_H
+#endif // MEGA_RECURRENT_KDA_V2_SYNC_H

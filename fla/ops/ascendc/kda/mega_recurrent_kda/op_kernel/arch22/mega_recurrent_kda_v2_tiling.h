@@ -31,19 +31,19 @@
 
 namespace MegaRecurrentKdaV2 {
 
-constexpr uint32_t kHeadDim = 128;      // D = K = V
-constexpr uint32_t kHidden = 7168;      // H
-constexpr uint32_t kTileRows = 64;      // tile = one ring slot = 64 tokens
-constexpr uint32_t kBlockTiles = 3;     // P row block spans at most 3 tiles
-constexpr uint32_t kBlockRows = kTileRows * kBlockTiles;  // BP = 192
-constexpr uint32_t kPRSlotsMin = 3;     // minimum P->R slot count
-constexpr uint32_t kGatedSlotsMin = 4;  // gated ring depth for a 2-tile O block
-constexpr uint32_t kObTiles = 2;        // O row block spans 2 tiles
-constexpr uint32_t kNW = 128;           // logical N tile width of every GEMM
+constexpr uint32_t kHeadDim = 128;                       // D = K = V
+constexpr uint32_t kHidden = 7168;                       // H
+constexpr uint32_t kTileRows = 64;                       // tile = one ring slot = 64 tokens
+constexpr uint32_t kBlockTiles = 3;                      // P row block spans at most 3 tiles
+constexpr uint32_t kBlockRows = kTileRows * kBlockTiles; // BP = 192
+constexpr uint32_t kPRSlotsMin = 3;                      // minimum P->R slot count
+constexpr uint32_t kGatedSlotsMin = 4;                   // gated ring depth for a 2-tile O block
+constexpr uint32_t kObTiles = 2;                         // O row block spans 2 tiles
+constexpr uint32_t kNW = 128;                            // logical N tile width of every GEMM
 constexpr uint32_t kAlign = 64;
-constexpr uint32_t kCounterWords = 8;   // 32 B atomic DMA unit per counter
-constexpr uint32_t kReadyCounters = 3;  // P -> R, R -> O, decay-A -> decay-B
-constexpr uint32_t kConvWin = 3;        // 3 history rows fed into conv1d
+constexpr uint32_t kCounterWords = 8;  // 32 B atomic DMA unit per counter
+constexpr uint32_t kReadyCounters = 3; // P -> R, R -> O, decay-A -> decay-B
+constexpr uint32_t kConvWin = 3;       // 3 history rows fed into conv1d
 
 // Template identifiers (docs/design.md 2 and 3).
 //   T01: every sequence stays inside one 64-row tile.
@@ -69,16 +69,19 @@ KDA_INLINE uint32_t CeilDiv(uint32_t value, uint32_t divisor)
 
 /// Problem description straight from the frozen API arguments.
 struct KdaProblem {
-    uint32_t batch;            // B
-    uint32_t sequence;         // S (BSH). TH -> 0, the prefix array is used.
-    uint32_t heads;            // N
-    uint32_t blockNum;         // state pool size
-    uint32_t convLength;       // L
-    uint32_t replayCapacity;   // S capacity
-    uint32_t tokens;           // T = token_count
-    uint32_t tileRows;         // kTileRows
+    uint32_t batch;          // B
+    uint32_t sequence;       // S (BSH). TH -> 0, the prefix array is used.
+    uint32_t heads;          // N
+    uint32_t blockNum;       // state pool size
+    uint32_t convLength;     // L
+    uint32_t replayCapacity; // S capacity
+    uint32_t tokens;         // T = token_count
+    uint32_t tileRows;       // kTileRows
 
-    uint32_t projectWidth() const { return heads * kHeadDim; }
+    uint32_t projectWidth() const
+    {
+        return heads * kHeadDim;
+    }
 };
 
 /// Stage P's work unit: one 128-column projection block of one row block.
@@ -93,28 +96,28 @@ struct ProjectionBlock {
 struct KdaTiling {
     uint32_t tokens;
     uint32_t tiles;
-    uint32_t p;                 // P = N * D
-    uint32_t hidden;            // H
-    uint32_t n;                 // N
-    uint32_t d;                 // D
-    uint32_t pBlocks;           // S0 row blocks
-    uint32_t pSplit;            // 1: one tile per P row block (R needs tile 0 early)
-    uint32_t oBlocks;           // S2 row blocks
+    uint32_t p;       // P = N * D
+    uint32_t hidden;  // H
+    uint32_t n;       // N
+    uint32_t d;       // D
+    uint32_t pBlocks; // S0 row blocks
+    uint32_t pSplit;  // 1: one tile per P row block (R needs tile 0 early)
+    uint32_t oBlocks; // S2 row blocks
     uint32_t nQkv;
     uint32_t nGate;
     uint32_t nBeta;
     uint32_t nDecayRaw;
-    uint32_t nProj;             // S0 publication expectation per tile
-    uint32_t nOut;              // number of output projection panels
-    uint32_t units;             // total S1 units = sum_k units(k)
+    uint32_t nProj; // S0 publication expectation per tile
+    uint32_t nOut;  // number of output projection panels
+    uint32_t units; // total S1 units = sum_k units(k)
     uint32_t aicNum;
     uint32_t aivNum;
-    uint32_t templateId;        // kTemplateT01 or kTemplateT02
-    uint32_t quota;             // T02: ceil(B*N/aivNum) groups per AIV
-    uint32_t carryElems;        // B*N*D*D when sequences straddle tiles else 0
-    uint32_t slotsPR;           // qkv/decay_raw/gate_raw/beta_raw ring depth
-    uint32_t slotsGated;        // gated ring depth
-    uint32_t overflow;          // 1 when the byte layout does not fit 32-bit offsets
+    uint32_t templateId; // kTemplateT01 or kTemplateT02
+    uint32_t quota;      // T02: ceil(B*N/aivNum) groups per AIV
+    uint32_t carryElems; // B*N*D*D when sequences straddle tiles else 0
+    uint32_t slotsPR;    // qkv/decay_raw/gate_raw/beta_raw ring depth
+    uint32_t slotsGated; // gated ring depth
+    uint32_t overflow;   // 1 when the byte layout does not fit 32-bit offsets
     // Workspace layout (byte offsets).
     uint32_t offQkv;
     uint32_t offDecayRaw;
@@ -129,13 +132,28 @@ struct KdaTiling {
 };
 
 /// Byte sizes of the per-slot regions (single slot).
-KDA_INLINE uint32_t QkvSlotBytes(uint32_t p) { return kTileRows * p * 3u * 2u; }
-KDA_INLINE uint32_t GateSlotBytes(uint32_t p) { return kTileRows * p * 2u; }
-KDA_INLINE uint32_t BetaSlotBytes(uint32_t n) { return kTileRows * n * 2u; }
-KDA_INLINE uint32_t GatedSlotBytes(uint32_t p) { return kTileRows * p * 2u; }
+KDA_INLINE uint32_t QkvSlotBytes(uint32_t p)
+{
+    return kTileRows * p * 3u * 2u;
+}
+KDA_INLINE uint32_t GateSlotBytes(uint32_t p)
+{
+    return kTileRows * p * 2u;
+}
+KDA_INLINE uint32_t BetaSlotBytes(uint32_t n)
+{
+    return kTileRows * n * 2u;
+}
+KDA_INLINE uint32_t GatedSlotBytes(uint32_t p)
+{
+    return kTileRows * p * 2u;
+}
 
 /// Number of int32 words of the counter block: three ready flags x tiles x 8 words.
-KDA_INLINE uint32_t CounterWords(uint32_t tiles) { return kReadyCounters * tiles * kCounterWords; }
+KDA_INLINE uint32_t CounterWords(uint32_t tiles)
+{
+    return kReadyCounters * tiles * kCounterWords;
+}
 
 /// Byte offset of counter (stage, tile) inside the counts region.
 KDA_INLINE uint32_t CounterByteOffset(uint32_t stage, uint32_t tile, uint32_t tiles)
@@ -145,10 +163,16 @@ KDA_INLINE uint32_t CounterByteOffset(uint32_t stage, uint32_t tile, uint32_t ti
 
 /// Expectations region: units[tiles] (uint32) + unitsPrefix[tiles+1] (uint32)
 /// + firstSeq[tiles] (uint32).
-KDA_INLINE uint32_t ExpectWords(uint32_t tiles) { return tiles + (tiles + 1u) + tiles; }
+KDA_INLINE uint32_t ExpectWords(uint32_t tiles)
+{
+    return tiles + (tiles + 1u) + tiles;
+}
 
 /// S1 units of one tile (device side, from the host-written arrays).
-KDA_INLINE uint32_t UnitsOf(const uint32_t *units, uint32_t tile) { return units[tile]; }
+KDA_INLINE uint32_t UnitsOf(const uint32_t *units, uint32_t tile)
+{
+    return units[tile];
+}
 
 /// O row block geometry: block j covers tiles [k0, k1) with k0 = j*kObTiles and
 /// k1 = min(tiles, k0 + kObTiles); the corresponding row range is
@@ -188,8 +212,8 @@ KDA_INLINE RowBlockRange PBlockRange(const KdaTiling &t, uint32_t block)
 }
 
 #ifndef __CCE_AICORE__
-inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint32_t aivNum,
-    bool straddle, uint64_t l2Bytes)
+inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint32_t aivNum, bool straddle,
+                               uint64_t l2Bytes)
 {
     KdaTiling t{};
     t.tokens = problem.tokens;
@@ -210,8 +234,8 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     // When one pass over the projection weights exceeds L2, process up to
     // three row tiles per weight read. Otherwise publish short tiles early
     // when recurrence has enough independent work to overlap the next tile.
-    const uint64_t projectionWeights = sizeof(uint16_t) *
-        ((4ull * t.p + t.n + kHeadDim) * t.hidden + uint64_t(t.p) * kHeadDim);
+    const uint64_t projectionWeights =
+        sizeof(uint16_t) * ((4ull * t.p + t.n + kHeadDim) * t.hidden + uint64_t(t.p) * kHeadDim);
     const bool reuseWeights = l2Bytes && projectionWeights > l2Bytes;
     t.pSplit = !straddle && !reuseWeights && uint64_t(problem.batch) * t.n > aivNum;
     t.pBlocks = t.pSplit != 0u ? t.tiles : CeilDiv(t.tiles, kBlockTiles);
@@ -222,9 +246,7 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     t.nDecayRaw = CeilDiv(t.p, kNW);
     t.nProj = t.nQkv + t.nGate + t.nBeta + t.nDecayRaw;
     t.nOut = CeilDiv(kHidden, kNW);
-    t.carryElems = straddle
-        ? static_cast<uint32_t>(problem.batch) * t.n * kHeadDim * kHeadDim
-        : 0u;
+    t.carryElems = straddle ? static_cast<uint32_t>(problem.batch) * t.n * kHeadDim * kHeadDim : 0u;
     // Give each tile its own GM slot throughout the P, R and O stages.
     t.slotsPR = t.tiles > kPRSlotsMin ? t.tiles : kPRSlotsMin;
     t.slotsGated = t.tiles > kGatedSlotsMin ? t.tiles : kGatedSlotsMin;
@@ -256,6 +278,6 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
 
 #endif
 #undef KDA_INLINE
-}  // namespace MegaRecurrentKdaV2
+} // namespace MegaRecurrentKdaV2
 
-#endif  // MEGA_RECURRENT_KDA_V2_TILING_H
+#endif // MEGA_RECURRENT_KDA_V2_TILING_H

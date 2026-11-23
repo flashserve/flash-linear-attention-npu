@@ -70,7 +70,7 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
     const uint32_t bail = (p.skipSync & 4u) != 0u ? 2000000u : 0u;
     const bool smallSEnabled = (p.skipSync & kSkipSmallS) == 0u;
     HeadConstants cached;
-    uint32_t knownTile = 0u;      // highest tile already known to be P-ready
+    uint32_t knownTile = 0u; // highest tile already known to be P-ready
     bool haveKnown = false;
 
     // quota > kMaxGroupsPerAiv is handled by processing the owned groups in
@@ -82,7 +82,7 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
         for (uint32_t i = 0u; i < cnt; ++i) {
             const uint32_t g = rank + (base + i) * aivNum;
             if (g >= groups) {
-                gt.SetValue(i, -1);  // not owned by this AIV
+                gt.SetValue(i, -1); // not owned by this AIV
                 gt.SetValue(kMaxGroupsPerAiv + i, 0);
                 gt.SetValue(2u * kMaxGroupsPerAiv + i, 0);
                 continue;
@@ -90,11 +90,11 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
             const uint32_t b = g / p.n;
             const uint32_t seqStart = static_cast<uint32_t>(gmPrefix.GetValue(b));
             const uint32_t seqEnd = static_cast<uint32_t>(gmPrefix.GetValue(b + 1u));
-            gt.SetValue(i, static_cast<int32_t>(seqStart / kTileRows));  // cursor
+            gt.SetValue(i, static_cast<int32_t>(seqStart / kTileRows)); // cursor
             gt.SetValue(kMaxGroupsPerAiv + i,
-                static_cast<int32_t>((seqEnd - 1u) / kTileRows));       // last tile
+                        static_cast<int32_t>((seqEnd - 1u) / kTileRows)); // last tile
             gt.SetValue(2u * kMaxGroupsPerAiv + i,
-                static_cast<int32_t>(seqStart / kTileRows));            // first tile
+                        static_cast<int32_t>(seqStart / kTileRows)); // first tile
             ++live;
         }
         AscendC::PipeBarrier<PIPE_ALL>();
@@ -129,15 +129,14 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
             if (smallSEnabled && (seqEnd - seqStart <= kTileRows)) {
                 if (!haveKnown || lastTile > knownTile) {
                     if ((p.skipSync & 1u) == 0u) {
-                        Sync::WaitEq(p.counts, CounterByteOffset(0u, lastTile, p.tiles),
-                            static_cast<int32_t>(p.nProj), bail);
+                        Sync::WaitEq(p.counts, CounterByteOffset(0u, lastTile, p.tiles), static_cast<int32_t>(p.nProj),
+                                     bail);
                     }
                     knownTile = lastTile;
                     haveKnown = true;
                 }
                 ProcessRows(p, ub, b, head, seqStart, seqEnd, seqStart, seqEnd, false, cached);
-                const uint32_t firstTile =
-                    static_cast<uint32_t>(gt.GetValue(2u * kMaxGroupsPerAiv + best));
+                const uint32_t firstTile = static_cast<uint32_t>(gt.GetValue(2u * kMaxGroupsPerAiv + best));
                 for (uint32_t k = firstTile; k <= lastTile; ++k) {
                     Sync::AivAdd(stg, p.counts, CounterByteOffset(1u, k, p.tiles), 1u);
                 }
@@ -151,8 +150,7 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
             // only a frontier advance needs a new wait.
             if (!haveKnown || tile > knownTile) {
                 if ((p.skipSync & 1u) == 0u) {
-                    Sync::WaitEq(p.counts, CounterByteOffset(0u, tile, p.tiles),
-                        static_cast<int32_t>(p.nProj), bail);
+                    Sync::WaitEq(p.counts, CounterByteOffset(0u, tile, p.tiles), static_cast<int32_t>(p.nProj), bail);
                 }
                 knownTile = tile;
                 haveKnown = true;
@@ -176,6 +174,6 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
     AscendC::PipeBarrier<PIPE_ALL>();
 }
 
-}  // namespace MegaRecurrentKdaV2
+} // namespace MegaRecurrentKdaV2
 
-#endif  // MEGA_RECURRENT_KDA_V2_T02_H
+#endif // MEGA_RECURRENT_KDA_V2_T02_H

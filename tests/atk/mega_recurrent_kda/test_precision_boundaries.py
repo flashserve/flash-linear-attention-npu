@@ -1,4 +1,5 @@
 """Short projection and cross-tile recurrence regressions for the public A5 kernel."""
+
 import pytest
 import torch
 
@@ -6,13 +7,16 @@ pytest.importorskip("torch_npu")
 from executor_mega_recurrent_kda import build_inputs, expected_outputs, to_device
 
 
-@pytest.mark.parametrize("lengths,heads,layout,output,atol,rtol", [
-    ([1], 7, "BSH", 4, 1.53e-5, 9.77e-4),
-    ([63, 63], 24, "TH", 3, 1.95e-3, 1.95e-3),
-    ([3] * 40, 8, "BSH", 3, 1.95e-3, 1.95e-3),
-    ([3] * 22, 8, "TH", 4, 1.53e-5, 9.77e-4),
-    ([63, 65, 62, 67, 64, 3, 61], 3, "TH", 2, 1.53e-5, 9.77e-4),
-])
+@pytest.mark.parametrize(
+    "lengths,heads,layout,output,atol,rtol",
+    [
+        ([1], 7, "BSH", 4, 1.53e-5, 9.77e-4),
+        ([63, 63], 24, "TH", 3, 1.95e-3, 1.95e-3),
+        ([3] * 40, 8, "BSH", 3, 1.95e-3, 1.95e-3),
+        ([3] * 22, 8, "TH", 4, 1.53e-5, 9.77e-4),
+        ([63, 65, 62, 67, 64, 3, 61], 3, "TH", 2, 1.53e-5, 9.77e-4),
+    ],
+)
 def test_projection_and_history_handoff(lengths, heads, layout, output, atol, rtol):
     from fla_npu.ops.ascendc import npu_mega_recurrent_kda
 
@@ -25,6 +29,7 @@ def test_projection_and_history_handoff(lengths, heads, layout, output, atol, rt
     initial = {k: args[k].clone() for k in mutable}
     expected = expected_outputs(host)[output]
     slots = host["state_indices"].long()
+
     def active_rows(tensor):
         return torch.cat([tensor[slot, :, :length].reshape(-1) for slot, length in zip(slots, lengths)])
 

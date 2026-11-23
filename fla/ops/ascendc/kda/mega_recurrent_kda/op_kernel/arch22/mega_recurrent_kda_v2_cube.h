@@ -66,15 +66,16 @@ struct KdaGemm {
     static constexpr uint32_t kL0AStages = 2;
     static constexpr uint32_t kL0BStages = 2;
 
-    using DispatchPolicy = Catlass::Gemm::MmadPingpong<ArchTag, kEnableUnitFlag, kUseHF32,
-        1 /*L0C stages*/, false /*L1 resident*/, kL1AStages, kL1BStages, kL0AStages, kL0BStages>;
+    using DispatchPolicy =
+        Catlass::Gemm::MmadPingpong<ArchTag, kEnableUnitFlag, kUseHF32, 1 /*L0C stages*/, false /*L1 resident*/,
+                                    kL1AStages, kL1BStages, kL0AStages, kL0BStages>;
     using L1TileShape = tla::Shape<tla::Int<kL1M>, tla::Int<kL1N>, tla::Int<kL1K>>;
     using L0TileShape = tla::Shape<tla::Int<kL1M>, tla::Int<kL1N>, tla::_64>;
 
-    using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA,
-        ElementB, LayoutTagB, ElementC, LayoutTagC>;
-    using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape,
-        L0TileShape, ElementA, ElementB, ElementC, void, TileCopy>;
+    using TileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<ArchTag, ElementA, LayoutTagA, ElementB, LayoutTagB,
+                                                            ElementC, LayoutTagC>;
+    using BlockMmad = Catlass::Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, ElementA, ElementB,
+                                                         ElementC, void, TileCopy>;
 
     using LayoutA = typename TileCopy::LayoutA;
     using LayoutB = typename TileCopy::LayoutB;
@@ -96,9 +97,9 @@ struct KdaGemm {
 
 /// One GEMM: C[rows, cols) = A[rows, K) @ B[K, cols) with A/B/C already resolved
 /// to GM addresses and element leading dimensions.
-CATLASS_DEVICE void RunGemm(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
-    GM_ADDR ptrA, uint32_t rows, int64_t ldA, GM_ADDR ptrB, uint32_t cols, int64_t ldB,
-    GM_ADDR ptrC, int64_t ldC, uint32_t k)
+CATLASS_DEVICE void RunGemm(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource, GM_ADDR ptrA, uint32_t rows,
+                            int64_t ldA, GM_ADDR ptrB, uint32_t cols, int64_t ldB, GM_ADDR ptrC, int64_t ldC,
+                            uint32_t k)
 {
     typename KdaGemm::BlockMmad blockMmad(resource);
 
@@ -109,21 +110,17 @@ CATLASS_DEVICE void RunGemm(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &res
     AscendC::GlobalTensor<bfloat16_t> gmC;
     gmC.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(ptrC));
 
-    auto tensorA = tla::MakeTensor(gmA, KdaGemm::MakeLayoutA(rows, k, ldA),
-        Catlass::Arch::PositionGM{});
-    auto tensorB = tla::MakeTensor(gmB, KdaGemm::MakeLayoutB(k, cols, ldB),
-        Catlass::Arch::PositionGM{});
-    auto tensorC = tla::MakeTensor(gmC, KdaGemm::MakeLayoutC(rows, cols, ldC),
-        Catlass::Arch::PositionGM{});
+    auto tensorA = tla::MakeTensor(gmA, KdaGemm::MakeLayoutA(rows, k, ldA), Catlass::Arch::PositionGM{});
+    auto tensorB = tla::MakeTensor(gmB, KdaGemm::MakeLayoutB(k, cols, ldB), Catlass::Arch::PositionGM{});
+    auto tensorC = tla::MakeTensor(gmC, KdaGemm::MakeLayoutC(rows, cols, ldC), Catlass::Arch::PositionGM{});
 
     blockMmad(tensorA, tensorB, tensorC, Catlass::GemmCoord(rows, cols, k));
 }
 
 /// GEMM with the block-mmad object kept alive across the whole core's work of a
 /// row block (no L1/L0 reconfiguration between projections).
-CATLASS_DEVICE void RunGemmReuse(typename KdaGemm::BlockMmad &blockMmad, GM_ADDR ptrA,
-    uint32_t rows, int64_t ldA, GM_ADDR ptrB, uint32_t cols, int64_t ldB, GM_ADDR ptrC,
-    int64_t ldC, uint32_t k)
+CATLASS_DEVICE void RunGemmReuse(typename KdaGemm::BlockMmad &blockMmad, GM_ADDR ptrA, uint32_t rows, int64_t ldA,
+                                 GM_ADDR ptrB, uint32_t cols, int64_t ldB, GM_ADDR ptrC, int64_t ldC, uint32_t k)
 {
     AscendC::GlobalTensor<bfloat16_t> gmA;
     gmA.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(ptrA));
@@ -132,12 +129,9 @@ CATLASS_DEVICE void RunGemmReuse(typename KdaGemm::BlockMmad &blockMmad, GM_ADDR
     AscendC::GlobalTensor<bfloat16_t> gmC;
     gmC.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(ptrC));
 
-    auto tensorA = tla::MakeTensor(gmA, KdaGemm::MakeLayoutA(rows, k, ldA),
-        Catlass::Arch::PositionGM{});
-    auto tensorB = tla::MakeTensor(gmB, KdaGemm::MakeLayoutB(k, cols, ldB),
-        Catlass::Arch::PositionGM{});
-    auto tensorC = tla::MakeTensor(gmC, KdaGemm::MakeLayoutC(rows, cols, ldC),
-        Catlass::Arch::PositionGM{});
+    auto tensorA = tla::MakeTensor(gmA, KdaGemm::MakeLayoutA(rows, k, ldA), Catlass::Arch::PositionGM{});
+    auto tensorB = tla::MakeTensor(gmB, KdaGemm::MakeLayoutB(k, cols, ldB), Catlass::Arch::PositionGM{});
+    auto tensorC = tla::MakeTensor(gmC, KdaGemm::MakeLayoutC(rows, cols, ldC), Catlass::Arch::PositionGM{});
 
     blockMmad(tensorA, tensorB, tensorC, Catlass::GemmCoord(rows, cols, k));
 }
@@ -145,16 +139,16 @@ CATLASS_DEVICE void RunGemmReuse(typename KdaGemm::BlockMmad &blockMmad, GM_ADDR
 /// Parameters shared by the whole fused v2 launch; the stages read what they
 /// need.  All addresses are raw GM addresses (API tensors or workspace).
 struct V2Params {
-    uint64_t convStride,checkpointStride,uStride,keyStride,decayStride;
+    uint64_t convStride, checkpointStride, uStride, keyStride, decayStride;
     uint32_t convLayout;
     // problem geometry
     uint32_t tokens;
     uint32_t tiles;
-    uint32_t n;          // N
-    uint32_t p;          // P = N*D
-    uint32_t hidden;     // H
+    uint32_t n;      // N
+    uint32_t p;      // P = N*D
+    uint32_t hidden; // H
     uint32_t batch;
-    uint32_t sequence;   // S (BSH), 0 for TH
+    uint32_t sequence; // S (BSH), 0 for TH
     uint32_t blockNum;
     uint32_t convLength;
     uint32_t replayCapacity;
@@ -171,7 +165,7 @@ struct V2Params {
     uint32_t slotsGated;
     uint32_t aicNum;
     uint32_t aivNum;
-    uint32_t templateId;   // kTemplateT01 / kTemplateT02 (R stage ownership)
+    uint32_t templateId; // kTemplateT01 / kTemplateT02 (R stage ownership)
     // API inputs
     GM_ADDR hiddenStates;
     GM_ADDR qkvWeight;
@@ -188,7 +182,7 @@ struct V2Params {
     GM_ADDR replayDecay;
     GM_ADDR stateIndices;
     GM_ADDR accepted;
-    GM_ADDR prefix;      // int32[B+1] (always materialised by the host)
+    GM_ADDR prefix; // int32[B+1] (always materialised by the host)
     GM_ADDR aLog;
     GM_ADDR dtBias;
     GM_ADDR gamma;
@@ -202,7 +196,7 @@ struct V2Params {
     GM_ADDR wGated;
     GM_ADDR counts;
     GM_ADDR syncConst;
-    GM_ADDR expect;      // units[tiles], unitsPrefix[tiles+1], firstSeq[tiles]
+    GM_ADDR expect; // units[tiles], unitsPrefix[tiles+1], firstSeq[tiles]
     GM_ADDR carry;
     // scalars
     float scale;
@@ -221,8 +215,8 @@ constexpr uint32_t kStageAll = kStageP | kStageR | kStageO;
 // ---------------------------------------------------------------------------
 // Stage P
 // ---------------------------------------------------------------------------
-CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
-    V2Params const &p, uint32_t blockIndex)
+CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource, V2Params const &p,
+                              uint32_t blockIndex)
 {
     const uint32_t core = static_cast<uint32_t>(AscendC::GetBlockIdx());
     const uint32_t coreNum = static_cast<uint32_t>(AscendC::GetBlockNum());
@@ -256,8 +250,7 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     GM_ADDR decayA = p.wGated + static_cast<size_t>(localRow0) * p.p * 2u;
     const uint32_t decayReadyOffset = CounterByteOffset(2u, blockIndex, p.tiles);
     if (core == regularPanels % active) {
-        RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.decayAWeight, kHeadDim,
-            p.hidden, decayA, kHeadDim, p.hidden);
+        RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.decayAWeight, kHeadDim, p.hidden, decayA, kHeadDim, p.hidden);
         AscendC::PipeBarrier<PIPE_ALL>();
         Sync::AicAdd(constBase, p.syncConst, p.counts, decayReadyOffset, 1u);
     }
@@ -267,47 +260,44 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
         if (block < p.nQkv) {
             const uint32_t col = block * kNW;
             const uint32_t width = (col + kNW <= threeP) ? kNW : (threeP - col);
-            RunGemmReuse(blockMmad, aPtr, rows, p.hidden,
-                p.qkvWeight + static_cast<size_t>(col) * p.hidden * 2u, width, p.hidden,
-                p.wQkv + (static_cast<size_t>(localRow0) * threeP + col) * 2u, threeP, p.hidden);
+            RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.qkvWeight + static_cast<size_t>(col) * p.hidden * 2u, width,
+                         p.hidden, p.wQkv + (static_cast<size_t>(localRow0) * threeP + col) * 2u, threeP, p.hidden);
         } else if (block < p.nQkv + p.nGate) {
             const uint32_t i = block - p.nQkv;
             const uint32_t col = i * kNW;
             const uint32_t width = (col + kNW <= p.p) ? kNW : (p.p - col);
-            RunGemmReuse(blockMmad, aPtr, rows, p.hidden,
-                p.gateWeight + static_cast<size_t>(col) * p.hidden * 2u, width, p.hidden,
-                p.wGateRaw + (static_cast<size_t>(localRow0) * p.p + col) * 2u, p.p, p.hidden);
+            RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.gateWeight + static_cast<size_t>(col) * p.hidden * 2u,
+                         width, p.hidden, p.wGateRaw + (static_cast<size_t>(localRow0) * p.p + col) * 2u, p.p,
+                         p.hidden);
         } else if (block < p.nQkv + p.nGate + p.nBeta) {
             const uint32_t i = block - (p.nQkv + p.nGate);
             const uint32_t col = i * kNW;
             const uint32_t width = (col + kNW <= p.n) ? kNW : (p.n - col);
-            RunGemmReuse(blockMmad, aPtr, rows, p.hidden,
-                p.betaWeight + static_cast<size_t>(col) * p.hidden * 2u, width, p.hidden,
-                p.wBetaRaw + (static_cast<size_t>(localRow0) * p.n + col) * 2u, p.n, p.hidden);
+            RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.betaWeight + static_cast<size_t>(col) * p.hidden * 2u,
+                         width, p.hidden, p.wBetaRaw + (static_cast<size_t>(localRow0) * p.n + col) * 2u, p.n,
+                         p.hidden);
         } else {
             if (!decayReady) {
                 Sync::WaitEq(p.counts, decayReadyOffset, 1);
                 decayReady = true;
             }
             const uint32_t col = (block - regularPanels) * kNW;
-            RunGemmReuse(blockMmad, decayA, rows, kHeadDim,
-                p.decayBWeight + static_cast<size_t>(col) * kHeadDim * 2u, kNW, kHeadDim,
-                p.wDecayRaw + (static_cast<size_t>(localRow0) * p.p + col) * 2u, p.p, kHeadDim);
+            RunGemmReuse(blockMmad, decayA, rows, kHeadDim, p.decayBWeight + static_cast<size_t>(col) * kHeadDim * 2u,
+                         kNW, kHeadDim, p.wDecayRaw + (static_cast<size_t>(localRow0) * p.p + col) * 2u, p.p, kHeadDim);
         }
     }
 
     AscendC::PipeBarrier<PIPE_ALL>();
     for (uint32_t tile = range.tileBegin; tile < range.tileEnd; ++tile) {
-        Sync::AicAdd(constBase, p.syncConst, p.counts,
-            CounterByteOffset(0u, tile, p.tiles), credits);
+        Sync::AicAdd(constBase, p.syncConst, p.counts, CounterByteOffset(0u, tile, p.tiles), credits);
     }
 }
 
 // ---------------------------------------------------------------------------
 // Stage O
 // ---------------------------------------------------------------------------
-CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
-    V2Params const &p, uint32_t blockIndex)
+CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource, V2Params const &p,
+                              uint32_t blockIndex)
 {
     const uint32_t core = static_cast<uint32_t>(AscendC::GetBlockIdx());
     const uint32_t coreNum = static_cast<uint32_t>(AscendC::GetBlockNum());
@@ -327,8 +317,7 @@ CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
         const uint32_t bail = (p.skipSync & 4u) != 0u ? 2000000u : 0u;
         for (uint32_t tile = range.tileBegin; tile < range.tileEnd; ++tile) {
             const uint32_t want = gmUnits.GetValue(tile);
-            Sync::WaitEq(p.counts, CounterByteOffset(1u, tile, p.tiles),
-                static_cast<int32_t>(want), bail);
+            Sync::WaitEq(p.counts, CounterByteOffset(1u, tile, p.tiles), static_cast<int32_t>(want), bail);
         }
     }
 
@@ -341,13 +330,12 @@ CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     for (uint32_t task = core; task < p.nOut; task += coreNum) {
         const uint32_t col = task * kNW;
         const uint32_t width = (col + kNW <= p.hidden) ? kNW : (p.hidden - col);
-        RunGemmReuse(blockMmad, gatedPtr, rows, p.p,
-            p.wOut + static_cast<size_t>(col) * p.p * 2u, width, p.p,
-            outPtr + static_cast<size_t>(col) * 2u, p.hidden, p.p);
+        RunGemmReuse(blockMmad, gatedPtr, rows, p.p, p.wOut + static_cast<size_t>(col) * p.p * 2u, width, p.p,
+                     outPtr + static_cast<size_t>(col) * 2u, p.hidden, p.p);
     }
     AscendC::PipeBarrier<PIPE_ALL>();
 }
 
-}  // namespace MegaRecurrentKdaV2
+} // namespace MegaRecurrentKdaV2
 
-#endif  // MEGA_RECURRENT_KDA_V2_CUBE_H
+#endif // MEGA_RECURRENT_KDA_V2_CUBE_H
