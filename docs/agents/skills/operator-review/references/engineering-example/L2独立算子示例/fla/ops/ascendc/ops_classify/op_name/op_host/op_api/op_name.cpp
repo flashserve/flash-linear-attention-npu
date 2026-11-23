@@ -108,7 +108,10 @@ OpNameOutputs OpName(
         OP_OUTPUT(yOut, stateForKernel, xNormForKernel),
         OP_ATTR(layout, scaleAttr, chunkSize, epsilonAttr, outputMode));
     if (status != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "添加 OpName AI Core 任务失败。");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "OpName", "ADD_TO_LAUNCHER_LIST_AICORE",
+            "actual_status=" + std::to_string(status) +
+            "; expected_status=ACLNN_SUCCESS; failed to create the AI Core launcher");
         return {};
     }
     return {yOut, stateOut, xNormOut};

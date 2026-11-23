@@ -79,8 +79,8 @@ aclnnStatus aclnnOpName(void *workspace, uint64_t workspaceSize,
 | --- | --- | --- |
 | `def` | `Input("<state>")` 与 `Output("<state>")` 成对声明 | 用属性（如 `inplace_final_state`）声明"写回调用方张量 / 写内部 scratch 并作为返回值"；不用 optional 输出表达原地 |
 | aclnn L2 | 输入 `*Ref` 与输出 `*Out` 两个槽位 | 调用方把同一张张量传给两处；L2 对两槽做 `CreateView` 并校验 shape/dtype 一致 |
-| Stable-ABI | schema `Tensor(a!)` + 适配层原样下发 | 不在下发前做连续化或拷贝；原地参数照常用宏拆栈 |
-| Python | `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`） | 拒绝被写回张量的 `requires_grad=True`；调用成功后 `increment_version()`；按上游语义把被改写张量原对象返回/透传 |
+| Stable-ABI | schema `Tensor(a!)` + 适配层原样调用 | 不在调用前做连续化或拷贝；原地参数按 schema 传给 aclnn |
+| Python | `MUTATED_ARGUMENTS`（必要时 `MUTATION_FLAGS`） | 拒绝被写回张量的 `requires_grad=True`；调用成功后 `increment_version()`；按上游语义把被改写张量原对象返回 |
 
 限制与回归：当前没有 FakeTensor / functionalization，暂不能作为 compiler-visible op 入图；Stable schema 与
 `MUTATED_ARGUMENTS` 的原地声明须一致；契约回归见 `tests/stable_abi/regression_mutation_contract.py`。

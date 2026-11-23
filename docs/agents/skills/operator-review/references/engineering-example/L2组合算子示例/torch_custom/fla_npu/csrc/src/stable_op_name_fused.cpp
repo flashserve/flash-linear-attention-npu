@@ -14,7 +14,7 @@
  *      `FLA_STABLE_EXEC` 实参 === aclnn 头文件顺序（`stream` 固定在最后）。
  *   2. 三处参数顺序一致：kSchema_ 声明 = run_ 形参 = FLA_STABLE_EXEC 下发的 aclnn 实参顺序。
  *   3. 可选输出用 std::optional<Tensor>；缺席返回 std::nullopt（走 boxed optional 打包）。
- *   4. 档位与"回落入口"的选择在 Python wrapper 完成，适配层只做拆栈与下发，不判断场景。
+ *   4. 档位与"回落入口"的选择在 Python wrapper 完成，适配层只负责接收参数、整理格式并调用，不判断场景。
  *   5. 不要在这个文件里调用被组合算子的适配函数：组合发生在 L2（aclnn）内部，适配层只调本算子的 aclnn。
  *   6. 组合入口的依赖闭包（构建侧 + 打包侧）见同目录 README「依赖闭包与过滤构建」一节。
  */
