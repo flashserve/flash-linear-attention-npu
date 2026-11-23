@@ -95,7 +95,8 @@ _ENUM = {
     "npu_recurrent_kda": {"layout": {"BSND": 0, "TND": 1}},
     "npu_chunk_gated_delta_rule_bwd": {"layout": _LAYOUT_CODES},
     "npu_chunk_local_cumsum": {"output_dtype": {"float32": 0,
-                                                "bfloat16": 1}},
+                                                "bfloat16": 1,
+                                                "float16": 2}},
     "npu_solve_tri": {"layout": {"bsnd": 0, "bnsd": 1, "tnd": 2, "ntd": 3}},
 }
 
@@ -872,6 +873,27 @@ def npu_pre_process_bwd_kernel_merged(q, k, w, d_o, dv, scale, chunk_size, *,
     )
 
 
+def _chunk_local_cumsum_output_dtype(g, value):
+    # Keep the legacy integer codes and distinguish None (default FP32)
+    # from "none" (follow the input dtype).
+    if value is None or isinstance(value, int):
+        return value
+
+    name = str(value).strip().lower()
+    if not name:
+        return "float32"
+    if name in ("same", "same_as_input", "input", "none", "null"):
+        name = str(g.dtype)
+    name = name.removeprefix("torch.")
+    if name in ("float", "fp32"):
+        return "float32"
+    if name in ("half", "fp16"):
+        return "float16"
+    if name == "bf16":
+        return "bfloat16"
+    return name
+
+
 def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
                            chunk_indices_out=None, reverse=False, scale=1.0,
                            head_first=True, output_dtype="float32"):
@@ -885,6 +907,7 @@ def npu_chunk_local_cumsum(g, chunk_size, *, cu_seqlens=None,
         stacklevel=4,
     )
 
+    output_dtype = _chunk_local_cumsum_output_dtype(g, output_dtype)
     return _op("npu_chunk_local_cumsum")(
         g,
         _host_ints(cu_seqlens),
