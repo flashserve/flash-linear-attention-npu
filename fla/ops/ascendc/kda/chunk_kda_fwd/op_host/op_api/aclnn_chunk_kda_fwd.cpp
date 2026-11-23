@@ -1157,19 +1157,33 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         for (int64_t stage = KDA_STAGE_GATE_PREPARE; stage < KDA_STAGE_COUNT;
              ++stage) {
             result = launchStage(stage);
+            if (result.empty()) {
+                OP_LOGE_WITHOUT_REPORT(
+                    OP_NAME, "%s: stage %ld produced no output; tiling or launch failed",
+                    __func__, static_cast<long>(stage));
+                return ACLNN_ERR_INNER_TILING_ERROR;
+            }
             for (const aclTensor *tensor : result) {
                 if (!(tensor != nullptr)) {
-                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
-                    return ACLNN_ERR_INNER_NULLPTR;
+                    OP_LOGE_WITHOUT_REPORT(
+                        OP_NAME, "%s: stage %ld returned a null tensor", __func__,
+                        static_cast<long>(stage));
+                    return ACLNN_ERR_INNER_TILING_ERROR;
                 }
             }
         }
     } else {
         result = launchStage(KDA_STAGE_FULL);
+        if (result.empty()) {
+            OP_LOGE_WITHOUT_REPORT(
+                OP_NAME, "%s: full stage produced no output; tiling or launch failed", __func__);
+            return ACLNN_ERR_INNER_TILING_ERROR;
+        }
         for (const aclTensor *tensor : result) {
             if (!(tensor != nullptr)) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
-                return ACLNN_ERR_INNER_NULLPTR;
+                OP_LOGE_WITHOUT_REPORT(
+                    OP_NAME, "%s: full stage returned a null tensor", __func__);
+                return ACLNN_ERR_INNER_TILING_ERROR;
             }
         }
     }
