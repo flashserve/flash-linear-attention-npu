@@ -217,6 +217,76 @@ __simd_vf__ inline void shortDecay(__ubuf__ Bf *raw, __ubuf__ Bf *betaRaw, __ubu
         StoreAlign(dec + 64 * i, x, m);
     }
 }
+__simd_vf__ inline void transposeState(__ubuf__ float *dst, __ubuf__ float *src)
+{
+    auto mask = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<int32_t> index;
+    Arange(index, int32_t(0));
+    Muls(index, index, int32_t(128), mask);
+    for (uint16_t col = 0; col < 128; ++col) {
+        F lo, hi;
+        Gather(lo, src + col, reinterpret_cast<RegTensor<uint32_t> &>(index), mask);
+        Gather(hi, src + 64 * 128 + col, reinterpret_cast<RegTensor<uint32_t> &>(index), mask);
+        StoreAlign(dst + col * 128, lo, mask);
+        StoreAlign(dst + col * 128 + 64, hi, mask);
+    }
+}
+// Each lane owns an output row. Accumulate its dot product across the 128 contiguous state columns.
+__simd_vf__ inline void stepColumnMajor(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf__ float *decay,
+                                        __ubuf__ float *beta, __ubuf__ float *u, __ubuf__ float *y)
+{
+    auto mask = CreateMask<float, MaskPattern::ALL>();
+    F sumLow, sumHigh, b, updateLow, updateHigh;
+    Duplicate(sumLow, 0.f, mask);
+    Duplicate(sumHigh, 0.f, mask);
+    // Predict the value from the decayed state.
+    for (uint16_t k = 0; k < 128; ++k) {
+        F stateLow, stateHigh, decayValue, keyValue, weightedKey;
+        LoadAlign(stateLow, state + k * 128);
+        LoadAlign(stateHigh, state + k * 128 + 64);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(decayValue, decay + k);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(keyValue, qkv + 128 + k);
+        Mul(weightedKey, decayValue, keyValue, mask);
+        Mul(stateLow, stateLow, weightedKey, mask);
+        Mul(stateHigh, stateHigh, weightedKey, mask);
+        Add(sumLow, sumLow, stateLow, mask);
+        Add(sumHigh, sumHigh, stateHigh, mask);
+    }
+    LoadAlign(b, beta);
+    LoadAlign(updateLow, qkv + 256);
+    LoadAlign(updateHigh, qkv + 320);
+    Sub(updateLow, updateLow, sumLow, mask);
+    Sub(updateHigh, updateHigh, sumHigh, mask);
+    Mul(updateLow, updateLow, b, mask);
+    Mul(updateHigh, updateHigh, b, mask);
+    StoreAlign(u, updateLow, mask);
+    StoreAlign(u + 64, updateHigh, mask);
+    // Update the state and accumulate the query projection in the same pass.
+    Duplicate(sumLow, 0.f, mask);
+    Duplicate(sumHigh, 0.f, mask);
+    for (uint16_t k = 0; k < 128; ++k) {
+        F stateLow, stateHigh, decayValue, keyValue, queryValue, productLow, productHigh;
+        LoadAlign(stateLow, state + k * 128);
+        LoadAlign(stateHigh, state + k * 128 + 64);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(decayValue, decay + k);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(keyValue, qkv + 128 + k);
+        LoadAlign<float, LoadDist::DIST_BRC_B32>(queryValue, qkv + k);
+        Mul(stateLow, stateLow, decayValue, mask);
+        Mul(stateHigh, stateHigh, decayValue, mask);
+        Mul(productLow, updateLow, keyValue, mask);
+        Mul(productHigh, updateHigh, keyValue, mask);
+        Add(stateLow, stateLow, productLow, mask);
+        Add(stateHigh, stateHigh, productHigh, mask);
+        StoreAlign(state + k * 128, stateLow, mask);
+        StoreAlign(state + k * 128 + 64, stateHigh, mask);
+        Mul(productLow, stateLow, queryValue, mask);
+        Mul(productHigh, stateHigh, queryValue, mask);
+        Add(sumLow, sumLow, productLow, mask);
+        Add(sumHigh, sumHigh, productHigh, mask);
+    }
+    StoreAlign(y, sumLow, mask);
+    StoreAlign(y + 64, sumHigh, mask);
+}
 __simd_vf__ inline void shortPrepare(__ubuf__ float *qkv, __ubuf__ float *dec, __ubuf__ float *weighted,
                                      __ubuf__ float *coeff, uint16_t count)
 {
@@ -391,6 +461,7 @@ public:
     }
 
 public:
+    template <bool AllowColumnMajor = true>
     CATLASS_DEVICE void consume(Resource &resource, const RecurrenceArgs &a, GM_ADDR gated, GM_ADDR carry,
                                 uint32_t heads, uint32_t head, uint32_t global, uint32_t ringRow, uint32_t valid,
                                 AscendC::LocalTensor<Bf> slot)
@@ -432,12 +503,14 @@ public:
         for (uint32_t r = 0; r < valid; ++r) {
             uint32_t row = global + r, start = shortSequence ? global : prefix(a, b),
                      end = shortSequence ? global + valid : prefix(a, b + 1), t = row - start;
+            const bool useColumnMajor = AllowColumnMajor && (end - start) >= 16;
             uint32_t idx = shortSequence ? shortIndex : gm<int32_t>(a.indices).GetValue(b);
             uint64_t convBase = uint64_t(idx) * a.convStride;
             if (t == 0 || (carry && row % 64 == 0)) {
                 auto src = t == 0 ? gm<float>(a.checkpoint, uint64_t(idx) * a.checkpointStride + head * 16384) :
                                     gm<float>(carry, head * 16384);
-                AscendC::DataCopy(state, src, 16384);
+                // Checkpoints are row-major. A carry keeps the on-chip layout between 64-row tiles.
+                AscendC::DataCopy(useColumnMajor && t != 0 ? chunk : state, src, 16384);
                 uint32_t accepted = gm<int32_t>(a.accepted).GetValue(b);
                 uint32_t hs = t ? t - 1 : (accepted ? accepted - 1 : 0);
                 for (uint32_t h = 0; h < 3; ++h) {
@@ -447,6 +520,10 @@ public:
                     }
                 }
                 AscendC::PipeBarrier<PIPE_ALL>();
+                if (useColumnMajor && t == 0) {
+                    vec::transposeState((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)state.GetPhyAddr());
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 if (t == 0) {
                     for (uint32_t h = 0; h < 2; ++h) {
                         for (uint32_t i = 0; i < 3; ++i) {
@@ -514,11 +591,22 @@ public:
                                   128);
             }
             AscendC::PipeBarrier<PIPE_V>();
-            vec::step((__ubuf__ float *)state.GetPhyAddr(), (__ubuf__ float *)qkv.GetPhyAddr(),
-                      (__ubuf__ Bf *)slot[3 * 2048 + r * 128].GetPhyAddr(),
-                      (__ubuf__ Bf *)slot[5 * 2048 + r * 16].GetPhyAddr(), (__ubuf__ float *)bias.GetPhyAddr(), aLog,
-                      a.lower, (__ubuf__ float *)u.GetPhyAddr(), (__ubuf__ float *)dec.GetPhyAddr(),
-                      (__ubuf__ float *)y.GetPhyAddr());
+            if (useColumnMajor) {
+                vec::shortDecay((__ubuf__ Bf *)slot[3 * 2048 + r * 128].GetPhyAddr(),
+                                (__ubuf__ Bf *)slot[5 * 2048 + r * 16].GetPhyAddr(),
+                                (__ubuf__ float *)bias.GetPhyAddr(), aLog, a.lower, (__ubuf__ float *)dec.GetPhyAddr(),
+                                (__ubuf__ float *)state.GetPhyAddr());
+                AscendC::PipeBarrier<PIPE_V>();
+                vec::stepColumnMajor((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)qkv.GetPhyAddr(),
+                                     (__ubuf__ float *)dec.GetPhyAddr(), (__ubuf__ float *)state.GetPhyAddr(),
+                                     (__ubuf__ float *)u.GetPhyAddr(), (__ubuf__ float *)y.GetPhyAddr());
+            } else {
+                vec::step((__ubuf__ float *)state.GetPhyAddr(), (__ubuf__ float *)qkv.GetPhyAddr(),
+                          (__ubuf__ Bf *)slot[3 * 2048 + r * 128].GetPhyAddr(),
+                          (__ubuf__ Bf *)slot[5 * 2048 + r * 16].GetPhyAddr(), (__ubuf__ float *)bias.GetPhyAddr(),
+                          aLog, a.lower, (__ubuf__ float *)u.GetPhyAddr(), (__ubuf__ float *)dec.GetPhyAddr(),
+                          (__ubuf__ float *)y.GetPhyAddr());
+            }
             AscendC::PipeBarrier<PIPE_V>();
             vec::finish((__ubuf__ float *)y.GetPhyAddr(), (__ubuf__ Bf *)slot[4 * 2048 + r * 128].GetPhyAddr(),
                         (__ubuf__ float *)gamma.GetPhyAddr(), a.eps, (__ubuf__ Bf *)gatedRow.GetPhyAddr());
@@ -530,7 +618,7 @@ public:
             AscendC::DataCopy(gm<half>(a.key, idx * a.keyStride + at), keyRow, 128);
             AscendC::DataCopy(gm<Bf>(gated, uint64_t(ringRow + r) * width + head * 128), gatedRow, 128);
             if (carry && (row + 1) % 64 == 0 && row + 1 < end) {
-                AscendC::DataCopy(gm<float>(carry, head * 16384), state, 16384);
+                AscendC::DataCopy(gm<float>(carry, head * 16384), useColumnMajor ? chunk : state, 16384);
             }
             if (row + 1 == end) {
                 ++b;

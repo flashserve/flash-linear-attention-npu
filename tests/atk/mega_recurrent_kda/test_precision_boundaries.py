@@ -15,6 +15,8 @@ from executor_mega_recurrent_kda import build_inputs, expected_outputs, to_devic
         ([3] * 40, 8, "BSH", 3, 1.95e-3, 1.95e-3),
         ([3] * 22, 8, "TH", 4, 1.53e-5, 9.77e-4),
         ([63, 65, 62, 67, 64, 3, 61], 3, "TH", 2, 1.53e-5, 9.77e-4),
+        ([31] * 8 + [8, 1], 8, "TH", 0, 1.56e-2, 1.56e-2),
+        ([16, 48, 4], 8, "TH", 0, 1.56e-2, 1.56e-2),
     ],
 )
 def test_projection_and_history_handoff(lengths, heads, layout, output, atol, rtol):
@@ -31,6 +33,8 @@ def test_projection_and_history_handoff(lengths, heads, layout, output, atol, rt
     slots = host["state_indices"].long()
 
     def active_rows(tensor):
+        if output == 0:
+            return tensor.reshape(-1)
         return torch.cat([tensor[slot, :, :length].reshape(-1) for slot, length in zip(slots, lengths)])
 
     expected = active_rows(expected).float()

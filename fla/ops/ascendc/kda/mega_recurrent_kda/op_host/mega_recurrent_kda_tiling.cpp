@@ -163,8 +163,10 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     const auto soc = platform.GetSocVersion();
     const auto systemBytes = platform.GetLibApiWorkSpaceSize();
     if (soc == platform_ascendc::SocVersion::ASCEND950) {
-        return PublishTiling(ctx, common, geometryData[geometry::WorkspaceBytes], systemBytes, cores,
-                             common.crosses ? 2 : 1);
+        // Transpose the checkpoint when a frame averages at least one 16-token recurrence slice per sequence.
+        const bool longSequenceBatch = common.tokens >= uint64_t(common.batch) * 16;
+        const uint64_t key = common.crosses ? 2 : (longSequenceBatch ? 3 : 1);
+        return PublishTiling(ctx, common, geometryData[geometry::WorkspaceBytes], systemBytes, cores, key);
     }
     if (soc != platform_ascendc::SocVersion::ASCEND910B && soc != platform_ascendc::SocVersion::ASCEND910_93) {
         return ge::GRAPH_FAILED;

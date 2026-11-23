@@ -49,7 +49,7 @@ struct StreamingOutputCopy : OutputCopy {
         }
     };
 };
-template <bool SpansTile>
+template <bool SpansTile, bool AllowColumnMajor = SpansTile>
 class MegaKernel {
 public:
     using Params = MegaParams;
@@ -135,8 +135,8 @@ private:
                     }
                     if ASCEND_IS_AIV {
                         WaitReady(phase);
-                        Recurrence{}.consume(resource_, p.recurrence, gated, carry, p.heads, head, first + r, r, valid,
-                                             LocalTile(phase, Plane::Q));
+                        Recurrence{}.consume<AllowColumnMajor>(resource_, p.recurrence, gated, carry, p.heads, head,
+                                                               first + r, r, valid, LocalTile(phase, Plane::Q));
                         NotifyFree(phase);
                     }
                     phase ^= 1;
@@ -210,7 +210,7 @@ private:
     }
     CATLASS_DEVICE void ConsumeStagedProjections(const Params &p, uint32_t first, uint32_t rows, uint32_t worker,
                                                  uint32_t workers, uint32_t firstHead = 0, uint32_t count = 0,
-                                                 bool reuseQ = false)
+                                                 bool reuseQ = false, GM_ADDR framePlanes = nullptr)
     {
         uint32_t width = p.heads * kHeadDim;
         uint32_t span = p.recurrence.staged == 3 ? 128 : 64;
@@ -233,7 +233,9 @@ private:
         GM_ADDR gated = gatedBase + uint64_t(slot) * span * width * 2;
         GM_ADDR planes = gatedBase + uint64_t(totalGatedRows) * width * 2 +
                          uint64_t(slot) * span * (5 * uint64_t(width) + betaStride) * 2;
-        if (reuseQ) {
+        if (SpansTile && framePlanes) {
+            planes = framePlanes;
+        } else if (reuseQ) {
             planes = gatedBase;
         }
         Recurrence rec;
@@ -265,8 +267,8 @@ private:
                     }
                 }
                 AscendC::PipeBarrier<PIPE_ALL>();
-                rec.consume(resource_, p.recurrence, gated, nullptr, p.heads, head, row, row - first, m,
-                            LocalTile(0, Plane::Q));
+                rec.consume<AllowColumnMajor>(resource_, p.recurrence, gated, nullptr, p.heads, head, row, row - first,
+                                              m, LocalTile(0, Plane::Q));
             }
         }
     }
@@ -353,11 +355,15 @@ private:
         }
     }
     CATLASS_DEVICE void RunHeadPipeline(const Params &p, const Waves &shape, uint32_t id, uint32_t groups,
-                                        bool decayAReady, uint32_t globalBase = 0, bool reuseQ = false)
+                                        bool decayAReady, uint32_t globalBase = 0, bool reuseQ = false,
+                                        GM_ADDR framePlanes = nullptr)
     {
         const uint32_t width = p.heads * 128, betaStride = (p.heads + 15) / 16 * 16, planeRows = shape.firstCapacity;
         GM_ADDR gated = p.decayRing + shape.decayRows * 256;
         GM_ADDR planes = reuseQ ? gated : gated + uint64_t(shape.storageRows) * width * 2;
+        if (SpansTile && framePlanes) {
+            planes = framePlanes;
+        }
         constexpr uint32_t waveLimit = 2;
         const uint32_t waves = p.heads < waveLimit ? p.heads : waveLimit;
         bool overlap = p.rows <= 288 && waves == 2;
@@ -492,7 +498,7 @@ private:
                 if (tick >= 1 && tick <= waves) {
                     uint32_t left = uint64_t(p.heads) * (tick - 1) / waves;
                     uint32_t count = uint64_t(p.heads) * tick / waves - left;
-                    ConsumeStagedProjections(p, globalBase, p.rows, id, 2 * groups, left, count, reuseQ);
+                    ConsumeStagedProjections(p, globalBase, p.rows, id, 2 * groups, left, count, reuseQ, framePlanes);
                 }
             }
             if ASCEND_IS_AIV {
@@ -512,21 +518,35 @@ private:
         // A complete frame reuses Q for its gated result after each sequence/head reads Q.
         // Include BF16 decay-A, the five projection planes, and the padded beta columns.
         const uint64_t bytes = SpansTile ? 32768 + uint64_t(p.heads) * 98304 : 32768 + 512 * (6 * width + betaStride);
-        const uint32_t capacity = bytes / (2 * (128 + 5 * width + betaStride)) / 16 * 16;
+        const uint64_t planeColumns = 5 * width + betaStride;
+        const uint32_t workspaceRows = bytes / (2 * (128 + planeColumns)) / 16 * 16;
+        uint32_t capacity = workspaceRows;
+        bool borrowOutput = false;
         const auto &a = p.recurrence;
         Recurrence rec;
         if constexpr (SpansTile) {
-            // Maintain at least four independent sequences per full frame.
-            if (a.sequence) {
-                if (a.sequence > capacity / 4) {
+            uint32_t longest = a.sequence;
+            if (!a.sequence) {
+                for (uint32_t b = 0; b < a.batch; ++b) {
+                    const uint32_t length = rec.prefix(a, b + 1) - rec.prefix(a, b);
+                    longest = length > longest ? length : longest;
+                }
+            }
+            if (longest > workspaceRows / 4) {
+                // A frame keeps gated and decay-A in workspace. Its future output can hold the six projection planes.
+                // Account for 16-row projection padding. A shorter tail can always use the original workspace.
+                if (a.output == p.hiddenStates ||
+                    planeColumns * (workspaceRows + 15) > kHiddenWidth * uint64_t(workspaceRows)) {
                     return false;
                 }
-            } else {
-                for (uint32_t b = 0; b < a.batch; ++b) {
-                    if (rec.prefix(a, b + 1) - rec.prefix(a, b) > capacity / 4) {
-                        return false;
-                    }
+                const uint32_t available = bytes / (2 * (128 + width)) / 16 * 16;
+                capacity = available < 256 ? available : 256;
+                // Each Vector task owns one sequence and one head in the current projection wave.
+                const uint32_t sequencesPerFrame = capacity / longest;
+                if (capacity <= workspaceRows || sequencesPerFrame < 4 || sequencesPerFrame * (p.heads / 2) < groups) {
+                    return false;
                 }
+                borrowOutput = true;
             }
         }
         for (uint32_t first = 0; first < p.rows;) {
@@ -545,7 +565,9 @@ private:
             frame.rows = rows;
             frame.recurrence.staged = 3;
             Waves single{rows, padded, padded, 1, padded, padded};
-            RunHeadPipeline(frame, single, id, groups, false, first, true);
+            const bool planesFit = uint64_t(padded) * planeColumns <= uint64_t(rows) * kHiddenWidth;
+            RunHeadPipeline(frame, single, id, groups, false, first, true,
+                            borrowOutput && planesFit ? frame.recurrence.output : nullptr);
             first += rows;
         }
         return true;

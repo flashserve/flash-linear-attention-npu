@@ -91,6 +91,9 @@ mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv, GM_ADDR wa, GM_ADDR wb, GM_ADDR beta,
     } else if (TILING_KEY_IS(2)) {
         kda::MegaKernel<true> op;
         op(params);
+    } else if (TILING_KEY_IS(3)) {
+        kda::MegaKernel<false, true> op;
+        op(params);
     }
 #endif
 }
