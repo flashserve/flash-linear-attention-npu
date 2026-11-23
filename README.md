@@ -45,7 +45,10 @@ npu-smi info
 
 ### Step 1. 部署 CANN 开发环境
 
-安装 toolkit 与对应机型 ops 两个包（A2/A3：CANN ≥ 8.5.2；A5：CANN ≥ 9.0.0；A6：CANN ≥ 9.3.0），下载页：[CANN 社区下载页](https://www.hiascend.com/developer/download/community/result?module=cann)
+安装 toolkit 与对应机型 ops 两个包
+- 运行环境：A2/A3：CANN ≥ 8.5.2；A5：CANN ≥ 9.0.0；A6：CANN ≥ 9.3.0
+- 编译环境：A2/A3/A5：CANN ≥ 9.2.0；A6：CANN ≥ 9.3.0
+- 下载页：[CANN 社区下载页](https://www.hiascend.com/developer/download/community/result?module=cann)
 
 - `Ascend-cann-toolkit_<version>_linux-<arch>.run`
 - `Ascend-cann-<chip>-ops_<version>_linux-<arch>.run`
