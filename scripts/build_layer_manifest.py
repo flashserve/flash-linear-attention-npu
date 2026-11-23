@@ -81,8 +81,9 @@ def requirements():
         if path in seen or not path.is_file():
             return set()
         text = abi.strip_comments(path.read_text(encoding="utf-8"))
-        # Include direct symbol lookups in older, hand-written public adapters.
-        result = set(re.findall(r"\baclnn[A-Z][A-Za-z0-9]+", text))
+        # Match whole identifiers in legacy lookups so a private name such as
+        # aclnnDemo_inner never adds a second dependency on aclnnDemo.
+        result = set(re.findall(r"\baclnn[A-Z][A-Za-z0-9_]*\b", text))
         result.update(calls_by_file.get(path, ()))
         for include in re.findall(r'#include "(stable_\w+\.cpp)"', text):
             result.update(cpp_symbols(path.parent / include, seen | {path}))
