@@ -9,25 +9,16 @@ from fla_npu.ops.ascendc import npu_chunk_gated_delta_rule_bwd
 
 dq, dk, dv, d_beta, d_g, dh0, d_a_log, d_dt_bias = npu_chunk_gated_delta_rule_bwd(
     q, k, v, g, beta, A, d_o, scale,
-)
-```
-
-函数签名如下。可选 Tensor 默认传 `None`。
-
-```python
-def npu_chunk_gated_delta_rule_bwd(
-    q, k, v, g, beta, A, d_o, scale, *,
     chunk_size=64, cu_seqlens=None, chunk_indices=None,
     initial_state=None, dht=None, q_rstd=None, k_rstd=None, beta_raw=None,
     use_exp2=False, use_qk_l2norm_in_kernel=False, use_gate_in_kernel=False,
     use_beta_sigmoid_in_kernel=False, allow_neg_eigval=False,
-    return_intermediate_states=False, state_v_first=False,
-    a_log=None, dt_bias=None, layout="BNSD",
-):
-    ...
+    return_intermediate_states=False,  # 兼容关键字
+    state_v_first=False, a_log=None, dt_bias=None, layout="BNSD",
+)
 ```
 
-`return_intermediate_states` 保留用于兼容既有 Python 调用，默认为 `False`。传 `True` 和传 `False` 使用相同的计算路径和返回槽位。中间张量保留在 executor 内部，`dh0` 的返回由 `initial_state` 决定。`allow_neg_eigval` 同为兼容参数。这两个关键字仅在 Python 层保留，取值均被忽略。
+`return_intermediate_states` 传 `False` 或 `True` 时均使用相同的计算路径和八个返回槽位。中间张量保留在 executor 内部，`dh0` 由 `initial_state` 决定。`return_intermediate_states` 与 `allow_neg_eigval` 都是 Python 兼容参数，取值均被忽略。
 
 ## ACLNN L2
 
