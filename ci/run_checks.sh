@@ -152,18 +152,19 @@ write_docs_only_reports() {
             --reason "documentation-only change; compilation and tests are not required"
     done
     python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize
-    ACCURACY_REPORT_FILE="$accuracy_report_file" python3 - <<'PY'
+    ACCURACY_REPORT_FILE="$accuracy_report_file" STAGE_REPORT_FILE="$stage_report_file" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 path = Path(os.environ["ACCURACY_REPORT_FILE"])
+stage_report = json.loads(Path(os.environ["STAGE_REPORT_FILE"]).read_text(encoding="utf-8"))
 payload = {
     "schema": "gdr-accuracy-report-v1",
     "complete": True,
     "status": "skipped",
     "classification": "docs-only",
-    "metadata": {},
+    "metadata": stage_report["metadata"],
     "summary": {
         "total": 0,
         "passed": 0,

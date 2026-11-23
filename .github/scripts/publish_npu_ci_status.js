@@ -426,6 +426,10 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     const report = requestScope === 'all'
       ? readJson(reportPath, '精度报告', accuracyErrors)
       : null;
+    // Match the explicit skip contract written by run_checks.sh and accepted
+    // by summarize_npu_ci.py. Identity and report integrity still apply.
+    const documentationOnly = isRecord(report) && report.status === 'skipped' &&
+      report.classification === 'docs-only';
     let summary = null;
     let reportAccuracyState = null;
     if (report !== null) {
@@ -527,7 +531,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
             }
           }
         }
-        if (requestScope === 'all') {
+        if (requestScope === 'all' && !documentationOnly) {
           for (const requiredCase of requiredAccuracyCases) {
             const caseItem = casesByName.get(requiredCase.name);
             if (!caseItem) {
@@ -620,6 +624,11 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
           if (fields.some((field) => !Number.isInteger(summary[field]) || summary[field] < 0)) {
             accuracyErrors.push('精度报告计数无效');
           } else {
+            if (documentationOnly &&
+                (!Array.isArray(report.cases) || report.cases.length !== 0 ||
+                 fields.some((field) => summary[field] !== 0))) {
+              accuracyErrors.push('仅文档变更的精度报告必须为空且所有计数为零');
+            }
             const expected = {
               total: Array.isArray(report.cases) ? report.cases.length : 0,
               ...derivedExecution,
@@ -630,7 +639,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
             };
             if (!casesValid || fields.some((field) => summary[field] !== expected[field])) {
               accuracyErrors.push('精度报告 summary 与 cases 不一致');
-            } else if (summary.accuracy_total === 0) {
+            } else if (summary.accuracy_total === 0 && !documentationOnly) {
               reportAccuracyState = 'failure';
               accuracyErrors.push('未发现精度检查用例');
             } else if (summary.accuracy_failed > 0 || summary.accuracy_not_run > 0 || summary.accuracy_passed !== summary.accuracy_total) {
@@ -774,6 +783,7 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       stageReport,
       stageResults,
       summary,
+      documentationOnly,
       executionOk: executionErrors.length === 0 && diagnosticErrors.length === 0,
       accuracyOk: accuracyErrors.length === 0,
       stageReportOk: stageReportErrors.length === 0,
@@ -864,8 +874,11 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     .filter((item) => !item.accuracyOk)
     .map((item) => `${item.label}: ${item.accuracyErrors.join('；') || '精度失败'}`)
     .join('；');
+  const documentationOnly = platforms.every((item) => item.documentationOnly);
   const accuracyDescription = invalidReason || (accuracyOk
-    ? `A2+A5 精度通过：${accuracyTotals.passed}/${accuracyTotals.total} 个用例`
+    ? (documentationOnly
+      ? '仅文档变更，无需精度测试'
+      : `A2+A5 精度通过：${accuracyTotals.passed}/${accuracyTotals.total} 个用例`)
     : truncateDescription(`A2+A5 精度失败：${failedPlatformSummary || '报告不完整'}`));
 
   const finalOk = executionOk && accuracyOk;
@@ -953,6 +966,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     if (stageDef.key === 'gdr-example-st' && result.status === 'success' && !platform.accuracyOk) {
       return '精度失败';
     }
+    if (platform.documentationOnly && result.status === 'success') {
+      return '免测通过';
+    }
     const labels = {
       success: '通过',
       failure: '失败',
@@ -979,7 +995,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
     `- 执行矩阵：\`${sanitizeMarkdownInline(matrixResult, 40)}\``,
     matrixFailureReason ? `- 汇总异常：${matrixFailureReason}` : null,
     requestScope === 'all'
-      ? '- Example ST：两平台均必跑'
+      ? (documentationOnly
+        ? '- 仅文档变更：跳过编译和测试'
+        : '- Example ST：两平台均必跑')
       : '- 范围：环境契约与指定算子 OPP 构建；不执行后续无关分项',
     requestScope === 'all' ? `- 精度检查：${accuracyDescription}` : null,
     ops ? `- 算子：\`${sanitizeMarkdownInline(ops, 500)}\`` : null,
@@ -1004,9 +1022,9 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
         ? `${summary.accuracy_passed}/${summary.accuracy_total}`
         : '-/-';
       const accuracyCell = requestScope === 'all'
-        ? (item.accuracyOk ? '通过' : '失败')
+        ? (item.accuracyOk ? (item.documentationOnly ? '免测' : '通过') : '失败')
         : '未执行';
-      const accuracyCasesCell = requestScope === 'all' ? accuracyCases : '-/-';
+      const accuracyCasesCell = requestScope === 'all' && !item.documentationOnly ? accuracyCases : '-/-';
       return `| ${item.label} | \`${item.soc}\` | ${item.executionOk ? '通过' : '失败'} | ${accuracyCell} | ${escapeCell(accuracyCasesCell)} | ${escapeCell(item.errors.join('；'))} |`;
     }),
   ].filter((line) => line !== null);

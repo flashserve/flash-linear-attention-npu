@@ -75,6 +75,9 @@ class WorkflowResultPresentationTest(unittest.TestCase):
         missing_required_metric=False,
         duplicate_required_metric=False,
         altered_metric_threshold=False,
+        documentation_only=False,
+        invalid_documentation_report=None,
+        mode="quick",
         ops="",
         expected_run_attempt="1",
         platform_attempts=None,
@@ -342,6 +345,29 @@ class WorkflowResultPresentationTest(unittest.TestCase):
                         for stage in STAGE_KEYS
                     },
                 }
+                if documentation_only:
+                    report.update(status="skipped", classification="docs-only", cases=[])
+                    report["summary"] = dict.fromkeys(report["summary"], 0)
+                    diagnostic["accuracy"].update(total=0, passed=0)
+                    if platform == "a5":
+                        if invalid_documentation_report == "missing_marker":
+                            report.pop("classification")
+                        elif invalid_documentation_report == "wrong_status":
+                            report["status"] = "success"
+                        elif invalid_documentation_report == "nonempty_cases":
+                            report["cases"] = [{"name": "unexpected"}]
+                        elif invalid_documentation_report == "invalid_cases":
+                            report["cases"] = None
+                        elif invalid_documentation_report == "nonzero_counts":
+                            report["summary"]["total"] = 1
+                        elif invalid_documentation_report == "missing_identity":
+                            report["metadata"] = {}
+                        elif invalid_documentation_report == "wrong_identity":
+                            report["metadata"] = {**metadata, "head_sha": "b" * 40}
+                        elif invalid_documentation_report == "incomplete":
+                            report["complete"] = False
+                        elif invalid_documentation_report == "wrong_schema":
+                            report["schema"] = "unsupported"
                 if stage_failure and platform == "a5":
                     failed_index = STAGE_KEYS.index(stage_failure)
                     stage_report["status"] = "failure"
@@ -631,7 +657,7 @@ globalThis.core = {
                     "COMMENT_FILE": str(comment_file),
                     "RECORD_FILE": str(record_file),
                     "NPU_PUBLISH_SCRIPT_PATH": str(publish_script_path or PUBLISH_SCRIPT_PATH),
-                    "NPU_CI_MODE": "quick",
+                    "NPU_CI_MODE": mode,
                     "NPU_OPS": ops,
                     "NPU_PR_NUMBER": "527",
                     "NPU_COMMENT_ID": "123",
@@ -1915,6 +1941,58 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         self.assertIn("分项结果", comment)
         self.assertNotIn("case1_current_default", comment)
         self.assertLess(len(comment), 48000)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_finalize_script_accepts_documentation_only_reports(self):
+        completed, comment, records = self._run_finalize_script(
+            documentation_only=True,
+            expected_run_attempt="2",
+            platform_attempts={"a2": "1", "a5": "1"},
+            nested_artifacts=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self._assert_statuses(records, ["success"] * 6)
+        self.assertFalse(any(item["kind"] == "failed" for item in records))
+        self.assertIn("仅文档变更", comment)
+        self.assertIn("跳过编译和测试", comment)
+        self.assertNotIn("两平台均必跑", comment)
+        self.assertNotIn("精度通过：0/0", comment)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_finalize_script_rejects_invalid_documentation_skip(self):
+        for invalid in (
+            "missing_marker", "wrong_status", "nonempty_cases", "invalid_cases", "nonzero_counts",
+            "missing_identity", "wrong_identity", "incomplete", "wrong_schema",
+        ):
+            with self.subTest(invalid=invalid):
+                completed, _, records = self._run_finalize_script(
+                    documentation_only=True, invalid_documentation_report=invalid,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self._assert_statuses(
+                    records, ["success"] * 4 + ["failure", "failure"],
+                )
+                self.assertTrue(any(item["kind"] == "failed" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_normal_quick_and_full_runs_still_require_accuracy(self):
+        scenarios = (
+            ({}, ["success"] * 6),
+            ({"missing_required_case": True}, ["success"] * 4 + ["failure"] * 2),
+            ({"accuracy_failure": True}, ["success"] * 4 + ["failure"] * 2),
+            ({"incomplete": True}, ["success"] * 4 + ["failure"] * 2),
+            ({"missing_required_metric": True}, ["success"] * 4 + ["failure"] * 2),
+        )
+        for mode in ("quick", "full"):
+            for options, expected in scenarios:
+                with self.subTest(mode=mode, options=options):
+                    completed, comment, records = self._run_finalize_script(mode=mode, **options)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self._assert_statuses(records, expected)
+                    self.assertIn("Example ST：两平台均必跑", comment)
+                    self.assertNotIn("免测通过", comment)
+                    if options:
+                        self.assertTrue(any(item["kind"] == "failed" for item in records))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_publisher_rejects_changed_head_or_pr_lifecycle(self):
