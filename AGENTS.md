@@ -21,7 +21,7 @@
 - CANNBot workflow 完成后，按本仓规则接入 op_api/aclnn、Stable-ABI、Python 导出和 ATK 包装；
   适配层冒烟和单 case ATK 通过后，执行本仓 ATK full 验收。
 - 适配层的 ACLNN 接口规则见 [`docs/算子自动开发工作流.md`](docs/算子自动开发工作流.md) 的
-  「本仓适配：ACLNN 接口层规则」：对外只暴露 aclnn，内部实现以 inner 命名。
+  「本仓适配：ACLNN 接口层规则」：对外只暴露 aclnn，内部实现放在 `l0op` 命名空间。
 - CANNBot 02 生成的 CPU 标杆直接作为 `tests/atk/<op>/reference.py` 交付。CANNBot 直调测试和
   本仓 ATK executor 导入同一文件，数学公式集中在该文件维护。
 - CANNBot 可用且版本匹配是 Ascend C 算子研发的入口条件；缺少条件时记录并报告阻塞项。
