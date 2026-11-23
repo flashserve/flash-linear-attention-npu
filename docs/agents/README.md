@@ -98,6 +98,7 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
 
 | 任务 | 必读文件 |
 | --- | --- |
+| 创建或更新 Issue，包括 API / CLI 提交和为 PR 创建关联 Issue | [`issue-submission.md`](issue-submission.md)、当前仓库的 Issue 模板和 [`../repository-rules.md`](../repository-rules.md)；必须显式提交分类和所需目标分支标签，读回确认后才算完成 |
 | 新增算子、调整目录/接口/调用层结构 | [`skills/operator-review/references/engineering-example/`](skills/operator-review/references/engineering-example/) 和当前算子的 `docs/api.md`、`docs/design.md` |
 | 对算子或 PR 做四层静态检视 | [`skills/operator-review/SKILL.md`](skills/operator-review/SKILL.md)，按其路由读取功能、结构、DFX、文档和 issue 分类 reference |
 | 修改既有算子的接口或功能 | 包括修改属性、支持范围和异常行为。先读取当前 `docs/api.md`、CPU 标杆、`docs/design.md`、算子 ATK README、实现和测试；开发期 `docs/validation.md` 存在时同时读取。核对设计文档的规则版本，再按 `01-接口确认.md` 的既有算子修改流程选择后续阶段 |
@@ -109,6 +110,7 @@ GPU 和 Triton Ascend 路径都使用相同输入与 CPU 标杆比较。用户�
 ## 内容存放位置
 
 - 每条规则由一个阶段文件维护；跨阶段强制规则统一写在根 `AGENTS.md`。
+- Agent 提交 Issue 的入口要求写在根 `AGENTS.md`，分类、目标分支、API / CLI 提交和读回核验流程统一维护在 [`issue-submission.md`](issue-submission.md)。
 - ATK 正式验收的命令、参数、环境变量和目录资产写在 `tests/atk/README.md`；精度失败后的输出
   采集命令写在 `reference/精度对比与定位.md`。
 - Python runtime、wheel、动态库、device、stream、autograd 和图编译架构只写在 `docs/architecture/`。

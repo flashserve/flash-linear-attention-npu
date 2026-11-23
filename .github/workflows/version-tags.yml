@@ -3,12 +3,12 @@ name: 版本标签同步
 # 版本分支（如 v26.9.0、v26.9.1）与 issue 版本标签的同步入口。
 # 版本标签名与版本分支名完全一致：分支 v26.9.1 对应标签 v26.9.1。
 #
-# 版本标签只用于标记 bug 的目标修复版本，需求类 issue 不打版本标签、不做版本排期，
-# 需求与进展统一由置顶需求汇总 issue（requirements-index）跟踪。
+# bug 和 enhancement 都需要至少一个目标分支标签（main 或版本分支名）。
+# 提交时选择初始目标分支，维护者可通过 /version 调整；需求与进展由置顶需求汇总 issue 跟踪。
 #
 # 自动同步：创建版本分支时，给当前未解决且带 VERSION_TAG_FOR_LABELS（默认 bug）的 issue 补打该版本标签。
 # 手动同步：维护者在 issue 评论 `/version v26.9.1` 追加版本标签，
-#           `/version only v26.9.1` 用该版本替换全部版本标签，`/version none` 清空版本标签。
+#           `/version only main` 用 main 替换全部目标分支标签，不允许清空全部目标分支。
 # 历史补打：在 Actions 手动运行本 workflow 并填写已存在的版本分支名。
 
 on:
@@ -25,16 +25,22 @@ on:
 env:
   # 版本名规则：版本分支名与版本标签名同名
   VERSION_NAME_PATTERN: '^v[0-9]{2,4}\.[0-9]{1,2}\.[0-9]{1,2}$'
-  # 打这些标签的 open issue 才自动补打版本标签（版本标签标记 bug 的目标修复版本）
+  # /version 支持的目标分支；自动顺延仍仅匹配上面的版本分支规则
+  TARGET_BRANCH_PATTERN: '^(main|v[0-9]{2,4}\.[0-9]{1,2}\.[0-9]{1,2})$'
+  # 保持既有自动顺延范围：仅为未解决 bug 自动补打新版本标签
   VERSION_TAG_FOR_LABELS: 'bug'
+  # 维护者可调整这两类 issue 的目标分支
+  VERSION_COMMAND_FOR_LABELS: 'bug,enhancement'
   # 带这些标签的 open issue 不参与版本排期，不会自动打版本标签
   EXCLUDED_LABELS: 'question,invalid,duplicate,wontfix'
   # 未排期标记标签：已排期 issue 会被移除该标签，未排期 issue 由需求汇总 workflow 打上
   PENDING_LABEL: 'needs-version'
-  # `/version` 命令是否强制只对带 VERSION_TAG_FOR_LABELS 的 issue 生效
+  # `/version` 命令是否强制只对带 VERSION_COMMAND_FOR_LABELS 的 issue 生效
   ENFORCE_VERSION_TAG_SCOPE: 'true'
   # 打标签结束后触发置顶需求汇总刷新
   INDEX_WORKFLOW: 'requirements-index.yml'
+  # 手动命令完成后重新检查必填标签，清除已补齐的 needs-issue-info
+  ISSUE_LABEL_WORKFLOW: 'issue-labels.yml'
   # 允许使用 /version 命令的评论人权限
   COMMAND_ALLOWED_ASSOCIATIONS: 'OWNER,MEMBER,COLLABORATOR'
 
@@ -42,6 +48,12 @@ permissions:
   contents: read
   issues: write
   actions: write
+
+# 与表单标签同步共用单 Issue 队列，避免两个替换操作交错删除目标分支。
+concurrency:
+  group: issue-labels-${{ github.event.issue.number || github.event.ref || inputs.branch || github.run_id }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   sync-version-tag:
@@ -110,7 +122,7 @@ jobs:
             await ensureLabel(versionName, colorFor(versionName), `版本分支 ${versionName} 的排期标签`);
 
             // 同步范围：当前 open 的非 PR issue 中，带 VERSION_TAG_FOR_LABELS 的 issue
-            // 版本标签只标记 bug 的目标修复版本，需求类 issue 不做版本排期
+            // 保持 bug 自动顺延规则；需求的目标分支由提交者或维护者指定
             const openIssues = await github.paginate(github.rest.issues.listForRepo, {
               ...repoRef,
               state: 'open',
@@ -223,10 +235,10 @@ jobs:
             const { owner, repo } = context.repo;
             const repoRef = { owner, repo };
             const serverUrl = (process.env.GITHUB_SERVER_URL || 'https://github.com').replace(/\/$/, '');
-            const issue = context.payload.issue;
+            const issueNumber = context.payload.issue.number;
             const comment = context.payload.comment;
-            const versionPattern = new RegExp(process.env.VERSION_NAME_PATTERN);
-            const tagForLabels = new Set(splitList(process.env.VERSION_TAG_FOR_LABELS));
+            const versionPattern = new RegExp(process.env.TARGET_BRANCH_PATTERN);
+            const tagForLabels = new Set(splitList(process.env.VERSION_COMMAND_FOR_LABELS));
             const enforceScope = (process.env.ENFORCE_VERSION_TAG_SCOPE || 'true') !== 'false';
             const pendingLabel = process.env.PENDING_LABEL;
             const allowedAssociations = new Set(splitList(process.env.COMMAND_ALLOWED_ASSOCIATIONS));
@@ -239,7 +251,7 @@ jobs:
             const target = command[2].trim();
 
             async function reply(body) {
-              await github.rest.issues.createComment({ ...repoRef, issue_number: issue.number, body });
+              await github.rest.issues.createComment({ ...repoRef, issue_number: issueNumber, body });
             }
 
             if (!allowedAssociations.has(comment.author_association)) {
@@ -249,87 +261,96 @@ jobs:
                   '',
                   `- 当前评论人权限：\`${comment.author_association}\``,
                   `- 允许的权限：${splitList(process.env.COMMAND_ALLOWED_ASSOCIATIONS).map((item) => `\`${item}\``).join('、')}`,
-                  '- 维护者也可以直接在 issue 右侧 Labels 中手工添加版本标签。',
+                  '- 维护者也可以直接在 issue 右侧 Labels 中手工添加目标分支标签。',
                 ].join('\n'),
               );
               return;
             }
 
+            const { data: issue } = await github.rest.issues.get({ ...repoRef, issue_number: issueNumber });
             if (issue.state !== 'open') {
-              await reply(`本 issue 当前状态为 \`${issue.state}\`，只有 open 状态的 issue 参与版本排期。`);
+              await reply(`本 issue 当前状态为 \`${issue.state}\`，只有 open 状态的 issue 可以调整目标分支。`);
               return;
             }
 
             const currentLabels = labelNamesOf(issue);
             const currentVersions = currentLabels.filter((name) => versionPattern.test(name));
+            const primaryLabels = currentLabels.filter((name) =>
+              ['bug', 'enhancement', 'question', 'committer-promotion'].includes(name));
 
-            // 版本标签只标记 bug 的目标修复版本；需求类不做版本排期
+            if (primaryLabels.length !== 1) {
+              await reply('本 issue 的主分类缺失或冲突，请先保留一个正确主分类，未修改目标分支标签。');
+              return;
+            }
+
+            // bug 和 enhancement 均可调整目标分支
             if (enforceScope && !currentLabels.some((name) => tagForLabels.has(name))) {
               await reply(
                 [
-                  `本 issue 没有 ${[...tagForLabels].map((name) => `\`${name}\``).join('、')} 标签，未修改版本标签。`,
+                  `本 issue 没有 ${[...tagForLabels].map((name) => `\`${name}\``).join('、')} 标签，未修改目标分支标签。`,
                   '',
-                  '版本标签只用于标记 bug 的目标修复版本；需求类 issue 不做版本排期，进展请写在置顶需求汇总 issue 里。',
+                  '只有 bug 和 enhancement 使用目标分支标签；专用分类保持各自的处理流程。',
                 ].join('\n'),
               );
               return;
             }
 
-            // /version none：清空全部版本标签，回到未排期
+            // 不允许通过命令清空最后一个目标分支；可用 only 安全替换
             if (['none', 'clear', '-'].includes(target.toLowerCase())) {
-              for (const name of currentVersions) {
-                await github.rest.issues.removeLabel({ ...repoRef, issue_number: issue.number, name });
-              }
-              if (pendingLabel) {
-                await github.rest.issues
-                  .addLabels({ ...repoRef, issue_number: issue.number, labels: [pendingLabel] })
-                  .catch((error) => core.warning(`添加 ${pendingLabel} 失败：${error.message}`));
-              }
               await reply(
                 [
-                  '已清空本 issue 的版本标签，当前状态为未排期。',
+                  'bug 和 enhancement 必须保留至少一个目标分支标签，未清空当前标签。',
                   '',
-                  `- 重新排期：\`/version v26.9.1\``,
+                  '- 替换目标分支：`/version only main` 或 `/version only v26.9.1`。',
                 ].join('\n'),
               );
-              await github.rest.reactions
-                .createForIssueComment({ ...repoRef, comment_id: comment.id, content: '+1' })
-                .catch((error) => core.warning(`添加 reaction 失败：${error.message}`));
               return;
             }
 
             if (!versionPattern.test(target)) {
               await reply(
                 [
-                  `\`${target}\` 不是合法的版本名。`,
+                  `\`${target}\` 不是合法的目标分支名。`,
                   '',
-                  '- 版本名与版本分支同名，例如 `v26.9.1`',
-                  `- 版本名规则：\`${process.env.VERSION_NAME_PATTERN}\``,
+                  '- 目标分支为 `main` 或版本分支，例如 `v26.9.1`。',
+                  `- 分支名规则：\`${process.env.TARGET_BRANCH_PATTERN}\``,
                 ].join('\n'),
               );
               return;
             }
 
-            // 版本分支必须真实存在，避免把 issue 排进不存在的版本
+            // 目标分支必须真实存在，避免把 issue 排进不存在的分支
             try {
               await github.rest.repos.getBranch({ ...repoRef, branch: target });
             } catch (error) {
               await reply(
                 [
-                  `版本分支 \`${target}\` 不存在或不可读，未修改版本标签。`,
+                  `目标分支 \`${target}\` 不存在或不可读，未修改目标分支标签。`,
                   '',
-                  '- 请先创建对应版本分支，再执行本命令。',
+                  '- 请先确认对应分支存在，再执行本命令。',
                 ].join('\n'),
               );
               return;
             }
 
+            // 先确保新标签存在并添加成功，再移除旧目标，避免替换失败后丢失最后一个分支
+            try {
+              await github.rest.issues.getLabel({ ...repoRef, name: target });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                ...repoRef,
+                name: target,
+                color: '1d76db',
+                description: `目标分支 ${target}`,
+              });
+            }
+            await github.rest.issues.addLabels({ ...repoRef, issue_number: issue.number, labels: [target] });
             if (replaceAll) {
               for (const name of currentVersions.filter((name) => name !== target)) {
                 await github.rest.issues.removeLabel({ ...repoRef, issue_number: issue.number, name });
               }
             }
-            await github.rest.issues.addLabels({ ...repoRef, issue_number: issue.number, labels: [target] });
             if (pendingLabel) {
               await github.rest.issues
                 .removeLabel({ ...repoRef, issue_number: issue.number, name: pendingLabel })
@@ -340,16 +361,35 @@ jobs:
                 });
             }
 
-            const nextVersions = replaceAll
-              ? [target]
-              : [...currentVersions.filter((name) => name !== target), target];
+            const { data: verifiedIssue } = await github.rest.issues.get({ ...repoRef, issue_number: issue.number });
+            const nextVersions = labelNamesOf(verifiedIssue).filter((name) => versionPattern.test(name));
+            if (!nextVersions.includes(target) || (replaceAll && nextVersions.length !== 1)) {
+              core.setFailed('目标分支标签读回与请求不一致，请检查本 issue 的实际标签。');
+              return;
+            }
+
+            // GITHUB_TOKEN 打标签不会触发 issues 工作流，显式刷新校验和汇总。
+            const { data: repository } = await github.rest.repos.get(repoRef);
+            for (const [workflow_id, inputs] of [
+              [process.env.ISSUE_LABEL_WORKFLOW, { issue_number: String(issue.number) }],
+              [process.env.INDEX_WORKFLOW, {}],
+            ]) {
+              if (!workflow_id) continue;
+              await github.rest.actions.createWorkflowDispatch({
+                ...repoRef,
+                workflow_id,
+                ref: repository.default_branch,
+                inputs,
+              }).catch((error) => core.warning(`触发 ${workflow_id} 失败：${error.message}`));
+            }
+
             await reply(
               [
-                `已将本 issue 排入版本 \`${target}\`。`,
+                `已将本 issue 的目标分支设为包含 \`${target}\`。`,
                 '',
-                `- 版本分支：[${target}](${serverUrl}/${owner}/${repo}/tree/${target})`,
-                `- 当前版本标签：${nextVersions.map((name) => `\`${name}\``).join('、')}`,
-                `- 追加其他版本：\`/version <版本名>\`；只保留一个版本：\`/version only <版本名>\`；取消排期：\`/version none\``,
+                `- 目标分支：[${target}](${serverUrl}/${owner}/${repo}/tree/${target})`,
+                `- 当前目标分支标签：${nextVersions.map((name) => `\`${name}\``).join('、')}`,
+                '- 追加目标分支：`/version <分支名>`；只保留一个目标分支：`/version only <分支名>`。',
               ].join('\n'),
             );
             await github.rest.reactions
