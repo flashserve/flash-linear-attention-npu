@@ -80,6 +80,7 @@ struct ChunkKdaFwdPrepareParams {
     const aclTensor *betaEffOut = nullptr;
 };
 
+
 struct PrepareShapeInfo {
     bool packed = false;
     int64_t batch = 0;
@@ -953,6 +954,44 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
     status = MakeInputsContiguous(params, executorPtr);
     if (status != ACLNN_SUCCESS) {
         return status;
+    }
+    params.q->SetOriginalShape(params.q->GetViewShape());
+    params.k->SetOriginalShape(params.k->GetViewShape());
+    params.v->SetOriginalShape(params.v->GetViewShape());
+    params.g->SetOriginalShape(params.g->GetViewShape());
+    params.beta->SetOriginalShape(params.beta->GetViewShape());
+    if (params.aLogOptional != nullptr) {
+        params.aLogOptional->SetOriginalShape(params.aLogOptional->GetViewShape());
+    }
+    if (params.dtBiasOptional != nullptr) {
+        params.dtBiasOptional->SetOriginalShape(params.dtBiasOptional->GetViewShape());
+    }
+    params.gkOut->SetOriginalShape(params.gkOut->GetViewShape());
+    params.aqkOut->SetOriginalShape(params.aqkOut->GetViewShape());
+    if (params.akkOut != nullptr) {
+        params.akkOut->SetOriginalShape(params.akkOut->GetViewShape());
+    }
+    params.wOut->SetOriginalShape(params.wOut->GetViewShape());
+    params.uOut->SetOriginalShape(params.uOut->GetViewShape());
+    if (params.qgOut != nullptr) {
+        params.qgOut->SetOriginalShape(params.qgOut->GetViewShape());
+    }
+    params.kgOut->SetOriginalShape(params.kgOut->GetViewShape());
+    params.qgScaledOut->SetOriginalShape(params.qgScaledOut->GetViewShape());
+    if (params.qHatOut != nullptr) {
+        params.qHatOut->SetOriginalShape(params.qHatOut->GetViewShape());
+    }
+    if (params.kHatOut != nullptr) {
+        params.kHatOut->SetOriginalShape(params.kHatOut->GetViewShape());
+    }
+    if (params.qRstdOut != nullptr) {
+        params.qRstdOut->SetOriginalShape(params.qRstdOut->GetViewShape());
+    }
+    if (params.kRstdOut != nullptr) {
+        params.kRstdOut->SetOriginalShape(params.kRstdOut->GetViewShape());
+    }
+    if (params.betaEffOut != nullptr) {
+        params.betaEffOut->SetOriginalShape(params.betaEffOut->GetViewShape());
     }
 
     const auto result = l0op::ChunkKdaFwdPrepare(

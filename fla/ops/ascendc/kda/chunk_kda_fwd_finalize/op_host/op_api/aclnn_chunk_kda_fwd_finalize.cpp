@@ -26,6 +26,7 @@ namespace {
 
 constexpr int64_t FINALIZE_CHUNK_ROWS = 64;
 
+
 struct FinalizeParams {
     const aclTensor *qgScaled;
     const aclTensor *aqk;
@@ -96,12 +97,12 @@ aclnnStatus CheckDtypeAndFormat(const FinalizeParams &params)
         }
         const auto storage = tensors[index]->GetStorageFormat();
         const auto view = tensors[index]->GetViewFormat();
-        if (!(storage == Format::FORMAT_ND && view == Format::FORMAT_ND && !IsPrivateFormat(storage))) {
+        if (IsPrivateFormat(storage) || IsPrivateFormat(view)) {
             OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
                 OP_NAME, names[index],
                 std::to_string(static_cast<int>(storage)) + "/" +
                     std::to_string(static_cast<int>(view)),
-                "non-private ND storage/view format only");
+                "non-private public storage/view formats only");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -395,6 +396,11 @@ aclnnStatus aclnnChunkKdaFwdFinalizeGetWorkspaceSize(
     if (status != ACLNN_SUCCESS) {
         return status;
     }
+    params.qgScaled->SetOriginalShape(params.qgScaled->GetViewShape());
+    params.aqk->SetOriginalShape(params.aqk->GetViewShape());
+    params.vNew->SetOriginalShape(params.vNew->GetViewShape());
+    params.h->SetOriginalShape(params.h->GetViewShape());
+    params.attnOut->SetOriginalShape(params.attnOut->GetViewShape());
     const aclTensor *result = l0op::ChunkKdaFwdFinalize(
         params.qgScaled, params.aqk, params.vNew, params.h,
         params.cuSeqlens, params.chunkIndices, params.outputLayout,

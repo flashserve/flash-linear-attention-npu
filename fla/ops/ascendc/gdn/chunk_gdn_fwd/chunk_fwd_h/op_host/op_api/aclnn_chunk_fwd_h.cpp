@@ -135,14 +135,13 @@ static aclnnStatus CheckFormat(ChunkFwdHParams params)
         }
         const auto storageFormat = tensors[idx]->GetStorageFormat();
         const auto viewFormat = tensors[idx]->GetViewFormat();
-        if (!(storageFormat == Format::FORMAT_ND && viewFormat == Format::FORMAT_ND &&
-              !IsPrivateFormat(storageFormat))) {
+        if (IsPrivateFormat(storageFormat) || IsPrivateFormat(viewFormat)) {
             OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
                 OP_NAME, tensorNames[idx],
                 std::string("storage=") +
                     ge::TypeUtils::FormatToSerialString(static_cast<ge::Format>(storageFormat)) +
                     ",view=" + ge::TypeUtils::FormatToSerialString(static_cast<ge::Format>(viewFormat)),
-                "must use non-private ND storage/view format");
+                "must use non-private public storage/view formats");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -652,6 +651,23 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
     ret = ParamsDataContiguous(params, executorPtr);
     if (ret != ACLNN_SUCCESS) {
         return ret;
+    }
+    params.k->SetOriginalShape(params.k->GetViewShape());
+    params.w->SetOriginalShape(params.w->GetViewShape());
+    params.u->SetOriginalShape(params.u->GetViewShape());
+    if (params.gOptional != nullptr) {
+        params.gOptional->SetOriginalShape(params.gOptional->GetViewShape());
+    }
+    if (params.gkOptional != nullptr) {
+        params.gkOptional->SetOriginalShape(params.gkOptional->GetViewShape());
+    }
+    if (params.initialStateOptional != nullptr) {
+        params.initialStateOptional->SetOriginalShape(params.initialStateOptional->GetViewShape());
+    }
+    params.hOut->SetOriginalShape(params.hOut->GetViewShape());
+    params.vNewOut->SetOriginalShape(params.vNewOut->GetViewShape());
+    if (params.finalStateOut != nullptr) {
+        params.finalStateOut->SetOriginalShape(params.finalStateOut->GetViewShape());
     }
     // gated 引擎经 STATE_V_FIRST 模板维原生产出 [K,V]/[V,K] state（cube 等价
     // 转置式，见 arch22/chunk_fwd_h_utils.h），aclnn 层无需布局翻译，参数原样直达。
