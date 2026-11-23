@@ -54,6 +54,7 @@
 #include "stable_recurrent_kda.cpp"
 #include "stable_solve_tri.cpp"
 #include "stable_gdn_recoverssm_commit.cpp"
+#include "stable_compact_conv_state.cpp"
 
 // Build stamp: the md5 of the adapter sources this library was compiled from,
 // injected by csrc/build_stable.py.  fla_npu/ops/ascendc/_stable.py
@@ -138,6 +139,7 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_pre_process_fwd_kernel_merged);
   m.def(kSchema_pre_process_bwd_kernel_merged);
   m.def(kSchemaGdnRecoverssmCommit);
+  m.def(kSchemaCompactConvState);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.def("_stream_probe(int device_index) -> (int, int)");
 #endif
@@ -243,6 +245,9 @@ static void register_implementations(StableLibrary& m) {
   m.impl("npu_gdn_recoverssm_commit",
          &fla_npu_stable::stable::boxed_adapter<
              run_gdn_recoverssm_commit>);
+  m.impl("npu_compact_conv_state",
+         &fla_npu_stable::stable::boxed_adapter<
+             run_compact_conv_state>);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.impl("_stream_probe", &boxed_stream_probe);
 #endif

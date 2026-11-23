@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "copy": "exact",
+  "compare_region": "complete cache backing storage"
+}

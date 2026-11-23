@@ -18,6 +18,7 @@ Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带�
 | GDN | `npu_chunk_gated_delta_rule_bwd_finalize` | `chunk_gated_delta_rule_bwd_finalize` | 反向梯度收尾 | 暂缺README |
 | GDN | [`npu_chunk_gdn_bwd_intra`](../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_intra/README.md) | `chunk_gdn_bwd_intra` | chunk 内反向计算 | - |
 | GDN | [`npu_chunk_fwd_h`](../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/README.md) | `chunk_fwd_h` | 独立 chunk 状态前向 | - |
+| GDN | [`npu_compact_conv_state`](../fla/ops/ascendc/gdn/recurrent_gdn/compact_conv_state/README.md) | `compact_conv_state` | 压缩已接受的卷积历史状态 | - |
 | GDN | [`npu_gdn_recoverssm_commit`](../fla/ops/ascendc/gdn/recurrent_gdn/gdn_recoverssm_commit/README.md) | `gdn_recoverssm_commit` | SMM replay 状态提交 | - |
 | GDN | [`npu_gdn_recoverssm_verify`](../fla/ops/ascendc/gdn/recurrent_gdn/gdn_recoverssm_verify/README.md) | `gdn_recoverssm_verify` | SMM 状态恢复校验 | - |
 | GDN | [`npu_chunk_fwd_o`](../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_o/README.md) | `chunk_fwd_o` | chunk 输出计算 | - |

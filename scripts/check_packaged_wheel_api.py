@@ -58,6 +58,7 @@ ASCENDC_NAMES = (
     'merge_fwd_bwd_kernel',
     'kda_gate_cumsum',
     'recurrent_kda',
+    'compact_conv_state',
     'gdn_recoverssm_commit',
     'gdn_recoverssm_verify',
 )

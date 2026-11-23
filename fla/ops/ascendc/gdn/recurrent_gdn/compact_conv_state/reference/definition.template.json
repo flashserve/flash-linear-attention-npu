@@ -1,0 +1,23 @@
+{
+  "name": "CompactConvState",
+  "public_entry": "compact_conv_state",
+  "attributes": {
+    "conv_history_len": 3,
+    "align_mode": true,
+    "dim_stride": -1,
+    "null_block_id": 0
+  },
+  "inputs": [
+    "conv_state_ref",
+    "conv_state_base_addrs",
+    "conv_state_block_strides",
+    "conv_state_dim_strides",
+    "conv_state_token_strides",
+    "state_indices",
+    "commit_lens",
+    "final_state_indices",
+    "boundary_state_indices",
+    "boundary_recovery_lens"
+  ],
+  "mutation": ["conv_state_ref"]
+}

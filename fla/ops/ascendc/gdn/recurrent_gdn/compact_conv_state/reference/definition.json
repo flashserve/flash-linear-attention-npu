@@ -1,0 +1,19 @@
+{
+  "name": "CompactConvState",
+  "public_entry": "compact_conv_state",
+  "soc": "ascend950",
+  "inputs": [
+    {"name": "conv_state_ref", "dtype": ["bfloat16", "float32"], "shape": ["P", "C", "S"], "mutable": true},
+    {"name": "conv_state_base_addrs", "dtype": "int64", "shape": ["Layer"]},
+    {"name": "conv_state_block_strides", "dtype": "int64", "shape": ["Layer"]},
+    {"name": "conv_state_dim_strides", "dtype": "int64", "shape": ["Layer"]},
+    {"name": "conv_state_token_strides", "dtype": "int64", "shape": ["Layer"]},
+    {"name": "state_indices", "dtype": ["int32", "int64"], "shape": ["B"]},
+    {"name": "commit_lens", "dtype": ["int32", "int64"], "shape": ["B"]},
+    {"name": "final_state_indices", "dtype": ["int32", "int64"], "shape": ["B"]},
+    {"name": "boundary_state_indices", "dtype": ["int32", "int64"], "shape": ["B"]},
+    {"name": "boundary_recovery_lens", "dtype": ["int32", "int64"], "shape": ["B"]}
+  ],
+  "returns": null,
+  "mutation": ["conv_state_ref"]
+}

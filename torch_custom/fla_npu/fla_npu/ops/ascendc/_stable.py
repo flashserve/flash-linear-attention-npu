@@ -575,6 +575,24 @@ def npu_gdn_recoverssm_commit(
     )
 
 
+def npu_compact_conv_state(
+        conv_state, conv_state_base_addrs, conv_state_block_strides,
+        conv_state_dim_strides, conv_state_token_strides, state_indices,
+        commit_lens, final_state_indices, boundary_state_indices,
+        boundary_recovery_lens, *, conv_history_len, align_mode,
+        dim_stride=-1, null_block_id=0):
+    """Copy accepted convolution histories into planned cache pages."""
+
+    return _op("npu_compact_conv_state")(
+        conv_state, conv_state_base_addrs, conv_state_block_strides,
+        conv_state_dim_strides, conv_state_token_strides, state_indices,
+        commit_lens, final_state_indices, boundary_state_indices,
+        boundary_recovery_lens, int(conv_history_len), bool(align_mode),
+        -1 if dim_stride is None else int(dim_stride), int(null_block_id),
+        _current_stream_ptr(),
+    )
+
+
 def _bound_op(name: str):
     """Op handle for a hot path: one dict lookup, resolved on the first call.
 
