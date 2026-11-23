@@ -278,7 +278,7 @@ public:
             uint32_t row=global+r,start=shortSequence?global:prefix(a,b),end=shortSequence?global+valid:prefix(a,b+1),t=row-start;
             uint32_t idx=shortSequence?shortIndex:gm<int32_t>(a.indices).GetValue(b);
             uint64_t convBase=uint64_t(idx)*a.convStride;
-            if(t==0 || row%64==0) {
+            if(t==0 || (carry && row%64==0)) {
                 auto src=t==0?gm<float>(a.checkpoint,uint64_t(idx)*a.checkpointStride+head*16384):gm<float>(carry,head*16384);
                 AscendC::DataCopy(state,src,16384);
                 uint32_t accepted=gm<int32_t>(a.accepted).GetValue(b);
@@ -354,7 +354,7 @@ public:
             AscendC::DataCopy(gm<float>(a.decay,idx*a.decayStride+at),dec,128);
             AscendC::DataCopy(gm<half>(a.key,idx*a.keyStride+at),keyRow,128);
             AscendC::DataCopy(gm<Bf>(gated,uint64_t(ringRow+r)*width+head*128),gatedRow,128);
-            if((row+1)%64==0 && row+1<end) AscendC::DataCopy(gm<float>(carry,head*16384),state,16384);
+            if(carry && (row+1)%64==0 && row+1<end) AscendC::DataCopy(gm<float>(carry,head*16384),state,16384);
             if(row+1==end) ++b;
             AscendC::PipeBarrier<PIPE_ALL>();
         }

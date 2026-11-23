@@ -1,5 +1,5 @@
 #pragma once
-#include "recurrence.h"
+#include "short_decay_projection.h"
 #include "catlass/arch/cross_core_sync.hpp"
 
 namespace kda {
@@ -19,6 +19,21 @@ struct MegaParams {
     RecurrenceArgs recurrence{};
 };
 
+// The Vector side publishes the second head group while Cube is computing the first.
+using OutputCopy = Catlass::Gemm::Tile::PackedTileCopyTla<Arch,Bf,Row,Bf,Col,Bf,Row>;
+struct StreamingOutputCopy : OutputCopy {
+    template<class Source>
+    struct CopyGmToL1A : OutputCopy::template CopyGmToL1A<Source> {
+        template<class Destination, class Tile>
+        CATLASS_DEVICE void operator()(Destination &dst, Tile &src) {
+            uint32_t width=tla::get<0>(src.layout().stride());
+            uint32_t second=(width/128/2)*128;
+            if (uint32_t(tla::get<1>(src.coord()))==second)
+                AscendC::SyncAll<false>();
+            OutputCopy::template CopyGmToL1A<Source>::operator()(dst,src);
+        }
+    };
+};
 template<bool SpansTile>
 class MegaKernel {
 public:
@@ -29,6 +44,7 @@ public:
             doubleBuffered(p);
             return;
         }
+        if (p.heads>=2 && runSequenceFrames(p,AscendC::GetBlockIdx(),AscendC::GetBlockNum())) return;
         uint32_t group = AscendC::GetBlockIdx();
         if ASCEND_IS_AIV {
             if(AscendC::GetSubBlockIdx()!=0) return;
@@ -36,17 +52,32 @@ public:
             publishFree();
         }
         uint32_t groups = AscendC::GetBlockNum();
-        uint32_t tiles = (p.rows - 1) / kGlobalRows + 1;
-        uint32_t phase = 0;
-        for(uint32_t wave=0;wave<tiles;++wave) {
-            uint32_t first=wave*kGlobalRows,rows=p.rows-first<kGlobalRows?p.rows-first:kGlobalRows;
+        Recurrence rec;
+        const auto &a=p.recurrence;
+        const uint32_t capacity=((32768+uint64_t(p.heads)*98304)/(256+uint64_t(p.heads)*256))/16*16;
+        bool wholeSequences=a.batch>=2 && p.rows>=2*kGlobalRows;
+        if(a.sequence) wholeSequences=wholeSequences && a.sequence<=capacity/2;
+        else for(uint32_t b=0;wholeSequences && b<a.batch;++b)
+            wholeSequences=rec.prefix(a,b+1)-rec.prefix(a,b)<=capacity/2;
+        uint32_t phase=0,firstSequence=0;
+        GM_ADDR gated=p.decayRing+(wholeSequences?capacity*256:32768);
+        GM_ADDR carry=wholeSequences?nullptr:gated+uint64_t(p.heads)*32768;
+        for(uint32_t first=0;first<p.rows;) {
+            uint32_t rows=p.rows-first<kGlobalRows?p.rows-first:kGlobalRows;
+            uint32_t endSequence=firstSequence;
+            if(wholeSequences) {
+                endSequence=p.rows-first<=capacity?a.batch:rec.owner(a,first+capacity);
+                rows=rec.prefix(a,endSequence)-first;
+            }
             sharedDecay(p,first,rows,group,groups,phase);
             barrier();
-            constexpr uint32_t cuts=4;
+            const uint32_t cuts=wholeSequences?endSequence-firstSequence:4;
             for(uint64_t work=group;work<uint64_t(cuts)*p.heads;work+=groups) {
                 uint32_t part=work/p.heads,head=work%p.heads;
-                uint32_t offset=part?sequenceCut(p,first,rows,part*16):0;
-                uint32_t end=part+1<cuts?sequenceCut(p,first,rows,(part+1)*16):rows;
+                uint32_t offset=wholeSequences?rec.prefix(a,firstSequence+part)-first:
+                    (part?sequenceCut(p,first,rows,part*16):0);
+                uint32_t end=wholeSequences?rec.prefix(a,firstSequence+part+1)-first:
+                    (part+1<cuts?sequenceCut(p,first,rows,(part+1)*16):rows);
                 for (uint32_t r=offset; r<end; r+=kSliceRows) {
                     uint32_t valid = end-r < kSliceRows ? end-r : kSliceRows;
                     if ASCEND_IS_AIC {
@@ -68,8 +99,6 @@ public:
                     }
                     if ASCEND_IS_AIV {
                         waitReady(phase);
-                        GM_ADDR gated=p.decayRing+32768;
-                        GM_ADDR carry=gated+uint64_t(p.heads)*32768;
                         Recurrence{}.consume(resource_,p.recurrence,gated,carry,p.heads,head,
                             first+r,r,valid,localTile(phase,Plane::Q));
                         notifyFree(phase);
@@ -78,8 +107,16 @@ public:
                 }
             }
             barrier();
-            outputTiles(p,first,rows,group,groups,phase);
+            if (wholeSequences) {
+                if ASCEND_IS_AIC {
+                    for(uint32_t panel=group;panel<7168/256;panel+=groups)
+                        matmulToGm<256,256,64,128>(gated,p.recurrence.outWeight,p.recurrence.output,
+                            0,panel*256,first,panel*256,7168,rows,p.heads*128,256);
+                }
+            } else outputTiles(p,gated,first,rows,group,groups,phase);
             barrier();
+            first+=rows;
+            firstSequence=endSequence;
         }
         if ASCEND_IS_AIC { waitFree(0); waitFree(1); }
         AscendC::PipeBarrier<PIPE_ALL>();
@@ -127,7 +164,7 @@ private:
         return {first,firstCap,firstCap+secondCap,count,span,span==256?firstCap:128};
     }
     CATLASS_DEVICE void stagedConsumer(const Params &p,uint32_t first,uint32_t rows,uint32_t worker,uint32_t workers,
-                                      uint32_t firstHead=0,uint32_t count=0)
+                                      uint32_t firstHead=0,uint32_t count=0,bool reuseQ=false)
     {
         uint32_t width=p.heads*kHeadDim;
         uint32_t span=p.recurrence.staged==3?128:64;
@@ -135,7 +172,11 @@ private:
         uint32_t betaStride=p.recurrence.staged>=2 ? (p.heads+15)/16*16 : p.heads;
         GM_ADDR gatedBase=p.decayRing+(p.recurrence.staged>=2?16384:32768);
         uint32_t planeRows=64,totalGatedRows=128;
-        if(p.recurrence.staged==3) {
+        if(reuseQ) {
+            slot=0;
+            planeRows=(rows+15)/16*16;
+            gatedBase=p.decayRing+planeRows*256;
+        } else if(p.recurrence.staged==3) {
             auto shape=waves(p.rows);
             slot=first?(1+(first-shape.firstRows)/shape.span)%2:0;
             span=shape.firstCapacity;
@@ -145,6 +186,7 @@ private:
         }
         GM_ADDR gated=gatedBase+uint64_t(slot)*span*width*2;
         GM_ADDR planes=gatedBase+uint64_t(totalGatedRows)*width*2+uint64_t(slot)*span*(5*uint64_t(width)+betaStride)*2;
+        if(reuseQ) planes=gatedBase;
         Recurrence rec;
         uint32_t firstSeq=rec.owner(p.recurrence,first);
         uint32_t lastSeq=rec.owner(p.recurrence,first+rows-1);
@@ -192,7 +234,7 @@ private:
             phase ^= 1;
         }
     }
-    CATLASS_DEVICE void outputTiles(const Params &p,uint32_t first,uint32_t rows,uint32_t group,uint32_t groups,uint32_t &phase)
+    CATLASS_DEVICE void outputTiles(const Params &p,GM_ADDR gated,uint32_t first,uint32_t rows,uint32_t group,uint32_t groups,uint32_t &phase)
     {
         constexpr uint32_t cols=7168/kHeadDim;
         constexpr uint32_t outputRows=64;
@@ -203,7 +245,7 @@ private:
             auto tile=localTile(phase,Plane::Q);
             if ASCEND_IS_AIC {
                 waitFree(phase);
-                matmul<64>(p.decayRing+32768,p.recurrence.outWeight,r,col,valid,kHeadDim,p.heads*kHeadDim,tile);
+                matmul<64>(gated,p.recurrence.outWeight,r,col,valid,kHeadDim,p.heads*kHeadDim,tile);
                 notifyReady(phase);
             }
             if ASCEND_IS_AIV {
@@ -214,12 +256,26 @@ private:
             phase^=1;
         }
     }
-    CATLASS_DEVICE void headPipeline(const Params &p,const Waves &shape,uint32_t id,uint32_t groups) {
+    template<int TileM,int TileN,int L0K>
+    CATLASS_DEVICE void streamOutput(const Params &p,GM_ADDR gated,uint32_t id,uint32_t groups) {
+        constexpr uint32_t panels=7168/TileN;
+        const uint32_t width=p.heads*kHeadDim;
+        if (id<panels)
+            matmulToGm<TileN,128,L0K,TileM,true>(gated,p.recurrence.outWeight,p.recurrence.output,
+                0,id*TileN,0,id*TileN,7168,p.rows,width,TileN);
+        else AscendC::SyncAll<false>();
+        for(uint32_t j=id+groups;j<panels;j+=groups)
+            matmulToGm<TileN,256,L0K,TileM>(gated,p.recurrence.outWeight,p.recurrence.output,
+                0,j*TileN,0,j*TileN,7168,p.rows,width,TileN);
+    }
+    CATLASS_DEVICE void headPipeline(const Params &p,const Waves &shape,uint32_t id,uint32_t groups,
+                                    bool decayAReady,uint32_t globalBase=0,bool reuseQ=false) {
         const uint32_t width=p.heads*128,betaStride=(p.heads+15)/16*16,planeRows=shape.firstCapacity;
         GM_ADDR gated=p.decayRing+shape.decayRows*256;
-        GM_ADDR planes=gated+uint64_t(shape.storageRows)*width*2;
+        GM_ADDR planes=reuseQ?gated:gated+uint64_t(shape.storageRows)*width*2;
         constexpr uint32_t waveLimit=2;
         const uint32_t waves=p.heads<waveLimit?p.heads:waveLimit;
+        bool overlap=p.rows<=288 && waves==2;
         for(uint32_t tick=0;tick<waves+2;++tick) {
             if ASCEND_IS_AIC {
                 if(tick<waves) {
@@ -262,11 +318,14 @@ private:
                         uint64_t n=stop-cursor;
                         if(n>extent-local) n=extent-local;
                         if(n>128) n=128;
+                        if (kind == 4 && decayAReady) { cursor += n; continue; }
                         GM_ADDR weight=kind<3?p.qkv:(kind==3?p.gate:(kind==4?p.wa:p.beta));
                         uint32_t weightCol=kind<3?kind*width+col:col;
                         GM_ADDR dest=kind==4?p.decayRing:planes+uint64_t(kind==3?4:kind)*planeRows*width*2;
-                        if(p.rows<=160 && n<=96)
-                            matmulToGm<96,512,64,160>(p.x,weight,dest,0,weightCol,0,col,stride,p.rows,7168,n);
+                        if(p.rows>256 && p.rows<=288)
+                            matmulToGm<128,256,32,288>(p.x,weight,dest,0,weightCol,0,col,stride,p.rows,7168,n);
+                        else if(p.rows<=160 && n<=96)
+                            matmulToGm<96,384,96,160>(p.x,weight,dest,0,weightCol,0,col,stride,p.rows,7168,n);
                         else matmulToGm<128,256,64>(p.x,weight,dest,0,weightCol,0,col,stride,p.rows,7168,n);
                         cursor+=n;
                     }
@@ -274,10 +333,17 @@ private:
                         AscendC::CrossCoreSetFlag<0,PIPE_FIX>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
                         AscendC::CrossCoreWaitFlag<0,PIPE_MTE2>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
                         for(uint32_t h=id;h<p.heads;h+=groups)
-                            matmulToGm(p.decayRing,p.wb,planes+uint64_t(3)*planeRows*width*2,0,h*128,0,h*128,width,p.rows,128);
+                            if(p.rows>256 && p.rows<=288) matmulToGm<128,128,32,288>(p.decayRing,p.wb,planes+uint64_t(3)*planeRows*width*2,0,h*128,0,h*128,width,p.rows,128);
+                            else matmulToGm(p.decayRing,p.wb,planes+uint64_t(3)*planeRows*width*2,0,h*128,0,h*128,width,p.rows,128);
                     }
-                } else if(tick==waves+1) {
-                    for(uint32_t panel=id;panel<7168/256;panel+=groups)
+                } else if(overlap && tick==waves) {
+                    if (p.rows<=256) streamOutput<256,256,64>(p,gated,id,groups);
+                    else streamOutput<288,128,32>(p,gated,id,groups);
+                } else if(!overlap && tick==waves+1) {
+                    if(p.rows>256 && p.rows<=288) {
+                        for(uint32_t j=id;j<7168/128;j+=groups)
+                            matmulToGm<128,256,32,288>(gated,p.recurrence.outWeight,p.recurrence.output,0,j*128,0,j*128,7168,p.rows,width,128);
+                    } else for(uint32_t panel=id;panel<7168/256;panel+=groups)
                         matmulToGm<256,256,64>(gated,p.recurrence.outWeight,p.recurrence.output,0,panel*256,
                                                0,panel*256,7168,p.rows,width,256);
                 }
@@ -286,19 +352,64 @@ private:
                 if(tick>=1 && tick<=waves) {
                     uint32_t left=uint64_t(p.heads)*(tick-1)/waves;
                     uint32_t count=uint64_t(p.heads)*tick/waves-left;
-                    stagedConsumer(p,0,p.rows,id,2*groups,left,count);
+                    stagedConsumer(p,globalBase,p.rows,id,2*groups,left,count,reuseQ);
                 }
             }
-            AscendC::SyncAll<false>();
+            if ASCEND_IS_AIV { AscendC::SyncAll<false>(); }
+            if ASCEND_IS_AIC { if(!overlap || tick!=waves) AscendC::SyncAll<false>(); }
         }
+    }
+    CATLASS_DEVICE bool runSequenceFrames(const Params &p, uint32_t id, uint32_t groups) {
+        const uint64_t width=uint64_t(p.heads)*kHeadDim;
+        const uint64_t betaStride=(uint64_t(p.heads)+15)/16*16;
+        // A complete frame reuses Q for its gated result after each sequence/head reads Q.
+        // Include BF16 decay-A, the five projection planes, and the padded beta columns.
+        const uint64_t bytes=SpansTile ? 32768+uint64_t(p.heads)*98304 : 32768+512*(6*width+betaStride);
+        const uint32_t capacity=bytes/(2*(128+5*width+betaStride))/16*16;
+        const auto &a=p.recurrence;
+        Recurrence rec;
+        if constexpr(SpansTile) {
+            // Maintain at least four independent sequences per full frame.
+            if(a.sequence) {
+                if(a.sequence>capacity/4) return false;
+            } else {
+                for(uint32_t b=0;b<a.batch;++b)
+                    if(rec.prefix(a,b+1)-rec.prefix(a,b)>capacity/4) return false;
+            }
+        }
+        for(uint32_t first=0;first<p.rows;) {
+            uint32_t rows=p.rows-first;
+            if(rows>capacity) {
+                if constexpr(SpansTile) rows=rec.prefix(a,rec.owner(a,first+capacity))-first;
+                else rows=capacity/kGlobalRows*kGlobalRows;
+            }
+            const uint32_t padded=(rows+15)/16*16;
+            Params frame=p;
+            frame.x=p.x+uint64_t(first)*7168*sizeof(Bf);
+            frame.recurrence.output=a.output+uint64_t(first)*7168*sizeof(Bf);
+            frame.rows=rows;
+            frame.recurrence.staged=3;
+            Waves single{rows,padded,padded,1,padded,padded};
+            headPipeline(frame,single,id,groups,false,first,true);
+            first+=rows;
+        }
+        return true;
     }
     CATLASS_DEVICE void doubleBuffered(const Params &p)
     {
         uint32_t id=AscendC::GetBlockIdx(),groups=AscendC::GetBlockNum();
         uint32_t span=p.recurrence.staged==3?128:64;
         auto shape=waves(p.rows);
+        if (useDecayGemv(p.rows)) {
+            if ASCEND_IS_AIV { shortDecayA(resource_,p.x,p.wa,p.decayRing,p.rows,id,2*groups); }
+            AscendC::SyncAll<false>();
+        }
+        if (p.recurrence.staged==3 && p.heads>=2 && p.rows>256 && uint64_t(p.rows)<=uint64_t(p.recurrence.batch)*4) {
+            runSequenceFrames(p,id,groups);
+            return;
+        }
         if(p.recurrence.staged==3 && shape.count==1 && p.heads>=2) {
-            headPipeline(p,shape,id,groups);
+            headPipeline(p,shape,id,groups,useDecayGemv(p.rows));
             return;
         }
         uint32_t tiles=span==128?shape.count:(p.rows-1)/span+1,width=p.heads*128,betaStride=(p.heads+15)/16*16;
@@ -330,6 +441,7 @@ private:
                         uint64_t n=stop-cursor;
                         if(n>physical-col) n=physical-col;
                         if(n>160) n=160;
+                        if (kind == 4 && useDecayGemv(p.rows)) { cursor += n; continue; }
                         GM_ADDR weight=kind<3?p.qkv:(kind==3?p.gate:(kind==4?p.wa:p.beta));
                         uint32_t weightCol=kind<3?kind*width+col:col;
                         GM_ADDR dest=kind==4?p.decayRing:planes+uint64_t(kind==3?4:kind)*planeRows*width*2;
@@ -361,7 +473,7 @@ private:
             AscendC::SyncAll<false>();
         }
     }
-    template<int TileN=128,int L1K=256,int L0K=64,int TileM=256>
+    template<int TileN=128,int L1K=256,int L0K=64,int TileM=256,bool Stream=false>
     CATLASS_DEVICE void matmulToGm(GM_ADDR input,GM_ADDR weight,GM_ADDR out,uint32_t xRow,uint32_t wCol,
                                    uint32_t outRow,uint32_t outCol,uint32_t stride,uint32_t m,uint32_t k,uint32_t n=128)
     {
@@ -372,14 +484,18 @@ private:
         auto x=tla::MakeTensor(a,tla::MakeLayout<Bf,Row>(m,k),Catlass::Arch::PositionGM{});
         auto wt=tla::MakeTensor(w,tla::MakeLayout<Bf,Col>(k,n),Catlass::Arch::PositionGM{});
         auto base=tla::MakeTensor(c,tla::MakeLayout<Bf,Row>(m,stride),Catlass::Arch::PositionGM{});
-        auto dst=GetTile(base,tla::MakeCoord(0,outCol),tla::MakeShape(m,n));
-        using GmCopy=Catlass::Gemm::Tile::PackedTileCopyTla<Arch,Bf,Row,Bf,Col,Bf,Row>;
-        using Mmad=Catlass::Gemm::Tile::TileMmadTla<Arch,Bf,GmCopy::LayoutTagL1A>;
+        using GmCopy=std::conditional_t<Stream,StreamingOutputCopy,OutputCopy>;
+        using Mmad=Catlass::Gemm::Tile::TileMmadTla<Arch,Bf,typename GmCopy::LayoutTagL1A>;
         using Op=Catlass::Gemm::Block::BlockMmadTla<Policy,
             tla::Shape<tla::Int<TileM>,tla::Int<TileN>,tla::Int<L1K>>,
             tla::Shape<tla::Int<TileM>,tla::Int<TileN>,tla::Int<L0K>>,Bf,Bf,Bf,void,GmCopy,Mmad>;
         Op op(resource_);
-        op(x,wt,dst,Catlass::GemmCoord(m,n,k));
+        for (uint32_t first=0; first<m; first+=TileM) {
+            uint32_t active=m-first<TileM?m-first:TileM;
+            auto slab=GetTile(x,tla::MakeCoord(first,0),tla::MakeShape(active,k));
+            auto result=GetTile(base,tla::MakeCoord(first,outCol),tla::MakeShape(active,n));
+            op(slab,wt,result,Catlass::GemmCoord(active,n,k));
+        }
     }
     CATLASS_DEVICE uint32_t sequenceCut(Params const &p,uint32_t first,uint32_t tileEnd,uint32_t cut)
     {
@@ -426,7 +542,11 @@ private:
             AscendC::CrossCoreSetFlag<4,PIPE_FIX>(6);
         }
         if ASCEND_IS_AIV {
-            AscendC::CrossCoreWaitFlag<4,PIPE_MTE3>(6);
+            // A new tile reads its predecessor's conv history and carry through MTE2.
+            // Delay both these reads and the MTE3 free credit until the grid handoff.
+            AscendC::CrossCoreWaitFlag<4,PIPE_MTE2>(6);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID0);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE3>(EVENT_ID0);
             publishFree();
         }
     }
