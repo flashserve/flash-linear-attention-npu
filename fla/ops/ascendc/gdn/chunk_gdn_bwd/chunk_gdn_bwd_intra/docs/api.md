@@ -138,7 +138,7 @@ FP16。当前版本固定 `K=V=128`、`chunk_size=64`，要求 `HV % HK == 0`。
 
 独立 Intra 的支持范围不等同于完整反向父链的准入范围。完整
 [`chunk_gated_delta_rule_bwd`](../../chunk_gated_delta_rule_bwd/README.md#支持范围)
-在 A2/A3 上仍限制为 `G=1~4`，A5 为 `G=1~16`；调用父链时还须满足其余组合约束。
+在 A2/A3 与 A5 上均准入 `G=1~16`；调用父链时还须满足其余组合约束。
 
 ## 支持范围
 
