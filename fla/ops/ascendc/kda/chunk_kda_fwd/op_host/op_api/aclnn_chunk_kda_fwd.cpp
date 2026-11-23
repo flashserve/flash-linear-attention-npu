@@ -610,10 +610,15 @@ bool SameQkvStrides(const aclTensor *lhs, const aclTensor *rhs)
 // 用 CreateView 把原始 view 的 stride/offset 带进算子描述符，tiling 才能读到真实 pitch。
 const aclTensor *MakeStridedView(const aclTensor *tensor, aclOpExecutor *executor)
 {
-    if (tensor == nullptr || IsContiguous(tensor)) {
-        return tensor;
+    if (tensor == nullptr) {
+        return nullptr;
     }
-    return executor->CreateView(tensor, tensor->GetViewShape(), tensor->GetStorageShape(),
+    // 连续张量的 storage/origin shape 常常退化成一维 numel，tiling 会读到 rank=1。
+    // 连续时用 view shape 归一化 storage，非连续时保留底层 storage 形状。
+    const bool contiguous = IsContiguous(tensor);
+    const op::Shape &storageShape =
+        contiguous ? tensor->GetViewShape() : tensor->GetStorageShape();
+    return executor->CreateView(tensor, tensor->GetViewShape(), storageShape,
                                 tensor->GetViewStrides(), tensor->GetViewOffset());
 }
 
