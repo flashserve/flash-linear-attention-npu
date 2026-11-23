@@ -168,6 +168,7 @@ FLA_NPU_SOC=ascend910b FLA_NPU_OVERLAY_OPS=chunk_fwd_o \
 | 条件或操作 | 状态变化 | 新业务进程使用什么 |
 | --- | --- | --- |
 | 安装后受影响的依赖齐全、接口匹配 | 新组合成为 active，清空 pending | 新组合 |
+| 候选 wheel 的私有 ABI 自检报错 | 命令返回 1，打印 wheel 名和具体错误，保留原 active 和 pending | 原 active；没有则使用 base |
 | 无可用 OPP、缺少所需接口、ABI 不匹配或依赖要求冲突 | 新组合保存为 pending；安装返回成功，原 active 保留 | 原 active；没有则使用 base |
 | 已有 pending，继续安装其他包但仍未配齐 | 在最新 pending 上累积，更新 pending | 原 active 或 base |
 | 已有 pending，继续安装后配齐 | 完整的新组合成为 active，清空 pending | 新组合 |
@@ -175,6 +176,9 @@ FLA_NPU_SOC=ascend910b FLA_NPU_OVERLAY_OPS=chunk_fwd_o \
 | 移除 overlay | 清除全部增量及 active/pending 记录 | base |
 
 因此 active 和 pending 可以同时存在。重启不会自行配齐 pending，需要继续安装匹配组件。
+
+例如，当前使用 A，准备安装含私有接口的 B。安装器校验 wheel 的 `RECORD` 后，在子进程中运行 B 的 `_op_abi.py`。若 B 声明了第一阶段却漏掉第二阶段，命令会指出 Python 算子名和缺失的符号，A 继续提供服务。若 B 自检通过，但当前 OPP 的签名与 B 要求的签名不同，B 进入 `pending`，可以补装匹配的 OPP。查询状态和解析运行时组合时，由已安装的管理器读取清单、核对实际 OPP，无需再次运行 B 的自检。自检代码具有安装用户的文件权限，请只安装可信来源的 wheel。
+
 已保存的状态或文件损坏时，查询会显示 `damaged` 或 `errors`；先移除增量，再重新安装。
 
 ## 6. 其他情况

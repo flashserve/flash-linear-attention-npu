@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -631,7 +632,11 @@ def main() -> int:
         if args.source.suffix == ".whl" or (package / layers.MANIFEST).is_file():
             if args.overlay_name and args.overlay_name != layers.NAME:
                 parser.error("component overlays use the default overlay name")
-            result = layers.install(package, args.source, opp_source=args.opp_source, force=args.force)
+            try:
+                result = layers.install(package, args.source, opp_source=args.opp_source, force=args.force)
+            except layers.CandidateAbiError as exc:
+                print(f"[fla-npu] {exc}", file=sys.stderr)
+                return 1
             summary = result.pop("installation")
             print(json.dumps(result, indent=2))
             _print_install_summary(summary, result["state"])

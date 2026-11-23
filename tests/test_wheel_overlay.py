@@ -112,6 +112,16 @@ class WheelOverlayTests(unittest.TestCase):
         data.update(protocol=2)
         data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
         (src / layers.MANIFEST).write_text(json.dumps(data))
+        marker = self.root / "checker-calls"
+        with (src / "_op_abi.py").open("a", encoding="utf-8") as helper:
+            helper.write(f"""
+_check = _validate_exports
+def _validate_exports(exports, signatures):
+    import os
+    with open({str(marker)!r}, 'a') as calls:
+        print(os.getpid(), file=calls)
+    _check(exports, signatures)
+""")
 
         abi = layers.abi_module(base)
         provider = layers._vendor(base)
@@ -123,12 +133,20 @@ class WheelOverlayTests(unittest.TestCase):
             "contracts": public, "private_contracts": inner}))
         update = wheel(self.root / "private.whl", src)
         self.assertEqual(layers.install(base, update)["state"], "active")
+        self.assertFalse(layers.runtime_plan(base)["errors"])
+        self.assertFalse(layers.status(base)[0]["errors"])
+        [checker_pid] = marker.read_text().splitlines()
+        self.assertNotEqual(int(checker_pid), os.getpid())
 
         data["operators"]["npu_a"]["private_requires"]["DemoInnerGetWorkspaceSize"][1] = "double"
         (src / layers.MANIFEST).write_text(json.dumps(data))
         mismatch = layers.install(base, wheel(self.root / "changed.whl", src), force=True)
         self.assertEqual(mismatch["state"], "pending")
-        self.assertTrue(any("DemoInnerGetWorkspaceSize" in err for err in mismatch["errors"]))
+        [error] = mismatch["errors"]
+        for detail in ("DemoInnerGetWorkspaceSize", "wheel: tensor, double", "OPP: tensor, float"):
+            self.assertIn(detail, error)
+        self.assertEqual(layers.status(base)[0]["state"], "active")
+        self.assertEqual(len(marker.read_text().splitlines()), 2)
 
         legacy = package(self.root / "legacy", opp={"aclnnDemo": "int64"})
         shadow = layers._vendor(legacy)
@@ -696,6 +714,44 @@ a = npu_a
         output = self.summary_cli_install(base, self.update(), FLA_NPU_OVERLAY_VENDOR="")
         self.assertIn("combination: active", output)
         self.assertIn("selection for a new process: base", output)
+
+    def test_candidate_checker_error_reports_reason_and_preserves_selection(self):
+        base = self.summary_cli_base()
+        src = package(self.root / "candidate", exports=["npu_a"])
+        data = layers.manifest(src)
+        data["protocol"] = 2
+        inner = contract("float", "DemoInner")
+        del inner["DemoInner"]
+        data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+        for existing_overlay in (False, True):
+            with self.subTest(existing_overlay=existing_overlay):
+                if existing_overlay:
+                    layers.install(base, self.update())
+                    layers.install(base, self.update(full=False, kind="int64"))
+                    self.assertIsNotNone(layers.state(base)["pending"])
+                    (src / "_op_abi.py").write_text('raise ValueError("unsupported checker configuration")')
+                previous = layers.state(base)
+                plan = layers.runtime_plan(base)
+                retained = list(layers.storage(base).glob("*"))
+                candidate = wheel(self.root / "candidate.whl", src)
+                result = subprocess.run(
+                    [sys.executable, "-m", "fla_npu_opp_manage", "--overlay", "--source", str(candidate)],
+                    env=dict(os.environ, PYTHONPATH=str(base.parent)), cwd=self.root,
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("candidate.whl", result.stderr)
+                self.assertIn("_op_abi.py", result.stderr)
+                if existing_overlay:
+                    self.assertIn("ValueError: unsupported checker configuration", result.stderr)
+                    self.assertIn("Continuing with the previously active overlay", result.stderr)
+                else:
+                    self.assertIn("npu_a", result.stderr)
+                    self.assertIn("Missing phase-two export DemoInner", result.stderr)
+                    self.assertIn("Continuing with base", result.stderr)
+                self.assertEqual(layers.state(base), previous)
+                self.assertEqual(layers.runtime_plan(base), plan)
+                self.assertCountEqual(layers.storage(base).glob("*"), retained)
 
     def test_install_summary_without_base_opp_and_without_active_overlay(self):
         base = self.summary_cli_base(full=False)
