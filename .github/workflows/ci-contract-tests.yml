@@ -33,5 +33,8 @@ jobs:
       - name: 执行 CI 契约单元测试
         run: python -m unittest discover -s ci/tests -p 'test_*.py' -b
 
+      - name: 执行 Issue 规范校验测试
+        run: node --test .github/scripts/tests/issue_policy.test.js
+
       - name: 执行分阶段调度集成测试
         run: bash ci/tests/test_run_checks_stage_pipeline.sh

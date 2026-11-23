@@ -4,6 +4,31 @@ title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue 类型
+      options:
+        - enhancement
+      default: 0
+    validations:
+      required: true
+  - type: input
+    id: branches
+    attributes:
+      label: 涉及分支
+      description: 填写需求针对的实际仓库分支名；多个分支用逗号分隔。这不是版本排期。
+      placeholder: main 或其他实际存在的分支名
+    validations:
+      required: true
+  - type: input
+    id: modules
+    attributes:
+      label: 涉及算子或模块
+      description: 填写算子名或模块名，多个用逗号分隔；已有 op 标签会自动匹配。
+      placeholder: chunk_kda_fwd、runtime、build、ci、docs 等
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |

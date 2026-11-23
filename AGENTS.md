@@ -20,6 +20,7 @@
 | 修改公共组件、公共 ABI、代码生成模板或 Python runtime | `docs/architecture/torch-npu-decoupled-architecture.md`，并识别全部受影响算子 |
 | 修改 wheel、OPP、构建或安装流程 | `docs/开发者指南.md` 和相关构建脚本 |
 | 修改 PR、分支、CODEOWNERS 或 CI 规则 | `docs/repository-rules.md`、`.github/pull_request_template.md` 和现有 workflow |
+| 创建或修改 Issue（包括通过 Agent、CLI、MCP 或 API 提交） | `docs/agents/Issue提交规范.md` 和对应 `.github/ISSUE_TEMPLATE/` 表单；提交后检查 Issue 规范校验结果 |
 | 修改 Triton 算子 | 当前 Triton 实现、导出入口、对应测试和 README，并采用 Triton 对应的实现约束 |
 
 前一阶段的结论发生变化时，从最早受影响的阶段重新执行后续阶段。
