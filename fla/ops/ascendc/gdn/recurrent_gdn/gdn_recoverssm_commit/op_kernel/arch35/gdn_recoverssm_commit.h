@@ -126,8 +126,12 @@ __simd_vf__ inline void ProcessCommitValueTileVf(__ubuf__ float *records, uint32
 
         for (uint32_t position = recordCount; position > boundaryLen; --position) {
             __ubuf__ float *record = records + static_cast<uint32_t>(position - 1U) * GRSC_RECORD_STRIDE_264;
-            LoadAlign<float, LoadDist::DIST_NORM>(key0, record + GRSC_REQUIRED_DIM_128);
-            LoadAlign<float, LoadDist::DIST_NORM>(key1, record + GRSC_REQUIRED_DIM_128 + GRSC_FP32_PER_REG_64);
+            if constexpr (std::is_same<stateType, float>::value) {
+                LoadAlign<float, LoadDist::DIST_NORM>(key0, record + GRSC_REQUIRED_DIM_128);
+                LoadAlign<float, LoadDist::DIST_NORM>(key1, record + GRSC_REQUIRED_DIM_128 + GRSC_FP32_PER_REG_64);
+            } else {
+                LoadAlign<float, LoadDist::DIST_DINTLV_B32>(key0, key1, record + GRSC_REQUIRED_DIM_128);
+            }
             LoadAlign<float, LoadDist::DIST_BRC_B32>(scalarA, record + valueRowBase + row);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(scalarB, record + valueRowBase + row + 1U);
             Mul(weightA0, key0, finalDecayA0, maskFp32);
@@ -147,8 +151,12 @@ __simd_vf__ inline void ProcessCommitValueTileVf(__ubuf__ float *records, uint32
 
         for (uint32_t position = boundaryLen; position > 0U; --position) {
             __ubuf__ float *record = records + static_cast<uint32_t>(position - 1U) * GRSC_RECORD_STRIDE_264;
-            LoadAlign<float, LoadDist::DIST_NORM>(key0, record + GRSC_REQUIRED_DIM_128);
-            LoadAlign<float, LoadDist::DIST_NORM>(key1, record + GRSC_REQUIRED_DIM_128 + GRSC_FP32_PER_REG_64);
+            if constexpr (std::is_same<stateType, float>::value) {
+                LoadAlign<float, LoadDist::DIST_NORM>(key0, record + GRSC_REQUIRED_DIM_128);
+                LoadAlign<float, LoadDist::DIST_NORM>(key1, record + GRSC_REQUIRED_DIM_128 + GRSC_FP32_PER_REG_64);
+            } else {
+                LoadAlign<float, LoadDist::DIST_DINTLV_B32>(key0, key1, record + GRSC_REQUIRED_DIM_128);
+            }
             LoadAlign<float, LoadDist::DIST_BRC_B32>(scalarA, record + valueRowBase + row);
             LoadAlign<float, LoadDist::DIST_BRC_B32>(scalarB, record + valueRowBase + row + 1U);
             Mul(weightA0, key0, finalDecayA0, maskFp32);
