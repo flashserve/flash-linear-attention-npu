@@ -74,4 +74,6 @@ class FunctionApi(BaseApi):
             raise AssertionError("State outputs must alias the supplied state pools")
         if not torch.equal(inputs["checkpoint_state"], checkpoint):
             raise AssertionError("The checkpoint changed during the call")
-        return _finite_tuple(outputs)
+        # Check gapped slot views on CPU after copying their complete physical span.
+        logical = tuple(t if t.is_contiguous() else to_device(t, "cpu").contiguous() for t in outputs)
+        return _finite_tuple(logical)

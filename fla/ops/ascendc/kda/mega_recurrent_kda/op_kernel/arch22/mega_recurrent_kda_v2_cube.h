@@ -7,9 +7,8 @@
  *   beta_raw [rows,N]  = hidden[rows,H]  @ beta_w[N,H]^T          (BF16 out)
  *   decay_a  [rows,D]  = hidden[rows,H]  @ decay_a_w[D,H]^T       (BF16 out)
  *   decay_raw[rows,P]  = decay_a[rows,D] @ decay_b_w[P,D]^T       (BF16 out)
- * The decay chain runs on the same core that owns decay_a immediately after it,
- * so the L0C->GM->L1 round trip of the 49 KiB decay_a slab is the only added
- * traffic and no separate stage / launch is needed.
+ * One AIC produces decay_a while other AICs execute independent projections.
+ * The decay_b column panels join the regular round-robin work queue.
  *
  * Every projection block of 128 output columns is one work unit.  Blocks are
  * handed out round-robin over the active AIC cores; after a core finished all
@@ -18,7 +17,7 @@
  * nProj for every tile.
  *
  * Stage O executes out = gated @ Wout^T for one row block of 2 tiles (128 rows)
- * and publishes nOut credits per tile.
+ * after the corresponding R tiles are ready.
  *
  * All GEMMs share one block-mmad assembly (192 x 128 x 256 L1 tile) and one
  * Catlass resource per launch; the runtime (M,N,K) are passed per call, so no
@@ -252,6 +251,17 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     const uint32_t threeP = 3u * p.p;
     GM_ADDR aPtr = p.hiddenStates + static_cast<size_t>(range.rowBegin) * p.hidden * 2u;
 
+    const uint32_t regularPanels = p.nQkv + p.nGate + p.nBeta;
+    // The gated buffer belongs to this row block until R consumes its P credits.
+    GM_ADDR decayA = p.wGated + static_cast<size_t>(localRow0) * p.p * 2u;
+    const uint32_t decayReadyOffset = CounterByteOffset(2u, blockIndex, p.tiles);
+    if (core == regularPanels % active) {
+        RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.decayAWeight, kHeadDim,
+            p.hidden, decayA, kHeadDim, p.hidden);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        Sync::AicAdd(constBase, p.syncConst, p.counts, decayReadyOffset, 1u);
+    }
+    bool decayReady = false;
     for (uint32_t block = core; block < p.nProj; block += active) {
         ++credits;
         if (block < p.nQkv) {
@@ -274,7 +284,15 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
             RunGemmReuse(blockMmad, aPtr, rows, p.hidden,
                 p.betaWeight + static_cast<size_t>(col) * p.hidden * 2u, width, p.hidden,
                 p.wBetaRaw + (static_cast<size_t>(localRow0) * p.n + col) * 2u, p.n, p.hidden);
-
+        } else {
+            if (!decayReady) {
+                Sync::WaitEq(p.counts, decayReadyOffset, 1);
+                decayReady = true;
+            }
+            const uint32_t col = (block - regularPanels) * kNW;
+            RunGemmReuse(blockMmad, decayA, rows, kHeadDim,
+                p.decayBWeight + static_cast<size_t>(col) * kHeadDim * 2u, kNW, kHeadDim,
+                p.wDecayRaw + (static_cast<size_t>(localRow0) * p.p + col) * 2u, p.p, kHeadDim);
         }
     }
 
@@ -319,26 +337,15 @@ CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     GM_ADDR gatedPtr = p.wGated + static_cast<size_t>(slotBase) * kTileRows * p.p * 2u;
     GM_ADDR outPtr = p.out + static_cast<size_t>(range.rowBegin) * p.hidden * 2u;
 
-    uint32_t done = 0u;
-    {
-        typename KdaGemm::BlockMmad blockMmad(resource);
-        for (uint32_t task = core; task < p.nOut; task += coreNum) {
-            const uint32_t col = task * kNW;
-            const uint32_t width = (col + kNW <= p.hidden) ? kNW : (p.hidden - col);
-            RunGemmReuse(blockMmad, gatedPtr, rows, p.p,
-                p.wOut + static_cast<size_t>(col) * p.p * 2u, width, p.p,
-                outPtr + static_cast<size_t>(col) * 2u, p.hidden, p.p);
-            ++done;
-        }
+    typename KdaGemm::BlockMmad blockMmad(resource);
+    for (uint32_t task = core; task < p.nOut; task += coreNum) {
+        const uint32_t col = task * kNW;
+        const uint32_t width = (col + kNW <= p.hidden) ? kNW : (p.hidden - col);
+        RunGemmReuse(blockMmad, gatedPtr, rows, p.p,
+            p.wOut + static_cast<size_t>(col) * p.p * 2u, width, p.p,
+            outPtr + static_cast<size_t>(col) * 2u, p.hidden, p.p);
     }
     AscendC::PipeBarrier<PIPE_ALL>();
-    {
-        AscendC::LocalTensor<int32_t> constBase = resource.l1Buf.GetBufferByByte<int32_t>(0);
-        for (uint32_t tile = range.tileBegin; tile < range.tileEnd; ++tile) {
-            Sync::AicAdd(constBase, p.syncConst, p.counts,
-                CounterByteOffset(2u, tile, p.tiles), done);
-        }
-    }
 }
 
 }  // namespace MegaRecurrentKdaV2

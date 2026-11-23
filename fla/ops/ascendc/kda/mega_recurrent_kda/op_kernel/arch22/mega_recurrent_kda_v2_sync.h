@@ -14,7 +14,7 @@
  *     mandatory (same protocol as AscendC's own cross-core GM sync).
  *
  * The flag region layout is documented in mega_recurrent_kda_v2_tiling.h:
- *   counts[stage][tile] = one 8-word (32 B) counter, stage 0=P 1=R 2=O.
+ *   counts[stage][tile] = one 8-word (32 B) counter, 0=P ready, 1=R ready, 2=decay-A ready.
  * A stage tile is ready exactly when its counter reaches the expected total
  * that the host derived from the shape.
  */

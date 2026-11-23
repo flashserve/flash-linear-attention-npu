@@ -69,6 +69,7 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
     const uint32_t quota = CeilDiv(groups, aivNum);
     const uint32_t bail = (p.skipSync & 4u) != 0u ? 2000000u : 0u;
     const bool smallSEnabled = (p.skipSync & kSkipSmallS) == 0u;
+    HeadConstants cached;
     uint32_t knownTile = 0u;      // highest tile already known to be P-ready
     bool haveKnown = false;
 
@@ -134,7 +135,7 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
                     knownTile = lastTile;
                     haveKnown = true;
                 }
-                ProcessRows(p, ub, b, head, seqStart, seqEnd, seqStart, seqEnd, false);
+                ProcessRows(p, ub, b, head, seqStart, seqEnd, seqStart, seqEnd, false, cached);
                 const uint32_t firstTile =
                     static_cast<uint32_t>(gt.GetValue(2u * kMaxGroupsPerAiv + best));
                 for (uint32_t k = firstTile; k <= lastTile; ++k) {
@@ -162,7 +163,7 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
             const uint32_t lo = seqStart > tileRow0 ? seqStart : tileRow0;
             const uint32_t tileRow1 = tileRow0 + kTileRows;
             const uint32_t hi = seqEnd < tileRow1 ? seqEnd : tileRow1;
-            ProcessRows(p, ub, b, head, seqStart, seqEnd, lo, hi, true);
+            ProcessRows(p, ub, b, head, seqStart, seqEnd, lo, hi, true, cached);
             Sync::AivAdd(stg, p.counts, CounterByteOffset(1u, tile, p.tiles), 1u);
             if (tile == lastTile) {
                 gt.SetValue(best, -1);

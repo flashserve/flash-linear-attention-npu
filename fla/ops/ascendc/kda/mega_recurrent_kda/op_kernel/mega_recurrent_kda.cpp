@@ -1,7 +1,7 @@
 #include "kernel_operator.h"
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 #define CATLASS_ARCH 3510
-#include "mega_kernel.h"
+#include "arch35/mega_kernel.h"
 #else
 #define CATLASS_ARCH 2201
 #include "lib/matmul_intf.h"

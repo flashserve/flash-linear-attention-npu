@@ -1,7 +1,6 @@
 #pragma once
 #include "mega_recurrent_kda_v2_cube.h"
 #include "mega_recurrent_kda_v2_t02.h"
-#include "decay_projection.h"
 #include "tiling_data.h"
 namespace MegaRecurrentKdaV2 {
 CATLASS_DEVICE void runArch22(const MegaRecurrentKdaArch22TilingData &plan,V2Params &params,GM_ADDR inputPrefix,GM_ADDR workspace){
@@ -77,7 +76,6 @@ CATLASS_DEVICE void runArch22(const MegaRecurrentKdaArch22TilingData &plan,V2Par
         }
     }
     AscendC::SyncAll<false>();
-    projectDecay(params);
     if ASCEND_IS_AIC {
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> resource;
         if ((params.stageMask & kStageP) != 0u) {

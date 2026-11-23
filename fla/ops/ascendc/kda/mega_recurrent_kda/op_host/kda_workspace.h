@@ -46,7 +46,15 @@ Workspace makeTiling(const Shape &s, const PrefixInt *prefix, const int32_t *ind
     } else if (s.sequence < 1 || checkedProduct(s.batch, s.sequence) != static_cast<uint64_t>(s.tokens)) {
         throw std::invalid_argument("invalid BSH shape");
     }
-    std::unordered_set<int32_t> slots;
+    uint64_t lowSlots = 0;
+    std::unordered_set<int32_t> highSlots;
+    auto newSlot = [&](int32_t id) {
+        if (id >= 64) return highSlots.insert(id).second;
+        const uint64_t bit = uint64_t{1} << id;
+        bool unused = !(lowSlots & bit);
+        lowSlots |= bit;
+        return unused;
+    };
     bool crosses = false;
     int64_t start = 0;
     for (int64_t b = 0; b < s.batch; ++b) {
@@ -54,7 +62,7 @@ Workspace makeTiling(const Shape &s, const PrefixInt *prefix, const int32_t *ind
         if (end <= start || end > s.tokens || end - start > s.convLength - 2 || end - start > s.replayCapacity) {
             throw std::invalid_argument("invalid sequence extent or state capacity");
         }
-        if (indices[b] < 0 || indices[b] >= s.blocks || !slots.insert(indices[b]).second ||
+        if (indices[b] < 0 || indices[b] >= s.blocks || !newSlot(indices[b]) ||
             accepted[b] < 0 || accepted[b] > s.convLength - 2) {
             throw std::invalid_argument("invalid state slot or accepted-token count");
         }

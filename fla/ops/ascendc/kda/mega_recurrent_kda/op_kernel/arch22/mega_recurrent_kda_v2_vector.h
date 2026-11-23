@@ -181,6 +181,98 @@ __aicore__ inline void LoadConvWeights(AscendC::LocalTensor<bfloat16_t> const &c
 
 }  // namespace RDetail
 
+struct HeadConstants {
+    uint32_t head = UINT32_MAX;
+    float alpha = 0.f;
+};
+
+// Bias, norm weight and the four convolution taps occupy dedicated UB slices.
+// They stay valid until this AIV switches to another head.
+CATLASS_DEVICE void PrepareHeadConstants(const V2Params& p, const AscendC::LocalTensor<uint8_t>& ub,
+    uint32_t head, HeadConstants& cached)
+{
+    using namespace RDetail;
+    if (cached.head == head) {
+        return;
+    }
+    const uint32_t D = kD, P = p.p;
+    AscendC::LocalTensor<bfloat16_t> convW = ub[kUbConvW].ReinterpretCast<bfloat16_t>();
+    AscendC::LocalTensor<float> gammaV = ub[kUbGamma].ReinterpretCast<float>();
+    AscendC::LocalTensor<float> biasV = ub[kUbBias].ReinterpretCast<float>();
+    AscendC::LocalTensor<float> biasRep = ub[kUbBiasRep].ReinterpretCast<float>();
+    AscendC::LocalTensor<float> gammaRep = ub[kUbGammaRep].ReinterpretCast<float>();
+    AscendC::LocalTensor<float> convWf = ub[kUbRepW].ReinterpretCast<float>();
+    AscendC::LocalTensor<float> tmp = ub[kUbTmp].ReinterpretCast<float>();
+    AscendC::LocalTensor<float> ones = ub[kUbOnes].ReinterpretCast<float>();
+    AscendC::GlobalTensor<float> gmALog;
+    gmALog.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.aLog));
+    AscendC::GlobalTensor<float> gmDt;
+    gmDt.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.dtBias));
+    AscendC::GlobalTensor<float> gmGamma;
+    gmGamma.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.gamma));
+    // ---- per-chain constants ---------------------------------------------
+    AscendC::DataCopy(gammaV, gmGamma, static_cast<int32_t>(D));
+    AscendC::DataCopy(biasV, gmDt[static_cast<size_t>(head) * D], static_cast<int32_t>(D));
+    AscendC::PipeBarrier<PIPE_ALL>();
+    // gate_logits = exp(A_log) * (decay_raw + dt_bias): the scalar exp(A_log) is
+    // evaluated on the vector unit (one 8-lane op) because the scalar unit has no
+    // transcendental instruction.
+    float alpha = gmALog.GetValue(head);
+    {
+        AscendC::Duplicate(tmp, alpha, 8);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::Exp(tmp, tmp, 8);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        alpha = tmp.GetValue(0);
+    }
+
+    // ---- conv weights for this head (FP32, reused by every chunk) --------
+    // The old form rebuilt a [CH][384] repeated-weight tile per tap and per
+    // chunk with doubling UB copies plus a fence after each one.  Keeping the
+    // 4x3x128 casted weights resident lets the conv1d add every tap with a
+    // row-broadcast operand (src1 repeat stride 0) and no per-tap fence at all.
+    if ((p.skipSync & 2048u) == 0u) {
+        LoadConvWeights(convW,p.convWeight,P,head,p.convLayout);
+        AscendC::PipeBarrier<PIPE_ALL>();
+        AscendC::Cast(convWf, convW, AscendC::RoundMode::CAST_NONE,
+            static_cast<int32_t>(4u * 3u * kD));
+        VBar(p);
+    }
+    AscendC::LocalTensor<float> oneDInit = ub[kUbOnesD].ReinterpretCast<float>();
+    AscendC::Duplicate(ones, 1.0f, static_cast<int32_t>(kChunk * 384u));
+    AscendC::Duplicate(oneDInit, 1.0f, static_cast<int32_t>(kD));
+    AscendC::PipeBarrier<PIPE_ALL>();
+    // biasRep = [CH][D] broadcast of dt_bias[head], built by doubling copies
+    if ((p.skipSync & 4096u) == 0u) {
+        AscendC::DataCopy(biasRep, biasV, static_cast<int32_t>(kD));
+        AscendC::PipeBarrier<PIPE_ALL>();
+        {
+            uint32_t have = kD;
+            while (have < kChunk * kD) {
+                AscendC::DataCopy(biasRep[have], biasRep, static_cast<int32_t>(have));
+                AscendC::PipeBarrier<PIPE_ALL>();
+                have *= 2u;
+            }
+        }
+        AscendC::DataCopy(gammaRep, gammaV, static_cast<int32_t>(kD));
+        AscendC::PipeBarrier<PIPE_ALL>();
+        {
+            uint32_t have = kD;
+            while (have < kChunk * kD) {
+                AscendC::DataCopy(gammaRep[have], gammaRep, static_cast<int32_t>(have));
+                AscendC::PipeBarrier<PIPE_ALL>();
+                have *= 2u;
+            }
+        }
+    } else {
+        AscendC::Duplicate(biasRep, 0.0f, static_cast<int32_t>(kChunk * kD));
+        AscendC::Duplicate(gammaRep, 1.0f, static_cast<int32_t>(kChunk * kD));
+    }
+
+    cached.head = head;
+    cached.alpha = alpha;
+}
+
 /// Process the token range [rowBegin, rowEnd) of the (b, head) group with H
 /// resident in UB.  The range may span several 64-row tiles: the chunk loop never
 /// crosses a tile boundary (raw rings are tile-indexed), and `storeH` decides
@@ -199,7 +291,7 @@ __aicore__ inline void LoadConvWeights(AscendC::LocalTensor<bfloat16_t> const &c
 ///                    back (docs/design/T02.md 2.2 "small S branch").
 CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t> const &ub,
     uint32_t b, uint32_t head, uint32_t seqStart, uint32_t seqEnd, uint32_t rowBegin,
-    uint32_t rowEnd, bool storeH)
+    uint32_t rowEnd, bool storeH, HeadConstants& cached)
 {
     using namespace RDetail;
     const uint32_t N = p.n;
@@ -232,7 +324,6 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     AscendC::LocalTensor<float> conv = ub[kUbConv].ReinterpretCast<float>();
     AscendC::LocalTensor<bfloat16_t> convB = ub[kUbConvB].ReinterpretCast<bfloat16_t>();
     AscendC::LocalTensor<float> repW = ub[kUbRepW].ReinterpretCast<float>();
-    AscendC::LocalTensor<bfloat16_t> convW = ub[kUbConvW].ReinterpretCast<bfloat16_t>();
     AscendC::LocalTensor<float> cache = ub[kUbCache].ReinterpretCast<float>();
     AscendC::LocalTensor<float> qV = ub[kUbQ].ReinterpretCast<float>();
     AscendC::LocalTensor<float> kV = ub[kUbK].ReinterpretCast<float>();
@@ -244,8 +335,6 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     AscendC::LocalTensor<bfloat16_t> betaB = ub[kUbBetaB].ReinterpretCast<bfloat16_t>();
     AscendC::LocalTensor<float> betaV = ub[kUbBeta].ReinterpretCast<float>();
     AscendC::LocalTensor<float> ones = ub[kUbOnes].ReinterpretCast<float>();
-    AscendC::LocalTensor<float> gammaV = ub[kUbGamma].ReinterpretCast<float>();
-    AscendC::LocalTensor<float> biasV = ub[kUbBias].ReinterpretCast<float>();
     AscendC::LocalTensor<float> biasRep = ub[kUbBiasRep].ReinterpretCast<float>();
     AscendC::LocalTensor<float> corrBuf = ub[kUbCorrBuf].ReinterpretCast<float>();
     AscendC::LocalTensor<half> kHalfBuf = ub[kUbKHalfBuf].ReinterpretCast<half>();
@@ -275,12 +364,6 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     gmCkpt.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.checkpoint));
     AscendC::GlobalTensor<float> gmCarry;
     gmCarry.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.carry));
-    AscendC::GlobalTensor<float> gmALog;
-    gmALog.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.aLog));
-    AscendC::GlobalTensor<float> gmDt;
-    gmDt.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.dtBias));
-    AscendC::GlobalTensor<float> gmGamma;
-    gmGamma.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.gamma));
     AscendC::GlobalTensor<float> gmRu;
     gmRu.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.replayU));
     AscendC::GlobalTensor<half> gmRk;
@@ -297,21 +380,9 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     // scalar eight times), src0 repeat stride 1 block, src1 row stride 0.
     const AscendC::BinaryRepeatParams bcastParams(1, 0, 1, 8, 1, 0);
 
-    // ---- per-chain constants ---------------------------------------------
-    AscendC::DataCopy(gammaV, gmGamma, static_cast<int32_t>(D));
-    AscendC::DataCopy(biasV, gmDt[static_cast<size_t>(head) * D], static_cast<int32_t>(D));
-    AscendC::PipeBarrier<PIPE_ALL>();
-    // gate_logits = exp(A_log) * (decay_raw + dt_bias): the scalar exp(A_log) is
-    // evaluated on the vector unit (one 8-lane op) because the scalar unit has no
-    // transcendental instruction.
-    float alpha = gmALog.GetValue(head);
-    {
-        AscendC::Duplicate(tmp, alpha, 8);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Exp(tmp, tmp, 8);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        alpha = tmp.GetValue(0);
-    }
+    PrepareHeadConstants(p, ub, head, cached);
+    const float alpha = cached.alpha;
+    AscendC::LocalTensor<float> convWf = ub[kUbRepW].ReinterpretCast<float>();
 
     // ---- H: checkpoint (first segment) or carry (continuation) ------------
     // The carry region is addressed by b (not by the state-pool slot): its
@@ -337,50 +408,6 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         AscendC::DataCopy(h0, g, hLoad);
         AscendC::DataCopy(h1, g[kHalf], hLoad);
         AscendC::PipeBarrier<PIPE_ALL>();
-    }
-
-    // ---- conv weights for this head (FP32, reused by every chunk) --------
-    // The old form rebuilt a [CH][384] repeated-weight tile per tap and per
-    // chunk with doubling UB copies plus a fence after each one.  Keeping the
-    // 4x3x128 casted weights resident lets the conv1d add every tap with a
-    // row-broadcast operand (src1 repeat stride 0) and no per-tap fence at all.
-    AscendC::LocalTensor<float> convWf = ub[kUbRepW].ReinterpretCast<float>();
-    if ((p.skipSync & 2048u) == 0u) {
-        LoadConvWeights(convW,p.convWeight,P,head,p.convLayout);
-        AscendC::PipeBarrier<PIPE_ALL>();
-        AscendC::Cast(convWf, convW, AscendC::RoundMode::CAST_NONE,
-            static_cast<int32_t>(4u * 3u * kD));
-        VBar(p);
-    }
-    AscendC::LocalTensor<float> oneDInit = ub[kUbOnesD].ReinterpretCast<float>();
-    AscendC::Duplicate(ones, 1.0f, static_cast<int32_t>(kChunk * 384u));
-    AscendC::Duplicate(oneDInit, 1.0f, static_cast<int32_t>(kD));
-    AscendC::PipeBarrier<PIPE_ALL>();
-    // biasRep = [CH][D] broadcast of dt_bias[head], built by doubling copies
-    if ((p.skipSync & 4096u) == 0u) {
-    AscendC::DataCopy(biasRep, biasV, static_cast<int32_t>(kD));
-    AscendC::PipeBarrier<PIPE_ALL>();
-    {
-        uint32_t have = kD;
-        while (have < kChunk * kD) {
-            AscendC::DataCopy(biasRep[have], biasRep, static_cast<int32_t>(have));
-            AscendC::PipeBarrier<PIPE_ALL>();
-            have *= 2u;
-        }
-    }
-    AscendC::DataCopy(gammaRep, gammaV, static_cast<int32_t>(kD));
-    AscendC::PipeBarrier<PIPE_ALL>();
-    {
-        uint32_t have = kD;
-        while (have < kChunk * kD) {
-            AscendC::DataCopy(gammaRep[have], gammaRep, static_cast<int32_t>(have));
-            AscendC::PipeBarrier<PIPE_ALL>();
-            have *= 2u;
-        }
-    }
-    } else {
-        AscendC::Duplicate(biasRep, 0.0f, static_cast<int32_t>(kChunk * kD));
-        AscendC::Duplicate(gammaRep, 1.0f, static_cast<int32_t>(kChunk * kD));
     }
 
     // ---- sliding raw history: 3 rows before `lo` --------------------------
@@ -843,7 +870,7 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
 /// T01 uses this unit definition; the T02 S > 64 path calls ProcessRows with the
 /// same intersection, while the T02 S <= 64 path passes the whole sequence.
 CATLASS_DEVICE void ProcessGroup(V2Params const &p, AscendC::LocalTensor<uint8_t> const &ub,
-    uint32_t tile, uint32_t b, uint32_t head)
+    uint32_t tile, uint32_t b, uint32_t head, HeadConstants& cached)
 {
     using namespace RDetail;
     AscendC::GlobalTensor<int32_t> gmPrefix;
@@ -860,7 +887,7 @@ CATLASS_DEVICE void ProcessGroup(V2Params const &p, AscendC::LocalTensor<uint8_t
     if (hi <= lo) {
         return;
     }
-    ProcessRows(p, ub, b, head, seqStart, seqEnd, lo, hi, true);
+    ProcessRows(p, ub, b, head, seqStart, seqEnd, lo, hi, true, cached);
 }
 
 /// Stage R driver: walks the global unit list, publishes per-tile credits.
@@ -875,6 +902,7 @@ CATLASS_DEVICE uint32_t RunStageR(V2Params const &p, AscendC::LocalTensor<uint8_
     gmPrefix.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(p.expect));
 
     const uint32_t total = PrefixAt(p.expect, p.tiles, p.tiles);
+    HeadConstants cached;
     uint32_t lastTile = 0xFFFFFFFFu;
     uint32_t credits = 0u;
     uint32_t tile = 0u;
@@ -898,7 +926,7 @@ CATLASS_DEVICE uint32_t RunStageR(V2Params const &p, AscendC::LocalTensor<uint8_
         const uint32_t local = u - base;
         const uint32_t b = FirstSeqAt(p.expect, p.tiles, tile) + local / p.n;
         const uint32_t head = local % p.n;
-        ProcessGroup(p, ub, tile, b, head);
+        ProcessGroup(p, ub, tile, b, head, cached);
         ++credits;
     }
     if (lastTile != 0xFFFFFFFFu) {

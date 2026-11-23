@@ -25,10 +25,10 @@ Host 遍历序列的半开行区间 [start,end)。任一区间满足 `start/64 !
 ## Atlas A2/A3 实现
 
 公共 Python、Stable ABI 和 ACLNN 接口复用相同的形状校验、模板选择和状态槽映射。
-A2/A3 注册一个混合 kernel 入口，依据 Host 下发的模板编号执行 T01 或 T02。
+Host tiling 通过 `GetSocVersion()` 识别芯片。A2/A3 使用 `arch22/` 的分核与 workspace 布局，在混合 kernel 内选择 T01 或 T02。Ascend 950 使用 `arch35/` 的实现，分别由 TilingKey 1、2 选择 T01、T02。
 Cube 把投影写到 GM 临时区，Vector 根据每块的计数器消费结果。T01 按块分配递推任务，
 T02 按序列和 head 持有递推状态。两种模板按实际物理槽步长原地写回。
 
-第一层 decay 投影在 Cube 上以 FP32 累加。Vector 负责转 BF16，对于靠近 BF16 舍入中点的值，
-按 K 顺序用 FP32 复核。两层投影复用 QKV 和 gate 尚未使用的临时区。
+两层 decay 投影由 Cube 使用 BF16 输入、FP32 累加，每层都由 Fixpipe 写出 BF16。
+第一层借用本行块的 gated 区，结果就绪后各 Cube 核按列执行第二层。投影权重超过目标芯片 L2 容量时，每次最多对三个 64 行 tile 复用权重。Vector 再以 FP32 计算衰减和递推。CPU 和 Cube 的点积累加顺序可能不同，舍入边界附近的差异会沿投影传播到 replay_decay。
 Host 按 token 块数分配投影、门控及同步区，跨块时另计 B×N×128×128 个 FP32 状态元素。

@@ -75,6 +75,7 @@ ge::graphStatus tile(gert::TilingContext *ctx) {
         if(!cores || !raw || !sizes) return ge::GRAPH_FAILED;
         const auto soc=platform.GetSocVersion();
         const bool arch22 = soc == platform_ascendc::SocVersion::ASCEND910B || soc == platform_ascendc::SocVersion::ASCEND910_93;
+        if (!arch22 && soc != platform_ascendc::SocVersion::ASCEND950) return ge::GRAPH_FAILED;
         MegaRecurrentKdaArch22TilingData a2{};
         if(arch22){
             using namespace MegaRecurrentKdaV2;
@@ -82,7 +83,9 @@ ge::graphStatus tile(gert::TilingContext *ctx) {
             if(rows>INT32_MAX || n>65535/24 || (t.crosses && uint64_t(batch)*n*16384>UINT32_MAX/4) ||
                uint64_t(rows)*n*1536>UINT32_MAX) return ge::GRAPH_FAILED;
             KdaProblem shape{t.batch,seq,t.heads,a2.poolSlots,a2.convLength,t.capacity,rows,kTileRows};
-            a2.arch22=ComputeTiling(shape,cores,2*cores,t.crosses);
+            uint64_t l2Bytes = 0;
+            platform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, l2Bytes);
+            a2.arch22=ComputeTiling(shape,cores,2*cores,t.crosses,l2Bytes);
             if(a2.arch22.overflow) return ge::GRAPH_FAILED;
             bytes=a2.arch22.workspaceBytes+(uint64_t(batch)+1)*4;
         }
