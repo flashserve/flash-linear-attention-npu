@@ -32,13 +32,15 @@ ATK CPU and device nodes generate identical seeded CPU inputs, and only the devi
 
 ## A2 verification
 
-On Ascend 910B2C with CANN 8.5.0, an installed wheel built from this change and the 26.10.0 A2 base OPP passed all eight unittest methods, including the three native stage checks. With 87 frames, 405 tokens and width 128, the installed native Newton path produced these synchronized measurements after checking the full output. Each row uses 31 calls; times are milliseconds and incremental peak allocated memory is MiB.
+On Ascend 910B2C with CANN 8.5.0, an installed wheel built from this change and the 26.10.0 A2 base OPP passed the eight core unittest methods and the native launch error regression. The repository ATK accuracy workflow passed 8 of 8 cases with GM initialization and the unmodified mixed_tolerance_bm comparator. The local ATK 26.9.8 copy used underscores in two Celery queue names to support its installed Kombu transport. With 87 frames, 405 tokens and width 128, the installed native Newton path produced these synchronized measurements after checking the full output. Each row uses 31 calls; times are milliseconds and incremental peak allocated memory is MiB.
 
 | Heads | Frame tile | P10 | P50 | P90 | Incremental peak |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 7 | 64 | 4.027 | 4.042 | 4.056 | 383.97 |
-| 14 | 32 | 7.664 | 7.681 | 7.727 | 488.44 |
-| 28 | 16 | 14.004 | 14.049 | 14.110 | 640.35 |
-| 56 | 8 | 27.051 | 27.098 | 27.160 | 1225.41 |
+| 7 | 64 | 4.490 | 5.322 | 6.622 | 383.97 |
+| 14 | 32 | 7.664 | 7.706 | 7.743 | 488.44 |
+| 28 | 16 | 14.322 | 14.391 | 14.471 | 640.35 |
+| 56 | 8 | 27.051 | 27.183 | 27.225 | 1225.41 |
 
-The seven-head Cholesky path on the same input passed the same accuracy gate. The other supported installation and hardware combinations require separate validation.
+The first seven-head sample above overlapped a failed background test worker. After stopping that worker, two synchronized reruns on the final wheel gave P10/P50/P90 of 4.042/4.057/4.115 ms and 4.027/4.047/4.170 ms. Two interleaved runs of the preceding wheel gave P50 of 4.044 and 4.037 ms. All four reruns used the same quieter CANN logging configuration and the same precision gate.
+
+The seven-head Cholesky path on the same input passed the same accuracy gate and measured 8.105 ms P50. The other supported installation and hardware combinations require separate validation.
