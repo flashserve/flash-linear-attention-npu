@@ -1,5 +1,7 @@
 # ChunkGatedDeltaRuleBwd
 
+[API 文档](docs/api.md)
+
 ## 功能
 
 `ChunkGatedDeltaRuleBwd` 实现 Gated Delta Rule 的分块反向计算。所有支持的 SoC 统一
@@ -118,8 +120,6 @@ executor cache 的隔离方式见[设计说明](../chunk_gated_delta_rule_bwd_fi
 | `stateVFirst` | `true/false` | 控制 initial state、dht 和 dh0 的末两维为 `[V,K]` 或 `[K,V]` |
 
 未支持的属性组合会返回参数错误，不会静默切换到其他实现。
-
-Python 入口的 `return_intermediate_states` 是既有调用的兼容参数，其取值会被忽略。
 
 ## 支持范围
 
