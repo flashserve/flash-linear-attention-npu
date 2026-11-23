@@ -12,6 +12,7 @@ TYPES = {"bug", "enhancement"}
 PRIMARY_TYPES = TYPES | {"question", "committer-promotion"}
 BRANCH = re.compile(r"^(?:main|v[0-9]{2,4}\.[0-9]{1,2}\.[0-9]{1,2})$")
 PENDING = "needs-issue-info"
+COMMENT_MARKER = "<!-- fla-issue-label-policy -->"
 
 
 def field(body, heading):
@@ -141,6 +142,49 @@ class GitHub:
             page += 1
 
 
+def sync_validation_comment(github, issue, errors):
+    comments = github.list_all(f"issues/{issue['number']}/comments")
+    previous = next((comment for comment in comments
+                     if comment.get("user", {}).get("login") == "github-actions[bot]"
+                     and comment.get("user", {}).get("type") == "Bot"
+                     and (comment.get("body") or "").startswith(COMMENT_MARKER)), None)
+    if not errors and previous is None:
+        return
+    if errors:
+        login = issue.get("user", {}).get("login")
+        author = f"@{login}" if login else "Issue 提交人"
+        body = "\n".join([
+            COMMENT_MARKER,
+            f"{author}，本 Issue 的分类或目标分支信息需要补充：",
+            "",
+            *[f"- {error}" for error in dict.fromkeys(errors)],
+            "",
+            "请按以下方式修正：",
+            "",
+            "1. 主分类保留一项：`bug`、`enhancement`、`question` 或 `committer-promotion`。",
+            "2. Bug / 需求至少添加一个实际需要合入的目标分支标签，如 `main` 或已存在的 `v26.11.0`；咨询和晋升不强制分支。",
+            "3. 没有标签编辑权限的 Bug / 需求提交者，可编辑正文的 `### 问题类型` 和 `### 目标分支`：前者填写 `bug` 或 `enhancement`，后者填写真实目标分支，多分支用英文逗号分隔。机器人会据此同步标签。",
+            "4. 若存在无效或重复的上述栏目，请先修正；其他分类或权限问题请联系维护者。",
+            "",
+            "补齐后会自动重新检查，并更新本条评论。请勿另建重复 Issue。",
+        ])
+    else:
+        body = "\n".join([
+            COMMENT_MARKER,
+            "已重新核对：本 Issue 的主分类和所需目标分支信息已齐全，标签校验通过。",
+            "`needs-issue-info` 待补充标记已移除。",
+        ])
+    if previous and previous.get("body") == body:
+        return
+    path = f"issues/comments/{previous['id']}" if previous else f"issues/{issue['number']}/comments"
+    result = github.request("PATCH" if previous else "POST", path, {"body": body})
+    verified = github.request("GET", f"issues/comments/{result['id']}")
+    if (verified.get("id") != result["id"] or verified.get("body") != body
+            or verified.get("user", {}).get("login") != "github-actions[bot]"
+            or verified.get("user", {}).get("type") != "Bot"):
+        raise RuntimeError("Issue 校验评论读回不一致，未确认提醒已发布。")
+
+
 def main():
     from urllib.parse import quote
 
@@ -185,6 +229,8 @@ def main():
             raise RuntimeError(
                 f"Issue 标签写入后读回不一致：缺少 {sorted(missing)}；未移除 {sorted(remaining)}。"
             )
+    sync_validation_comment(github, issue, plan["errors"])
+    if plan["add"] or plan["remove"]:
         # GITHUB_TOKEN label changes do not trigger the other issues workflow.
         repository = github.request("GET", "")
         github.request("POST", "actions/workflows/requirements-index.yml/dispatches",
