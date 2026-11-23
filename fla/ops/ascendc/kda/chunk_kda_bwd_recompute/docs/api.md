@@ -3,7 +3,7 @@
 公开语义与支持范围以本文和 [算子 README](../README.md) 为准；流水、存储与同步见
 [设计文档](design.md)。
 
-## Python
+## 接口：Python
 
 ```python
 from fla_npu.ops.ascendc import chunk_kda_bwd_recompute
@@ -148,7 +148,7 @@ u   = A @ vb
 ```
 
 `w/u` 以 BF16 操作数进入 Cube、FP32 累加后 Fixpipe 为 BF16。尾 chunk 只消费
-有效行/列。完整精度与 Stage 划分见 [设计文档](design.md#数学与精度)。
+有效行/列。完整精度与 Stage 划分见 [设计文档](design.md)。
 
 ## 支持范围
 
@@ -165,7 +165,7 @@ u   = A @ vb
 A2/A3 tiling 要求公开 `gk` 输出缓冲存在；A5/A6 允许 `gk` 为空并由 L2 分配
 内部占位。在整体 `chunk_kda_bwd` 的 A2/A3 编排中，本算子位于
 `Recompute → FwdH → Prepare → Dhu → Finalize` 链的起点，见
-[`../chunk_kda_bwd/docs/A2A3_design.md`](../chunk_kda_bwd/docs/A2A3_design.md)。
+[`../chunk_kda_bwd/docs/design.md`](../../chunk_kda_bwd/docs/design.md)。
 
 ## 返回码
 
@@ -184,3 +184,9 @@ ATK：[`tests/atk/chunk_kda_bwd_recompute`](../../../../../../tests/atk/chunk_kd
 
 精度门限（相对融合 CPU 标杆的 max abs diff）：`gk/qg/kg < 0.05`，
 `w/u < 0.15`。
+
+### 本次 A2/A3 变更的边界约定
+
+G=1 选择 DIRECT key，G>1 选择独立 GVA key；不新增公开参数。packed 元数据必须完整、sequence-major、无重复，cu_seqlens 从0到T且非递减；空序列不产生chunk。T=0 时稳定 ABI 可将空 chunk_indices 视作缺席，此时所有 cu_seqlens 边界必须为0。
+
+Gate 开启时 A_log 必传且形状为[HV]，lower_bound 必须有限且属于[-5,0)。可选 dt_bias 为[HV,128]或长度HV*128的扁平数组。

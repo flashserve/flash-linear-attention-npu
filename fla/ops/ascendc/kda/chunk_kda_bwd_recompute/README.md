@@ -80,7 +80,7 @@ u    = A @ vb
 | `dt_bias` | `[HV, 128]` 或等价扁平 | 可选 |
 
 `cu_seqlens` / `chunk_indices` 为可选 host int array：变长时两者须同时
-提供；当前独立入口与 ATK 主路径以定长 dense BNSD 为主。
+提供；本次 A2 验证覆盖定长与 packed 变长；详见 ATK 验收记录。
 
 | 输出 | shape | dtype |
 | --- | --- | --- |
@@ -110,27 +110,26 @@ Python 固定返回五元组：
 ## 支持范围
 
 - SoC 注册：A2 (`ascend910b`)、A3 (`ascend910_93`)、A5 (`ascend950`)、
-  A6 (`ascend960dt`)。当前 ATK 与性能验收以 A5 为主；A6 由本 PR 接入 arch92，
-  仍需在 A6 环境完成正式精度、确定性和性能验收。
+  A6 (`ascend960dt`)。本次在 A2 的 910B3 完成 200 条 GVA 精度和确定性验证；A3 共享本次实现但未实机验收，A5/A6 本次未回归。
 - `K = V = 128`，`chunk_size = 64`；`HV % HK == 0`。
 - 独立入口输入布局固定为 dense BNSD（或总层给出的等价 rank-4 视图）；
   拒绝 `BSND` / `TND` 作为 `input_layout`。
 - 在整体 `chunk_kda_bwd` 的 A2/A3 编排中，本算子位于
   `Recompute → FwdH → Prepare → Dhu → Finalize` 链的起点；详见
-  [`../chunk_kda_bwd/docs/A2A3_design.md`](../chunk_kda_bwd/docs/A2A3_design.md)。
+  [`../chunk_kda_bwd/docs/design.md`](../chunk_kda_bwd/docs/design.md)。
 
 ## 实现
 
 A5 使用 Mix **1 AIC : 2 AIV**，A6 使用 Mix **1 AIC : 1 AIV**。Vector 完成
 gate cumsum、`qg/kg` 与 `kbg/vb` 准备，Cube 完成 `A @ kbg` / `A @ vb`。
-A5 走 `op_kernel/arch35/`，A6 走 `op_kernel/arch92/`，A2/A3 走兼容实现。
+A5 走 `op_kernel/arch35/`，A6 走 `op_kernel/arch92/`。A2/A3 使用同 head 的两个连续 64 通道分片、DIRECT/GVA 独立模板和每核 GM 双页；UB 134400 B，L1 单 head 24 KiB，用户 workspace 为 `usedAic*2*CG*32768 B`。
 Stage、L1/workspace 与同步见 [设计文档](docs/design.md)。
 
 ## 验证
 
 完整 aclnn / 返回码见 [API 文档](docs/api.md)。ATK 用例位于
 [`tests/atk/chunk_kda_bwd_recompute`](../../../../../tests/atk/chunk_kda_bwd_recompute/README.md)，
-含精度矩阵、CPU 标杆与 8K/16K Event 性能脚本。离线冒烟还可参考
+含 200 条 GVA 精度矩阵、唯一 CPU 标杆、20 条内存/模板覆盖用例与 F/V 模型 msprof 采样入口。离线冒烟还可参考
 `torch_custom/fla_npu/test/test_npu_chunk_kda_bwd_recompute.py`。
 
 精度门限（max abs diff，相对融合 CPU 标杆）：`gk/qg/kg < 0.05`，

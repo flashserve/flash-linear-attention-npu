@@ -21,10 +21,10 @@ constexpr uint32_t KDA_BWD_RECOMPUTE_K = 128;
 constexpr uint32_t KDA_BWD_RECOMPUTE_V = 128;
 
 // Offset in QkType elements. Each page has four adjacent [vb | kbg] slots.
-__aicore__ inline uint64_t KdaRecomputePageOffset(uint32_t core, uint32_t page, uint64_t slotElements)
+__aicore__ inline uint64_t KdaRecomputePageOffset(uint32_t core, uint32_t page, uint64_t slotElements, uint64_t headGroup = KDA::RECOMPUTE_HEADS_PER_GROUP)
 {
     return (static_cast<uint64_t>(core) * KDA::RECOMPUTE_PAGE_COUNT + page) *
-           KDA::RECOMPUTE_HEADS_PER_GROUP * slotElements;
+           headGroup * slotElements;
 }
 
 __aicore__ inline float KdaBwdRecomputeBitsToFloat(uint32_t bits)
@@ -61,6 +61,33 @@ __aicore__ inline void KdaBwdRecomputeGetChunkOffset(
         uint32_t chunkIdx = chunkIndicesTensor.GetValue(2 * loopIdx + 1);
         uint32_t curSeqBegin = cuSeqlensTensor.GetValue(seqIdx);
         uint32_t curSeqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+        bos = curSeqBegin + chunkIdx * chunkSize;
+        eos = bos + chunkSize > curSeqEnd ? curSeqEnd : bos + chunkSize;
+    }
+}
+
+__aicore__ inline void KdaBwdRecomputeGetChunkOffset(
+    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, uint64_t B, uint64_t H, uint64_t T,
+    uint64_t chunkSize, uint64_t loopIdx, uint64_t &bos, uint64_t &eos, int64_t isVariable)
+{
+    // gen_placeholder keeps optional GM_ADDR non-null. Use tiling.isVariable, not pointer.
+    if (isVariable == 0 || cu_seqlens == nullptr || chunk_indices == nullptr) {
+        uint64_t coreLoopsInB = (T + chunkSize - 1) / chunkSize;
+        uint64_t chunkIdx = loopIdx % coreLoopsInB;
+        uint64_t bIdx = loopIdx / coreLoopsInB;
+        bos = chunkIdx * chunkSize;
+        eos = bos + chunkSize > T ? T : bos + chunkSize;
+        bos += (bIdx * H * T);
+        eos += (bIdx * H * T);
+    } else {
+        AscendC::GlobalTensor<uint64_t> cuSeqlensTensor;
+        AscendC::GlobalTensor<uint64_t> chunkIndicesTensor;
+        cuSeqlensTensor.SetGlobalBuffer((__gm__ uint64_t *)cu_seqlens);
+        chunkIndicesTensor.SetGlobalBuffer((__gm__ uint64_t *)chunk_indices);
+        uint64_t seqIdx = chunkIndicesTensor.GetValue(2 * loopIdx);
+        uint64_t chunkIdx = chunkIndicesTensor.GetValue(2 * loopIdx + 1);
+        uint64_t curSeqBegin = cuSeqlensTensor.GetValue(seqIdx);
+        uint64_t curSeqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
         bos = curSeqBegin + chunkIdx * chunkSize;
         eos = bos + chunkSize > curSeqEnd ? curSeqEnd : bos + chunkSize;
     }

@@ -36,14 +36,14 @@ struct RecomputeDTypeTraits<CHUNK_KDA_BWD_RECOMPUTE_TPL_FP32> {
     using type = float;
 };
 
-template <int D_T_G, int D_T_BETA, int K_DIM>
+template <int D_T_G, int D_T_BETA, int K_DIM, int HEAD_MODE>
 struct RecomputeKernelTraits {
     static_assert(K_DIM == 128, "ChunkKdaBwdRecompute only supports K=128.");
     using GateT = typename RecomputeDTypeTraits<D_T_G>::type;
     using BetaT = typename RecomputeDTypeTraits<D_T_BETA>::type;
 };
 
-template <typename QkType, typename GateType, typename BetaType>
+template <typename QkType, typename GateType, typename BetaType, int HEAD_MODE>
 __aicore__ inline void ChunkKdaBwdRecomputeKernelImpl(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR a, GM_ADDR aLog, GM_ADDR dtBias,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR gk,
@@ -56,7 +56,11 @@ __aicore__ inline void ChunkKdaBwdRecomputeKernelImpl(
     }
     if ASCEND_IS_AIV {
         TPipe pipe;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
         ChunkKdaBwdRecomputeVectorProcess<QkType, GateType, BetaType> vector(
+#else
+        ChunkKdaBwdRecomputeVectorProcess<QkType, GateType, BetaType, HEAD_MODE> vector(
+#endif
             q, k, v, g, beta, aLog, dtBias, cuSeqlens, chunkIndices, w, u, qg, kg, gk, workspace, tiling);
         vector.Init(&pipe);
         vector.Process();
@@ -89,9 +93,11 @@ __aicore__ inline void CopyTilingFromGm(
     dst.vecRow = src->vecRow;
     dst.usedAic = src->usedAic;
     dst.reserved = src->reserved;
+    dst.headGroup = src->headGroup;
+    dst.reservedV2 = src->reservedV2;
 }
 
-template <int D_T_G, int D_T_BETA, int K_DIM>
+template <int D_T_G, int D_T_BETA, int K_DIM, int HEAD_MODE>
 __global__ __aicore__ void chunk_kda_bwd_recompute(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR a, GM_ADDR a_log, GM_ADDR dt_bias,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR gk,
@@ -112,8 +118,8 @@ __global__ __aicore__ void chunk_kda_bwd_recompute(
     CopyTilingFromGm(
         reinterpret_cast<__gm__ KDA::ChunkKdaBwdRecomputeTilingData *>(tiling), tilingData);
 
-    using Traits = KDA::RecomputeKernelTraits<D_T_G, D_T_BETA, K_DIM>;
-    KDA::ChunkKdaBwdRecomputeKernelImpl<bfloat16_t, typename Traits::GateT, typename Traits::BetaT>(
+    using Traits = KDA::RecomputeKernelTraits<D_T_G, D_T_BETA, K_DIM, HEAD_MODE>;
+    KDA::ChunkKdaBwdRecomputeKernelImpl<bfloat16_t, typename Traits::GateT, typename Traits::BetaT, HEAD_MODE>(
         q, k, v, g, beta, a, a_log, dt_bias, cu_seqlens, chunk_indices, w, u, qg, kg, gk, userWorkspace,
         &tilingData);
 }

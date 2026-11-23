@@ -157,15 +157,15 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const int64_t headTasks = (isAscend950 || isAscend960) ? tiling->Hv :
-        (tiling->Hv + KDA::RECOMPUTE_HEADS_PER_GROUP - 1) / KDA::RECOMPUTE_HEADS_PER_GROUP;
+        (tiling->Hv + tiling->headGroup - 1) / tiling->headGroup;
     const int64_t workUnits = tiling->chunkNum * headTasks;
     uint32_t usedAic = static_cast<uint32_t>(
         std::max<int64_t>(1, std::min(static_cast<int64_t>(aicNum), workUnits)));
-    if (isAscend960 && tiling->chunkNum == 0) {
+    if (tiling->chunkNum == 0) {
         usedAic = 0;
     }
     tiling->usedAic = static_cast<int64_t>(usedAic);
-    uint32_t blockDim = isAscend960 ? std::max(usedAic, 1U) : usedAic;
+    uint32_t blockDim = std::max(usedAic, 1U);
     if (isAscend950) {
         blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * aivPerBlock, aicNum, aivNum);
     }

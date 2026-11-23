@@ -1,168 +1,166 @@
-# ChunkKdaBwdRecompute 设计
+# chunk_kda_bwd_recompute Atlas A2系列产品和Atlas A3系列产品设计方案
 
-方案设计规则版本：`V1`。公开接口与支持范围以 [api.md](api.md) 为准。
+## 1. 目标
 
-## 阶段边界
+主模型 case F: B=1,HK=16,HV=128,T=11264,K=V=128,C=64；V: packed T=16384，明确使用16条1024的参考长度列表。
+性能目标：用户2026-11-19明确要求仅报告实测耗时，豁免数值性能目标准入与达标结论，不将未确认的0.4x作为目标。
+原始v2的技术方案作为完整推演存入 design.full.md。A5/A6路径保持原行为，本次只修改通用A2/A3路径。
 
-本算子只恢复反向所需的 chunk-local 检查点，不计算 chunk 间状态、不产生
-`h/v_new/final_state`，也不做 Q/K L2 归一化或 beta sigmoid。调用链中的位置：
+### 1.1 数据类型
+
+| 范围 | 数据 | 数据类型 |
+|---|---|---|
+| API输入 | q/k/v/A | bf16 |
+| API输入 | g/beta | bf16或fp32，独立选择 |
+| API输入 | A_log/bias | fp32 |
+| API输出 | gk;w/u/qg/kg | fp32;bf16 |
+| Vector计算 | gate/cumsum/exp/products | fp32 |
+| Cube输入与累加 | A/vb/kbg;acc | bf16;fp32 |
+| 跨Stage交接 | GM页vb/kbg | bf16 |
+
+### 1.2 理论性能上限分析
+
+满chunk/head两次GEMM共2097152 FLOPs。F为47.24 GFLOPs，V为68.72 GFLOPs。
+F必要输出2112MiB加页交接1408MiB，V必要输出3072MiB加页交接2048MiB，另外计算真实输入读流量。
+理论下界为max(FLOPs/Pcube, VectorWork/Pvector, GMBytes/BW, dependencyCriticalPath)。
+采用实际910B3可用核数与资源查询；没有同SoC实测有效算力、带宽或native baseline时不伪造数值下界。
+数值性能目标准入按用户明确豁免，理论可达性不作已证实结论。构建与正确性通过后只报告msprof实测耗时。
+
+## 2. 变量与任务映射
+
+| 符号 | 含义 |
+|---|---|
+| C,D,G | 64,128,HV/HK |
+| CG | host动态选择1..4，HV小于4时等于HV；G=3选择3，其余初版4，并不声称最优 |
+| Nh,Nbase | ceil(HV/CG)，所有序列有效chunk数 |
+| usedAic | min(可用AIC,Nbase*Nh)，空任务不发页事件 |
+| L,p | chunk有效长度、ordinal%2页号 |
 
 ```text
-ChunkKdaBwdRecompute → ChunkFwdH → ChunkKdaBwdPrepare → Dhu → Finalize
+work=core+ordinal*usedAic
+chunk=work/Nh; head_begin=(work%Nh)*CG
+AIV a遍历所有有效head并处理d=[64*a,64*a+64)
+DIRECT模板hk=hv，GVA模板hk=hv/G；Q/K在同work同hk时驻留复用
+qk=((batch*HK+hk)*T+token_begin)*128+d
+out=((batch*HV+hv)*T+token_begin)*128+d
 ```
+定长与packed起点、长度使用64位；packed空序列无work，序列tail不跨边界。
+HEAD_MODE编译轴0/1，两种模式与四dtype组合形成8个逻辑key；CG留在TilingData运行时字段。
 
-输入侧消费前向留下的 `A`（三角系统解）以及 raw `q/k/v/g/beta`（及可选
-`A_log`/`dt_bias`）。输出 `gk/w/u/qg/kg` 供后续 FwdH / Prepare / Finalize
-消费。整体编排约束见
-[`../chunk_kda_bwd/docs/A2A3_design.md`](../chunk_kda_bwd/docs/A2A3_design.md)。
+## 3. Stage 总览
 
-## 数学与精度
+| Stage | 执行单元 | 主要动作 | 并行与流水关系 | 结束条件 |
+|---|---|---|---|---|
+| S0 | 两AIV | 同head通道分片，safe-gate/cumsum及所有Vector结果 | 生产work(i+1)与Cube消费work(i)并行，GM双页流水 | 所有有效head半片MTE3完成，再ready |
+| S1 | AIC | 每head两GEMM u/w | 与下一work的Vector并行，等完整页ready后消费，最后释放页以供i+2复用 | 最后page读取完成、本地Cube/FIX排空 |
 
-对每个 value head、每个长度 `M ≤ 64` 的 chunk：
+### 3.1 芯片规则应用检查
+
+| 规则 | 结论 | 设计证据/不适用原因 |
+|---|---|---|
+| R01 | 已应用 | S0仅Vector，S1仅Cube |
+| R02 | 已应用 | u/w无互相数据依赖，合并S1 |
+| R03 | 已应用 | 每work CG head，两个GM页独立生产消费 |
+| R04 | 已应用 | vb/kbg经GM页交接 |
+| R05 | 已应用 | S0保留K/Gacc，Q/K跨同hk复用，S1同head A供两GEMM |
+| R06 | 已应用 | 两页用于下一work生产与当前消费并行 |
+| R07 | 已应用 | S0每AIV显式缓冲，S1单head工作集，编译核验物理容量 |
+| R08 | 已应用 | 原始输入和GM交接默认NORMAL缓存，实测前不猜测bypass收益 |
+| R09 | 已应用 | FP32稳定sigmoid，kg使用后缀差指数，无效行exp前排除 |
+
+## 4. Stage 详细设计
+
+### S0 · Vector：重建检查点
 
 ```text
-x      = g + dt_bias
-gate   = lower_bound * sigmoid(exp(A_log) * x)     # use_gate_in_kernel
-gk     = cumsum(gate) * RCP_LN2                      # use_exp2；RCP_LN2 = 1/ln(2)
-e2     = exp2(gk)
-qg     = q_hv * e2
-kbg    = k_hv * beta[..., None] * e2
-vb     = v * beta[..., None]
-kg     = k_hv * exp2(gk[M-1] - gk)
-w      = bf16(A[:M,:M] @ kbg[:M])
-u      = bf16(A[:M,:M] @ vb[:M])
+z=exp(A_log)*(g+bias)
+gate=lower_bound*exp(min(z,0))/(1+exp(-abs(z))) if enabled else g
+Gacc=cumsum(gate)*(RCP_LN2 if exp2 else 1)
+qg=bf16(q*E(Gacc)); kbg=bf16(k*beta*E(Gacc))
+vb=bf16(v*beta); kg=bf16(k*E(Gacc_last-Gacc))
 ```
+Gacc和K不回读GM。每AIV连续半行64元素用2D DMA，行stride128。
+为MemBase API显式预留原始输入及转换scratch，本轮从原v2的100KiB容量计划修正为132KiB上限，不能把额外scratch藏在保留区。
 
-`q/k` 按 `hvPerHk = HV/HK` 做 GQA 展开到 `HV`。A5 快路径在 RegBase VF 内
-把 safe-gate、cumsum、`qg/kg/kbg/vb` 融合；`w/u` 由 Cube 以 BF16 输入、
-FP32 累加后 Fixpipe 为 BF16。尾 chunk 只读有效 `M` 行/列；`M=1` 时 Cube
-侧将物理 MMAD 的 M 补到 16，Fixpipe 仍只写有效行。
+**本 Stage 产生/写出**
 
-CPU / ATK 标杆与上述公式一致，并对 `A/kbg/vb` 按 Cube 路径先量化到 BF16
-再乘，避免把 BF16 GEMM 误差算成实现错误。
+| 对象 | 存储位置 | 分配地址 | L2Cache | 功能 |
+|---|---|---|---|---|
+| vb/kbg | GM（用户 workspace） | page_base+r*32768B+0/16384B，单record32768B | 使能 | 每AIV写不同通道半片，tail行清零，ready前写完成 |
+| gk/qg/kg | GM（API 输出） | tensor_base+((batch*HV+hv)*T+token_begin)*128*elementBytes+d*elementBytes，每行128B(bf16)或256B(fp32) | 使能 | 实际L行；gk关闭无需写全量占位 |
 
-## 分核与任务映射
+**其它 Stage 提供、当前 Stage 读取或需保护**
 
-任务单元是 `(chunk, value_head)`，总数 `chunkNum * HV`。Host 按平台
-AIC 数与任务数取 `usedAic`，`scheduleMode = 1`；A5 为 Mix **1 AIC : 2 AIV**，
-A6 为 Mix **1 AIC : 1 AIV**。
+| 对象 | 存储位置 | 分配地址 | L2Cache | 功能 |
+|---|---|---|---|---|
+| q/k | GM（API 输入） | tensor_base+((batch*HK+hk)*T+token_begin)*256B+d*2B，单半片8192B | 使能 | 同work同hk驻留跨value head复用 |
+| g/v/beta/bias/Alog | GM（API 输入） | tensor_base+head_token_offset，最大每head半片16384B | 使能 | 各AIV独立搬入，公共参数按需要复制 |
 
-- A5：`CoreTaskRange` 把任务切成连续 chunk-major 区间，避免
-  `task += coreNum` 的跨度跳转打断四 head 旋转。每个 Mix 核内按
-  `kHeadRotate = 4` 成组；AIV 按 `h & 1` 独占奇偶 head（slot 0/1）。
-- A2/A3：每组为同一 chunk 的最多 4 个连续 value head。逻辑核数取任务组数和平台可用 AIC 数 中的较小值，组号按核数跨步分配。两个 AIV 分别处理组内偶数和奇数 slot。
-- A6：AIC/AIV 按 1:1 配对；平台查询为零时，Host 从 TilingParse CompileInfo
-  读取 A6 默认 64/64，再取两者较小值。空调用仍启动一个 inert block 用于关闭
-  已初始化事件，但 `usedAic=0`。
+**本 Stage 临时/固定**
 
-平台查询若只回报 1～2 个 AIC，Host 回退到 `aivNum/2`、`GetCoreNum()`，
-再不行落到 A5 的 28。
+| 对象 | 存储位置 | 分配地址 | L2Cache | 功能 |
+|---|---|---|---|---|
+| q,k,v原始与bf16输出scratch | UB | [0,32) KiB，每份8KiB，共4份单缓冲 | 不涉及 | q/k驻留，输出scratch每次MTE3完成后复用 |
+| g原始 | UB | [32,48) KiB，16KiB单缓冲 | 不涉及 | 按FP32最大容量，bf16单独转换 |
+| Gacc,tmp,Kraw,work,Qfp | UB | [48,128) KiB，5份16KiB单缓冲 | 不涉及 | 同head所有64token保留，Qfp复用于V计算 |
+| beta/carry/bias/Alog | UB | [128,132) KiB，4KiB容量 | 不涉及 | beta原始/FP32、Brcb、bias、标量及carry |
 
-TilingKey 由 `GET_TPL_TILING_KEY(D_T_G, D_T_BETA, K_DIM)` 生成，覆盖
-`g/beta` 的 BF16/FP32 组合与固定 `K=128`。Kernel 入口按模板参数实例化，
-不做数值 key 二次分派。
+### S1 · Cube：两次GEMM
 
-## Stage 划分
+```text
+u[L,128]=A[L,L]@vb[L,128]
+w[L,128]=A[L,L]@kbg[L,128]
+```
+按head顺序消费页。每head A仅同head复用，不跨value head复用。尾块内部补零，输出仅L行。
+当L<64时，使用目标A2 SDK InitConstValue(blockNum=768个32B块,repeatTimes=1)清零完整24KiB L1，并使用PIPE_MTE2屏障确保清零在ND2NZ搬运前完成。每head构造独立resident block，避免B页地址相同但内容已回绕时沿用旧数据。
+S0 beta FP32扩展区在Brcb前显式清零，避免尾部对齐lane读取未初始化值。
 
-### A5 快路径（`useGateInKernel && useExp2`）
+**本 Stage 产生/写出**
 
-Vector 走 `ProcessFastPingPong`：UB 双缓冲搬入 `g/q/k/v/beta`，RegBase
-`FusedRecomputeChunk128Regbase` 写出 `gk/qg/kg` 到 GM，并把 `kbg/vb`
-以 ND→NZ 形式写入 L1 ping-pong。Cube 驻留读取 `A`（L1 固定 8 KiB），
-等待对应 slot 的 ready 后做两次 MMAD，Fixpipe 写出 `u` 再写 `w`。
+| 对象 | 存储位置 | 分配地址 | L2Cache | 功能 |
+|---|---|---|---|---|
+| w/u | GM（API 输出） | tensor_base+((batch*HV+hv)*T+token_begin)*256B，L*256B | 使能 | FP32累加，Fixpipe为bf16 |
 
-| Stage | 核 | 本轮计算 | 阶段结果 |
-| --- | --- | --- | --- |
-| V0 | Vector | 搬入 token；safe-gate + cumsum；生成 `qg/kg`；打包 `kbg/vb` 到 L1 | 公开 `gk/qg/kg`；L1 上 `kbg/vb` ready |
-| C1 | Cube | `u = A @ vb`（BF16×BF16→FP32） | Fixpipe `u` |
-| C2 | Cube | `w = A @ kbg` | Fixpipe `w`；释放 L1 slot |
+**其它 Stage 提供、当前 Stage 读取或需保护**
 
-同一 chunk 上多个 head 可复用已装入的 `A`（`skipLoadA`），减少 GM→L1。
-流式 GM（`q/k/v/g/beta/qg/kg/gk/w/u`）关闭 L2；`A` 保留 NORMAL，避免
-AIC MTE2 成为瓶颈。
+| 对象 | 存储位置 | 分配地址 | L2Cache | 功能 |
+|---|---|---|---|---|
+| A | GM（API 输入） | A_base+((batch*HV+hv)*T+token_begin)*128B，L*128B | 使能 | 同head两GEMM共用 |
+| vb/kbg | GM（用户 workspace） | page_base+r*32768B+0/16384B，每tile16384B | 使能 | ready等待后访问，最终读取完成后free |
 
-非 `useGate && useExp2` 时 A5 走 `ProcessFallback`：仍在片上完成 Vector
-准备，但不同时启用 RegBase 融合快路径。
+**本 Stage 临时/固定**
 
-### A2/A3 四 head、每核八 slot 的 GM workspace 设计
+| 对象 | 存储位置 | 分配地址 | L2Cache | 功能 |
+|---|---|---|---|---|
+| A/B | L1 | [0,8),[8,24) KiB，24KiB单缓冲 | 不涉及 | Catlass ENABLE_L1_RESIDENT；同head A保留，两份B顺序复用同16KiB；每head重建对象避免GM页回绕误判驻留 |
+| A操作数 | L0A | L0A[0,8) KiB，8KiB单缓冲 | 不涉及 | 64x64 bf16，MMAD完成后复用 |
+| B操作数 | L0B | L0B[0,16) KiB，16KiB单缓冲 | 不涉及 | 64x128 bf16，MMAD完成后复用 |
+| acc | L0C | L0C[0,32) KiB，32KiB单缓冲 | 不涉及 | u的Fixpipe完成后覆盖为w |
 
-一个逻辑核（1 AIC + 2 AIV）独占 A、B 两页 GM，每页对应同一 chunk 的最多四个连续 value head。
-每个 head slot 连续存放 BF16 的 `vb[chunkSize,V]` 和 `kbg[chunkSize,K]`。当前每个 slot 为 32 KiB，
-每页 128 KiB，每核 256 KiB。用户 workspace 按实际启用的逻辑核数分配。
+## 5. 用户额外 workspace
 
-每核从自己的核号开始，按 `usedAic` 跨步取组。页号为本核轮次模 2。AIV0 填 lane 0/2，
-AIV1 填 lane 1/3；无有效 lane 的 AIV 仍参加本页的 mode 2 集合握手。前两轮各取得一张空页，
-第三轮开始必须先等目标页 FREE。两侧完成本页写出后发 READY。AIC 等本页 READY，读 vb 计算 u，
-读 kbg 计算 w。有同页的后续轮次时，待本页全部读取完成后发 FREE。两页独立交接，允许 AIV 在
-AIC 消费当前页时填写下一页。尾 chunk 按有效行数读写，公开输出使用原始张量地址。
+| 区域 | 数量与单份大小 | 主模型 case 大小 |
+|---|---|---|
+| GM双页 | usedAic*2*CG*32768B | CG4、24核示例6.291456 MB；实际按设备核数计算 |
 
-## 存储布局
+```text
+workspace_size=usedAic*2*CG*32768
+page_base=workspace+(core*2+page)*CG*32768
+```
+只统计用户额外GM页。API 输入、最终输出不属于该数值；系统 workspace单列。
+适配连续化和gate关闭占位必须另外计入峰值，不以页预算替代实际临时内存。
 
-### A5 L1（每 AIC）
+## 6. 跨 Stage 同步契约
 
-| 区域 | 偏移 | 容量 | 内容 |
-| --- | --- | --- | --- |
-| `A` | `0` | 8 KiB | BF16 `[64,64]`，可跨 head 复用 |
-| `kbg` slot0/1 | `8 / 40` KiB | 各 32 KiB | BF16 `[64,128]` ping-pong |
-| `vb` slot0/1 | `72 / 104` KiB | 各 32 KiB | BF16 `[64,128]` ping-pong |
+| 数据边 | Producer | Consumer | ready | free/复用 | 本地 pipe | 回绕/退出 |
+|---|---|---|---|---|---|---|
+| 双页vb/kbg | 两AIV的所有有效head半片 | AIC全部head两GEMM | mode2集合set/wait flag，两个AIV全部MTE3完成 | 复用前wait free，AIC最后读取完成set free | V_MTE2，MTE2_V，V_MTE3，MTE3_V；AIC MTE2/MTE1/M/FIX事件 | 首两页不等free，仅有后续使用才通知，空work不发事件，退出drain |
 
-合计约 136 KiB，低于 512 KiB L1。L0A/L0B 承载当前 MMAD 的 A/B tile；
-两块 L0C 各约 `kL0CTileBytes`，供 `u`/`w` 与相邻 head 流水。
-
-### Workspace
-
-| 平台 | user workspace | 说明 |
-| --- | --- | --- |
-| A5 | 0（另加 SDK 系统 workspace） | `kbg/vb` 留在 L1，不经 GM 中转 |
-| A6 | 0（另加 SDK 系统 workspace） | arch92 同样在片上完成 `kbg/vb` 中转 |
-| A2/A3 | `usedAic * 2 * 4 * chunk_size * (K + V) * sizeof(BF16)` | 每核双页，每页 4 个 head slot |
-
-`vecRow` 由 Host 按 UB 预算（默认上限约 192 KiB）从 `chunk_size` 向下折半
-选择，保证 Vector 侧多份 TQue/TBuf 同时存活。
-
-### 同步（A5/A6）
-
-跨核 mode `0x4`：AIV1 的 flag id 为 base+16。Cube **只 wait 生产该 slot
-的那一个 AIV**，不能对同一 head wait 两侧 flag（会死锁）；也不能在无
-对应 Wait 的情况下预置超过硬件信用的 free（会卡死芯片）。
-
-| flag | id | 方向 | 含义 |
-| --- | --- | --- | --- |
-| ready | 6 (+16×slot) | AIV → AIC | 当前 slot 的 `kbg/vb` 已在 L1 |
-| free | 7 (+16×slot) | AIC → AIV | Cube 已消费，AIV 可覆盖该 slot |
-
-核内 HardEvent 覆盖 MTE2↔V、MTE3↔MTE2、MTE1↔MTE2、M↔MTE1、FIX↔M。
-空任务区间的核不发 flag。
-
-A6 使用单 AIV，slot 0/1 不再映射到两个 AIV 的 `+16` 偏移；ready/free 和
-跨核 handshake 的 ID 由 arch92 的同步表统一给出。A6 arch92 当前只支持
-`input_layout=BNSD/NTD` 的 dense 输入，不支持 A5 后加的 mixed `model_layout`
-组合；Host 对该组合明确返回参数错误，避免静默读错布局。
-
-## Host / 属性透传
-
-OpDef 输出登记顺序为 `w/u/qg/kg/gk(optional)`。属性：
-
-| 属性 | 类型 | 说明 |
-| --- | --- | --- |
-| `chunk_size` | int | 必须为 64 |
-| `use_gate_in_kernel` | bool | L0 显式传入；独立 L2 由 `gkOut` 是否非空推导 |
-| `use_exp2` | bool | 与快路径选择相关 |
-| `lower_bound` | float | 以 bit 模式写入 tiling，避免 host/device 浮点填充差 |
-| `input_layout` | string | 仅 `BNSD`/`NTD` |
-
-变长：`isVariable` 由是否提供 `cu_seqlens` 决定；有变长时必须同时提供
-`chunk_indices`，`B` 置 1，`chunkNum = len(chunk_indices)/2`。定长时
-`chunkNum = B * ceil(T/64)`。
-
-## 实现位置
-
-| 路径 | 职责 |
-| --- | --- |
-| `op_host/` | OpDef、tiling、手写 aclnn / L0 |
-| `op_kernel/arch35/` | A5 Vector RegBase、Cube Catlass MMAD、跨核 flag |
-| `op_kernel/*.h`（非 arch35） | A2/A3 Vector/Cube 与 GM workspace 路径 |
-| `op_kernel/chunk_kda_bwd_recompute.cpp` | Mix 入口按 `__NPU_ARCH__` 选择实现 |
-
-验收与性能数字维护在
-[`tests/atk/chunk_kda_bwd_recompute/README.md`](../../../../../../tests/atk/chunk_kda_bwd_recompute/README.md)。
+```text
+AIV ordinal: if ordinal>=2 wait FREE[p]; load own half; wait MTE2;
+compute S0; store public outputs and page; wait MTE3; set READY[p]
+AIC ordinal: wait READY[p] from both producers; execute S1 all valid heads;
+wait last page read; if ordinal+2<count set FREE[p]
+exit: drain local DMA and Fixpipe before resources released
+```
+所有SetFlag有配对WaitFlag。独立页跨work重叠，不能用逐work串行生产、计算、消费替代。
