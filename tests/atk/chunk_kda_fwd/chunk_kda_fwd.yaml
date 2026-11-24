@@ -4,133 +4,116 @@ version: v2.1
 name: chunk_kda_fwd
 aclnn_name: ChunkKdaFwd
 generate: generator_chunk_kda_fwd
-dtype_numbers: 1
+dtype_numbers: 538
 extra_numbers: 0
+shape_distributions: [[0, 1.0]]
 standard:
-  acc: mixed_tolerance_bm
+  acc:
+    cv_fused_double_benchmark:
+      max_re_ratio: 5
+      avg_re_ratio: 1.5
+      root_mean_squared_ratio: 1.5
   perf: not_key
 inputs:
-  - name: low_precision_marker
+  - name: q
     type: tensor
     required: true
     dtypes:
-      values: [bf16]
+      values: [bf16, fp16]
     ranges:
       valid:
-        values: [[0, 0]]
+        values: [[-0.08, 0.08]]
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: fp32_marker
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: k
     type: tensor
     required: true
     dtypes:
-      values: [fp32]
+      values: [bf16, fp16]
     ranges:
       valid:
-        values: [[0, 0]]
+        values: [[-0.08, 0.08]]
       invalid:
         values: []
     shapes:
       dim_numbers:
-        values: [1]
+        values: [4]
       dim_values:
-        values: [1]
-  - name: case_spec
-    type: attr
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: v
+    type: tensor
     required: true
     dtypes:
-      values: [non_param]
+      values: [bf16, fp16]
     ranges:
       valid:
-        values: ['{"profile":"frozen_by_gen"}']
+        values: [[-0.08, 0.08]]
       invalid:
         values: []
-  - name: soc
-    type: attr
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: g
+    type: tensor
     required: true
     dtypes:
-      values: [string]
+      values: [bf16, fp32]
     ranges:
       valid:
-        values: [ascend910b, ascend950]
+        values: [[-1.0, 1.0]]
       invalid:
         values: []
-  - name: route
-    type: attr
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+        - values: [16]
+  - name: beta
+    type: tensor
     required: true
     dtypes:
-      values: [string]
+      values: [bf16, fp32]
     ranges:
       valid:
-        values: [ascendc, aclnn, direct_launch]
+        values: [[0.0, 1.0]]
       invalid:
         values: []
-  - name: batch
+    shapes:
+      dim_numbers:
+        values: [3]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [1]
+  - name: scale
     type: attr
     required: true
     dtypes:
-      values: [int]
+      values: [float]
     ranges:
       valid:
-        values: [1]
+        values: [0.25]
       invalid:
         values: []
-  - name: head
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [2, 96]
-      invalid:
-        values: [0, 129]
-  - name: value_head
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [4, 96]
-      invalid:
-        values: [0, 2, 129]
-  - name: total_tokens
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [63, 128, 8192, 16384]
-      invalid:
-        values: []
-  - name: key_dim
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      # K/V 只交付两档且必须同档：K=V=64 或 K=V=128；固化精度矩阵使用 K=V=128。
-      valid:
-        values: [64, 128]
-      invalid:
-        values: [8, 24, 256, 272]
-  - name: value_dim
-    type: attr
-    required: true
-    dtypes:
-      values: [int]
-    ranges:
-      valid:
-        values: [64, 128]
-      invalid:
-        values: [8, 24, 256, 272]
   - name: chunk_size
     type: attr
     required: true
@@ -138,9 +121,9 @@ inputs:
       values: [int]
     ranges:
       valid:
-        values: [64]
+        values: [64, 128]
       invalid:
-        values: [32, 128]
+        values: []
   - name: layout
     type: attr
     required: true
@@ -150,47 +133,25 @@ inputs:
       valid:
         values: [BSND, BNSD, TND, NTD]
       invalid:
-        values: [bsnd, INVALID]
-  - name: q_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp16]
-      invalid:
-        values: [fp32]
-  - name: g_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [fp32]
-      invalid:
-        values: [fp16]
-  - name: beta_dtype
-    type: attr
-    required: true
-    dtypes:
-      values: [string]
-    ranges:
-      valid:
-        values: [bf16, fp32]
-      invalid:
-        values: [fp16]
+        values: []
   - name: initial_state
-    type: attr
-    required: true
+    type: tensor
+    required: false
     dtypes:
-      values: [bool]
+      values: [fp32]
     ranges:
       valid:
-        values: [false, true]
+        values: [[-0.02, 0.02]]
       invalid:
         values: []
+    shapes:
+      dim_numbers:
+        values: [4]
+      dim_values:
+        - values: [1]
+        - values: [1]
+        - values: [16]
+        - values: [16]
   - name: output_final_state
     type: attr
     required: true
@@ -201,7 +162,31 @@ inputs:
         values: [false, true]
       invalid:
         values: []
-  - name: varlen
+  - name: cu_seqlens
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
+  - name: chunk_indices
+    type: attrs
+    required: false
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+    tuple_numbers:
+      values: [1]
+  - name: safe_gate
     type: attr
     required: true
     dtypes:
@@ -211,16 +196,6 @@ inputs:
         values: [false, true]
       invalid:
         values: []
-  - name: safe_gate
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [true]
-      invalid:
-        values: []
   - name: lower_bound
     type: attr
     required: true
@@ -228,9 +203,9 @@ inputs:
       values: [float]
     ranges:
       valid:
-        values: [-5.0]
+        values: [-5.0, -1.0, -0.001]
       invalid:
-        values: [-5.1, 0.0]
+        values: []
   - name: use_gate_in_kernel
     type: attr
     required: true
@@ -238,9 +213,39 @@ inputs:
       values: [bool]
     ranges:
       valid:
-        values: [true]
+        values: [false, true]
       invalid:
         values: []
+  - name: A_log
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-6.0, -2.0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        - values: [1]
+  - name: dt_bias
+    type: tensor
+    required: false
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[-2.0, 2.0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        - values: [16]
   - name: disable_recompute
     type: attr
     required: true
@@ -262,16 +267,6 @@ inputs:
       invalid:
         values: []
   - name: state_v_first
-    type: attr
-    required: true
-    dtypes:
-      values: [bool]
-    ranges:
-      valid:
-        values: [false, true]
-      invalid:
-        values: []
-  - name: negative_case
     type: attr
     required: true
     dtypes:

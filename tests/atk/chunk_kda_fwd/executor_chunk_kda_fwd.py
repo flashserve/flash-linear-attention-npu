@@ -1,14 +1,11 @@
-"""ATK executor, CPU golden, and route adapters for chunk_kda_fwd."""
+"""ATK executor and dual references for chunk_kda_fwd."""
 
 from __future__ import annotations
 
-import ctypes
+import importlib
 import json
 import math
 import os
-import sys
-from pathlib import Path
-import re
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -58,8 +55,11 @@ _OUTPUT_NAMES = (
     "initial_state_out",
 )
 _REFERENCE_WORKERS = int(os.environ.get("KDA_ATK_REFERENCE_WORKERS", "48"))
-_REFERENCE_CACHE: OrderedDict[str, tuple] = OrderedDict()
-_REFERENCE_CACHE_ENTRIES = int(os.environ.get("KDA_ATK_REFERENCE_CACHE_ENTRIES", "1"))
+_LEGACY_REFERENCE_CACHE: OrderedDict[str, tuple] = OrderedDict()
+_LEGACY_REFERENCE_CACHE_ENTRIES = int(
+    os.environ.get("KDA_ATK_REFERENCE_CACHE_ENTRIES", "1")
+)
+_DEFAULT_TRITON_CALLABLE = "fla.ops.kda.chunk_fwd:chunk_kda_fwd"
 
 
 def _selected_output_names() -> Optional[set[str]]:
@@ -85,7 +85,7 @@ class _PreparedInputs:
     initial_state: Optional[torch.Tensor]
     cu_seqlens: Optional[list[int]]
     chunk_indices: Optional[list[int]]
-    seed: int
+    legacy_seed: Optional[int] = None
 
 
 def _as_bool(value) -> bool:
@@ -94,11 +94,235 @@ def _as_bool(value) -> bool:
     return bool(value)
 
 
-def _parse_cu(value) -> Optional[list[int]]:
-    value = str(value or "").strip()
-    if not value:
+def _optional_tensor(value):
+    if value is None:
         return None
-    return [int(item) for item in value.split(",")]
+    if torch.is_tensor(value) and value.numel() == 0:
+        return None
+    return value
+
+
+def _normalize_int_list(value, name: str) -> Optional[list[int]]:
+    if value is None:
+        return None
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 1
+        and value[0] in (None, "null")
+    ):
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{name} must be an integer list or null")
+    normalized = []
+    for index, item in enumerate(value):
+        if isinstance(item, bool):
+            raise ValueError(f"{name}[{index}] must be an integer")
+        try:
+            converted = int(item)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name}[{index}] must be an integer") from exc
+        if isinstance(item, float) and not item.is_integer():
+            raise ValueError(f"{name}[{index}] must be an integer")
+        normalized.append(converted)
+    return normalized
+
+
+def _dtype_name(dtype: torch.dtype) -> str:
+    names = {
+        torch.bfloat16: "bf16",
+        torch.float16: "fp16",
+        torch.float32: "fp32",
+        torch.float64: "fp64",
+    }
+    try:
+        return names[dtype]
+    except KeyError as exc:
+        raise ValueError(f"unsupported floating dtype: {dtype}") from exc
+
+
+def _published_output(output: torch.Tensor) -> torch.Tensor:
+    if output.is_floating_point():
+        return output.to(torch.float32)
+    return output
+
+
+def _derive_spec(
+    values: dict,
+    q_dtype: str,
+    g_dtype: str,
+    beta_dtype: str,
+    case_id: int,
+) -> tuple[dict, Optional[list[int]], Optional[list[int]]]:
+    layout = str(values.get("layout", "BSND"))
+    if layout not in {"BSND", "BNSD", "TND", "NTD"}:
+        raise ValueError(f"unsupported layout: {layout!r}")
+
+    q = values["q"]
+    k = values["k"]
+    v = values["v"]
+    g = values["g"]
+    beta = values["beta"]
+    if not all(torch.is_tensor(item) for item in (q, k, v, g, beta)):
+        raise TypeError("q, k, v, g, and beta must be tensors")
+    if q.dtype not in {torch.float16, torch.bfloat16, torch.float32, torch.float64}:
+        raise ValueError(f"unsupported q dtype: {q.dtype}")
+    if k.dtype != q.dtype or v.dtype != q.dtype:
+        raise ValueError("q, k, and v must use the same dtype")
+    if q_dtype not in {"bf16", "fp16"}:
+        raise ValueError(f"q/k/v config dtype must be bf16 or fp16, got {q_dtype!r}")
+    if g_dtype not in {"bf16", "fp32"}:
+        raise ValueError(f"g config dtype must be bf16 or fp32, got {g_dtype!r}")
+    if beta_dtype not in {"bf16", "fp32"}:
+        raise ValueError(f"beta config dtype must be bf16 or fp32, got {beta_dtype!r}")
+
+    q_shape = tuple(q.shape)
+    v_shape = tuple(v.shape)
+    if q_shape != tuple(k.shape):
+        raise ValueError("q and k must have identical shapes")
+    if layout == "BSND":
+        if len(q_shape) != 4:
+            raise ValueError("BSND q/k must be rank 4")
+        batch, total_t, h_num, k_dim = q_shape
+        if len(v_shape) != 4:
+            raise ValueError("BSND v/g must be rank 4")
+        hv_num, v_dim = v_shape[2], v_shape[3]
+        expected_v = (batch, total_t, hv_num, v_dim)
+        expected_g = (batch, total_t, hv_num, k_dim)
+        expected_beta = (batch, total_t, hv_num)
+    elif layout == "BNSD":
+        if len(q_shape) != 4:
+            raise ValueError("BNSD q/k must be rank 4")
+        batch, h_num, total_t, k_dim = q_shape
+        if len(v_shape) != 4:
+            raise ValueError("BNSD v/g must be rank 4")
+        hv_num, v_dim = v_shape[1], v_shape[3]
+        expected_v = (batch, hv_num, total_t, v_dim)
+        expected_g = (batch, hv_num, total_t, k_dim)
+        expected_beta = (batch, hv_num, total_t)
+    elif layout == "TND":
+        if len(q_shape) != 3:
+            raise ValueError("TND q/k must be rank 3")
+        batch, total_t, h_num, k_dim = 1, *q_shape
+        if len(v_shape) != 3:
+            raise ValueError("TND v/g must be rank 3")
+        hv_num, v_dim = v_shape[1], v_shape[2]
+        expected_v = (total_t, hv_num, v_dim)
+        expected_g = (total_t, hv_num, k_dim)
+        expected_beta = (total_t, hv_num)
+    else:
+        if len(q_shape) != 3:
+            raise ValueError("NTD q/k must be rank 3")
+        h_num, total_t, k_dim = q_shape
+        batch = 1
+        if len(v_shape) != 3:
+            raise ValueError("NTD v/g must be rank 3")
+        hv_num, v_dim = v_shape[0], v_shape[2]
+        expected_v = (hv_num, total_t, v_dim)
+        expected_g = (hv_num, total_t, k_dim)
+        expected_beta = (hv_num, total_t)
+
+    if v_shape != expected_v or tuple(g.shape) != expected_g or tuple(beta.shape) != expected_beta:
+        raise ValueError("v, g, or beta shape does not match the selected layout")
+    if not (0 < h_num <= hv_num <= 128 and hv_num % h_num == 0):
+        raise ValueError("H/HV must satisfy 0 < H <= HV <= 128 and HV % H == 0")
+    if not (16 <= k_dim <= 256 and k_dim % 16 == 0):
+        raise ValueError("K must be a multiple of 16 in [16, 256]")
+    if not (16 <= v_dim <= 256 and v_dim % 16 == 0):
+        raise ValueError("V must be a multiple of 16 in [16, 256]")
+
+    chunk_size = int(values.get("chunk_size", 64))
+    if chunk_size not in {64, 128}:
+        raise ValueError("chunk_size must be 64 or 128")
+    cu_seqlens = _normalize_int_list(values.get("cu_seqlens"), "cu_seqlens")
+    if layout in {"TND", "NTD"} and cu_seqlens is None:
+        raise ValueError(f"{layout} requires cu_seqlens")
+    if cu_seqlens is not None:
+        if len(cu_seqlens) < 2:
+            raise ValueError("cu_seqlens must contain at least [0, total_tokens]")
+        if cu_seqlens[0] != 0 or cu_seqlens[-1] != total_t:
+            raise ValueError("cu_seqlens must start at 0 and end at total_tokens")
+        if any(left > right for left, right in zip(cu_seqlens, cu_seqlens[1:])):
+            raise ValueError("cu_seqlens must be nondecreasing")
+        if len(cu_seqlens) - 1 > 1024:
+            raise ValueError("cu_seqlens supports at most 1024 logical sequences")
+        if layout in {"BSND", "BNSD"} and batch != 1:
+            raise ValueError("rank-4 varlen input requires B=1")
+
+    chunk_indices = _normalize_int_list(values.get("chunk_indices"), "chunk_indices")
+    canonical_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
+    if chunk_indices is not None and chunk_indices != canonical_indices:
+        raise ValueError("chunk_indices must use canonical sequence-major order")
+
+    seq_num = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
+    state_v_first = _as_bool(values.get("state_v_first", False))
+    initial_state = _optional_tensor(values.get("initial_state"))
+    if initial_state is not None:
+        state_shape = (
+            (seq_num, hv_num, v_dim, k_dim)
+            if state_v_first
+            else (seq_num, hv_num, k_dim, v_dim)
+        )
+        if tuple(initial_state.shape) != state_shape:
+            raise ValueError(f"initial_state must have shape {state_shape}")
+
+    use_gate = _as_bool(values.get("use_gate_in_kernel", False))
+    safe_gate = _as_bool(values.get("safe_gate", False))
+    a_log = _optional_tensor(values.get("A_log"))
+    dt_bias = _optional_tensor(values.get("dt_bias"))
+    if use_gate and a_log is None:
+        raise ValueError("A_log is required when use_gate_in_kernel is true")
+    if a_log is not None and tuple(a_log.shape) != (hv_num,):
+        raise ValueError(f"A_log must have shape {(hv_num,)}")
+    if dt_bias is not None and tuple(dt_bias.shape) != (hv_num * k_dim,):
+        raise ValueError(f"dt_bias must have shape {(hv_num * k_dim,)}")
+    lower_bound = float(values.get("lower_bound", -5.0))
+    if use_gate and safe_gate and not (-5.0 <= lower_bound < 0.0):
+        raise ValueError("lower_bound must be in [-5, 0) for safe gate")
+
+    spec = {
+        "case_key": f"chunk_kda_fwd_{case_id:04d}",
+        "B": int(batch),
+        "H": int(h_num),
+        "HV": int(hv_num),
+        "T": int(total_t),
+        "K": int(k_dim),
+        "V": int(v_dim),
+        "q_dtype": q_dtype,
+        "g_dtype": g_dtype,
+        "beta_dtype": beta_dtype,
+        "layout": layout,
+        "scale": float(values["scale"]),
+        "chunk_size": chunk_size,
+        "output_final_state": _as_bool(values.get("output_final_state", False)),
+        "safe_gate": safe_gate,
+        "lower_bound": lower_bound,
+        "use_gate_in_kernel": use_gate,
+        "disable_recompute": _as_bool(values.get("disable_recompute", False)),
+        "return_intermediate_states": _as_bool(values.get("return_intermediate_states", False)),
+        "state_v_first": state_v_first,
+    }
+    return spec, cu_seqlens, chunk_indices
+
+
+def _direct_inputs(values: dict, spec: dict, cu_seqlens, chunk_indices, high_precision: bool) -> _PreparedInputs:
+    def convert(value):
+        value = _optional_tensor(value)
+        if value is not None and high_precision and value.is_floating_point():
+            return value.to(torch.float64)
+        return value
+
+    return _PreparedInputs(
+        q=convert(values["q"]),
+        k=convert(values["k"]),
+        v=convert(values["v"]),
+        g=convert(values["g"]),
+        beta=convert(values["beta"]),
+        A_log=convert(values.get("A_log")),
+        dt_bias=convert(values.get("dt_bias")),
+        initial_state=convert(values.get("initial_state")),
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+    )
 
 
 def _canonical_chunk_indices(cu_seqlens: Optional[list[int]], chunk_size: int) -> Optional[list[int]]:
@@ -111,13 +335,18 @@ def _canonical_chunk_indices(cu_seqlens: Optional[list[int]], chunk_size: int) -
     return indices
 
 
-def _target_dtype(original: str, high_precision: bool) -> torch.dtype:
-    if not high_precision:
-        return _DTYPES[original]
-    return torch.float64
+def _legacy_cu_seqlens(value) -> Optional[list[int]]:
+    value = str(value or "").strip()
+    if not value:
+        return None
+    return [int(item) for item in value.split(",")]
 
 
-def _random_quantized(
+def _legacy_target_dtype(original: str, high_precision: bool) -> torch.dtype:
+    return torch.float64 if high_precision else _DTYPES[original]
+
+
+def _legacy_random_quantized(
     shape,
     generator: torch.Generator,
     original_dtype: torch.dtype,
@@ -132,7 +361,7 @@ def _random_quantized(
     return value.to(device)
 
 
-def _normal_quantized(
+def _legacy_normal_quantized(
     shape,
     generator: torch.Generator,
     original_dtype: torch.dtype,
@@ -152,7 +381,9 @@ def _normal_quantized(
     return value.to(original_dtype).to(target_dtype).to(device)
 
 
-def _layout_from_bsnd(tensor: torch.Tensor, layout: str, *, beta: bool = False) -> torch.Tensor:
+def _legacy_layout_from_bsnd(
+    tensor: torch.Tensor, layout: str, *, beta: bool = False
+) -> torch.Tensor:
     if layout == "BSND":
         return tensor.contiguous()
     if layout == "BNSD":
@@ -165,31 +396,18 @@ def _layout_from_bsnd(tensor: torch.Tensor, layout: str, *, beta: bool = False) 
     raise ValueError(f"unsupported layout: {layout}")
 
 
-def _layout_to_bsnd(tensor: torch.Tensor, layout: str, *, beta: bool = False) -> torch.Tensor:
-    if layout == "BSND":
-        return tensor
-    if layout == "BNSD":
-        return tensor.permute(0, 2, 1) if beta else tensor.permute(0, 2, 1, 3)
-    if layout == "TND":
-        return tensor.unsqueeze(0)
-    if layout == "NTD":
-        return (tensor.permute(1, 0) if beta else tensor.permute(1, 0, 2)).unsqueeze(0)
-    raise ValueError(f"unsupported layout: {layout}")
-
-
-def _prepare_inputs(
+def _legacy_inputs(
     spec: dict,
     low_marker: torch.Tensor,
-    fp32_marker: torch.Tensor,
     *,
-    high_precision: bool = False,
-    seed: Optional[int] = None,
+    high_precision: bool,
+    seed: int,
 ) -> _PreparedInputs:
+    """Materialize the repository's existing marker/case_spec JSON cases."""
+
     device = low_marker.device
-    del fp32_marker
     generator = torch.Generator(device="cpu")
-    runtime_seed = int(spec["seed"] if seed is None else seed)
-    generator.manual_seed(runtime_seed)
+    generator.manual_seed(seed)
 
     batch = int(spec["B"])
     total_t = int(spec["T"])
@@ -201,88 +419,90 @@ def _prepare_inputs(
     data_profile = str(spec.get("data_profile", "uniform"))
 
     q_original = _DTYPES[str(spec["q_dtype"])]
-    q_target = _target_dtype(str(spec["q_dtype"]), high_precision)
+    q_target = _legacy_target_dtype(str(spec["q_dtype"]), high_precision)
     g_original = _DTYPES[str(spec["g_dtype"])]
-    g_target = _target_dtype(str(spec["g_dtype"]), high_precision)
+    g_target = _legacy_target_dtype(str(spec["g_dtype"]), high_precision)
     beta_original = _DTYPES[str(spec["beta_dtype"])]
-    beta_target = _target_dtype(str(spec["beta_dtype"]), high_precision)
+    beta_target = _legacy_target_dtype(str(spec["beta_dtype"]), high_precision)
     fp32_target = torch.float64 if high_precision else torch.float32
 
     if data_profile == "model_h96":
-        q_bsnd = _normal_quantized(
+        q_bsnd = _legacy_normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
             std=float(spec["qk_scale"]), l2_normalize=True,
         )
-        k_bsnd = _normal_quantized(
+        k_bsnd = _legacy_normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
             std=float(spec["qk_scale"]), l2_normalize=True,
         )
-        v_bsnd = _normal_quantized(
+        v_bsnd = _legacy_normal_quantized(
             (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device,
             std=float(spec["v_scale"]),
         )
-        g_bsnd = _normal_quantized(
+        g_bsnd = _legacy_normal_quantized(
             (batch, total_t, hv_num, k_dim), generator, g_original, g_target, device,
             std=float(spec["gate_scale"]),
         )
-        beta_bsnd = _normal_quantized(
+        beta_bsnd = _legacy_normal_quantized(
             (batch, total_t, hv_num), generator, beta_original, beta_target, device,
             mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=True,
         )
     else:
         data_scale = float(spec["data_scale"])
-        q_bsnd = _random_quantized(
+        q_bsnd = _legacy_random_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
             low=-data_scale, high=data_scale,
         )
-        k_bsnd = _random_quantized(
+        k_bsnd = _legacy_random_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
             low=-data_scale, high=data_scale,
         )
-        v_bsnd = _random_quantized(
+        v_bsnd = _legacy_random_quantized(
             (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device,
             low=-data_scale, high=data_scale,
         )
-
         gate_scale = float(spec["gate_scale"])
-        if _as_bool(spec["use_gate_in_kernel"]):
-            gate_low, gate_high = -gate_scale, gate_scale
-        else:
-            gate_low, gate_high = -0.02 * gate_scale, -0.002 * gate_scale
-        g_bsnd = _random_quantized(
+        gate_low, gate_high = (
+            (-gate_scale, gate_scale)
+            if _as_bool(spec["use_gate_in_kernel"])
+            else (-0.02 * gate_scale, -0.002 * gate_scale)
+        )
+        g_bsnd = _legacy_random_quantized(
             (batch, total_t, hv_num, k_dim), generator, g_original, g_target, device,
             low=gate_low, high=gate_high,
         )
-        beta_bsnd = _random_quantized(
+        beta_bsnd = _legacy_random_quantized(
             (batch, total_t, hv_num), generator, beta_original, beta_target, device,
             low=0.0, high=1.0,
         )
 
-    A_log = None
+    a_log = None
     if _as_bool(spec["use_gate_in_kernel"]):
         if data_profile == "model_h96":
-            A_log = _normal_quantized(
+            a_log = _legacy_normal_quantized(
                 (hv_num,), generator, torch.float32, fp32_target, device,
                 std=float(spec["a_log_scale"]),
             )
         else:
-            A_log = _random_quantized(
-                (hv_num,), generator, torch.float32, fp32_target, device, low=-6.0, high=-2.0,
+            a_log = _legacy_random_quantized(
+                (hv_num,), generator, torch.float32, fp32_target, device,
+                low=-6.0, high=-2.0,
             )
+
     dt_bias = None
     if _as_bool(spec["dt_bias"]):
         if data_profile == "model_h96":
-            dt_bias = _normal_quantized(
+            dt_bias = _legacy_normal_quantized(
                 (hv_num * k_dim,), generator, torch.float32, fp32_target, device,
                 mean=float(spec["dt_bias_mean"]), std=float(spec["dt_bias_scale"]),
             )
         else:
-            dt_bias = _random_quantized(
+            dt_bias = _legacy_random_quantized(
                 (hv_num * k_dim,), generator, torch.float32, fp32_target, device,
                 low=-2.0, high=2.0,
             )
 
-    cu_seqlens = _parse_cu(spec.get("cu_seqlens"))
+    cu_seqlens = _legacy_cu_seqlens(spec.get("cu_seqlens"))
     seq_num = len(cu_seqlens) - 1 if cu_seqlens is not None else batch
     initial_state = None
     if _as_bool(spec["initial_state"]):
@@ -291,26 +511,39 @@ def _prepare_inputs(
             if _as_bool(spec["state_v_first"])
             else (seq_num, hv_num, k_dim, v_dim)
         )
-        initial_state = _random_quantized(
-            state_shape, generator, torch.float32, fp32_target, device, low=-0.02, high=0.02,
+        initial_state = _legacy_random_quantized(
+            state_shape, generator, torch.float32, fp32_target, device,
+            low=-0.02, high=0.02,
         )
 
     chunk_indices = None
     if _as_bool(spec["explicit_chunk_indices"]):
         chunk_indices = _canonical_chunk_indices(cu_seqlens, int(spec["chunk_size"]))
     return _PreparedInputs(
-        q=_layout_from_bsnd(q_bsnd, layout),
-        k=_layout_from_bsnd(k_bsnd, layout),
-        v=_layout_from_bsnd(v_bsnd, layout),
-        g=_layout_from_bsnd(g_bsnd, layout),
-        beta=_layout_from_bsnd(beta_bsnd, layout, beta=True),
-        A_log=A_log,
+        q=_legacy_layout_from_bsnd(q_bsnd, layout),
+        k=_legacy_layout_from_bsnd(k_bsnd, layout),
+        v=_legacy_layout_from_bsnd(v_bsnd, layout),
+        g=_legacy_layout_from_bsnd(g_bsnd, layout),
+        beta=_legacy_layout_from_bsnd(beta_bsnd, layout, beta=True),
+        A_log=a_log,
         dt_bias=dt_bias,
         initial_state=initial_state,
         cu_seqlens=cu_seqlens,
         chunk_indices=chunk_indices,
-        seed=runtime_seed,
+        legacy_seed=seed,
     )
+
+
+def _layout_to_bsnd(tensor: torch.Tensor, layout: str, *, beta: bool = False) -> torch.Tensor:
+    if layout == "BSND":
+        return tensor
+    if layout == "BNSD":
+        return tensor.permute(0, 2, 1) if beta else tensor.permute(0, 2, 1, 3)
+    if layout == "TND":
+        return tensor.unsqueeze(0)
+    if layout == "NTD":
+        return (tensor.permute(1, 0) if beta else tensor.permute(1, 0, 2)).unsqueeze(0)
+    raise ValueError(f"unsupported layout: {layout}")
 
 
 def _gate_cumsum(inputs: _PreparedInputs, spec: dict) -> torch.Tensor:
@@ -382,9 +615,14 @@ def _stable_causal_scores(
         q_left = q[:, row_start:row_end] * left_factor
         k_left = k[:, row_start:row_end] * left_factor
         if operand_dtype is not None:
-            right = right.to(operand_dtype).to(q.dtype)
-            q_left = q_left.to(operand_dtype).to(q.dtype)
-            k_left = k_left.to(operand_dtype).to(q.dtype)
+            # The kernels keep the shifted factors in bfloat16 (qPlus/kPlus in
+            # chunk_kda_fwd_prepare_vec.h).  bfloat16 shares fp32 exponent
+            # range, so quantising there neither overflows nor over-states the
+            # precision the operator actually uses.
+            factor_dtype = torch.bfloat16
+            right = right.to(factor_dtype).to(q.dtype)
+            q_left = q_left.to(factor_dtype).to(q.dtype)
+            k_left = k_left.to(factor_dtype).to(q.dtype)
         q_scores = torch.bmm(
             q_left,
             right.transpose(1, 2),
@@ -740,25 +978,31 @@ def _reference_cache_key(inputs: _PreparedInputs, spec: dict, implementation: st
     payload = {key: value for key, value in spec.items() if key not in ignored}
     payload["reference_implementation"] = implementation
     payload["reference_q_dtype"] = str(inputs.q.dtype)
-    payload["runtime_seed"] = inputs.seed
+    payload["runtime_seed"] = inputs.legacy_seed
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-def _cached_full_reference(inputs: _PreparedInputs, spec: dict, implementation: str, runner):
-    cache_key = _reference_cache_key(inputs, spec, implementation)
-    outputs = _REFERENCE_CACHE.get(cache_key)
-    if outputs is None:
-        full_spec = dict(spec)
-        full_spec["disable_recompute"] = True
-        full_spec["output_final_state"] = True
-        full_spec["return_intermediate_states"] = True
-        outputs = runner(inputs, full_spec)
-        _REFERENCE_CACHE[cache_key] = outputs
-        _REFERENCE_CACHE.move_to_end(cache_key)
-        while len(_REFERENCE_CACHE) > max(0, _REFERENCE_CACHE_ENTRIES):
-            _REFERENCE_CACHE.popitem(last=False)
-    else:
-        _REFERENCE_CACHE.move_to_end(cache_key)
+def _full_reference(inputs: _PreparedInputs, spec: dict, runner):
+    # Always derive the reference from ATK's materialized tensors so saved-input
+    # replays and accuracy_lt loops compare the values that were actually run.
+    cache_key = None
+    if inputs.legacy_seed is not None:
+        cache_key = _reference_cache_key(inputs, spec, runner.__name__)
+        outputs = _LEGACY_REFERENCE_CACHE.get(cache_key)
+        if outputs is not None:
+            _LEGACY_REFERENCE_CACHE.move_to_end(cache_key)
+            return _apply_output_policy(outputs, spec)
+
+    full_spec = dict(spec)
+    full_spec["disable_recompute"] = True
+    full_spec["output_final_state"] = True
+    full_spec["return_intermediate_states"] = True
+    outputs = runner(inputs, full_spec)
+    if cache_key is not None:
+        _LEGACY_REFERENCE_CACHE[cache_key] = outputs
+        _LEGACY_REFERENCE_CACHE.move_to_end(cache_key)
+        while len(_LEGACY_REFERENCE_CACHE) > max(0, _LEGACY_REFERENCE_CACHE_ENTRIES):
+            _LEGACY_REFERENCE_CACHE.popitem(last=False)
     return _apply_output_policy(outputs, spec)
 
 
@@ -783,20 +1027,249 @@ def _torch_fp64_golden(inputs: _PreparedInputs, spec: dict):
         previous_threads = torch.get_num_threads()
         try:
             torch.set_num_threads(1)
-            return _cached_full_reference(
+            return _full_reference(
                 inputs,
                 spec,
-                "torch_cpu_fp64_model_parallel",
                 _reference_model_parallel,
             )
         finally:
             torch.set_num_threads(previous_threads)
-    return _cached_full_reference(
+    return _full_reference(
         inputs,
         spec,
-        "torch_cuda_fp64",
         _reference_impl,
     )
+
+
+def _torch_same_precision(inputs: _PreparedInputs, spec: dict):
+    if inputs.q.device.type != "cpu":
+        raise RuntimeError("Torch same-precision control must run on an ATK CPU node")
+    if inputs.q.dtype != _DTYPES[str(spec["q_dtype"])]:
+        raise RuntimeError(
+            "Torch same-precision control received an unexpected q dtype: "
+            f"expected={_DTYPES[str(spec['q_dtype'])]}, actual={inputs.q.dtype}"
+        )
+    previous_threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(1)
+        return _full_reference(
+            inputs,
+            spec,
+            _reference_model_parallel,
+        )
+    finally:
+        torch.set_num_threads(previous_threads)
+
+
+def _load_triton_callable():
+    target = os.environ.get("KDA_ATK_TRITON_CALLABLE", _DEFAULT_TRITON_CALLABLE).strip()
+    module_name, separator, attribute = target.partition(":")
+    if not separator or not module_name or not attribute:
+        raise RuntimeError(
+            "KDA_ATK_TRITON_CALLABLE must use '<python_module>:<callable>' syntax"
+        )
+    module = importlib.import_module(module_name)
+    callable_obj = getattr(module, attribute, None)
+    if not callable(callable_obj):
+        raise RuntimeError(f"configured Triton target is not callable: {target}")
+    return target, callable_obj
+
+
+def _cuda_long(values: Optional[list[int]], device, *, pairs: bool = False):
+    if values is None:
+        return None
+    tensor = torch.tensor(values, dtype=torch.int64, device=device)
+    return tensor.reshape(-1, 2) if pairs else tensor
+
+
+def _triton_gate_cumsum(
+    inputs: _PreparedInputs,
+    spec: dict,
+    g: torch.Tensor,
+    cu_seqlens: Optional[torch.Tensor],
+    chunk_indices: Optional[torch.Tensor],
+) -> torch.Tensor:
+    if _as_bool(spec["use_gate_in_kernel"]):
+        from fla.ops.kda.gate import kda_gate_chunk_cumsum
+
+        return kda_gate_chunk_cumsum(
+            g=g,
+            A_log=inputs.A_log,
+            dt_bias=inputs.dt_bias,
+            scale=1.0 / math.log(2.0),
+            chunk_size=int(spec["chunk_size"]),
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            lower_bound=(
+                float(spec["lower_bound"]) if _as_bool(spec["safe_gate"]) else None
+            ),
+        )
+
+    from fla.ops.utils import chunk_local_cumsum
+
+    return chunk_local_cumsum(
+        g,
+        scale=1.0 / math.log(2.0),
+        chunk_size=int(spec["chunk_size"]),
+        cu_seqlens=cu_seqlens,
+        chunk_indices=chunk_indices,
+    )
+
+
+def _sequence_major_to_head_major(tensor: Optional[torch.Tensor], spec: dict):
+    if tensor is None or tensor.dim() != 4:
+        return tensor
+    total_t, hv_num = int(spec["T"]), int(spec["HV"])
+    if tensor.shape[1] == total_t and tensor.shape[2] == hv_num:
+        return tensor.permute(0, 2, 1, 3).contiguous()
+    if tensor.shape[1] == hv_num and tensor.shape[2] == total_t:
+        return tensor
+    raise RuntimeError(
+        "Triton intermediate has an unsupported layout: "
+        f"shape={tuple(tensor.shape)}, expected BT(HV)D or B(HV)TD"
+    )
+
+
+def _normalize_triton_outputs(outputs: tuple, inputs: _PreparedInputs, spec: dict) -> tuple:
+    if not isinstance(outputs, (tuple, list)) or len(outputs) != len(_OUTPUT_NAMES):
+        raise RuntimeError(
+            f"Triton callable must return {len(_OUTPUT_NAMES)} values in chunk_kda_fwd order"
+        )
+    normalized = list(outputs)
+    for index in range(2, 10):
+        normalized[index] = _sequence_major_to_head_major(normalized[index], spec)
+    normalized[11] = inputs.initial_state
+    if str(spec["layout"]) in {"TND", "NTD"}:
+        for index in (0, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+            tensor = normalized[index]
+            if isinstance(tensor, torch.Tensor) and tensor.dim() >= 1 and tensor.shape[0] == 1:
+                normalized[index] = tensor.squeeze(0)
+    return tuple(normalized)
+
+
+def _zero_undefined_triton_aqk_regions(
+    outputs: tuple, inputs: _PreparedInputs, spec: dict
+) -> tuple:
+    """Zero Aqk elements that the causal Triton kernel intentionally leaves unwritten."""
+    normalized = list(outputs)
+    total_t = int(spec["T"])
+    chunk_size = int(spec["chunk_size"])
+    if total_t < 0 or chunk_size <= 0:
+        raise RuntimeError(
+            f"invalid Aqk dimensions: T={total_t}, chunk_size={chunk_size}"
+        )
+
+    aqk = normalized[3]
+    if not isinstance(aqk, torch.Tensor):
+        return tuple(normalized)
+    if aqk.dim() not in (3, 4):
+        raise RuntimeError(f"Aqk has unsupported rank {aqk.dim()}")
+    if tuple(aqk.shape[-2:]) != (total_t, chunk_size):
+        raise RuntimeError(
+            f"Aqk has unsupported shape {tuple(aqk.shape)}; expected trailing "
+            f"dimensions ({total_t}, {chunk_size})"
+        )
+
+    spans = (
+        [(0, total_t)]
+        if inputs.cu_seqlens is None
+        else [
+            (int(start), int(end))
+            for start, end in zip(inputs.cu_seqlens, inputs.cu_seqlens[1:])
+        ]
+    )
+    if (
+        not spans
+        or spans[0][0] != 0
+        or spans[-1][1] != total_t
+        or any(
+            start < 0
+            or end < 0
+            or start > end
+            or start > total_t
+            or end > total_t
+            for start, end in spans
+        )
+        or any(left[1] != right[0] for left, right in zip(spans, spans[1:]))
+    ):
+        raise RuntimeError(f"invalid sequence spans for T={total_t}: {spans}")
+
+    # Aqk stores one causal row per token and one column per position in its
+    # current chunk. Packed sequences restart the chunk offset at each span.
+    local_rows = torch.empty(total_t, dtype=torch.int64, device=aqk.device)
+    for start, end in spans:
+        local_rows[start:end] = torch.arange(
+            end - start, dtype=torch.int64, device=aqk.device
+        ).remainder(chunk_size)
+    columns = torch.arange(chunk_size, dtype=torch.int64, device=aqk.device)
+    valid = columns.unsqueeze(0) <= local_rows.unsqueeze(1)
+    valid = valid.reshape((1,) * (aqk.dim() - 2) + valid.shape)
+
+    with torch.no_grad():
+        aqk.masked_fill_(~valid, 0)
+    return tuple(normalized)
+
+
+def _triton_same_precision_impl(inputs: _PreparedInputs, spec: dict):
+    if inputs.q.device.type != "cuda":
+        raise RuntimeError("Triton same-precision control must run on an ATK GPU node")
+    target, triton_callable = _load_triton_callable()
+    chunk_size = int(spec["chunk_size"])
+    if chunk_size != 64:
+        raise RuntimeError(
+            "the GPU dual-benchmark matrix is scoped to chunk_size=64; "
+            f"got chunk_size={chunk_size} from {target}"
+        )
+
+    layout = str(spec["layout"])
+    q = _layout_to_bsnd(inputs.q, layout).contiguous()
+    k = _layout_to_bsnd(inputs.k, layout).contiguous()
+    v = _layout_to_bsnd(inputs.v, layout).contiguous()
+    g = _layout_to_bsnd(inputs.g, layout).contiguous()
+    beta = _layout_to_bsnd(inputs.beta, layout, beta=True).contiguous()
+    cu_seqlens = _cuda_long(inputs.cu_seqlens, q.device)
+    cu_seqlens_cpu = (
+        None if inputs.cu_seqlens is None
+        else torch.tensor(inputs.cu_seqlens, dtype=torch.int64, device="cpu")
+    )
+    chunk_indices = _cuda_long(inputs.chunk_indices, q.device, pairs=True)
+
+    outputs = list(
+        triton_callable(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            scale=float(spec["scale"]),
+            initial_state=inputs.initial_state,
+            output_final_state=True,
+            state_v_first=_as_bool(spec["state_v_first"]),
+            cu_seqlens=cu_seqlens,
+            cu_seqlens_cpu=cu_seqlens_cpu,
+            chunk_indices=chunk_indices,
+            chunk_size=chunk_size,
+            safe_gate=_as_bool(spec["safe_gate"]),
+            lower_bound=(
+                float(spec["lower_bound"]) if _as_bool(spec["safe_gate"]) else None
+            ),
+            use_gate_in_kernel=_as_bool(spec["use_gate_in_kernel"]),
+            A_log=inputs.A_log,
+            dt_bias=inputs.dt_bias,
+            disable_recompute=True,
+            return_intermediate_states=True,
+        )
+    )
+    if len(outputs) == len(_OUTPUT_NAMES) and outputs[2] is None:
+        outputs[2] = _triton_gate_cumsum(
+            inputs, spec, g, cu_seqlens, chunk_indices
+        )
+    outputs = _normalize_triton_outputs(tuple(outputs), inputs, spec)
+    return _zero_undefined_triton_aqk_regions(outputs, inputs, spec)
+
+
+def _triton_same_precision(inputs: _PreparedInputs, spec: dict):
+    return _full_reference(inputs, spec, _triton_same_precision_impl)
 
 
 def _public_kwargs(inputs: _PreparedInputs, spec: dict) -> dict:
@@ -817,319 +1290,126 @@ def _public_kwargs(inputs: _PreparedInputs, spec: dict) -> dict:
     }
 
 
+_HEAD_AXIS = {"BSND": 2, "BNSD": 1, "TND": 1, "NTD": 0}
+
+
+def _make_input_views(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layout: str, mode: str):
+    """按 case 的 view_mode 把 q/k/v 变成尾轴切分得到的非连续视图。
+
+    dense  : 原样返回；
+    slice  : cat([q,k,v], head_axis) 后按 head 轴 narrow，视图整体非连续；
+    offset : 先前置一段 zeros_like(q)，再 narrow，使 storage offset 非 0。
+    """
+    if mode == "dense":
+        return q, k, v
+    axis = _HEAD_AXIS[str(layout)]
+    pieces = [q, k, v] if mode == "slice" else [torch.zeros_like(q), q, k, v]
+    fused = torch.cat(pieces, dim=axis)
+    hq = q.shape[axis]
+    hv = v.shape[axis]
+    base = 0 if mode == "slice" else hq
+    return (
+        fused.narrow(axis, base, hq),
+        fused.narrow(axis, base + hq, hq),
+        fused.narrow(axis, base + 2 * hq, hv),
+    )
+
+
 def _run_positive_npu(inputs: _PreparedInputs, spec: dict):
-    route = str(spec["route"])
+    from fla_npu.ops.ascendc import chunk_kda_fwd
+
+    q, k, v = _make_input_views(
+        inputs.q, inputs.k, inputs.v, str(spec["layout"]), str(spec.get("view_mode", "dense"))
+    )
     args = (
-        inputs.q, inputs.k, inputs.v, inputs.g, inputs.beta,
+        q, k, v, inputs.g, inputs.beta,
         float(spec["scale"]), int(spec["chunk_size"]),
     )
-    if route == "ascendc":
-        from fla_npu.ops.ascendc import chunk_kda_fwd
-
-        return chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
-    if route == "aclnn":
-        from fla_npu.ops.ascendc._stable import npu_chunk_kda_fwd
-
-        return npu_chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
-    if route == "direct_launch":
-        import ascend_ops  # noqa: F401
-
-        gk = _gate_cumsum(inputs, spec).permute(0, 2, 1, 3).contiguous()
-        beta = inputs.beta.to(torch.float32).contiguous()
-        outputs = list(torch.ops.ascend_ops.chunk_kda_fwd_direct(
-            inputs.q,
-            inputs.k,
-            inputs.v,
-            gk,
-            beta,
-            float(spec["scale"]),
-            int(spec["chunk_size"]),
-            initial_state=inputs.initial_state,
-            output_final_state=_as_bool(spec["output_final_state"]),
-            safe_gate=_as_bool(spec["safe_gate"]),
-        ))
-        outputs[10] = outputs[10].permute(0, 2, 1, 3, 4).contiguous()
-        return _apply_output_policy(tuple(outputs) + (inputs.initial_state,), spec)
-    raise ValueError(f"unsupported route: {route}")
-
-
-def _recent_aclnn_error() -> str:
-    try:
-        library = ctypes.CDLL("libascendcl.so")
-        function = library.aclGetRecentErrMsg
-        function.argtypes = []
-        function.restype = ctypes.c_char_p
-        value = function()
-    except (OSError, AttributeError) as exc:
-        raise RuntimeError(f"unable to query aclGetRecentErrMsg: {exc}") from exc
-    return "" if value is None else value.decode("utf-8", errors="replace")
-
-
-def _head_axis(layout: str) -> int:
-    return 2 if layout == "BSND" else (1 if layout in {"BNSD", "TND"} else 0)
-
-
-def _seq_axis(layout: str) -> int:
-    return 1 if layout in {"BSND", "NTD"} else (2 if layout == "BNSD" else 0)
-
-
-def _resize_axis(tensor: torch.Tensor, axis: int, size: int) -> torch.Tensor:
-    if size <= tensor.shape[axis]:
-        return tensor.narrow(axis, 0, size).contiguous()
-    repeats = [1] * tensor.dim()
-    repeats[axis] = (size + tensor.shape[axis] - 1) // tensor.shape[axis]
-    return tensor.repeat(*repeats).narrow(axis, 0, size).contiguous()
-
-
-def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
-    mutation = str(spec["mutation"])
-    layout = str(spec["layout"])
-    values = {
-        "q": inputs.q,
-        "k": inputs.k,
-        "v": inputs.v,
-        "g": inputs.g,
-        "beta": inputs.beta,
-        "A_log": inputs.A_log,
-        "dt_bias": inputs.dt_bias,
-        "initial_state": inputs.initial_state,
-        "cu": inputs.cu_seqlens,
-        "indices": inputs.chunk_indices,
-        "layout": layout,
-        "chunk_size": int(spec["chunk_size"]),
-        "lower_bound": float(spec["lower_bound"]),
-    }
-    null_inputs = {"null_q": "q", "null_k": "k", "null_v": "v", "null_g": "g", "null_beta": "beta"}
-    if mutation in null_inputs:
-        values[null_inputs[mutation]] = None
-    elif mutation == "null_attn":
-        outputs[0] = None
-    elif mutation == "null_aqk":
-        outputs[3] = None
-    elif mutation == "null_akk":
-        outputs[4] = None
-    elif mutation == "missing_alog":
-        values["A_log"] = None
-    elif mutation == "chunk_invalid":
-        values["chunk_size"] = 32
-    elif mutation == "layout_lower":
-        values["layout"] = layout.lower()
-    elif mutation == "layout_invalid":
-        values["layout"] = "INVALID"
-    elif mutation == "rank_invalid":
-        values["q"] = inputs.q.unsqueeze(0) if inputs.q.dim() == 3 else inputs.q.squeeze(0)
-    elif mutation == "qk_shape":
-        values["k"] = inputs.k[..., :-16].contiguous()
-    elif mutation == "v_shape":
-        values["v"] = inputs.v[..., :-16].contiguous()
-    elif mutation == "g_shape":
-        values["g"] = inputs.g[..., :-16].contiguous()
-    elif mutation == "beta_shape":
-        values["beta"] = inputs.beta.narrow(_head_axis(layout), 0, max(1, int(spec["HV"]) - 1)).contiguous()
-    elif mutation in {"h_zero", "hv_lt_h", "hv_not_divisible", "h_gt_128"}:
-        head_sizes = {
-            "h_zero": (0, 4),
-            "hv_lt_h": (4, 2),
-            "hv_not_divisible": (3, 4),
-            "h_gt_128": (129, 129),
-        }
-        h_num, hv_num = head_sizes[mutation]
-        head_axis = _head_axis(layout)
-        values["q"] = _resize_axis(inputs.q, head_axis, h_num)
-        values["k"] = _resize_axis(inputs.k, head_axis, h_num)
-        values["v"] = _resize_axis(inputs.v, head_axis, hv_num)
-        values["g"] = _resize_axis(inputs.g, head_axis, hv_num)
-        values["beta"] = _resize_axis(inputs.beta, head_axis, hv_num)
-    elif mutation.startswith("k_"):
-        # k_mixed 把 K 降到 64 而 V 保持 128：K/V 不同档，公开契约要求两侧都拒绝。
-        k_size = {"k_lt_16": 8, "k_gt_256": 272, "k_unaligned": 24,
-                  "k_mixed": 64}[mutation]
-        values["q"] = _resize_axis(inputs.q, inputs.q.dim() - 1, k_size)
-        values["k"] = _resize_axis(inputs.k, inputs.k.dim() - 1, k_size)
-        values["g"] = _resize_axis(inputs.g, inputs.g.dim() - 1, k_size)
-    elif mutation.startswith("v_"):
-        # v_mixed 对称：V=64 而 K 保持 128。
-        v_size = {"v_lt_16": 8, "v_gt_256": 272, "v_unaligned": 24,
-                  "v_mixed": 64}[mutation]
-        values["v"] = _resize_axis(inputs.v, inputs.v.dim() - 1, v_size)
-    elif mutation == "q_fp32":
-        values["q"] = inputs.q.float()
-    elif mutation == "k_dtype":
-        values["k"] = inputs.k.float()
-    elif mutation == "v_dtype":
-        values["v"] = inputs.v.float()
-    elif mutation == "g_fp16":
-        values["g"] = inputs.g.half()
-    elif mutation == "beta_fp16":
-        values["beta"] = inputs.beta.half()
-    elif mutation == "alog_dtype":
-        values["A_log"] = inputs.A_log.half()
-    elif mutation == "dtbias_dtype":
-        values["dt_bias"] = inputs.dt_bias.half()
-    elif mutation == "state_dtype":
-        values["initial_state"] = inputs.initial_state.to(torch.bfloat16)
-    elif mutation == "cu_short":
-        values["cu"] = [0]
-    elif mutation == "cu_start":
-        values["cu"] = [1, int(spec["T"])]
-    elif mutation == "cu_end":
-        values["cu"] = [0, int(spec["T"]) - 1]
-    elif mutation == "cu_order":
-        values["cu"] = [0, 96, 64, int(spec["T"])]
-    elif mutation == "varlen_b2":
-        values["layout"] = "BSND"
-        for name in ("q", "k", "v", "g", "beta"):
-            values[name] = inputs.__dict__[name].repeat(2, *([1] * (inputs.__dict__[name].dim() - 1)))
-        values["cu"] = [0, int(spec["T"])]
-    elif mutation == "seq_gt_1024":
-        values["cu"] = [0] * 1025 + [int(spec["T"])]
-    elif mutation == "indices_without_cu":
-        values["cu"] = None
-        values["indices"] = [0, 0]
-    elif mutation == "indices_count":
-        values["cu"] = [0, 64, int(spec["T"])]
-        values["indices"] = [0, 0]
-    elif mutation == "indices_order":
-        values["cu"] = [0, 64, int(spec["T"])]
-        values["indices"] = [1, 0, 0, 0]
-    elif mutation in {"state_shape_kv", "state_shape_vk"}:
-        values["initial_state"] = inputs.initial_state[..., :-16].contiguous()
-    elif mutation == "alog_shape":
-        values["A_log"] = inputs.A_log[:-1].contiguous()
-    elif mutation == "dtbias_shape":
-        values["dt_bias"] = inputs.dt_bias[:-1].contiguous()
-    elif mutation in {"t_zero", "b_zero"}:
-        # 空 tensor 负向用例：把序列长度或 batch 维压到 0，其余维保持合法，
-        # 用于确认 host 校验会明确报出是哪个逻辑维为空。
-        axis = _seq_axis(layout) if mutation == "t_zero" else 0
-        for name in ("q", "k", "v", "g", "beta"):
-            values[name] = _resize_axis(values[name], axis, 0)
-    elif mutation == "lower_low":
-        values["lower_bound"] = -5.1
-    elif mutation == "lower_high":
-        values["lower_bound"] = 0.0
-    else:
-        raise ValueError(f"unsupported negative mutation: {mutation}")
-    return values
-
-
-def _raw_output_tensors(inputs: _PreparedInputs, spec: dict) -> list:
-    layout = str(spec["layout"])
-    rank3 = layout in {"TND", "NTD"}
-    batch, total_t, hv_num = int(spec["B"]), int(spec["T"]), int(spec["HV"])
-    k_dim, v_dim, chunk_size = int(spec["K"]), int(spec["V"]), int(spec["chunk_size"])
-    total_chunks = (total_t + chunk_size - 1) // chunk_size
-    state_shape = (
-        (batch, hv_num, v_dim, k_dim) if _as_bool(spec["state_v_first"])
-        else (batch, hv_num, k_dim, v_dim)
-    )
-    attn_shape = (total_t, hv_num, v_dim) if rank3 else (batch, total_t, hv_num, v_dim)
-    matrix_shape = (hv_num, total_t, chunk_size) if rank3 else (batch, hv_num, total_t, chunk_size)
-    k_shape = (hv_num, total_t, k_dim) if rank3 else (batch, hv_num, total_t, k_dim)
-    v_shape = (hv_num, total_t, v_dim) if rank3 else (batch, hv_num, total_t, v_dim)
-    h_shape = (
-        (total_chunks, hv_num, v_dim, k_dim) if rank3 and _as_bool(spec["state_v_first"])
-        else (total_chunks, hv_num, k_dim, v_dim) if rank3
-        else (batch, total_chunks, hv_num, v_dim, k_dim) if _as_bool(spec["state_v_first"])
-        else (batch, total_chunks, hv_num, k_dim, v_dim)
-    )
-    new = lambda shape, dtype=inputs.q.dtype: torch.empty(shape, dtype=dtype, device=inputs.q.device)
-    return [
-        new(attn_shape),
-        new(state_shape, torch.float32),
-        new(k_shape, torch.float32),
-        new(matrix_shape),
-        new(matrix_shape),
-        new(k_shape),
-        new(v_shape),
-        new(k_shape),
-        new(k_shape),
-        new(v_shape),
-        new(h_shape),
-    ]
-
-
-def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-    from aclnn_error_probe import reject_workspace as _call_aclnn
-
-    outputs = _raw_output_tensors(inputs, spec)
-    values = _mutate_raw(inputs, spec, outputs)
-    layout_buffer = ctypes.create_string_buffer(str(values["layout"]).encode("utf-8"))
-    try:
-        _call_aclnn(
-            "aclnnChunkKdaFwd",
-            lambda ctx: [
-                ctx.tensor(values["q"], "q"),
-                ctx.tensor(values["k"], "k"),
-                ctx.tensor(values["v"], "v"),
-                ctx.tensor(values["g"], "g"),
-                ctx.tensor(values["beta"], "beta"),
-                ctx.tensor(values["A_log"], "A_log"),
-                ctx.tensor(values["dt_bias"], "dt_bias"),
-                ctx.tensor(values["initial_state"], "initial_state"),
-                ctx.int_array(values["cu"]),
-                ctx.int_array(values["indices"]),
-                ctypes.cast(layout_buffer, ctypes.c_char_p),
-                ctypes.c_double(float(spec["scale"])),
-                ctypes.c_int64(values["chunk_size"]),
-                ctypes.c_bool(_as_bool(spec["safe_gate"])),
-                ctypes.c_double(values["lower_bound"]),
-                ctypes.c_bool(_as_bool(spec["use_gate_in_kernel"])),
-                ctypes.c_bool(_as_bool(spec["state_v_first"])),
-                *[ctx.tensor(output, _OUTPUT_NAMES[index]) for index, output in enumerate(outputs)],
-            ],
-            tuple(output for output in outputs if output is not None),
-        )
-    except RuntimeError as exc:
-        match = re.search(r"aclnnStatus=(\d+)", str(exc))
-        actual_code = int(match.group(1)) if match else None
-        expected_code = int(spec["expected_return_code"])
-        if actual_code != expected_code:
-            raise RuntimeError(
-                f"negative interception returned {actual_code}, expected {expected_code}: {exc}"
-            ) from exc
-        # `_aclnn_error` 已经把 CANN 报错文案拼进异常，且读取该文案会清空全局缓冲，
-        # 因此以异常文本为主、`aclGetRecentErrMsg` 为辅，二者任一命中即可。
-        observed = "\n".join(part for part in (str(exc), _recent_aclnn_error()) if part)
-        expected_message = str(spec["expected_message"])
-        if expected_message not in observed:
-            raise RuntimeError(
-                f"negative interception code matched but message did not: expected {expected_message!r}, "
-                f"actual {observed!r}"
-            ) from exc
-        raise RuntimeError(
-            f"{spec['expected_code_name']}({expected_code}): {expected_message}; observed={observed}"
-        ) from exc
-    raise RuntimeError("negative interception unexpectedly returned ACLNN_SUCCESS")
+    return chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
 
 
 @register("executor_chunk_kda_fwd")
 class ChunkKdaFwdApi(BaseApi):
     def __init__(self, task_result: TaskResult):
         super().__init__(task_result)
+        self.task_result = task_result
         self.spec = None
         self.inputs = None
         case_config = getattr(task_result, "case_config", None)
         case_id = case_config.get("id") if isinstance(case_config, dict) else getattr(case_config, "id", None)
         self.runtime_case_id = None if case_id is None else int(case_id)
-        self.high_precision = self.device == "cpu"
+        self.is_benchmark_task = bool(task_result.is_benchmark_task)
+        self.high_precision = self.device in {"cpu", "gpu"} and self.is_benchmark_task
+        self.cpu_control = self.device == "cpu" and not self.high_precision
+        self.triton_control = self.device == "gpu" and not self.high_precision
+        task_names = {
+            str(getattr(task_type, "value", task_type))
+            for task_type in (task_result.task_type or [])
+        }
+        self.randomize_legacy_values = bool(
+            getattr(task_result, "disable_id_seed", False)
+            and "accuracy_lt" in task_names
+        )
 
     def init_by_input_data(self, input_data: InputDataset):
-        self.spec = json.loads(str(input_data.kwargs["case_spec"]))
-        runtime_seed = int(self.spec["seed"])
-        self.inputs = _prepare_inputs(
-            self.spec,
-            input_data.kwargs["low_precision_marker"],
-            input_data.kwargs["fp32_marker"],
-            high_precision=self.high_precision,
-            seed=runtime_seed,
-        )
+        values = input_data.kwargs
+        case_id = 0 if self.runtime_case_id is None else self.runtime_case_id
+        legacy_names = {"case_spec", "low_precision_marker", "fp32_marker"}
+        if legacy_names.issubset(values):
+            raw_spec = values["case_spec"]
+            if not isinstance(raw_spec, str):
+                raise TypeError("legacy case_spec must be a JSON string")
+            self.spec = json.loads(raw_spec)
+            if not isinstance(self.spec, dict):
+                raise ValueError("legacy case_spec must decode to a JSON object")
+            runtime_seed = int(self.spec["seed"])
+            if self.randomize_legacy_values:
+                if self.runtime_case_id is None:
+                    raise RuntimeError(
+                        "accuracy_lt with --disable_id_seed requires an ATK runtime case id"
+                    )
+                runtime_seed = (
+                    runtime_seed * 0x9E3779B185EBCA87 + self.runtime_case_id
+                ) % (2**63 - 1)
+            self.inputs = _legacy_inputs(
+                self.spec,
+                values["low_precision_marker"],
+                high_precision=self.high_precision,
+                seed=runtime_seed,
+            )
+            input_schema = "legacy"
+        elif "q" in values:
+            q_config = self.task_result.case_config.get_input_data_config(name="q")
+            g_config = self.task_result.case_config.get_input_data_config(name="g")
+            beta_config = self.task_result.case_config.get_input_data_config(name="beta")
+            q_dtype = str(getattr(q_config, "dtype", _dtype_name(values["q"].dtype)))
+            g_dtype = str(getattr(g_config, "dtype", _dtype_name(values["g"].dtype)))
+            beta_dtype = str(
+                getattr(beta_config, "dtype", _dtype_name(values["beta"].dtype))
+            )
+            self.spec, cu_seqlens, chunk_indices = _derive_spec(
+                values, q_dtype, g_dtype, beta_dtype, case_id
+            )
+            self.inputs = _direct_inputs(
+                values,
+                self.spec,
+                cu_seqlens,
+                chunk_indices,
+                self.high_precision,
+            )
+            runtime_seed = case_id
+            input_schema = "direct"
+        else:
+            raise ValueError("chunk_kda_fwd case must use direct inputs or legacy case_spec")
         if os.environ.get("KDA_ATK_TRACE_SEED") == "1":
             print(
                 "KDA_ATK_RUNTIME_SEED",
                 self.device,
-                "cpu_golden=" + str(self.high_precision),
+                "benchmark=" + str(self.is_benchmark_task),
+                "high_precision=" + str(self.high_precision),
+                "cpu_control=" + str(self.cpu_control),
+                "triton_control=" + str(self.triton_control),
+                "schema=" + input_schema,
                 "case_id=" + str(self.runtime_case_id),
                 "seed=" + str(runtime_seed),
                 flush=True,
@@ -1137,22 +1417,22 @@ class ChunkKdaFwdApi(BaseApi):
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
         del input_data, with_output
-        if "negative" in str(self.spec["tags"]).split(","):
-            if self.device != "npu":
-                raise RuntimeError("negative cases must run on the NPU aclnn route")
-            return _run_negative_aclnn(self.inputs, self.spec)
-        if self.device == "cpu":
+        if self.high_precision:
             outputs = _torch_fp64_golden(self.inputs, self.spec)
+        elif self.cpu_control:
+            outputs = _torch_same_precision(self.inputs, self.spec)
+        elif self.triton_control:
+            outputs = _triton_same_precision(self.inputs, self.spec)
         elif self.device == "npu":
             outputs = _run_positive_npu(self.inputs, self.spec)
         else:
             raise RuntimeError(
-                "positive chunk_kda_fwd cases require an NPU DUT or CPU golden node; "
-                f"got device={self.device!r}"
+                "positive chunk_kda_fwd cases require one NPU node and one CPU or GPU reference node; "
+                f"got device={self.device!r}, benchmark={self.is_benchmark_task}"
             )
         selected_names = _selected_output_names()
         named_visible = tuple(
-            (name, output.to(torch.float32) if self.high_precision and output.is_floating_point() else output)
+            (name, _published_output(output))
             for name, output in zip(_OUTPUT_NAMES, outputs)
             if isinstance(output, torch.Tensor)
             and (selected_names is None or name in selected_names)
@@ -1180,13 +1460,14 @@ class ChunkKdaFwdApi(BaseApi):
         del input_data
         return {
             "case_key": str(self.spec["case_key"]),
-            "soc": str(self.spec["soc"]),
-            "route": str(self.spec["route"]),
-            "B": int(self.spec["B"]),
-            "H": int(self.spec["H"]),
-            "HV": int(self.spec["HV"]),
-            "T": int(self.spec["T"]),
-            "K": int(self.spec["K"]),
-            "V": int(self.spec["V"]),
+            "layout": str(self.spec["layout"]),
+            "shape": {
+                "B": int(self.spec["B"]),
+                "H": int(self.spec["H"]),
+                "HV": int(self.spec["HV"]),
+                "T": int(self.spec["T"]),
+                "K": int(self.spec["K"]),
+                "V": int(self.spec["V"]),
+            },
             "chunk_size": int(self.spec["chunk_size"]),
         }
