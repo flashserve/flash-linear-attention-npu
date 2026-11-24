@@ -1345,8 +1345,7 @@ private:
         if constexpr (SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128) {
             LocalTensor<T> vTyped = GateVTyped(slot);
             LocalTensor<BETA_T> betaTyped = GateBetaTyped(slot);
-            CopyRowsIn(vTyped, v_, VInputOffset(b, hv, token, 0), rows, V_,
-                       vTokenStride_);
+            CopyRowsIn(vTyped, v_, VInputOffset(b, hv, token, 0), rows, V_, vTokenStride_);
             CopyVectorIn(betaTyped, beta_, BetaOffset(b, hv, token), rows);
         }
 #endif
@@ -4077,9 +4076,7 @@ private:
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
         uint64_t elemCount = rowCount * dim;
         uint64_t baseOffset = KVOffset(b, hv, start + rowBegin, 0, dim);
-        uint64_t sourceOffset = sourceIsVInput
-                                    ? VInputOffset(b, hv, start + rowBegin, 0)
-                                    : baseOffset;
+        uint64_t sourceOffset = sourceIsVInput ? VInputOffset(b, hv, start + rowBegin, 0) : baseOffset;
         uint64_t sourceStride = sourceIsVInput ? vTokenStride_ : dim;
 
         if constexpr (IsSameType<T, float>::value) {
@@ -4166,8 +4163,8 @@ private:
                 LoadAsFloatRow(beta_, BetaOffset(b, hv, start + rowBegin + tileRow), betaLocal, tileCount);
                 ScaleRowsByBeta(w_, w_, b, hv, start, rowBegin + tileRow, tileCount, K_,
                                 betaLocal, betaBrcb, matrixLocal);
-                ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin + tileRow, tileCount, V_,
-                                betaLocal, betaBrcb, matrixLocal, true);
+                ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin + tileRow, tileCount, V_, betaLocal, betaBrcb,
+                                matrixLocal, true);
             }
             return;
         }
@@ -4178,8 +4175,7 @@ private:
         PipeBarrier<PIPE_V>();
 #endif
         ScaleRowsByBeta(w_, w_, b, hv, start, rowBegin, rowCount, K_, betaLocal, betaBrcb, matrixLocal);
-        ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin, rowCount, V_, betaLocal, betaBrcb,
-                        matrixLocal, true);
+        ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin, rowCount, V_, betaLocal, betaBrcb, matrixLocal, true);
     }
 
     __aicore__ inline void FinalizePrepareIntermediates(uint64_t b, uint64_t hv, uint64_t chunkIdx,
@@ -4254,8 +4250,7 @@ private:
                 CopyVectorIn(kgGateRows, gk_, KVOffset(b, hv, start + tileRow, 0, K_), qgElems);
                 CopyVectorIn(kgRefRow, gk_, KVOffset(b, hv, start + curT - 1, 0, K_),
                              static_cast<uint64_t>(K_));
-                CopyRowsIn(kgTyped, k_, QOffset(b, kgHead, start + tileRow, 0), rows, K_,
-                           qkTokenStride_);
+                CopyRowsIn(kgTyped, k_, QOffset(b, kgHead, start + tileRow, 0), rows, K_, qkTokenStride_);
                 SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
                 WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
                 // 复用 post-wu 已调优的 regbase 实现（单循环内 load/compute/store），

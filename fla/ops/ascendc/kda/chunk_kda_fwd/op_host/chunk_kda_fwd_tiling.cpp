@@ -175,8 +175,8 @@ struct QkvStride {
 // 把输入张量的 view stride 归一化成 {batch, token, head} 三个 pitch。
 // 没有 stride 信息时按布局回退到 dense pitch：序列主序 {B:T*H*K, T:H*K, H:K}、
 // 头主序 {B:H*T*K, T:K, H:T*K}。两种回退值与旧地址公式逐项相等。
-bool ResolveQkvStride(gert::TilingContext *context, size_t index, const ShapeInfo &shape,
-                      int64_t heads, int64_t dim, QkvStride &out)
+bool ResolveQkvStride(gert::TilingContext *context, size_t index, const ShapeInfo &shape, int64_t heads, int64_t dim,
+                      QkvStride &out)
 {
     if (heads <= 0 || dim <= 0 || shape.seqlen <= 0 || shape.rank < 3) {
         return false;
@@ -219,9 +219,8 @@ bool ResolveQkvStride(gert::TilingContext *context, size_t index, const ShapeInf
         return false;
     }
     if (rank4 && shape.batch > 1) {
-        const int64_t minBatchStride = shape.sequenceMajor
-            ? (shape.seqlen - 1) * out.token + headSpan
-            : (heads - 1) * out.head + tokenSpan;
+        const int64_t minBatchStride =
+            shape.sequenceMajor ? (shape.seqlen - 1) * out.token + headSpan : (heads - 1) * out.head + tokenSpan;
         if (out.batch < minBatchStride) {
             return false;
         }
@@ -271,8 +270,7 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
         !ResolveQkvStride(context, INPUT_V_IDX, shape, shape.vHeads, shape.vDim, vStride)) {
         return ge::GRAPH_FAILED;
     }
-    if (qStride.batch != kStride.batch || qStride.token != kStride.token ||
-        qStride.head != kStride.head) {
+    if (qStride.batch != kStride.batch || qStride.token != kStride.token || qStride.head != kStride.head) {
         // aclnn 只在 q/k stride 完全一致时才透传视图；不一致的输入应已被连续化。
         return ge::GRAPH_FAILED;
     }

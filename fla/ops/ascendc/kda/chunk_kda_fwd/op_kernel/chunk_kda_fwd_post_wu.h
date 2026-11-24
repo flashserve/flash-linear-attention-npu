@@ -669,8 +669,7 @@ private:
             const uint64_t gateOffsetBytes = (typedOffset + elemCount) * sizeof(T);
             LocalTensor<GK_T> gateTyped = vecBuf_.Get<GK_T>()[
                 (gateOffsetBytes + sizeof(GK_T) - 1) / sizeof(GK_T)];
-            CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_,
-                       qkTokenStride_);
+            CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_, qkTokenStride_);
             LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gLocal, gateTyped, elemCount);
             Cast(kLocal, typedLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(elemCount));
             PipeBarrier<PIPE_V>();

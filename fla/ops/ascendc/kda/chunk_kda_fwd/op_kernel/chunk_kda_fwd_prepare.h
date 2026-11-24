@@ -1844,7 +1844,6 @@ private:
     }
 
 
-
     __aicore__ inline void ScaleRowsByBeta(GlobalTensor<T> &src, GlobalTensor<T> &dst, uint64_t b, uint64_t hv,
                                            uint64_t start, uint64_t rowBegin, uint64_t rowCount, uint64_t dim,
                                            LocalTensor<float> &betaLocal, LocalTensor<float> &betaBrcb,
@@ -1855,9 +1854,7 @@ private:
         constexpr uint64_t typedOffset = typedOffsetFloats * sizeof(float) / sizeof(T);
         uint64_t elemCount = rowCount * dim;
         uint64_t baseOffset = KVOffset(b, hv, start + rowBegin, 0, dim);
-        uint64_t sourceOffset = sourceIsVInput
-                                    ? VInputOffset(b, hv, start + rowBegin, 0)
-                                    : baseOffset;
+        uint64_t sourceOffset = sourceIsVInput ? VInputOffset(b, hv, start + rowBegin, 0) : baseOffset;
         uint64_t sourceStride = sourceIsVInput ? vTokenStride_ : dim;
 
         if constexpr (IsSameType<T, float>::value) {
@@ -1922,8 +1919,7 @@ private:
         Brcb(betaBrcb, betaLocal, static_cast<uint8_t>((rowCount + 7) / 8), {1, 8});
         PipeBarrier<PIPE_V>();
         ScaleRowsByBeta(w_, w_, b, hv, start, rowBegin, rowCount, K_, betaLocal, betaBrcb, matrixLocal);
-        ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin, rowCount, V_, betaLocal, betaBrcb,
-                        matrixLocal, true);
+        ScaleRowsByBeta(v_, vNew_, b, hv, start, rowBegin, rowCount, V_, betaLocal, betaBrcb, matrixLocal, true);
     }
 
     __aicore__ inline void FinalizePrepareIntermediates(uint64_t b, uint64_t hv, uint64_t start,

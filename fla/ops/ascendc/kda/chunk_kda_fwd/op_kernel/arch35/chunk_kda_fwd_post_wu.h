@@ -1148,8 +1148,7 @@ private:
         uint64_t elems = rows * K_;
         LocalTensor<T> kStage = TypicalGateK(slot);
         LocalTensor<GK_T> gateStage = TypicalGateG(slot);
-        CopyRowsIn(kStage, k_, QOffset(b, h, token, 0), rows, K_,
-                   qkTokenStride_);
+        CopyRowsIn(kStage, k_, QOffset(b, h, token, 0), rows, K_, qkTokenStride_);
         DataCopy(gateStage, gk_[KVOffset(b, hv, token, 0, K_)], static_cast<uint32_t>(elems));
         SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
     }
@@ -1269,8 +1268,7 @@ private:
             LocalTensor<T> kStage = TypicalGatePipelineK(slot);
             LocalTensor<float> gateStage = TypicalGatePipelineG(slot);
             LocalTensor<float> refStage = TypicalGatePipelineRef(slot);
-            CopyRowsIn(kStage, k_, QOffset(b, h, start + rowBegin, 0), rowEnd - rowBegin, K_,
-                       qkTokenStride_);
+            CopyRowsIn(kStage, k_, QOffset(b, h, start + rowBegin, 0), rowEnd - rowBegin, K_, qkTokenStride_);
             DataCopy(gateStage, gk_[KVOffset(b, hv, start + rowBegin, 0, K_)],
                      static_cast<uint32_t>(elems));
             DataCopy(refStage, gk_[KVOffset(b, hv, start + curT - 1, 0, K_)],
@@ -1366,8 +1364,7 @@ private:
             const uint64_t gateOffsetBytes = (typedOffset + elemCount) * sizeof(T);
             LocalTensor<GK_T> gateTyped = vecBuf_.Get<GK_T>()[
                 (gateOffsetBytes + sizeof(GK_T) - 1) / sizeof(GK_T)];
-            CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_,
-                       qkTokenStride_);
+            CopyRowsIn(typedLocal, k_, QOffset(b, h, token, 0), tileRows, K_, qkTokenStride_);
             LoadAsFloatVector(gk_, KVOffset(b, hv, token, 0, K_), gLocal, gateTyped, elemCount);
             Cast(kLocal, typedLocal, RoundMode::CAST_NONE, static_cast<uint32_t>(elemCount));
             PipeBarrier<PIPE_V>();

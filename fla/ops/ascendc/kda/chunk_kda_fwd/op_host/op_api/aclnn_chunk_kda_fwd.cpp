@@ -567,8 +567,8 @@ bool IsSupportedQkvView(const aclTensor *tensor, KdaFwdLayout layout)
     if (heads <= 0 || dim <= 0 || strides[featureDim] != 1 || strides[headDim] < dim) {
         return false;
     }
-    const int64_t seqLen = rank4 ? (sequenceMajor ? Dim(tensor, 1) : Dim(tensor, 2))
-                                 : (sequenceMajor ? Dim(tensor, 0) : Dim(tensor, 1));
+    const int64_t seqLen =
+        rank4 ? (sequenceMajor ? Dim(tensor, 1) : Dim(tensor, 2)) : (sequenceMajor ? Dim(tensor, 0) : Dim(tensor, 1));
     // 与 tiling 侧同一口径：序列主序看 token 是否覆盖全部 head，
     // 头主序看 head 是否覆盖全部 token。
     const int64_t tokenSpan = (seqLen - 1) * strides[tokenDim] + dim;
@@ -581,9 +581,8 @@ bool IsSupportedQkvView(const aclTensor *tensor, KdaFwdLayout layout)
         return false;
     }
     if (rank4 && Dim(tensor, 0) > 1) {
-        const int64_t minBatchStride = sequenceMajor
-            ? (seqLen - 1) * strides[tokenDim] + headSpan
-            : (heads - 1) * strides[headDim] + tokenSpan;
+        const int64_t minBatchStride =
+            sequenceMajor ? (seqLen - 1) * strides[tokenDim] + headSpan : (heads - 1) * strides[headDim] + tokenSpan;
         if (strides[0] < minBatchStride) {
             return false;
         }
@@ -616,16 +615,14 @@ const aclTensor *MakeStridedView(const aclTensor *tensor, aclOpExecutor *executo
     // 连续张量的 storage/origin shape 常常退化成一维 numel，tiling 会读到 rank=1。
     // 连续时用 view shape 归一化 storage，非连续时保留底层 storage 形状。
     const bool contiguous = IsContiguous(tensor);
-    const op::Shape &storageShape =
-        contiguous ? tensor->GetViewShape() : tensor->GetStorageShape();
-    return executor->CreateView(tensor, tensor->GetViewShape(), storageShape,
-                                tensor->GetViewStrides(), tensor->GetViewOffset());
+    const op::Shape &storageShape = contiguous ? tensor->GetViewShape() : tensor->GetStorageShape();
+    return executor->CreateView(tensor, tensor->GetViewShape(), storageShape, tensor->GetViewStrides(),
+                                tensor->GetViewOffset());
 }
 
 } // namespace
 
-aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor,
-                             bool qkvHandled = false)
+aclnnStatus ContiguousInputs(ChunkKdaFwdParams &params, aclOpExecutor *executor, bool qkvHandled = false)
 {
     if (!qkvHandled) {
         CHECK_RET(MakeContiguous(params.q, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -809,10 +806,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     // 由 tiling 把 pitch 下给 kernel；其余情况保持原有连续化路径。
     bool qkvDirect = false;
     if ((parsedLayout == KdaFwdLayout::BSND || parsedLayout == KdaFwdLayout::BNSD) &&
-        IsSupportedQkvView(params.q, parsedLayout) &&
-        IsSupportedQkvView(params.k, parsedLayout) &&
-        IsSupportedQkvView(params.v, parsedLayout) &&
-        SameQkvStrides(params.q, params.k)) {
+        IsSupportedQkvView(params.q, parsedLayout) && IsSupportedQkvView(params.k, parsedLayout) &&
+        IsSupportedQkvView(params.v, parsedLayout) && SameQkvStrides(params.q, params.k)) {
         const aclTensor *qView = MakeStridedView(params.q, executorPtr);
         const aclTensor *kView = MakeStridedView(params.k, executorPtr);
         const aclTensor *vView = MakeStridedView(params.v, executorPtr);
@@ -823,8 +818,7 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             qkvDirect = true;
         }
     }
-    CHECK_RET(ContiguousInputs(params, executorPtr, qkvDirect) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(ContiguousInputs(params, executorPtr, qkvDirect) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
 
     const aclTensor *qHead = params.q;
     const aclTensor *kHead = params.k;
