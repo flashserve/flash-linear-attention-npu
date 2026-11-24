@@ -201,7 +201,10 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -949,8 +952,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            std::string("executor failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_CREATE_EXECUTOR)));
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -992,7 +997,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         betaHead = Transpose(params.beta, {1, 0}, executorPtr);
     }
     if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1003,7 +1011,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         gHead = AsRank4(gHead, MakeShape({1, info.hvNum, info.seqlen, info.kDim}), executorPtr);
         betaHead = AsRank4(betaHead, MakeShape({1, info.hvNum, info.seqlen}), executorPtr);
         if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr && betaHead != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "l0op",
+                std::string("l0op failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1039,7 +1050,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
             DataType::DT_FLOAT);
     }
     if (!(gkCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gkCompute != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1064,7 +1078,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         }
     }
     if (!((params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nullptr) && (params.qgOut == nullptr || qgExport != nullptr) && (params.kgOut == nullptr || kgExport != nullptr) && (params.vNewOut == nullptr || vNewExport != nullptr) && (params.hOut == nullptr || hExport != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ((params.wOut == nullptr || wExport != nullptr) && (params.uOut == nullptr || uExport != nullptr) && (params.qgOut == nullptr || qgExport != nullptr) && (params.kgOut == nullptr || kgExport != nullptr) && (params.vNewOut == nullptr || vNewExport != nullptr) && (params.hOut == nullptr || hExport != nullptr)) failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (aqkCompute == nullptr) {
@@ -1097,7 +1114,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         executorPtr, hExport == nullptr && !splitStages ? placeholderShape : hShape5,
         params.q->GetDataType());
     if (!(aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr && vNewCompute != nullptr && hCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: aqkCompute != nullptr && akkCompute != nullptr && wCompute != nullptr && uCompute != nullptr && qgCompute != nullptr && kgCompute != nullptr && vNewCompute != nullptr && hCompute != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1105,7 +1125,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     if (params.stateVFirst && initialStateCompute != nullptr) {
         initialStateCompute = TransposeLastTwo(initialStateCompute, executorPtr);
         if (!(initialStateCompute != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: initialStateCompute != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "l0op",
+                std::string("l0op failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1114,7 +1137,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         executorPtr, outputFinalState || splitStages ? stateShape4 : placeholderShape,
         DataType::DT_FLOAT);
     if (!(finalStateCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateCompute != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1123,7 +1149,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         attnCompute = AsRank4(
             params.attnOut, MakeShape({1, info.seqlen, info.hvNum, info.vDim}), executorPtr);
         if (!(attnCompute != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: attnCompute != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "l0op",
+                std::string("l0op failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1135,7 +1164,10 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         executorPtr, splitStages ? vShape4 : placeholderShape,
         params.q->GetDataType());
     if (!(qgScaledCompute != nullptr && uSeedCompute != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: qgScaledCompute != nullptr && uSeedCompute != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            std::string("l0op failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1157,19 +1189,39 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         for (int64_t stage = KDA_STAGE_GATE_PREPARE; stage < KDA_STAGE_COUNT;
              ++stage) {
             result = launchStage(stage);
+            if (result.empty()) {
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "launcher",
+                    std::string("launcher failed, ret = ") +
+                        std::to_string(static_cast<int>(ACLNN_ERR_INNER_TILING_ERROR)));
+                return ACLNN_ERR_INNER_TILING_ERROR;
+            }
             for (const aclTensor *tensor : result) {
                 if (!(tensor != nullptr)) {
-                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
-                    return ACLNN_ERR_INNER_NULLPTR;
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        OP_NAME, "launcher",
+                        std::string("launcher failed, ret = ") +
+                            std::to_string(static_cast<int>(ACLNN_ERR_INNER_TILING_ERROR)));
+                    return ACLNN_ERR_INNER_TILING_ERROR;
                 }
             }
         }
     } else {
         result = launchStage(KDA_STAGE_FULL);
+        if (result.empty()) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "launcher",
+                std::string("launcher failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_TILING_ERROR)));
+            return ACLNN_ERR_INNER_TILING_ERROR;
+        }
         for (const aclTensor *tensor : result) {
             if (!(tensor != nullptr)) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
-                return ACLNN_ERR_INNER_NULLPTR;
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "launcher",
+                    std::string("launcher failed, ret = ") +
+                        std::to_string(static_cast<int>(ACLNN_ERR_INNER_TILING_ERROR)));
+                return ACLNN_ERR_INNER_TILING_ERROR;
             }
         }
     }
@@ -1179,12 +1231,18 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         if (params.stateVFirst) {
             finalStateResult = TransposeLastTwo(finalStateResult, executorPtr);
             if (!(finalStateResult != nullptr)) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateResult != nullptr failed", __func__);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "l0op",
+                    std::string("l0op failed, ret = ") +
+                        std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
                 return ACLNN_ERR_INNER_NULLPTR;
             }
         }
         if (!(l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: l0op::ViewCopy(finalStateResult, params.finalStateOut, executorPtr) != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "view_copy",
+                std::string("view_copy failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1192,11 +1250,17 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         const aclTensor *hResult = params.stateVFirst
             ? TransposeLastTwo(result[10], executorPtr) : result[10];
         if (!(hResult != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: hResult != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "l0op",
+                std::string("l0op failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
         if (!(l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: l0op::ViewCopy(hResult, hExport, executorPtr) != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "view_copy",
+                std::string("view_copy failed, ret = ") +
+                    std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -1212,8 +1276,10 @@ aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
     L2_DFX_PHASE_2(aclnnChunkKdaFwd);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "launcher",
+            std::string("launcher failed, ret = ") +
+                std::to_string(static_cast<int>(runRet)));
         return runRet;
     }
     return ACLNN_SUCCESS;
@@ -1296,8 +1362,10 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            std::string("executor failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_CREATE_EXECUTOR)));
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -1376,8 +1444,10 @@ aclnnStatus aclnnChunkKdaFwdV2(void *workspace, uint64_t workspaceSize,
     L2_DFX_PHASE_2(aclnnChunkKdaFwdV2);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "launcher",
+            std::string("launcher failed, ret = ") +
+                std::to_string(static_cast<int>(runRet)));
         return runRet;
     }
     return ACLNN_SUCCESS;

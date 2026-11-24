@@ -74,6 +74,8 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetPlatformInfo()
     return ge::GRAPH_SUCCESS;
 };
 
+// 下层 CheckContext/AnalyzeDtype/AnalyzeShapes/GetScale/GetStateStrides/GetOptionalInput/
+// AnalyzeFormat 均自行上报，失败时这里仅传递返回码。
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetShapeAttrsInfo()
 {
     if (CheckContext() != ge::GRAPH_SUCCESS) { return ge::GRAPH_FAILED; };
@@ -334,12 +336,16 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetScale()
 
 ge::graphStatus RecurrentGatedDeltaRuleTiling::GetStateStrides()
 {
-    auto read = [&](size_t index, size_t rank, uint64_t *out) {
+    auto read = [&](size_t index, size_t rank, uint64_t *out, const char *name) {
         const auto *stride = context_->GetInputStride(index);
         const bool explicitStrides = stride != nullptr && stride->GetDimNum() != 0;
         // Contiguous L0 intermediates may omit their stride metadata entirely.
         // Nonempty views must still carry the complete rank and positive strides.
         if (explicitStrides && stride->GetDimNum() != rank) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context_->GetNodeName(), name,
+                rgdn_error::Format("%s stride rank must be %zu, but it is %zu", name, rank,
+                                   stride->GetDimNum()));
             return false;
         }
         uint64_t dense = 1;
@@ -350,12 +356,20 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetStateStrides()
         for (size_t i = rank; i > 0; --i) {
             const int64_t value = explicitStrides ? stride->GetStride(i - 1) : static_cast<int64_t>(dense);
             if (value <= 0) {
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), name,
+                    rgdn_error::Format("%s stride[%zu] must be positive, but it is %ld", name, i - 1,
+                                       value));
                 return false;
             }
             out[i - 1] = static_cast<uint64_t>(value);
             const uint64_t dim = static_cast<uint64_t>(shape.GetDim(i - 1));
             if (dim == 0 || (dim - 1) > (maxExtent - extent) / out[i - 1] ||
                 dense > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / dim) {
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), name,
+                    rgdn_error::Format("%s shape/stride address range overflows int64 at dim %zu", name,
+                                       i - 1));
                 return false;
             }
             extent += (dim - 1) * out[i - 1];
@@ -363,8 +377,13 @@ ge::graphStatus RecurrentGatedDeltaRuleTiling::GetStateStrides()
         }
         return true;
     };
-    if (!read(QUERY_INDEX,3,tilingData_.queryStrides) || !read(KEY_INDEX,3,tilingData_.keyStrides) ||
-                !read(VALUE_INDEX,3,tilingData_.valueStrides) || !read(STATE_INDEX,4,tilingData_.stateStrides)) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input strides", rgdn_error::Format("strides must be positive and address arithmetic must fit int64")); return ge::GRAPH_FAILED; };
+    if (!read(QUERY_INDEX, 3, tilingData_.queryStrides, "query") ||
+        !read(KEY_INDEX, 3, tilingData_.keyStrides, "key") ||
+        !read(VALUE_INDEX, 3, tilingData_.valueStrides, "value") ||
+        !read(STATE_INDEX, 4, tilingData_.stateStrides, "state")) {
+        // 失败已由 read() 按输入名上报，这里只传递返回码。
+        return ge::GRAPH_FAILED;
+    }
     for (const auto *strides : {tilingData_.queryStrides, tilingData_.keyStrides, tilingData_.valueStrides}) {
         if (strides[2] != 1 || strides[0] < RGDR_REQUIRED_DIM ||
                     strides[0] - RGDR_REQUIRED_DIM > std::numeric_limits<uint32_t>::max() / 2U) { OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "input strides", rgdn_error::Format("Q/K/V require a contiguous inner axis and a uint32 DMA token gap")); return ge::GRAPH_FAILED; };
