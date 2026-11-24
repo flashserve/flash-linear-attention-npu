@@ -18,6 +18,8 @@ Host 遍历序列的半开行区间 [start,end)。任一区间满足 `start/64 !
 | 1 卷积、递推与门控 | 每个序列/head 读取独立 checkpoint。四抽头卷积及 SiLU 后转 BF16，再用 FP32 归一化 Q/K、计算 sigmoid beta 和逐 K 衰减。每步先衰减状态，再计算校正向量、更新状态并生成输出 | Vector 在 UB 中计算，写活动槽的 conv/replay。短序列最多四个 token 时，用 checkpoint 批量得到投影并按 token 次序施加校正。跨块时把块末 FP32 状态交到下一个块 |
 | 2 输出投影 | Vector 对递推结果作 RMS 归一化并乘输出门，转 BF16。Cube 执行 `out = gated @ W_out.T`，累加 FP32，Fixpipe 写 BF16 | gated 通过 GM 工作区交接。输出各列独立写入调用方结果 |
 
+Ascend 950 的 MXFP8 路径仅替换 Stage 0 的 QKV 投影。Vector 沿 H 每 32 个 BF16 元素生成 E4M3FN 编码和 E8M0 scale，暂存在尚未写出最终结果的 out 中。全核同步后，Cube 用 NZ 权重和对应的 scale 计算，向用户 workspace 写入连续的 BF16 QKV。第二次同步后，Vector 按 token 和 head 读取 QKV，Cube 分核执行原有 decay、beta 和输出 gate 投影。T01 与 T02 复用原有卷积、递推及输出逻辑。
+
 主用例的有界整批路径将 head 均分为两轮。Q、K、V 和 gate 按输出列分核。T01 整批计算 64–160 行时，若预留四个核后每个其余投影核最多仍需两块 128 列面板，这四个核按行连续完成 decay 的两层投影。每个核读回自己写好的 BF16 中间结果即可启动第二层。其它分工沿用原来的核间同步。第二轮投影与第一轮 Vector 递推重叠。输出投影可先累加已完成的前一组 head，在读取后一组 gated 数据前同步，保持原来的 K 累加次序。按完整序列分组时，递推读完本序列和 head 的 Q 后，复用同一片空间写 gated。按 64 行交接状态时，下一块读卷积历史和 FP32 状态的搬运流水等待上一块写回。
 
 Ascend 950 在序列长度达到 16 时可以把 128 × 128 的 FP32 状态转置到 UB，按输出行并行完成递推。T02 跨块时直接传递该布局。T01 在批内平均长度达到 16 时启用这一实现，批内不足 16 的序列继续用行主序递推。独立编译短序列路径后，Ascend 950 kernel 二进制由 296,136 B 增至 470,152 B。

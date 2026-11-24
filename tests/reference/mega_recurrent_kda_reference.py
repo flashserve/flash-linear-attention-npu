@@ -29,6 +29,8 @@ def validate_mega_recurrent_kda_inputs(
     lower_bound,
     rms_norm_eps,
     cu_seqlens,
+    qkv_projection_weight_scale=None,
+    qkv_scale_alg=0,
 ):
     """Validate the complete logical ND input contract before computation."""
     named_tensors = {
@@ -53,6 +55,8 @@ def validate_mega_recurrent_kda_inputs(
     }
     if cu_seqlens is not None:
         named_tensors["cu_seqlens"] = cu_seqlens
+    if qkv_projection_weight_scale is not None:
+        named_tensors["qkv_projection_weight_scale"] = qkv_projection_weight_scale
     for name, value in named_tensors.items():
         if not isinstance(value, torch.Tensor):
             raise TypeError(f"{name} must be a torch.Tensor")
@@ -107,8 +111,20 @@ def validate_mega_recurrent_kda_inputs(
         raise ValueError("N must be >= 1")
     projection_width = heads * dim
 
+    cols = 3 * projection_width
+    if qkv_projection_weight_scale is None:
+        if qkv_scale_alg != 0:
+            raise ValueError("qkv_scale_alg requires MXFP8 QKV")
+        qkv = (qkv_projection_weight, (cols, 7168), torch.bfloat16)
+    else:
+        sw = qkv_projection_weight_scale
+        if qkv_scale_alg not in (0, 1) or sw.shape != (1, 112, cols, 2) or not sw.is_contiguous():
+            raise ValueError("invalid QKV scale shape or algorithm")
+        if sw.dtype not in (torch.uint8, torch.float8_e8m0fnu):
+            raise ValueError("expected paired E8M0 scale bytes")
+        qkv = (qkv_projection_weight, (1, 7168, cols), torch.float8_e4m3fn)
     expected_weights = (
-        (qkv_projection_weight, (3 * projection_width, 7168), torch.bfloat16),
+        qkv,
         (decay_projection_a_weight, (dim, 7168), torch.bfloat16),
         (decay_projection_b_weight, (projection_width, dim), torch.bfloat16),
         (beta_projection_weight, (heads, 7168), torch.bfloat16),
@@ -239,6 +255,27 @@ def validate_mega_recurrent_kda_inputs(
             raise ValueError(f"{name} must be an inference-only writable buffer")
 
 
+def _mx_qkv(x, weight, weight_scale, algorithm):
+    groups = x.reshape(x.shape[0], -1, 32)
+    peak = groups.abs().amax(dim=-1)
+    if algorithm == 0:
+        exponent = torch.floor(torch.log2(peak.double())) - 8
+    else:
+        exponent = torch.ceil(torch.log2(peak.double() / 448))
+    exponent = exponent.clamp(-127, 127)
+    factor = torch.exp2(exponent)
+    scaled = (groups.double() / factor.unsqueeze(-1)).clamp(-448, 448)
+    if algorithm == 0:
+        scaled.masked_fill_(exponent.unsqueeze(-1) == -127, 0)
+    codes = scaled.float().to(torch.float8_e4m3fn)
+    activation = (codes.float() * factor.float().unsqueeze(-1)).reshape_as(x)
+    # Two consecutive 32-element K groups share the final pair dimension.
+    sw = weight_scale.view(torch.uint8)[0].transpose(1, 2).reshape(224, -1)
+    scales = torch.exp2(sw.float() - 127)
+    decoded = weight[0].float().reshape(224, 32, -1) * scales[:, None, :]
+    return (activation @ decoded.reshape(7168, -1)).bfloat16().float()
+
+
 def mega_recurrent_kda_golden(
     hidden_states,
     qkv_projection_weight,
@@ -262,6 +299,8 @@ def mega_recurrent_kda_golden(
     lower_bound,
     rms_norm_eps=1e-5,
     cu_seqlens=None,
+    qkv_projection_weight_scale=None,
+    qkv_scale_alg=0,
 ):
     """Run the complete Mega KDA forward in FP32 and update the supplied pools."""
     validate_mega_recurrent_kda_inputs(
@@ -287,6 +326,8 @@ def mega_recurrent_kda_golden(
         lower_bound,
         rms_norm_eps,
         cu_seqlens,
+        qkv_projection_weight_scale,
+        qkv_scale_alg,
     )
 
     hidden_width = 7168
@@ -305,7 +346,10 @@ def mega_recurrent_kda_golden(
     ]
 
     x_all = hidden_states.reshape(-1, hidden_width).detach().to(torch.float32)
-    qkv_raw = x_all @ qkv_projection_weight.detach().to(torch.float32).T
+    if qkv_projection_weight_scale is None:
+        qkv_raw = x_all @ qkv_projection_weight.detach().to(torch.float32).T
+    else:
+        qkv_raw = _mx_qkv(x_all, qkv_projection_weight, qkv_projection_weight_scale, qkv_scale_alg)
     decay_a = (
         x_all @ decay_projection_a_weight.detach().to(torch.float32).T
     ).to(torch.bfloat16)

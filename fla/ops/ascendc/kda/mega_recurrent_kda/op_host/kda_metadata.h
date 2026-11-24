@@ -24,7 +24,9 @@ enum class Input : std::size_t {
     AcceptedTokens,
     ALog,
     DtBias,
-    CuSeqlens
+    CuSeqlens,
+    SequencePlan,
+    WeightScale
 };
 
 // The ACLNN executor sends state_geometry to GE as a list of int64_t.

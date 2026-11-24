@@ -16,7 +16,7 @@ out, conv_state, replay_u, replay_k, replay_decay = npu_mega_recurrent_kda(
 | 输入 | 类型 | 形状与约定 |
 |---|---|---|
 | hidden_states | BF16 | BSH 为 `[B,S,H]`，TH 为 `[T,H]` |
-| qkv_projection_weight | BF16 | `[3P,H]`，按 Q、K、V 排列 |
+| qkv_projection_weight（BF16 路径） | BF16 | `[3P,H]`，按 Q、K、V 排列 |
 | decay_projection_a_weight / decay_projection_b_weight | BF16 | `[D,H]` / `[P,D]` |
 | beta_projection_weight / output_gate_projection_weight | BF16 | `[N,H]` / `[P,H]` |
 | output_norm_weight / output_projection_weight | FP32 / BF16 | `[D]` / `[H,P]` |
@@ -28,7 +28,7 @@ out, conv_state, replay_u, replay_k, replay_decay = npu_mega_recurrent_kda(
 | a_log / dt_bias | FP32 | `[N]` / `[N,D]`，输入值有限 |
 | cu_seqlens | INT32 或 INT64 | TH 使用长度 B+1 的严格递增前缀，首尾为 0 和 T。BSH 传 `None` |
 
-除五个状态池的槽轴可留间隙外，各张量按行主序连续。一个槽的尾部不能与下一个槽重叠。每条序列至少含一个 token。scale、lower_bound、rms_norm_eps 须可用有限 FP32 表示，lower_bound 在 [−5,0] 内，rms_norm_eps 至少为最小正正规 FP32 值。
+BF16 路径除五个状态池的槽轴可留间隙外，各张量按行主序连续。一个槽的尾部不能与下一个槽重叠。每条序列至少含一个 token。scale、lower_bound、rms_norm_eps 须可用有限 FP32 表示，lower_bound 在 [−5,0] 内，rms_norm_eps 至少为最小正正规 FP32 值。
 
 out 为新分配的 BF16 张量，形状与输入相同。其余四项返回原地更新的输入。每个活动槽仅写 conv_state 的前 S+2 行和各 replay 的前 S 行。其他槽、槽间填充和 checkpoint 保持原值。状态池用于推理。
 
@@ -49,3 +49,17 @@ for layer_inputs in kda_layers:
 `cu_seqlens` 为设备上连续的 INT32 或 INT64 向量。输出为连续 INT32 向量，长度为 `2 + ceil(T/16)`。前两项记录是否跨越 64 行和最长序列长度，其余各项依次记录第 0、16、32… 行的序列编号。T=120 时有效数据为 40 B。调用方保证前缀、活动槽和卷积历史窗口符合上表约定。各层提供自己的状态池，设备直接读取 INT32 的 `state_indices` 与 `conv_num_accepted_tokens`。
 
 BSH 用 `npu_mega_recurrent_kda(..., use_device_metadata=True)` 直接从 B、S 计算分块，同时从设备读取两个 INT32 向量。C++ 分别使用 `aclnnMegaRecurrentKdaMetadata` 和 `aclnnMegaRecurrentKdaV2` 的两段式接口。BSH 在 V2 中将前缀和调度表均传空。
+
+## Ascend 950 MXFP8 QKV 投影
+
+在 `npu_mega_recurrent_kda` 中传入 `qkv_projection_weight_scale` 启用 MXFP8。输入激活保持 BF16。QKV 沿 H 每 32 个元素动态量化为 E4M3FN，使用 E8M0 激活与权重 scale 作矩阵乘，向卷积交接 BF16。decay-A、decay-B、beta 和输出 gate 分别使用接口表中的 BF16 权重。模型集成时沿用这四个输入。
+
+| 参数 | 模型输入 |
+|---|---|
+| `qkv_projection_weight` | E4M3FN，逻辑形状 `[1,H,3P]`，FRACTAL_NZ 存储形状 `[1,3P/32,H/16,16,32]`，通道按 Q、K、V 排列 |
+| `qkv_projection_weight_scale` | 连续 ND E8M0，形状 `[1,H/64,3P,2]`。K 方向第 g 个分组、输出列 c 对应 `[0,g//2,c,g%2]`。Python 同时接受 E8M0 原始字节的 uint8 张量 |
+| `qkv_scale_alg` | 0（默认）或 1，与模型 `npu_dynamic_mx_quant(..., scale_alg=...)` 取相同值 |
+
+BSH 和 TH 均使用设备上的状态索引和已接受 token 数。TH 支持上节的跨层调度表。单独调用时也可直接提供设备上的前缀，由 Python 入口生成本次调度表。C++ 入口为 `aclnnMegaRecurrentKdaMxGetWorkspaceSize` 和 `aclnnMegaRecurrentKdaMx`。该路径额外申请 `T × 3P × 2` 字节用户 workspace，用于保存 BF16 QKV。T=120、N=12 时增加 1,105,920 字节。
+
+权重加载、完整的 forward 调用和连续两步对照方法见[模型接入指南](model_integration.md)。

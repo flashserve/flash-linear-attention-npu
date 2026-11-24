@@ -83,3 +83,18 @@ python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case model --mode
 ```
 
 三个计时输入上，两个独立构建的五项完整输出均逐位一致。等长 TH 和 BSH 的五项输出通过 CPU 标杆门限。变长 TH 的 `replay_decay` 在两个版本中均有 326/184320 个有效元素超出逐元素容差（0.177%，门限 0.1%），其余四项通过。A5 设备回归通过 33 项，另有 2 项 A2 专用用例跳过。原有 ATK 精度回归通过 9/9。
+
+
+## Ascend 950 MXFP8 QKV
+
+在本目录运行 ATK 的 MXFP8 专项用例，覆盖 BSH、跨块 TH 和 T=120、N=12 的 TH。
+
+```bash
+python -m atk node --name npu_dut --backend npu --devices 0 node --name cpu_golden --backend cpu \
+  task -c atk_mega_recurrent_kda_mxfp8.json --task accuracy --bm_device cpu -p executor_mega_recurrent_kda.py --gm_init_flag
+python -m pytest -q test_mxfp8.py
+```
+
+A5 上 ATK 精度和三次重复运行一致性各通过 3/3。对这三个用例运行 memcheck，均命中 MXFP8 的混合核，未报告内存错误。原有 BF16 ATK 精度回归通过 9/9。pytest 的 18 项覆盖两种动态量化算法、E8M0 类型及原始字节输入、显式复用及自动生成的 TH 调度表、零 scale、BF16 次正规数和非法参数。使用 492 个状态槽时，30 条长度为 4 的序列和等总 token 数的变长序列各连续调用两步，逐次检查实际写回的 QKV、五项输出、未使用区域和 checkpoint。
+
+在相同 A5 上，以 T=120、N=12、B=30、S=4 的合成输入和预先生成的 TH metadata，对调度修改前后各采集 30 次完整融合 kernel 耗时。算法 0 的中位数从 199.05 µs 降至 183.74 µs，算法 1 从 189.42 µs 降至 170.34 µs。两种算法的计时均包含激活动态量化。用户 workspace 与本轮分核调整前相同。

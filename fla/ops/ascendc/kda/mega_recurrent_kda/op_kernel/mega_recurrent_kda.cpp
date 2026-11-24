@@ -2,6 +2,7 @@
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
 #define CATLASS_ARCH 3510
 #include "arch35/mega_kernel.h"
+#include "arch35/mx_qkv.h"
 #else
 #define CATLASS_ARCH 2201
 #include "lib/matmul_intf.h"
@@ -13,7 +14,7 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
                                                          GM_ADDR gate, GM_ADDR gamma, GM_ADDR wo, GM_ADDR convW,
                                                          GM_ADDR conv, GM_ADDR checkpoint, GM_ADDR u, GM_ADDR key,
                                                          GM_ADDR decay, GM_ADDR indices, GM_ADDR accepted,
-                                                         GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR plan,
+                                                         GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR plan, GM_ADDR weightScale,
                                                          GM_ADDR out, GM_ADDR convOut, GM_ADDR uOut, GM_ADDR keyOut,
                                                          GM_ADDR decayOut, GM_ADDR workspace, GM_ADDR tiling)
 {
@@ -88,7 +89,37 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     recurrence.lower = tilingData.lowerBound;
     recurrence.eps = tilingData.rmsNormEps;
 
-    if (TILING_KEY_IS(4)) {
+    if (TILING_KEY_IS(5)) {
+        // Output storage is private until the QKV projection has finished on every core.
+        GM_ADDR scales = out + uint64_t(params.rows) * 7168;
+        params.projectedQkv = params.decayRing;
+        params.decayRing += uint64_t(params.rows) * params.heads * 3 * 128 * sizeof(kda::Bf);
+        if ASCEND_IS_AIV {
+            AscendC::Simt::VF_CALL<kda::QuantizeHidden>(AscendC::Simt::Dim3(256),
+                reinterpret_cast<__gm__ const uint16_t *>(x), out, scales, params.rows,
+                uint32_t(AscendC::GetBlockIdx()), uint32_t(AscendC::GetBlockNum() * AscendC::GetTaskRation()),
+                tilingData.mxAlgorithm);
+        }
+        AscendC::SyncAll<false>();
+        if ASCEND_IS_AIC {
+            Catlass::Arch::Resource<kda::Arch> resource;
+            kda::ProjectMxQkv(resource, out, scales, qkv, weightScale, params.projectedQkv, params.rows,
+                              params.heads * 3 * 128);
+        }
+        AscendC::SyncAll<false>();
+        recurrence.crosses = tilingData.crosses == 2 ? reinterpret_cast<__gm__ const int32_t *>(plan)[0] : tilingData.crosses;
+        recurrence.staged = recurrence.crosses ? 0 : 3;
+        if (recurrence.crosses) {
+            kda::MegaKernel<true, true, true> op;
+            op(params);
+        } else if (uint64_t(params.rows) >= uint64_t(recurrence.batch) * 16) {
+            kda::MegaKernel<false, true, true> op;
+            op(params);
+        } else {
+            kda::MegaKernel<false, false, true> op;
+            op(params);
+        }
+    } else if (TILING_KEY_IS(4)) {
         recurrence.crosses = reinterpret_cast<__gm__ const int32_t *>(plan)[0];
         recurrence.staged = recurrence.crosses ? 0 : 3;
         if (recurrence.crosses) {

@@ -7,7 +7,7 @@ public:
     {
         const std::initializer_list<ge::Format> nd = {ge::FORMAT_ND};
         this->Input("hidden_states").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
-        this->Input("qkv_projection_weight").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
+        this->Input("qkv_projection_weight").ParamType(REQUIRED).DataTypeList({ge::DT_BF16, ge::DT_FLOAT8_E4M3FN}).FormatList({ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ});
         this->Input("decay_projection_a_weight").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
         this->Input("decay_projection_b_weight").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
         this->Input("beta_projection_weight").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
@@ -30,6 +30,7 @@ public:
         this->Input("dt_bias").ParamType(REQUIRED).DataTypeList({ge::DT_FLOAT}).FormatList(nd);
         this->Input("cu_seqlens").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32, ge::DT_INT64}).FormatList(nd);
         this->Input("sequence_plan").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32}).FormatList(nd);
+        this->Input("qkv_projection_weight_scale").ParamType(OPTIONAL).DataTypeList({ge::DT_FLOAT8_E8M0}).FormatList(nd);
         this->Output("out").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
         this->Output("conv_state_out")
             .ParamType(REQUIRED)
@@ -51,6 +52,7 @@ public:
         this->Attr("lower_bound").AttrType(REQUIRED).Float();
         this->Attr("rms_norm_eps").AttrType(REQUIRED).Float();
         this->Attr("state_geometry").AttrType(REQUIRED).ListInt();
+        this->Attr("qkv_scale_alg").AttrType(OPTIONAL).Int(0);
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
             .DynamicFormatFlag(true)

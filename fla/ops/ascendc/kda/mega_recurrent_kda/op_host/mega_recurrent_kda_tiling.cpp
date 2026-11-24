@@ -18,7 +18,7 @@ constexpr int64_t kHeadWidth = 128;
 Dims GetDimensions(gert::TilingContext *ctx, Input input)
 {
     const auto index = static_cast<size_t>(input);
-    auto tensor = input == Input::CuSeqlens ? ctx->GetOptionalInputShape(index) : ctx->GetInputShape(index);
+    auto tensor = input >= Input::CuSeqlens ? ctx->GetOptionalInputShape(index) : ctx->GetInputShape(index);
     if (!tensor) {
         return {};
     }
@@ -50,7 +50,16 @@ void CheckProjectionShapes(gert::TilingContext *ctx, int64_t batch, int64_t n)
 {
     const int64_t width = n * kHeadWidth;
     CheckShape(GetDimensions(ctx, Input::AcceptedTokens), {batch}, "accepted-token shape");
-    CheckShape(GetDimensions(ctx, Input::QkvWeight), {3 * width, kHiddenWidth}, "QKV projection shape");
+    if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
+        // The launcher may forward the packed storage dimensions as the origin shape.
+        const auto qkv = GetDimensions(ctx, Input::QkvWeight);
+        if (qkv != Dims{1, kHiddenWidth, 3 * width}) {
+            CheckShape(qkv, {1, 3 * width / 32, kHiddenWidth / 16, 16, 32}, "MX QKV storage shape");
+        }
+        CheckShape(GetDimensions(ctx, Input::WeightScale), {1, kHiddenWidth / 64, 3 * width, 2}, "MX weight scale shape");
+    } else {
+        CheckShape(GetDimensions(ctx, Input::QkvWeight), {3 * width, kHiddenWidth}, "QKV projection shape");
+    }
     CheckShape(GetDimensions(ctx, Input::DecayAWeight), {kHeadWidth, kHiddenWidth}, "decay-A shape");
     CheckShape(GetDimensions(ctx, Input::DecayBWeight), {width, kHeadWidth}, "decay-B shape");
     CheckShape(GetDimensions(ctx, Input::BetaWeight), {n, kHiddenWidth}, "beta shape");
@@ -164,6 +173,20 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     const auto soc = platform.GetSocVersion();
     const auto systemBytes = platform.GetLibApiWorkSpaceSize();
     if (soc == platform_ascendc::SocVersion::ASCEND950) {
+        if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
+            const auto *algorithm = ctx->GetAttrs()->GetAttrPointer<int64_t>(4);
+            if (!algorithm || *algorithm < 0 || *algorithm > 1) {
+                return ge::GRAPH_FAILED;
+            }
+            auto data = common;
+            data.mxAlgorithm = static_cast<uint32_t>(*algorithm);
+            uint64_t projected = kda::checkedProduct(uint64_t(common.tokens) * common.heads, 3 * 128 * sizeof(uint16_t));
+            uint64_t base = geometryData[geometry::WorkspaceBytes];
+            if (base > UINT64_MAX - projected) {
+                return ge::GRAPH_FAILED;
+            }
+            return PublishTiling(ctx, data, base + projected, systemBytes, cores, 5);
+        }
         // Transpose the checkpoint when a frame averages at least one 16-token recurrence slice per sequence.
         const bool longSequenceBatch = common.tokens >= uint64_t(common.batch) * 16;
         const uint64_t key = common.crosses == 2 ? 4 : (common.crosses ? 2 : (longSequenceBatch ? 3 : 1));
@@ -173,7 +196,7 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
         return ge::GRAPH_FAILED;
     }
 
-    if (common.crosses == 2) {
+    if (common.crosses == 2 || ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
         return ge::GRAPH_FAILED;
     }
     using namespace MegaRecurrentKdaV2;

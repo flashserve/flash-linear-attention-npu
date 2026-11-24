@@ -23,6 +23,7 @@ enum class Plane : uint32_t {
 struct MegaParams {
     GM_ADDR hiddenStates;
     GM_ADDR qkvWeight;
+    GM_ADDR projectedQkv;
     GM_ADDR decayAWeight;
     GM_ADDR decayBWeight;
     GM_ADDR gateWeight;
@@ -49,7 +50,7 @@ struct StreamingOutputCopy : OutputCopy {
         }
     };
 };
-template <bool SpansTile, bool AllowColumnMajor = SpansTile>
+template <bool SpansTile, bool AllowColumnMajor = SpansTile, bool MxQkv = false>
 class MegaKernel {
 public:
     using Params = MegaParams;
@@ -117,17 +118,15 @@ private:
                     uint32_t valid = end - r < kSliceRows ? end - r : kSliceRows;
                     if ASCEND_IS_AIC {
                         WaitFree(phase);
-                        uint32_t col = head * kHeadDim;
-                        uint32_t width = p.heads * kHeadDim;
-                        for (uint32_t i = 0; i < 2; ++i) {
-                            Matmul(p.hiddenStates, p.qkvWeight, first + r, col + i * width, valid, kHeadDim,
-                                   kHiddenWidth, LocalTile(phase, static_cast<Plane>(i)));
+                        if constexpr (!MxQkv) {
+                            for (uint32_t i = 0; i < 3; ++i) {
+                                Matmul(p.hiddenStates, p.qkvWeight, first + r, (head + i * p.heads) * kHeadDim,
+                                       valid, kHeadDim, kHiddenWidth, LocalTile(phase, static_cast<Plane>(i)));
+                            }
                         }
                     }
                     uint32_t col = head * kHeadDim;
                     if ASCEND_IS_AIC {
-                        Matmul(p.hiddenStates, p.qkvWeight, first + r, col + 2 * p.heads * kHeadDim, valid, kHeadDim,
-                               kHiddenWidth, LocalTile(phase, Plane::V));
                         Matmul(p.decayRing, p.decayBWeight, r, col, valid, kHeadDim, 128,
                                LocalTile(phase, Plane::Decay));
                         Matmul(p.hiddenStates, p.gateWeight, first + r, col, valid, kHeadDim, kHiddenWidth,
@@ -138,6 +137,10 @@ private:
                     }
                     if ASCEND_IS_AIV {
                         WaitReady(phase);
+                        if constexpr (MxQkv) {
+                            LoadProjected(p, first + r, head, valid, phase);
+                            AscendC::PipeBarrier<PIPE_ALL>();
+                        }
                         Recurrence{}.consume<AllowColumnMajor>(resource_, p.recurrence, gated, carry, p.heads, head,
                                                                first + r, r, valid, LocalTile(phase, Plane::Q));
                         NotifyFree(phase);
@@ -172,6 +175,18 @@ private:
     {
         uint32_t offset = phase * kSlotBytes + static_cast<uint32_t>(plane) * kSliceRows * kHeadDim * sizeof(Bf);
         return resource_.ubBuf.template GetBufferByByte<Bf>(offset);
+    }
+    CATLASS_DEVICE void LoadProjected(const Params &p, uint32_t row, uint32_t head, uint32_t m, uint32_t phase)
+    {
+        uint32_t width = p.heads * kHeadDim;
+        AscendC::GlobalTensor<Bf> src;
+        src.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(p.projectedQkv));
+        for (uint32_t i = 0; i < 3; ++i) {
+            auto offset = uint64_t(row) * (3 * width) + i * width + head * kHeadDim;
+            AscendC::DataCopyPad(LocalTile(phase, static_cast<Plane>(i)), src[offset],
+                AscendC::DataCopyExtParams{static_cast<uint16_t>(m), 256, (3 * width - 128) * 2, 0, 0},
+                AscendC::DataCopyPadExtParams<Bf>{});
+        }
     }
     template <uint32_t TileM = 16>
     CATLASS_DEVICE void Matmul(GM_ADDR aPtr, GM_ADDR wPtr, uint32_t row, uint32_t col, uint32_t m, uint32_t n,
@@ -252,7 +267,10 @@ private:
             uint32_t start = rec.prefix(p.recurrence, b), end = rec.prefix(p.recurrence, b + 1);
             for (uint32_t row = start; row < end; row += kSliceRows) {
                 uint32_t m = end - row < kSliceRows ? end - row : kSliceRows;
-                for (uint32_t i = 0; i < 6; ++i) {
+                if constexpr (MxQkv) {
+                    LoadProjected(p, row, head, m, 0);
+                }
+                for (uint32_t i = MxQkv ? 3 : 0; i < 6; ++i) {
                     AscendC::GlobalTensor<Bf> src;
                     src.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(planes) + uint64_t(i) * planeRows * width);
                     auto tile = LocalTile(0, static_cast<Plane>(i));
@@ -367,6 +385,8 @@ private:
         if (SpansTile && framePlanes) {
             planes = framePlanes;
         }
+        constexpr uint32_t firstKind = MxQkv ? 3 : 0;  // Q/K/V already reside in projectedQkv.
+        constexpr uint32_t wideProjections = 4 - firstKind;
         constexpr uint32_t waveLimit = 2;
         const uint32_t waves = p.heads < waveLimit ? p.heads : waveLimit;
         bool overlap = p.rows <= 288 && waves == 2;
@@ -375,8 +395,8 @@ private:
                 if (tick < waves) {
                     uint32_t firstHead = uint64_t(p.heads) * tick / waves;
                     uint32_t count = uint64_t(p.heads) * (tick + 1) / waves - firstHead;
-                    uint64_t part = uint64_t(count) * 128, betaBase = 4 * part + 128;
-                    uint64_t total = tick ? 4 * part : betaBase + p.heads, blocks = (total + 15) / 16;
+                    uint64_t part = uint64_t(count) * 128, betaBase = wideProjections * part + 128;
+                    uint64_t total = tick ? wideProjections * part : betaBase + p.heads, blocks = (total + 15) / 16;
                     constexpr uint32_t workers = 4;
                     // Reserve one core for beta and divide the rest across Q, K, V and gate.
                     // A third 128-column panel would force another complete read of hidden_states.
@@ -394,10 +414,10 @@ private:
                         ProjectDecayRows(p, planes + uint64_t(3) * planeRows * width * 2, id - team, workers);
                     }
                     const uint32_t kinds = tick ? 4 : 6;
-                    if (id < team && team >= kinds) {
+                    if (id < team && team >= kinds - firstKind) {
                         uint32_t groupStart = 0;
                         uint64_t columnStart = 0;
-                        for (uint32_t kind = 0; kind < kinds; ++kind) {
+                        for (uint32_t kind = firstKind; kind < kinds; ++kind) {
                             const uint64_t columns = kind < 4 ? part : (kind == 4 ? 128 : p.heads);
                             const uint64_t end = columnStart + columns;
                             if (localDecay && kind == 4) {
@@ -429,8 +449,8 @@ private:
                         }
                     }
                     while (cursor < stop) {
-                        uint32_t kind = cursor < 4 * part ? cursor / part : (cursor < betaBase ? 4 : 5);
-                        uint64_t start = kind < 4 ? uint64_t(kind) * part : (kind == 4 ? 4 * part : betaBase);
+                        uint32_t kind = cursor < wideProjections * part ? firstKind + cursor / part : (cursor < betaBase ? 4 : 5);
+                        uint64_t start = kind < 4 ? uint64_t(kind - firstKind) * part : (kind == 4 ? wideProjections * part : betaBase);
                         uint32_t stride = kind < 4 ? width : (kind == 4 ? 128 : betaStride);
                         uint32_t local = cursor - start, extent = kind < 4 ? part : (kind == 4 ? 128 : p.heads);
                         uint32_t col = local + (kind < 4 ? firstHead * 128 : 0);
@@ -580,6 +600,7 @@ private:
     CATLASS_DEVICE void RunDoubleBuffered(const Params &p)
     {
         uint32_t id = AscendC::GetBlockIdx(), groups = AscendC::GetBlockNum();
+        constexpr uint32_t firstKind = MxQkv ? 3 : 0;
         uint32_t span = p.recurrence.staged == 3 ? 128 : 64;
         auto shape = PlanWaves(p.rows);
         if (useDecayGemv(p.rows)) {
@@ -615,16 +636,17 @@ private:
                     GM_ADDR planes = scratch + (tick % 2) * slotBytes;
                     // Shared decay-A and the independent input projections share one dispatch.
                     // Assign equal numbers of aligned output columns to resident Cube cores.
-                    const uint64_t betaBase = 4 * uint64_t(width) + 128;
+                    const uint64_t wideColumns = uint64_t(4 - firstKind) * width;
+                    const uint64_t betaBase = wideColumns + 128;
                     const uint64_t total = betaBase + p.heads, blocks = (total + 15) / 16;
                     uint64_t cursor = (blocks * id / groups) * 16, stop = (blocks * (id + 1) / groups) * 16;
                     if (stop > total) {
                         stop = total;
                     }
                     while (cursor < stop) {
-                        uint32_t kind = cursor < 4 * uint64_t(width) ? cursor / width : (cursor < betaBase ? 4 : 5);
+                        uint32_t kind = cursor < wideColumns ? firstKind + cursor / width : (cursor < betaBase ? 4 : 5);
                         uint64_t start =
-                            kind < 4 ? uint64_t(kind) * width : (kind == 4 ? 4 * uint64_t(width) : betaBase);
+                            kind < 4 ? uint64_t(kind - firstKind) * width : (kind == 4 ? wideColumns : betaBase);
                         uint32_t stride = kind < 4 ? width : (kind == 4 ? 128 : betaStride);
                         uint32_t physical = kind == 5 ? p.heads : stride;
                         uint32_t col = cursor - start;

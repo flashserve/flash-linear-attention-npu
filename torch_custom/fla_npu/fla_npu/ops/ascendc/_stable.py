@@ -641,6 +641,8 @@ def npu_mega_recurrent_kda(
     cu_seqlens=None,
     metadata=None,
     use_device_metadata=False,
+    qkv_projection_weight_scale=None,
+    qkv_scale_alg=0,
     scale,
     lower_bound,
     rms_norm_eps,
@@ -664,15 +666,37 @@ def npu_mega_recurrent_kda(
         transfers.append(host)
         return host
 
-    if metadata is not None or use_device_metadata:
+    mx = qkv_projection_weight_scale is not None
+    if mx != (qkv_projection_weight.dtype == torch.float8_e4m3fn):
+        raise ValueError("MXFP8 QKV requires E4M3FN weights and paired E8M0 scales")
+    if qkv_scale_alg not in (0, 1) or (not mx and qkv_scale_alg != 0):
+        raise ValueError("qkv_scale_alg must be 0 or 1 for MXFP8 QKV")
+    if mx:
+        import torch_npu
+
+        if any(t.device != hidden_states.device for t in (qkv_projection_weight, qkv_projection_weight_scale)):
+            raise ValueError("QKV weights and scales must be on the hidden_states device")
+        if torch_npu.get_npu_format(qkv_projection_weight) != 29:
+            raise ValueError("MXFP8 QKV weight must have FRACTAL_NZ storage")
+        # Four-dimensional contiguous scale tensors can use the ND or plain NCHW format.
+        if torch_npu.get_npu_format(qkv_projection_weight_scale) not in (0, 2):
+            raise ValueError("MXFP8 QKV weight scales must have plain contiguous storage")
+    if mx or metadata is not None or use_device_metadata:
         packed = hidden_states.ndim == 2
-        if (metadata is not None) != packed or (cu_seqlens is not None) != packed:
-            raise ValueError("TH requires cu_seqlens and metadata, BSH uses the sequence dimension")
+        if (cu_seqlens is not None) != packed or (not packed and metadata is not None):
+            raise ValueError("TH requires cu_seqlens, BSH uses the sequence dimension")
         for tensor in (state_indices, conv_num_accepted_tokens, cu_seqlens, metadata):
             if tensor is not None and tensor.device != hidden_states.device:
                 raise ValueError("All device metadata must be on the hidden_states device")
+        if packed and metadata is None:
+            if not mx:
+                raise ValueError("TH requires a device metadata plan")
+            metadata = npu_mega_recurrent_kda_metadata(cu_seqlens, hidden_states.shape[0])
         symbol = "npu_mega_recurrent_kda_v2"
         sequence_args = (cu_seqlens, metadata)
+        if mx:
+            symbol = "npu_mega_recurrent_kda_mx"
+            sequence_args += (qkv_projection_weight_scale, qkv_scale_alg)
     else:
         state_indices = host_metadata(state_indices, (torch.int32,))
         conv_num_accepted_tokens = host_metadata(conv_num_accepted_tokens, (torch.int32,))

@@ -1,0 +1,158 @@
+[
+  {
+    "id": 0,
+    "default_seed": 0,
+    "name": "mega_recurrent_kda_mx_bsh",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_mega_recurrent_kda",
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"mega_recurrent_kda\",\"name\":\"mx_bsh\",\"lengths\":[4,4],\"heads\":3,\"layout\":\"BSH\",\"conv\":\"flat\",\"seed\":17,\"qkv_scale_alg\":0}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "default_seed": 0,
+    "name": "mega_recurrent_kda_mx_th",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_mega_recurrent_kda",
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"mega_recurrent_kda\",\"name\":\"mx_th\",\"lengths\":[63,2],\"heads\":2,\"layout\":\"TH\",\"conv\":\"flat\",\"seed\":17,\"qkv_scale_alg\":1}",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "default_seed": 0,
+    "name": "mega_recurrent_kda_mx_model",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_mega_recurrent_kda",
+    "standard": {
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": true
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"mega_recurrent_kda\",\"name\":\"mx_model\",\"lengths\":[4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],\"heads\":12,\"layout\":\"TH\",\"conv\":\"flat\",\"seed\":17,\"qkv_scale_alg\":0}",
+        "backward": false
+      }
+    ]
+  }
+]
