@@ -761,8 +761,9 @@ install_wheel_opp_package() {
   fi
 
   local dst_vendor="${wheel_opp_root}/vendors/fla_npu_transformer"
-  if [ ! -d "${dst_vendor}" ]; then
-    logandprint "[ERROR]: Target wheel OPP vendor not found: ${dst_vendor}. Install the full flash-linear-attention-npu wheel first."
+  local base_lib="${dst_vendor}/op_api/lib/libcust_opapi.so"
+  if [ ! -f "${base_lib}" ]; then
+    logandprint "[ERROR]: Install a base wheel with embedded OPP first. Missing ${base_lib}."
     exitlog
     exit 1
   fi

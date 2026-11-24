@@ -1159,6 +1159,35 @@ source {set_env!s}
                 checker["_manifest_from_directory"](package_dir),
             )
 
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell required")
+    def test_builtin_run_rejects_base_with_only_vendor_directory(self) -> None:
+        installer = REPO_ROOT / "scripts/package/ops_transformer/scripts/install.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            scripts = root / "share/info/ops_transformer/script"
+            scripts.mkdir(parents=True)
+            (root / "ops_transformer/packages/vendors/fla_npu_transformer").mkdir(parents=True)
+            base = root / "wheel/opp"
+            vendor = base / "vendors/fla_npu_transformer"
+            vendor.mkdir(parents=True)
+            script = """
+set -eu
+source <(sed -n '/^install_wheel_opp_package() {/,/^}/p' "$1")
+IS_INSTALL=y
+CURR_PATH="$2"
+base="$3"
+get_wheel_opp_root() { echo "$base"; }
+logandprint() { echo "$*"; }
+exitlog() { :; }
+install_wheel_opp_package
+"""
+            result = subprocess.run(["bash", "-c", script, "bash", str(installer), str(scripts), str(base)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("base wheel with embedded OPP", result.stdout)
+            self.assertIn(str(vendor / "op_api/lib/libcust_opapi.so"), result.stdout)
+            self.assertEqual(list(vendor.iterdir()), [])
+
     def test_builtin_run_installer_keeps_legacy_finalizer(self) -> None:
         installers = (
             REPO_ROOT

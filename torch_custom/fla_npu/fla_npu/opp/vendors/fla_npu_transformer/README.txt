@@ -8,6 +8,5 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-This directory is intentionally shipped by the standalone fla_npu Python wheel.
-Install a FLA NPU operator run package with --install or --full to merge the
-actual OPP libraries, aclnn headers, tiling/proto libraries and kernels here.
+Incremental installation requires a base wheel with embedded OPP.
+Install that wheel with pip before applying a .run or an OPP-backed wheel.
