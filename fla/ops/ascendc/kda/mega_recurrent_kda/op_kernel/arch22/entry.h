@@ -91,6 +91,7 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
     }
 }
 
+template <bool splitSums = false>
 CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params, GM_ADDR sequencePlan,
                               GM_ADDR workspace)
 {
@@ -113,7 +114,11 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
         }
         params.nProj -= params.nQkv;
         params.nQkv = 0;
-        ProjectInt8Qkv(params, overlapAuxiliary);
+        GM_ADDR extraSums = nullptr;
+        if constexpr (splitSums) {
+            extraSums = workspace + SplitQkvSumOffset(plan.arch22, plan.common.crosses == 2);
+        }
+        ProjectInt8Qkv<splitSums>(params, overlapAuxiliary, extraSums);
     }
     if ASCEND_IS_AIC {
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> resource;

@@ -127,6 +127,42 @@ struct KdaTiling {
     uint32_t workspaceBytes;
 };
 
+constexpr uint32_t kInt8ScaleBytes = 32;
+constexpr uint32_t kInt8SumColumns = (kHidden - kInt8ScaleBytes) / sizeof(int32_t) / kNW * kNW;
+constexpr uint32_t kInt8DequantBytesPerColumn = 16;
+constexpr uint32_t kArch22UbBytes = 192 * 1024;
+
+// A device prefix can switch to whole-sequence scheduling after host tiling.
+// Either schedule may overlap decay-A with INT8 when it has one projection block.
+KDA_INLINE bool MayOverlapQkv(const KdaTiling &t, bool devicePrefix)
+{
+    return t.pBlocks == 1 || (devicePrefix && t.tiles <= kBlockTiles);
+}
+
+KDA_INLINE uint32_t SplitQkvSumOffset(const KdaTiling &t, bool devicePrefix)
+{
+    if (MayOverlapQkv(t, devicePrefix)) {
+        return t.offGated + t.tokens * kHeadDim * sizeof(uint16_t);
+    }
+    return t.offDecayRaw;
+}
+
+inline bool UseSplitQkvSums(const KdaTiling &t, bool devicePrefix, uint64_t ubBytes)
+{
+    const uint32_t columns = 3 * t.p;
+    const uint64_t dequantBytes = uint64_t(columns) * kInt8DequantBytesPerColumn;
+    if (columns <= kInt8SumColumns || dequantBytes > ubBytes || dequantBytes > kArch22UbBytes) {
+        return false;
+    }
+    // The existing kernel already fits all INT32 sums in the unused QKV tail.
+    if (uint64_t(t.slotsPR) * kTileRows >= 3ull * t.tokens) {
+        return false;
+    }
+    const uint32_t end = MayOverlapQkv(t, devicePrefix) ? t.offCounts : t.offBetaRaw;
+    const uint64_t bytes = uint64_t(t.tokens) * (columns - kInt8SumColumns) * sizeof(int32_t);
+    return bytes <= end - SplitQkvSumOffset(t, devicePrefix);
+}
+
 /// Byte sizes of the per-slot regions (single slot).
 KDA_INLINE uint32_t QkvSlotBytes(uint32_t p)
 {

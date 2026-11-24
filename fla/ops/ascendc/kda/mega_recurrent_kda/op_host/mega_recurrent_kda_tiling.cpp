@@ -225,7 +225,13 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     if (data.arch22.overflow) {
         return ge::GRAPH_FAILED;
     }
-    return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, int8Qkv ? 6 : 0);
+    uint64_t key = 0;
+    if (int8Qkv) {
+        uint64_t ubBytes = 0;
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
+        key = UseSplitQkvSums(data.arch22, common.crosses == 2, ubBytes) ? 7 : 6;
+    }
+    return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, key);
 }
 
 ge::graphStatus TileMegaRecurrentKda(gert::TilingContext *ctx)

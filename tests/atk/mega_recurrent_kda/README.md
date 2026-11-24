@@ -122,7 +122,7 @@ python -m pytest -q tests/atk/mega_recurrent_kda/{test_int8,test_device_metadata
 python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a2_model --mode int8 --layers 4 --warmup 5 --repeats 15
 ```
 
-8 个量化精度用例从卷积状态取回本轮实际写入的 BF16 QKV，与设备上的 DynamicQuantV2 和 QuantMatmulWeightNz 组合逐位比较，再将同一 QKV 送入 CPU 标杆核对五项输出。模型形状为 B=8、N=6、S=4、D=128，使用 567 个状态槽并连续调用两步。若独立的 BF16 decay 投影触发已有舍入差异，另用相同初始状态与原 BF16 算子的整份 `replay_decay` 逐位比较。
+11 个量化精度用例从卷积状态取回实际写入的 BF16 QKV，与设备上的 DynamicQuantV2 和 QuantMatmulWeightNz 对照，再将同一 QKV 送入 CPU 标杆核对五项输出。10 例要求 QKV 逐位相同。另一个 193-token 用例逐点检查差异，用相同的 INT8 点积分别验证两种 FP32 乘 scale 顺序的 BF16 舍入结果。模型形状为 B=8、N=6、S=4、D=128，使用 567 个状态槽并连续调用两步。若独立的 BF16 decay 投影触发已有舍入差异，另用相同初始状态与原 BF16 算子的整份 `replay_decay` 逐位比较。
 
 另以可精确表示的激活、权重和 scale 运行原有 810 项 B/N/S 与布局清单。五项输出均与等价 BF16 调用逐位一致，四个原地状态的地址均符合契约。初版模型形状的 TH 融合 kernel 包含动态量化，预热 4 轮后采集 44 次，中位数为 112.08 µs。4 层复用同一份 metadata 时，15 次无 profiler 回放的设备流耗时中位数为 0.940 ms，调用到同步完成为 1.050 ms。
 
@@ -146,3 +146,18 @@ TH 布局，B=8、N=6、S=4、D=128、H=7168，567 个状态槽。以 `86248e13`
 ```bash
 python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a2_model --mode int8 --layers 4 --warmup 6 --repeats 31 --graph
 ```
+
+
+### A2 INT8 随形状扩展的性能
+
+N=6、S=4 的 TH 输入在 B=16 时，原有 QKV 暂存区能容纳所有 INT32 累加值。B=17 时，68 个 token 超过该区的容量，tiling 改用两段空闲空间，让 QKV 投影继续一轮完成。选择依据是空闲缓冲的大小、使用时机和 UB 容量。各形状的用户 workspace 增量均为 0 B。
+
+| 形状与布局 | 单层原版 → 新版（µs） | 四层权重轮换原版 → 新版（µs/层） |
+|---|---:|---:|
+| TH，B=16、N=6、S=4 | 102.5 → 102.5 | 114.6 → 113.0 |
+| TH，B=17、N=6、S=4 | 145.4 → 133.8 | 152.4 → 146.4 |
+| TH，B=32、N=6、S=4 | 177.9 → 166.0 | 193.2 → 179.6 |
+| BSH，B=17、N=6、S=4 | 144.5 → 130.7 | 149.3 → 137.1 |
+| TH，B=8、N=6、S=16 | 202.3 → 185.9 | 209.6 → 190.9 |
+
+两种构建在同卡交错运行，各测两轮。每轮预热 4 次后，单层取 9 次、四层轮换取 36 次完整融合 kernel 的中位数，再取两轮中位数。B=8、N=6、S=4 的模型输入继续走原有单轮路径。非模型输入的扫描覆盖 B=1–128、N=1–32、S=1–256 的采样点，另在 B=17、S=4 时改变 N，验证不同投影宽度的选路。

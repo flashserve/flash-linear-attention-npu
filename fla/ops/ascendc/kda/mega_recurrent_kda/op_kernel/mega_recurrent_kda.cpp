@@ -44,12 +44,16 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     params.gamma = gamma;
     params.out = out;
     params.prefix = prefix;
-    if (TILING_KEY_IS(6)) {
+    GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+    if (TILING_KEY_IS(6) || TILING_KEY_IS(0)) {
+        if (TILING_KEY_IS(6)) {
+            params.weightScale = weightScale;
+        }
+        RunArch22(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(7)) {
         params.weightScale = weightScale;
-    } else if (!TILING_KEY_IS(0)) {
-        return;
+        RunArch22<true>(tilingData, params, plan, userWorkspace);
     }
-    RunArch22(tilingData, params, plan, AscendC::GetUserWorkspace(workspace));
 #else
     REGISTER_TILING_DEFAULT(MegaRecurrentKdaTilingData);
     GET_TILING_DATA_WITH_STRUCT(MegaRecurrentKdaTilingData, tilingData, tiling);

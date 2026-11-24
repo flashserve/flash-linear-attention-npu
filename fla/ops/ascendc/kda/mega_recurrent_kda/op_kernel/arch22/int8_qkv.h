@@ -17,8 +17,7 @@ using Mmad = Catlass::Gemm::Block::BlockMmadTla<Policy,
 // out is private until Stage O. Each token lends H bytes to INT8 activations,
 // one DMA block to its scale, and the remaining bytes to a wave of INT32 sums.
 // When the unused tail of the QKV buffer fits all sums, one wave suffices.
-constexpr uint32_t kScaleBytes = 32;
-constexpr uint32_t kWaveColumns = (kHidden - kScaleBytes) / sizeof(int32_t) / kNW * kNW;
+static_assert(kArch22UbBytes == Arch::UB_SIZE, "Atlas A2 UB size must match host tiling");
 static_assert(kHidden * 16 <= Arch::UB_SIZE, "INT8 row scratch exceeds UB capacity");
 template <typename T> CATLASS_DEVICE GlobalTensor<T> Global(GM_ADDR ptr)
 {
@@ -76,7 +75,9 @@ CATLASS_DEVICE void QuantizeRows(const V2Params &p, const LocalTensor<uint8_t> &
     }
 }
 
-CATLASS_DEVICE void Multiply(Catlass::Arch::Resource<Arch> &resource, const V2Params &p, GM_ADDR sums, uint32_t colBase, uint32_t width)
+template <bool splitSums>
+CATLASS_DEVICE void Multiply(Catlass::Arch::Resource<Arch> &resource, const V2Params &p, GM_ADDR sums,
+                             uint32_t colBase, uint32_t width, GM_ADDR extraSums)
 {
     Mmad multiply(resource);
     uint32_t panels = width / kNW;
@@ -85,17 +86,27 @@ CATLASS_DEVICE void Multiply(Catlass::Arch::Resource<Arch> &resource, const V2Pa
         uint32_t rows = p.tokens - row < kTileRows ? p.tokens - row : kTileRows;
         auto a = Global<int8_t>(p.out + uint64_t(row) * kHidden);
         auto b = Global<int8_t>(p.qkvWeight + uint64_t(colBase + col) * kHidden);
-        auto c = Global<int32_t>(sums + (uint64_t(row) * width + col) * sizeof(int32_t));
+        GM_ADDR buffer = sums;
+        uint32_t stride = width;
+        uint32_t sumCol = col;
+        if constexpr (splitSums) {
+            const bool second = col >= kInt8SumColumns;
+            buffer = second ? extraSums : sums;
+            stride = second ? width - kInt8SumColumns : kInt8SumColumns;
+            sumCol = second ? col - kInt8SumColumns : col;
+        }
+        auto c = Global<int32_t>(buffer + (uint64_t(row) * stride + sumCol) * sizeof(int32_t));
         auto ta = tla::MakeTensor(a, tla::MakeLayout<int8_t, Row>(rows, kHidden), Catlass::Arch::PositionGM{});
         auto tb = tla::MakeTensor(b, tla::MakeLayout<int8_t, Nz>(kHidden, kNW), Catlass::Arch::PositionGM{});
-        auto tc = tla::MakeTensor(c, KdaGemm::MakeLayoutC(rows, kNW, width), Catlass::Arch::PositionGM{});
+        auto tc = tla::MakeTensor(c, KdaGemm::MakeLayoutC(rows, kNW, stride), Catlass::Arch::PositionGM{});
         multiply(ta, tb, tc, Catlass::GemmCoord(rows, kNW, kHidden));
     }
     PipeBarrier<PIPE_ALL>();
 }
 
+template <bool splitSums>
 CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub, GM_ADDR scales,
-                              GM_ADDR sums, uint32_t colBase, uint32_t width)
+                              GM_ADDR sums, uint32_t colBase, uint32_t width, GM_ADDR extraSums)
 {
     auto tokenScale = Global<float>(scales);
     auto weightScale = Global<bfloat16_t>(p.weightScale);
@@ -110,7 +121,14 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
     Cast(channel, bf, RoundMode::CAST_NONE, width);
     PipeBarrier<PIPE_V>();
     for (uint32_t row = GetBlockIdx(); row < p.tokens; row += p.aivNum) {
-        DataCopy(i32, accum[uint64_t(row) * width], width);
+        if constexpr (splitSums) {
+            const uint32_t rest = width - kInt8SumColumns;
+            auto second = Global<int32_t>(extraSums);
+            DataCopy(i32, accum[uint64_t(row) * kInt8SumColumns], kInt8SumColumns);
+            DataCopy(i32[kInt8SumColumns], second[uint64_t(row) * rest], rest);
+        } else {
+            DataCopy(i32, accum[uint64_t(row) * width], width);
+        }
         PipeBarrier<PIPE_ALL>();
         Cast(fp, i32, RoundMode::CAST_RINT, width);
         PipeBarrier<PIPE_V>();
@@ -126,19 +144,23 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
 }
 } // namespace Int8Qkv
 
-CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary)
+template <bool splitSums>
+CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary, GM_ADDR extraSums)
 {
     using namespace AscendC;
     GM_ADDR scales = p.out + uint64_t(p.tokens) * kHidden;
-    GM_ADDR sums = scales + uint64_t(p.tokens) * Int8Qkv::kScaleBytes;
+    GM_ADDR sums = scales + uint64_t(p.tokens) * kInt8ScaleBytes;
     const uint32_t columns = 3 * p.p;
-    const uint64_t qkvRows = uint64_t(p.slotsPR) * kTileRows;
-    const uint64_t available = (qkvRows - p.tokens) * columns * sizeof(bfloat16_t);
-    const uint64_t required = uint64_t(p.tokens) * columns * sizeof(int32_t);
-    uint32_t wave = Int8Qkv::kWaveColumns;
-    if (columns > wave && columns <= Int8Qkv::Arch::UB_SIZE / 16 && required <= available) {
-        sums = p.wQkv + uint64_t(p.tokens) * columns * sizeof(bfloat16_t);
-        wave = columns;
+    uint32_t wave = columns;
+    if constexpr (!splitSums) {
+        const uint64_t qkvRows = uint64_t(p.slotsPR) * kTileRows;
+        const uint64_t available = (qkvRows - p.tokens) * columns * sizeof(bfloat16_t);
+        const uint64_t required = uint64_t(p.tokens) * columns * sizeof(int32_t);
+        wave = kInt8SumColumns;
+        if (columns > wave && columns <= Int8Qkv::Arch::UB_SIZE / kInt8DequantBytesPerColumn && required <= available) {
+            sums = p.wQkv + uint64_t(p.tokens) * columns * sizeof(bfloat16_t);
+            wave = columns;
+        }
     }
     Catlass::Arch::Resource<Int8Qkv::Arch> resource;
     auto scratch = resource.ubBuf.GetBufferByByte<uint8_t>(0);
@@ -155,7 +177,7 @@ CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary)
         uint32_t left = 3 * p.p - col;
         uint32_t width = left < wave ? left : wave;
         if ASCEND_IS_AIC {
-            Int8Qkv::Multiply(resource, p, sums, col, width);
+            Int8Qkv::Multiply<splitSums>(resource, p, sums, col, width, extraSums);
         }
         SyncAll<false>();
         if ASCEND_IS_AIC {
@@ -163,7 +185,9 @@ CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary)
                 RunStageP<ProjectionPhase::DecayB>(resource, p, 0);
             }
         }
-        if ASCEND_IS_AIV { Int8Qkv::Dequantize(p, scratch, scales, sums, col, width); }
+        if ASCEND_IS_AIV {
+            Int8Qkv::Dequantize<splitSums>(p, scratch, scales, sums, col, width, extraSums);
+        }
         SyncAll<false>();
     }
 }

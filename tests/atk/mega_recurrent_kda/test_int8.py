@@ -77,8 +77,18 @@ def model_qkv(hidden, packed, channel_scale):
     ([1], 1, "BSH", torch.int32, True),
     ([1] * 65, 2, "TH", torch.int64, True),
     ([193], 8, "TH", torch.int64, False),
+    ([4] * 17, 6, "BSH", torch.int32, True),
+    ([63, 2], 6, "TH", torch.int64, True),
 ])
 def test_int8_qkv(lengths, heads, layout, dtype, explicit):
+    check_int8_qkv(lengths, heads, layout, dtype, explicit)
+
+
+def test_int8_long_sequence_scale_rounding():
+    check_int8_qkv([193], 6, "TH", torch.int64, False, check_scale_order=True)
+
+
+def check_int8_qkv(lengths, heads, layout, dtype, explicit, check_scale_order=False):
     from fla_npu.ops.ascendc import npu_mega_recurrent_kda, npu_mega_recurrent_kda_metadata
 
     model = (len(lengths), heads) == (8, 6) and layout == "TH"
@@ -116,8 +126,22 @@ def test_int8_qkv(lengths, heads, layout, dtype, explicit):
         results = tuple(t.cpu() for t in got)
         slots = host["state_indices"].long()
         stored = torch.cat([results[1][slot, 2:2+n] for slot, n in zip(slots, lengths)])
-        torch.testing.assert_close(stored, projected, atol=0, rtol=0)
-        expected = mega_recurrent_kda_golden(**host, projected_qkv=projected)
+        if check_scale_order:
+            # FP32 scale multiplication can change the final BF16 rounding at a tie.
+            # Verify both sides from the same integer dot product at every differing element.
+            rows, cols = torch.where(stored != projected)
+            assert rows.numel() <= 1, f"unexpected number of QKV rounding differences: {rows.numel()}"
+            if len(rows):
+                codes, token_scale = torch_npu.npu_dynamic_quant(args["hidden_states"].reshape(-1, 7168))
+                weights = packed.cpu().permute(1, 2, 0, 3).reshape(7168, -1)
+                dots = (codes.cpu()[rows].int() * weights[:, cols].T.int()).sum(dim=1, dtype=torch.int32).float()
+                sx = token_scale.cpu()[rows].float()
+                sw = args["qkv_projection_weight_scale"].cpu()[cols].float()
+                torch.testing.assert_close(stored[rows, cols], ((dots * sw) * sx).bfloat16(), atol=0, rtol=0)
+                torch.testing.assert_close(projected[rows, cols], (dots * (sw * sx)).bfloat16(), atol=0, rtol=0)
+        else:
+            torch.testing.assert_close(stored, projected, atol=0, rtol=0)
+        expected = mega_recurrent_kda_golden(**host, projected_qkv=stored)
         for i, (actual, want, (atol, rtol)) in enumerate(zip(results, expected, [
             (0.0156, 0.0156), (0, 0), (1.53e-5, 9.77e-4), (1.95e-3, 1.95e-3), (1.53e-5, 9.77e-4)
         ])):
