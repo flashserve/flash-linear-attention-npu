@@ -1,4 +1,4 @@
-  (no options)                      Incrementally install this run package on a base wheel with embedded OPP
+  (no options)                      Incrementally install this run package on a base wheel
   --install                         Same incremental installation as no options (no --overlay option is required)
   --full                            Same incremental installation as --install; does not overwrite the base wheel
   --cann                            Install into the CANN OPP layout (ASCEND_CUSTOM_OPP_PATH / ASCEND_OPP_PATH)

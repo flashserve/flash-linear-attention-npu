@@ -8,5 +8,5 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-Incremental installation requires a base wheel with embedded OPP.
-Install that wheel with pip before applying a .run or an OPP-backed wheel.
+Install the base wheel with pip before applying a .run or a wheel update.
+The installer checks this vendor directory for op_api/lib/libcust_opapi.so.

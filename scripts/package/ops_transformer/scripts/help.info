@@ -1,4 +1,4 @@
-  --install                         Merge this run package into the installed flash-linear-attention-npu wheel with embedded OPP
+  --install                         Merge this run package into the installed flash-linear-attention-npu wheel
   --full                            Same as --install
     The installer lists package operators, support status, and scoped aclnn ABI changes
     --quiet                         Quiet install mode

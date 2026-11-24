@@ -11,7 +11,7 @@
 python -m pip install --force-reinstall --no-deps /path/to/base.whl
 ```
 
-基础 wheel 必须自带 OPP 和增量管理器。安装器检查 base 自身的
+基础 wheel 包提供 OPP 和增量管理器。安装器会检查包内的
 `fla_npu/opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so`。缺少它时，安装 `.run` 或增量 wheel 均会报错。
 旧 base 需要先升级，安装增量包不会升级 base 的管理器。
 
@@ -25,16 +25,16 @@ python -m pip install --force-reinstall --no-deps /path/to/base.whl
 | 增量包 | 本次更新 | 保留什么 |
 | --- | --- | --- |
 | run-only（`.run`） | 包内算子的 OPP | 已有适配层，以及未覆盖的 OPP |
-| 携带 OPP 的 wheel | 声明的适配层入口和包内 OPP | 未覆盖的适配层入口及 OPP |
+| wheel 包 | 声明的适配层入口和包内 OPP | 未覆盖的适配层入口及 OPP |
 
 **普通 `pip install 新wheel` 更新整个 base。** 要把 wheel 作为增量安装，使用下文的
-`python -m fla_npu_opp_manage --overlay --source ...`。增量 wheel 必须携带 OPP。
+`python -m fla_npu_opp_manage --overlay --source ...`。
 
 ### 2.1 增量安装流程
 
 每次安装都从上次成功的组合（`active`）开始。首次安装从基础 wheel（`base`）开始。如果本次失败，后续安装仍从同一个起点继续，失败的包需要修正后重新安装。
 
-![增量安装流程。基础 wheel 自带 OPP 时可安装 .run 或带 OPP 的 wheel，校验成功更新 active，失败保留原组合。](assets/wheel-overlay-install-after.png)
+![增量安装流程。安装 .run 包或 wheel 包，校验成功更新 active，失败保留原组合。](assets/wheel-overlay-install-after.png)
 
 [查看修改前的安装流程（PNG）](assets/wheel-overlay-install-before.png)
 
@@ -72,11 +72,11 @@ OPP 查找顺序为 **B1 → A1 → base**：B1 中没有 A，就继续查找 A1
 python -m fla_npu_opp_manage --overlay --source /path/to/A1.run
 ```
 
-### 3.2 安装一次带 OPP 的 wheel，再安装第二次
+### 3.2 连续安装两个 wheel 包
 
 ```bash
-python -m fla_npu_opp_manage --overlay --source /path/to/A1-with-opp.whl
-python -m fla_npu_opp_manage --overlay --source /path/to/B1-with-opp.whl
+python -m fla_npu_opp_manage --overlay --source /path/to/A1.whl
+python -m fla_npu_opp_manage --overlay --source /path/to/B1.whl
 ```
 
 | 安装到哪一步 | A 使用的版本 | B 使用的版本 |
@@ -94,8 +94,8 @@ python -m fla_npu_opp_manage --overlay --source /path/to/B1-with-opp.whl
 | 安装顺序 | A 的适配层 / OPP | B 的适配层 / OPP |
 | --- | --- | --- |
 | ① A1.run | base / A1 | base / B0 |
-| ② 带 OPP 的 B1 wheel | base / A1 | B1 / B1 |
-| ③ 带 OPP 的 A2 wheel | A2 / A2 | B1 / B1 |
+| ② B1 wheel 包 | base / A1 | B1 / B1 |
+| ③ A2 wheel 包 | A2 / A2 | B1 / B1 |
 
 若把 A1.run 放在 A2 wheel 之后，A 将使用 A2 适配层。只有 A1 OPP 仍满足它的 ABI，安装才成功。
 若第二包失败，第三包直接接在第一包上。修正第二包后需要显式重装它。
@@ -121,7 +121,7 @@ python -m fla_npu_opp_manage --remove-overlay
 [fla-npu] installed OPP: /.../wheel_layers/<本次层ID>/fla_npu/opp/vendors/fla_npu_transformer
 ```
 
-带 OPP 的 wheel 显示 `artifact=wheel`。在新进程运行相同输入的算子用例，
+wheel 包显示 `artifact=wheel`。在新进程运行相同输入的算子用例，
 检查是否得到新版本的预期结果。移除后再开新进程，A、B 均恢复 base 版本。
 
 升级或卸载 base 前，先执行上述移除命令。
@@ -138,7 +138,7 @@ python -m fla_npu_opp_manage --remove-overlay
 bash build.sh --pkg --soc=ascend910b --vendor_name=fla_npu --ops=chunk_fwd_o
 ```
 
-**带 OPP 的 wheel：** 在仓库根目录同时指定 OPP 范围和适配层入口范围。
+**wheel 包：** 在仓库根目录同时指定 OPP 范围和适配层入口范围。
 
 ```bash
 FLA_NPU_SOC=ascend910b FLA_NPU_OPS=chunk_fwd_o \
@@ -157,7 +157,7 @@ FLA_NPU_OVERLAY_OPS=chunk_fwd_o python scripts/build_wheel.py
 | 情况 | 命令结果 | 下次安装从哪里继续 |
 | --- | --- | --- |
 | 所有受影响入口的两阶段符号与签名匹配 | 成功，提交新组合 | 本次组合 |
-| wheel 缺少内嵌 OPP、缺少依赖、签名不匹配或文件校验失败 | 非零退出并显示原因 | 上次成功组合，首次安装失败时从 base 继续 |
+| 包内容不完整、缺少依赖、签名不匹配或文件校验失败 | 非零退出并显示原因 | 上次成功组合，首次安装失败时从 base 继续 |
 | 移除全部增量 | 清空选中组合 | base |
 
 升级时沿用旧状态中的 `active`，忽略旧 `pending`。旧候选需要重新提交安装。

@@ -19,9 +19,9 @@
 | 产物 | 更新适配层 P | 更新 OPP O |
 | --- | --- | --- |
 | run-only overlay | 保留当前选择，未更新过则为 base | 更新 |
-| 携带 OPP 的 wheel overlay | 优先提供声明的公共入口；其余回落较早 P / base | 更新 |
+| wheel 包增量安装 | 优先提供声明的公共入口；其余回落较早 P / base | 更新 |
 
-run 只更新 OPP。带 OPP 的 wheel 同时更新它声明的适配层入口和包内 OPP。
+run 只更新 OPP。wheel 包同时更新它声明的适配层入口和包内 OPP。
 多个包重复更新同一组件则以最后安装的为准，因此不承诺重叠更新也与顺序无关。
 适配层与 OPP 都保留多个增量产物。公共入口按新 P→较早 P→base adapter 选择，
 只覆盖新 wheel 在 layer manifest 的 exports 中声明的入口，未声明的保留较早入口。
@@ -41,7 +41,7 @@ B1 没有 A 的符号时继续使用 A1；同名符号以后安装的包为准�
 **base 与 launcher 的兼容边界**：不支持保留旧 Python/Stable launcher，再手工覆盖 base
 为 ABI 不兼容产物，也不承诺自动拦截手工覆盖。新 run 的默认、`--install`、`--full`
 均走增量管理器，不再提供直接覆盖 base 共享库的入口。
-首次使用时，通过 pip 安装自带 OPP 的 base wheel。增量管理器先检查 base 自身的
+首次使用时，通过 pip 安装基础 wheel 包。增量管理器先检查 base 自身的
 `op_api/lib/libcust_opapi.so`，缺失时拒绝安装。增量文件写入独立目录。安装后通过
 `python -m fla_npu_opp_manage --status` 确认启用状态，并在新进程中使用。
 
@@ -206,7 +206,7 @@ python -m fla_npu_opp_manage --overlay --source /path/to/update.run
 # 也接受已解包的 vendor 目录或只含一个 vendor 的父目录
 
 # 同时更新两部分
-python -m fla_npu_opp_manage --overlay --source /path/to/with-opp.whl
+python -m fla_npu_opp_manage --overlay --source /path/to/update.whl
 
 python -m fla_npu_opp_manage --status
 python -m fla_npu_opp_manage --remove-overlay
@@ -286,7 +286,7 @@ python -m pytest -q tests/test_opp_overlay.py tests/test_opp_abi_contract.py \
 
 ## 9. 增量安装
 
-新管理器接收纯 run 包（含已解包的 vendor）和内嵌 OPP 的 wheel。先安装自带 OPP 的 base wheel，随后可按任意顺序安装这两种更新。
+新管理器接收纯 run 包（含已解包的 vendor）和 wheel 包。先安装基础 wheel 包，随后可按任意顺序安装这两种更新。
 `FLA_NPU_OVERLAY_OPS` 声明 wheel 的适配层入口，`FLA_NPU_OPS` 或 `--ops` 选择编译的 OPP。
 每次对实际选中的入口和符号做 ABI 校验。新算子要通过 Python 调用，还需要有适配层提供该入口。
 按算子构建的示例见 [Wheel 增量安装指南](Wheel增量安装指南.md#4-如何构建这两类包)。
