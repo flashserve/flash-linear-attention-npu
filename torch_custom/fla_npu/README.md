@@ -143,7 +143,7 @@ python3 torch_custom/fla_npu/csrc/build_stable.py --out /tmp/libfla_npu_stable.s
 构建需要 CANN/编译工具及 torch 链接库；不运行 torchnpugen，不依赖 torch_npu 代码生成。
 子目录与根目录均生成按 a2/a3/a5 命名的 `py3-none-manylinux_2_34_<arch>` wheel，必须包含
 `libfla_npu_stable.so`、匹配的 `_stable_hash.py`、档位元数据以及 torch/torch_npu 运行时最低依赖。
-子目录 wheel 的 OPP 骨架须通过对应 run 包安装补齐；`build.sh` 依次完成 wheel 和 run 安装。
+已有目标 SoC 的 `.run` 后，在本目录执行 `FLA_NPU_SOC=<soc> bash build.sh` 会把 OPP 嵌入 wheel，再通过 pip 安装。这个 wheel 可用作增量安装的 base。
 
 删除旧脚本中的 `FLA_NPU_BUILD_STABLE_ABI=0`、`FLA_NPU_BUILD_LEGACY_EXTENSION=1`、
 `FLA_NPU_SKIP_TORCH_GEN`；这些模式已明确拒绝。包中残留旧扩展也会阻止构建。

@@ -281,9 +281,8 @@ def resolve(package, layer, *, source_label=None):
                     errors.append(f"{owner}/{name}: conflicting requirement for {symbol}")
                 required[symbol] = expected
                 if chosen is None:
-                    if owner == "overlay":
-                        errors.append(f"{owner}/{name}: missing OPP symbol {symbol}")
-                    continue  # A skeleton base may have unavailable, uncovered ops.
+                    errors.append(f"{owner}/{name}: missing OPP symbol {symbol}")
+                    continue
                 actual = contracts[str(chosen)][symbol]
                 if tuple(expected) != actual:
                     provider = source_label if source_label and chosen.is_relative_to(layer) else chosen
@@ -438,7 +437,12 @@ def install(package, source, *, force=False):
     Only compatible combinations are committed. Payloads are immutable and shared. ``force`` is
     accepted for existing callers; component replacement no longer requires it.
     """
-    manifest(package)  # Requires the new controller, not a complete base OPP.
+    base_opp = _vendor(package)
+    if base_opp is None:
+        missing = package / "opp/vendors" / BASE / LIBRARY
+        raise RuntimeError(f"Overlay installation requires a base wheel with embedded OPP. Missing {missing}. "
+                           "Install a base wheel with embedded OPP first.")
+    manifest(package)
     source = Path(source)
     is_wheel = source.suffix == ".whl"
     if not is_wheel and not (source.is_dir() or source.suffix == ".run"):
@@ -470,7 +474,6 @@ def install(package, source, *, force=False):
             plan = resolve(package, target, source_label=source_label)
             if plan["errors"]:
                 raise RuntimeError(f"Incompatible overlay {source_label}:\n" + "\n".join(plan["errors"]))
-            base_opp = _vendor(package)
             installed_opp = _vendor(target / PACKAGE)
             _atomic_json(target / "installation.json", {"component_protocol": 1, "source": str(source.resolve())})
             _atomic_json(storage(package) / "state.json", {"version": 2, "active": identity})
@@ -494,7 +497,7 @@ def install(package, source, *, force=False):
                 "affected_base_operators": plan["affected_base_operators"], "errors": plan["errors"],
                 "installation": {
                     "artifact": "wheel" if is_wheel else "run",
-                    "base_opp": str(base_opp) if base_opp else None,
+                    "base_opp": str(base_opp),
                     "previous_overlay_opp": os.pathsep.join(map(str, previous_opps)) or None,
                     "installed_opp": str(installed_opp) if installed_opp else None,
                     "selection": "overlay" if enabled() else "base",

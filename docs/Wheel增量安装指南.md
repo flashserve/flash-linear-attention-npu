@@ -11,7 +11,8 @@
 python -m pip install --force-reinstall --no-deps /path/to/base.whl
 ```
 
-base 必须包含支持多包增量安装的管理器；增量 wheel 也须由支持该功能的源码构建。
+基础 wheel 必须自带 OPP 和增量管理器。安装器检查 base 自身的
+`fla_npu/opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so`。缺少它时，安装 `.run` 或增量 wheel 均会报错。
 旧 base 需要先升级，安装增量包不会升级 base 的管理器。
 
 **安装或移除前停止业务进程，完成后重新启动。** 增量内容在新 Python 进程中生效，
@@ -137,7 +138,8 @@ FLA_NPU_OVERLAY_OPS=chunk_fwd_o python scripts/build_wheel.py
 ```
 
 `FLA_NPU_OPS` 决定构建哪些 OPP 算子及其依赖；
-`FLA_NPU_OVERLAY_OPS` 决定 wheel 替换哪些公共适配层入口，可用逗号指定多个入口。
+`FLA_NPU_OVERLAY_OPS` 把要替换的 Python/Stable 公共入口写入 wheel 的 `layer_manifest.json`（`exports`）。
+安装器按这个列表选择适配层。省略时默认声明全部公共入口，即使 OPP 只编译了一个算子。
 
 ## 5. 什么情况下启用，状态怎么变化
 
@@ -156,7 +158,6 @@ FLA_NPU_OVERLAY_OPS=chunk_fwd_o python scripts/build_wheel.py
 
 ## 6. 其他情况
 
-- **骨架 base（不带 OPP）也支持增量安装：** 配套的 .run 或带 OPP 的 wheel 可以补齐相应算子。base 原本缺失且没有补齐的其他算子仍不可用。
 - **临时禁用：** 设置 `FLA_NPU_OVERLAY_VENDOR=''` 后启动新业务进程，只使用 base，
   不删除已安装增量。恢复使用前取消该设置并重启。
 - **覆盖边界：** wheel 增量覆盖声明的 `fla_npu.ops.ascendc` 入口，不更新顶层 `fla`、

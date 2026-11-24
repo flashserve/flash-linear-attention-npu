@@ -97,8 +97,8 @@ class WheelOverlayTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def base(self, full=True):
-        return package(self.root / "base", opp={"aclnnDemo": "int64", "aclnnOther": "int64"} if full else None)
+    def base(self):
+        return package(self.root / "base", opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
 
     def update(self, *, full=True, kind="bool", scheme="", corrupt=False):
         src = package(self.root / uuid_name(), kind=kind, exports=["npu_a"], opp={"aclnnDemo": kind} if full else None)
@@ -127,9 +127,18 @@ class WheelOverlayTests(unittest.TestCase):
         result = layers.install(base, self.update(kind="int64"))
         self.assertEqual(result["state"], "active")
 
-    def test_skeleton_base_full_overlay(self):
-        result = layers.install(self.base(False), self.update())
-        self.assertEqual(result["state"], "active")
+    def test_overlay_cannot_supply_the_base_opp(self):
+        base = self.base()
+        update = self.update()
+        layers.install(base, update)
+        previous = layers.state(base)
+        payloads = set(layers.storage(base).iterdir())
+        (layers._vendor(base) / layers.LIBRARY).unlink()
+        with mock.patch.dict(os.environ, {"FLA_NPU_OVERLAY_VENDOR": ""}):
+            with self.assertRaisesRegex(RuntimeError, "base wheel with embedded OPP"):
+                layers.install(base, update, force=True)
+        self.assertEqual(layers.state(base), previous)
+        self.assertEqual(set(layers.storage(base).iterdir()), payloads)
 
     def test_corrupt_replacement_preserves_active_layer(self):
         base = self.base()
@@ -529,12 +538,20 @@ a = npu_a
         self.assertIn("combination: active", output)
         self.assertIn("selection for a new process: base", output)
 
-    def test_install_summary_without_base_opp_and_without_active_overlay(self):
+    def test_cli_rejects_both_artifacts_on_base_without_opp(self):
         base = self.summary_cli_base(full=False)
-        output = self.summary_cli_install(base, self.update())
-        self.assertIn("base OPP: none", output)
-        self.assertIn("combination: active", output)
-        self.assertIn(f"installed OPP: {layers.component_paths(base, layers.active(base))[1]}", output)
+        source = package(self.root / "run-opp", opp={"aclnnDemo": "int64"})
+        for artifact in (self.update(), layers._vendor(source)):
+            with self.subTest(artifact=artifact):
+                result = subprocess.run(
+                    [sys.executable, "-m", "fla_npu_opp_manage", "--overlay", "--source", str(artifact)],
+                    env=dict(os.environ, PYTHONPATH=str(base.parent)), cwd=self.root,
+                    capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("base wheel with embedded OPP", result.stderr)
+                self.assertIn(str(base / "opp/vendors" / layers.BASE / layers.LIBRARY), result.stderr)
+                self.assertNotIn("Installation successful", result.stdout)
+                self.assertFalse(layers.storage(base).exists())
 
     def test_failed_install_does_not_print_success_summary(self):
         base = self.summary_cli_base()

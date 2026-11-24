@@ -3,7 +3,7 @@
 作者：zzy1205。本文维护增量安装的组件模型、启动顺序、兼容边界和验收要求。
 [PR878](https://github.com/flashserve/flash-linear-attention-npu/pull/878) 引入 run-only overlay；
 [PR1177](https://github.com/flashserve/flash-linear-attention-npu/pull/1177) 增加适配层与 OPP 独立组合。
-当前组合能力要求 base 支持 layer 协议并包含本节的组件管理器；仅有旧版 layer 协议但仍按整层
+当前组合能力要求 base wheel 自带 OPP、支持 layer 协议并包含本节的组件管理器；仅有旧版 layer 协议但仍按整层
 安装的 base 也须升级管理代码。旧 wheel 的 vendor 目录安装路径保留兼容。
 实现了某项机制不等于全部验收完成，报告须注明对应提交及实测范围。
 
@@ -41,8 +41,8 @@ B1 没有 A 的符号时继续使用 A1；同名符号以后安装的包为准�
 **base 与 launcher 的兼容边界**：不支持保留旧 Python/Stable launcher，再手工覆盖 base
 为 ABI 不兼容产物，也不承诺自动拦截手工覆盖。新 run 的默认、`--install`、`--full`
 均走增量管理器，不再提供直接覆盖 base 共享库的入口。
-需使用本管理器安装组件，或通过 pip 安装配套 base wheel。通过 pip 安装的骨架 base 可用配套 run
-提供 OPP，但 OPP 安装在增量目录，不补写 base vendor 或 RECORD。安装后通过
+首次使用时，通过 pip 安装自带 OPP 的 base wheel。增量管理器先检查 base 自身的
+`op_api/lib/libcust_opapi.so`，缺失时拒绝安装。增量文件写入独立目录。安装后通过
 `python -m fla_npu_opp_manage --status` 确认启用状态，并在新进程中使用。
 
 ## 2. 架构与来源顺序
@@ -60,7 +60,7 @@ flowchart TD
     H --> C
 ```
 
-host 与 CANN 必须保持相同的 OPP 顺序：**active 中从新到旧的 OPP 列表 → 存在的 base OPP**。
+host 与 CANN 必须保持相同的 OPP 顺序：**active 中从新到旧的 OPP 列表 → base 自带的 OPP**。
 没有增量 O 时只使用 base；P 来自哪个 wheel 不决定 O 的来源。外部 vendor 保留在 CANN
 路径中，不作为本包 host 库来源。各 OPP 组件内部的 L1–L4 必须配套，不拆散替换。
 
@@ -83,7 +83,7 @@ site-packages/
     ├── libfla_npu_stable.so              # base launcher
     ├── layer_manifest.json              # 公共入口、依赖和 launcher 指纹
     └── opp/
-        ├── vendors/fla_npu_transformer/  # base OPP；骨架可无二进制
+        ├── vendors/fla_npu_transformer/  # base wheel 内嵌的 OPP
         └── wheel_layers/
             ├── state.json              # version=2，active 指向生效组合
             └── <id>/
@@ -115,7 +115,7 @@ base 和增量适配层使用独立的 dispatcher 命名空间、Runtime 句柄�
 
 默认由 `.pth` 在用户代码及通常的 `import torch_npu` 前设置路径。关闭 `.pth` 时，须提前
 source base 的 `fla_npu/opp/vendors/fla_npu_transformer/bin/set_env.bash`；不要直接 source
-私有组件提取的脚本。骨架 base 若没有脚本，应保留默认 `.pth`。脚本和 `.pth` 均解析同一份
+私有组件提取的脚本。脚本和 `.pth` 均解析同一份
 active 组件选择，不根据最后一个输入包是否含 OPP 猜测路径。禁用或移除后不启用旧目录残留。
 
 归一化移除旧的包内 OPP root、`vendor/op_api/lib` 和 vendor 顺序，重复 source 保持幂等。
@@ -170,7 +170,7 @@ bash tests/atk/run_test_cpu.sh -op=<op> -scope=accuracy
 | 阶段 | 检查与结果 |
 | --- | --- |
 | OPP 构建 | CPack 枚举真实导出，检查公共头和两阶段配对，生成 abi_manifest；源码 adapter 与头文件的构建检查保留 |
-| wheel 构建 | 生成 layer manifest；骨架不要求完整 OPP snapshot |
+| wheel 构建 | 生成 layer manifest，打包已校验的 OPP |
 | 产物接收 | 校验 wheel tag、依赖、RECORD、layer 协议、档位、launcher 元数据及 OPP 清单；损坏产物拒绝且不改变已有选择 |
 | 组合解析 | 新 P 的依赖按选中 O → base 查找；仍使用 base adapter、但 OPP 来源被更新的入口也检查其契约 |
 | 组合不就绪 | 安装返回非零并报告不兼容原因，保留原选择 |
@@ -263,7 +263,7 @@ Docker 进程由 daemon 管理，除本地客户端进程组外，还要按本�
 
 | 检视组 | 主要文件 | 必查条件 |
 | --- | --- | --- |
-| 来源顺序 | `fla_npu_opp_env.py`、`fla_npu/__init__.py`、`csrc/src/runtime.cpp`、`_wheel_layer_runtime.py` | run-only 的 vendor 顺序与 base 回落；wheel 的 provider/launcher/OPP 一致、骨架复用；两者启动前预置及显式禁用 |
+| 来源顺序 | `fla_npu_opp_env.py`、`fla_npu/__init__.py`、`csrc/src/runtime.cpp`、`_wheel_layer_runtime.py` | run-only 的 vendor 顺序与 base 回落；wheel 的 provider/launcher/OPP 一致；两者启动前预置及显式禁用 |
 | ABI/恢复 | `_op_abi.py`、`install_opp.py`、`fla_npu_opp_manage.py`、`fla_npu_wheel_overlay.py` | P/O 独立安装顺序、最新组件覆盖、实际 ABI 匹配、共享依赖、失败回滚、损坏恢复与移除 |
 | 日落/构建 | `_stable.py`、`ops/ascendc/__init__.py`、`stable_build_policy.py`、两套 setup | 无回退，实际 launcher 校验，旧选项拒绝，完整 wheel 检查 |
 | 测试迁移 | `test_stable_only_runtime.py`、`stable_coverage.py`、仓内调用方 | 当前公开入口与 wrapper 一致；已有参数及分派相对顺序兼容，新增接口及可选参数放行；行为、精度仍由实际测试覆盖 |
@@ -286,7 +286,7 @@ python -m pytest -q tests/test_opp_overlay.py tests/test_opp_abi_contract.py \
 
 ## 9. 增量安装
 
-新管理器接收纯 run 包（含已解包的 vendor）和内嵌 OPP 的 wheel。先安装 base 后，可任意穿插这两种更新。
+新管理器接收纯 run 包（含已解包的 vendor）和内嵌 OPP 的 wheel。先安装自带 OPP 的 base wheel，随后可按任意顺序安装这两种更新。
 `FLA_NPU_OVERLAY_OPS` 声明 wheel 的适配层入口，`FLA_NPU_OPS` 或 `--ops` 选择编译的 OPP。
 每次对实际选中的入口和符号做 ABI 校验。新算子要通过 Python 调用，还需要有适配层提供该入口。
 按算子构建的示例见 [Wheel 增量安装指南](Wheel增量安装指南.md#4-如何构建这两类包)。
