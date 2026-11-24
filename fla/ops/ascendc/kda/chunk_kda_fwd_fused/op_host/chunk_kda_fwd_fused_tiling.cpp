@@ -25,6 +25,7 @@ constexpr size_t OUTPUT_FINAL_STATE_IDX = 1;
 constexpr size_t ATTR_LAYOUT_IDX = 0;
 constexpr size_t ATTR_SCALE_IDX = 1;
 constexpr size_t ATTR_LOWER_BOUND_IDX = 2;
+constexpr size_t ATTR_STATE_V_FIRST_IDX = 3;
 
 constexpr uint64_t KDA_FD32_MAX_VARLEN_SEQ = 1024;
 constexpr uint64_t KDA_FD32_CHUNK_TOKENS = 128;
@@ -57,6 +58,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
     const float scale = static_cast<float>(*attrs->GetAttrPointer<double>(ATTR_SCALE_IDX));
     const float lowerBound = *attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND_IDX);
     const char *layout = attrs->GetAttrPointer<char>(ATTR_LAYOUT_IDX);
+    const bool stateVFirst = *attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_IDX);
 
     const auto cuTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
     const bool isVarlen = cuTensor != nullptr;
@@ -190,6 +192,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFused(gert::TilingContext *context)
     tiling.set_hvNumReal(hvReal);
     tiling.set_blockNum(blockNum);
     tiling.set_varlenMode(headMajorVarlen ? 2 : (isVarlen ? 1 : 0));
+    tiling.set_stateVFirst(stateVFirst ? 1 : 0);
     tiling.set_epsilonBits(Fp32Bits(KDA_FD32_EPSILON));
     const uint64_t gateFlags = (context->GetInputDesc(INPUT_G_IDX)->GetDataType() == ge::DT_FLOAT ? 1 : 0) |
                                (context->GetInputDesc(INPUT_BETA_IDX)->GetDataType() == ge::DT_FLOAT ? 2 : 0);

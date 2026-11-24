@@ -81,7 +81,7 @@ outputs = chunk_kda_fwd(
   统一上转 FP32；`A_log`、`dt_bias` 和 state 为 FP32。
 - `T>0`，kernel 处理非 128 对齐尾块；支持 dense batch、varlen，以及 `HV` 为 `H` 正整数倍的 GVA。
   varlen 支持 BSND（`B=1`）、TND、NTD，不支持 BNSD；最多 1024 个序列并允许空序列。
-- 支持可选 `initial_state` 和 `output_final_state`；`state_v_first=true` 由 host 转置适配。
+- 支持可选 `initial_state` 和 `output_final_state`；`state_v_first=true` 时由 kernel 原生读写 `[N,HV,V,K]`，无需 Python/host 转置。
 - 必须 `safe_gate=true`、`use_gate_in_kernel=true` 并提供 `A_log`；`dt_bias=None` 等价于零偏置。
   gate 语义为 `lower_bound * sigmoid(exp(A_log) * (g + dt_bias))`。
 - 必须 `use_qk_l2norm_in_kernel=true`、`use_beta_sigmoid_in_kernel=true`、
@@ -92,8 +92,8 @@ outputs = chunk_kda_fwd(
   `gk/w/u/qg/kg/v_new/h` 也为 `None`。
 - `chunk_indices` 仅接受与 `cu_seqlens` 对应的 canonical sequence-major 顺序。
 - Python 的 `dt_bias=None` 会补成 FP32 零张量；aclnn chunk32 路径本身要求
-  `aLogOptional/dtBiasOptional` 非空。Python 的 `state_v_first=true` 在调用前后转置，
-  传到 fused L2 的 state 固定为 K-first。
+  `aLogOptional/dtBiasOptional` 非空。`state_v_first` 原样传到 fused L2/L0，由 kernel
+  在 state GM 与内部 K-first NZ 之间转换。
 
 ### 返回
 
@@ -265,9 +265,9 @@ V2 chunk64 的形参尾部另有 5 个可选输出指针
 
 - `q/k/v/g/beta/attnOut` 必须非空；`aLogOptional/dtBiasOptional` 在 fused L2 同样必须非空。
   Python 层的 `dt_bias=None` 零填充不属于 aclnn 的可空语义。
-- `initialStateOptional/finalStateOut` 可独立为空；请求 state IO 时 L2 要求
-  `stateVFirst=false`，shape 为 `[N,HV,128,128]`、dtype FP32。未请求 `finalStateOut` 时，
-  host 传 `[1,1,1]` 占位，tiling 将其识别为“不写出”。
+- `initialStateOptional/finalStateOut` 可独立为空；请求 state IO 时，K-first shape 为
+  `[N,HV,K,V]`，`stateVFirst=true` 时为 `[N,HV,V,K]`，dtype 均为 FP32（chunk32 要求
+  `K=V=128`）。未请求 `finalStateOut` 时，host 传 `[1,1,1]` 占位，tiling 将其识别为“不写出”。
 - `gkOut/wOut/uOut/qgOut/kgOut/vNewOut/hOut` 必须全部为 `nullptr`，以及 V2 的 5 个反向
   保存值指针也必须全部为 `nullptr`；任一非空返回 `ACLNN_ERR_PARAM_INVALID`。
 - fused 不导出 `Aqk/Akk`，Python 对 `aqkOut/akkOut` 均传 `nullptr`，返回槽也为 `None`。

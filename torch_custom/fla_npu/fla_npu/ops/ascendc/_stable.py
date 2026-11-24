@@ -1528,16 +1528,8 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         # issue #829 契约:dt_bias=None ⇔ dt≡0。host 补零张量(fp32 [HV*K],HV 由
         # A_log 形状读出),kernel 内 raw = g + 0 与原语义逐位等价,免改 kernel/dispatcher。
         dt_bias = torch.zeros(int(A_log.shape[0]) * key_dim, dtype=torch.float32, device=q.device)
-    # chunk32 融合 kernel 的 state IO 只有 K-first([seq,HV,K,V])一种形态;
-    # state_v_first=True 在 host 侧吸收:istate 末两维转置进、final_state 转置回,
-    # 与 kernel/dispatcher 零耦合(dense/varlen 同路径)。
-    svf_absorb = (int(chunk_size) == 32 and bool(state_v_first)
-                  and (initial_state is not None or output_final_state))
+    # chunk32 在 kernel 内完成 V-first state 与内部 K-first NZ 的转换。
     caller_initial_state = initial_state
-    if svf_absorb:
-        if initial_state is not None:
-            initial_state = initial_state.transpose(-1, -2).contiguous()
-        state_v_first = False
     result = _op("npu_chunk_kda_fwd")(
         q, k, v, g, beta, A_log, dt_bias, initial_state,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -1553,9 +1545,6 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
         _current_stream_ptr(),
     )
-    if svf_absorb and output_final_state and result[1] is not None:
-        # 转回调用方期望的 V-first 布局;尾槽仍返回调用方自己的 initial_state。
-        result = (result[0], result[1].transpose(-1, -2).contiguous(), *result[2:])
     return (*result, caller_initial_state)
 
 

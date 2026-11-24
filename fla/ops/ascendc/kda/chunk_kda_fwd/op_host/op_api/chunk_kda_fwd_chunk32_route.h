@@ -8,7 +8,7 @@
 // kernel 契约:[B*H,T,K] 头连续 bf16(batch 拍平进头维);K=V=128;任意 T>0
 // (尾块核内钳制);HV % H == 0;dense batch 使用单启动任务循环;
 // 原始 g + a_log(fp32 [H]) + dt_bias(fp32 [H*K]);beta 核内 sigmoid、q/k 核内 L2 归一;
-// 产出 attn_out + 可选 final_state;可选 initial_state(fp32 [1,H,128,128],state_v_first=false);
+// 产出 attn_out + 可选 final_state;可选 initial_state(fp32 [N,HV,K,V]/[N,HV,V,K]);
 // varlen 支持 TND/NTD;不支持中间态导出。
 aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor *executor,
                                         const KdaShapeInfo &info);
@@ -260,8 +260,12 @@ aclnnStatus CheckChunkKdaFwd32Outputs(const ChunkKdaFwdParams &params, const Kda
     const aclTensor *states[] = {params.initialStateOptional, params.finalStateOut};
     const char *stateNames[] = {"initialStateOptional", "finalStateOut"};
     for (size_t i = 0; i < 2; ++i) {
-        if (states[i] != nullptr && !HasShape(states[i], {info.seqNum, info.hvNum, info.kDim, info.vDim})) {
-            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", stateNames[i], op::ToString(states[i]->GetViewShape()).GetString(), "[N,HV,128,128] with stateVFirst=false");
+        if (states[i] == nullptr) continue;
+        const bool valid = params.stateVFirst
+            ? HasShape(states[i], {info.seqNum, info.hvNum, info.vDim, info.kDim})
+            : HasShape(states[i], {info.seqNum, info.hvNum, info.kDim, info.vDim});
+        if (!valid) {
+            OP_LOGE_FOR_INVALID_SHAPE("aclnnChunkKdaFwd", stateNames[i], op::ToString(states[i]->GetViewShape()).GetString(), params.stateVFirst ? "[N,HV,V,K] with stateVFirst=true" : "[N,HV,K,V] with stateVFirst=false");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -302,10 +306,6 @@ aclnnStatus CheckChunkKdaFwd32Params(const ChunkKdaFwdParams &params, KdaFwdLayo
             OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", unsupportedNames[i], "provided", "chunkSize=32 only exports attnOut/finalStateOut");
             return ACLNN_ERR_PARAM_INVALID;
         }
-    }
-    if ((params.initialStateOptional != nullptr || params.finalStateOut != nullptr) && params.stateVFirst) {
-        OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "stateVFirst", "true", "false for chunkSize=32 state IO");
-        return ACLNN_ERR_PARAM_INVALID;
     }
     if (!params.useGateInKernel) {
         OP_LOGE_FOR_INVALID_VALUE("aclnnChunkKdaFwd", "useGateInKernel", "false", "true for chunkSize=32");
@@ -490,8 +490,8 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
-    // initial_state:[N_seq,H,K,V] 拍平成 [N_seq*H,K,V](kernel 按 (seq*H+head) 寻址);
-    // final_state 先写 [N_seq*H,K,V] 临时张量,结束后 ViewCopy 回 [N_seq,H,K,V] 输出槽。
+    // initial/final state 的 [N,HV,*] 拍平为 [N*HV,K,V] 或 [N*HV,V,K]，
+    // 末两维顺序由 stateVFirst 解释；kernel 按 (seq*HV+head) 寻址。
     const int64_t stateHeads = info.seqNum * info.hvNum;
     const aclTensor *initialStateHead = nullptr;
     if (params.initialStateOptional != nullptr) {
@@ -524,7 +524,7 @@ aclnnStatus RunChunkKdaFwd32FusedDense(ChunkKdaFwdParams &params, aclOpExecutor 
     const aclTensor *fused = l0op::KdaChunkForwardFused(
         qNtd, kNtd, vNtd, gNtd, betaNtd, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTmp, finalStateTmp,
-        nullptr /* dense 无 cu_seqlens */, executor);
+        nullptr /* dense 无 cu_seqlens */, executor, "BSND", params.stateVFirst);
     if (!(fused != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: fused != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
@@ -627,7 +627,8 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         }
     }
 
-    // state:[nSeq,HV,K,V] 拍平 [nSeq*HV,K,V](kernel 按任务号 fh = seq*HV+head 寻址)
+    // state:[nSeq,HV,K/V 按 stateVFirst 排列] 拍平为 [nSeq*HV,128,128]，
+    // kernel 按任务号 fh=seq*HV+head 寻址。
     const int64_t stateHeads = nSeq * info.hvNum;
     const aclTensor *initialStateHead = nullptr;
     if (params.initialStateOptional != nullptr) {
@@ -677,7 +678,7 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
         qTok, kTok, vTok, gTok, betaTok, params.aLogOptional, params.dtBiasOptional,
         initialStateHead, params.scale, params.lowerBound, oTok, finalStateTmp,
         params.cuSeqlensOptional, executor,
-        std::strcmp(params.layout, "NTD") == 0 ? "NTD" : "TND");
+        std::strcmp(params.layout, "NTD") == 0 ? "NTD" : "TND", params.stateVFirst);
     if (!(fused != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: fused != nullptr failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;

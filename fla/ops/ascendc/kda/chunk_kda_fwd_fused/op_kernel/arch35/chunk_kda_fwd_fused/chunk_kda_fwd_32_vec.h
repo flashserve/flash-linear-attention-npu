@@ -184,6 +184,34 @@ template <typename T, bool IsVarlen, bool HasTail>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::LoadStateVFirstScatter(__ubuf__ void *s_ub, __ubuf__ void *stage_f32)
+	{
+		__VEC_SCOPE__{
+			MaskReg preg_f32 = CreateMask<uint8_t, MaskPattern::ALL>();
+			MaskReg preg_bf16 = CreateMask<uint16_t, MaskPattern::ALL>();
+			uint32_t bf16Count = state_k_half;
+			MaskReg preg_64 = UpdateMask<T>(bf16Count);
+			RegTensor<uint16_t> k_index, nz_index;
+			Arange((RegTensor<int16_t> &)k_index, int16_t(0));
+			for (uint16_t fv = 0; fv < (uint16_t)(value_dim / fractal_len); ++fv) {
+				// 固定 v 时,NZ 中 64 个 k 的元素偏移为 k*16+v_in。
+				Muls(nz_index, k_index, (uint16_t)fractal_len, preg_bf16);
+				for (uint16_t v_in = 0; v_in < (uint16_t)fractal_len; ++v_in) {
+					const uint16_t v = fv * fractal_len + v_in;
+					RegTensor<float> vreg_f;
+					RegTensor<T> packed, values, unused;
+					DataCopy(vreg_f, (__ubuf__ float *)stage_f32 + v*state_k_half);
+					Cast<T, float, f2bfZero>(packed, vreg_f, preg_f32);
+					DeInterleave(values, unused, packed, packed);
+					Scatter((__ubuf__ T *)s_ub + fv*fractal_elems*(state_k_half/fractal_len),
+						values, nz_index, preg_64);
+					Adds(nz_index, nz_index, (uint16_t)1, preg_bf16);
+				}
+			}
+		}
+	}
+
+template <typename T, bool IsVarlen, bool HasTail>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::StoreStateGatherCast(__ubuf__ void *stage_f32, __ubuf__ void *s_ub)
 	{
 		__VEC_SCOPE__{
@@ -202,6 +230,32 @@ template <typename T, bool IsVarlen, bool HasTail>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
+	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::StoreStateVFirstCastScatter(__ubuf__ void *stage_f32, __ubuf__ void *s_ub)
+	{
+		__VEC_SCOPE__{
+			MaskReg preg_f32 = CreateMask<uint8_t, MaskPattern::ALL>();
+			MaskReg preg_bf16 = CreateMask<uint16_t, MaskPattern::ALL>();
+			RegTensor<uint32_t> even_index, odd_index;
+			Arange((RegTensor<int32_t> &)even_index, int32_t(0));
+			// stage[v,k]:偶数 v 的偏移为 (v/2)*128,奇数 v 再多 64。
+			Muls(even_index, even_index, (uint32_t)(2*state_k_half), preg_f32);
+			Adds(odd_index, even_index, (uint32_t)state_k_half, preg_f32);
+			for(uint16_t r = 0; r < (uint16_t)state_k_half; ++r) {
+				RegTensor<T> vreg_b;
+				RegTensor<float> vreg_f0, vreg_f1;
+				DataCopy<T, MicroAPI::DataCopyMode::DATA_BLOCK_COPY>(
+					vreg_b, (__ubuf__ T *)s_ub + r*fractal_len, fv_block_bytes/block_bytes, preg_bf16);
+				Cast<float, T, bf2fZero>(vreg_f0, vreg_b, preg_f32);
+				Cast<float, T, bf2fOne>(vreg_f1, vreg_b, preg_f32);
+				Scatter((__ubuf__ float *)stage_f32, vreg_f0, even_index, preg_f32);
+				Scatter((__ubuf__ float *)stage_f32, vreg_f1, odd_index, preg_f32);
+				Adds(even_index, even_index, (uint32_t)1, preg_f32);
+				Adds(odd_index, odd_index, (uint32_t)1, preg_f32);
+			}
+		}
+	}
+
+template <typename T, bool IsVarlen, bool HasTail>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::LoadInitState(__ubuf__ void *s_ub)
 	{
 		// 初始状态的 FP32 ND 暂存区,借用从 g_ub[0] 开始的连续 32KiB 输入区
@@ -211,10 +265,23 @@ template <typename T, bool IsVarlen, bool HasTail>
 		AscendC::LocalTensor<float> stage(AscendC::TPosition::VECCALC, KdaAddrV(istate_ub), state_half_elems);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(0);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(1);
-		AscendC::DataCopy(stage, istate_gm[0], state_half_elems);   // 一次连续 32KB(ND 行主序)
+		if (state_v_first) {
+			AscendC::DataCopyParams dp;
+			dp.blockCount = (uint16_t)value_dim;
+			dp.blockLen = (uint16_t)(state_k_half*sizeof(float)/block_bytes);
+			dp.srcStride = (uint16_t)((key_dim-state_k_half)*sizeof(float)/block_bytes);
+			dp.dstStride = 0;
+			AscendC::DataCopy(stage, istate_gm[0], dp);  // [128v,64k] 连续暂存
+		} else {
+			AscendC::DataCopy(stage, istate_gm[0], state_half_elems);
+		}
 		AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(6);
 		AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(6);
-		LoadStateNdScatter(s_ub, (__ubuf__ void *)stage.GetPhyAddr());
+		if (state_v_first) {
+			LoadStateVFirstScatter(s_ub, (__ubuf__ void *)stage.GetPhyAddr());
+		} else {
+			LoadStateNdScatter(s_ub, (__ubuf__ void *)stage.GetPhyAddr());
+		}
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(0);
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(1);
 	}
@@ -240,10 +307,23 @@ template <typename T, bool IsVarlen, bool HasTail>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::StoreFinalState(__ubuf__ void *s_ub)
 	{
 		AscendC::LocalTensor<float> stage(AscendC::TPosition::VECCALC, KdaAddrV(g_ub[0]), state_half_elems);
-		StoreStateGatherCast((__ubuf__ void *)stage.GetPhyAddr(), s_ub);
+		if (state_v_first) {
+			StoreStateVFirstCastScatter((__ubuf__ void *)stage.GetPhyAddr(), s_ub);
+		} else {
+			StoreStateGatherCast((__ubuf__ void *)stage.GetPhyAddr(), s_ub);
+		}
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(0);
-		AscendC::DataCopy(fstate_gm[0], stage, state_half_elems);   // 一次连续 32KB(ND 行主序)
+		if (state_v_first) {
+			AscendC::DataCopyParams dp;
+			dp.blockCount = (uint16_t)value_dim;
+			dp.blockLen = (uint16_t)(state_k_half*sizeof(float)/block_bytes);
+			dp.srcStride = 0;
+			dp.dstStride = (uint16_t)((key_dim-state_k_half)*sizeof(float)/block_bytes);
+			AscendC::DataCopy(fstate_gm[0], stage, dp);
+		} else {
+			AscendC::DataCopy(fstate_gm[0], stage, state_half_elems);
+		}
 		// 多任务执行时必须自排干:stage 借用 g_ub[0],MTE3 读未完成时下一任务
 		// 的 MTE2 装载会冲掉它(单任务靠 kernel 退出隐式排干,多任务无此保障)
 		AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(0);
@@ -439,10 +519,12 @@ template <typename T, bool IsVarlen, bool HasTail>
 		tmp_gm.SetGlobalBuffer((__gm__ T *)tmp_base + ((uint64_t)tok0*hv + head)*value_dim);
 		o_gm.SetGlobalBuffer((__gm__ T *)o_base + ((uint64_t)tok0*hv + head)*value_dim);
 		if (has_istate) {
-			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*(state_v_first ? 1 : value_dim));
 		}
 		if (out_fstate) {
-			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*(state_v_first ? 1 : value_dim));
 		}
 		a = a_gm.GetValue(head);
 		a = -a;
@@ -474,7 +556,16 @@ template <typename T, bool IsVarlen, bool HasTail>
 		AscendC::Duplicate<float>(stage, 0.0f, state_half_elems);
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(0);
-		AscendC::DataCopy(fstate_gm[0], stage, state_half_elems);
+		if (state_v_first) {
+			AscendC::DataCopyParams dp;
+			dp.blockCount = (uint16_t)value_dim;
+			dp.blockLen = (uint16_t)(state_k_half*sizeof(float)/block_bytes);
+			dp.srcStride = 0;
+			dp.dstStride = (uint16_t)((key_dim-state_k_half)*sizeof(float)/block_bytes);
+			AscendC::DataCopy(fstate_gm[0], stage, dp);
+		} else {
+			AscendC::DataCopy(fstate_gm[0], stage, state_half_elems);
+		}
 		AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(0);
 		AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(0);
 	}
@@ -498,12 +589,14 @@ template<bool varlen>
 		dt_gm.SetGlobalBuffer((__gm__ float *)dt_base + key_dim*bias_head);  // 每头 key_dim 个 dt_bias(按通道跳,不是按 token 组)
 		tmp_gm.SetGlobalBuffer((__gm__ T *)tmp_base + seq_len*value_dim*fh);
 		o_gm.SetGlobalBuffer((__gm__ T *)o_base + seq_len*value_dim*fh);
-		// state GM 按任务 + k 半幅寻址:[B*HV,K,V] fp32,本 AIV 取 k∈[subid*64,+64)
+		// state GM 按任务寻址;K-first 取 k 半幅行,V-first 取 k 半幅列。
 		if (has_istate) {
-			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*(state_v_first ? 1 : value_dim));
 		}
 		if (out_fstate) {
-			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*(state_v_first ? 1 : value_dim));
 		}
 		a = a_gm.GetValue(bias_head);
 		a = -a;

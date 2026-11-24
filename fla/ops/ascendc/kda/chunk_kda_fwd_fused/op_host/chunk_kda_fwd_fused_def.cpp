@@ -39,6 +39,7 @@ public:
         this->Attr("layout").AttrType(OPTIONAL).String("TND");
         this->Attr("scale").AttrType(REQUIRED).Float(1.0);
         this->Attr("lower_bound").AttrType(OPTIONAL).Float(-5.0);
+        this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
