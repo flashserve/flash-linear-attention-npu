@@ -29,6 +29,9 @@ from ..._backend_policy import validate_backend_environment
 from . import _stable
 
 _ASCENDC_OPS = (
+    "npu_vdn_scan",
+    "npu_vdn_add_diagonal",
+    "npu_vdn_bridge",
     "npu_fast_gelu_custom",
     "npu_fast_gelu_custom_backward",
     "npu_causal_conv1d",
@@ -81,6 +84,9 @@ BACKWARD_OPS = {
 # ACLNN 直接写 tensor storage 时，dispatcher 不会自动发现所有副作用。
 # 这里集中声明被修改的参数，由 direct-op wrapper 负责 grad 限制和版本计数。
 MUTATED_ARGUMENTS = {
+    "npu_vdn_scan": ("prefix", "suffix"),
+    "npu_vdn_add_diagonal": ("correction",),
+    "npu_vdn_bridge": ("out",),
     "causal_conv1d": ("conv_states",),
     "causal_conv1d_fn": ("conv_states",),
     "causal_conv1d_update": ("conv_state",),

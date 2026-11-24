@@ -1,8 +1,9 @@
+# SPDX-License-Identifier: BSD-3-Clause
 import unittest
 
 import torch
 
-from reference import reference
+from scripts.reference import reference
 
 
 class TestWindowAndState(unittest.TestCase):

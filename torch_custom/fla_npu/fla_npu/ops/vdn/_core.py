@@ -4,8 +4,8 @@ import torch
 
 from . import vdn_native
 
-from ._cholesky import solve
-from ._newton import ITERATIONS, inverse_sub
+from ..triton.triton_core.vdn_cholesky import solve
+from ._newton import ITERATIONS, _SCALE, inverse_sub
 
 # On 910B2C the diagonal update amortizes its launches at eight waves of 48 diagonal tiles.
 _NATIVE_NEWTON_MIN_BATCH = 192
@@ -69,8 +69,8 @@ def _factor(k, v, beta, eye, *, inverse_solve=None, value_weighted=False, inject
     b = pending_b.float()
     del pending_b
     if native_inverse is not None:
-        from ._gram import initialize
-        system, first = initialize(a)
+        from ..triton.triton_core.vdn_gram import initialize
+        system, first = initialize(a, _SCALE)
     else:
         system = a + eye
     del a, k32, k, v, beta
@@ -177,6 +177,8 @@ def _forward(q, k, v, beta, alpha, bounds, text_state, *, inverse_solver, prepro
 
     use_bridge = native is not None and bounds.device.type == "cpu"
     bounds = bounds.to(q.device)
+    if use_bridge:
+        bounds = bounds.contiguous()
     logs = alpha.clamp_min(1e-12).log()
     log_prefix = torch.cat((torch.zeros_like(logs[:1]), logs.cumsum(0)), dim=0)
     if not use_bridge:

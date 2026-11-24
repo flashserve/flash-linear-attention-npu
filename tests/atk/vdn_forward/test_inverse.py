@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Exercise both FP32 inverse strategies against I and the spectral boundary."""
 import os
 import unittest
@@ -15,7 +16,7 @@ class TestInverse(unittest.TestCase):
             self.skipTest("requires torch_npu")
         if not torch.npu.is_available():
             self.skipTest("requires an Ascend NPU")
-        from fla_npu.ops.vdn._cholesky import solve
+        from fla_npu.ops.triton.triton_core.vdn_cholesky import solve
         from fla_npu.ops.vdn._newton import inverse_sub
 
         device = torch.device("npu", int(os.getenv("VDN_TEST_DEVICE", "0")))

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Public wheel smoke test for the video delta-network forward."""
 import os
 import unittest

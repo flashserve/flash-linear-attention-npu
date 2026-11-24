@@ -1,5 +1,5 @@
-"""ATK generator for deterministic VDN solver and window coverage."""
-import json
+# SPDX-License-Identifier: BSD-3-Clause
+"""Couple tensor shapes and dtypes to the public VDN contract."""
 
 from atk.case_generator.generator.base_generator import CaseGenerator
 from atk.case_generator.generator.generate_types import GENERATOR_REGISTRY
@@ -8,25 +8,17 @@ from atk.case_generator.generator.generate_types import GENERATOR_REGISTRY
 @GENERATOR_REGISTRY.register("generator_vdn_forward")
 class Generator(CaseGenerator):
     def after_case_config(self, case_config):
-        from pathlib import Path
-
-        # Registered cases are the reviewed branch matrix. Additional generated
-        # samples keep these configurations and vary the common CPU/device seed.
-        cases = json.loads(Path(__file__).with_name("atk_vdn_forward.json").read_text())
-        index = max(int(self.index) - 1, 0)
-        config = cases[index % len(cases)]
-        spec = json.loads(next(x["range_values"] for x in config["inputs"] if x["name"] == "case_spec"))
-        spec["seed"] += index
-        case_config.id = index
-        case_config.name = f"vdn_forward_{index:04d}"
-        case_config.default_seed = spec["seed"]
-        for entry in case_config.inputs:
-            item = entry[0] if isinstance(entry, list) else entry
-            if item.name == "case_spec":
-                item.range_values = json.dumps(spec)
-            elif item.name == "low_precision_marker":
-                item.dtype = spec["dtype"]
-            elif item.name in spec:
-                item.range_values = spec[item.name]
+        fields = {field.name: field for field in case_config.inputs}
+        q = fields["q"]
+        frames, heads, tokens, dim = q.shape
+        for name in ("k", "v"):
+            fields[name].shape = list(q.shape)
+            fields[name].dtype = q.dtype
+        fields["beta"].shape = [frames, heads, tokens]
+        if q.dtype == "fp32":
+            fields["beta"].dtype = q.dtype
+        fields["alpha"].shape = [frames, heads, dim]
+        fields["bounds"].shape = [frames, 2]
+        fields["bounds"].range_values = [0, frames - 1]
+        fields["text_state"].shape = [heads, dim, dim]
         return case_config
-

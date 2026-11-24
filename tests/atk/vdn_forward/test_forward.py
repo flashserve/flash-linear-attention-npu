@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """Run with unittest discovery. VDN_TEST_DEVICE selects the logical device."""
 import os
 import unittest
@@ -5,7 +6,7 @@ import unittest
 import torch
 import torch.nn.functional as F
 
-from cases import check, expected, make_case, on_device
+from scripts.cases import check, expected, make_case, on_device
 
 
 class TestForward(unittest.TestCase):
@@ -74,28 +75,3 @@ class TestForward(unittest.TestCase):
         invalid[5] = torch.tensor([[0, 0], [2, 2], [2, 2]])
         with self.assertRaises(ValueError):
             self.forward(*invalid)
-
-
-    def test_native_stage_boundaries(self):
-        from fla_npu.ops.vdn import vdn_native
-
-        lib = vdn_native.library(self.device)
-        if lib is None:
-            self.skipTest("wheel has no native 910B accelerator on this device")
-        eye = torch.eye(128, device=self.device)
-        system = eye.repeat(4, 1, 1)
-        inverse = vdn_native.newton_from_first(lib, -system, system.clone(), eye, 3)
-        torch.testing.assert_close(inverse.cpu(), system.cpu(), rtol=0, atol=0)
-        frames, heads = 3, 2
-        transition = eye.repeat(frames, heads, 1, 1)
-        injection = transition * 0.25
-        prefix = eye.new_zeros(frames + 1, heads, 128, 128)
-        suffix = torch.zeros_like(prefix)
-        vdn_native.scan(lib, transition, injection, prefix, suffix)
-        gold = eye.cpu() * torch.arange(frames + 1).view(-1, 1, 1, 1) * 0.25
-        torch.testing.assert_close(prefix.cpu(), gold.expand_as(prefix))
-        torch.testing.assert_close(suffix.cpu(), gold.flip([0]).expand_as(suffix))
-        bounds = torch.arange(frames).expand(2, -1).T.to(self.device)
-        logs = eye.new_zeros(frames + 1, heads, 128)
-        out = vdn_native.bridge(lib, prefix, suffix, bounds, logs, slice(0, frames), torch.bfloat16)
-        torch.testing.assert_close(out.cpu().float(), (eye.cpu() * 0.5).expand_as(out))

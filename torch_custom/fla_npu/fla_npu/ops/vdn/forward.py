@@ -4,7 +4,7 @@ import torch
 
 from ._core import forward as _forward
 from ._newton import inverse, inverse_sub
-from ._short_conv import feature_preprocessor
+from ..triton.triton_core.vdn_short_conv import feature_preprocessor
 
 _FEATURE_BLOCK_BYTES = 128 * 2**20
 _CORRECTION_BLOCK_BYTES = 32 * 2**20
@@ -27,8 +27,8 @@ def _select_inverse(frame_tile, heads, dim):
 
 
 def vdn_forward(q, k, v, beta, alpha, bounds, text_state=None, *, delta_rule="vdn_solve",
-            fuse_silu=False, fuse_qk_l2norm=False, short_conv=None, frame_size=None,
-            frame_tile=None, pad_tail=True, value_first=False):
+                fuse_silu=False, fuse_qk_l2norm=False, short_conv=None, frame_size=None,
+                frame_tile=None, pad_tail=True, value_first=False):
     """Compute the VDN alpha-bridge readout before RMSNorm and output projection.
 
     q, k and v have shape [frames, heads, tokens, 128]. beta weights each

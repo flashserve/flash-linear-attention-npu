@@ -4,7 +4,7 @@ Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带�
 
 ## 视频线性注意力
 
-[VDN 视频线性注意力前向](../torch_custom/fla_npu/fla_npu/ops/vdn/README.md) 使用组合入口 `fla_npu.ops.vdn.vdn_forward`，支持 Cholesky 和 FP32 Newton–Schulz 求解、双向帧状态递推及 alpha 窗口合并。
+[VDN 视频线性注意力前向](../fla/ops/ascendc/vdn/vdn_forward/README.md) 使用组合入口 `fla_npu.ops.vdn.vdn_forward`，支持 Cholesky 和 FP32 Newton–Schulz 求解、双向帧状态递推及 alpha 窗口合并。
 
 <a id="atk-op-options"></a>
 
@@ -14,6 +14,9 @@ Ascend C 使用 `fla_npu.ops.ascendc`，同时提供带 `npu_` 前缀和不带�
 
 | 类别 | 算子 | 算子工程名 | 基本用途 | 备注 |
 | --- | --- | --- | --- | --- |
+| VDN | [`npu_vdn_scan`](../fla/ops/ascendc/vdn/vdn_forward/docs/api.md#ascend-c-接口) | `vdn_scan` | 双向帧状态递推 | A2 |
+| VDN | [`npu_vdn_bridge`](../fla/ops/ascendc/vdn/vdn_forward/docs/api.md#ascend-c-接口) | `vdn_bridge` | 合并窗口两侧的状态 | A2 |
+| VDN | [`npu_vdn_add_diagonal`](../fla/ops/ascendc/vdn/vdn_forward/docs/api.md#ascend-c-接口) | `vdn_add_diagonal` | Newton–Schulz 校正矩阵对角更新 | A2 |
 | GDN | [`npu_chunk_gated_delta_rule_fwd`](../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/README.md) | `chunk_gated_delta_rule_fwd` | 融合前向 | - |
 | GDN | [`npu_chunk_gated_delta_rule_bwd`](../fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd/README.md) | `chunk_gated_delta_rule_bwd` | 融合反向 | - |
 | GDN | [`npu_chunk_gated_delta_rule_fwd_prepare`](../fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_prepare/README.md) | `chunk_gated_delta_rule_fwd_prepare` | 前向预处理 | - |
