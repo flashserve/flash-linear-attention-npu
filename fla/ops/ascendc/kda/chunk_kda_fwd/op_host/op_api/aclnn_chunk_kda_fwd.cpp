@@ -805,7 +805,8 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
     // BSND/BNSD 不需要 host 侧转置：q/k/v 命中 stride 白名单时直接透传视图，
     // 由 tiling 把 pitch 下给 kernel；其余情况保持原有连续化路径。
     bool qkvDirect = false;
-    if ((parsedLayout == KdaFwdLayout::BSND || parsedLayout == KdaFwdLayout::BNSD) &&
+    if ((parsedLayout == KdaFwdLayout::BSND || parsedLayout == KdaFwdLayout::BNSD ||
+         parsedLayout == KdaFwdLayout::TND) &&
         IsSupportedQkvView(params.q, parsedLayout) && IsSupportedQkvView(params.k, parsedLayout) &&
         IsSupportedQkvView(params.v, parsedLayout) && SameQkvStrides(params.q, params.k)) {
         const aclTensor *qView = MakeStridedView(params.q, executorPtr);
@@ -830,10 +831,14 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
         // sequence-major form. Keep only this lightweight transpose.
         betaHead = Transpose(params.beta, {0, 2, 1}, executorPtr);
     } else if (parsedLayout == KdaFwdLayout::TND) {
-        qHead = Transpose(params.q, {1, 0, 2}, executorPtr);
-        kHead = Transpose(params.k, {1, 0, 2}, executorPtr);
-        vHead = Transpose(params.v, {1, 0, 2}, executorPtr);
-        gHead = Transpose(params.g, {1, 0, 2}, executorPtr);
+        // 直通时 q/k/v/g 保持 [T,H,K] 序列主序，不做 host 转置；
+        // beta 仍转为头主序（元素少、DMA 友好），与 BSND 的处理一致。
+        if (!qkvDirect) {
+            qHead = Transpose(params.q, {1, 0, 2}, executorPtr);
+            kHead = Transpose(params.k, {1, 0, 2}, executorPtr);
+            vHead = Transpose(params.v, {1, 0, 2}, executorPtr);
+            gHead = Transpose(params.g, {1, 0, 2}, executorPtr);
+        }
         betaHead = Transpose(params.beta, {1, 0}, executorPtr);
     }
     CHECK_RET(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
@@ -841,10 +846,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
               ACLNN_ERR_INNER_NULLPTR);
 
     if (info.isRank3) {
-        qHead = AsRank4(qHead, MakeShape({1, info.hNum, info.seqlen, info.kDim}), executorPtr);
-        kHead = AsRank4(kHead, MakeShape({1, info.hNum, info.seqlen, info.kDim}), executorPtr);
-        vHead = AsRank4(vHead, MakeShape({1, info.hvNum, info.seqlen, info.vDim}), executorPtr);
-        gHead = AsRank4(gHead, MakeShape({1, info.hvNum, info.seqlen, info.kDim}), executorPtr);
+        if (!qkvDirect) {
+            qHead = AsRank4(qHead, MakeShape({1, info.hNum, info.seqlen, info.kDim}), executorPtr);
+            kHead = AsRank4(kHead, MakeShape({1, info.hNum, info.seqlen, info.kDim}), executorPtr);
+            vHead = AsRank4(vHead, MakeShape({1, info.hvNum, info.seqlen, info.vDim}), executorPtr);
+            gHead = AsRank4(gHead, MakeShape({1, info.hvNum, info.seqlen, info.kDim}), executorPtr);
+        }
         betaHead = AsRank4(betaHead, MakeShape({1, info.hvNum, info.seqlen}), executorPtr);
         CHECK_RET(qHead != nullptr && kHead != nullptr && vHead != nullptr &&
                       gHead != nullptr && betaHead != nullptr,
@@ -973,14 +980,12 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
 
     auto launchStage = [&](int64_t stage) {
         return l0op::KdaChunkForward(
-            qHead, kHead, vHead, gHead, betaHead, params.aLogOptional,
-            params.dtBiasOptional, initialStateCompute, params.cuSeqlensOptional,
-            params.chunkIndicesOptional, params.scale, params.chunkSize,
-            params.safeGate, parsedLayout == KdaFwdLayout::BSND,
-            params.useGateInKernel, params.lowerBound, attnCompute,
-            finalStateCompute, gkCompute, aqkCompute, akkCompute, wCompute,
-            uCompute, qgCompute, kgCompute, vNewCompute, hCompute,
-            qgScaledCompute, uSeedCompute, stage, executorPtr);
+            qHead, kHead, vHead, gHead, betaHead, params.aLogOptional, params.dtBiasOptional, initialStateCompute,
+            params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize, params.safeGate,
+            parsedLayout == KdaFwdLayout::BSND || (parsedLayout == KdaFwdLayout::TND && qkvDirect),
+            params.useGateInKernel, params.lowerBound, attnCompute, finalStateCompute, gkCompute, aqkCompute,
+            akkCompute, wCompute, uCompute, qgCompute, kgCompute, vNewCompute, hCompute, qgScaledCompute, uSeedCompute,
+            stage, executorPtr);
     };
     l0op::KdaCoreOutputs result{};
     if (splitStages) {
