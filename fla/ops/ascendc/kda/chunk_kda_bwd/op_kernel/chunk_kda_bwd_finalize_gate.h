@@ -88,8 +88,6 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
     constexpr uint32_t kRegCols =
         AscendC::VECTOR_REG_WIDTH / sizeof(float);
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
-    RegTensor<float> one;
-    Duplicate(one, 1.0f, mask);
     const float chainScale = lowerBound * expA;
     for (uint32_t col = 0; col < kCols; col += kRegCols) {
         RegTensor<float> dbReg;
@@ -116,8 +114,7 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             const uint32_t offset = row * kCols + col;
             RegTensor<float> raw;
             RegTensor<float> denominator;
-            RegTensor<float> sigmoid;
-            RegTensor<float> oneMinus;
+            RegTensor<float> expNegAbs;
             RegTensor<float> upstreamReg;
             RegTensor<float> gradient;
             RegTensor<float> dAReg;
@@ -125,13 +122,14 @@ static __simd_vf__ inline void KdaBwdCSafeGateBackwardA5(
             if constexpr (HAS_BIAS) {
                 Add(raw, raw, biasReg, mask);
             }
-            Muls(denominator, raw, -expA, mask);
-            Exp(denominator, denominator, mask);
-            Adds(denominator, denominator, 1.0f, mask);
-            Div(sigmoid, one, denominator, mask);
-            Muls(oneMinus, sigmoid, -1.0f, mask);
-            Adds(oneMinus, oneMinus, 1.0f, mask);
-            Mul(gradient, oneMinus, sigmoid, mask);
+            // sigmoid'(x) = t / (1 + t)^2, where t = exp(-abs(x)).
+            Muls(expNegAbs, raw, expA, mask);
+            Abs(expNegAbs, expNegAbs, mask);
+            Muls(expNegAbs, expNegAbs, -1.0f, mask);
+            Exp(expNegAbs, expNegAbs, mask);
+            Adds(denominator, expNegAbs, 1.0f, mask);
+            Mul(denominator, denominator, denominator, mask);
+            Div(gradient, expNegAbs, denominator, mask);
             DataCopy(upstreamReg, upstream + offset);
             if constexpr (SCAN_UPSTREAM) {
                 Add(upstreamAcc, upstreamAcc, upstreamReg, mask);
