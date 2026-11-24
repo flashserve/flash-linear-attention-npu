@@ -276,6 +276,8 @@ static __simd_vf__ inline void KdaGatePostSafeScannedA5(
     constexpr uint16_t kCols = 2U * kRegCols;
     using namespace AscendC::MicroAPI;
     MaskReg mask = CreateMask<float, MaskPattern::ALL>();
+    RegTensor<float> one0;
+    RegTensor<float> one1;
     RegTensor<float> db0;
     RegTensor<float> db1;
     RegTensor<float> dASum0;
@@ -284,6 +286,8 @@ static __simd_vf__ inline void KdaGatePostSafeScannedA5(
     RegTensor<float> carry1;
     RegTensor<float> bias0;
     RegTensor<float> bias1;
+    Duplicate(one0, 1.0f, mask);
+    Duplicate(one1, 1.0f, mask);
     Duplicate(dASum0, 0.0f, mask);
     Duplicate(dASum1, 0.0f, mask);
     DataCopy(db0, dbAcc);
@@ -313,8 +317,10 @@ static __simd_vf__ inline void KdaGatePostSafeScannedA5(
         RegTensor<float> raw1;
         RegTensor<float> denominator0;
         RegTensor<float> denominator1;
-        RegTensor<float> expNegAbs0;
-        RegTensor<float> expNegAbs1;
+        RegTensor<float> sigmoid0;
+        RegTensor<float> sigmoid1;
+        RegTensor<float> oneMinus0;
+        RegTensor<float> oneMinus1;
         RegTensor<float> upstream0;
         RegTensor<float> upstream1;
         RegTensor<float> gradient0;
@@ -327,21 +333,20 @@ static __simd_vf__ inline void KdaGatePostSafeScannedA5(
             Add(raw0, raw0, bias0, mask);
             Add(raw1, raw1, bias1, mask);
         }
-        // Stable sigmoid derivative for both register halves.
-        Muls(expNegAbs0, raw0, expA, mask);
-        Muls(expNegAbs1, raw1, expA, mask);
-        Abs(expNegAbs0, expNegAbs0, mask);
-        Abs(expNegAbs1, expNegAbs1, mask);
-        Muls(expNegAbs0, expNegAbs0, -1.0f, mask);
-        Muls(expNegAbs1, expNegAbs1, -1.0f, mask);
-        Exp(expNegAbs0, expNegAbs0, mask);
-        Exp(expNegAbs1, expNegAbs1, mask);
-        Adds(denominator0, expNegAbs0, 1.0f, mask);
-        Adds(denominator1, expNegAbs1, 1.0f, mask);
-        Mul(denominator0, denominator0, denominator0, mask);
-        Mul(denominator1, denominator1, denominator1, mask);
-        Div(gradient0, expNegAbs0, denominator0, mask);
-        Div(gradient1, expNegAbs1, denominator1, mask);
+        Muls(denominator0, raw0, -expA, mask);
+        Muls(denominator1, raw1, -expA, mask);
+        Exp(denominator0, denominator0, mask);
+        Exp(denominator1, denominator1, mask);
+        Adds(denominator0, denominator0, 1.0f, mask);
+        Adds(denominator1, denominator1, 1.0f, mask);
+        Div(sigmoid0, one0, denominator0, mask);
+        Div(sigmoid1, one1, denominator1, mask);
+        Muls(oneMinus0, sigmoid0, -1.0f, mask);
+        Muls(oneMinus1, sigmoid1, -1.0f, mask);
+        Adds(oneMinus0, oneMinus0, 1.0f, mask);
+        Adds(oneMinus1, oneMinus1, 1.0f, mask);
+        Mul(gradient0, oneMinus0, sigmoid0, mask);
+        Mul(gradient1, oneMinus1, sigmoid1, mask);
         DataCopy(upstream0, upstream + offset);
         DataCopy(upstream1, upstream + offset + kRegCols);
         if constexpr (UNSCALE_UPSTREAM) {

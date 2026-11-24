@@ -38,6 +38,8 @@ __simd_vf__ inline void FinalizeStage11VF(
     RegTensor<float> e;
     LoadIn<float, true>(e, aLog);
     Exp(e, e, mask);
+    RegTensor<float> chainScale;
+    Muls(chainScale, e, lowerBound, mask);
     RegTensor<float> sum0, sum1, da0, da1, db0, db1, bias0, bias1;
     Duplicate(sum0, 0.0f, mask);
     Duplicate(sum1, 0.0f, mask);
@@ -71,10 +73,8 @@ __simd_vf__ inline void FinalizeStage11VF(
         Div(s0, s0, tmp0, mask);
         Mul(tmp1, tmp1, tmp1, mask);
         Div(s1, s1, tmp1, mask);
-        Muls(g0, sum0, lowerBound, mask);
-        Muls(g1, sum1, lowerBound, mask);
-        Mul(g0, g0, e, mask);
-        Mul(g1, g1, e, mask);
+        Mul(g0, sum0, chainScale, mask);
+        Mul(g1, sum1, chainScale, mask);
         Mul(g0, g0, s0, mask);
         Mul(g1, g1, s1, mask);
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(dg + offset, g0, g1, mask);
