@@ -77,6 +77,10 @@ CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADD
     sx.SetGlobalBuffer(reinterpret_cast<__gm__ S8 *>(scales));
     sw.SetGlobalBuffer(reinterpret_cast<__gm__ S8 *>(weightScales));
     y.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(projected));
+    if (rows <= tileRows) {
+        w.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        sw.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+    }
     auto a = tla::MakeTensor(x, layoutA, Catlass::Arch::PositionGM{});
     auto b = tla::MakeTensor(w, layoutB, Catlass::Arch::PositionGM{});
     auto sa = tla::MakeTensor(sx, layoutSA, Catlass::Arch::PositionGM{});

@@ -81,7 +81,7 @@ __simd_vf__ inline void convolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf_
     StoreAlign(out + 64, result[1], m);
 }
 // A complete short sequence has no outgoing hidden-state dependency.
-__simd_vf__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf__ Bf *weights, __ubuf__ float *out,
+__simd_callee__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf__ Bf *weights, __ubuf__ float *out,
                                       uint16_t count, bool normalize, float scale)
 {
     auto m = CreateMask<float, MaskPattern::ALL>();
@@ -136,6 +136,13 @@ __simd_vf__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __
         StoreAlign(out + t * 384, result[0], m);
         StoreAlign(out + t * 384 + 64, result[1], m);
     }
+}
+__simd_vf__ inline void shortConvolveAll(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf__ Bf *weights,
+                                         __ubuf__ float *out, uint16_t valid, float scale)
+{
+    shortConvolve(raw, history, weights, out, valid, true, scale);
+    shortConvolve(raw + 2048, history + 128, weights + 512, out + 128, valid, true, 1.f);
+    shortConvolve(raw + 4096, history + 256, weights + 1024, out + 256, valid, false, 1.f);
 }
 __simd_vf__ inline void step(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf__ Bf *dr, __ubuf__ Bf *beta,
                              __ubuf__ float *bias, float aLog, float lower, __ubuf__ float *u, __ubuf__ float *d,
@@ -195,27 +202,29 @@ __simd_vf__ inline void step(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf_
 // Expand a short, complete recurrence from its read-only checkpoint. The
 // coefficient products never divide by decay, including when it underflows.
 __simd_vf__ inline void shortDecay(__ubuf__ Bf *raw, __ubuf__ Bf *betaRaw, __ubuf__ float *bias, float aLog,
-                                   float lower, __ubuf__ float *dec, __ubuf__ float *beta)
+                                   float lower, __ubuf__ float *dec, __ubuf__ float *beta, uint16_t valid)
 {
     auto m = CreateMask<float, MaskPattern::ALL>();
     F alpha, v, betaF;
     Duplicate(alpha, aLog, m);
     Exp(alpha, alpha, m);
-    RegTensor<Bf> bits;
-    LoadAlign<Bf, LoadDist::DIST_BRC_B16>(bits, betaRaw);
-    Cast<float, Bf, widen>(v, bits, m);
-    logistic(betaF, v, m);
-    StoreAlign(beta, betaF, m);
-    for (uint16_t i = 0; i < 2; ++i) {
-        F x, b;
-        readBf(x, raw + i * 64, m);
-        LoadAlign(b, bias + i * 64);
-        Add(x, x, b, m);
-        Mul(x, x, alpha, m);
-        logistic(b, x, m);
-        Muls(b, b, lower, m);
-        Exp(x, b, m);
-        StoreAlign(dec + 64 * i, x, m);
+    for (uint16_t j = 0; j < valid; ++j) {
+        RegTensor<Bf> bits;
+        LoadAlign<Bf, LoadDist::DIST_BRC_B16>(bits, betaRaw + j * 16);
+        Cast<float, Bf, widen>(v, bits, m);
+        logistic(betaF, v, m);
+        StoreAlign(beta + j * 64, betaF, m);
+        for (uint16_t i = 0; i < 2; ++i) {
+            F x, b;
+            readBf(x, raw + j * 128 + i * 64, m);
+            LoadAlign(b, bias + i * 64);
+            Add(x, x, b, m);
+            Mul(x, x, alpha, m);
+            logistic(b, x, m);
+            Muls(b, b, lower, m);
+            Exp(x, b, m);
+            StoreAlign(dec + j * 128 + 64 * i, x, m);
+        }
     }
 }
 __simd_vf__ inline void transposeState(__ubuf__ float *dst, __ubuf__ float *src)
@@ -543,25 +552,21 @@ public:
                                          AscendC::DataCopyExtParams{6, 256, 0, (width - 128) * 2, 0});
                 }
             }
-            AscendC::PipeBarrier<PIPE_ALL>();
             if (shortSequence) {
+                // History is ready; its writeback and the vector calculation only read it.
+                vec::shortConvolveAll((__ubuf__ Bf *)slot.GetPhyAddr(), (__ubuf__ Bf *)hist.GetPhyAddr(),
+                                      (__ubuf__ Bf *)weights.GetPhyAddr(), (__ubuf__ float *)chunk.GetPhyAddr(),
+                                      valid, a.scale);
                 for (uint32_t i = 0; i < 3; ++i) {
-                    vec::shortConvolve(
-                        (__ubuf__ Bf *)slot[i * 2048].GetPhyAddr(), (__ubuf__ Bf *)hist[i * 128].GetPhyAddr(),
-                        (__ubuf__ Bf *)weights[i * 512].GetPhyAddr(), (__ubuf__ float *)chunk[i * 128].GetPhyAddr(),
-                        valid, i < 2, i == 0 ? a.scale : 1.f);
                     AscendC::DataCopyPad(
                         gm<Bf>(a.conv, convBase + uint64_t(2) * 3 * width + i * width + head * 128), slot[i * 2048],
                         AscendC::DataCopyExtParams{static_cast<uint16_t>(valid), 256, 0, (3 * width - 128) * 2, 0});
                 }
-                for (uint32_t j = 0; j < valid; ++j) {
-                    vec::shortDecay((__ubuf__ Bf *)slot[3 * 2048 + j * 128].GetPhyAddr(),
-                                    (__ubuf__ Bf *)slot[5 * 2048 + j * 16].GetPhyAddr(),
-                                    (__ubuf__ float *)bias.GetPhyAddr(), aLog, a.lower,
-                                    (__ubuf__ float *)chunkDec[j * 128].GetPhyAddr(),
-                                    (__ubuf__ float *)chunkBeta[j * 64].GetPhyAddr());
-                }
-                AscendC::PipeBarrier<PIPE_ALL>();
+                vec::shortDecay((__ubuf__ Bf *)slot[3 * 2048].GetPhyAddr(),
+                                (__ubuf__ Bf *)slot[5 * 2048].GetPhyAddr(),
+                                (__ubuf__ float *)bias.GetPhyAddr(), aLog, a.lower,
+                                (__ubuf__ float *)chunkDec.GetPhyAddr(), (__ubuf__ float *)chunkBeta.GetPhyAddr(), valid);
+                AscendC::PipeBarrier<PIPE_V>();
                 vec::shortPrepare((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)chunkDec.GetPhyAddr(),
                                   (__ubuf__ float *)weighted.GetPhyAddr(), (__ubuf__ float *)coeff.GetPhyAddr(), valid);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -591,6 +596,7 @@ public:
                 AscendC::PipeBarrier<PIPE_ALL>();
                 return;
             }
+            AscendC::PipeBarrier<PIPE_ALL>();
             for (uint32_t i = 0; i < 3; ++i) {
                 auto raw = slot[i * 2048 + r * 128];
                 vec::convolve((__ubuf__ Bf *)raw.GetPhyAddr(), (__ubuf__ Bf *)hist[i * 128].GetPhyAddr(),
@@ -604,7 +610,7 @@ public:
                 vec::shortDecay((__ubuf__ Bf *)slot[3 * 2048 + r * 128].GetPhyAddr(),
                                 (__ubuf__ Bf *)slot[5 * 2048 + r * 16].GetPhyAddr(),
                                 (__ubuf__ float *)bias.GetPhyAddr(), aLog, a.lower, (__ubuf__ float *)dec.GetPhyAddr(),
-                                (__ubuf__ float *)state.GetPhyAddr());
+                                (__ubuf__ float *)state.GetPhyAddr(), 1);
                 AscendC::PipeBarrier<PIPE_V>();
                 vec::stepColumnMajor((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)qkv.GetPhyAddr(),
                                      (__ubuf__ float *)dec.GetPhyAddr(), (__ubuf__ float *)state.GetPhyAddr(),

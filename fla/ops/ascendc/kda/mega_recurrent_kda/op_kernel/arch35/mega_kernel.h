@@ -304,7 +304,7 @@ private:
                             AscendC::DataCopyPadExtParams<Bf>{});
                     }
                 }
-                AscendC::PipeBarrier<PIPE_ALL>();
+                // consume waits for its own loads before it reads the projected inputs.
                 rec.consume<AllowColumnMajor>(resource_, p.recurrence, gated, nullptr, p.heads, head, row, row - first,
                                               m, LocalTile(0, Plane::Q),
                                               (row == start && row + m == end) ? b : UINT32_MAX);
@@ -754,6 +754,11 @@ private:
         a.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(input) + uint64_t(xRow) * k);
         w.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(weight) + uint64_t(wCol) * k);
         c.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(out) + uint64_t(outRow) * stride);
+        if constexpr (Stream && MxQkv) {
+            if (m <= TileM) {
+                w.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+            }
+        }
         auto x = tla::MakeTensor(a, tla::MakeLayout<Bf, Row>(m, k), Catlass::Arch::PositionGM{});
         auto wt = tla::MakeTensor(w, tla::MakeLayout<Bf, Col>(k, n), Catlass::Arch::PositionGM{});
         auto base = tla::MakeTensor(c, tla::MakeLayout<Bf, Row>(m, stride), Catlass::Arch::PositionGM{});
