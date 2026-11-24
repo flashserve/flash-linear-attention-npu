@@ -34,9 +34,7 @@ python -m pip install --force-reinstall --no-deps /path/to/base.whl
 
 每次安装都从上次成功的组合（`active`）开始。首次安装从基础 wheel（`base`）开始。如果本次失败，后续安装仍从同一个起点继续，失败的包需要修正后重新安装。
 
-![增量安装流程。安装 .run 包或 wheel 包，校验成功更新 active，失败保留原组合。](assets/wheel-overlay-install-after.png)
-
-[查看修改前的安装流程（PNG）](assets/wheel-overlay-install-before.png)
+![增量安装流程。安装 .run 包或 wheel 包，校验成功更新 active，失败保留原组合。](assets/wheel-overlay-install.svg)
 
 ## 3. 安装、查询和移除
 
