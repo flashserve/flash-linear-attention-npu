@@ -638,8 +638,8 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
-    // final_state:直写调用方输出的拍平视图(少一次回拷);空序列契约 final=initial
-    // 由整体预填兜住(kernel 只写非空序列;无 initial 时空序列由 kernel 清零)。
+    // final_state:直写调用方输出的拍平视图(少一次回拷);仅在存在空序列时
+    // 预填 final=initial(kernel 只写非空序列;无 initial 时空序列由 kernel 清零)。
     const aclTensor *finalStateTmp = nullptr;
     if (params.finalStateOut != nullptr) {
         finalStateTmp = l0op::Reshape(params.finalStateOut,
@@ -648,9 +648,17 @@ aclnnStatus RunChunkKdaFwd32FusedVarlen(ChunkKdaFwdParams &params, aclOpExecutor
             OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: finalStateTmp != nullptr failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
-        if (initialStateHead != nullptr) {
+        bool hasEmptySequence = false;
+        for (int64_t seq = 0; seq < nSeq; ++seq) {
+            if ((*params.cuSeqlensOptional)[seq] == (*params.cuSeqlensOptional)[seq + 1]) {
+                hasEmptySequence = true;
+                break;
+            }
+        }
+        if (initialStateHead != nullptr && hasEmptySequence) {
+            // 只有空序列需要 final=initial 预填;非空序列由 kernel 写回终态。
             // 核内 istate 直通实测不稳定(见 kernel WriteEmptyFinalState 注释);
-            // ViewCopy 的 dst 不能是 workspace 张量,故预填直接落在调用方输出上
+            // ViewCopy 的 dst 不能是 workspace 张量,故预填直接落在调用方输出上。
             auto pre = l0op::ViewCopy(params.initialStateOptional, params.finalStateOut, executor);
             if (!(pre != nullptr)) {
                 OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: pre != nullptr failed", __func__);
