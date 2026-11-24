@@ -672,15 +672,15 @@ private:
             ArchTag, FinalizeLocalType, ALayout, FinalizeLocalType, LayoutRM, float, LayoutRM>;
         const uint32_t slot = NextSlot();
         auto l0a = resource.l0ABuf.template GetBufferByByte<FinalizeLocalType>(slot * L0_BYTES);
-        auto l0b = resource.l0BBuf.template GetBufferByByte<FinalizeLocalType>(slot * L0_BYTES);
         auto l0c = resource.l0CBuf.template GetBufferByByte<float>(slot * L0C_BYTES);
         // Causal tiles only consume columns up to this band for A, or
         // rows starting at this band for A transpose. Round K for L0Copy.
         const uint32_t kBegin = TRANSPOSE_A ? rowBegin : 0U;
         const uint32_t kEnd = TRANSPOSE_A ? validRows : FinalizeMin(validRows, rowBegin + KDA_FINALIZE_INTRA_ROWS);
         const uint32_t reduction = (kEnd - kBegin + 7U) / 8U * 8U;
-        const bool packRight = CONCAT_RIGHT && reduction <= 32U;
-        const uint32_t tileK = packRight ? 2U * reduction : reduction;
+        const uint32_t tileK = CONCAT_RIGHT ? 2U * reduction : reduction;
+        const bool wideB = tileK * KDA_FINALIZE_DIM * sizeof(FinalizeLocalType) > L0_BYTES;
+        auto l0b = resource.l0BBuf.template GetBufferByByte<FinalizeLocalType>(wideB ? 0U : slot * L0_BYTES);
         constexpr uint32_t outputRows = STACK_LEFT ? 2U * KDA_FINALIZE_INTRA_ROWS : KDA_FINALIZE_INTRA_ROWS;
         auto ta = tla::MakeTensor(l0a,
             tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL0A>(outputRows, tileK), Catlass::Arch::PositionL0A{});
@@ -689,36 +689,41 @@ private:
         auto tc = tla::MakeTensor(l0c, tla::MakeLayoutL0C(outputRows, 128), Catlass::Arch::PositionL0C{});
         auto tileC = tla::GetTile(tc, tla::MakeCoord(0, 0), tla::MakeShape(outputRows, 128));
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(slot);
-        // Accumulate each right-hand product in FP32 within one 32-KiB L0B slot.
-        for (uint32_t term = 0; term < (CONCAT_RIGHT && !packRight ? 2U : 1U); ++term) {
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
-            for (uint32_t part = 0; part < (STACK_LEFT || packRight ? 2U : 1U); ++part) {
-                const bool second = term != 0 || part != 0;
-                auto sourceA = second ? aSecond : a;
-                auto sourceB = CONCAT_RIGHT && second ? bSecond : b;
-                const uint32_t dstK = packRight ? part * reduction : 0U;
-                auto sa = tla::MakeTensor(sourceA,
-                    tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1A>(64, 64), Catlass::Arch::PositionL1{});
-                auto sb = tla::MakeTensor(sourceB,
-                    tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1B>(64, 128), Catlass::Arch::PositionL1{});
-                auto tileA = tla::GetTile(sa, tla::MakeCoord(rowBegin, kBegin), tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, reduction));
-                auto tileB = tla::GetTile(sb, tla::MakeCoord(kBegin, 0), tla::MakeShape(reduction, 128));
-                auto dstA = tla::GetTile(ta,
-                    tla::MakeCoord(STACK_LEFT ? part * KDA_FINALIZE_INTRA_ROWS : 0U, dstK),
-                    tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, reduction));
-                auto dstB = tla::GetTile(tb, tla::MakeCoord(dstK, 0), tla::MakeShape(reduction, 128));
-                typename Copy::CopyL1ToL0A{}(dstA, tileA);
-                if (!STACK_LEFT || part == 0) {
-                    typename Copy::CopyL1ToL0B{}(dstB, tileB);
-                }
+        // A full transposed band uses both L0B slots. Hold both B credits
+        // until its concatenated FP32 product has consumed the operands.
+        if (wideB) {
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * (slot ^ 1U) + 1);
+        }
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
+        for (uint32_t part = 0; part < (STACK_LEFT || CONCAT_RIGHT ? 2U : 1U); ++part) {
+            const bool second = part != 0;
+            auto sourceA = second ? aSecond : a;
+            auto sourceB = CONCAT_RIGHT && second ? bSecond : b;
+            const uint32_t dstK = CONCAT_RIGHT ? part * reduction : 0U;
+            auto sa = tla::MakeTensor(sourceA,
+                tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1A>(64, 64), Catlass::Arch::PositionL1{});
+            auto sb = tla::MakeTensor(sourceB,
+                tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1B>(64, 128), Catlass::Arch::PositionL1{});
+            auto tileA = tla::GetTile(sa, tla::MakeCoord(rowBegin, kBegin), tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, reduction));
+            auto tileB = tla::GetTile(sb, tla::MakeCoord(kBegin, 0), tla::MakeShape(reduction, 128));
+            auto dstA = tla::GetTile(ta,
+                tla::MakeCoord(STACK_LEFT ? part * KDA_FINALIZE_INTRA_ROWS : 0U, dstK),
+                tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, reduction));
+            auto dstB = tla::GetTile(tb, tla::MakeCoord(dstK, 0), tla::MakeShape(reduction, 128));
+            typename Copy::CopyL1ToL0A{}(dstA, tileA);
+            if (!STACK_LEFT || part == 0) {
+                typename Copy::CopyL1ToL0B{}(dstB, tileB);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
-            Catlass::Gemm::Tile::TileMmadTla<ArchTag, FinalizeLocalType, typename Copy::LayoutTagL1A>{}(
-                tileC, ta, tb, term == 0, 0);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
+        Catlass::Gemm::Tile::TileMmadTla<ArchTag, FinalizeLocalType, typename Copy::LayoutTagL1A>{}(
+            tileC, ta, tb, true, 0);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
+        if (wideB) {
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * (slot ^ 1U) + 1);
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(slot);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(slot);

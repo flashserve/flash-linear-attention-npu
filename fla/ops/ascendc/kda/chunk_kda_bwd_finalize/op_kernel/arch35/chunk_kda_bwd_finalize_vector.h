@@ -13,6 +13,9 @@ namespace KDA {
 
 using namespace AscendC::MicroAPI;
 
+// A power-of-two shift keeps rebased products normal during Cube accumulation
+// at saturated gates. Undo it only after restoring the per-band factor.
+constexpr float KDA_FINALIZE_LOCAL_SCALE = 65536.0f;
 constexpr float KDA_FINALIZE_LN2 = 0.6931471805599453f;
 constexpr CastTrait KDA_FINALIZE_FP32_TO_BF16_RNE = {
     RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::MERGING,
@@ -577,7 +580,7 @@ __simd_vf__ inline void FinalizeStage5VF(
         if (rowBegin == 0) {
             RegTensor<float> raw0;
             LoadAlign(raw0, dAkkRaw + matrixOffset);
-            Muls(raw0, raw0, -1.0f, fpMask);
+            Muls(raw0, raw0, -KDA_FINALIZE_LOCAL_SCALE, fpMask);
             uint32_t lowerCount = row;
             MaskReg lower = UpdateMask<float>(lowerCount);
             Select(raw0, raw0, zero, lower);
@@ -588,6 +591,7 @@ __simd_vf__ inline void FinalizeStage5VF(
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(diagonal + row, diag, one);
             LoadAlign(value, dAqk + matrixOffset);
             Select(value, value, zero, lower);
+            Muls(value, value, KDA_FINALIZE_LOCAL_SCALE, fpMask);
             Scatter(dAqkOut + row * 8, value, nzIndex, fpMask);
         }
 
@@ -684,6 +688,8 @@ __simd_vf__ inline void FinalizeStage7VF(
         StoreAlign<float, StoreDist::DIST_INTLV_B32>(bandExp + offset, exp0, exp1, fpMask);
         Mul(raw0, raw0, exp0, fpMask);
         Mul(raw1, raw1, exp1, fpMask);
+        Muls(raw0, raw0, 1.0f / KDA_FINALIZE_LOCAL_SCALE, fpMask);
+        Muls(raw1, raw1, 1.0f / KDA_FINALIZE_LOCAL_SCALE, fpMask);
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             dq0, dq1, dqBase + offset);
         Add(dq0, dq0, raw0, fpMask);
@@ -767,8 +773,12 @@ __simd_vf__ inline void FinalizeStage9VF(
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(e0, e1, bandExp + offset);
         Mul(l0, l0, e0, mask);
         Mul(l1, l1, e1, mask);
+        Muls(l0, l0, 1.0f / KDA_FINALIZE_LOCAL_SCALE, mask);
+        Muls(l1, l1, 1.0f / KDA_FINALIZE_LOCAL_SCALE, mask);
         Div(r0, r0, e0, mask);
         Div(r1, r1, e1, mask);
+        Muls(r0, r0, 1.0f / KDA_FINALIZE_LOCAL_SCALE, mask);
+        Muls(r1, r1, 1.0f / KDA_FINALIZE_LOCAL_SCALE, mask);
         LoadIn<bfloat16_t, false>(kb, k + offset);
         CastHalf2Float<bfloat16_t>(k0, k1, kb, bfMask);
         if constexpr (AscendC::IsSameType<BetaT, float>::value) {
@@ -1458,6 +1468,21 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
     }
 
+    // Each FP32 NZ plane contains 64 consecutive 32-byte row blocks.
+    template <uint16_t PLANES>
+    __aicore__ inline void CopyLocalRows(AscendC::LocalTensor<float> dst,
+        AscendC::LocalTensor<float> src, uint16_t begin, uint16_t end)
+    {
+        const uint16_t rows = end - begin;
+        if (rows == KDA_FINALIZE_CHUNK) {
+            AscendC::DataCopy(dst, src, PLANES * KDA_FINALIZE_CHUNK * 8);
+        } else {
+            const uint16_t skip = KDA_FINALIZE_CHUNK - rows;
+            AscendC::DataCopyParams copy{PLANES, rows, skip, skip};
+            AscendC::DataCopy(dst[begin * 8U], src[begin * 8U], copy);
+        }
+    }
+
     __aicore__ inline void RunStage5(
         const FinalizeChunkInfo &chunk, int64_t head, uint32_t owner,
         uint32_t slot, uint32_t rowBegin)
@@ -1533,20 +1558,15 @@ private:
 
         auto local = L1Bf16(
             KDA_FINALIZE_LOCAL_BASE + owner * KDA_FINALIZE_LOCAL_BYTES).ReinterpretCast<FinalizeLocalType>();
+        const uint16_t paddedRows = (chunk.validRows + 7U) / 8U * 8U;
         if (rowBegin == 0) {
-            AscendC::DataCopy(
-                local[KDA_FINALIZE_LOCAL_DAQK / sizeof(FinalizeLocalType)], dAqkNd,
-                KDA_FINALIZE_MATRIX_ELEMS);
-            AscendC::DataCopy(
-                local[KDA_FINALIZE_LOCAL_DAKK / sizeof(FinalizeLocalType)], dAkkNd,
-                KDA_FINALIZE_MATRIX_ELEMS);
+            CopyLocalRows<8>(local[KDA_FINALIZE_LOCAL_DAQK / sizeof(float)], dAqkNd, 0, paddedRows);
+            CopyLocalRows<8>(local[KDA_FINALIZE_LOCAL_DAKK / sizeof(float)], dAkkNd, 0, paddedRows);
         }
-        AscendC::DataCopy(local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(FinalizeLocalType)],
-                          kNegNd, KDA_FINALIZE_VECTOR_ELEMS);
-        AscendC::DataCopy(local[KDA_FINALIZE_LOCAL_Q_POS / sizeof(FinalizeLocalType)],
-                          qPosNd, KDA_FINALIZE_VECTOR_ELEMS);
-        AscendC::DataCopy(local[KDA_FINALIZE_LOCAL_BK_POS / sizeof(FinalizeLocalType)],
-                          bkPosNd, KDA_FINALIZE_VECTOR_ELEMS);
+        const uint16_t paddedEnd = (rowEnd + 7U) / 8U * 8U;
+        CopyLocalRows<16>(local[KDA_FINALIZE_LOCAL_K_NEG / sizeof(float)], kNegNd, 0, paddedEnd);
+        CopyLocalRows<16>(local[KDA_FINALIZE_LOCAL_Q_POS / sizeof(float)], qPosNd, rowBegin, paddedRows);
+        CopyLocalRows<16>(local[KDA_FINALIZE_LOCAL_BK_POS / sizeof(float)], bkPosNd, rowBegin, paddedRows);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(stage3Mte3ToV_);
         AscendC::CrossCoreSetFlag<KDA_FINALIZE_CROSS_MODE, PIPE_MTE3>(
