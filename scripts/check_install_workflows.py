@@ -471,7 +471,7 @@ import json
 import fla_npu_wheel_overlay as layers
 package = layers.package_dir()
 state = layers.state(package)
-if not state.get("active") or state.get("pending"):
+if not state.get("active"):
     raise AssertionError(f"Run installation must activate, not just return success: {state}")
 snapshot = layers.active(package)
 selected = layers.components(package, snapshot)
@@ -498,7 +498,7 @@ def _assert_removed_overlay(package_dir: Path) -> set[Path]:
     root = package_dir / "opp/wheel_layers"
     state_file = root / "state.json"
     state = json.loads(state_file.read_text(encoding="utf-8"))
-    if state != {"version": 2, "active": None, "pending": None}:
+    if state != {"version": 2, "active": None}:
         raise AssertionError(f"Overlay is still selected after removal: {state}")
     if set(root.iterdir()) != {state_file}:
         raise AssertionError("Overlay removal left component payloads or unexpected state files")

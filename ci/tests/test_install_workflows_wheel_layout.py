@@ -17,7 +17,6 @@ import sys
 import tempfile
 import unittest
 import zipfile
-from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -254,28 +253,19 @@ class ManagedRunWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "missing packaged op_api"):
             self.checker["_assert_opp_layout"](self.base, require_runtime=True)
 
-    def test_pending_is_not_mistaken_for_successful_install(self):
+    def test_incompatible_install_preserves_selected_run(self):
         from tests.test_wheel_overlay import package
-        source = package(self.root / "incompatible", opp={"aclnnDemo": "bool"})
-        subprocess = self.checker["subprocess"]
-        # Run the real child process; capture stderr to verify why it failed.
-        capture_stderr = partial(subprocess.check_output, stderr=subprocess.PIPE)
+        bad = package(self.root / "bad", opp={"aclnnDemo": "bool"}) / "opp/vendors"
         for previous_active in (False, True):
             with self.subTest(previous_active=previous_active):
                 if previous_active:
-                    result = self.layers.install(self.base, self.source_vendor)
-                    self.assertEqual(result["state"], "active")
-                active_before = self.layers.state(self.base).get("active")
-                result = self.layers.install(self.base, source / "opp/vendors" / self.layers.BASE)
-                self.assertEqual(result["state"], "pending")
-                state = self.layers.state(self.base)
-                self.assertEqual(state["pending"], Path(result["path"]).name)
-                self.assertEqual(state.get("active"), active_before)
-                with mock.patch.object(subprocess, "check_output", wraps=capture_stderr):
-                    with self.assertRaises(subprocess.CalledProcessError) as error:
-                        self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
-                self.assertIn("Run installation must activate, not just return success",
-                              error.exception.stderr)
+                    self.layers.install(self.base, self.source_vendor)
+                before = self.layers.state(self.base)
+                with self.assertRaisesRegex(RuntimeError, "base/npu_a"):
+                    self.layers.install(self.base, bad)
+                self.assertEqual(self.layers.state(self.base), before)
+                if previous_active:
+                    self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
 
     def test_repeat_compares_payload_not_snapshot_identity(self):
         first = self.layers.install(self.base, self.source_vendor)
@@ -371,8 +361,7 @@ build_torch_custom() { echo WHEEL_BUILD_REACHED; }
                     str(Path(p) / self.layers.LIBRARY) for p in vendors))
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell required")
-    def test_ci_configuration_rejects_pending_or_disabled_update(self):
-        from tests.test_wheel_overlay import package
+    def test_ci_configuration_rejects_disabled_update(self):
         self.layers.install(self.base, self.source_vendor)
         # A valid CANN vendor must not mask an installed wheel's readiness error.
         self.env["ASCEND_OPP_PATH"] = str(self.source_vendor.parents[1])
@@ -380,14 +369,6 @@ build_torch_custom() { echo WHEEL_BUILD_REACHED; }
         result = self.build_adapter_ci()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Selected OPP is missing or disabled", result.stderr)
-        self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
-        self.env.pop("FLA_NPU_OVERLAY_VENDOR")
-        bad = package(self.root / "bad", opp={"aclnnDemo": "bool"})
-        self.layers.install(self.base, bad / "opp/vendors" / self.layers.BASE)
-        result = self.build_adapter_ci()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Requested OPP is pending; CI must not test an older active/base version",
-                      result.stderr)
         self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
 
 

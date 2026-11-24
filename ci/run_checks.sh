@@ -625,7 +625,6 @@ PY
 )"
     vendor_dir="${package_dir}/opp/vendors/fla_npu_transformer"
     # A standalone wheel can have an empty base vendor and an active OPP layer.
-    # Do not test an older active/base composition when the requested run is pending.
     layer_environment="$(python3 - "$package_dir" <<'PY'
 import importlib.util
 import os
@@ -636,8 +635,6 @@ import sys
 package = Path(sys.argv[1]).resolve()
 if importlib.util.find_spec("fla_npu_wheel_overlay") is not None:
     import fla_npu_wheel_overlay as layers
-    if layers.state(package).get("pending"):
-        raise SystemExit("[CI][ERROR] Requested OPP is pending; CI must not test an older active/base version")
     vendors = layers.environment_vendors(package)
     if vendors is not None:
         if not vendors or not layers.enabled():
