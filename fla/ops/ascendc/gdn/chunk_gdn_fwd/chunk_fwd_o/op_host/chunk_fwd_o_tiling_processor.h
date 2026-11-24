@@ -124,6 +124,7 @@ struct ChunkFwdOTilingContext {
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
     bool isA6 = false;
+    bool isA2 = false;
 };
 
 class ChunkFwdOTilingProcessor {
@@ -389,9 +390,10 @@ public:
     ge::graphStatus LayoutCheck()
     {
         const char *layout = ctx_.outputLayout == nullptr ? "BNSD" : ctx_.outputLayout;
+        const bool fusedA2Bsnd = ctx_.isA2 && std::strcmp(layout, GDN::kFusedA2BsndOutput) == 0;
         if (std::strcmp(layout, "BNSD") == 0) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_BNSD;
-        } else if (std::strcmp(layout, "BSND") == 0) {
+        } else if (std::strcmp(layout, "BSND") == 0 || fusedA2Bsnd) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_BSND;
         } else if (std::strcmp(layout, "TND") == 0) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_TND;
@@ -404,9 +406,9 @@ public:
             return ge::GRAPH_FAILED;
         }
 
-        const bool useOptimizedLayout = tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
-                                        tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND;
-        if (useOptimizedLayout && !(ctx_.isA5 || ctx_.isA6)) {
+        const bool tokenFirst = GetOutputTokenFirst() != 0;
+        const bool useOptimizedLayout = tokenFirst && (ctx_.isA5 || ctx_.isA6);
+        if (tokenFirst && !useOptimizedLayout && !fusedA2Bsnd) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                 ctx_.nodeName, "output_layout", "BSND/TND", "BSND/TND output requires A5/A6");
             return ge::GRAPH_FAILED;
@@ -532,8 +534,7 @@ public:
         if (LayoutCheck() != ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
-        if (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
-            tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND) {
+        if (GetOutputTokenFirst() != 0 && (ctx_.isA5 || ctx_.isA6)) {
             if (ctx_.isA5) {
                 if (A5ShapeCheck() != ge::GRAPH_SUCCESS || A5ChunkTiling() != ge::GRAPH_SUCCESS ||
                     WorkspaceTilingA5() != ge::GRAPH_SUCCESS) {

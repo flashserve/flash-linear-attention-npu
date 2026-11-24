@@ -115,6 +115,7 @@ public:
     ~BlockEpilogue()
     {}
 
+    template <bool AllowStride = true>
     CATLASS_DEVICE
     void CopyOutputToGm(
         AscendC::GlobalTensor<HElementOutput> output,
@@ -123,17 +124,19 @@ public:
         uint32_t cols,
         uint32_t outputStride)
     {
-        if (cols == outputStride) {
-            AscendC::DataCopy(output, outputUb, rows * cols);
-            return;
+        if constexpr (AllowStride) {
+            if (cols != outputStride) {
+                AscendC::DataCopyExtParams outputParams{
+                    static_cast<uint16_t>(rows),
+                    static_cast<uint32_t>(cols * sizeof(HElementOutput)),
+                    0,
+                    static_cast<uint32_t>((outputStride - cols) * sizeof(HElementOutput)),
+                    0};
+                AscendC::DataCopyPad(output, outputUb, outputParams);
+                return;
+            }
         }
-        AscendC::DataCopyExtParams outputParams{
-            static_cast<uint16_t>(rows),
-            static_cast<uint32_t>(cols * sizeof(HElementOutput)),
-            0,
-            static_cast<uint32_t>((outputStride - cols) * sizeof(HElementOutput)),
-            0};
-        AscendC::DataCopyPad(output, outputUb, outputParams);
+        AscendC::DataCopy(output, outputUb, rows * cols);
     }
 
     CATLASS_DEVICE
@@ -269,6 +272,7 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
     }
 
+    template <bool OutputTokenFirst = false>
     CATLASS_DEVICE
     void operator()(
         AscendC::GlobalTensor<HElementOutput> hOutput,
@@ -279,7 +283,7 @@ public:
         uint32_t chunkSize,
         uint32_t kHeadDim,
         uint32_t vBlockDim,
-        uint32_t vHeadDim,
+        uint32_t outputStride,
         uint32_t &pingpongFlag
         , uint32_t batchIdx, uint32_t headIdx, uint32_t chunkIdx
         )
@@ -287,9 +291,10 @@ public:
         uint32_t mActual = chunkSize;
         uint32_t nActual = vBlockDim;
         if (nActual > 128) {
-            ProcessWideOutput(hOutput, gInput, attnInput, hInput, scale, mActual, nActual, vHeadDim, pingpongFlag);
+            ProcessWideOutput(hOutput, gInput, attnInput, hInput, scale, mActual, nActual, outputStride, pingpongFlag);
             return;
         }
+        const uint32_t narrowOutputStride = OutputTokenFirst ? outputStride : nActual;
         uint32_t alignedM = CeilDiv(nActual, 8) * 8;
         uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
         uint32_t subBlockNum = AscendC::GetSubBlockNum();
@@ -329,7 +334,8 @@ public:
             AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
             AscendC::GlobalTensor<HElementInput> hInputThisSubBlock = hInput[gbrcStart * nActual];
             AscendC::GlobalTensor<GElementInput> gInputThisSubBlock = gInput;
-            AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[gbrcStart * nActual];
+            AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[OutputTokenFirst ? static_cast<int64_t>(gbrcStart) * outputStride
+                                                              : gbrcStart * nActual];
 
             AscendC::DataCopyParams gfloatUbParams{1, (uint16_t)(mActual*sizeof(float)), 0, 0};
             AscendC::DataCopyParams ghalfUbParams{1, (uint16_t)(mActual*sizeof(half)), 0, 0};
@@ -395,7 +401,8 @@ public:
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                AscendC::DataCopy(hOutputThisSubBlock, outUbFPTensor, mActualThisSubBlock * nActual);
+                CopyOutputToGm<OutputTokenFirst>(hOutputThisSubBlock, outUbFPTensor,
+                    mActualThisSubBlock, nActual, narrowOutputStride);
             }
             else
             {
@@ -403,7 +410,8 @@ public:
                 AscendC::PipeBarrier<PIPE_V>();
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                AscendC::DataCopy(hOutputThisSubBlock, outUbBFTensor, mActualThisSubBlock * nActual);
+                CopyOutputToGm<OutputTokenFirst>(hOutputThisSubBlock, outUbBFTensor,
+                    mActualThisSubBlock, nActual, narrowOutputStride);
             }
             pingpongFlag = 1 - pingpongFlag;
         }
@@ -476,7 +484,8 @@ public:
                 uint32_t dstShape_[2] = {gbrcRealProcess, nActual};
                 uint32_t srcShape_[2] = {gbrcRealProcess, 1};
 
-                AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[gbrcStart * nActual];
+                AscendC::GlobalTensor<HElementOutput> hOutputThisSubBlock = hOutput[OutputTokenFirst ? static_cast<int64_t>(gbrcStart) * outputStride
+                                                              : gbrcStart * nActual];
                 AscendC::GlobalTensor<AElementInput> attnInputThisSubBlock = attnInput[gbrcStart * nActual];
                 AscendC::GlobalTensor<HElementInput> hInputThisSubBlock = hInput[gbrcStart * nActual];
 
@@ -516,7 +525,8 @@ public:
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                    AscendC::DataCopy(hOutputThisSubBlock, outUbFPTensor, mActualThisStage * nActual);
+                    CopyOutputToGm<OutputTokenFirst>(hOutputThisSubBlock, outUbFPTensor,
+                    mActualThisStage, nActual, narrowOutputStride);
                 }
                 else
                 {
@@ -524,7 +534,8 @@ public:
                     AscendC::PipeBarrier<PIPE_V>();
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
-                    AscendC::DataCopy(hOutputThisSubBlock, outUbBFTensor, mActualThisStage * nActual);
+                    CopyOutputToGm<OutputTokenFirst>(hOutputThisSubBlock, outUbBFTensor,
+                    mActualThisStage, nActual, narrowOutputStride);
                 }
                 pingpongFlag = 1 - pingpongFlag;
             }
