@@ -30,6 +30,29 @@ python -m pip install --force-reinstall --no-deps /path/to/base.whl
 **普通 `pip install 新wheel` 更新整个 base。** 要把 wheel 作为增量安装，使用下文的
 `python -m fla_npu_opp_manage --overlay --source ...`。增量 wheel 必须携带 OPP。
 
+### 2.1 增量安装流程
+
+每次安装都从上次成功的组合（`active`）开始。首次安装从基础 wheel（`base`）开始。如果本次失败，后续安装仍从同一个起点继续，失败的包需要修正后重新安装。
+
+```mermaid
+flowchart TD
+    A["收到增量包"] --> B{"基础 wheel 自带 OPP 吗？"}
+    B -->|否| X["报出 base 缺少的库路径"]
+    B -->|是| C{"安装哪种包？"}
+    C -->|"纯 .run"| R["沿用当前适配层<br/>加入本包 OPP"]
+    C -->|"带 OPP 的 wheel"| W["替换清单声明的适配层入口<br/>加入本包 OPP"]
+    C -->|"不带 OPP 的 wheel"| Y["提示增量 wheel 必须自带 OPP"]
+
+    R --> D["叠加到上次成功的组合 active<br/>首次安装从 base 开始"]
+    W --> D
+    D --> E{"包校验通过，且受影响的调用都兼容吗？"}
+    E -->|是| S["一次性提交新的 active，返回 0<br/>重启业务进程后使用新组合"]
+    E -->|否| F["报告校验失败原因<br/>签名冲突时指出符号和参数位置"]
+    X --> H["返回非零，保留原组合<br/>下次安装从原组合继续"]
+    Y --> H
+    F --> H
+```
+
 ## 3. 安装、查询和移除
 
 以下各场景均从一个含算子 A、B 的完整 base 开始。A0、B0 表示 base 版本；
