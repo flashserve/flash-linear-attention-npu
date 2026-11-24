@@ -104,7 +104,9 @@ def test_int8_qkv(lengths, heads, layout, dtype, explicit):
         args["hidden_states"] = host["hidden_states"].to(dev)
         projected = model_qkv(args["hidden_states"], packed, args["qkv_projection_weight_scale"])
         initial = {key: args[key].clone() for key in MUTABLE}
+        versions = [args[key]._version for key in MUTABLE]
         got = npu_mega_recurrent_kda(**args)
+        assert [args[key]._version for key in MUTABLE] == [version + 1 for version in versions]
         if heads == 1:
             repeat_args = dict(args, **{key: initial[key].clone() for key in MUTABLE})
             repeat = npu_mega_recurrent_kda(**repeat_args)

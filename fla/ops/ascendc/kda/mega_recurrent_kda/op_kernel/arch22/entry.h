@@ -89,7 +89,6 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
             AscendC::DataCacheCleanAndInvalid<int32_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(flag);
         }
     }
-    AscendC::SyncAll<false>();
 }
 
 CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params, GM_ADDR sequencePlan,
@@ -101,15 +100,24 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
         params.pSplit = 0;
         params.pBlocks = CeilDiv(params.tiles, kBlockTiles);
     }
+    // One projection block fits in the existing INT8 synchronization phases.
+    // Its independent BF16 projections do not consume the tile counters.
+    const bool overlapAuxiliary = params.weightScale && params.pBlocks == 1;
     InitializeTileSchedule(plan, params, sequencePlan);
+    if (!overlapAuxiliary) {
+        AscendC::SyncAll<false>();
+    }
     if (params.weightScale) {
-        ProjectInt8Qkv(params);
+        if (overlapAuxiliary) {
+            params.skipSync |= 1u; // The last INT8 barrier also publishes all BF16 projections to R.
+        }
         params.nProj -= params.nQkv;
         params.nQkv = 0;
+        ProjectInt8Qkv(params, overlapAuxiliary);
     }
     if ASCEND_IS_AIC {
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> resource;
-        if ((params.stageMask & kStageP) != 0u) {
+        if ((params.stageMask & kStageP) != 0u && !overlapAuxiliary) {
             for (uint32_t block = 0; block < params.pBlocks; ++block) {
                 RunStageP(resource, params, block);
             }

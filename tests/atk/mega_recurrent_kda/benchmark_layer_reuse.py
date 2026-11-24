@@ -58,7 +58,7 @@ def make_layers(name, count, device, int8=False):
     return args, layers
 
 
-def run(case, mode, count, repeats, warmup):
+def run(case, mode, count, repeats, warmup, graph=False):
     device = torch.device("npu", torch.npu.current_device())
     args, layers = make_layers(case, count, device, int8=mode == "int8")
     active = len(CASES[case][0])
@@ -67,6 +67,25 @@ def run(case, mode, count, repeats, warmup):
         from fla_npu.ops.ascendc import npu_mega_recurrent_kda_metadata as build_plan
     else:
         build_plan = None
+
+    def forward():
+        plan = build_plan(args["cu_seqlens"], tokens) if build_plan else None
+        for layer in layers:
+            if mode in ("device", "int8"):
+                npu_mega_recurrent_kda(**layer, metadata=plan, use_device_metadata=True)
+            else:
+                npu_mega_recurrent_kda(**layer)
+
+    submit = forward
+    if graph:
+        for _ in range(3):
+            forward()
+        torch.npu.synchronize()
+        captured = torch.npu.NPUGraph()
+        with torch.npu.graph(captured):
+            forward()
+        submit = captured.replay
+
     wall, stream = [], []
     for iteration in range(warmup + repeats):
         for layer in layers:
@@ -76,12 +95,7 @@ def run(case, mode, count, repeats, warmup):
         start, end = (torch.npu.Event(enable_timing=True) for _ in range(2))
         begin = perf_counter_ns()
         start.record()
-        plan = build_plan(args["cu_seqlens"], tokens) if build_plan else None
-        for layer in layers:
-            if mode in ("device", "int8"):
-                npu_mega_recurrent_kda(**layer, metadata=plan, use_device_metadata=True)
-            else:
-                npu_mega_recurrent_kda(**layer)
+        submit()
         end.record()
         end.synchronize()
         elapsed = (perf_counter_ns() - begin) / 1e6
@@ -89,7 +103,7 @@ def run(case, mode, count, repeats, warmup):
             wall.append(elapsed)
             stream.append(start.elapsed_time(end))
     print(json.dumps(dict(case=case, mode=mode, layers=count, metadata_calls=int(build_plan is not None),
-                          wall_ms=median(wall), stream_ms=median(stream),
+                          graph=graph, wall_ms=median(wall), stream_ms=median(stream),
                           wall_samples_ms=wall, stream_samples_ms=stream)), flush=True)
 
 
@@ -97,11 +111,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=CASES, required=True)
     parser.add_argument("--mode", choices=("legacy", "device", "int8"), required=True)
+    parser.add_argument("--graph", action="store_true", help="Replay metadata and KDA layers in a fixed-shape NPU graph")
     parser.add_argument("--layers", type=int, default=69)
     parser.add_argument("--repeats", type=int, default=9)
     parser.add_argument("--warmup", type=int, default=3)
     opts = parser.parse_args()
+    if opts.graph and opts.mode == "legacy":
+        parser.error("--graph requires device metadata (--mode device or int8)")
     if min(opts.layers, opts.repeats) < 1 or opts.warmup < 0:
         parser.error("layers and repeats must be positive, warmup must be nonnegative")
     with torch.inference_mode():
-        run(opts.case, opts.mode, opts.layers, opts.repeats, opts.warmup)
+        run(opts.case, opts.mode, opts.layers, opts.repeats, opts.warmup, opts.graph)

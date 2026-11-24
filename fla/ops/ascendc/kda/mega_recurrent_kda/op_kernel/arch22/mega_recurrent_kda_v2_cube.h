@@ -119,7 +119,8 @@ CATLASS_DEVICE void RunGemm(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &res
 
 /// GEMM with the block-mmad object kept alive across the whole core's work of a
 /// row block (no L1/L0 reconfiguration between projections).
-CATLASS_DEVICE void RunGemmReuse(typename KdaGemm::BlockMmad &blockMmad, GM_ADDR ptrA, uint32_t rows, int64_t ldA,
+template <typename Gemm>
+CATLASS_DEVICE void RunGemmReuse(Gemm &blockMmad, GM_ADDR ptrA, uint32_t rows, int64_t ldA,
                                  GM_ADDR ptrB, uint32_t cols, int64_t ldB, GM_ADDR ptrC, int64_t ldC, uint32_t k)
 {
     AscendC::GlobalTensor<bfloat16_t> gmA;
@@ -223,12 +224,19 @@ constexpr uint32_t kStageAll = kStageP | kStageR | kStageO;
 // ---------------------------------------------------------------------------
 // Stage P
 // ---------------------------------------------------------------------------
+enum class ProjectionPhase { All, Independent, DecayB };
+
+template <ProjectionPhase phase = ProjectionPhase::All>
 CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource, V2Params const &p,
                               uint32_t blockIndex)
 {
     const uint32_t core = static_cast<uint32_t>(AscendC::GetBlockIdx());
     const uint32_t coreNum = static_cast<uint32_t>(AscendC::GetBlockNum());
-    const uint32_t active = coreNum < p.nProj ? coreNum : p.nProj;
+    const uint32_t regularPanels = p.nQkv + p.nGate + p.nBeta;
+    const uint32_t first = phase == ProjectionPhase::DecayB ? regularPanels : 0;
+    const uint32_t end = phase == ProjectionPhase::Independent ? regularPanels : p.nProj;
+    const uint32_t jobs = end - first + (phase == ProjectionPhase::Independent ? 1u : 0u);
+    const uint32_t active = coreNum < jobs ? coreNum : jobs;
 
     KdaTiling t{};
     t.tiles = p.tiles;
@@ -253,17 +261,18 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     const uint32_t threeP = 3u * p.p;
     GM_ADDR aPtr = p.hiddenStates + static_cast<size_t>(range.rowBegin) * p.hidden * 2u;
 
-    const uint32_t regularPanels = p.nQkv + p.nGate + p.nBeta;
     // The gated buffer belongs to this row block until R consumes its P credits.
     GM_ADDR decayA = p.wGated + static_cast<size_t>(localRow0) * p.p * 2u;
     const uint32_t decayReadyOffset = CounterByteOffset(2u, blockIndex, p.tiles);
-    if (core == regularPanels % active) {
+    if (phase != ProjectionPhase::DecayB && core == regularPanels % active) {
         RunGemmReuse(blockMmad, aPtr, rows, p.hidden, p.decayAWeight, kHeadDim, p.hidden, decayA, kHeadDim, p.hidden);
         AscendC::PipeBarrier<PIPE_ALL>();
-        Sync::AicAdd(constBase, p.syncConst, p.counts, decayReadyOffset, 1u);
+        if constexpr (phase == ProjectionPhase::All) {
+            Sync::AicAdd(constBase, p.syncConst, p.counts, decayReadyOffset, 1u);
+        }
     }
     bool decayReady = false;
-    for (uint32_t block = core; block < p.nProj; block += active) {
+    for (uint32_t block = first + core; block < end; block += active) {
         ++credits;
         if (block < p.nQkv) {
             const uint32_t col = block * kNW;
@@ -285,7 +294,7 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
                          width, p.hidden, p.wBetaRaw + (static_cast<size_t>(localRow0) * p.n + col) * 2u, p.n,
                          p.hidden);
         } else {
-            if (!decayReady) {
+            if (phase == ProjectionPhase::All && !decayReady) {
                 Sync::WaitEq(p.counts, decayReadyOffset, 1);
                 decayReady = true;
             }
@@ -296,6 +305,9 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     }
 
     AscendC::PipeBarrier<PIPE_ALL>();
+    if constexpr (phase != ProjectionPhase::All) {
+        return;
+    }
     for (uint32_t tile = range.tileBegin; tile < range.tileEnd; ++tile) {
         Sync::AicAdd(constBase, p.syncConst, p.counts, CounterByteOffset(0u, tile, p.tiles), credits);
     }
@@ -304,6 +316,19 @@ CATLASS_DEVICE void RunStageP(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
 // ---------------------------------------------------------------------------
 // Stage O
 // ---------------------------------------------------------------------------
+template <typename Gemm, uint32_t panel>
+CATLASS_DEVICE void RunOutputPanels(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
+                                   const V2Params &p, GM_ADDR gated, GM_ADDR out, uint32_t rows,
+                                   uint32_t core, uint32_t coreNum)
+{
+    Gemm multiply(resource);
+    for (uint32_t col = core * panel; col < p.hidden; col += panel * coreNum) {
+        const uint32_t width = p.hidden - col < panel ? p.hidden - col : panel;
+        RunGemmReuse(multiply, gated, rows, p.p, p.wOut + uint64_t(col) * p.p * 2, width, p.p,
+                     out + col * 2, p.hidden, p.p);
+    }
+}
+
 CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource, V2Params const &p,
                               uint32_t blockIndex)
 {
@@ -334,12 +359,14 @@ CATLASS_DEVICE void RunStageO(Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &r
     GM_ADDR gatedPtr = p.wGated + static_cast<size_t>(slotBase) * kTileRows * p.p * 2u;
     GM_ADDR outPtr = p.out + static_cast<size_t>(range.rowBegin) * p.hidden * 2u;
 
-    typename KdaGemm::BlockMmad blockMmad(resource);
-    for (uint32_t task = core; task < p.nOut; task += coreNum) {
-        const uint32_t col = task * kNW;
-        const uint32_t width = (col + kNW <= p.hidden) ? kNW : (p.hidden - col);
-        RunGemmReuse(blockMmad, gatedPtr, rows, p.p, p.wOut + static_cast<size_t>(col) * p.p * 2u, width, p.p,
-                     outPtr + static_cast<size_t>(col) * 2u, p.hidden, p.p);
+    if (p.weightScale) {
+        constexpr uint32_t panel = 256;
+        using Gemm = Catlass::Gemm::Block::BlockMmadTla<typename KdaGemm::DispatchPolicy,
+            tla::Shape<tla::_128, tla::Int<panel>, tla::_256>, tla::Shape<tla::_128, tla::Int<panel>, tla::_64>,
+            bfloat16_t, bfloat16_t, bfloat16_t, void, typename KdaGemm::TileCopy>;
+        RunOutputPanels<Gemm, panel>(resource, p, gatedPtr, outPtr, rows, core, coreNum);
+    } else {
+        RunOutputPanels<KdaGemm::BlockMmad, kNW>(resource, p, gatedPtr, outPtr, rows, core, coreNum);
     }
     AscendC::PipeBarrier<PIPE_ALL>();
 }

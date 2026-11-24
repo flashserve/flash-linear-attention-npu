@@ -40,7 +40,7 @@ Host 按 token 块数分配投影、门控及同步区。T02 每个序列和 hea
 
 ### Atlas A2 INT8 QKV
 
-Vector 按 token 量化 BF16 输入。Cube 按行块和输出列分工，直接读取 INT8 NZ 权重，写 INT32 累加值。Vector 将结果按通道和 token 反量化到现有 BF16 QKV 缓冲区，再由原有 Stage R 执行卷积。激活编码、token scale 和分批复用的累加值暂存在最终输出写入前的 `out` 中。每一批累加值读完后才能覆盖，所有投影完成后才能写最终输出。相对同形状的 A2 BF16 路径，额外用户 workspace 为 0 B。
+Vector 按 token 量化 BF16 输入。Cube 按行块和输出列分工，直接读取 INT8 NZ 权重，写 INT32 累加值。Vector 将结果按通道和 token 反量化到现有 BF16 QKV 缓冲区，再由原有 Stage R 执行卷积。激活编码和 token scale 暂存在最终输出写入前的 `out` 中。当前批次的 QKV 缓冲区尾部和片上 UB 都足以处理全部输出列时，一轮完成 INT32 累加与反量化。否则在 `out` 剩余空间按列分批，读完一批再覆盖。只有一个投影块时，Cube 在 Vector 量化期间计算 gate、beta 和 decay-A，在最后一批反量化期间计算 decay-B。最后一次同步同时交付 QKV 和辅助投影。相对同形状的 A2 BF16 路径，额外用户 workspace 为 0 B。
 
 ## 跨层复用序列调度
 

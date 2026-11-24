@@ -73,15 +73,13 @@ constexpr uint32_t kUbBeta = kUbBetaB + kChunk * kD * 2u;        // [CH*128] fp3
 constexpr uint32_t kUbOnes = kUbBeta + kChunk * kD * 4u;         // 1536 fp32
 constexpr uint32_t kUbGamma = kUbOnes + kChunk * 384u * 4u;      // 128 fp32
 constexpr uint32_t kUbBias = kUbGamma + kD * 4u;                 // 128 fp32
-constexpr uint32_t kUbBiasRep = kUbBias + kD * 4u;               // [CH][128] fp32
-constexpr uint32_t kUbTmp = kUbBiasRep + kChunk * kD * 4u;       // [CH][384] fp32
+constexpr uint32_t kUbTmp = kUbBias + kD * 4u;       // [CH][384] fp32
 constexpr uint32_t kUbVecs = kUbTmp + kChunk * 384u * 4u;        // small vectors/staging
 constexpr uint32_t kUbOnesD = kUbVecs + 512u;                    // 128 fp32 ones
 constexpr uint32_t kUbCorrBuf = kUbOnesD + kD * 4u;              // [CH][128] fp32
 constexpr uint32_t kUbKHalfBuf = kUbCorrBuf + kChunk * kD * 4u;  // [CH][128] fp16
 constexpr uint32_t kUbGatedBuf = kUbKHalfBuf + kChunk * kD * 2u; // [CH][128] bf16
-constexpr uint32_t kUbGammaRep = kUbGatedBuf + kChunk * kD * 2u; // [CH][128] fp32
-constexpr uint32_t kUbSVec = kUbGammaRep + kChunk * kD * 4u;     // 128 fp32
+constexpr uint32_t kUbSVec = kUbGatedBuf + kChunk * kD * 2u;     // 128 fp32
 constexpr uint32_t kUbRVec = kUbSVec + kD * 4u;                  // 128 fp32
 constexpr uint32_t kUbRedTmp = kUbRVec + kD * 4u;
 constexpr uint32_t kUbStg = kUbRedTmp + 2048u;          // 8 int32 publish staging
@@ -143,20 +141,19 @@ __aicore__ inline void LoadConvWeights(AscendC::LocalTensor<bfloat16_t> const &c
     AscendC::GlobalTensor<bfloat16_t> gmW;
     gmW.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(convWeight));
     const uint32_t dBlocks = kD * 2u / 32u; // 8
-    const uint16_t srcGap = static_cast<uint16_t>((p - kD) * 2u / 32u);
-    for (uint32_t tap = 0; tap < 4u; ++tap) {
-        for (uint32_t g = 0; g < 3u; ++g) {
-            const size_t src = layout == 0 ? static_cast<size_t>(tap) * 3 * p + g * p + head * kD :
-                                             ((layout == 1 ? g * (p / kD) + head : g) * 4 + tap) * kD;
-            AscendC::DataCopyParams params;
-            params.blockCount = 1;
-            params.blockLen = static_cast<uint16_t>(dBlocks);
-            params.srcStride = 0;
-            params.dstStride = 0;
-            AscendC::DataCopy(convW[(tap * 3u + g) * kD], gmW[src], params);
+    if (layout == 0) {
+        // [tap, Q/K/V, head, D]: consecutive head slices are P elements apart.
+        const uint16_t gap = static_cast<uint16_t>((p - kD) / 16u);
+        AscendC::DataCopyParams copy{12, static_cast<uint16_t>(dBlocks), gap, 0};
+        AscendC::DataCopy(convW, gmW[head * kD], copy);
+    } else {
+        // Per-head and shared weights both store the four taps contiguously.
+        AscendC::DataCopyParams copy{4, static_cast<uint16_t>(dBlocks), 0, static_cast<uint16_t>(2 * dBlocks)};
+        for (uint32_t g = 0; g < 3; ++g) {
+            const size_t group = layout == 1 ? g * (p / kD) + head : g;
+            AscendC::DataCopy(convW[g * kD], gmW[group * 4 * kD], copy);
         }
     }
-    (void)srcGap;
 }
 
 } // namespace RDetail
@@ -179,8 +176,6 @@ CATLASS_DEVICE void PrepareHeadConstants(const V2Params &p, const AscendC::Local
     AscendC::LocalTensor<bfloat16_t> convW = ub[kUbConvW].ReinterpretCast<bfloat16_t>();
     AscendC::LocalTensor<float> gammaV = ub[kUbGamma].ReinterpretCast<float>();
     AscendC::LocalTensor<float> biasV = ub[kUbBias].ReinterpretCast<float>();
-    AscendC::LocalTensor<float> biasRep = ub[kUbBiasRep].ReinterpretCast<float>();
-    AscendC::LocalTensor<float> gammaRep = ub[kUbGammaRep].ReinterpretCast<float>();
     AscendC::LocalTensor<float> convWf = ub[kUbRepW].ReinterpretCast<float>();
     AscendC::LocalTensor<float> tmp = ub[kUbTmp].ReinterpretCast<float>();
     AscendC::LocalTensor<float> ones = ub[kUbOnes].ReinterpretCast<float>();
@@ -221,33 +216,10 @@ CATLASS_DEVICE void PrepareHeadConstants(const V2Params &p, const AscendC::Local
     AscendC::Duplicate(ones, 1.0f, static_cast<int32_t>(kChunk * 384u));
     AscendC::Duplicate(oneDInit, 1.0f, static_cast<int32_t>(kD));
     AscendC::PipeBarrier<PIPE_ALL>();
-    // biasRep = [CH][D] broadcast of dt_bias[head], built by doubling copies
-    if ((p.skipSync & 4096u) == 0u) {
-        AscendC::DataCopy(biasRep, biasV, static_cast<int32_t>(kD));
-        AscendC::PipeBarrier<PIPE_ALL>();
-        {
-            uint32_t have = kD;
-            while (have < kChunk * kD) {
-                AscendC::DataCopy(biasRep[have], biasRep, static_cast<int32_t>(have));
-                AscendC::PipeBarrier<PIPE_ALL>();
-                have *= 2u;
-            }
-        }
-        AscendC::DataCopy(gammaRep, gammaV, static_cast<int32_t>(kD));
-        AscendC::PipeBarrier<PIPE_ALL>();
-        {
-            uint32_t have = kD;
-            while (have < kChunk * kD) {
-                AscendC::DataCopy(gammaRep[have], gammaRep, static_cast<int32_t>(have));
-                AscendC::PipeBarrier<PIPE_ALL>();
-                have *= 2u;
-            }
-        }
-    } else {
-        AscendC::Duplicate(biasRep, 0.0f, static_cast<int32_t>(kChunk * kD));
-        AscendC::Duplicate(gammaRep, 1.0f, static_cast<int32_t>(kChunk * kD));
+    if ((p.skipSync & 4096u) != 0u) {
+        AscendC::Duplicate(biasV, 0.0f, static_cast<int32_t>(D));
+        AscendC::Duplicate(gammaV, 1.0f, static_cast<int32_t>(D));
     }
-
     cached.head = head;
     cached.alpha = alpha;
 }
@@ -298,11 +270,9 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
     AscendC::LocalTensor<bfloat16_t> betaB = ub[kUbBetaB].ReinterpretCast<bfloat16_t>();
     AscendC::LocalTensor<float> betaV = ub[kUbBeta].ReinterpretCast<float>();
     AscendC::LocalTensor<float> ones = ub[kUbOnes].ReinterpretCast<float>();
-    AscendC::LocalTensor<float> biasRep = ub[kUbBiasRep].ReinterpretCast<float>();
     AscendC::LocalTensor<float> corrBuf = ub[kUbCorrBuf].ReinterpretCast<float>();
     AscendC::LocalTensor<half> kHalfBuf = ub[kUbKHalfBuf].ReinterpretCast<half>();
     AscendC::LocalTensor<bfloat16_t> gatedBuf = ub[kUbGatedBuf].ReinterpretCast<bfloat16_t>();
-    AscendC::LocalTensor<float> gammaRep = ub[kUbGammaRep].ReinterpretCast<float>();
     AscendC::LocalTensor<float> sVecBig = ub[kUbSVec].ReinterpretCast<float>();
     AscendC::LocalTensor<float> rVecBig = ub[kUbRVec].ReinterpretCast<float>();
     AscendC::LocalTensor<float> tmp = ub[kUbTmp].ReinterpretCast<float>();
@@ -362,33 +332,18 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
     // ---- sliding raw history: 3 rows before the sequence --------------------------
     {
         const uint16_t dBlocks = static_cast<uint16_t>(D * 2u / 32u);
-        const uint16_t srcGap = static_cast<uint16_t>((threeP - D) * 2u / 32u);
-        const uint16_t dstGap = static_cast<uint16_t>((384u - D) * 2u / 32u);
-        for (uint32_t g = 0; g < 3u; ++g) {
-            const size_t src =
-                slot * p.convStride + static_cast<size_t>(hs) * threeP + g * P + static_cast<size_t>(head) * D;
-            AscendC::DataCopyParams params;
-            params.blockCount = 3;
-            params.blockLen = dBlocks;
-            params.srcStride = srcGap;
-            params.dstStride = dstGap;
-            AscendC::DataCopy(rawB[g * D], gmCs[src], params);
-        }
+        const uint16_t gap = static_cast<uint16_t>((P - D) / 16u);
+        const size_t headBase = slot * p.convStride + static_cast<size_t>(head) * D;
+        AscendC::DataCopyParams load{9, dBlocks, gap, 0};
+        AscendC::DataCopy(rawB, gmCs[headBase + static_cast<size_t>(hs) * threeP], load);
         AscendC::PipeBarrier<PIPE_ALL>();
         AscendC::Cast(cache, rawB, AscendC::RoundMode::CAST_NONE, static_cast<int32_t>(3u * 384u));
         AscendC::PipeBarrier<PIPE_ALL>();
         // conv_state[slot, 0:2] = history[1:3]
         AscendC::Cast(rawB, cache[384], AscendC::RoundMode::CAST_RINT, static_cast<int32_t>(2u * 384u));
         AscendC::PipeBarrier<PIPE_ALL>();
-        for (uint32_t g = 0; g < 3u; ++g) {
-            const size_t dst = slot * p.convStride + g * P + static_cast<size_t>(head) * D;
-            AscendC::DataCopyParams params;
-            params.blockCount = 2;
-            params.blockLen = dBlocks;
-            params.srcStride = dstGap;
-            params.dstStride = srcGap;
-            AscendC::DataCopy(gmCs[dst], rawB[g * D], params);
-        }
+        AscendC::DataCopyParams store{6, dBlocks, 0, gap};
+        AscendC::DataCopy(gmCs[headBase], rawB, store);
     }
 
     // ---- chunk loop -------------------------------------------------------
@@ -431,8 +386,6 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         // GM, so it never blocks the vector work).
         const uint32_t dBlocks16 = static_cast<uint16_t>(D * 2u / 32u);
         const uint16_t srcGapP = static_cast<uint16_t>((P - D) * 2u / 32u);
-        const uint16_t srcGap3P = static_cast<uint16_t>((threeP - D) * 2u / 32u);
-        const uint16_t dstGap384 = static_cast<uint16_t>((384u - D) * 2u / 32u);
         const size_t rowSrcBase = (static_cast<size_t>(rowSlot) * kTileRows + ringRow);
         if (betaBatch) {
             const uint32_t betaWords = cl * N;
@@ -447,15 +400,8 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         }
         const bool loadRaw = (p.skipSync & 8192u) == 0u;
         if (loadRaw) {
-            for (uint32_t g = 0; g < 3u; ++g) {
-                const size_t src = rowSrcBase * threeP + g * P + static_cast<size_t>(head) * D;
-                AscendC::DataCopyParams params;
-                params.blockCount = static_cast<uint16_t>(cl);
-                params.blockLen = dBlocks16;
-                params.srcStride = srcGap3P;
-                params.dstStride = dstGap384;
-                AscendC::DataCopy(rawB[g * D], gmQkv[src], params);
-            }
+            AscendC::DataCopyParams copy{static_cast<uint16_t>(3u * cl), static_cast<uint16_t>(dBlocks16), srcGapP, 0};
+            AscendC::DataCopy(rawB, gmQkv[rowSrcBase * threeP + static_cast<size_t>(head) * D], copy);
         }
         {
             const size_t src = rowSrcBase * P + static_cast<size_t>(head) * D;
@@ -472,16 +418,9 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         if (loadRaw) {
             // write this call's raw rows back into conv_state[slot, 2+t]
             const uint32_t csRow = 2u + t0;
-            for (uint32_t g = 0; g < 3u; ++g) {
-                const size_t dst =
-                    slot * p.convStride + static_cast<size_t>(csRow) * threeP + g * P + static_cast<size_t>(head) * D;
-                AscendC::DataCopyParams params;
-                params.blockCount = static_cast<uint16_t>(cl);
-                params.blockLen = dBlocks16;
-                params.srcStride = dstGap384;
-                params.dstStride = srcGap3P;
-                AscendC::DataCopy(gmCs[dst], rawB[g * D], params);
-            }
+            const size_t dst = slot * p.convStride + static_cast<size_t>(csRow) * threeP + static_cast<size_t>(head) * D;
+            AscendC::DataCopyParams copy{static_cast<uint16_t>(3u * cl), static_cast<uint16_t>(dBlocks16), 0, srcGapP};
+            AscendC::DataCopy(gmCs[dst], rawB, copy);
         }
 
         // ---- sliding window: cache rows + this chunk's raw rows -----------
@@ -581,7 +520,10 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         {
             AscendC::Cast(decV, drB, AscendC::RoundMode::CAST_NONE, static_cast<int32_t>(mD));
             VBar(p);
-            AscendC::Add(decV, decV, biasRep, static_cast<int32_t>(mD));
+            const auto bias = ub[kUbBias].ReinterpretCast<float>();
+            const AscendC::BinaryRepeatParams broadcast(1, 1, 1, 16, 16, 0);
+            AscendC::Add(decV, decV, bias, 64, cl, broadcast);
+            AscendC::Add(decV[64], decV[64], bias[64], 64, cl, broadcast);
             VBar(p);
             AscendC::Muls(decV, decV, -alpha, static_cast<int32_t>(mD));
             VBar(p);
@@ -610,7 +552,10 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
             AscendC::Div(ogV, ones, ogV, static_cast<int32_t>(mD));
             VBar(p);
             // fold output_norm_weight into the gate tile (saves one token op)
-            AscendC::Mul(ogV, ogV, gammaRep, static_cast<int32_t>(mD));
+            const auto gamma = ub[kUbGamma].ReinterpretCast<float>();
+            const AscendC::BinaryRepeatParams broadcast(1, 1, 1, 16, 16, 0);
+            AscendC::Mul(ogV, ogV, gamma, 64, cl, broadcast);
+            AscendC::Mul(ogV[64], ogV[64], gamma[64], 64, cl, broadcast);
             VBar(p);
         }
 
@@ -676,7 +621,6 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
 
             VBar(p);
             AscendC::Mul(h0, h0, decRow, 64, 128, packParams);
-            VBar(p);
             AscendC::Mul(h1, h1, decRow[64], 64, 128, packParams);
             VBar(p);
             AscendC::LocalTensor<float> sVec = sVecBig;
@@ -702,7 +646,6 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
             AscendC::Brcb(tmp, corrBuf[t * D], 16, AscendC::BrcbRepeatParams(1, 8));
             VBar(p);
             AscendC::MulAddDst(h0, tmp, kRow, 64, 128, bcastParams);
-            VBar(p);
             AscendC::MulAddDst(h1, tmp, kRow[64], 64, 128, bcastParams);
             VBar(p);
             // r = H @ q, stashed per token for the batched epilogue
@@ -783,8 +726,10 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         }
 
         // ---- cache update: next chunk needs rows cl .. cl+2 ----------------
-        AscendC::DataCopy(cache, rawF[cl * 384u], static_cast<int32_t>(3u * 384u));
-        AscendC::PipeBarrier<PIPE_ALL>();
+        if (t0 + cl < n) {
+            AscendC::DataCopy(cache, rawF[cl * 384u], static_cast<int32_t>(3u * 384u));
+            AscendC::PipeBarrier<PIPE_ALL>();
+        }
         t0 += cl;
         if constexpr (StreamTiles) {
             if (t0 == n || gs + cl == tileRowEnd) {

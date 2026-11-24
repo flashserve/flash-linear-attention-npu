@@ -650,8 +650,10 @@ def npu_mega_recurrent_kda(
     """Return projected output, convolution state and the three replay tensors."""
     import torch
 
-    if any(tensor.requires_grad for tensor in (conv_state, replay_u, replay_k, replay_decay)):
-        raise ValueError("Mutable state buffers must be inference-only tensors")
+    states = (conv_state, replay_u, replay_k, replay_decay)
+    if any(t.requires_grad for t in states):
+        raise RuntimeError("npu_mega_recurrent_kda mutates state tensors in place. Mutable state tensors "
+                           "must not require gradients; use a functional state API for training.")
     transfers = []
 
     def host_metadata(tensor, allowed):
@@ -713,7 +715,7 @@ def npu_mega_recurrent_kda(
             torch.npu.current_stream(hidden_states.device).synchronize()
         symbol = "npu_mega_recurrent_kda"
         sequence_args = (cu_seqlens,)
-    return _op(symbol)(
+    result = _op(symbol)(
         hidden_states,
         qkv_projection_weight,
         decay_projection_a_weight,
@@ -735,6 +737,9 @@ def npu_mega_recurrent_kda(
         *sequence_args,
         scale, lower_bound, rms_norm_eps, _current_stream_ptr(),
     )
+    bump = _INC_VERSION or _increment_version()
+    bump(states)
+    return result
 
 
 def npu_recurrent_kda(
@@ -2449,7 +2454,7 @@ def npu_merge_fwd_bwd_kernel(
 # ---------------------------------------------------------------------------
 # Which wrappers apply the in-place contract themselves
 # ---------------------------------------------------------------------------
-# These four are the ones a decode step calls with a state argument.  Each
+# These operators update their state arguments in place.  Each
 # refuses a grad-requiring state and bumps the version counter inside its own
 # frame, which is what __init__._get_direct_op reads this marker for: adding its
 # generic mutation wrapper on top would bump the counter twice for one call, so
@@ -2458,6 +2463,7 @@ for _contract_op in (
         "npu_causal_conv1d_fn",
         "npu_causal_conv1d_update",
         "npu_recurrent_gated_delta_rule",
+        "npu_mega_recurrent_kda",
         "npu_recurrent_kda"):
     globals()[_contract_op]._fla_npu_inplace_contract = True
 del _contract_op

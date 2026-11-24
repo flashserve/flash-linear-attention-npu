@@ -16,6 +16,7 @@ using Mmad = Catlass::Gemm::Block::BlockMmadTla<Policy,
 
 // out is private until Stage O. Each token lends H bytes to INT8 activations,
 // one DMA block to its scale, and the remaining bytes to a wave of INT32 sums.
+// When the unused tail of the QKV buffer fits all sums, one wave suffices.
 constexpr uint32_t kScaleBytes = 32;
 constexpr uint32_t kWaveColumns = (kHidden - kScaleBytes) / sizeof(int32_t) / kNW * kNW;
 static_assert(kHidden * 16 <= Arch::UB_SIZE, "INT8 row scratch exceeds UB capacity");
@@ -101,9 +102,9 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
     auto accum = Global<int32_t>(sums);
     auto result = Global<bfloat16_t>(p.wQkv);
     auto i32 = ub.ReinterpretCast<int32_t>();
-    auto fp = ub[4 * kWaveColumns].ReinterpretCast<float>();
-    auto channel = ub[8 * kWaveColumns].ReinterpretCast<float>();
-    auto bf = ub[12 * kWaveColumns].ReinterpretCast<bfloat16_t>();
+    auto fp = ub[4 * width].ReinterpretCast<float>();
+    auto channel = ub[8 * width].ReinterpretCast<float>();
+    auto bf = ub[12 * width].ReinterpretCast<bfloat16_t>();
     DataCopy(bf, weightScale[colBase], width);
     PipeBarrier<PIPE_ALL>();
     Cast(channel, bf, RoundMode::CAST_NONE, width);
@@ -125,22 +126,43 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
 }
 } // namespace Int8Qkv
 
-CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p)
+CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary)
 {
     using namespace AscendC;
     GM_ADDR scales = p.out + uint64_t(p.tokens) * kHidden;
     GM_ADDR sums = scales + uint64_t(p.tokens) * Int8Qkv::kScaleBytes;
+    const uint32_t columns = 3 * p.p;
+    const uint64_t qkvRows = uint64_t(p.slotsPR) * kTileRows;
+    const uint64_t available = (qkvRows - p.tokens) * columns * sizeof(bfloat16_t);
+    const uint64_t required = uint64_t(p.tokens) * columns * sizeof(int32_t);
+    uint32_t wave = Int8Qkv::kWaveColumns;
+    if (columns > wave && columns <= Int8Qkv::Arch::UB_SIZE / 16 && required <= available) {
+        sums = p.wQkv + uint64_t(p.tokens) * columns * sizeof(bfloat16_t);
+        wave = columns;
+    }
     Catlass::Arch::Resource<Int8Qkv::Arch> resource;
     auto scratch = resource.ubBuf.GetBufferByByte<uint8_t>(0);
+    if ASCEND_IS_AIC {
+        if (overlapAuxiliary) {
+            RunStageP<ProjectionPhase::Independent>(resource, p, 0);
+        }
+    }
     if ASCEND_IS_AIV {
         Int8Qkv::QuantizeRows(p, scratch, scales);
     }
     SyncAll<false>();
-    for (uint32_t col = 0; col < 3 * p.p; col += Int8Qkv::kWaveColumns) {
+    for (uint32_t col = 0; col < 3 * p.p; col += wave) {
         uint32_t left = 3 * p.p - col;
-        uint32_t width = left < Int8Qkv::kWaveColumns ? left : Int8Qkv::kWaveColumns;
-        if ASCEND_IS_AIC { Int8Qkv::Multiply(resource, p, sums, col, width); }
+        uint32_t width = left < wave ? left : wave;
+        if ASCEND_IS_AIC {
+            Int8Qkv::Multiply(resource, p, sums, col, width);
+        }
         SyncAll<false>();
+        if ASCEND_IS_AIC {
+            if (overlapAuxiliary && width == left) {
+                RunStageP<ProjectionPhase::DecayB>(resource, p, 0);
+            }
+        }
         if ASCEND_IS_AIV { Int8Qkv::Dequantize(p, scratch, scales, sums, col, width); }
         SyncAll<false>();
     }
