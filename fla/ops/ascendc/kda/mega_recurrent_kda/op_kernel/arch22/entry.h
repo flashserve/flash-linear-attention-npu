@@ -2,6 +2,7 @@
 #include "mega_recurrent_kda_v2_cube.h"
 #include "mega_recurrent_kda_v2_t02.h"
 #include "tiling_data.h"
+#include "int8_qkv.h"
 namespace MegaRecurrentKdaV2 {
 CATLASS_DEVICE void BindTilingAndWorkspace(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params,
                                            GM_ADDR workspace)
@@ -49,33 +50,32 @@ CATLASS_DEVICE void BindTilingAndWorkspace(const MegaRecurrentKdaArch22TilingDat
     params.counts = workspace + t.offCounts;
     params.syncConst = workspace + t.offSyncAux;
     params.expect = workspace + t.offExpect;
-    params.prefix = workspace + t.workspaceBytes;
+    params.prefix64 = data.prefix64;
     params.stageMask = kStageP | kStageR | kStageO;
 }
 
 CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingData &plan, const V2Params &params,
-                                           GM_ADDR inputPrefix)
+                                           GM_ADDR sequencePlan)
 {
     const auto &t = plan.arch22;
     const auto &data = plan.common;
     if ASCEND_IS_AIV {
         if (AscendC::GetBlockIdx() == 0) {
-            auto seq = reinterpret_cast<__gm__ int32_t *>(params.prefix);
+            auto owners = reinterpret_cast<__gm__ const int32_t *>(sequencePlan);
             auto expect = reinterpret_cast<__gm__ uint32_t *>(params.expect);
             auto counters = reinterpret_cast<__gm__ int32_t *>(params.counts);
             auto constants = reinterpret_cast<__gm__ int32_t *>(params.syncConst);
-            for (uint32_t b = 0; b <= data.batch; ++b) {
-                seq[b] = data.sequence ? b * data.sequence :
-                                         static_cast<int32_t>(reinterpret_cast<__gm__ int64_t *>(inputPrefix)[b]);
-            }
             uint32_t first = 0, end = 0;
             for (uint32_t tile = 0; tile < t.tiles; ++tile) {
-                while (first < data.batch && uint32_t(seq[first + 1]) <= tile * 64) {
-                    ++first;
+                const uint32_t start = tile * kTileRows;
+                const uint32_t stop = (tile + 1) * kTileRows < t.tokens ? (tile + 1) * kTileRows : t.tokens;
+                if (data.crosses == 2) {
+                    first = owners[2 + start / 16];
+                    end = owners[2 + (stop - 1) / 16];
+                } else {
+                    while (first < data.batch && SequenceStart(params, first + 1) <= start) ++first;
                 }
-                while (end < data.batch && uint32_t(seq[end]) < (tile + 1) * 64) {
-                    ++end;
-                }
+                while (end < data.batch && SequenceStart(params, end) < stop) ++end;
                 expect[tile] = (end - first) * data.heads;
             }
             for (uint32_t i = 0; i < CounterWords(t.tiles); ++i) {
@@ -92,11 +92,21 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
     AscendC::SyncAll<false>();
 }
 
-CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params, GM_ADDR inputPrefix,
+CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params, GM_ADDR sequencePlan,
                               GM_ADDR workspace)
 {
     BindTilingAndWorkspace(plan, params, workspace);
-    InitializeTileSchedule(plan, params, inputPrefix);
+    if (plan.common.crosses == 2 && reinterpret_cast<__gm__ const int32_t *>(sequencePlan)[0]) {
+        params.templateId = kTemplateT02;
+        params.pSplit = 0;
+        params.pBlocks = CeilDiv(params.tiles, kBlockTiles);
+    }
+    InitializeTileSchedule(plan, params, sequencePlan);
+    if (params.weightScale) {
+        ProjectInt8Qkv(params);
+        params.nProj -= params.nQkv;
+        params.nQkv = 0;
+    }
     if ASCEND_IS_AIC {
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> resource;
         if ((params.stageMask & kStageP) != 0u) {

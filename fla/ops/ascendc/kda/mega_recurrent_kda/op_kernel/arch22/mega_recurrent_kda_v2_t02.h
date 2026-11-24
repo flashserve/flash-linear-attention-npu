@@ -14,13 +14,11 @@ CATLASS_DEVICE void RunStageR02(V2Params const &p, AscendC::LocalTensor<uint8_t>
 {
     const uint32_t rank = static_cast<uint32_t>(AscendC::GetBlockIdx());
     const uint32_t aivNum = static_cast<uint32_t>(AscendC::GetBlockNum()) * 2u;
-    AscendC::GlobalTensor<int32_t> prefix;
-    prefix.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(p.prefix));
     HeadConstants cached;
     for (uint32_t group = rank; group < p.batch * p.n; group += aivNum) {
         const uint32_t b = group / p.n, head = group % p.n;
-        const uint32_t first = p.sequence ? b * p.sequence : static_cast<uint32_t>(prefix.GetValue(b));
-        const uint32_t end = p.sequence ? first + p.sequence : static_cast<uint32_t>(prefix.GetValue(b + 1u));
+        const uint32_t first = SequenceStart(p, b);
+        const uint32_t end = SequenceStart(p, b + 1u);
         ProcessSequence<true>(p, ub, b, head, first, end, cached);
     }
     AscendC::PipeBarrier<PIPE_ALL>();

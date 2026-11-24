@@ -98,3 +98,16 @@ python -m pytest -q test_mxfp8.py
 A5 上 ATK 精度和三次重复运行一致性各通过 3/3。对这三个用例运行 memcheck，均命中 MXFP8 的混合核，未报告内存错误。原有 BF16 ATK 精度回归通过 9/9。pytest 的 18 项覆盖两种动态量化算法、E8M0 类型及原始字节输入、显式复用及自动生成的 TH 调度表、零 scale、BF16 次正规数和非法参数。使用 492 个状态槽时，30 条长度为 4 的序列和等总 token 数的变长序列各连续调用两步，逐次检查实际写回的 QKV、五项输出、未使用区域和 checkpoint。
 
 在相同 A5 上，以 T=120、N=12、B=30、S=4 的合成输入和预先生成的 TH metadata，对调度修改前后各采集 30 次完整融合 kernel 耗时。算法 0 的中位数从 199.05 µs 降至 183.74 µs，算法 1 从 189.42 µs 降至 170.34 µs。两种算法的计时均包含激活动态量化。用户 workspace 与本轮分核调整前相同。
+
+## Atlas A2 INT8 QKV 与设备前缀
+
+在已安装本算子和 ATK 依赖的 A2 环境运行：
+
+```bash
+python -m pytest -q tests/atk/mega_recurrent_kda/{test_int8,test_device_metadata,test_invalid_inputs}.py
+python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a2_model --mode int8 --layers 4 --warmup 5 --repeats 15
+```
+
+8 个量化精度用例从卷积状态取回本轮实际写入的 BF16 QKV，与设备上的 DynamicQuantV2 和 QuantMatmulWeightNz 组合逐位比较，再将同一 QKV 送入 CPU 标杆核对五项输出。模型形状为 B=8、N=6、S=4、D=128，使用 567 个状态槽并连续调用两步。若独立的 BF16 decay 投影触发已有舍入差异，另用相同初始状态与原 BF16 算子的整份 `replay_decay` 逐位比较。
+
+另以可精确表示的激活、权重和 scale 运行原有 810 项 B/N/S 与布局清单。五项输出均与等价 BF16 调用逐位一致，四个原地状态的地址均符合契约。模型形状的 TH 融合 kernel 包含动态量化，预热 4 轮后采集 44 次，中位数为 112.08 µs。4 层复用同一份 metadata 时，15 次无 profiler 回放的设备流耗时中位数为 0.940 ms，调用到同步完成为 1.050 ms。

@@ -34,7 +34,7 @@ out 为新分配的 BF16 张量，形状与输入相同。其余四项返回原�
 
 C++ 先调用 `aclnnMegaRecurrentKdaGetWorkspaceSize` 再调用 `aclnnMegaRecurrentKda`。ACLNN 的三个整数元数据参数使用 host 端 `aclIntArray`。Python 接口接受 CPU 或当前设备上的元数据张量，设备元数据在调用前按当前 stream 顺序取回。元数据已在 CPU 的调用方可直接复用。
 
-## Ascend 950 设备元数据接口
+## Atlas A2/A3 与 Ascend 950 设备元数据接口
 
 TH 布局可在一次 forward 的 KDA 层循环前生成序列调度表。同一设备上，各层的 token 排列和前缀值一致时可以共享该表。批次重排、前缀更新或 token 数变化后重新生成。生成和消费使用同一 stream，跨 stream 的调用方须建立事件依赖，并让调度表存活到消费结束。
 
@@ -52,7 +52,7 @@ BSH 用 `npu_mega_recurrent_kda(..., use_device_metadata=True)` 直接从 B、S 
 
 ## Ascend 950 MXFP8 QKV 投影
 
-在 `npu_mega_recurrent_kda` 中传入 `qkv_projection_weight_scale` 启用 MXFP8。输入激活保持 BF16。QKV 沿 H 每 32 个元素动态量化为 E4M3FN，使用 E8M0 激活与权重 scale 作矩阵乘，向卷积交接 BF16。decay-A、decay-B、beta 和输出 gate 分别使用接口表中的 BF16 权重。模型集成时沿用这四个输入。
+在 `npu_mega_recurrent_kda` 中传入 E4M3FN 权重和配对的 `qkv_projection_weight_scale` 启用 MXFP8。输入激活保持 BF16。QKV 沿 H 每 32 个元素动态量化为 E4M3FN，使用 E8M0 激活与权重 scale 作矩阵乘，向卷积交接 BF16。decay-A、decay-B、beta 和输出 gate 分别使用接口表中的 BF16 权重。模型集成时沿用这四个输入。
 
 | 参数 | 模型输入 |
 |---|---|
@@ -63,3 +63,11 @@ BSH 用 `npu_mega_recurrent_kda(..., use_device_metadata=True)` 直接从 B、S 
 BSH 和 TH 均使用设备上的状态索引和已接受 token 数。TH 支持上节的跨层调度表。单独调用时也可直接提供设备上的前缀，由 Python 入口生成本次调度表。C++ 入口为 `aclnnMegaRecurrentKdaMxGetWorkspaceSize` 和 `aclnnMegaRecurrentKdaMx`。该路径额外申请 `T × 3P × 2` 字节用户 workspace，用于保存 BF16 QKV。T=120、N=12 时增加 1,105,920 字节。
 
 权重加载、完整的 forward 调用和连续两步对照方法见[模型接入指南](model_integration.md)。
+
+## Atlas A2 INT8 QKV 投影
+
+向同一 Python 入口传入 INT8 `qkv_projection_weight` 和 BF16 `qkv_projection_weight_scale[3P]`。权重的列顺序为 Q、K、V。支持逻辑形状 `[7168,3P]` 的 FRACTAL_NZ 张量，也支持模型已经打包好的连续四维张量 `[3P/32,448,16,32]`。通道 scale 与列一一对应。`qkv_scale_alg` 沿用默认值 0。
+
+融合 kernel 从原始 BF16 hidden states 读取每个 token，动态量化为 INT8，使用 INT32 累加，再以 FP32 token scale 和通道 scale 反量化到 BF16，送入四抽头因果卷积。两级 decay、beta 和输出 gate 仍读取原始 BF16 输入。BSH、TH 和跨层 metadata 的用法与上节相同。C++ 使用 `aclnnMegaRecurrentKdaInt8GetWorkspaceSize` 和 `aclnnMegaRecurrentKdaInt8`。
+
+例如模型批次 `B=8,N=6,S=4,D=128` 的投影是 `[32,7168] → [32,2304]`，对应 NZ 权重 `[72,448,16,32]`，scale 为 `[2304]`。可从 `conv_state[slot,2:2+S]` 读回实际送入卷积的 BF16 QKV，与模型的 `DynamicQuantV2 + QuantMatmulWeightNz` 逐项对照。

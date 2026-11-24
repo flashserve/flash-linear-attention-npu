@@ -169,6 +169,7 @@ struct V2Params {
     // API inputs
     GM_ADDR hiddenStates;
     GM_ADDR qkvWeight;
+    GM_ADDR weightScale;
     GM_ADDR decayAWeight;
     GM_ADDR decayBWeight;
     GM_ADDR betaWeight;
@@ -182,7 +183,8 @@ struct V2Params {
     GM_ADDR replayDecay;
     GM_ADDR stateIndices;
     GM_ADDR accepted;
-    GM_ADDR prefix; // int32[B+1] (always materialised by the host)
+    GM_ADDR prefix;
+    uint32_t prefix64;
     GM_ADDR aLog;
     GM_ADDR dtBias;
     GM_ADDR gamma;
@@ -205,6 +207,13 @@ struct V2Params {
     uint32_t stageMask;
     uint32_t skipSync;
 };
+
+CATLASS_DEVICE uint32_t SequenceStart(const V2Params &p, uint32_t b)
+{
+    if (p.sequence) return b * p.sequence;
+    if (p.prefix64) return static_cast<uint32_t>(reinterpret_cast<__gm__ const int64_t *>(p.prefix)[b]);
+    return static_cast<uint32_t>(reinterpret_cast<__gm__ const int32_t *>(p.prefix)[b]);
+}
 
 constexpr uint32_t kStageP = 1u << 0;
 constexpr uint32_t kStageR = 1u << 1;

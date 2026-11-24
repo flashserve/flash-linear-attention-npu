@@ -805,8 +805,6 @@ CATLASS_DEVICE uint32_t RunStageR(V2Params const &p, AscendC::LocalTensor<uint8_
     const uint32_t aivNum = static_cast<uint32_t>(AscendC::GetBlockNum()) * 2u;
     AscendC::LocalTensor<int32_t> stg = ub[kUbStg].ReinterpretCast<int32_t>();
 
-    AscendC::GlobalTensor<int32_t> prefix;
-    prefix.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(p.prefix));
     const uint32_t total = p.batch * p.n;
     HeadConstants cached;
     uint32_t lastTile = 0xFFFFFFFFu;
@@ -815,8 +813,8 @@ CATLASS_DEVICE uint32_t RunStageR(V2Params const &p, AscendC::LocalTensor<uint8_
     // therefore enumerates (sequence, head) directly in prefix order.
     for (uint32_t u = rank; u < total; u += aivNum) {
         const uint32_t b = u / p.n, head = u % p.n;
-        const uint32_t first = p.sequence ? b * p.sequence : static_cast<uint32_t>(prefix.GetValue(b));
-        const uint32_t end = p.sequence ? first + p.sequence : static_cast<uint32_t>(prefix.GetValue(b + 1u));
+        const uint32_t first = SequenceStart(p, b);
+        const uint32_t end = SequenceStart(p, b + 1u);
         const uint32_t tile = first / kTileRows;
         if (tile != lastTile) {
             if (lastTile != 0xFFFFFFFFu) {

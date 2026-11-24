@@ -17,13 +17,14 @@ from fla_npu.ops.ascendc import npu_mega_recurrent_kda
 MUTABLE = ("conv_state", "replay_u", "replay_k", "replay_decay")
 SHARED = ("cu_seqlens", "state_indices", "conv_num_accepted_tokens")
 CASES = {
+    "a2_model": ([4] * 8, 6, "TH", 567),
     "model": ([4] * 30, 12, "TH", 501),
     "ragged": ([4] * 15 + [5, 3] + [4] * 13, 12, "TH", 501),
     "bsh": ([4] * 40, 8, "BSH", 40),
 }
 
 
-def make_layers(name, count, device):
+def make_layers(name, count, device, int8=False):
     lengths, heads, layout, slots = CASES[name]
     batch, seq = len(lengths), max(lengths)
     host, flat, _ = _make_case(batch, seq, heads, block_num=batch, seed=19)
@@ -37,6 +38,13 @@ def make_layers(name, count, device):
         host["cu_seqlens"] = None
     args = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in host.items()}
     args["a_log"] = args.pop("A_log")
+    if int8:
+        w = host["qkv_projection_weight"].T.contiguous().float()
+        sw = (w.abs().amax(dim=0) / 127).bfloat16()
+        cols = w.shape[1]
+        packed = (w / sw).round().clamp(-127, 127).to(torch.int8).reshape(448, 16, cols // 32, 32)
+        args["qkv_projection_weight"] = packed.permute(2, 0, 1, 3).contiguous().to(device)
+        args["qkv_projection_weight_scale"] = sw.to(device)
     for key in (*MUTABLE, "checkpoint_state"):
         value = args[key]
         if slots != value.shape[0]:
@@ -52,10 +60,10 @@ def make_layers(name, count, device):
 
 def run(case, mode, count, repeats, warmup):
     device = torch.device("npu", torch.npu.current_device())
-    args, layers = make_layers(case, count, device)
+    args, layers = make_layers(case, count, device, int8=mode == "int8")
     active = len(CASES[case][0])
     tokens = sum(CASES[case][0])
-    if mode == "device" and args["cu_seqlens"] is not None:
+    if mode in ("device", "int8") and args["cu_seqlens"] is not None:
         from fla_npu.ops.ascendc import npu_mega_recurrent_kda_metadata as build_plan
     else:
         build_plan = None
@@ -70,7 +78,7 @@ def run(case, mode, count, repeats, warmup):
         start.record()
         plan = build_plan(args["cu_seqlens"], tokens) if build_plan else None
         for layer in layers:
-            if mode == "device":
+            if mode in ("device", "int8"):
                 npu_mega_recurrent_kda(**layer, metadata=plan, use_device_metadata=True)
             else:
                 npu_mega_recurrent_kda(**layer)
@@ -88,7 +96,7 @@ def run(case, mode, count, repeats, warmup):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=CASES, required=True)
-    parser.add_argument("--mode", choices=("legacy", "device"), required=True)
+    parser.add_argument("--mode", choices=("legacy", "device", "int8"), required=True)
     parser.add_argument("--layers", type=int, default=69)
     parser.add_argument("--repeats", type=int, default=9)
     parser.add_argument("--warmup", type=int, default=3)

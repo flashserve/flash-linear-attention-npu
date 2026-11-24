@@ -30,7 +30,8 @@ extern "C" aclnnStatus aclnnMegaRecurrentKdaMetadataGetWorkspaceSize(const aclTe
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const auto dtype = cuSeqlens->GetDataType();
-    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950 || tokens < 1 || tokens > INT32_MAX ||
+    const auto soc = GetCurrentPlatformInfo().GetSocVersion();
+    if ((soc != SocVersion::ASCEND950 && soc != SocVersion::ASCEND910B && soc != SocVersion::ASCEND910_93) || tokens < 1 || tokens > INT32_MAX ||
         cuSeqlens->GetViewShape().GetDimNum() != 1 || cuSeqlens->Numel() < 2 || cuSeqlens->Numel() - 1 > tokens ||
         cuSeqlens->GetViewStrides()[0] != 1 || (dtype != DataType::DT_INT32 && dtype != DataType::DT_INT64) ||
         plan->GetViewShape().GetDimNum() != 1 || plan->Numel() != 2 + (tokens + 15) / 16 ||

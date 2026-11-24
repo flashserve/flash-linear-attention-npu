@@ -301,6 +301,8 @@ def mega_recurrent_kda_golden(
     cu_seqlens=None,
     qkv_projection_weight_scale=None,
     qkv_scale_alg=0,
+    *,
+    projected_qkv=None,
 ):
     """Run the complete Mega KDA forward in FP32 and update the supplied pools."""
     validate_mega_recurrent_kda_inputs(
@@ -346,7 +348,12 @@ def mega_recurrent_kda_golden(
     ]
 
     x_all = hidden_states.reshape(-1, hidden_width).detach().to(torch.float32)
-    if qkv_projection_weight_scale is None:
+    if projected_qkv is not None:
+        # A vendor projection can be injected to isolate downstream recurrence accuracy.
+        if projected_qkv.dtype != torch.bfloat16 or projected_qkv.shape != (len(x_all), 3 * projection_width):
+            raise ValueError("expected BF16 pre-convolution QKV for every token")
+        qkv_raw = projected_qkv.detach().to(device=x_all.device, dtype=torch.float32)
+    elif qkv_projection_weight_scale is None:
         qkv_raw = x_all @ qkv_projection_weight.detach().to(torch.float32).T
     else:
         qkv_raw = _mx_qkv(x_all, qkv_projection_weight, qkv_projection_weight_scale, qkv_scale_alg)

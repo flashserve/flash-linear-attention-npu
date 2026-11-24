@@ -1,4 +1,4 @@
-"""A5 device plan and in-place output regressions."""
+"""Device plan and in-place output regressions."""
 from bisect import bisect_right
 from itertools import accumulate
 
@@ -9,7 +9,7 @@ pytest.importorskip("torch_npu")
 from executor_mega_recurrent_kda import build_inputs, to_device
 
 pytestmark = pytest.mark.skipif(
-    not torch.npu.is_available() or "950" not in torch.npu.get_device_name(), reason="A5 sequence plan"
+    not torch.npu.is_available(), reason="requires an Ascend NPU"
 )
 
 

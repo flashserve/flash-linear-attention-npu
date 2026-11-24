@@ -50,7 +50,13 @@ void CheckProjectionShapes(gert::TilingContext *ctx, int64_t batch, int64_t n)
 {
     const int64_t width = n * kHeadWidth;
     CheckShape(GetDimensions(ctx, Input::AcceptedTokens), {batch}, "accepted-token shape");
-    if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
+    if (ctx->GetInputDesc(static_cast<size_t>(Input::QkvWeight))->GetDataType() == ge::DT_INT8) {
+        const auto weight = GetDimensions(ctx, Input::QkvWeight);
+        if (weight != Dims{kHiddenWidth, 3 * width}) {
+            CheckShape(weight, {3 * width / 32, kHiddenWidth / 16, 16, 32}, "INT8 QKV NZ storage shape");
+        }
+        CheckShape(GetDimensions(ctx, Input::WeightScale), {3 * width}, "INT8 QKV channel scales");
+    } else if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
         // The launcher may forward the packed storage dimensions as the origin shape.
         const auto qkv = GetDimensions(ctx, Input::QkvWeight);
         if (qkv != Dims{1, kHiddenWidth, 3 * width}) {
@@ -172,6 +178,8 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     }
     const auto soc = platform.GetSocVersion();
     const auto systemBytes = platform.GetLibApiWorkSpaceSize();
+    const bool int8Qkv = ctx->GetInputDesc(static_cast<size_t>(Input::QkvWeight))->GetDataType() == ge::DT_INT8;
+    if (int8Qkv && soc != platform_ascendc::SocVersion::ASCEND910B) return ge::GRAPH_FAILED;
     if (soc == platform_ascendc::SocVersion::ASCEND950) {
         if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
             const auto *algorithm = ctx->GetAttrs()->GetAttrPointer<int64_t>(4);
@@ -196,7 +204,7 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
         return ge::GRAPH_FAILED;
     }
 
-    if (common.crosses == 2 || ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
+    if (bool(ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) != int8Qkv) {
         return ge::GRAPH_FAILED;
     }
     using namespace MegaRecurrentKdaV2;
@@ -213,12 +221,11 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
                      data.convLength, common.capacity, common.tokens, kTileRows};
     uint64_t l2Bytes = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, l2Bytes);
-    data.arch22 = ComputeTiling(shape, cores, 2 * cores, common.crosses, l2Bytes);
+    data.arch22 = ComputeTiling(shape, cores, 2 * cores, common.crosses == 1, l2Bytes);
     if (data.arch22.overflow) {
         return ge::GRAPH_FAILED;
     }
-    const uint64_t prefixBytes = (uint64_t(common.batch) + 1) * sizeof(int32_t);
-    return PublishTiling(ctx, data, data.arch22.workspaceBytes + prefixBytes, systemBytes, cores, 0);
+    return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, int8Qkv ? 6 : 0);
 }
 
 ge::graphStatus TileMegaRecurrentKda(gert::TilingContext *ctx)
