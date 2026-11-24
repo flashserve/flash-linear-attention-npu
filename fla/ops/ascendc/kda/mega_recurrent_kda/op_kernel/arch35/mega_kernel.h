@@ -24,6 +24,7 @@ struct MegaParams {
     GM_ADDR hiddenStates;
     GM_ADDR qkvWeight;
     GM_ADDR projectedQkv;
+    bool firstWaveReady = false;
     GM_ADDR decayAWeight;
     GM_ADDR decayBWeight;
     GM_ADDR gateWeight;
@@ -35,6 +36,7 @@ struct MegaParams {
 
 // The Vector side publishes the second head group while Cube is computing the first.
 using OutputCopy = Catlass::Gemm::Tile::PackedTileCopyTla<Arch, Bf, Row, Bf, Col, Bf, Row>;
+template <uint32_t ExtraHead>
 struct StreamingOutputCopy : OutputCopy {
     template <class Source>
     struct CopyGmToL1A : OutputCopy::template CopyGmToL1A<Source> {
@@ -42,7 +44,7 @@ struct StreamingOutputCopy : OutputCopy {
         CATLASS_DEVICE void operator()(Destination &dst, Tile &src)
         {
             uint32_t width = tla::get<0>(src.layout().stride());
-            uint32_t second = (width / 128 / 2) * 128;
+            uint32_t second = (width / kHeadDim / 2 + ExtraHead) * kHeadDim;
             if (uint32_t(tla::get<1>(src.coord())) == second) {
                 AscendC::SyncAll<false>();
             }
@@ -54,6 +56,21 @@ template <bool SpansTile, bool AllowColumnMajor = SpansTile, bool MxQkv = false>
 class MegaKernel {
 public:
     using Params = MegaParams;
+
+    // The first BF16 head projections consume the original input while Vector quantizes it.
+    CATLASS_DEVICE void PrepareFirstMxWave(Params &p)
+    {
+        const auto shape = PlanWaves(p.rows);
+        p.firstWaveReady = !p.recurrence.crosses && p.rows >= kGlobalRows && shape.count == 1 && p.heads >= 2;
+        if ASCEND_IS_AIC {
+            if (p.firstWaveReady) {
+                GM_ADDR planes = p.decayRing + shape.decayRows * 256 + uint64_t(shape.storageRows) * p.heads * 256;
+                ProjectHeadWave(p, planes, shape.firstCapacity, 0, 2, AscendC::GetBlockIdx(),
+                                AscendC::GetBlockNum(), false, false);
+            }
+        }
+    }
+
     CATLASS_DEVICE void operator()(const Params &p)
     {
         if constexpr (!SpansTile) {
@@ -289,7 +306,8 @@ private:
                 }
                 AscendC::PipeBarrier<PIPE_ALL>();
                 rec.consume<AllowColumnMajor>(resource_, p.recurrence, gated, nullptr, p.heads, head, row, row - first,
-                                              m, LocalTile(0, Plane::Q));
+                                              m, LocalTile(0, Plane::Q),
+                                              (row == start && row + m == end) ? b : UINT32_MAX);
             }
         }
     }
@@ -339,14 +357,15 @@ private:
             phase ^= 1;
         }
     }
-    template <int TileM, int TileN, int L0K>
+    template <int TileM, int TileN, int L0K, uint32_t ExtraHead = 0>
     CATLASS_DEVICE void StreamOutput(const Params &p, GM_ADDR gated, uint32_t id, uint32_t groups)
     {
         constexpr uint32_t panels = kHiddenWidth / TileN;
         const uint32_t width = p.heads * kHeadDim;
         if (id < panels) {
-            MatmulToGm<TileN, 128, L0K, TileM, true>(gated, p.recurrence.outWeight, p.recurrence.output, 0, id * TileN,
-                                                     0, id * TileN, kHiddenWidth, p.rows, width, TileN);
+            MatmulToGm<TileN, 128, L0K, TileM, true, ExtraHead>(
+                gated, p.recurrence.outWeight, p.recurrence.output, 0, id * TileN, 0, id * TileN,
+                kHiddenWidth, p.rows, width, TileN);
         } else {
             AscendC::SyncAll<false>();
         }
@@ -375,130 +394,153 @@ private:
                                          end - first, 128, count);
         }
     }
+    CATLASS_DEVICE uint32_t FirstWaveHeads(const Params &p, uint32_t groups)
+    {
+        const uint32_t half = p.heads / 2;
+        if (!MxQkv || !p.firstWaveReady || half + 1 >= p.heads) {
+            return half;
+        }
+        // Move one head only when it eliminates a scheduling round across both Vector waves.
+        const uint64_t requests = p.recurrence.batch, workers = uint64_t(groups) * 2;
+        const uint64_t left = requests * half, right = requests * (p.heads - half);
+        const uint64_t rounds = (left + workers - 1) / workers + (right + workers - 1) / workers;
+        const uint64_t shifted =
+            (left + requests + workers - 1) / workers + (right - requests + workers - 1) / workers;
+        return shifted < rounds ? half + 1 : half;
+    }
+    CATLASS_DEVICE void ProjectHeadWave(const Params &p, GM_ADDR planes, uint32_t planeRows, uint32_t tick,
+                                       uint32_t waves, uint32_t id, uint32_t groups, bool decayAReady, bool reuseQ)
+    {
+        const uint32_t width = p.heads * 128, betaStride = (p.heads + 15) / 16 * 16;
+        constexpr uint32_t firstKind = MxQkv ? 3 : 0;  // Q/K/V already reside in projectedQkv.
+        constexpr uint32_t wideProjections = 4 - firstKind;
+        uint32_t split = waves == 2 ? FirstWaveHeads(p, groups) : p.heads;
+        uint32_t firstHead = tick ? split : 0;
+        uint32_t count = tick ? p.heads - split : split;
+        uint64_t part = uint64_t(count) * 128, betaBase = wideProjections * part + 128;
+        uint64_t total = tick ? wideProjections * part : betaBase + p.heads, blocks = (total + 15) / 16;
+        constexpr uint32_t workers = MxQkv ? 8 : 4;
+        // Reserve one core for beta and divide the rest across Q, K, V and gate.
+        // A third 128-column panel would force another complete read of hidden_states.
+        const bool localDecay = !tick && !SpansTile && !reuseQ && !decayAReady && p.rows >= 64 &&
+                                p.rows <= 160 && groups >= workers + 6 &&
+                                count <= 2 * ((groups - workers - 1) / wideProjections);
+        const uint32_t team = localDecay ? groups - workers : groups;
+        uint64_t cursor = (blocks * id / groups) * 16, stop = (blocks * (id + 1) / groups) * 16;
+        if (stop > total) {
+            stop = total;
+        }
+        // Keep each Cube core on one projection to avoid a second matrix pipeline setup.
+        if (localDecay && id >= team) {
+            cursor = stop;
+            ProjectDecayRows(p, planes + uint64_t(3) * planeRows * width * 2, id - team, workers);
+        }
+        const uint32_t kinds = tick ? 4 : 6;
+        if (id < team && team >= kinds - firstKind) {
+            uint32_t groupStart = 0;
+            uint64_t columnStart = 0;
+            for (uint32_t kind = firstKind; kind < kinds; ++kind) {
+                const uint64_t columns = kind < 4 ? part : (kind == 4 ? 128 : p.heads);
+                const uint64_t end = columnStart + columns;
+                if (localDecay && kind == 4) {
+                    columnStart = end;
+                    continue;
+                }
+                const uint64_t grouped = localDecay ? total - 128 : total;
+                const uint64_t at = localDecay && kind == 5 ? end - 128 : end;
+                uint32_t groupEnd = static_cast<uint32_t>((at * team + grouped / 2) / grouped);
+                const uint32_t limit = team - (kinds - kind - 1) + (localDecay && kind < 4 ? 1 : 0);
+                if (groupEnd > limit) {
+                    groupEnd = limit;
+                }
+                if (groupEnd <= groupStart) {
+                    groupEnd = groupStart + 1;
+                }
+                if (id < groupEnd) {
+                    const uint32_t rank = id - groupStart, team = groupEnd - groupStart;
+                    const uint64_t units = (columns + 15) / 16;
+                    cursor = columnStart + 16 * (units * rank / team);
+                    stop = columnStart + 16 * (units * (rank + 1) / team);
+                    if (stop > end) {
+                        stop = end;
+                    }
+                    break;
+                }
+                groupStart = groupEnd;
+                columnStart = end;
+            }
+        }
+        while (cursor < stop) {
+            uint32_t kind = cursor < wideProjections * part ? firstKind + cursor / part : (cursor < betaBase ? 4 : 5);
+            uint64_t start = kind < 4 ? uint64_t(kind - firstKind) * part : (kind == 4 ? wideProjections * part : betaBase);
+            uint32_t stride = kind < 4 ? width : (kind == 4 ? 128 : betaStride);
+            uint32_t local = cursor - start, extent = kind < 4 ? part : (kind == 4 ? 128 : p.heads);
+            uint32_t col = local + (kind < 4 ? firstHead * 128 : 0);
+            uint64_t n = stop - cursor;
+            if (n > extent - local) {
+                n = extent - local;
+            }
+            if (n > 128) {
+                n = 128;
+            }
+            if (kind == 4 && decayAReady) {
+                cursor += n;
+                continue;
+            }
+            GM_ADDR weight = kind < 3 ?
+                                 p.qkvWeight :
+                                 (kind == 3 ? p.gateWeight : (kind == 4 ? p.decayAWeight : p.betaWeight));
+            uint32_t weightCol = kind < 3 ? kind * width + col : col;
+            GM_ADDR dest =
+                kind == 4 ? p.decayRing : planes + uint64_t(kind == 3 ? 4 : kind) * planeRows * width * 2;
+            if (p.rows > 256 && p.rows <= 288) {
+                MatmulToGm<128, 256, 32, 288>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
+                                              p.rows, kHiddenWidth, n);
+            } else if (p.rows <= 160 && n <= 96) {
+                MatmulToGm<96, 384, 96, 160>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
+                                             p.rows, kHiddenWidth, n);
+            } else {
+                MatmulToGm<128, 256, 64>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride, p.rows,
+                                         kHiddenWidth, n);
+            }
+            cursor += n;
+        }
+        if (!tick && !localDecay) {
+            AscendC::CrossCoreSetFlag<0, PIPE_FIX>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
+            AscendC::CrossCoreWaitFlag<0, PIPE_MTE2>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
+            for (uint32_t h = id; h < p.heads; h += groups) {
+                if (p.rows > 256 && p.rows <= 288) {
+                    MatmulToGm<128, 128, 32, 288>(p.decayRing, p.decayBWeight,
+                                                  planes + uint64_t(3) * planeRows * width * 2, 0, h * 128,
+                                                  0, h * 128, width, p.rows, 128);
+                } else {
+                    MatmulToGm(p.decayRing, p.decayBWeight, planes + uint64_t(3) * planeRows * width * 2, 0,
+                               h * 128, 0, h * 128, width, p.rows, 128);
+                }
+            }
+        }
+    }
     CATLASS_DEVICE void RunHeadPipeline(const Params &p, const Waves &shape, uint32_t id, uint32_t groups,
                                         bool decayAReady, uint32_t globalBase = 0, bool reuseQ = false,
                                         GM_ADDR framePlanes = nullptr)
     {
-        const uint32_t width = p.heads * 128, betaStride = (p.heads + 15) / 16 * 16, planeRows = shape.firstCapacity;
+        const uint32_t width = p.heads * 128, planeRows = shape.firstCapacity;
         GM_ADDR gated = p.decayRing + shape.decayRows * 256;
         GM_ADDR planes = reuseQ ? gated : gated + uint64_t(shape.storageRows) * width * 2;
         if (SpansTile && framePlanes) {
             planes = framePlanes;
         }
-        constexpr uint32_t firstKind = MxQkv ? 3 : 0;  // Q/K/V already reside in projectedQkv.
-        constexpr uint32_t wideProjections = 4 - firstKind;
         constexpr uint32_t waveLimit = 2;
         const uint32_t waves = p.heads < waveLimit ? p.heads : waveLimit;
         bool overlap = p.rows <= 288 && waves == 2;
-        for (uint32_t tick = 0; tick < waves + 2; ++tick) {
+        for (uint32_t tick = (MxQkv && p.firstWaveReady) ? 1 : 0; tick < waves + 2; ++tick) {
             if ASCEND_IS_AIC {
                 if (tick < waves) {
-                    uint32_t firstHead = uint64_t(p.heads) * tick / waves;
-                    uint32_t count = uint64_t(p.heads) * (tick + 1) / waves - firstHead;
-                    uint64_t part = uint64_t(count) * 128, betaBase = wideProjections * part + 128;
-                    uint64_t total = tick ? wideProjections * part : betaBase + p.heads, blocks = (total + 15) / 16;
-                    constexpr uint32_t workers = 4;
-                    // Reserve one core for beta and divide the rest across Q, K, V and gate.
-                    // A third 128-column panel would force another complete read of hidden_states.
-                    const bool localDecay = !tick && !SpansTile && !reuseQ && !decayAReady && p.rows >= 64 &&
-                                            p.rows <= 160 && groups >= workers + 6 &&
-                                            count <= 2 * ((groups - workers - 1) / 4);
-                    const uint32_t team = localDecay ? groups - workers : groups;
-                    uint64_t cursor = (blocks * id / groups) * 16, stop = (blocks * (id + 1) / groups) * 16;
-                    if (stop > total) {
-                        stop = total;
-                    }
-                    // Keep each Cube core on one projection to avoid a second matrix pipeline setup.
-                    if (localDecay && id >= team) {
-                        cursor = stop;
-                        ProjectDecayRows(p, planes + uint64_t(3) * planeRows * width * 2, id - team, workers);
-                    }
-                    const uint32_t kinds = tick ? 4 : 6;
-                    if (id < team && team >= kinds - firstKind) {
-                        uint32_t groupStart = 0;
-                        uint64_t columnStart = 0;
-                        for (uint32_t kind = firstKind; kind < kinds; ++kind) {
-                            const uint64_t columns = kind < 4 ? part : (kind == 4 ? 128 : p.heads);
-                            const uint64_t end = columnStart + columns;
-                            if (localDecay && kind == 4) {
-                                columnStart = end;
-                                continue;
-                            }
-                            const uint64_t grouped = localDecay ? total - 128 : total;
-                            const uint64_t at = localDecay && kind == 5 ? end - 128 : end;
-                            uint32_t groupEnd = static_cast<uint32_t>((at * team + grouped / 2) / grouped);
-                            const uint32_t limit = team - (kinds - kind - 1) + (localDecay && kind < 4 ? 1 : 0);
-                            if (groupEnd > limit) {
-                                groupEnd = limit;
-                            }
-                            if (groupEnd <= groupStart) {
-                                groupEnd = groupStart + 1;
-                            }
-                            if (id < groupEnd) {
-                                const uint32_t rank = id - groupStart, team = groupEnd - groupStart;
-                                const uint64_t units = (columns + 15) / 16;
-                                cursor = columnStart + 16 * (units * rank / team);
-                                stop = columnStart + 16 * (units * (rank + 1) / team);
-                                if (stop > end) {
-                                    stop = end;
-                                }
-                                break;
-                            }
-                            groupStart = groupEnd;
-                            columnStart = end;
-                        }
-                    }
-                    while (cursor < stop) {
-                        uint32_t kind = cursor < wideProjections * part ? firstKind + cursor / part : (cursor < betaBase ? 4 : 5);
-                        uint64_t start = kind < 4 ? uint64_t(kind - firstKind) * part : (kind == 4 ? wideProjections * part : betaBase);
-                        uint32_t stride = kind < 4 ? width : (kind == 4 ? 128 : betaStride);
-                        uint32_t local = cursor - start, extent = kind < 4 ? part : (kind == 4 ? 128 : p.heads);
-                        uint32_t col = local + (kind < 4 ? firstHead * 128 : 0);
-                        uint64_t n = stop - cursor;
-                        if (n > extent - local) {
-                            n = extent - local;
-                        }
-                        if (n > 128) {
-                            n = 128;
-                        }
-                        if (kind == 4 && decayAReady) {
-                            cursor += n;
-                            continue;
-                        }
-                        GM_ADDR weight = kind < 3 ?
-                                             p.qkvWeight :
-                                             (kind == 3 ? p.gateWeight : (kind == 4 ? p.decayAWeight : p.betaWeight));
-                        uint32_t weightCol = kind < 3 ? kind * width + col : col;
-                        GM_ADDR dest =
-                            kind == 4 ? p.decayRing : planes + uint64_t(kind == 3 ? 4 : kind) * planeRows * width * 2;
-                        if (p.rows > 256 && p.rows <= 288) {
-                            MatmulToGm<128, 256, 32, 288>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
-                                                          p.rows, kHiddenWidth, n);
-                        } else if (p.rows <= 160 && n <= 96) {
-                            MatmulToGm<96, 384, 96, 160>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
-                                                         p.rows, kHiddenWidth, n);
-                        } else {
-                            MatmulToGm<128, 256, 64>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride, p.rows,
-                                                     kHiddenWidth, n);
-                        }
-                        cursor += n;
-                    }
-                    if (!tick && !localDecay) {
-                        AscendC::CrossCoreSetFlag<0, PIPE_FIX>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
-                        AscendC::CrossCoreWaitFlag<0, PIPE_MTE2>(Catlass::Arch::AIC_INTER_BLOCK_BARRIER);
-                        for (uint32_t h = id; h < p.heads; h += groups) {
-                            if (p.rows > 256 && p.rows <= 288) {
-                                MatmulToGm<128, 128, 32, 288>(p.decayRing, p.decayBWeight,
-                                                              planes + uint64_t(3) * planeRows * width * 2, 0, h * 128,
-                                                              0, h * 128, width, p.rows, 128);
-                            } else {
-                                MatmulToGm(p.decayRing, p.decayBWeight, planes + uint64_t(3) * planeRows * width * 2, 0,
-                                           h * 128, 0, h * 128, width, p.rows, 128);
-                            }
-                        }
-                    }
+                    ProjectHeadWave(p, planes, planeRows, tick, waves, id, groups, decayAReady, reuseQ);
                 } else if (overlap && tick == waves) {
-                    if (p.rows <= 256) {
+                    if (MxQkv && FirstWaveHeads(p, groups) > p.heads / 2) {
+                        StreamOutput<256, 256, 64, 1>(p, gated, id, groups);
+                    } else if (p.rows <= 256) {
                         StreamOutput<256, 256, 64>(p, gated, id, groups);
                     } else {
                         StreamOutput<288, 128, 32>(p, gated, id, groups);
@@ -519,8 +561,9 @@ private:
             }
             if ASCEND_IS_AIV {
                 if (tick >= 1 && tick <= waves) {
-                    uint32_t left = uint64_t(p.heads) * (tick - 1) / waves;
-                    uint32_t count = uint64_t(p.heads) * tick / waves - left;
+                    uint32_t split = waves == 2 ? FirstWaveHeads(p, groups) : p.heads;
+                    uint32_t left = tick == 1 ? 0 : split;
+                    uint32_t count = tick == 1 ? split : p.heads - split;
                     ConsumeStagedProjections(p, globalBase, p.rows, id, 2 * groups, left, count, reuseQ, framePlanes);
                 }
             }
@@ -701,7 +744,8 @@ private:
             AscendC::SyncAll<false>();
         }
     }
-    template <int TileN = 128, int L1K = 256, int L0K = 64, int TileM = 256, bool Stream = false>
+    template <int TileN = 128, int L1K = 256, int L0K = 64, int TileM = 256, bool Stream = false,
+              uint32_t ExtraHead = 0>
     CATLASS_DEVICE void MatmulToGm(GM_ADDR input, GM_ADDR weight, GM_ADDR out, uint32_t xRow, uint32_t wCol,
                                    uint32_t outRow, uint32_t outCol, uint32_t stride, uint32_t m, uint32_t k,
                                    uint32_t n = 128)
@@ -713,7 +757,7 @@ private:
         auto x = tla::MakeTensor(a, tla::MakeLayout<Bf, Row>(m, k), Catlass::Arch::PositionGM{});
         auto wt = tla::MakeTensor(w, tla::MakeLayout<Bf, Col>(k, n), Catlass::Arch::PositionGM{});
         auto base = tla::MakeTensor(c, tla::MakeLayout<Bf, Row>(m, stride), Catlass::Arch::PositionGM{});
-        using GmCopy = std::conditional_t<Stream, StreamingOutputCopy, OutputCopy>;
+        using GmCopy = std::conditional_t<Stream, StreamingOutputCopy<ExtraHead>, OutputCopy>;
         using Mmad = Catlass::Gemm::Tile::TileMmadTla<Arch, Bf, typename GmCopy::LayoutTagL1A>;
         using Op =
             Catlass::Gemm::Block::BlockMmadTla<Policy, tla::Shape<tla::Int<TileM>, tla::Int<TileN>, tla::Int<L1K>>,

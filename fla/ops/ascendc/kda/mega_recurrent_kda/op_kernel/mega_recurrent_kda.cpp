@@ -100,8 +100,11 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
         GM_ADDR scales = out + uint64_t(params.rows) * 7168;
         params.projectedQkv = params.decayRing;
         params.decayRing += uint64_t(params.rows) * params.heads * 3 * 128 * sizeof(kda::Bf);
+        recurrence.crosses = tilingData.crosses == 2 ? reinterpret_cast<__gm__ const int32_t *>(plan)[0] : tilingData.crosses;
+        recurrence.staged = recurrence.crosses ? 0 : 3;
+        kda::MegaKernel<false, false, true>{}.PrepareFirstMxWave(params);
         if ASCEND_IS_AIV {
-            AscendC::Simt::VF_CALL<kda::QuantizeHidden>(AscendC::Simt::Dim3(256),
+            AscendC::Simt::VF_CALL<kda::QuantizeHidden>(AscendC::Simt::Dim3(1024),
                 reinterpret_cast<__gm__ const uint16_t *>(x), out, scales, params.rows,
                 uint32_t(AscendC::GetBlockIdx()), uint32_t(AscendC::GetBlockNum() * AscendC::GetTaskRation()),
                 tilingData.mxAlgorithm);
@@ -113,8 +116,6 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
                               params.heads * 3 * 128);
         }
         AscendC::SyncAll<false>();
-        recurrence.crosses = tilingData.crosses == 2 ? reinterpret_cast<__gm__ const int32_t *>(plan)[0] : tilingData.crosses;
-        recurrence.staged = recurrence.crosses ? 0 : 3;
         if (recurrence.crosses) {
             kda::MegaKernel<true, true, true> op;
             op(params);

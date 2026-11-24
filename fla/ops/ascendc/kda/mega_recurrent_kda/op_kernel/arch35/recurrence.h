@@ -472,7 +472,7 @@ public:
     template <bool AllowColumnMajor = true>
     CATLASS_DEVICE void consume(Resource &resource, const RecurrenceArgs &a, GM_ADDR gated, GM_ADDR carry,
                                 uint32_t heads, uint32_t head, uint32_t global, uint32_t ringRow, uint32_t valid,
-                                AscendC::LocalTensor<Bf> slot)
+                                AscendC::LocalTensor<Bf> slot, uint32_t wholeSeq = UINT32_MAX)
     {
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
         constexpr uint32_t base = 41984;
@@ -498,12 +498,12 @@ public:
         AscendC::DataCopy(bias, gm<float>(a.bias, head * 128), 128);
         AscendC::DataCopy(gamma, gm<float>(a.gamma), 128);
         float aLog = gm<float>(a.alphaLog).GetValue(head);
-        uint32_t b = owner(a, global);
+        uint32_t b = wholeSeq == UINT32_MAX ? owner(a, global) : wholeSeq;
         auto chunk = resource.ubBuf.template GetBufferByByte<float>(tmp + 10 * 512);
         auto chunkDec = chunk[4 * 384], chunkBeta = chunkDec[4 * 128], weighted = chunkBeta[4 * 64];
         auto coeff = weighted[4 * 256], chunkU = coeff[64], chunkY = chunkU[4 * 128], predicted = chunkY[4 * 128];
-        bool shortSequence =
-            a.staged >= 2 && valid <= 4 && prefix(a, b) == global && prefix(a, b + 1) == global + valid;
+        bool shortSequence = a.staged >= 2 && valid <= 4 &&
+            (wholeSeq != UINT32_MAX || (prefix(a, b) == global && prefix(a, b + 1) == global + valid));
         uint32_t shortIndex = shortSequence ? gm<int32_t>(a.indices).GetValue(b) : 0;
         constexpr uint32_t shortOut = tmp + 10 * 512 + 5 * 4096;
         auto gatedRows = resource.ubBuf.template GetBufferByByte<Bf>(shortOut);
@@ -521,11 +521,17 @@ public:
                 AscendC::DataCopy(useColumnMajor && t != 0 ? chunk : state, src, 16384);
                 uint32_t accepted = gm<int32_t>(a.accepted).GetValue(b);
                 uint32_t hs = t ? t - 1 : (accepted ? accepted - 1 : 0);
-                for (uint32_t h = 0; h < 3; ++h) {
-                    for (uint32_t i = 0; i < 3; ++i) {
-                        uint64_t c = convBase + uint64_t(hs + h) * 3 * width + i * width + head * 128;
-                        AscendC::DataCopy(hist[(((t + h) % 3) * 3 + i) * 128], gm<Bf>(a.conv, c), 128);
-                    }
+                const uint64_t convStart = convBase + uint64_t(hs) * 3 * width + head * 128;
+                // Gather the three history rows into the cyclic UB buffer, splitting only at its wrap.
+                const uint32_t wrap = t % 3;
+                const uint32_t first = (3 - wrap) * 3;
+                AscendC::DataCopyPad(hist[wrap * 384], gm<Bf>(a.conv, convStart),
+                                     AscendC::DataCopyExtParams{static_cast<uint16_t>(first), 256, (width - 128) * 2, 0, 0},
+                                     AscendC::DataCopyPadExtParams<Bf>{});
+                if (wrap) {
+                    AscendC::DataCopyPad(hist, gm<Bf>(a.conv, convStart + uint64_t(first) * width),
+                                         AscendC::DataCopyExtParams{static_cast<uint16_t>(9 - first), 256, (width - 128) * 2, 0, 0},
+                                         AscendC::DataCopyPadExtParams<Bf>{});
                 }
                 AscendC::PipeBarrier<PIPE_ALL>();
                 if (useColumnMajor && t == 0) {
@@ -533,13 +539,8 @@ public:
                     AscendC::PipeBarrier<PIPE_V>();
                 }
                 if (t == 0) {
-                    for (uint32_t h = 0; h < 2; ++h) {
-                        for (uint32_t i = 0; i < 3; ++i) {
-                            AscendC::DataCopy(
-                                gm<Bf>(a.conv, convBase + uint64_t(h) * 3 * width + i * width + head * 128),
-                                hist[((h + 1) * 3 + i) * 128], 128);
-                        }
-                    }
+                    AscendC::DataCopyPad(gm<Bf>(a.conv, convBase + head * 128), hist[384],
+                                         AscendC::DataCopyExtParams{6, 256, 0, (width - 128) * 2, 0});
                 }
             }
             AscendC::PipeBarrier<PIPE_ALL>();
@@ -563,16 +564,16 @@ public:
                 AscendC::PipeBarrier<PIPE_ALL>();
                 vec::shortPrepare((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)chunkDec.GetPhyAddr(),
                                   (__ubuf__ float *)weighted.GetPhyAddr(), (__ubuf__ float *)coeff.GetPhyAddr(), valid);
-                AscendC::PipeBarrier<PIPE_ALL>();
+                AscendC::PipeBarrier<PIPE_V>();
                 vec::shortProject((__ubuf__ float *)state.GetPhyAddr(), (__ubuf__ float *)weighted.GetPhyAddr(),
                                   (__ubuf__ float *)predicted.GetPhyAddr(), (__ubuf__ float *)chunkY.GetPhyAddr(),
                                   valid);
-                AscendC::PipeBarrier<PIPE_ALL>();
+                AscendC::PipeBarrier<PIPE_V>();
                 for (uint32_t j = 0; j < valid; ++j) {
                     vec::shortCorrect((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)chunkBeta.GetPhyAddr(),
                                       (__ubuf__ float *)coeff.GetPhyAddr(), (__ubuf__ float *)predicted.GetPhyAddr(),
                                       (__ubuf__ float *)chunkY.GetPhyAddr(), (__ubuf__ float *)chunkU.GetPhyAddr(), j);
-                    AscendC::PipeBarrier<PIPE_ALL>();
+                    AscendC::PipeBarrier<PIPE_V>();
                     vec::finish((__ubuf__ float *)chunkY[j * 128].GetPhyAddr(),
                                 (__ubuf__ Bf *)slot[4 * 2048 + j * 128].GetPhyAddr(),
                                 (__ubuf__ float *)gamma.GetPhyAddr(), a.eps,

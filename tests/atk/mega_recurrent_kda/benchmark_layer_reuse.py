@@ -18,13 +18,14 @@ MUTABLE = ("conv_state", "replay_u", "replay_k", "replay_decay")
 SHARED = ("cu_seqlens", "state_indices", "conv_num_accepted_tokens")
 CASES = {
     "a2_model": ([4] * 8, 6, "TH", 567),
+    "a5_model": ([4] * 30, 12, "TH", 492),
     "model": ([4] * 30, 12, "TH", 501),
     "ragged": ([4] * 15 + [5, 3] + [4] * 13, 12, "TH", 501),
     "bsh": ([4] * 40, 8, "BSH", 40),
 }
 
 
-def make_layers(name, count, device, int8=False):
+def make_layers(name, count, device, int8=False, mxfp8=False, qkv_scale_alg=0):
     lengths, heads, layout, slots = CASES[name]
     batch, seq = len(lengths), max(lengths)
     host, flat, _ = _make_case(batch, seq, heads, block_num=batch, seed=19)
@@ -45,6 +46,13 @@ def make_layers(name, count, device, int8=False):
         packed = (w / sw).round().clamp(-127, 127).to(torch.int8).reshape(448, 16, cols // 32, 32)
         args["qkv_projection_weight"] = packed.permute(2, 0, 1, 3).contiguous().to(device)
         args["qkv_projection_weight_scale"] = sw.to(device)
+    if mxfp8:
+        weight = host["qkv_projection_weight"].T.contiguous().float()
+        packed = (weight * 32).to(torch.float8_e4m3fn).unsqueeze(0).to(device)
+        args["qkv_projection_weight_scale"] = torch.full(
+            (1, weight.shape[0] // 64, weight.shape[1], 2), 122, dtype=torch.uint8, device=device
+        )
+        args["qkv_scale_alg"] = qkv_scale_alg
     for key in (*MUTABLE, "checkpoint_state"):
         value = args[key]
         if slots != value.shape[0]:
@@ -53,17 +61,21 @@ def make_layers(name, count, device, int8=False):
             args[key] = pool
     layers = []
     for _ in range(count):
-        layers.append({k: v.clone() if isinstance(v, torch.Tensor) and k not in SHARED else v
-                       for k, v in args.items()})
+        layer = {k: v.clone() if isinstance(v, torch.Tensor) and k not in SHARED else v
+                 for k, v in args.items() if not (mxfp8 and k == "qkv_projection_weight")}
+        if mxfp8:
+            layer["qkv_projection_weight"] = torch_npu.npu_format_cast(packed, 29)
+        layers.append(layer)
     return args, layers
 
 
-def run(case, mode, count, repeats, warmup, graph=False):
+def run(case, mode, count, repeats, warmup, graph=False, qkv_scale_alg=0):
     device = torch.device("npu", torch.npu.current_device())
-    args, layers = make_layers(case, count, device, int8=mode == "int8")
+    args, layers = make_layers(case, count, device, int8=mode == "int8",
+                              mxfp8=mode == "mxfp8", qkv_scale_alg=qkv_scale_alg)
     active = len(CASES[case][0])
     tokens = sum(CASES[case][0])
-    if mode in ("device", "int8") and args["cu_seqlens"] is not None:
+    if mode != "legacy" and args["cu_seqlens"] is not None:
         from fla_npu.ops.ascendc import npu_mega_recurrent_kda_metadata as build_plan
     else:
         build_plan = None
@@ -71,7 +83,7 @@ def run(case, mode, count, repeats, warmup, graph=False):
     def forward():
         plan = build_plan(args["cu_seqlens"], tokens) if build_plan else None
         for layer in layers:
-            if mode in ("device", "int8"):
+            if mode != "legacy":
                 npu_mega_recurrent_kda(**layer, metadata=plan, use_device_metadata=True)
             else:
                 npu_mega_recurrent_kda(**layer)
@@ -102,7 +114,8 @@ def run(case, mode, count, repeats, warmup, graph=False):
         if iteration >= warmup:
             wall.append(elapsed)
             stream.append(start.elapsed_time(end))
-    print(json.dumps(dict(case=case, mode=mode, layers=count, metadata_calls=int(build_plan is not None),
+    print(json.dumps(dict(case=case, mode=mode, qkv_scale_alg=qkv_scale_alg if mode == "mxfp8" else None,
+                          layers=count, metadata_calls=int(build_plan is not None),
                           graph=graph, wall_ms=median(wall), stream_ms=median(stream),
                           wall_samples_ms=wall, stream_samples_ms=stream)), flush=True)
 
@@ -110,15 +123,16 @@ def run(case, mode, count, repeats, warmup, graph=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=CASES, required=True)
-    parser.add_argument("--mode", choices=("legacy", "device", "int8"), required=True)
     parser.add_argument("--graph", action="store_true", help="Replay metadata and KDA layers in a fixed-shape NPU graph")
+    parser.add_argument("--mode", choices=("legacy", "device", "int8", "mxfp8"), required=True)
+    parser.add_argument("--qkv-scale-alg", type=int, choices=(0, 1), default=0)
     parser.add_argument("--layers", type=int, default=69)
     parser.add_argument("--repeats", type=int, default=9)
     parser.add_argument("--warmup", type=int, default=3)
     opts = parser.parse_args()
     if opts.graph and opts.mode == "legacy":
-        parser.error("--graph requires device metadata (--mode device or int8)")
+        parser.error("--graph requires device metadata (--mode device, int8 or mxfp8)")
     if min(opts.layers, opts.repeats) < 1 or opts.warmup < 0:
         parser.error("layers and repeats must be positive, warmup must be nonnegative")
     with torch.inference_mode():
-        run(opts.case, opts.mode, opts.layers, opts.repeats, opts.warmup, opts.graph)
+        run(opts.case, opts.mode, opts.layers, opts.repeats, opts.warmup, opts.graph, opts.qkv_scale_alg)

@@ -95,9 +95,23 @@ python -m atk node --name npu_dut --backend npu --devices 0 node --name cpu_gold
 python -m pytest -q test_mxfp8.py
 ```
 
-A5 上 ATK 精度和三次重复运行一致性各通过 3/3。对这三个用例运行 memcheck，均命中 MXFP8 的混合核，未报告内存错误。原有 BF16 ATK 精度回归通过 9/9。pytest 的 18 项覆盖两种动态量化算法、E8M0 类型及原始字节输入、显式复用及自动生成的 TH 调度表、零 scale、BF16 次正规数和非法参数。使用 492 个状态槽时，30 条长度为 4 的序列和等总 token 数的变长序列各连续调用两步，逐次检查实际写回的 QKV、五项输出、未使用区域和 checkpoint。
+A5 上 ATK 精度和三次重复运行一致性各通过 3/3。对这三个用例运行 memcheck，均命中 MXFP8 的混合核，未报告内存错误。原有 BF16 ATK 精度回归通过 9/9。MXFP8 的 22 项 pytest 用例覆盖两种动态量化算法、E8M0 类型及原始字节输入、显式复用及自动生成的 TH 调度表、零 scale、BF16 次正规数和非法参数。3 个 head、132 行与 260 行的用例覆盖奇数 head 和多行块。使用 492 个状态槽时，30 条长度为 4 的序列和等总 token 数的变长序列各连续调用两步，逐次检查实际写回的 QKV、五项输出、未使用区域和 checkpoint。
 
 在相同 A5 上，以 T=120、N=12、B=30、S=4 的合成输入和预先生成的 TH metadata，对调度修改前后各采集 30 次完整融合 kernel 耗时。算法 0 的中位数从 199.05 µs 降至 183.74 µs，算法 1 从 189.42 µs 降至 170.34 µs。两种算法的计时均包含激活动态量化。用户 workspace 与本轮分核调整前相同。
+
+模型形状测试使用 TH、B=30、S=4、N=12、D=128、H=7168 和 492 个状态槽。每轮生成一次 metadata，69 次 KDA 调用分别使用独立存储的权重和状态。下表使用相同合成输入，在同一张 Ascend 950 上按基线、优化版、优化版、基线的顺序复测。每个版本、每种量化算法各记录 8 轮，共 552 次 KDA 调用。
+
+| `qkv_scale_alg` | 单层 kernel P50，基线 → 优化版 | 单层 kernel P90，基线 → 优化版 | 1 次 metadata + 69 次 KDA 设备耗时之和 P50 | 同一组调用的图回放流耗时 P50 |
+|---|---|---|---|---|
+| 0 | 202.84 → 126.09 µs | 206.24 → 128.36 µs | 14.091 → 8.810 ms | 14.208 → 8.862 ms |
+| 1 | 202.67 → 126.00 µs | 206.26 → 128.19 µs | 14.085 → 8.802 ms | 14.138 → 8.865 ms |
+
+单层指标来自 profiler 的 `MegaRecurrentKda` kernel 时长，包含激活量化、QKV 和辅助投影、递推及输出投影。图回放在同一张卡上独立测量，预热 3 次后取 7 次的中位数。
+
+```bash
+python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a5_model --mode mxfp8 --qkv-scale-alg 0 --layers 69 --graph --warmup 3 --repeats 7
+python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a5_model --mode mxfp8 --qkv-scale-alg 1 --layers 69 --graph --warmup 3 --repeats 7
+```
 
 ## Atlas A2 INT8 QKV 与设备前缀
 

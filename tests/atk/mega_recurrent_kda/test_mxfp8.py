@@ -57,6 +57,7 @@ def check_step(host, args, lengths):
 
 @pytest.mark.parametrize("lengths,heads,layout", [
     ([4], 1, "BSH"), ([63, 2], 2, "TH"), ([4] * 30, 12, "TH"),
+    ([4] * 33, 3, "TH"), ([4] * 65, 3, "BSH"),
     ([4] * 15 + [5, 3] + [4] * 13, 12, "TH"),
 ])
 @pytest.mark.parametrize("algorithm", [0, 1])
