@@ -17,6 +17,12 @@ import math
 import random
 from typing import Optional, Tuple
 
+def _run_nt_first(q, k, v, g, h, do, dh, dv, *args, **kwargs):
+    """将旧标杆数据转为 NT-first。"""
+    h, dh = h.transpose(1, 2).contiguous(), dh.transpose(1, 2).contiguous()
+    return torch.ops.ascend_ops.chunk_bwd_dqkwg(q, k, v, g, h, do, dh, dv, *args, **kwargs)
+
+
 def prepare_lens(cu_seqlens: torch.LongTensor) -> torch.LongTensor:
     return cu_seqlens[1:] - cu_seqlens[:-1]
 
@@ -519,7 +525,7 @@ def test_chunk_bwd_dqkwg_fix(B, HK, HV, T, K, V, chunk_size, scale, ktype, gtype
     dh_npu = dh.npu()
     dv_npu = dv.npu()
 
-    dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+    dq, dk, dw, dg = _run_nt_first(
         q_npu, k_npu, v_npu, g_npu, h_npu, do_npu, dh_npu, dv_npu,
         scale, chunk_size,
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
@@ -580,7 +586,7 @@ def test_chunk_bwd_dqkwg_variable(B, HK, HV, T, K, V, chunk_size, scale, cu_seql
     cu_seqlens_list = cu_seqlens.tolist()
     chunk_indices_list = chunk_indices.flatten().tolist()
 
-    dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+    dq, dk, dw, dg = _run_nt_first(
         q_npu, k_npu, v_npu, g_npu, h_npu, do_npu, dh_npu, dv_npu,
         scale, chunk_size,
         w=None, g_gamma=None,
@@ -618,7 +624,7 @@ def test_chunk_bwd_dqkwg_output_shapes():
     dh = create_tensor((B, HV, num_chunks, K, V), dtype=torch.float16).npu()
     dv = create_tensor((B, HV, T, V), dtype=torch.float16).npu()
 
-    dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+    dq, dk, dw, dg = _run_nt_first(
         q, k, v, g, h, do, dh, dv,
         0.0625, chunk_size,
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
@@ -652,7 +658,7 @@ def test_chunk_bwd_dqkwg_gva_output_shapes():
     dh = create_tensor((B, HV, num_chunks, K, V), dtype=torch.float16).npu()
     dv = create_tensor((B, HV, T, V), dtype=torch.float16).npu()
 
-    dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+    dq, dk, dw, dg = _run_nt_first(
         q, k, v, g, h, do, dh, dv,
         0.0625, chunk_size,
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
@@ -691,7 +697,7 @@ def test_chunk_bwd_dqkwg_dtypes():
         dh = create_tensor((B, HV, num_chunks, K, V), dtype=ktype).npu()
         dv = create_tensor((B, HV, T, V), dtype=ktype).npu()
 
-        dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+        dq, dk, dw, dg = _run_nt_first(
             q, k, v, g, h, do, dh, dv,
             0.0625, chunk_size,
             w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
@@ -730,7 +736,7 @@ def test_chunk_bwd_dqkwg_chunk_size_128():
         cu_seqlens=None, chunk_size=chunk_size, n_ratio=n_ratio
     )
 
-    dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+    dq, dk, dw, dg = _run_nt_first(
         q.npu(), k.npu(), v.npu(), g.npu(), h.npu(), do.npu(), dh.npu(), dv.npu(),
         0.0625, chunk_size,
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None
@@ -774,7 +780,7 @@ def test_chunk_bwd_dqkwg_v256():
         cu_seqlens=None, chunk_size=chunk_size, n_ratio=n_ratio
     )
 
-    dq, dk, dw, dg = torch.ops.ascend_ops.chunk_bwd_dqkwg(
+    dq, dk, dw, dg = _run_nt_first(
         q.npu(), k.npu(), v.npu(), g.npu(), h.npu(), do.npu(), dh.npu(), dv.npu(),
         0.0625, chunk_size,
         w=None, g_gamma=None, cu_seqlens=None, chunk_indices=None

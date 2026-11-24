@@ -7,6 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "op_common/log/log.h"
+
+#include <cstring>
 
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
@@ -14,6 +17,9 @@
 #include "chunk_fwd_h.h"
 
 #include <initializer_list>
+#include <vector>
+
+#include "aclnn/acl_meta.h"
 
 using namespace op;
 
@@ -50,17 +56,25 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *hOut,
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
-    aclOpExecutor *executor)
+    aclOpExecutor *executor,
+    const char *layout)
 {
+    if (layout == nullptr ||
+        (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
+         std::strcmp(layout, "NTD") != 0 && std::strcmp(layout, "TND") != 0)) {
+        OP_LOGE_WITH_INVALID_ATTR("ChunkFwdH", "layout", layout == nullptr ? "nullptr" : layout,
+                                  "BNSD, BSND, NTD or TND");
+        return {nullptr, nullptr, nullptr};
+    }
     L0_DFX(ChunkFwdH, k, w, u, g, gkOptional, initialStateOptional, cuSeqlensOptional,
            chunkIndicesOptional, outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
-           hOut, vNewOut, finalStateOut);
+           hOut, vNewOut, finalStateOut, layout);
 
     const aclTensor *actualCuSeqlens = nullptr;
     if (cuSeqlensOptional) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (actualCuSeqlens == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert cuSeqlens to tensor failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert cuSeqlens to tensor failed.");
             return {nullptr, nullptr, nullptr};
         }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
@@ -74,7 +88,7 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     if (chunkIndicesOptional) {
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (actualChunkIndices == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Convert chunkIndices to tensor failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert chunkIndices to tensor failed.");
             return {nullptr, nullptr, nullptr};
         }
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
@@ -86,10 +100,14 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
 
     const auto &kShape = k->GetViewShape();
     const auto &uShape = u->GetViewShape();
+    const size_t headDim = (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0) ? 2 : 1;
+    const size_t sequenceDim = (std::strcmp(layout, "BSND") == 0 || std::strcmp(layout, "TND") == 0) ? 1 : 2;
     const int64_t logicalBatch = kShape.GetDim(0);
-    const int64_t logicalKHeads = kShape.GetDim(1);
-    const int64_t logicalSeqlen = kShape.GetDim(2);
+    const int64_t logicalKHeads = kShape.GetDim(headDim);
+    const int64_t logicalSeqlen = kShape.GetDim(sequenceDim);
     const int64_t logicalKDim = kShape.GetDim(3);
+    // u is an internal head-major [B,HV,T,V] tensor even when the public
+    // q/k/v tensors are sequence-major; only k follows layout here.
     const int64_t logicalVHeads = uShape.GetDim(1);
     const int64_t logicalVDim = uShape.GetDim(3);
     const aclTensor *finalStateOutKernel = finalStateOut;
@@ -99,18 +117,37 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
                                        : initialStateOptional->GetDataType();
         finalStateOutKernel = executor->AllocTensor(MakeShape({0}), stateType, Format::FORMAT_ND);
         if (finalStateOutKernel == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Alloc finalStateOut placeholder failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Alloc finalStateOut placeholder failed.");
             return {nullptr, nullptr, nullptr};
         }
     }
+    // P1 varlen balanced partition: cu_seqlens is host-readable here, so the
+    // per-sequence chunk counts travel to the tiling function as a ListInt
+    // attr (attr #11). Dense calls pass an empty list and the tiling keeps the
+    // uniform head partition. The attr array is executor-owned (AllocIntArray)
+    // and freed with the executor.
+    std::vector<int64_t> seqChunkCounts;
+    if (cuSeqlensOptional != nullptr) {
+        seqChunkCounts.reserve(cuSeqlensOptional->Size());
+        for (size_t seq = 0; seq + 1 < cuSeqlensOptional->Size(); ++seq) {
+            const int64_t length = (*cuSeqlensOptional)[seq + 1] - (*cuSeqlensOptional)[seq];
+            seqChunkCounts.push_back((length + chunkSize - 1) / chunkSize);
+        }
+    }
+    int64_t emptySeqChunkCounts = 0;
+    const aclIntArray *seqChunkCountsAttr = seqChunkCounts.empty()
+        ? executor->AllocIntArray(&emptySeqChunkCounts, 0)
+        : executor->AllocIntArray(seqChunkCounts.data(), seqChunkCounts.size());
+
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdH,
         OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
         OP_OUTPUT(hOut, vNewOut, finalStateOutKernel),
         OP_ATTR(outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
                 logicalBatch, logicalSeqlen,
-                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim));
+                logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr,
+                layout));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
         return {nullptr, nullptr, nullptr};
     }
     return {hOut, vNewOut, finalStateOut};

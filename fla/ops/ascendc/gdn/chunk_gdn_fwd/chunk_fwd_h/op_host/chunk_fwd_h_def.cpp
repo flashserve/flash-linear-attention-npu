@@ -96,6 +96,8 @@ public:
         this->Attr("logical_v_heads").AttrType(REQUIRED).Int(1);
         this->Attr("logical_k_dim").AttrType(REQUIRED).Int(1);
         this->Attr("logical_v_dim").AttrType(REQUIRED).Int(1);
+        this->Attr("seq_chunk_counts").AttrType(OPTIONAL).ListInt({});
+        this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig aicore_config;
         aicore_config.DynamicCompileStaticFlag(true)
@@ -111,6 +113,8 @@ public:
         this->AICore().AddConfig("ascend910b", aicore_config);
         this->AICore().AddConfig("ascend910_93", aicore_config);
         this->AICore().AddConfig("ascend950", aicore_config);
+        // A6：Ascend960DT（dav-920r1 / __NPU_ARCH__ == 9201），soc 短名与 ops-transformer/ops-nn 保持一致
+        this->AICore().AddConfig("ascend960dt", aicore_config);
 
     }
 };

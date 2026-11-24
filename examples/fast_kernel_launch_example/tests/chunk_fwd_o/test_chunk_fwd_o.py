@@ -162,7 +162,7 @@ def test_chunk_fwd_o_fix(B, HK, HV, T, K, V, chunk_size, scale, input_dtype, g_d
     expected = chunk_fwd_o_ref(q, k, v, h, g, scale, chunk_size, cu_seqlens, chunk_offsets)
 
     actual = torch.ops.ascend_ops.chunk_fwd_o(
-        q.npu(), k.npu(), v.npu(), h.npu(), g.npu(), scale, chunk_size, cu_seqlens=None, chunk_offsets=None
+        q.npu(), k.npu(), v.npu(), h.transpose(1, 2).contiguous().npu(), g.npu(), scale, chunk_size, cu_seqlens=None, chunk_offsets=None
     )
 
     assert_close(actual, expected)
@@ -180,7 +180,7 @@ def test_chunk_fwd_o_variable(B, HK, HV, T, K, V, chunk_size, scale, token_batch
         q.npu(),
         k.npu(),
         v.npu(),
-        h.npu(),
+        h.transpose(1, 2).contiguous().npu(),
         g.npu(),
         scale,
         chunk_size,

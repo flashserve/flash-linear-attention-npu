@@ -10,7 +10,9 @@
 #include "kernel_operator.h"
 #include "lib/matmul_intf.h"
 #include "chunk_kda_fwd_finalize_cube.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/chunk_kda_fwd_finalize_vec.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_kda_fwd_finalize_vec.h"
 #endif
 
@@ -24,7 +26,15 @@ __aicore__ inline void RunFinalize(const FinalizeArgs &args)
         cube.Init(args);
         cube.Process();
     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    if constexpr (UseAivInputMover) {
+        if ASCEND_IS_AIV {
+            Arch92::FinalizeInputMover<StateVFirst> inputMover;
+            inputMover.Init(args);
+            inputMover.Process();
+        }
+    }
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if constexpr (UseAivInputMover) {
         if ASCEND_IS_AIV {
             Arch35::FinalizeInputMover<StateVFirst> inputMover;

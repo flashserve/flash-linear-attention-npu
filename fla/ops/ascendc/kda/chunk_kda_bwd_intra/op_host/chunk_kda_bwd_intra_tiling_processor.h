@@ -141,7 +141,7 @@ private:
                             "safe_gate=false is reserved but not supported by the first kernel."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(ctx_.chunkSize != 64,
-                    OP_LOGE(ctx_.nodeName, "chunk_size must be 64."),
+                    OP_LOGE(ctx_.nodeName, "chunkSize must be 64."),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(ctx_.layoutMode != KDA_BWD_LAYOUT_DENSE_BNSD &&
                         ctx_.layoutMode != KDA_BWD_LAYOUT_VARLEN_TND,
@@ -257,7 +257,7 @@ private:
                             dAqk.GetDim(2) != static_cast<size_t>(tiling_.seqlen) ||
                             dAqk.GetDim(3) != static_cast<size_t>(tiling_.chunkSize),
                         OP_LOGE(ctx_.nodeName,
-                                "dense dAqk/dAkk must be [B,H,T,chunk_size]."),
+                                "dense dAqk/dAkk must be [B,H,T,chunkSize]."),
                         return ge::GRAPH_FAILED);
             tiling_.chunkNumPerBatch =
                 (tiling_.seqlen + tiling_.chunkSize - 1) / tiling_.chunkSize;

@@ -31,6 +31,17 @@ h, v_new, final_state = chunk_fwd_h(
 - g-only：`k` 是 raw key，shape 为 `[B, HK, T, 128]`，要求 `HV % HK == 0`。
 - gk-only：`k` 是 Prepare 阶段已经生成的 `kg`，shape 为 `[B, HV, T, 128]`；本算子不会再次把 `gk` 乘到 `k` 上。
 
+## 支持范围
+
+- A2/A3/A5。
+- A6（CANN soc 短名 `ascend960dt`，soc_version `Ascend960DT_968B7`，`dav-920r1`，编译宏 `__NPU_ARCH__ == 9201`）：
+  使用独立的 arch92 kernel 实现，选用 `Catlass::Arch::Ascend960DT` 和 `CATLASS_ARCH == 9201`，并按
+  A6 的 1 AIC : 1 AIV 拓扑，每个 work unit 最多两个 head；Catlass 固定使用
+  `https://gitcode.com/cann/catlass` 的官方固定提交
+  `3a6b66970ea1469fb566eb5f50afa9a469606e92`，与其他 SoC 一致。
+  当前按两 head 详设适配：独立 PD/right、321.125 KiB UB、两套 160 KiB L1 bank、GM right 与 alpha 按 chunk 奇偶轮转。
+  当前完成编译路径接入，精度与性能待 A6 环境补充。
+
 ## 计算语义
 
 记 `E(x)=exp(x)`；`use_exp2=true` 时改为 `E(x)=exp2(x)`。对 value head `h` 的每个 chunk `c`：
@@ -71,21 +82,25 @@ Stage0 和 Stage2 均使用 BF16 矩阵乘输入、FP32 累加。Stage0 在写�
 | `g` | BF16/FP32 | g-only 必传，`[B,HV,T]` |
 | `gk` | BF16/FP32 | gk-only 必传，`[B,HV,T,128]` |
 | `initial_state` | BF16/FP32 | 可空；`[N,HV,K,V]` 或 `[N,HV,V,K]` |
-| `h` | BF16 | `[B,HV,C,K,V]` 或 `[B,HV,C,V,K]` |
+| `h` | BF16 | dense `[B,C,HV,K,V]`；带 cu_seqlens 的 packed 为 `[1,C,HV,K,V]`，C 为总 chunk 数；state_v_first 交换末两维 |
 | `v_new` | BF16 | `[B,HV,T,128]` |
 | `final_state` | BF16/FP32 | 可空；shape/layout 与 `initial_state` 相同 |
 
 `state_v_first=false` 时 state 末两维为 `[K,V]`，为 `true` 时为 `[V,K]`。两种布局均由 kernel 原生处理，不依赖外部转置。
 
-当前仅支持 `K=V=128`、`chunk_size=64`、`save_new_value=true`，支持 A2、A3 和 A5。
-
 所有 aclnn tensor descriptor 必须使用非私有 ND storage/view format；输入可以是 ND view，
 host 会在需要时连续化，`h/v_new/final_state` 输出必须是连续 ND。Python 入口只接受标准物理
 布局并创建连续 ND 输出，不支持将私有 NPU format 伪装成 ND。
 
+## 支持范围
+
+- A2、A3、A5。
+- `K=V=128`、`chunk_size=64`、`save_new_value=true`。
+- `g` 与 `gk` 必须且只能提供一个：g-only 要求 `HV % HK == 0`。
+
 ## 变长序列
 
-变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束并严格递增。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
+变长模式使用 BNSD 容器且要求 `B=1`。`cu_seqlens` 必须从 0 开始、以 `T` 结束且非递减，相邻两项相等表示零长度序列。`chunk_indices` 若提供，必须严格等于由 `cu_seqlens` 和 `chunk_size=64` 推导出的 sequence-major `(seq_id, chunk_id)` 序列。
 
 ## 内核分工
 

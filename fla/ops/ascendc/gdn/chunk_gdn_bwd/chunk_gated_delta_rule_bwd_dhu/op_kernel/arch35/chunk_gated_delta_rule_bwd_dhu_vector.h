@@ -15,6 +15,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_VECTOR_H
 
+
 #include <cstdint>
 #include <type_traits>
 
@@ -302,7 +303,8 @@ class ChunkGatedDeltaRuleBwdDhuVector {
 public:
     __aicore__ inline ChunkGatedDeltaRuleBwdDhuVector() = default;
 
-    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
+    __aicore__ inline void Init(GM_ADDR q, GM_ADDR gate, GM_ADDR dv, GM_ADDR dht,
+                                GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dh,
                                 GM_ADDR dh0, GM_ADDR dv2, GM_ADDR workspace,
                                 const ChunkGatedDeltaRuleBwdDhuTilingData *__restrict tilingData,
                                 AscendC::TPipe *pipe)
@@ -310,6 +312,10 @@ public:
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(q));
         gateGm_.SetGlobalBuffer(reinterpret_cast<__gm__ GT *>(gate));
         dvGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dv));
+        hasDht_ = dht != nullptr;
+        if (hasDht_) {
+            dhtGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dht));
+        }
         cuSeqlens_ = cuSeqlens;
         chunkIndices_ = chunkIndices;
         dhGm_.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dh));
@@ -432,13 +438,13 @@ public:
                     if constexpr (sizeof(DT) == sizeof(uint16_t)) {
                         AscendC::GlobalTensor<uint16_t> dh0ClearGm;
                         dh0ClearGm.SetGlobalBuffer(
-                            reinterpret_cast<__gm__ uint16_t *>(dh0Addr_) + clearOffset);
+                            reinterpret_cast<__gm__ uint16_t *>(dh0Addr_) + clearOffset, clearElems);
                         AscendC::Fill(dh0ClearGm, static_cast<uint64_t>(clearElems),
                                       static_cast<uint16_t>(0));
                     } else {
                         AscendC::GlobalTensor<uint32_t> dh0ClearGm;
                         dh0ClearGm.SetGlobalBuffer(
-                            reinterpret_cast<__gm__ uint32_t *>(dh0Addr_) + clearOffset);
+                            reinterpret_cast<__gm__ uint32_t *>(dh0Addr_) + clearOffset, clearElems);
                         AscendC::Fill(dh0ClearGm, static_cast<uint64_t>(clearElems),
                                       static_cast<uint32_t>(0));
                     }
@@ -464,6 +470,9 @@ public:
             SeqInfo seqInfo;
             GetSeqInfo(cuSeqlens_, *tiling_, seqIdx, seqInfo);
             if (!seqInfo.valid) {
+                if (isVariable_ != 0 && seqInfo.tokenStart == seqInfo.tokenEnd) {
+                    CopyEmptySequenceDh0(seqIdx, hvBase, headCnt);
+                }
                 continue;
             }
 
@@ -472,10 +481,18 @@ public:
                     continue;
                 }
                 if (stateResident_) {
-                    // 驻留态：直接清 UB 槽位（workspace state 段不再读写）
+                    // Initialize the resident state without touching the GM workspace.
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[StateResidentSlot(headOffset)];
-                    FillFloatRegbase((__ubuf__ float *)reinterpret_cast<uint64_t>(stateFp32.GetPhyAddr()),
-                                     0.0f, static_cast<uint16_t>(K_ * V_));
+                    if (hasDht_) {
+                        const int64_t dhtBase = (seqIdx * HV_ + hvBase + headOffset) * K_ * V_;
+                        for (int64_t rowOffset = 0; rowOffset < K_; rowOffset += vecRow_) {
+                            LoadDhtRows(stateFp32[rowOffset * V_], dhtBase, rowOffset,
+                                        Min(vecRow_, K_ - rowOffset));
+                        }
+                    } else {
+                        FillFloatRegbase((__ubuf__ float *)reinterpret_cast<uint64_t>(stateFp32.GetPhyAddr()),
+                                         0.0f, static_cast<uint16_t>(K_ * V_));
+                    }
                     AscendC::PipeBarrier<PIPE_V>();
                     continue;
                 }
@@ -488,8 +505,13 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2Event_[stateIdx]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stateMte3ToMte2Event_[stateIdx]);
                     AscendC::LocalTensor<float> stateFp32 = stateBuf_[stateIdx];
-                    FillFloatRegbase((__ubuf__ float *)reinterpret_cast<uint64_t>(stateFp32.GetPhyAddr()), 0.0f,
-                                     static_cast<uint16_t>(elems));
+                    if (hasDht_) {
+                        LoadDhtRows(stateFp32, (seqIdx * HV_ + hvBase + headOffset) * K_ * V_,
+                                    rowOffset, curRows);
+                    } else {
+                        FillFloatRegbase((__ubuf__ float *)reinterpret_cast<uint64_t>(stateFp32.GetPhyAddr()),
+                                         0.0f, static_cast<uint16_t>(elems));
+                    }
                     AscendC::PipeBarrier<PIPE_V>();
                     CopyOutStateRows(stateIdx, stateFp32, stateBase + rowOffset * V_, elems);
                     curStatePingPong_ ^= 1U;
@@ -509,8 +531,9 @@ public:
                     const int64_t hq = hv / HRatio_;
                     const int64_t workspaceBase = WorkspaceBase(coreIdx, workspaceSlot);
                     const int64_t stateBase = StateWorkspaceFloatOffset(workspaceBase, 0);
-                    const int64_t qBase =
-                        ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
+                    const int64_t qBase = (tiling_->layout == GDN::DhuLayout::BSND)
+                        ? ((chunkInfo.bIdx * T_ + chunkInfo.tokenStart) * HK_ + hq) * K_
+                        : ((chunkInfo.bIdx * HK_ + hq) * T_ + chunkInfo.tokenStart) * K_;
                     const int64_t dhBase = DhOffset(chunkInfo.bIdx, hv, chunkInfo.outputChunkIdx);
                     if (headOffset % subBlockNum_ != subBlockIdx_) {
                         Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
@@ -607,9 +630,8 @@ public:
                     }
 
                     // C3：dh 已全部写 GM（上面 state 行循环的 CopyOutFp32Rows 完成），
-                    // GEMM0 唯一跨核输入就绪——先于 qg 生成/dvGateFactor 发射 dhReady，
-                    // 让 cube 的 GEMM0 与本 AIV 的 qg 生成重叠。PIPE_MTE3 与 dh 的
-                    // MTE3 写同 pipe 保序。
+                    // GEMM0 唯一跨核输入就绪——先于 qg 生成/dvGateFactor 发射 dhReady。
+                    // AIC direct 的 qg 不再需要这里的 AIV staging；其它路径仍保持重叠。
                     Catlass::Arch::CrossCoreFlag dhReadyFlag{DH_READY_FLAG};
                     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(dhReadyFlag);
 
@@ -617,19 +639,22 @@ public:
                     AscendC::DataCopyEnhancedParams qgCopyEnhanced;
                     qgCopyEnhanced.blockMode = AscendC::BlockMode::BLOCK_MODE_VECTOR;
                     uint32_t qgScratchSlot = static_cast<uint32_t>(headOffset);
-                    bool produceQG = true;
+                    bool produceQG = USE_GK == 0 || HRatio_ != 1;
                     if constexpr (USE_GK != 0) {
                         const int64_t groupStartHv = hq * HRatio_;
                         qgScratchSlot = static_cast<uint32_t>(groupStartHv > hvBase ? groupStartHv - hvBase : 0);
-                        produceQG = headOffset == 0 || hq != (hv - 1) / HRatio_;
+                        produceQG = HRatio_ != 1 && (headOffset == 0 || hq != (hv - 1) / HRatio_);
                     }
                     if (produceQG) {
                         AscendC::LocalTensor<DT> qgL1 = qgL1Scratch[qgScratchSlot];
                         for (int64_t rowOffset = 0; rowOffset < chunkInfo.chunkLen; rowOffset += vecRow_) {
                             const int64_t curRows = Min(vecRow_, chunkInfo.chunkLen - rowOffset);
-                            const uint32_t qIdx = CopyInRows(
-                                qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset * K_,
-                                static_cast<uint32_t>(curRows * K_));
+                            const uint32_t qIdx = CopyInRows<DT>(
+                                qGm_, qInputBuf_[curQInputPingPong_], qBase + rowOffset *
+                                    ((tiling_->layout == GDN::DhuLayout::BSND) ? HK_ * K_ : K_),
+                                static_cast<uint32_t>(curRows * K_),
+                            (tiling_->layout == GDN::DhuLayout::BSND)
+                                ? HK_ * K_ : K_);
                             AscendC::LocalTensor<float> qFp32 = qFp32Buf_.template Get<float>();
                             CastInputRows(qFp32, qInputBuf_[qIdx], static_cast<uint32_t>(curRows * K_), qIdx);
                             AscendC::PipeBarrier<PIPE_V>();
@@ -883,6 +908,9 @@ private:
 
     __aicore__ inline void InitVectorEvents()
     {
+        if (hasDht_ && stateVFirst_) {
+            dhtMte3ToMte2Event_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
+        }
         for (uint32_t eventIdx = 0; eventIdx < BUFFER_COUNT; ++eventIdx) {
             qMte2ToVEvent_[eventIdx] = pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>();
             qVToMte2Event_[eventIdx] = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
@@ -907,6 +935,9 @@ private:
 
     __aicore__ inline void ReleaseVectorEvents()
     {
+        if (hasDht_ && stateVFirst_) {
+            pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+        }
         for (uint32_t eventIdx = 0; eventIdx < BUFFER_COUNT; ++eventIdx) {
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[eventIdx]);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(gateVToMte2Event_[eventIdx]);
@@ -929,11 +960,20 @@ private:
     template <typename CopyType>
     __aicore__ inline uint32_t CopyInRows(AscendC::GlobalTensor<CopyType> &inputTensor,
                                           AscendC::LocalTensor<CopyType> dstTensor, int64_t inputOffset,
-                                          uint32_t elements)
+                                          uint32_t elements, int64_t rowStride = 0)
     {
         const uint32_t inputIdx = curQInputPingPong_;
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[inputIdx]);
-        AscendC::DataCopy(dstTensor, inputTensor[inputOffset], elements);
+        if (rowStride > K_) {
+            const uint32_t rows = elements / static_cast<uint32_t>(K_);
+            AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(K_ * sizeof(CopyType)),
+                static_cast<uint32_t>((rowStride - K_) * sizeof(CopyType)), 0, 0};
+            AscendC::DataCopyPadExtParams<CopyType> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(dstTensor, inputTensor[inputOffset], copy, pad);
+        } else {
+            AscendC::DataCopy(dstTensor, inputTensor[inputOffset], elements);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[inputIdx]);
         curQInputPingPong_ ^= 1U;
         return inputIdx;
@@ -995,8 +1035,84 @@ private:
         curOutputPingPong_ ^= 1U;
     }
 
+    __aicore__ inline void CopyEmptySequenceDh0(
+        int64_t seqIdx, int64_t hvBase, int64_t headCnt)
+    {
+        if (!hasDh0_ || !hasDht_) {
+            return;
+        }
+        // hT == h0, including the physical state layout and dtype. Copy the
+        // bits through output slot 0; no FP32 conversion or Vector scratch.
+        // Temporarily borrow q slot 0's empty event credits to bridge
+        // MTE3 -> V -> MTE2 and MTE2 -> V -> MTE3 for this output buffer.
+        // No q buffer is accessed, and its initial credit is restored below.
+        constexpr uint32_t SLOT = 0;
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
+        for (int64_t headOffset = 0; headOffset < headCnt; ++headOffset) {
+            if (headOffset % subBlockNum_ != subBlockIdx_) {
+                continue;
+            }
+            const int64_t stateBase = (seqIdx * HV_ + hvBase + headOffset) * K_ * V_;
+            for (int64_t offset = 0; offset < K_ * V_; offset += vecRow_ * V_) {
+                const uint32_t elems = static_cast<uint32_t>(Min(vecRow_ * V_, K_ * V_ - offset));
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SLOT]);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
+                AscendC::DataCopy(outputBuf_[SLOT], dhtGm_[stateBase + offset], elems);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SLOT]);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SLOT]);
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[SLOT]);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[SLOT]);
+                AscendC::DataCopy(dh0Gm_[stateBase + offset], outputBuf_[SLOT], elems);
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[SLOT]);
+            }
+        }
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SLOT]);
+    }
+
+    // Load the terminal gradient into the internal fp32 [K, V] state.
+    __aicore__ inline void LoadDhtRows(AscendC::LocalTensor<float> dstTensor, int64_t stateBase,
+                                       int64_t rowOffset, int64_t rowCount)
+    {
+        if (!stateVFirst_) {
+            const uint32_t inputIdx = curQInputPingPong_;
+            const uint32_t elements = static_cast<uint32_t>(rowCount * V_);
+            CopyInRows(dhtGm_, qInputBuf_[inputIdx], stateBase + rowOffset * V_, elements);
+            CastInputRows(dstTensor, qInputBuf_[inputIdx], elements, inputIdx);
+            AscendC::PipeBarrier<PIPE_V>();
+            return;
+        }
+
+        // Reuse the two output tiles: [V, 16] -> [16, V]. No additional UB is needed.
+        // q slot 0 protects scratch reuse after V; MTE3->MTE2 protects the previous task's output DMA.
+        constexpr uint32_t SCRATCH_SLOT = 0;
+        constexpr int64_t TILE_ROWS = 16;
+        for (int64_t tileRow = 0; tileRow < rowCount; tileRow += TILE_ROWS) {
+            const int64_t curRows = Min(TILE_ROWS, rowCount - tileRow);
+            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SCRATCH_SLOT]);
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(dhtMte3ToMte2Event_);
+            AscendC::DataCopyExtParams copyParams{
+                static_cast<uint16_t>(V_), static_cast<uint32_t>(curRows * sizeof(DT)),
+                static_cast<uint32_t>((K_ - curRows) * sizeof(DT)), 0, 0};
+            AscendC::DataCopyPadExtParams<DT> padParams{false, 0, 0, 0};
+            AscendC::DataCopyPad(outputBuf_[0], dhtGm_[stateBase + rowOffset + tileRow], copyParams, padParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SCRATCH_SLOT]);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(qMte2ToVEvent_[SCRATCH_SLOT]);
+            TransposeStateTile(outputBuf_[1], outputBuf_[0], true);
+            AscendC::PipeBarrier<PIPE_V>();
+            CastLocalToFloatRegbase<DT>(
+                (__ubuf__ float *)reinterpret_cast<uint64_t>(dstTensor[tileRow * V_].GetPhyAddr()),
+                (__ubuf__ DT *)reinterpret_cast<uint64_t>(outputBuf_[1].GetPhyAddr()),
+                static_cast<uint16_t>(curRows * V_));
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(qVToMte2Event_[SCRATCH_SLOT]);
+        }
+    }
+
     __aicore__ inline void TransposeStateTile(AscendC::LocalTensor<DT> dstTensor,
-                                              AscendC::LocalTensor<DT> srcTensor) const
+                                              AscendC::LocalTensor<DT> srcTensor,
+                                              bool vFirstInput = false) const
     {
         constexpr uint32_t TRANSPOSE_ROWS = 16;
         constexpr uint32_t DATA_BLOCK_BYTES = 32;
@@ -1008,11 +1124,11 @@ private:
         const uint16_t repeatTimes = static_cast<uint16_t>(V_ / ELEMS_PER_BLOCK);
         AscendC::TransDataTo5HDParams transposeParams{
             false, false, static_cast<uint8_t>(repeatTimes),
-            static_cast<uint16_t>(repeatTimes > 1 ? TRANSPOSE_ROWS : 0),
-            static_cast<uint16_t>(repeatTimes > 1 ? 1 : 0)};
+            static_cast<uint16_t>(repeatTimes > 1 ? (vFirstInput ? 1 : TRANSPOSE_ROWS) : 0),
+            static_cast<uint16_t>(repeatTimes > 1 ? (vFirstInput ? TRANSPOSE_ROWS : 1) : 0)};
         for (uint32_t row = 0; row < TRANSPOSE_ROWS; ++row) {
-            srcList[row] = srcAddr + row * V_ * sizeof(uint16_t);
-            dstList[row] = dstAddr + row * TRANSPOSE_ROWS * sizeof(uint16_t);
+            srcList[row] = srcAddr + row * (vFirstInput ? TRANSPOSE_ROWS : V_) * sizeof(uint16_t);
+            dstList[row] = dstAddr + row * (vFirstInput ? V_ : TRANSPOSE_ROWS) * sizeof(uint16_t);
         }
         AscendC::TransDataTo5HD<uint16_t>(dstList, srcList, transposeParams);
     }
@@ -1096,7 +1212,7 @@ private:
 
     __aicore__ inline int64_t DhOffset(int64_t b, int64_t hv, int64_t chunkIdx) const
     {
-        return ((b * HV_ + hv) * totalChunkNum_ + chunkIdx) * K_ * V_;
+        return ((b * totalChunkNum_ + chunkIdx) * HV_ + hv) * K_ * V_;
     }
 
     __aicore__ inline int64_t WorkspaceBase(int64_t coreIdx, int64_t workspaceSlot) const
@@ -1114,6 +1230,7 @@ private:
     AscendC::GlobalTensor<DT> qGm_;
     AscendC::GlobalTensor<GT> gateGm_;
     AscendC::GlobalTensor<DT> dvGm_;
+    AscendC::GlobalTensor<DT> dhtGm_;
     AscendC::GlobalTensor<DT> dhGm_;
     AscendC::GlobalTensor<DT> dh0Gm_;
     AscendC::GlobalTensor<DT> dv2Gm_;
@@ -1155,6 +1272,7 @@ private:
     AscendC::TEventID stateVToMte2Event_[BUFFER_COUNT];
     AscendC::TEventID stateVToMte3Event_[BUFFER_COUNT];
     AscendC::TEventID stateMte3ToMte2Event_[BUFFER_COUNT];
+    AscendC::TEventID dhtMte3ToMte2Event_;
     uint32_t curQInputPingPong_ = 0;
     uint32_t curGateInputPingPong_ = 0;
     uint32_t curOutputPingPong_ = 0;
@@ -1183,6 +1301,7 @@ private:
     int64_t isVariable_ = 0;
     float scale_ = 1.0f;
     bool hasDh0_ = false;
+    bool hasDht_ = false;
     bool stateVFirst_ = false;
     bool stateResident_ = false;
     int64_t dh0ClearCoreNum_ = 0;

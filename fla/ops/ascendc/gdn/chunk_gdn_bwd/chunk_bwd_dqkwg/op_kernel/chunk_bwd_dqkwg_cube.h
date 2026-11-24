@@ -14,7 +14,7 @@
 #ifndef CHUNK_BWD_DQKWG_CUBE_H
 #define CHUNK_BWD_DQKWG_CUBE_H
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #include "chunk_bwd_dqkwg_common.h"
 #include "catlass/arch/arch.hpp"
@@ -266,7 +266,7 @@ public:
                 BlockMmadPart1 blockMmadPart1(resource);
                 for (uint32_t h = 0; h < params.HV; h++) {
                     uint64_t dvOffset = (h * params.T + bos) * params.V;
-                    uint64_t hOffset = ((bIdx * params.HV + h) * params.numChunks + chunkIdx) * params.K * params.V;
+                    uint64_t hOffset = ((bIdx * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t dwOffset = (h * params.T + bos) * params.K;
 
                     auto tensorDv = tla::MakeTensor(gmDv[dvOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
@@ -334,7 +334,7 @@ public:
                 for (uint32_t h = 0; h < params.HV; h++) {
                     // --- Part4: dq_inner = do @ h^T ---
                     uint64_t doOffset = (h * params.T + bos) * params.V;
-                    uint64_t hOffset = ((bIdx * params.HV + h) * params.numChunks + chunkIdx) * params.K * params.V;
+                    uint64_t hOffset = ((bIdx * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t mm4Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
                     auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
@@ -382,7 +382,7 @@ public:
                 for (uint32_t h = 0; h < params.HV; h++) {
                     // --- Part5: dk_inner = v @ dh ---
                     uint64_t vOffset = (h * params.T + bos) * params.V;
-                    uint64_t dhOffset = ((bIdx * params.HV + h) * params.numChunks + chunkIdx) * params.K * params.V;
+                    uint64_t dhOffset = ((bIdx * params.numChunks + chunkIdx) * params.HV + h) * params.K * params.V;
                     uint64_t mm5Offset = DqkwgBtxKElemOffset(coreIdx, h, params.HV, params.BT, params.K);
 
                     auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
@@ -520,7 +520,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
     using LayoutColMajor = layout::ColumnMajor;
 
     // 架构和策略定义
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
 #else
     using ArchTag = Arch::AtlasA2;

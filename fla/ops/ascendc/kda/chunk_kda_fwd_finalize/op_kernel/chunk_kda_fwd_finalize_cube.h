@@ -8,7 +8,11 @@
 #define CHUNK_KDA_FWD_FINALIZE_CUBE_H
 
 #include <type_traits>
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#ifndef CATLASS_ARCH
+#define CATLASS_ARCH 9201
+#endif
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -31,13 +35,14 @@ namespace KdaFinalize {
 
 using namespace AscendC;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+using FinalizeArch = Catlass::Arch::Ascend960DT;
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using FinalizeArch = Catlass::Arch::Ascend950;
-constexpr bool kFinalizeA5 = true;
 #else
 using FinalizeArch = Catlass::Arch::AtlasA2;
-constexpr bool kFinalizeA5 = false;
 #endif
+constexpr bool kFinalizeA5 = FinalizePlatform::isNonArch22;
 
 template <bool StateVFirst, bool OutputSequenceMajor, bool UseAivInputMover>
 class FinalizeCube {
@@ -69,7 +74,7 @@ public:
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.vNew));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.h));
         out_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.attnOut));
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         if ASCEND_IS_AIC {
             SetLoadDataPaddingValue<Element>(static_cast<Element>(0));
         }
@@ -78,6 +83,9 @@ public:
 
     __aicore__ inline void Process()
     {
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ == 2201
+        ProcessA2A3();
+#else
         if (core_ >= args_.tiling.usedCoreNum || args_.tiling.usedCoreNum == 0) {
             return;
         }
@@ -88,8 +96,7 @@ public:
         const uint32_t end = WorkEnd(total, core_, args_.tiling.usedCoreNum);
         // 主体只分 chunk；余下不足一轮核数的 chunk 才按 4-head 组均摊。
         const uint32_t cores = args_.tiling.usedCoreNum;
-        const bool balanceTail = kFinalizeA5 && !args_.tiling.isVarLen &&
-            partitions == 1 && total >= cores && total % cores != 0;
+        const bool balanceTail = kFinalizeA5 && partitions == 1 && total >= cores && total % cores != 0;
         const uint32_t fullChunksPerCore = total / cores;
         const uint32_t headGroups = CeilDiv(args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
         const uint32_t tailGroups = (total % cores) * headGroups;
@@ -136,7 +143,7 @@ public:
             }
         }
         if constexpr (kFinalizeA5) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
             // 最后一轮 Fixpipe 没有后继 MMAD 消费互斥量，在 M pipe 侧等待写回完成。
             for (uint32_t slot = 0; slot < 2; ++slot) {
                 if (outputSlotUsed[slot]) {
@@ -156,9 +163,118 @@ public:
                 }
             }
         }
+#endif
     }
 
 private:
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ == 2201
+    __aicore__ inline bool NextHead(uint64_t &work, uint64_t total,
+                                    FinalizeChunk &chunk, uint32_t &head)
+    {
+        // Host fixes CG=1. Advance only the work cursor when an invalid chunk is skipped.
+        while (work < total) {
+            const uint64_t current = work;
+            work += args_.tiling.usedCoreNum;
+            if (ResolveChunk(args_, static_cast<uint32_t>(current / args_.tiling.valueHeadNum), chunk)) {
+                head = static_cast<uint32_t>(current % args_.tiling.valueHeadNum);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    __aicore__ inline void PrefetchHead(const FinalizeChunk &chunk,
+                                       uint32_t head, uint32_t inputSlot)
+    {
+        if (l1InputInFlight_[inputSlot]) {
+            WaitFlag<HardEvent::MTE1_MTE2>(inputSlot);
+            l1InputInFlight_[inputSlot] = false;
+        }
+        const uint32_t lane = inputSlot * kL1HeadBytes;
+        const uint64_t qOffset = InputOffset(args_, chunk, head, Shape::kHeadDim);
+        LoadOperands<TileCopyQH, HLayout>(
+            q_, h_, qOffset, StateOffset(args_, chunk, head), lane + kQOffset, lane + kHOffset,
+            chunk.validRows, Shape::kHeadDim, Shape::kHeadDim,
+            Shape::kHeadDim, Shape::kHeadDim);
+        LoadOperands<TileCopyAV, LayoutRM>(
+            a_, v_, InputOffset(args_, chunk, head, Shape::kChunkRows), qOffset,
+            lane + kAOffset, lane + kVOffset, chunk.validRows, chunk.validRows,
+            Shape::kChunkRows, Shape::kChunkRows, Shape::kHeadDim);
+        SetFlag<HardEvent::MTE2_MTE1>(inputSlot);
+    }
+
+    __aicore__ inline void ConsumeHead(const FinalizeChunk &chunk, uint32_t head,
+                                      uint32_t inputSlot, uint32_t outputSlot)
+    {
+        WaitFlag<HardEvent::MTE2_MTE1>(inputSlot);
+        if (l0OutputInFlight_[outputSlot]) {
+            WaitFlag<HardEvent::FIX_M>(outputSlot);
+            l0OutputInFlight_[outputSlot] = false;
+        }
+        const uint32_t lane = inputSlot * kL1HeadBytes;
+        ComputeProduct<TileCopyQH, true, false>(lane + kQOffset, lane + kHOffset,
+            chunk.validRows, Shape::kHeadDim, Shape::kHeadDim,
+            Shape::kHeadDim, Shape::kHeadDim, 0, outputSlot);
+        ComputeProduct<TileCopyAV, false, false>(lane + kAOffset, lane + kVOffset,
+            chunk.validRows, chunk.validRows, Shape::kChunkRows,
+            Shape::kChunkRows, Shape::kHeadDim, 1, outputSlot);
+        // Both MTE1 copies precede this event. L1 can be reused while Cube/Fixpipe continue.
+        SetFlag<HardEvent::MTE1_MTE2>(inputSlot);
+        l1InputInFlight_[inputSlot] = true;
+        SetFlag<HardEvent::M_FIX>(outputSlot);
+        StoreOutput(chunk, head, outputSlot);
+    }
+
+    __aicore__ inline void ProcessA2A3()
+    {
+        const uint32_t cores = args_.tiling.usedCoreNum;
+        if (cores == 0 || core_ >= cores) {
+            return;
+        }
+        static_assert(2 * kL1HeadBytes <= 512 * 1024, "L1 input slots exceed A2/A3 capacity");
+        const uint64_t chunks = args_.tiling.isVarLen
+            ? args_.tiling.totalChunks
+            : static_cast<uint64_t>(args_.tiling.batch) * args_.tiling.totalChunks;
+        const uint64_t total = chunks * args_.tiling.valueHeadNum;
+        uint64_t work = core_;
+        FinalizeChunk current{};
+        uint32_t currentHead = 0;
+        uint32_t inputSlot = 0;
+        uint32_t outputSlot = 0;
+        if (NextHead(work, total, current, currentHead)) {
+            PrefetchHead(current, currentHead, inputSlot);
+            while (true) {
+                FinalizeChunk next{};
+                uint32_t nextHead = 0;
+                const bool hasNext = NextHead(work, total, next, nextHead);
+                // Queue the other slot before consuming this one, without waiting for Cube/Fixpipe.
+                if (hasNext) {
+                    PrefetchHead(next, nextHead, inputSlot ^ 1);
+                }
+                ConsumeHead(current, currentHead, inputSlot, outputSlot);
+                if (!hasNext) {
+                    break;
+                }
+                current = next;
+                currentHead = nextHead;
+                inputSlot ^= 1;
+                outputSlot ^= 1;
+            }
+        }
+        for (uint32_t slot = 0; slot < 2; ++slot) {
+            if (l1InputInFlight_[slot]) {
+                WaitFlag<HardEvent::MTE1_MTE2>(slot);
+            }
+            if (l0OperandInFlight_[slot]) {
+                WaitFlag<HardEvent::M_MTE1>(slot);
+            }
+            if (l0OutputInFlight_[slot]) {
+                WaitFlag<HardEvent::FIX_M>(slot);
+            }
+        }
+    }
+#endif
+
     template <typename TileCopy, typename LayoutB>
     __aicore__ inline void LoadOperands(GlobalTensor<Element> &sourceA,
                                         GlobalTensor<Element> &sourceB,
@@ -195,7 +311,11 @@ private:
         CopyGmB{}(l1BTensor, gmBBlock);
     }
 
-    template <typename TileCopy, bool InitC>
+    template <typename TileCopy, bool InitC
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ == 2201
+              , bool ReleaseL1 = true
+#endif
+              >
     __aicore__ inline void ComputeProduct(uint32_t l1AOffset, uint32_t l1BOffset,
                                           uint32_t m, uint32_t k, uint32_t aStride,
                                           uint32_t bRows, uint32_t n,
@@ -215,7 +335,7 @@ private:
                                         Catlass::Arch::PositionL1{});
         auto l1BTensor = tla::MakeTensor(l1B, tla::MakeLayout<Element, L1B>(bRows, n),
                                         Catlass::Arch::PositionL1{});
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Lock<PIPE_MTE1>(static_cast<uint8_t>(4 + operandPlane));
 #endif
         auto l0A = resource_.l0ABuf.template GetBufferByByte<Element>(kL0AOffset[operandPlane]);
@@ -230,7 +350,7 @@ private:
                                         Catlass::Arch::PositionL0B{});
         auto tensorL0C = tla::MakeTensor(l0C, tla::MakeLayoutL0C(m, n),
                                         Catlass::Arch::PositionL0C{});
-#if !(defined(__CCE_AICORE__) && __CCE_AICORE__ == 310)
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ == 2201
         if (l0OperandInFlight_[operandPlane]) {
             WaitFlag<HardEvent::M_MTE1>(operandPlane);
         }
@@ -241,20 +361,22 @@ private:
         auto tileL0B = GetTile(tensorL0B, tla::MakeCoord(0, 0), tla::MakeShape(k, n));
         CopyA{}(tileL0A, tileL1A);
         CopyB{}(tileL0B, tileL1B);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Unlock<PIPE_MTE1>(static_cast<uint8_t>(4 + operandPlane));
         Mutex::Lock<PIPE_M>(static_cast<uint8_t>(4 + operandPlane));
 #else
         SetFlag<HardEvent::MTE1_M>(0);
         WaitFlag<HardEvent::MTE1_M>(0);
-        SetFlag<HardEvent::MTE1_MTE2>(0);
-        WaitFlag<HardEvent::MTE1_MTE2>(0);
+        if constexpr (ReleaseL1) {
+            SetFlag<HardEvent::MTE1_MTE2>(0);
+            WaitFlag<HardEvent::MTE1_MTE2>(0);
+        }
 #endif
         auto tileL0C = GetTile(tensorL0C, tla::MakeCoord(0, 0), tla::MakeShape(m, n));
         // A2/A3 的 MMAD 至少处理一个 16 行分形，尾块仍只写回有效行。
         const uint32_t madM = kFinalizeA5 ? m : (m < 16 ? 16 : m);
         Mmad{}(tileL0C, tileL0A, tileL0B, madM, n, k, InitC, 0);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Unlock<PIPE_M>(static_cast<uint8_t>(4 + operandPlane));
 #else
         SetFlag<HardEvent::M_MTE1>(operandPlane);
@@ -267,7 +389,7 @@ private:
     {
         auto l0C = resource_.l0CBuf.template GetBufferByByte<float>(
             outputSlot * Shape::kProductBytes);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Lock<PIPE_FIX>(static_cast<uint8_t>(kL0CMutexBase + outputSlot));
 #else
         WaitFlag<HardEvent::M_FIX>(outputSlot);
@@ -282,7 +404,7 @@ private:
         fix.quantPre = QuantMode_t::F322BF16;
         Fixpipe<Element, float, CFG_ROW_MAJOR>(
             out_[OutputOffset(args_, chunk, head, 0)], l0C, fix);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Unlock<PIPE_FIX>(static_cast<uint8_t>(kL0CMutexBase + outputSlot));
 #else
         SetFlag<HardEvent::FIX_M>(outputSlot);
@@ -299,7 +421,7 @@ private:
             const uint64_t qOffset = InputOffset(args_, chunk, head, Shape::kHeadDim);
             const uint64_t aOffset = InputOffset(args_, chunk, head, Shape::kChunkRows);
             const uint64_t hOffset = StateOffset(args_, chunk, head);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
             Mutex::Lock<PIPE_MTE2>(0);
 #endif
             LoadOperands<TileCopyQH, HLayout>(
@@ -310,7 +432,7 @@ private:
                 a_, v_, aOffset, qOffset, lane + kAOffset, lane + kVOffset,
                 chunk.validRows, chunk.validRows, Shape::kChunkRows,
                 Shape::kChunkRows, Shape::kHeadDim);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
             Mutex::Unlock<PIPE_MTE2>(0);
             Mutex::Lock<PIPE_MTE1>(0);
 #else
@@ -322,15 +444,15 @@ private:
             }
 #endif
         } else {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
             // Q/H 先 ready，第一路 MTE1/MMAD 可与 AIV 的 Aqk/V 搬运重叠。
-            CrossCoreWaitFlag<A5Sync::kCrossCoreMode, PIPE_MTE1>(
-                A5Sync::kAicQhReadyFlagId[localHead]);
+            CrossCoreWaitFlag<FinalizeSync::kCrossCoreMode, PIPE_MTE1>(
+                FinalizeSync::kAicQhReadyFlagId[localHead]);
             Mutex::Lock<PIPE_MTE1>(0);
 #endif
         }
         // 第一项初始化 L0C，第二项直接累加；两个槽仅用于跨 head 的 MMAD/Fixpipe 流水。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Lock<PIPE_M>(static_cast<uint8_t>(kL0CMutexBase + outputSlot));
 #endif
         ComputeProduct<TileCopyQH, true>(lane + kQOffset, lane + kHOffset,
@@ -338,21 +460,21 @@ private:
                                          Shape::kHeadDim, Shape::kHeadDim,
                                          Shape::kHeadDim, 0, outputSlot);
         if constexpr (UseAivInputMover) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-            CrossCoreWaitFlag<A5Sync::kCrossCoreMode, PIPE_MTE1>(
-                A5Sync::kAicAvReadyFlagId[localHead]);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
+            CrossCoreWaitFlag<FinalizeSync::kCrossCoreMode, PIPE_MTE1>(
+                FinalizeSync::kAicAvReadyFlagId[localHead]);
 #endif
         }
         ComputeProduct<TileCopyAV, false>(lane + kAOffset, lane + kVOffset,
                                           chunk.validRows, chunk.validRows,
                                           Shape::kChunkRows, Shape::kChunkRows,
                                           Shape::kHeadDim, 1, outputSlot);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ != 2201)
         Mutex::Unlock<PIPE_MTE1>(0);
         if constexpr (UseAivInputMover) {
             // Q/H 与 Aqk/V 均已离开 L1，AIV 可提前复用该 head 槽。
-            CrossCoreSetFlag<A5Sync::kCrossCoreMode, PIPE_MTE1>(
-                A5Sync::kAicL1ReusableFlagId[localHead]);
+            CrossCoreSetFlag<FinalizeSync::kCrossCoreMode, PIPE_MTE1>(
+                FinalizeSync::kAicL1ReusableFlagId[localHead]);
         }
         Mutex::Unlock<PIPE_M>(static_cast<uint8_t>(kL0CMutexBase + outputSlot));
 #else
@@ -361,6 +483,9 @@ private:
         StoreOutput(chunk, head, outputSlot);
     }
 
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ == 2201
+    bool l1InputInFlight_[2] = {false, false};
+#endif
     FinalizeArgs args_{};
     uint32_t core_ = 0;
     bool l0OperandInFlight_[2] = {false, false};

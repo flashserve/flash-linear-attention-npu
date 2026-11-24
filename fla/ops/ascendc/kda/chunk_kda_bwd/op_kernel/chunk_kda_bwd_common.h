@@ -54,9 +54,6 @@ struct ChunkKdaBwdCTilingData {
     int16_t workspaceSlotCount;
     int16_t usedCoreNum;
     int8_t isVarLen;
-    // PR291 Kernel B writes dh as [B,H,NT,K,V] for dense and
-    // [1,H,totalChunks,K,V] for varlen. Saved h remains chunk-major.
-    int8_t dhHeadMajor;
     int8_t useGateInKernel;
     int8_t hasDtBias;
     int8_t deferGatePost;
@@ -220,7 +217,7 @@ namespace KDA {
 // one place so the shared A/C kernels can use the same implementation.
 template <class TileCopy, class TensorC>
 struct KdaBwdCopyL0CToDstSelector {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using Type = typename TileCopy::template CopyL0CToDst<TensorC>;
 #else
     using Type = typename TileCopy::template CopyL0CToGm<TensorC>;
@@ -231,12 +228,22 @@ template <class TileCopy, class TensorC>
 using KdaBwdCopyL0CToDst =
     typename KdaBwdCopyL0CToDstSelector<TileCopy, TensorC>::Type;
 
+// Cross-phase private workspace regions are handed to the device entry as
+// offsets inside ChunkKdaBwdTilingData.  The fused MIX entry has to keep its
+// whole tiling payload inside the proven A5 kernel-argument budget, so those
+// fields stay 32-bit and are stored in units of this alignment instead of
+// bytes: every region starts on a 512-byte boundary by construction (see the
+// host tiling), which keeps the payload size unchanged while raising the
+// addressable single-launch workspace from 4 GiB to 2 TiB.
+constexpr uint64_t KDA_BWD_WORKSPACE_ALIGN = 512U;
+
 struct ChunkKdaBwdTilingData {
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData kernelB;
     ChunkKdaBwdCTilingData kernelC;
     // Cross-phase tensors are private workspace regions, not public kernel
     // parameters.  This keeps the single device entry comfortably below the
     // A5 kernel-argument limit and mirrors chunk_kda_fwd's address plan.
+    // Every offset is expressed in KDA_BWD_WORKSPACE_ALIGN units.
     uint32_t dv0Offset;
     uint32_t dqRawOffset;
     uint32_t dAqkOffset;

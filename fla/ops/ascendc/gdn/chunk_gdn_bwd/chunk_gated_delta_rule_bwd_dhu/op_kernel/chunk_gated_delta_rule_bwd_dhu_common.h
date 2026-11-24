@@ -23,8 +23,15 @@ namespace GDN {
 
 constexpr uint64_t VEC_TO_CUBE_FLAG_READY = 2;
 constexpr uint64_t CUBE_TO_VEC_FLAG_READY = 4;
+// dh（GEMM0 唯一跨核输入）就绪专用 mode-2 flag。
+// flagId 命名空间：mode-2 已占用 {2,4}，取未占用的 3。
+constexpr uint64_t DH_READY_FLAG = 3;
 constexpr int64_t HEADS_PER_TASK = 4;
 constexpr int64_t WORKSPACE_BUFFER_COUNT = 8;
+// 同步拆分/early-notify 仅在单 task chunk 链足够深时有利。
+// cube/vector 两侧必须用同一判据（同 task 的
+// chunkCnt 相同），否则 mode-2 计数错配死锁。
+constexpr int64_t SYNC_SPLIT_MIN_CHUNKS = 32;
 
 struct ChunkInfo {
     int64_t seqIdx = 0;
@@ -54,19 +61,6 @@ __aicore__ inline int64_t Min(int64_t a, int64_t b)
 __aicore__ inline int64_t CeilDiv(int64_t a, int64_t b)
 {
     return b == 0 ? 0 : (a + b - 1) / b;
-}
-
-__aicore__ inline bool ChunkIndexMatches(
-    GM_ADDR chunkIndices, int64_t outputIdx, int64_t seqIdx, int64_t chunkIdx)
-{
-    if (chunkIndices == nullptr || outputIdx < 0) {
-        return false;
-    }
-
-    AscendC::GlobalTensor<int64_t> chunkIndicesTensor;
-    chunkIndicesTensor.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices));
-    return chunkIndicesTensor.GetValue(2 * outputIdx) == seqIdx &&
-           chunkIndicesTensor.GetValue(2 * outputIdx + 1) == chunkIdx;
 }
 
 __aicore__ inline void GetSeqInfo(
@@ -127,6 +121,19 @@ __aicore__ inline void GetSeqInfo(
     seqInfo.valid = seqInfo.chunkCnt > 0;
 }
 
+__aicore__ inline bool ChunkIndexMatches(
+    GM_ADDR chunkIndices, int64_t outputIdx, int64_t seqIdx, int64_t chunkIdx)
+{
+    if (chunkIndices == nullptr || outputIdx < 0) {
+        return false;
+    }
+
+    AscendC::GlobalTensor<int64_t> chunkIndicesTensor;
+    chunkIndicesTensor.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices));
+    return chunkIndicesTensor.GetValue(2 * outputIdx) == seqIdx &&
+           chunkIndicesTensor.GetValue(2 * outputIdx + 1) == chunkIdx;
+}
+
 __aicore__ inline int64_t FindVarlenChunkOutputIdx(
     GM_ADDR chunkIndices, const ChunkGatedDeltaRuleBwdDhuTilingData &tiling, int64_t seqIdx, int64_t chunkIdx)
 {
@@ -184,6 +191,102 @@ __aicore__ inline void GetChunkInfoBySeqChunk(
     chunkInfo.chunkLen = tokenEnd - tokenStart;
     chunkInfo.outputChunkIdx = outputChunkIdx;
     chunkInfo.valid = true;
+}
+
+// 变长前缀增量缓存。task 循环内 taskIdx 严格递增 → seqIdx 单调不减，
+// 相邻 task 的 GetSeqInfo 重复扫描 cuSeqlens[0..seqIdx]（每次 O(seqIdx) 的
+// GetValue 往返）。缓存上次的 {seqIdx, tokenStart, outputChunkBase}，seqIdx
+// 不变直接复用，前进则从缓存点增量累积。缓存初值 seqIdx=-1 表示无效。
+// 固定长度模式（cuSeqlens == nullptr）不走此路径。
+struct SeqInfoCache {
+    int64_t seqIdx = -1;
+    int64_t tokenStart = 0;
+    int64_t outputChunkBase = 0;
+};
+
+__aicore__ inline void GetSeqInfoCached(
+    GM_ADDR cuSeqlens, const ChunkGatedDeltaRuleBwdDhuTilingData &tiling, int64_t seqIdx,
+    SeqInfoCache &cache, SeqInfo &seqInfo)
+{
+    if (cuSeqlens == nullptr) {
+        GetSeqInfo(cuSeqlens, tiling, seqIdx, seqInfo);
+        return;
+    }
+    if (seqIdx < 0 || seqIdx >= tiling.seqNum) {
+        GetSeqInfo(cuSeqlens, tiling, seqIdx, seqInfo);
+        return;
+    }
+
+    AscendC::GlobalTensor<int64_t> cuSeqlensTensor;
+    cuSeqlensTensor.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
+
+    int64_t curSeq = 0;
+    int64_t prev = 0;
+    int64_t outputChunkBase = 0;
+    if (cache.seqIdx >= 0 && seqIdx >= cache.seqIdx) {
+        // 单调前进：从缓存点继续累积（seqIdx 相同则零扫描）
+        curSeq = cache.seqIdx;
+        prev = cache.tokenStart;
+        outputChunkBase = cache.outputChunkBase;
+        if (curSeq == seqIdx) {
+            const int64_t seqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+            if (seqEnd < prev || seqEnd > tiling.T) {
+                GetSeqInfo(cuSeqlens, tiling, seqIdx, seqInfo);
+                return;
+            }
+            seqInfo.seqIdx = seqIdx;
+            seqInfo.bIdx = 0;
+            seqInfo.tokenStart = prev;
+            seqInfo.outputChunkBase = outputChunkBase;
+            seqInfo.chunkCnt = CeilDiv(seqEnd - prev, tiling.chunkSize);
+            seqInfo.tokenEnd = seqEnd;
+            seqInfo.valid = seqInfo.chunkCnt > 0;
+            return;
+        }
+    } else {
+        prev = cuSeqlensTensor.GetValue(0);
+        if (prev < 0 || prev > tiling.T) {
+            GetSeqInfo(cuSeqlens, tiling, seqIdx, seqInfo);
+            return;
+        }
+    }
+
+    bool failed = false;
+    while (curSeq < seqIdx) {
+        const int64_t next = cuSeqlensTensor.GetValue(curSeq + 1);
+        if (next < prev || next > tiling.T) {
+            failed = true;
+            break;
+        }
+        outputChunkBase += CeilDiv(next - prev, tiling.chunkSize);
+        prev = next;
+        ++curSeq;
+    }
+    if (failed) {
+        GetSeqInfo(cuSeqlens, tiling, seqIdx, seqInfo);
+        return;
+    }
+
+    const int64_t seqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+    if (seqEnd < prev || seqEnd > tiling.T) {
+        GetSeqInfo(cuSeqlens, tiling, seqIdx, seqInfo);
+        return;
+    }
+
+    // cache 须在 seqEnd 校验通过后再写入，否则非法 cuSeqlens 会把
+    // 未验证的 {seqIdx, tokenStart, outputChunkBase} 留给后续 task 命中，
+    // 绕过越界检查构造出 tokenEnd > T 的 SeqInfo。
+    cache.seqIdx = seqIdx;
+    cache.tokenStart = prev;
+    cache.outputChunkBase = outputChunkBase;
+
+    seqInfo.seqIdx = seqIdx;
+    seqInfo.bIdx = 0;
+    seqInfo.tokenStart = prev;
+    seqInfo.tokenEnd = seqEnd;
+    seqInfo.chunkCnt = CeilDiv(seqEnd - prev, tiling.chunkSize);
+    seqInfo.outputChunkBase = outputChunkBase;
+    seqInfo.valid = seqInfo.chunkCnt > 0;
 }
 
 } // namespace GDN

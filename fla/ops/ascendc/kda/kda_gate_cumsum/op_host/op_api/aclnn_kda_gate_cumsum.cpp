@@ -5,6 +5,9 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND.
  */
 
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_kda_gate_cumsum.h"
 #include "kda_gate_cumsum.h"
 
@@ -19,6 +22,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnKdaGateCumsum";
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,8 +95,14 @@ aclnnStatus KdaGateCheckParams(
     double lowerBound,
     const aclTensor *gkOut)
 {
-    CHECK_COND(g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(gkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "gkOut must not be nullptr.");
+    if (g == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (gkOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "gkOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     CHECK_COND(chunkSize == 32 || chunkSize == 64 || chunkSize == 128, ACLNN_ERR_PARAM_INVALID,
                "chunkSize must be 32, 64 or 128.");
     size_t rank = KdaGateRank(g);
@@ -110,8 +121,10 @@ aclnnStatus KdaGateCheckParams(
                "rank4 varlen input with cuSeqlensOptional currently requires B=1.");
     int64_t hv = KdaGateDim(g, rank == 4 ? 1 : 0);
     if (useGateInKernel) {
-        CHECK_COND(aLogOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "aLogOptional must be provided when useGateInKernel is true.");
+        if (aLogOptional == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "aLogOptional");
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
         CHECK_COND(aLogOptional->GetDataType() == DataType::DT_FLOAT, ACLNN_ERR_PARAM_INVALID,
                    "aLogOptional must be float32.");
         if (safeGate) {
@@ -146,6 +159,15 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(
         aclnnKdaGateCumsum,
         DFX_IN(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
@@ -154,16 +176,36 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
-    CHECK_RET(KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel,
-                                 safeGate, lowerBound, gkOut) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaGateDataContiguous(g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaGateDataContiguous(aLogOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(KdaGateDataContiguous(dtBiasOptional, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+
+    OP_LOGW("npu_kda_gate_cumsum",
+            "npu_kda_gate_cumsum is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_kda_fwd instead.");
+
+    {
+        const aclnnStatus checkRet = KdaGateCheckParams(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize, useGateInKernel, safeGate, lowerBound, gkOut);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
+    }
+    if (KdaGateDataContiguous(g, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous conversion of g failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (KdaGateDataContiguous(aLogOptional, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous conversion of aLogOptional failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (KdaGateDataContiguous(dtBiasOptional, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous conversion of dtBiasOptional failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto result = l0op::KdaGateCumsum(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
                                       useGateInKernel, safeGate, lowerBound, gkOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (result[0] == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output (gkOut)", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

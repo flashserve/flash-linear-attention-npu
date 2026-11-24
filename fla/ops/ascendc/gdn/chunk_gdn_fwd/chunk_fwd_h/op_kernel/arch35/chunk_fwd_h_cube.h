@@ -7,6 +7,8 @@
 #ifndef ARCH35_CHUNK_FWD_H_CUBE_H
 #define ARCH35_CHUNK_FWD_H_CUBE_H
 
+#include "../chunk_fwd_h_struct.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -49,6 +51,7 @@ public:
         const uint32_t headsPerSequence = static_cast<uint32_t>(args_.tiling.vNumHead);
         uint32_t cachedSequence = FwdHSequenceCount(args_.tiling);
         FwdHSequenceSpan sequenceSpan{};
+        FwdHSequenceCursor sequenceCursor{};
         for (uint32_t cursor = range.begin; cursor < range.end;) {
             const uint32_t sequence = cursor / headsPerSequence;
             const uint32_t hvBegin = cursor - sequence * headsPerSequence;
@@ -61,7 +64,7 @@ public:
                 unitHeads = FWD_H_AIC_HEAD_SLOTS;
             }
             if (sequence != cachedSequence) {
-                sequenceSpan = FwdHResolveSequence(args_, sequence);
+                sequenceSpan = FwdHResolveSequence(args_, sequence, sequenceCursor);
                 cachedSequence = sequence;
             }
             const FwdHWorkUnit unit{
@@ -467,6 +470,8 @@ private:
         const uint64_t offset = FwdHKOffset(args_.tiling, unit.sequence.physicalBatch,
                                             binding.kh, chunk.tokenBegin);
         gmKg.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.k) + offset);
+        const uint32_t kRowStride = (args_.tiling.layout == GDN::FwdHLayout::BSND)
+            ? args_.tiling.kNumHead * FWD_H_K : FWD_H_K;
         bool readOnce = true;
         if constexpr (CompilePolicy::GATE_MODE == FwdHGateMode::SCALAR_G) {
             const uint32_t groupSize = static_cast<uint32_t>(args_.tiling.vNumHead) /
@@ -480,7 +485,7 @@ private:
             gmKg.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         }
         if constexpr (!STATE_V_FIRST) {
-            auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutLeftS2>(FWD_H_K, chunk.validTokens);
+            auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutLeftS2>(kRowStride, chunk.validTokens);
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(FWD_H_K, chunk.validTokens));
@@ -489,7 +494,7 @@ private:
             CopyGmToL1AS2<decltype(blockGm)> copy;
             copy(tensorL1, blockGm);
         } else {
-            auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutRightS2>(chunk.validTokens, FWD_H_K);
+            auto gmLayout = tla::MakeLayout<bfloat16_t, LayoutRightS2>(chunk.validTokens, kRowStride);
             auto tensorGm = tla::MakeTensor(gmKg, gmLayout, Catlass::Arch::PositionGM{});
             auto blockGm = tla::GetTile(tensorGm, tla::MakeCoord(0, 0),
                                         tla::MakeShape(chunk.validTokens, FWD_H_K));

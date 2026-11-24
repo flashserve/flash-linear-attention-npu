@@ -10,6 +10,8 @@
 
 namespace optiling {
 
+static constexpr const char *OP_NAME = "ChunkKdaBwdPrepare";
+
 ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
 {
     auto *tiling = context->GetTilingData<KDA::ChunkKdaBwdPrepareTilingData>();
@@ -20,37 +22,65 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
     auto *vNewDesc = context->GetInputDesc(KDA_PREPARE_INPUT_V_NEW);
     auto *dODesc = context->GetInputDesc(KDA_PREPARE_INPUT_D_O);
     auto *hDesc = context->GetInputDesc(KDA_PREPARE_INPUT_H);
-    OP_CHECK_NULL_WITH_CONTEXT(context, aqkDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vNewDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dODesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, hDesc);
+    if (aqkDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "aqk");
+        return ge::GRAPH_FAILED;
+    }
+    if (vNewDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v_new");
+        return ge::GRAPH_FAILED;
+    }
+    if (dODesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dO");
+        return ge::GRAPH_FAILED;
+    }
+    if (hDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
 
-    const double *scale = attrs->GetAttrPointer<double>(KDA_PREPARE_ATTR_SCALE);
+    const float *scale = attrs->GetAttrPointer<float>(KDA_PREPARE_ATTR_SCALE);
     const int64_t *chunkSize = attrs->GetAttrPointer<int64_t>(KDA_PREPARE_ATTR_CHUNK_SIZE);
+    const char *layout = attrs->GetStr(KDA_PREPARE_ATTR_LAYOUT);
     const bool *stateVFirst = attrs->GetAttrPointer<bool>(KDA_PREPARE_ATTR_STATE_V_FIRST);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale);
-    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
+    if (scale == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "scale");
+        return ge::GRAPH_FAILED;
+    }
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
     if (!std::isfinite(*scale)) {
-        OP_LOGE(context->GetNodeName(), "scale must be finite");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "scale", std::to_string(*scale), "scale must be finite");
         return ge::GRAPH_FAILED;
     }
 
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const auto *cuShape = context->GetOptionalInputShape(KDA_PREPARE_INPUT_CU_SEQLENS);
+    const auto *indicesShape = context->GetOptionalInputShape(KDA_PREPARE_INPUT_CHUNK_INDICES);
+    // Opaque ACLNN may represent an absent optional input with an empty shape.
+    if (cuShape && cuShape->GetStorageShape().GetDimNum() == 0) cuShape = nullptr;
+    if (indicesShape && indicesShape->GetStorageShape().GetDimNum() == 0) indicesShape = nullptr;
     ChunkKdaBwdPrepareTilingContext ctx{
         context->GetNodeName(),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_AQK),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_V_NEW),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_D_O),
         context->GetRequiredInputShape(KDA_PREPARE_INPUT_H),
-        context->GetOptionalInputShape(KDA_PREPARE_INPUT_CU_SEQLENS),
-        context->GetOptionalInputShape(KDA_PREPARE_INPUT_CHUNK_INDICES),
+        cuShape, indicesShape,
         aqkDesc->GetDataType(), vNewDesc->GetDataType(), dODesc->GetDataType(), hDesc->GetDataType(),
         *scale, *chunkSize, stateVFirst != nullptr && *stateVFirst,
-        static_cast<uint32_t>(platform.GetCoreNumAic()),
+        layout, static_cast<uint32_t>(platform.GetCoreNumAic()),
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
+        platform.GetCurNpuArch() == NpuArch::DAV_3510,
     };
+    ctx.isA6 = platform.GetCurNpuArch() == NpuArch::DAV_9201;
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
-    OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+    if (processor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     context->SetTilingKey(processor.GetTilingKey());
     context->SetBlockDim(processor.GetBlockDim());
     context->GetWorkspaceSizes(1)[0] = processor.GetWorkspaceSize();

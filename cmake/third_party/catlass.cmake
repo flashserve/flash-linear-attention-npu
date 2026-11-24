@@ -15,26 +15,43 @@ if(NOT CANN_3RD_LIB_PATH)
   set(CANN_3RD_LIB_PATH "${PROJECT_SOURCE_DIR}/third_party")
 endif()
 
+set(CATLASS_VENDOR_GIT_REPOSITORY
+    "https://gitcode.com/cann/catlass.git")
 set(CATLASS_VENDOR_GIT_TAG
-    "41bf90da655bba3c66d0acd7e00abe33960ecfd6"
-    CACHE STRING "Catlass vendor git tag (fixed revision for reproducible build)")
-
+    "3a6b66970ea1469fb566eb5f50afa9a469606e92")
 set(_CATLASS_SOURCE_DIR "${CANN_3RD_LIB_PATH}/catlass")
 set(_CATLASS_MARK "${_CATLASS_SOURCE_DIR}/include/catlass/catlass.hpp")
 
 if(EXISTS "${_CATLASS_MARK}")
+  if(EXISTS "${_CATLASS_SOURCE_DIR}/.git")
+    find_package(Git REQUIRED)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+      WORKING_DIRECTORY "${_CATLASS_SOURCE_DIR}"
+      OUTPUT_VARIABLE _CATLASS_HEAD OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _CATLASS_RESULT)
+    if(NOT _CATLASS_RESULT EQUAL 0 OR NOT _CATLASS_HEAD STREQUAL CATLASS_VENDOR_GIT_TAG)
+      message(FATAL_ERROR
+        "Cached Catlass revision '${_CATLASS_HEAD}' does not match ${CATLASS_VENDOR_GIT_TAG}. "
+        "Preserve local changes, then update ${_CATLASS_SOURCE_DIR} to the required revision and rebuild.")
+    endif()
+  endif()
   get_filename_component(OPS_ADV_CATLASS_INC "${_CATLASS_SOURCE_DIR}/include" REALPATH)
   message(STATUS "[ThirdPartyLib][catlass] Found headers at ${OPS_ADV_CATLASS_INC}")
 else()
-  message(STATUS "[ThirdPartyLib][catlass] Missing ${_CATLASS_MARK}, fetching via FetchContent (GIT_TAG ${CATLASS_VENDOR_GIT_TAG}) …")
+  message(STATUS
+          "[ThirdPartyLib][catlass] Missing ${_CATLASS_MARK}, fetching via FetchContent "
+          "(GIT_REPOSITORY ${CATLASS_VENDOR_GIT_REPOSITORY}, "
+          "GIT_TAG ${CATLASS_VENDOR_GIT_TAG}) …")
   if(EXISTS "${CMAKE_BINARY_DIR}/_deps/catlass_vendor-subbuild")
     file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/_deps/catlass_vendor-subbuild")
   endif()
   include(FetchContent)
   FetchContent_Declare(
     catlass_vendor
-    GIT_REPOSITORY https://gitcode.com/cann/catlass.git
+    GIT_REPOSITORY ${CATLASS_VENDOR_GIT_REPOSITORY}
     GIT_TAG ${CATLASS_VENDOR_GIT_TAG}
+    # FLA only consumes C++ headers; skip the DSL/LLVM submodule tree.
+    GIT_SUBMODULES ""
     GIT_PROGRESS TRUE
     SOURCE_DIR "${_CATLASS_SOURCE_DIR}")
   FetchContent_Populate(catlass_vendor)

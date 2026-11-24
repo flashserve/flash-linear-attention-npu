@@ -8,7 +8,7 @@
 #pragma once
 
 #include "kernel_operator.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #ifndef FLA_NPU_REGBASE_HPP_INCLUDED
 #define FLA_NPU_REGBASE_HPP_INCLUDED
 #include "kernel_utils/vector/regbase.hpp"
@@ -26,7 +26,7 @@ constexpr uint32_t GATE_BULK_ROWS = 64;
 constexpr uint32_t GATE_BULK_COLS = 128;
 constexpr uint32_t GATE_BULK_ELEMENTS = GATE_BULK_ROWS * GATE_BULK_COLS;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 static __simd_vf__ inline void AccumulateGateRowRegbase(__ubuf__ float *input, __ubuf__ float *acc,
                                                         __ubuf__ float *output, uint16_t count)
 {
@@ -182,6 +182,8 @@ public:
         pipe_->InitBuffer(chunkBuf_, 2 * GATE_BULK_ELEMENTS * sizeof(float));
         pipe_->InitBuffer(scalarBuf_, 32);
         pipe_->InitBuffer(scalarI64Buf_, 32);
+        pipe_->InitBuffer(gateResidualBuf_,
+                          GATE_ROW_ELEMENTS * sizeof(float));
         AllocEvents();
     }
 
@@ -422,18 +424,34 @@ private:
             } else {
                 LocalTensor<float> positive = oneBuf_.Get<float>();
                 LocalTensor<float> tmp = tmpBuf_.Get<float>();
-                Maxs(positive, row, 0.0f, static_cast<uint32_t>(k_));
+                LocalTensor<float> residual = gateResidualBuf_.Get<float>();
+                // log1p(u) = Ln(1+u) + r/(1+u)，r = u - (fl(1+u) - 1)。
+                // 直接把 Ln(1+u) 当作 log1p 会把 1+u 的舍入按 1/u 放大，
+                // 小 u（门控接近 0）时相对误差可达 1e-4~1e-2；补偿项正好
+                // 补回这半个 ULP 的残差。
                 Abs(tmp, row, static_cast<uint32_t>(k_));
                 PipeBarrier<PIPE_V>();
                 Muls(tmp, tmp, -1.0f, static_cast<uint32_t>(k_));
                 PipeBarrier<PIPE_V>();
-                Exp(tmp, tmp, static_cast<uint32_t>(k_));
+                Exp(tmp, tmp, static_cast<uint32_t>(k_));               // u
                 PipeBarrier<PIPE_V>();
-                Adds(tmp, tmp, 1.0f, static_cast<uint32_t>(k_));
+                Adds(positive, tmp, 1.0f, static_cast<uint32_t>(k_));   // s=1+u
                 PipeBarrier<PIPE_V>();
-                Ln(tmp, tmp, static_cast<uint32_t>(k_));
+                Adds(residual, positive, -1.0f, static_cast<uint32_t>(k_));
                 PipeBarrier<PIPE_V>();
-                Add(row, positive, tmp, static_cast<uint32_t>(k_));
+                Sub(residual, tmp, residual, static_cast<uint32_t>(k_)); // r
+                PipeBarrier<PIPE_V>();
+                Adds(tmp, positive, 0.0f, static_cast<uint32_t>(k_));
+                PipeBarrier<PIPE_V>();
+                Ln(tmp, tmp, static_cast<uint32_t>(k_));                 // Ln(s)
+                PipeBarrier<PIPE_V>();
+                Div(residual, residual, positive, static_cast<uint32_t>(k_));
+                PipeBarrier<PIPE_V>();
+                Add(tmp, tmp, residual, static_cast<uint32_t>(k_));      // log1p
+                PipeBarrier<PIPE_V>();
+                Maxs(row, row, 0.0f, static_cast<uint32_t>(k_));
+                PipeBarrier<PIPE_V>();
+                Add(row, row, tmp, static_cast<uint32_t>(k_));
                 PipeBarrier<PIPE_V>();
                 Muls(row, row, -expA_, static_cast<uint32_t>(k_));
                 PipeBarrier<PIPE_V>();
@@ -470,7 +488,7 @@ private:
 
     __aicore__ inline void ProcessChunk(uint64_t b, uint64_t hv, uint64_t start, uint64_t end)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         if constexpr (USE_GATE_IN_KERNEL && SAFE_GATE && IsSameType<T, float>::value) {
             if (k_ == GATE_BULK_COLS && chunkSize_ == GATE_BULK_ROWS && end - start == GATE_BULK_ROWS) {
                 ProcessChunkBulkFp32SafeVec(b, hv, start);
@@ -478,7 +496,7 @@ private:
             }
         }
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if constexpr (USE_GATE_IN_KERNEL && SAFE_GATE && IsSameType<T, float>::value) {
             if (k_ == GATE_BULK_COLS && chunkSize_ == GATE_BULK_ROWS) {
                 ProcessChunkBulkFp32Safe(b, hv, start, end);
@@ -523,7 +541,7 @@ private:
             LocalTensor<float> output =
                 outBuf_.Get<float>()[outputSlot * GATE_ROW_ELEMENTS];
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if constexpr (!USE_GATE_IN_KERNEL && IsSameType<T, float>::value) {
                 if ((k_ % 128) == 0) {
                     LocalTensor<float> input = inBuf_.Get<float>()[slot * GATE_ROW_ELEMENTS];
@@ -574,7 +592,7 @@ private:
         }
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     __aicore__ inline void ScanGateChunk64x128(LocalTensor<float> input, LocalTensor<float> output)
     {
         constexpr uint32_t rowElements = GATE_BULK_COLS;
@@ -642,7 +660,7 @@ private:
     }
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void ProcessChunkBulkFp32Safe(uint64_t b, uint64_t hv, uint64_t start, uint64_t end)
     {
         uint64_t rows = end - start;
@@ -716,6 +734,9 @@ private:
     TBuf<TPosition::VECCALC> chunkBuf_;
     TBuf<TPosition::VECCALC> scalarBuf_;
     TBuf<TPosition::VECCALC> scalarI64Buf_;
+    // raw softplus 分段使用的比较 mask（k_ 至多 128，16 字节足够）。
+    // raw softplus 的 log1p 补偿残差缓冲（一行 k_ 个 FP32）。
+    TBuf<TPosition::VECCALC> gateResidualBuf_;
     TEventID inputMte2ToVEvent_[GATE_PIPELINE_DEPTH];
     TEventID inputVToMte2Event_[GATE_PIPELINE_DEPTH];
     TEventID outputVToMte3Event_[GATE_PIPELINE_DEPTH];

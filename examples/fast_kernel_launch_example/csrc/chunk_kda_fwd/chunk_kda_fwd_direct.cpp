@@ -23,7 +23,7 @@
 
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
 #else
 #include "fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd_h/op_kernel/gemm/kernel/gdn_fwd_h_kernel.hpp"
@@ -319,7 +319,7 @@ DirectOutputs MakeOutputs(
         at::empty({batch, hv, seqlen, kdim}, q.options()),
         at::empty({batch, hv, seqlen, kdim}, q.options()),
         at::empty({batch, hv, seqlen, vdim}, q.options()),
-        at::empty({batch, hv, totalChunks, kdim, vdim}, q.options()),
+        at::empty({batch, totalChunks, hv, kdim, vdim}, q.options()),
     };
 }
 

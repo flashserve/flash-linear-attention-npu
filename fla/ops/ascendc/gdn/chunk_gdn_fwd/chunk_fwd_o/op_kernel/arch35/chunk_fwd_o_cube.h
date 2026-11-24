@@ -80,10 +80,10 @@ public:
         kGm_.SetGlobalBuffer((__gm__ Element *)k_);
         vGm_.SetGlobalBuffer((__gm__ Element *)v_);
         hGm_.SetGlobalBuffer((__gm__ Element *)h_);
-        qGm_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        kGm_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        vGm_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        hGm_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        qGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        kGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        vGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        hGm_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         if ASCEND_IS_AIC {
             SetLoadDataPaddingValue<Element>(static_cast<Element>(0));
             for (uint32_t eventIdx = 0; eventIdx < kL1EventCount; ++eventIdx) {

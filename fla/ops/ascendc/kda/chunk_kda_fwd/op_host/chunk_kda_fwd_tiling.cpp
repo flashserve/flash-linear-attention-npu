@@ -269,7 +269,28 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
 
     const uint64_t postWuScratchOffset = AlignWorkspace(cursor);
     if (!arch35Options.fusePostWu && !arch35Options.fusePostWuIntoFwdH) {
-        cursor = postWuScratchOffset + tokenHeads * shape.kDim * sizeof(float);
+        // kernel 侧 WScratchOffset 按 (b, hv, flatChunk, BT_, K_) 索引，元素数上界是
+        // B*HV*totalChunks*chunkSize*K：varLen 每个序列的尾块都会补足到 chunkSize，
+        // 因此不能按 tokenHeads*K 分配，否则尾块场景会越界写到后面的 workspace。
+        const uint64_t chunkAlignedTokens =
+            static_cast<uint64_t>(hChunkCount) * chunkSize;
+        const uint64_t postWuScratchElements =
+            chunkAlignedTokens * shape.vHeads * shape.kDim;
+        // 不变式一：补齐到整块后的 token 数必须覆盖真实 token 数。totalChunks 由 host
+        // 侧按 cu_seqlens 算出，一旦与实际序列长度口径分叉，这里就会退化成尾块越界。
+        if (chunkAlignedTokens < tokenHeads / shape.vHeads) {
+            return ge::GRAPH_FAILED;
+        }
+        // 不变式二：保留区间必须覆盖 kernel 侧 WScratchOffset 的最坏下标。该表达式
+        // 与 kernel 索引口径一一对应，防止后续把分配公式改回按 token 计数。
+        const uint64_t postWuScratchBytes = postWuScratchElements * sizeof(float);
+        const uint64_t postWuKernelRequiredBytes =
+            static_cast<uint64_t>(hChunkCount) * shape.vHeads * chunkSize *
+            shape.kDim * sizeof(float);
+        if (postWuScratchBytes < postWuKernelRequiredBytes) {
+            return ge::GRAPH_FAILED;
+        }
+        cursor = postWuScratchOffset + postWuScratchBytes;
     }
 
     const uint64_t fwdHWorkspaceBaseOffset = AlignWorkspace(cursor);

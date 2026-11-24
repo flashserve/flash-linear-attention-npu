@@ -10,7 +10,7 @@
 #pragma once
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -30,12 +30,13 @@
 #include "catlass/layout/layout.hpp"
 #include "kernel_operator.h"
 #include "../chunk_kda_fwd_varlen.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #ifndef FLA_NPU_REGBASE_HPP_INCLUDED
 #define FLA_NPU_REGBASE_HPP_INCLUDED
 #include "kernel_utils/vector/regbase.hpp"
 #endif
 #endif
+#include "chunk_kda_fwd_regbase_kg.h"
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 
@@ -105,96 +106,12 @@ constexpr uint16_t KDA_POST_HEAD_PAIR_LANES = 2;
 constexpr uint16_t KDA_POST_PIPELINE_U_EVENT = KDA_POST_EVENT_FIX;
 constexpr bool KDA_ENABLE_POST_AIC_PIPELINE = true;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-template <typename InputT>
-__simd_callee__ inline void LoadPostKdaGateRegbasePair(
-    AscendC::MicroAPI::RegTensor<float> &zeroReg,
-    AscendC::MicroAPI::RegTensor<float> &oneReg,
-    __ubuf__ InputT *src,
-    AscendC::MicroAPI::MaskReg &inputMask)
-{
-    using namespace AscendC::MicroAPI;
-    if constexpr (std::is_same<InputT, float>()) {
-        LoadAlign<float, LoadDist::DIST_DINTLV_B32>(zeroReg, oneReg, src);
-    } else {
-        RegTensor<InputT> inputReg;
-        LoadIn<InputT, false>(inputReg, src);
-        CastHalf2Float<InputT>(zeroReg, oneReg, inputReg, inputMask);
-    }
-}
-
-template <typename OutputT>
-__simd_callee__ inline void StorePostKdaGateRegbasePair(
-    __ubuf__ OutputT *dst,
-    AscendC::MicroAPI::RegTensor<float> &zeroReg,
-    AscendC::MicroAPI::RegTensor<float> &oneReg,
-    AscendC::MicroAPI::MaskReg &inputMask,
-    AscendC::MicroAPI::MaskReg &floatMask)
-{
-    using namespace AscendC::MicroAPI;
-    if constexpr (std::is_same<OutputT, half>()) {
-        Mins(zeroReg, zeroReg, KDA_FP16_MAX, floatMask);
-        Mins(oneReg, oneReg, KDA_FP16_MAX, floatMask);
-        Maxs(zeroReg, zeroReg, -KDA_FP16_MAX, floatMask);
-        Maxs(oneReg, oneReg, -KDA_FP16_MAX, floatMask);
-    }
-    RegTensor<OutputT> outputReg;
-    CastFloat2Half<OutputT>(outputReg, zeroReg, oneReg, floatMask);
-    StoreAlign(dst, outputReg, inputMask);
-}
-
-template <typename T, typename GK_T>
-static __simd_vf__ inline void ComputePostKdaKgRegbase(
-    __ubuf__ T *kAndKg, __ubuf__ GK_T *gate, __ubuf__ float *ref,
-    uint16_t rows, uint16_t cols)
-{
-    using namespace AscendC::MicroAPI;
-    constexpr uint16_t ELEMENTS_PER_REG = AscendC::VECTOR_REG_WIDTH / sizeof(T);
-    MaskReg floatMask = CreateMask<float, MaskPattern::ALL>();
-    for (uint16_t row = 0; row < rows; ++row) {
-        uint32_t rowOffset = static_cast<uint32_t>(row) * cols;
-        for (uint16_t col = 0; col < cols; col += ELEMENTS_PER_REG) {
-            uint32_t activeCount = static_cast<uint32_t>(cols - col);
-            MaskReg inputMask = UpdateMask<T>(activeCount);
-            uint32_t offset = rowOffset + col;
-
-            RegTensor<float> gateZeroReg;
-            RegTensor<float> gateOneReg;
-            RegTensor<float> refZeroReg;
-            RegTensor<float> refOneReg;
-            RegTensor<float> expZeroReg;
-            RegTensor<float> expOneReg;
-            RegTensor<float> inputZeroReg;
-            RegTensor<float> inputOneReg;
-            RegTensor<float> outputZeroReg;
-            RegTensor<float> outputOneReg;
-
-            LoadPostKdaGateRegbasePair<GK_T>(
-                gateZeroReg, gateOneReg, gate + offset, inputMask);
-            LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
-                refZeroReg, refOneReg, ref + col);
-            SubFloatTwoReg(expZeroReg, expOneReg, refZeroReg, refOneReg,
-                           gateZeroReg, gateOneReg, floatMask);
-            Muls(expZeroReg, expZeroReg, LN2, floatMask);
-            Muls(expOneReg, expOneReg, LN2, floatMask);
-            MinsFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg,
-                            KDA_EXP_INPUT_MAX, floatMask);
-            Maxs(expZeroReg, expZeroReg, KDA_EXP_INPUT_MIN, floatMask);
-            Maxs(expOneReg, expOneReg, KDA_EXP_INPUT_MIN, floatMask);
-            ExpFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg, floatMask);
-
-            LoadPostKdaGateRegbasePair<T>(
-                inputZeroReg, inputOneReg, kAndKg + offset, inputMask);
-            MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
-                           expZeroReg, expOneReg, floatMask);
-            StorePostKdaGateRegbasePair<T>(
-                kAndKg + offset, outputZeroReg, outputOneReg, inputMask, floatMask);
-        }
-    }
-}
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+// 计分/状态两侧共用同一份 regbase kg 实现（见 chunk_kda_fwd_regbase_kg.h）。
+using KdaRegbaseKg::ComputePostKdaKgRegbase;
 #endif
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using KdaArchTag = Catlass::Arch::Ascend950;
 #else
 using KdaArchTag = Catlass::Arch::AtlasA2;
@@ -358,7 +275,7 @@ public:
         ProcessPostAic();
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void ProcessPreparedFullHeadPairBatchArch35(
         const uint64_t *batchB, const uint64_t *batchHvBase,
         const uint64_t *batchStart, uint16_t taskCount)
@@ -520,7 +437,7 @@ private:
 
     __aicore__ inline uint64_t HOffset(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t d, uint64_t r) const
     {
-        return (((b * HV_ + hv) * NT_ + chunkIdx) * K_ + d) * V_ + r;
+        return (((b * NT_ + chunkIdx) * HV_ + hv) * K_ + d) * V_ + r;
     }
 
     __aicore__ inline uint64_t WScratchOffset(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t t, uint64_t d) const
@@ -765,7 +682,7 @@ private:
                V_ <= 256 && K_ % 16 == 0 && V_ % 16 == 0;
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline bool UsePostWuCubeArch35(uint64_t curT) const
     {
         return curT == 64 && BT_ == 64 && K_ == 128 && V_ == 128;
@@ -1097,7 +1014,7 @@ private:
     __aicore__ inline void ComputePostWuCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                              uint64_t curT)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (UsePostWuCubeArch35(curT)) {
             ComputePostWuCubeFusedArch35(b, hv, start, curT);
             return;
@@ -1108,7 +1025,7 @@ private:
         using LayoutTagA = Catlass::layout::RowMajor;
         using LayoutTagB = Catlass::layout::RowMajor;
         using LayoutTagC = Catlass::layout::RowMajor;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         SetLoadDataPaddingValue<T>(static_cast<T>(0));
         using WTileCopy = Catlass::Gemm::Tile::PackedTileCopyTla<KdaArchTag, ElementA, LayoutTagA, ElementB,
                                                                  LayoutTagB, T, LayoutTagC>;
@@ -1122,7 +1039,7 @@ private:
         using PostL0TileShape128 = tla::Shape<KdaInt128, KdaInt128, KdaInt128>;
         using PostL1TileShape256 = tla::Shape<KdaInt128, tla::_256, tla::_256>;
         using PostL0TileShape256 = tla::Shape<KdaInt128, tla::_256, KdaInt64>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using WBlockMmad = Catlass::Gemm::Block::BlockMmadTla<KdaDispatchPolicy, PostL1TileShape128,
                                                                PostL0TileShape128,
                                                                ElementA, ElementB, T, void, WTileCopy>;
@@ -1144,7 +1061,7 @@ private:
 
         {
             LayoutTagB tagB = LayoutTagB::template MakeLayout<ElementB>(BT_, K_);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             LayoutTagC tagC = LayoutTagC::template MakeLayout<T>(BT_, K_);
 #else
             LayoutTagC tagC = LayoutTagC::template MakeLayout<float>(BT_, K_);
@@ -1155,7 +1072,7 @@ private:
                                      static_cast<uint32_t>(curT)};
             auto tensorB = tla::MakeTensor(preparedQG_[KVOffset(b, hv, start, 0, K_)], layoutB,
                                            Catlass::Arch::PositionGM{});
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             auto tensorC = tla::MakeTensor(w_[KVOffset(b, hv, start, 0, K_)], layoutC,
                                            Catlass::Arch::PositionGM{});
 #else
@@ -1198,7 +1115,7 @@ private:
 
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline bool UseTypicalPostWuGate(uint64_t curT) const
     {
         return curT == 64 && BT_ == 64 && K_ == 128 && V_ == 128;
@@ -1422,14 +1339,14 @@ private:
                 tileRows = maxRows;
             }
             uint64_t elemCount = tileRows * K_;
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
             uint64_t scratchBase = WScratchOffset(b, hv, chunkIdx, tileRow, 0);
 #else
             (void)chunkIdx;
 #endif
             uint64_t token = start + tileRow;
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
             DataCopy(arena, h_[scratchBase], static_cast<uint32_t>(elemCount));
             SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
@@ -1487,7 +1404,7 @@ private:
         WaitFlag<HardEvent::MTE3_V>(mte3ToVEvent_);
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     template <typename SrcTensor, typename DstTensor>
     __aicore__ inline void ComputeTailWuRow(GlobalTensor<SrcTensor> &src, GlobalTensor<DstTensor> &dst,
                                             uint64_t akkBase, uint64_t srcBase, uint64_t dstBase, uint64_t curT,
@@ -1578,7 +1495,7 @@ private:
         return start < end;
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline bool ResolveHeadMajorChunk(
         uint64_t task, uint64_t &seq, uint64_t &b, uint64_t &h, uint64_t &hv,
         uint64_t &chunkIdx, uint64_t &start, uint64_t &end)
@@ -1715,7 +1632,7 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (curT < BT_) {
             ComputeTailWuVector(b, hv, chunkIdx, start, curT, subBlockIdx, subBlockNum);
             CopyScratchWAndFinalizeKg(
@@ -1749,8 +1666,18 @@ private:
         if (curT == 0 || !UsePostWuCube(curT)) {
             return;
         }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        // preparedQG_ 与公开的 w 输出同址：AIV 尾块重算 (ComputeTailWuVector) 靠按行倒序
+        // 就地覆盖，保证读到的种子行还没被自己写脏。AIC 这条 cube 通路会把 W 结果直接写回
+        // 同一地址，而 arch35 上 AIC 与 AIV 之间没有跨核握手，尾块会读到被并发覆盖的种子，
+        // 使 w 变成对种子二次施加 A 的结果。非满块本来就由 AIV 独占产出（A2/A3 上 AIC 的
+        // 尾块结果写进 scratch 后即被丢弃），因此这里直接返回。
+        if (curT < BT_) {
+            return;
+        }
+#endif
         ComputePostWuCube(b, hv, chunkIdx, start, curT);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
         Catlass::Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(syncDoneFlag_);
 #endif
     }
@@ -1768,7 +1695,7 @@ private:
         uint64_t coreNum = usedCoreNum_ == 0 ? 1 : usedCoreNum_;
         uint64_t coreIdx = static_cast<uint64_t>(GetBlockIdx()) / subBlockNum;
         uint64_t taskNum = static_cast<uint64_t>((isVarLen_ ? NT_ : B_ * NT_) * HV_);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (BT_ == 64 && K_ == 128 && V_ == 128) {
             uint64_t taskBegin = 0;
             uint64_t taskEnd = 0;
@@ -1797,7 +1724,7 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (KDA_ENABLE_POST_AIC_PIPELINE && BT_ == 64 && K_ == 128 && V_ == 128) {
             ProcessPostAicPipelineArch35();
             return;
@@ -1821,7 +1748,7 @@ private:
         }
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void ProcessPostAicPipelineArch35()
     {
         static_assert(sizeof(T) == sizeof(uint16_t),

@@ -1,3 +1,4 @@
+#include "graph/utils/type_utils.h"
 #include "chunk_kda_bwd_tiling.h"
 
 #include <algorithm>
@@ -5,12 +6,16 @@
 
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
+#include "platform/soc_spec.h"
 
 #include "chunk_kda_bwd_a_tiling_processor.h"
 #include "chunk_kda_bwd_c_tiling_processor.h"
 #include "../op_kernel/kda_gate_bwd_post_common.h"
+#include <string>
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkKdaBwd";
 namespace {
 
 constexpr uint64_t KDA_A_RAW_WORKSPACE_PER_CORE =
@@ -80,23 +85,41 @@ ge::graphStatus BuildKernelBTiling(
     GDN::ChunkGatedDeltaRuleBwdDhuTilingData &b,
     uint64_t &userWorkspaceBytes, float scale)
 {
+    const auto platform =
+        platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const bool isAscend950 =
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const auto *qgDesc = context->GetInputDesc(INPUT_QG);
     const auto *gkDesc = context->GetInputDesc(INPUT_GK);
     const auto *qShapeStorage = context->GetRequiredInputShape(INPUT_Q);
     const auto *vShapeStorage = context->GetRequiredInputShape(INPUT_V);
     OP_CHECK_NULL_WITH_CONTEXT(context, qgDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gkDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qShapeStorage);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vShapeStorage);
-    OP_CHECK_IF(qgDesc->GetDataType() != ge::DT_FLOAT16 &&
-                    qgDesc->GetDataType() != ge::DT_BF16,
-                OP_LOGE(context->GetNodeName(),
-                        "Kernel B qg/kg/w inputs must be FP16 or BF16"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(gkDesc->GetDataType() != ge::DT_FLOAT,
-                OP_LOGE(context->GetNodeName(),
-                        "single-launch Kernel B requires saved gk in FP32"),
-                return ge::GRAPH_FAILED);
+    if (gkDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "gk");
+        return ge::GRAPH_FAILED;
+    }
+    if (qShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
+    if (vShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v");
+        return ge::GRAPH_FAILED;
+    }
+    if (qgDesc->GetDataType() != ge::DT_FLOAT16 &&
+                    qgDesc->GetDataType() != ge::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    OP_NAME, "qg,kg,w",
+                    ge::TypeUtils::DataTypeToSerialString(qgDesc->GetDataType()),
+                    "qg/kg/w inputs must be FP16 or BF16");
+        return ge::GRAPH_FAILED;
+    }
+    if (gkDesc->GetDataType() != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    OP_NAME, "gk", ge::TypeUtils::DataTypeToSerialString(gkDesc->GetDataType()),
+                    "single-launch Kernel B requires saved gk in FP32");
+        return ge::GRAPH_FAILED;
+    }
 
     const gert::Shape qShape = qShapeStorage->GetOriginShape();
     const gert::Shape vShape = vShapeStorage->GetOriginShape();
@@ -115,7 +138,10 @@ ge::graphStatus BuildKernelBTiling(
     b.seqNum = b.B;
     if (a.isVarLen) {
         const auto *cuShape = context->GetOptionalInputShape(INPUT_CU_SEQLENS);
-        OP_CHECK_NULL_WITH_CONTEXT(context, cuShape);
+        if (cuShape == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cu_seqlens");
+            return ge::GRAPH_FAILED;
+        }
         b.seqNum = static_cast<int64_t>(
             cuShape->GetOriginShape().GetDim(0) - 1);
     }
@@ -130,6 +156,8 @@ ge::graphStatus BuildKernelBTiling(
     b.scale = scale;
 
     const uint64_t qSize = DtypeSize(qgDesc->GetDataType());
+    // Retain both state-update GEMM terms in FP32 until subtraction on all SoCs.
+    const uint64_t termSize = sizeof(float);
     const uint64_t gateSize = DtypeSize(gkDesc->GetDataType());
     const uint64_t maxDim = static_cast<uint64_t>(std::max(b.K, b.V));
     const uint64_t gateElems = static_cast<uint64_t>(
@@ -141,12 +169,14 @@ ge::graphStatus BuildKernelBTiling(
             2 * align32(gateElems * gateSize) +
             align32(4U * gateElems * sizeof(float));
         uint64_t vectorBytes =
-            4 * align32(row * maxDim * qSize) +
+            2 * align32(row * maxDim * qSize) +
+            2 * align32(row * maxDim * termSize) +
             2 * align32(row * maxDim * sizeof(float)) +
             2 * align32(row * static_cast<uint64_t>(b.V) * sizeof(float));
         if (qgDesc->GetDataType() == ge::DT_BF16) {
             vectorBytes +=
-                2 * align32(row * static_cast<uint64_t>(b.V) * qSize);
+                2 * align32(row * static_cast<uint64_t>(b.V) *
+                            (isAscend950 ? termSize : qSize));
         }
         if (fixedBytes + vectorBytes + 16U * 1024U <= ubSize) {
             break;
@@ -159,9 +189,9 @@ ge::graphStatus BuildKernelBTiling(
     b.stateWorkspaceElems = static_cast<int64_t>(
         align32(static_cast<uint64_t>(b.K) * b.V * sizeof(float)) / qSize);
     b.dvStateWorkspaceElems = b.chunkSize * b.V;
-    b.termQWorkspaceElems = b.K * b.V;
+    b.termQWorkspaceElems = b.K * b.V * termSize / qSize;
     b.dv2WorkspaceElems = 0;
-    b.termWWorkspaceElems = b.K * b.V;
+    b.termWWorkspaceElems = b.K * b.V * termSize / qSize;
 
     int64_t offset = 0;
     b.qgWorkspaceOffset = offset;
@@ -207,27 +237,60 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         attrs->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
     const auto *deferGatePost =
         attrs->GetAttrPointer<bool>(ATTR_DEFER_GATE_POST);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scale);
-    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
-    OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
-    OP_CHECK_NULL_WITH_CONTEXT(context, useGate);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
-    OP_CHECK_NULL_WITH_CONTEXT(context, disableRecompute);
-    OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
-    OP_CHECK_NULL_WITH_CONTEXT(context, stateVFirst);
-    OP_CHECK_NULL_WITH_CONTEXT(context, deferGatePost);
-    OP_CHECK_IF(!*disableRecompute,
-                OP_LOGE(context->GetNodeName(),
-                        "disable_recompute=false is reserved but not supported"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!*useExp2,
-                OP_LOGE(context->GetNodeName(),
-                        "use_exp2=false is reserved but not supported"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(*stateVFirst,
-                OP_LOGE(context->GetNodeName(),
-                        "state_v_first=true is reserved but not supported"),
-                return ge::GRAPH_FAILED);
+    if (scale == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "scale");
+        return ge::GRAPH_FAILED;
+    }
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
+    if (safeGate == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "safe_gate");
+        return ge::GRAPH_FAILED;
+    }
+    if (useGate == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "use_gate");
+        return ge::GRAPH_FAILED;
+    }
+    if (lowerBound == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "lower_bound");
+        return ge::GRAPH_FAILED;
+    }
+    if (disableRecompute == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "disableRecompute");
+        return ge::GRAPH_FAILED;
+    }
+    if (useExp2 == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "use_exp2");
+        return ge::GRAPH_FAILED;
+    }
+    if (stateVFirst == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "state_v_first");
+        return ge::GRAPH_FAILED;
+    }
+    if (deferGatePost == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "defer_gate_post");
+        return ge::GRAPH_FAILED;
+    }
+    if (!*disableRecompute) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "disable_recompute", std::to_string(*disableRecompute),
+                    "disable_recompute=false is reserved but not supported");
+        return ge::GRAPH_FAILED;
+    }
+    if (!*useExp2) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "use_exp2", std::to_string(*useExp2),
+                    "use_exp2=false is reserved but not supported");
+        return ge::GRAPH_FAILED;
+    }
+    if (*stateVFirst) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "state_v_first", std::to_string(*stateVFirst),
+                    "state_v_first=true is reserved but not supported");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *wShape = context->GetOptionalInputShape(INPUT_W);
     const auto *qgShape = context->GetOptionalInputShape(INPUT_QG);
@@ -239,19 +302,20 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     const auto *kgDesc = context->GetInputDesc(INPUT_KG);
     const auto *vNewDesc = context->GetInputDesc(INPUT_V_NEW);
     const auto *hDesc = context->GetInputDesc(INPUT_H);
-    OP_CHECK_IF(wShape == nullptr || qgShape == nullptr ||
+    if (wShape == nullptr || qgShape == nullptr ||
                     kgShape == nullptr || vNewShape == nullptr ||
                     hShape == nullptr || wDesc == nullptr ||
                     qgDesc == nullptr || kgDesc == nullptr ||
-                    vNewDesc == nullptr || hDesc == nullptr,
-                OP_LOGE(context->GetNodeName(),
-                        "w, qg, kg, v_new and h are required when disable_recompute=true"),
-                return ge::GRAPH_FAILED);
+                    vNewDesc == nullptr || hDesc == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: tiling metadata of w/qg/kg/v_new/h is missing", __func__);
+        return ge::GRAPH_FAILED;
+    }
 
     const uint32_t blockDim =
         std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const size_t systemWorkspace =
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize());
 
@@ -270,17 +334,19 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         *chunkSize, blockDim, systemWorkspace};
     KDA::ChunkKdaBwdATilingData aTiling{};
     ChunkKdaBwdATilingProcessor aProcessor(aCtx, aTiling);
-    OP_CHECK_IF(aProcessor.Process() != ge::GRAPH_SUCCESS, ,
-                return ge::GRAPH_FAILED);
+    if (aProcessor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     uint64_t ubSize = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     uint64_t bUserWorkspace = 0;
-    OP_CHECK_IF(BuildKernelBTiling(
+    if (BuildKernelBTiling(
                     context, aTiling, ubSize, blockDim,
                     tiling->kernelB, bUserWorkspace, *scale) !=
-                    ge::GRAPH_SUCCESS,
-                , return ge::GRAPH_FAILED);
+                    ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     ChunkKdaBwdCTilingContext cCtx{};
     cCtx.nodeName = context->GetNodeName();
@@ -320,20 +386,21 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
         publicQShape.GetDim(2) % *chunkSize == 0;
     cCtx.useGateInKernel = denseGateFusion;
     cCtx.lowerBound = *lowerBound;
-    cCtx.dhHeadMajor = true;
     cCtx.validateIntermediateShapes = false;
     cCtx.aicCoreNum = blockDim;
     cCtx.systemWorkspaceSize = systemWorkspace;
     ChunkKdaBwdCTilingProcessor cProcessor(cCtx, tiling->kernelC);
-    OP_CHECK_IF(cProcessor.Process() != ge::GRAPH_SUCCESS, ,
-                return ge::GRAPH_FAILED);
+    if (cProcessor.Process() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     tiling->kernelC.deferGatePost = *deferGatePost ? 1 : 0;
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
-    OP_CHECK_IF(cTotalWorkspace < systemWorkspace,
-                OP_LOGE(context->GetNodeName(),
-                        "Kernel C workspace is smaller than system workspace"),
-                return ge::GRAPH_FAILED);
+    if (cTotalWorkspace < systemWorkspace) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: Kernel C workspace is smaller than system workspace.", __func__);
+        return ge::GRAPH_FAILED;
+    }
     const uint64_t cUserWorkspace = cTotalWorkspace - systemWorkspace;
     const gert::Shape qShape =
         context->GetRequiredInputShape(INPUT_Q)->GetOriginShape();
@@ -353,33 +420,43 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     uint64_t cursor = 0;
     const auto reserve = [&cursor](uint64_t bytes) {
         const uint64_t offset = cursor;
-        cursor = AlignUp(cursor + bytes, 512);
+        cursor = AlignUp(cursor + bytes, KDA::KDA_BWD_WORKSPACE_ALIGN);
         return offset;
     };
-    tiling->dv0Offset = static_cast<uint32_t>(
-        reserve(tokenCount * vDim * dataBytes));
-    tiling->dqRawOffset = static_cast<uint32_t>(
-        reserve(tokenCount * kDim * sizeof(float)));
-    tiling->dAqkOffset = static_cast<uint32_t>(
+    // Every private workspace region starts on a 512-byte boundary, so the
+    // offsets travel to the device in 512-byte units (see
+    // KDA_BWD_WORKSPACE_ALIGN).  The unit change keeps the fused tiling
+    // payload inside the proven A5 kernel-argument budget while lifting the
+    // single fused launch from the old 4 GiB byte-offset limit to a 2 TiB
+    // budget: a long-context SFT pack with T * H = 2^21 needs about 4.3 GiB
+    // of private workspace, which the previous byte-valued fields rejected.
+    const auto encodeOffset = [](uint64_t bytes) {
+        return static_cast<uint32_t>(bytes / KDA::KDA_BWD_WORKSPACE_ALIGN);
+    };
+    tiling->dv0Offset = encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    tiling->dqRawOffset =
+        encodeOffset(reserve(tokenCount * kDim * sizeof(float)));
+    tiling->dAqkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
-    tiling->dhOffset = static_cast<uint32_t>(reserve(
-        chunkTasks * headNum * kDim * vDim * dataBytes));
-    tiling->dvScanOffset = static_cast<uint32_t>(
-        reserve(tokenCount * vDim * dataBytes));
-    tiling->dAkkOffset = static_cast<uint32_t>(
+    tiling->dhOffset = encodeOffset(
+        reserve(chunkTasks * headNum * kDim * vDim * dataBytes));
+    tiling->dvScanOffset =
+        encodeOffset(reserve(tokenCount * vDim * dataBytes));
+    tiling->dAkkOffset = encodeOffset(
         reserve(static_cast<uint64_t>(akkShape.GetShapeSize()) * sizeof(float)));
-    tiling->kernelBWorkspaceOffset = static_cast<uint32_t>(cursor);
-    cursor = AlignUp(cursor + bUserWorkspace, 512);
+    tiling->kernelBWorkspaceOffset = encodeOffset(cursor);
+    cursor = AlignUp(cursor + bUserWorkspace, KDA::KDA_BWD_WORKSPACE_ALIGN);
     cursor = AlignUp(
         cursor + static_cast<uint64_t>(tiling->kernelC.usedCoreNum) *
                      KDA_A_RAW_WORKSPACE_PER_CORE,
-        512);
-    tiling->kernelCWorkspaceOffset = static_cast<uint32_t>(cursor);
+        KDA::KDA_BWD_WORKSPACE_ALIGN);
+    tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
-    OP_CHECK_IF(cursor > UINT32_MAX,
-                OP_LOGE(context->GetNodeName(),
-                        "single-launch private workspace exceeds 4 GiB"),
-                return ge::GRAPH_FAILED);
+    if (cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+            "%s: single-launch private workspace exceeds the 2 TiB limit.", __func__);
+        return ge::GRAPH_FAILED;
+    }
     const uint64_t totalWorkspace = systemWorkspace + cursor;
 
     context->SetBlockDim(blockDim);
@@ -420,9 +497,15 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     const auto *aLogShapeStorage =
         context->GetRequiredInputShape(INPUT_A_LOG);
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dgShapeStorage);
+    if (dgShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dg");
+        return ge::GRAPH_FAILED;
+    }
     OP_CHECK_NULL_WITH_CONTEXT(context, rawShapeStorage);
-    OP_CHECK_NULL_WITH_CONTEXT(context, aLogShapeStorage);
+    if (aLogShapeStorage == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "a_log");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *chunkSize =
         attrs->GetAttrPointer<int64_t>(ATTR_CHUNK_SIZE);
@@ -431,14 +514,25 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
         attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND);
     const auto *inputScanned =
         attrs->GetAttrPointer<bool>(ATTR_INPUT_SCANNED);
-    OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
-    OP_CHECK_NULL_WITH_CONTEXT(context, safeGate);
-    OP_CHECK_NULL_WITH_CONTEXT(context, lowerBound);
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
+    if (safeGate == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "safe_gate");
+        return ge::GRAPH_FAILED;
+    }
+    if (lowerBound == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "lower_bound");
+        return ge::GRAPH_FAILED;
+    }
     OP_CHECK_NULL_WITH_CONTEXT(context, inputScanned);
-    OP_CHECK_IF(*chunkSize != 64,
-                OP_LOGE(context->GetNodeName(),
-                        "KdaGateBwdPost requires chunk_size=64"),
-                return ge::GRAPH_FAILED);
+    if (*chunkSize != 64) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "chunkSize", std::to_string(*chunkSize),
+                    "KdaGateBwdPost requires chunkSize=64");
+        return ge::GRAPH_FAILED;
+    }
 
     const gert::Shape dgStorageShape = dgShapeStorage->GetOriginShape();
     const gert::Shape rawShape = rawShapeStorage->GetOriginShape();
@@ -455,17 +549,28 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
         context->GetOptionalInputShape(INPUT_CU_SEQLENS) != nullptr;
     const bool hasChunkIndices =
         context->GetOptionalInputShape(INPUT_CHUNK_INDICES) != nullptr;
-    OP_CHECK_IF(hasCuSeqlens != hasChunkIndices ||
-                    isVarLen != hasCuSeqlens,
-                OP_LOGE(context->GetNodeName(),
-                        "rank-3 GatePost requires cu_seqlens/chunk_indices and rank-4 GatePost forbids them"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(dgShape.GetDimNum() != (isVarLen ? 3U : 4U) ||
+    if (hasCuSeqlens != hasChunkIndices ||
+                    isVarLen != hasCuSeqlens) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "cu_seqlens,chunk_indices,dg",
+                    std::string("cu_seqlens=") + (hasCuSeqlens ? "present" : "absent") +
+                        ",chunk_indices=" + (hasChunkIndices ? "present" : "absent") +
+                        ",dg_rank=" + std::to_string(dgShape.GetDimNum()),
+                    "rank-3 GatePost requires cu_seqlens/chunk_indices and rank-4 GatePost forbids them");
+        return ge::GRAPH_FAILED;
+    }
+    if (dgShape.GetDimNum() != (isVarLen ? 3U : 4U) ||
                     rawShape.GetDimNum() != dgShape.GetDimNum() ||
-                    rawShape.GetShapeSize() != dgShape.GetShapeSize(),
-                OP_LOGE(context->GetNodeName(),
-                        "dg_act/raw_g shapes must match canonical BHTK/HTK layout"),
-                return ge::GRAPH_FAILED);
+                    rawShape.GetShapeSize() != dgShape.GetShapeSize()) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    OP_NAME, "dg,raw_g",
+                    "dg_rank=" + std::to_string(dgShape.GetDimNum()) +
+                        ",raw_rank=" + std::to_string(rawShape.GetDimNum()) +
+                        ",dg_size=" + std::to_string(dgShape.GetShapeSize()) +
+                        ",raw_size=" + std::to_string(rawShape.GetShapeSize()),
+                    "dg_act/raw_g shapes must match canonical BHTK/HTK layout");
+        return ge::GRAPH_FAILED;
+    }
 
     const size_t headAxis = isVarLen ? 0U : 1U;
     const size_t tokenAxis = isVarLen ? 1U : 2U;
@@ -474,33 +579,42 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     const int64_t heads = dgShape.GetDim(headAxis);
     const int64_t seqlen = dgShape.GetDim(tokenAxis);
     const int64_t keyDim = dgShape.GetDim(keyAxis);
-    OP_CHECK_IF(batch <= 0 || heads <= 0 || seqlen <= 0 || keyDim != 128,
-                OP_LOGE(context->GetNodeName(),
-                        "KdaGateBwdPost requires positive B/H/T and K=128"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(aLogShapeStorage->GetOriginShape().GetShapeSize() != heads,
-                OP_LOGE(context->GetNodeName(),
-                        "a_log must contain one FP32 value per head"),
-                return ge::GRAPH_FAILED);
+    if (batch <= 0 || heads <= 0 || seqlen <= 0 || keyDim != 128) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    OP_NAME, "B,H,T,K",
+                    std::to_string(batch) + "," + std::to_string(heads) + "," +
+                        std::to_string(seqlen) + "," + std::to_string(keyDim),
+                    "KdaGateBwdPost requires positive B/H/T and K=128");
+        return ge::GRAPH_FAILED;
+    }
+    if (aLogShapeStorage->GetOriginShape().GetShapeSize() != heads) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "a_log",
+                    std::to_string(aLogShapeStorage->GetOriginShape().GetShapeSize()),
+                    "a_log must contain one FP32 value per head (H=" + std::to_string(heads) + ")");
+        return ge::GRAPH_FAILED;
+    }
 
     int64_t chunkNum = 0;
     const int64_t chunkNumPerBatch = CeilDiv(seqlen, *chunkSize);
     if (isVarLen) {
         const auto *chunkShape =
             context->GetOptionalInputShape(INPUT_CHUNK_INDICES);
-        OP_CHECK_NULL_WITH_CONTEXT(context, chunkShape);
+        if (chunkShape == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunk");
+            return ge::GRAPH_FAILED;
+        }
         const int64_t metadataElems =
             chunkShape->GetOriginShape().GetShapeSize();
-        OP_CHECK_IF(metadataElems <= 0 || metadataElems % 2 != 0,
-                    OP_LOGE(context->GetNodeName(),
-                            "chunk_indices must contain (sequence, local_chunk) pairs"),
-                return ge::GRAPH_FAILED);
+        if (metadataElems <= 0 || metadataElems % 2 != 0) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(
+                        OP_NAME, "chunk_indices", std::to_string(metadataElems),
+                        "2 * chunk_num (sequence, local_chunk) pairs");
+        return ge::GRAPH_FAILED;
+    }
         chunkNum = metadataElems / 2;
-        OP_CHECK_IF(chunkNum > KDA::KDA_GATE_POST_MAX_CHUNKS,
-                    OP_LOGE(context->GetNodeName(),
-                            "KdaGateBwdPost supports at most %d packed chunks",
-                            KDA::KDA_GATE_POST_MAX_CHUNKS),
-                    return ge::GRAPH_FAILED);
+        // DecodeTask reads each pair from GM using a fixed-size scratch buffer.
+        // The packed task count is not limited by a tiling/UB metadata table.
     } else {
         chunkNum = batch * chunkNumPerBatch;
     }
@@ -513,7 +627,7 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
     // AIV avoids concurrent unaligned stores sharing and overwriting the same
     // 32-byte GM block.  Other architectures retain the parallel head map.
     const bool isAscend950 =
-        platform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+        platform.GetCurNpuArch() == NpuArch::DAV_3510;
     const uint32_t usedCoreNum = isAscend950 ? 1U : std::max<uint32_t>(
         std::min<uint32_t>(static_cast<uint32_t>(heads), availableAiv), 1U);
     auto *tiling =
@@ -542,37 +656,52 @@ ge::graphStatus Tiling4KdaGateBwdPost(gert::TilingContext *context)
         OP_CHECK_NULL_WITH_CONTEXT(context, chunkTensor);
         const int64_t *cu = cuTensor->GetData<int64_t>();
         const int64_t *chunks = chunkTensor->GetData<int64_t>();
-        OP_CHECK_NULL_WITH_CONTEXT(context, cu);
-        OP_CHECK_NULL_WITH_CONTEXT(context, chunks);
+        if (cu == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "cu_seqlens");
+            return ge::GRAPH_FAILED;
+        }
+        if (chunks == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunk_indices");
+            return ge::GRAPH_FAILED;
+        }
         const int64_t cuElems =
             cuTensor->GetStorageShape().GetShapeSize();
         int64_t packedCursor = 0;
         for (int64_t task = 0; task < chunkNum; ++task) {
             const int64_t sequence = chunks[2 * task];
             const int64_t localChunk = chunks[2 * task + 1];
-            OP_CHECK_IF(sequence < 0 || sequence + 1 >= cuElems ||
-                            localChunk < 0,
-                        OP_LOGE(context->GetNodeName(),
-                                "invalid chunk_indices entry at task %ld", task),
-                        return ge::GRAPH_FAILED);
+            if (sequence < 0 || sequence + 1 >= cuElems ||
+                            localChunk < 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                            OP_NAME, "chunk_indices",
+                            std::to_string(sequence) + "," + std::to_string(localChunk),
+                            "task " + std::to_string(task) +
+                                " requires 0 <= sequence < seq_num and local_chunk >= 0");
+        return ge::GRAPH_FAILED;
+    }
             const int64_t seqBegin = cu[sequence];
             const int64_t seqEnd = cu[sequence + 1];
             const int64_t begin = seqBegin + localChunk * *chunkSize;
             const int64_t end = std::min<int64_t>(begin + *chunkSize, seqEnd);
-            OP_CHECK_IF(seqBegin < 0 || seqEnd < seqBegin ||
+            if (seqBegin < 0 || seqEnd < seqBegin ||
                             seqEnd > seqlen || begin < seqBegin ||
                             begin >= seqEnd || end <= begin ||
-                            begin != packedCursor,
-                        OP_LOGE(context->GetNodeName(),
-                                "chunk_indices must use canonical packed order at task %ld",
-                                task),
-                        return ge::GRAPH_FAILED);
+                            begin != packedCursor) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                            OP_NAME, "chunk_indices",
+                            "{seq=" + std::to_string(sequence) + ",chunk=" + std::to_string(localChunk) + "}",
+                            "task " + std::to_string(task) +
+                                " must follow canonical packed order {seq=" + std::to_string(packedCursor) + "}");
+        return ge::GRAPH_FAILED;
+    }
             packedCursor = end;
         }
-        OP_CHECK_IF(packedCursor != seqlen,
-                    OP_LOGE(context->GetNodeName(),
-                            "canonical packed chunks must cover all tokens"),
-                    return ge::GRAPH_FAILED);
+        if (packedCursor != seqlen) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        OP_NAME, "chunk_indices", std::to_string(packedCursor),
+                        "canonical packed chunks must cover all " + std::to_string(seqlen) + " tokens");
+        return ge::GRAPH_FAILED;
+    }
     }
 
     context->SetBlockDim(usedCoreNum);

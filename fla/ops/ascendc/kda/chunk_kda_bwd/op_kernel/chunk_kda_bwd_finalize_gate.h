@@ -5,13 +5,13 @@
 
 #ifndef CHUNK_KDA_BWD_C_GATE_H
 #define CHUNK_KDA_BWD_C_GATE_H
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "kernel_utils/vector/regbase.hpp"
 #endif
 
 namespace KDA {
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using namespace AscendC::MicroAPI;
 
 constexpr CastTrait kKdaGateBf16ToFp32 = {
@@ -359,7 +359,7 @@ private:
             {false, 0, 0, 0});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if constexpr (SAFE_GATE) {
             // A dense sequence made entirely of full chunks never switches
             // between the fused and split helpers, so the fast one-pass
@@ -395,7 +395,7 @@ private:
         if (applyRaw) {
             ApplyRawGate<false>(
                 task, head, validC, upstream, *dAAcc, *dbAcc, expA);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if constexpr (SAFE_GATE) {
                 // The next chunk reloads dA/db from the same UB accumulator
                 // addresses in a new SIMD helper invocation.
@@ -435,7 +435,7 @@ private:
                 {false, 0, 0, 0});
             AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(0);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaBwdCCastBf16ToFp32A5(
                 (__ubuf__ float *)x.GetPhyAddr(),
                 (__ubuf__ bfloat16_t *)rawStage.GetPhyAddr(),
@@ -455,21 +455,21 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(0);
         if (tiling_.hasDtBias != 0) {
             auto bias = reduce_.Get<float>()[144];
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if constexpr (!SAFE_GATE) {
 #endif
             for (uint32_t row = 0; row < rows; ++row) {
                 AscendC::Add(x[row * 128], x[row * 128], bias, 128);
             }
             AscendC::PipeBarrier<PIPE_V>();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             }
 #endif
         }
 
         if constexpr (SAFE_GATE) {
             const float a = expA;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if (tiling_.hasDtBias != 0) {
                 auto bias = reduce_.Get<float>()[144];
                 KdaBwdCSafeGateBackwardA5<
@@ -527,7 +527,7 @@ private:
             AscendC::PipeBarrier<PIPE_V>();
         }
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
         AccumulateColumns(dbAcc, tmp, rows);
         AccumulateScalar(dAAcc, aux, rows);
 #else
@@ -644,7 +644,7 @@ private:
     AscendC::TEventID mte3ToMte2_;
 };
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 __aicore__ inline void RunChunkKdaBwdCInitGateOutputsA5(
     GM_ADDR dA, GM_ADDR dBias,
     const ChunkKdaBwdCTilingData &tiling)

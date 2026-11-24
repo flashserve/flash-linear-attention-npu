@@ -6,6 +6,8 @@ import ctypes
 import json
 import math
 import os
+import sys
+from pathlib import Path
 import re
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -826,7 +828,7 @@ def _run_positive_npu(inputs: _PreparedInputs, spec: dict):
 
         return chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
     if route == "aclnn":
-        from fla_npu.ops.ascendc._aclnn_ctypes import npu_chunk_kda_fwd
+        from fla_npu.ops.ascendc._stable import npu_chunk_kda_fwd
 
         return npu_chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
     if route == "direct_launch":
@@ -979,8 +981,8 @@ def _mutate_raw(inputs: _PreparedInputs, spec: dict, outputs: list):
         for name in ("q", "k", "v", "g", "beta"):
             values[name] = inputs.__dict__[name].repeat(2, *([1] * (inputs.__dict__[name].dim() - 1)))
         values["cu"] = [0, int(spec["T"])]
-    elif mutation == "seq_gt_1024":
-        values["cu"] = [0] * 1025 + [int(spec["T"])]
+    elif mutation == "state_seq_count":
+        values["cu"] = [0, int(spec["T"]) // 2, int(spec["T"])]
     elif mutation == "indices_without_cu":
         values["cu"] = None
         values["indices"] = [0, 0]
@@ -1048,7 +1050,8 @@ def _raw_output_tensors(inputs: _PreparedInputs, spec: dict) -> list:
 
 
 def _run_negative_aclnn(inputs: _PreparedInputs, spec: dict):
-    from fla_npu.ops.ascendc._aclnn_ctypes import _GET_WORKSPACE_ARGTYPES, _call_aclnn
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    from aclnn_error_probe import reject_workspace as _call_aclnn
 
     outputs = _raw_output_tensors(inputs, spec)
     values = _mutate_raw(inputs, spec, outputs)

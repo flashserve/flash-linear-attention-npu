@@ -94,6 +94,7 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(true);
+        this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)
@@ -106,6 +107,8 @@ public:
             .ExtendCfgInfo("coreType.value", "AiCore")
             .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
         this->AICore().AddConfig("ascend950", config);
+        this->AICore().AddConfig("ascend910b", config);
+        this->AICore().AddConfig("ascend910_93", config);
     }
 };
 

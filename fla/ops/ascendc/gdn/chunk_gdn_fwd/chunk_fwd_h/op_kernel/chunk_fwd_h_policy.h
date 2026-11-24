@@ -7,6 +7,8 @@
 #ifndef CHUNK_FWD_H_POLICY_H
 #define CHUNK_FWD_H_POLICY_H
 
+#include "chunk_fwd_h_struct.h"
+
 #include <cstdint>
 
 #include "kernel_operator.h"
@@ -18,20 +20,39 @@ enum class FwdHGateMode : uint8_t {
     KEY_GK = 1,
 };
 
-template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_>
+template <FwdHGateMode GATE_MODE_, bool USE_EXP2_, bool STATE_FP32_, bool STORE_FINAL_,
+          bool DENSE_T16_ = false>
 struct FwdHCompilePolicy {
     static constexpr FwdHGateMode GATE_MODE = GATE_MODE_;
     static constexpr bool USE_EXP2 = USE_EXP2_;
     static constexpr bool STATE_FP32 = STATE_FP32_;
+    // O4：storeFinalState 提为编译期维（host tiling key 与运行时 attr 同源，值恒等）。
+    // =true 时 S1 的 WRITE_RIGHT 恒真——WRITE_RIGHT=false 实例族整体消失、
+    // storeFinalState 运行时读全部常量折叠（A2 模板收敛同路线，热段 span 缩小）。
+    static constexpr bool STORE_FINAL = STORE_FINAL_;
+    // T16：dense 专用 TILE_ROWS=16 布局（host tiling key 依 isVariedLen==0 且
+    // 每 unit ≤2 head 才选 1；AIV 单 slot 大缓冲，per-tile 开销减半）。仅 arch22；
+    // 变长/多 head-per-unit 路径恒 0，行为与既有二进制一致。
+    static constexpr bool DENSE_T16 = DENSE_T16_;
 };
 
 constexpr uint32_t FWD_H_CHUNK = 64;
 constexpr uint32_t FWD_H_K = 128;
 constexpr uint32_t FWD_H_V = 128;
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 2;
+constexpr uint32_t FWD_H_AIV_COUNT = 1;
+constexpr uint32_t FWD_H_WORKSPACE_HEAD_SLOTS = 2 * FWD_H_AIC_HEAD_SLOTS;
+#else
 constexpr uint32_t FWD_H_AIC_HEAD_SLOTS = 4;
 constexpr uint32_t FWD_H_AIV_COUNT = 2;
+constexpr uint32_t FWD_H_WORKSPACE_HEAD_SLOTS = FWD_H_AIC_HEAD_SLOTS;
+#endif
 constexpr uint32_t FWD_H_AIV_HEAD_SLOTS = 2;
 constexpr uint32_t FWD_H_FLAG_SUBBLOCK_STRIDE = 16;
+// P1 varlen 均衡分区：per-core 任务边界表容量（与 host 侧 tiling 数组字段同宽；
+// 超容量回退均分，见 chunk_fwd_h_struct.h）
+constexpr uint32_t FWD_H_MAX_CORE_BOUNDS = 32;
 
 constexpr uint32_t FWD_H_TOKEN_MATRIX_BF16_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(bfloat16_t);
 constexpr uint32_t FWD_H_TOKEN_MATRIX_FP32_BYTES = FWD_H_CHUNK * FWD_H_V * sizeof(float);
@@ -61,7 +82,7 @@ constexpr uint32_t FWD_H_UB_SHARE_BASE = 226 * 1024;
 // ready/free 使用同一 ID 的双向计数器，且复用前必须由上一代 wait 消费。
 // 目标 CANN 9.1 的 A5 mode=0x4 仅支持 AIV 本地 ID 0..10；AIC 侧通过 16-ID
 // 步长选择 AIV0/AIV1。各协议使用互不重叠的本地 ID，最大 ID 为 8。
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 16;
 #else
 constexpr uint32_t FWD_H_AIV_FLAG_STRIDE = 0;
@@ -154,6 +175,17 @@ struct FwdHRuntimeTiling {
     bool useInitialState = false;
     bool storeFinalState = false;
     bool isVariedLen = false;
+    int64_t layout = GDN::FwdHLayout::BNSD;
+    // P1：host 注入的均衡分区表（varlen）。coreBoundCount=0 表示无表，走均分。
+    // 表本体留在 GM tiling data 内（不拷入 kernel 栈——260B 结构体膨胀曾致
+    // AIV 指令缓冲等待 +48us 的代码足迹税），此处仅持 GM 指针，每核读 2 个字。
+    uint32_t coreBoundCount = 0;
+    const __gm__ int64_t *coreBoundsGm = nullptr;
+    // gated 引擎启用位（host gatedEligible 落盘，kernel 入口拷贝）：
+    // RunFwdHGatedDispatch 的充分条件——0 时本实例即便编译期具备 gated 能力
+    // 也降级通用路径，保证 kernel 分派与 host 资源形状（blockDim/workspace）
+    // 恒一致。
+    uint32_t gatedEngine = 0;
 };
 
 struct FwdHKernelArgs {
@@ -176,7 +208,7 @@ struct FwdHKernelArgs {
 // 集合同步，同一 localSlot 的两个 AIV 必须使用同一 ID。
 __aicore__ inline uint32_t FwdHAicPeerFlag(uint32_t base, uint32_t localSlot, uint32_t aiv)
 {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
     return base + localSlot + aiv * FWD_H_AIV_FLAG_STRIDE;
 #else
     (void)aiv;
@@ -198,7 +230,12 @@ __aicore__ inline uint32_t FwdHLocalSlotBase(uint32_t localSlot)
 
 __aicore__ inline uint32_t FwdHAivHeadCount(uint32_t activeHeadCount, uint32_t aiv)
 {
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    (void)aiv;
+    return activeHeadCount;
+#else
     return activeHeadCount > aiv ? (activeHeadCount - aiv + 1) / 2 : 0;
+#endif
 }
 
 __aicore__ inline uint32_t FwdHMode2PairCount(uint32_t activeHeadCount)
@@ -211,6 +248,51 @@ __aicore__ inline bool FwdHMode2PairHasHead(uint32_t activeHeadCount, uint32_t p
 {
     return pairSlot * 2U + aiv < activeHeadCount;
 }
+
+__aicore__ inline uint64_t FwdHCoreSlotOffset(uint32_t core, uint32_t slot, uint32_t slotElements)
+{
+    return (static_cast<uint64_t>(core) * FWD_H_WORKSPACE_HEAD_SLOTS + slot) * slotElements;
+}
+
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+namespace FwdHArch92 {
+constexpr uint32_t HEADS = 2;
+constexpr uint32_t BANKS = 2;
+constexpr uint32_t PD_BASE = 0;
+constexpr uint32_t STATE_BASE = 128 * 1024;
+constexpr uint32_t INPUT_BASE = 256 * 1024;
+constexpr uint32_t RIGHT_BASE = 288 * 1024;
+constexpr uint32_t GATE_BASE = 320 * 1024;
+constexpr uint32_t ALPHA_BASE = 321 * 1024;
+constexpr uint32_t UB_USED = ALPHA_BASE + BANKS * HEADS * 32;
+constexpr uint32_t L1_BANK_BYTES = 160 * 1024;
+constexpr uint32_t L1_W_BASE = 0;
+constexpr uint32_t L1_H_BASE = 32 * 1024;
+constexpr uint32_t L1_RIGHT_BASE = 96 * 1024;
+constexpr uint32_t L1_K_BASE = 128 * 1024;
+
+constexpr uint32_t P_FLAG = 0;
+constexpr uint32_t D_FLAG = 2;
+constexpr uint32_t RIGHT_FLAG = 4;
+constexpr uint32_t H_FLAG = 8;
+constexpr uint32_t ROUND_FLAG = 10;
+
+__aicore__ inline uint32_t BankSlot(uint32_t chunk, uint32_t head)
+{
+    return (chunk & 1U) * HEADS + head;
+}
+
+__aicore__ inline uint64_t RightOffset(uint32_t core, uint32_t chunk, uint32_t head)
+{
+    return FwdHCoreSlotOffset(core, BankSlot(chunk, head), FWD_H_CHUNK * FWD_H_V);
+}
+
+__aicore__ inline AscendC::LocalTensor<uint8_t> UbBuffer()
+{
+    return AscendC::LocalTensor<uint8_t>(AscendC::TPosition::VECCALC, 0, UB_USED);
+}
+} // namespace FwdHArch92
+#endif
 
 } // namespace GDN
 

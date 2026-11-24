@@ -8,9 +8,10 @@ CPU 标杆直接复用 `torch_custom/fla_npu/test/test_bwd_dhu.py` 里的
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import math
 import sys
-import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -70,17 +71,33 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     chunk_size = int(spec["chunk_size"])
     state_v_first = bool(spec.get("state_v_first", False))
     state_tail = (V, K) if state_v_first else (K, V)
+    cu_seqlens = spec.get("cu_seqlens")
+    if cu_seqlens is not None and (B != 1 or cu_seqlens[-1] != T):
+        raise ValueError("变长用例要求 B=1 且 cu_seqlens[-1]=T")
+    state_count = len(cu_seqlens) - 1 if cu_seqlens is not None else B
+    gate_dtype = torch.float64 if high_precision else torch.float32
+    use_gk = bool(spec.get("use_gk", False))
     return {
         "q": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 1),
         "k": _randn((B, HK, T, K), dtype_name, calc_dtype, device, seed + 2),
         "w": _randn((B, HV, T, K), dtype_name, calc_dtype, device, seed + 3),
         "do": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 4),
         "dv": _randn((B, HV, T, V), dtype_name, calc_dtype, device, seed + 5),
-        "g": _gate((B, HV, T), torch.float64 if high_precision else torch.float32, device, seed + 6),
+        "g": None if use_gk else _gate((B, HV, T), gate_dtype, device, seed + 6),
+        "gK": _kda_gate((B, HV, T, K), dtype_name, calc_dtype, device, seed + 6) if use_gk else None,
         "h0": (
-            _randn((B, HV, *state_tail), dtype_name, calc_dtype, device, seed + 7)
+            _randn((state_count, HV, *state_tail), dtype_name, calc_dtype, device, seed + 7)
             if bool(spec.get("with_h0", False))
             else None
+        ),
+        "dht": (
+            _randn((state_count, HV, *state_tail), dtype_name, calc_dtype, device, seed + 8)
+            if bool(spec.get("with_dht", False)) else None
+        ),
+        "cu_seqlens": cu_seqlens,
+        "chunk_indices": (
+            _cpu_reference_module.prepare_chunk_indices(cu_seqlens, chunk_size)
+            if cu_seqlens is not None else None
         ),
         "chunk_size": chunk_size,
         "scale": float(spec.get("scale", 1.0 / math.sqrt(K))),
@@ -97,12 +114,18 @@ def run_cpu(spec: dict[str, Any], high_precision: bool = False):
         inputs["do"],
         inputs["dv"],
         g=inputs["g"],
+        gK=inputs["gK"],
         h0=inputs["h0"],
+        dht=inputs["dht"],
+        cu_seqlens=inputs["cu_seqlens"],
+        chunk_indices=inputs["chunk_indices"],
         scale=inputs["scale"],
         chunk_size=inputs["chunk_size"],
         # 公共 CPU 节点始终传入 high_precision=True，使用 fp64 完成标杆计算。
         golden_mode="fp64" if high_precision else "npu",
         state_v_first=bool(spec.get("state_v_first", False)),
+        nt_first=True,
+        use_exp2=bool(spec.get("use_gk", False)),
     )
 
 
@@ -113,9 +136,12 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
 
     return ascendc.chunk_gated_delta_rule_bwd_dhu(
         inputs["q"], inputs["k"], inputs["w"], inputs["do"], inputs["dv"],
-        inputs["scale"], inputs["chunk_size"], g=inputs["g"], gK=None,
-        h0=inputs["h0"], dht=None, cu_seqlens=None, chunk_indices=None,
+        inputs["scale"], inputs["chunk_size"], g=inputs["g"], gK=inputs["gK"],
+        h0=inputs["h0"], dht=inputs["dht"],
+        cu_seqlens=_int_tensor(inputs["cu_seqlens"], inputs["q"].device) if inputs["cu_seqlens"] is not None else None,
+        chunk_indices=_int_tensor(inputs["chunk_indices"], inputs["q"].device) if inputs["chunk_indices"] is not None else None,
         transpose_state_layout=bool(spec.get("state_v_first", False)),
+        use_exp2=bool(spec.get("use_gk", False)),
     )
 
 
@@ -128,7 +154,14 @@ class FunctionApi(BaseApi):
         self.high_precision = self.device == "cpu"
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME)
+        # ATK removes non_param inputs before calling the executor. Read the
+        # serialized spec from metadata so optional dht/layout/varlen fields survive.
+        spec_config = self.task_result.case_config.get_input_data_config(name="case_spec")
+        spec = (
+            json.loads(spec_config.range_values)
+            if spec_config is not None and spec_config.range_values
+            else _case_spec(input_data, OP_NAME)
+        )
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":

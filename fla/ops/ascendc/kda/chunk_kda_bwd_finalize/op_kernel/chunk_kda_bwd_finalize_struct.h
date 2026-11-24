@@ -9,9 +9,7 @@
 
 namespace KDA {
 
-// The public contract is already complete, while this development branch only
-// executes Stage0--3.  Keeping the final tiling schema from the first patch
-// prevents a later ABI change when Stage3--12 are appended.
+// Shared A5 Host/device tiling for the complete finalize kernel.
 struct ChunkKdaBwdFinalizeTilingData {
     int64_t B;
     int64_t NQ;
@@ -32,6 +30,12 @@ struct ChunkKdaBwdFinalizeTilingData {
     uint32_t useGateInKernel;
     uint32_t useExp2;
     uint32_t stateVFirst;
+    uint32_t outputTokenMajor;
+    uint32_t qkTokenMajor = 0;
+    uint32_t vTokenMajor = 0;
+    uint32_t rawTokenMajor = 0;
+    uint32_t gateOutputTokenMajor = 0;
+    uint32_t betaMode;
     float scale;
     float lowerBound;
     uint64_t slotWorkspaceOffset;

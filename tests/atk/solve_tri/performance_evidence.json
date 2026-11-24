@@ -1,0 +1,34 @@
+{
+  "issue": "https://github.com/flashserve/flash-linear-attention-npu/issues/660",
+  "a2_case_files": {
+    "accuracy_and_performance": "atk_solve_tri_a2_perf.json",
+    "resources": "atk_solve_tri_a2_resources.json",
+    "executor": "executor_solve_tri_a2.py"
+  },
+  "baseline_note": "A2 model evidence is separate from the unchanged default A5 case files; record each report's actual executor without relabelling historical evidence",
+  "duration_ratio_definition": "A2_or_A3_Task_Duration_mean_us / A5_Task_Duration_mean_us",
+  "threshold": "Pass --max-duration-ratio explicitly after agreeing latency versus throughput meaning",
+  "extra_memory_definition": "ATK peak allocated minus live-input baseline and returned output; bytes, at most 200000000",
+  "platforms": {
+    "A2": {
+      "code_id": "REQUIRED: commit plus overlay digest if dirty",
+      "cann_version": "REQUIRED",
+      "device_name": "REQUIRED",
+      "opapi_sha256": "REQUIRED: actual loaded libcust_opapi.so SHA256",
+      "build_exit": "A2/build.exit",
+      "build_log": "A2/build.log",
+      "cann_version_file": "A2/cann_version.info",
+      "runtime_provenance": "A2/worker_provenance.json",
+      "accuracy_provenance": "A2/accuracy_worker_provenance.json",
+      "performance_report": "A2/performance.xlsx",
+      "accuracy_report": "A2/accuracy_task/report/accuracy.xlsx",
+      "accuracy_log": "A2/accuracy_task/log/atk.log",
+      "memory_report": "A2/memory.json",
+      "profile_root": "A2/profiles",
+      "node": "npu_npu_dut",
+      "case_ids": {"dense": 208, "varlen": 209}
+    },
+    "A3": {},
+    "A5": {}
+  }
+}

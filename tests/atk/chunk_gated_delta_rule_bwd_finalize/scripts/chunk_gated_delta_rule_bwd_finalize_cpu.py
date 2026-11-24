@@ -4,6 +4,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     chunk_indices=None, scale=None, chunk_size=64,
     use_qk_l2_norm_in_kernel=False, use_beta_sigmoid_in_kernel=False,
     use_gate_in_kernel=False, state_v_first=False, use_exp2=True,
+    nt_first=False,
 ):
     """CPU reference for the fused gated-delta-rule backward finalize range.
 
@@ -12,6 +13,8 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     axes are swapped: vectors use ``[B, H, T, D]``, states use
     ``[B, H, NT, K, V]``, and ``a`` uses ``[B, HV, T, BT]``. The function
     returns ``dq, dk, dv, dbeta, dg`` in that NPU-facing layout.
+
+    nt_first=True 时状态为 [B,NT,HV,K,V]。
     """
     import math
     import torch
@@ -108,7 +111,10 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
             tasks.append((0, token_start, chunk_len, task_idx))
         state_chunk_num = len(tasks)
 
-    expected_state_shape = (batch, value_heads, state_chunk_num, dim, dim)
+    if nt_first:
+        expected_state_shape = (batch, state_chunk_num, value_heads, dim, dim)
+    else:
+        expected_state_shape = (batch, value_heads, state_chunk_num, dim, dim)
     if tuple(h.shape) != expected_state_shape or tuple(dh.shape) != expected_state_shape:
         raise ValueError(f"h and dh must have shape {expected_state_shape}.")
     if tuple(a.shape) != (batch, value_heads, total_tokens, chunk_size):
@@ -144,7 +150,7 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
     dg_prepare = torch.empty(scalar_shape, dtype=torch.float32)
     dkb = torch.empty(hv_vector_shape, dtype=work_dtype)
     dkb_t = torch.empty(hv_vector_shape, dtype=work_dtype)
-    state_term = torch.empty((batch, value_heads, h.shape[2]), dtype=torch.float32)
+    state_term = torch.empty((batch, value_heads, state_chunk_num), dtype=torch.float32)
     ds0 = torch.zeros(matrix_shape, dtype=work_dtype)
     dk_prepare = torch.empty(hv_vector_shape, dtype=work_dtype)
     db_prepare = torch.empty(scalar_shape, dtype=torch.float32)
@@ -165,8 +171,12 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
         for hv in range(value_heads):
             du_chunk = du[batch_idx, hv, token_start:token_end].float()
             vb_chunk = vb[batch_idx, hv, token_start:token_end].float()
-            h_chunk = h[batch_idx, hv, state_chunk_idx].float()
-            dh_chunk = dh[batch_idx, hv, state_chunk_idx].float()
+            if nt_first:
+                index = (batch_idx, state_chunk_idx, hv)
+            else:
+                index = (batch_idx, hv, state_chunk_idx)
+            h_chunk = h[index].float()
+            dh_chunk = dh[index].float()
             if state_v_first:
                 h_chunk = h_chunk.transpose(-1, -2)
                 dh_chunk = dh_chunk.transpose(-1, -2)
@@ -323,15 +333,29 @@ def chunk_gated_delta_rule_bwd_finalize_golden(
 
         for hk in range(key_heads):
             hv_start = hk * head_ratio
-            dq_acc = dq_hv[batch_idx, hv_start, token_start:token_end].clone()
-            dk_acc = dk_raw_hv[batch_idx, hv_start, token_start:token_end].clone()
-            for hv in range(hv_start + 1, min(hv_start + head_ratio, value_heads)):
-                dq_acc = (
-                    dq_acc.float() + dq_hv[batch_idx, hv, token_start:token_end].float()
-                ).to(work_dtype)
-                dk_acc = (
-                    dk_acc.float() + dk_raw_hv[batch_idx, hv, token_start:token_end].float()
-                ).to(work_dtype)
+            if head_ratio > 4 and work_dtype == torch.bfloat16:
+                # A5 G>4 contract: preserve S13/S14 BF16 partials, sum each
+                # group-relative parity in FP32, then merge and round once.
+                sums_q = [torch.zeros_like(dq_hv[batch_idx, hv_start, token_start:token_end],
+                                           dtype=torch.float32) for _ in range(2)]
+                sums_k = [torch.zeros_like(sums_q[0]) for _ in range(2)]
+                for local_hv in range(head_ratio):
+                    hv = hv_start + local_hv
+                    parity = local_hv % 2
+                    sums_q[parity] += dq_hv[batch_idx, hv, token_start:token_end].float()
+                    sums_k[parity] += dk_raw_hv[batch_idx, hv, token_start:token_end].float()
+                dq_acc = (sums_q[0] + sums_q[1]).to(work_dtype)
+                dk_acc = (sums_k[0] + sums_k[1]).to(work_dtype)
+            else:
+                dq_acc = dq_hv[batch_idx, hv_start, token_start:token_end].clone()
+                dk_acc = dk_raw_hv[batch_idx, hv_start, token_start:token_end].clone()
+                for hv in range(hv_start + 1, min(hv_start + head_ratio, value_heads)):
+                    dq_acc = (
+                        dq_acc.float() + dq_hv[batch_idx, hv, token_start:token_end].float()
+                    ).to(work_dtype)
+                    dk_acc = (
+                        dk_acc.float() + dk_raw_hv[batch_idx, hv, token_start:token_end].float()
+                    ).to(work_dtype)
             dq[batch_idx, hk, token_start:token_end] = dq_acc
             dk[batch_idx, hk, token_start:token_end] = dk_acc
 

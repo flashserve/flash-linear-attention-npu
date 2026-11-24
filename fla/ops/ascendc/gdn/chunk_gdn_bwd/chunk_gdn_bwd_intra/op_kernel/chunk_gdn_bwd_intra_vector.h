@@ -5,6 +5,8 @@
 #ifndef CHUNK_GDN_BWD_INTRA_VECTOR_H
 #define CHUNK_GDN_BWD_INTRA_VECTOR_H
 
+#include "chunk_gdn_bwd_intra_struct.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -141,24 +143,18 @@ __simd_vf__ inline void ChunkGdnBwdIntraPackMatrixVF(
     using namespace AscendC;
     using namespace AscendC::MicroAPI;
     constexpr uint32_t ROW_ELEMENTS = 128;
-    constexpr uint32_t REG_ELEMENTS = 64;
-    constexpr uint32_t COL_BLOCKS_PER_REG = 4;
     constexpr uint32_t NZ_ROWS = 32;
+    static_assert(ROW_ELEMENTS * sizeof(MainT) == 256);
     RegTensor<MainT> dataReg;
     MaskReg mask = CreateMask<MainT, MaskPattern::ALL>();
 
-    // 每个 AIV 将自己负责的 32 行从 ND 重排为 Cube 可直接读取的 NZ 半片。
+    // A5 的 256B 寄存器恰好容纳一整行，按八个 32B 列块写入 NZ 半片。
     for (uint16_t row = 0; row < rows; ++row) {
         const uint32_t ndRow = static_cast<uint32_t>(row) * ROW_ELEMENTS;
         const uint32_t nzRow = static_cast<uint32_t>(row) * 16;
-        for (uint32_t colPart = 0; colPart < 2; ++colPart) {
-            const uint32_t ndOffset = ndRow + colPart * REG_ELEMENTS;
-            const uint32_t nzOffset =
-                nzRow + colPart * COL_BLOCKS_PER_REG * NZ_ROWS * 16;
-            LoadIn<MainT, false>(dataReg, ndIn + ndOffset);
-            StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(
-                nzOut + nzOffset, dataReg, NZ_ROWS, mask);
-        }
+        LoadIn<MainT, false>(dataReg, ndIn + ndRow);
+        StoreAlign<MainT, DataCopyMode::DATA_BLOCK_COPY>(
+            nzOut + nzRow, dataReg, NZ_ROWS, mask);
     }
 }
 
@@ -358,7 +354,7 @@ private:
                 PrefetchStage1Input(meta, r + 1);
             }
             const int64_t leader =
-                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r);
+                ChunkGdnBwdIntraLeaderR<G>(meta.hvBegin, r, tiling_->groupSize);
             if (r == leader) {
                 // AIC 只为每个唯一 hk 发布一次 Score；同一 hk 的后续 hv 直接复用该槽。
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
@@ -376,7 +372,8 @@ private:
             vdoSlotUsed[vdoSlot] = true;
             RunStage1(meta, r, leader, pairInputs);
             const bool lastConsumer = r + 1 == meta.validHeads ||
-                (meta.hvBegin + r) / G != (meta.hvBegin + r + 1) / G;
+                (meta.hvBegin + r) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize) !=
+                (meta.hvBegin + r + 1) / ChunkGdnBwdIntraGroup<G>(tiling_->groupSize);
             if (lastConsumer) {
                 // 当前 hk 的最后一个 hv 已读完 Score，向 AIC 归还本 AIV 的半片槽。
                 AscendC::CrossCoreSetFlag<0x4, PIPE_V>(
@@ -385,6 +382,7 @@ private:
         }
     }
 
+    template <bool PAIR_INPUTS = false>
     __aicore__ inline void PrefetchStage1Input(
         const ChunkGdnBwdIntraWorkMeta &meta, int64_t r)
     {
@@ -397,7 +395,8 @@ private:
             return;
         }
 
-        const uint32_t slot = static_cast<uint32_t>(r) & 1U;
+        const uint32_t slot = PAIR_INPUTS ? static_cast<uint32_t>(r) :
+            static_cast<uint32_t>(r) & 1U;
         auto aLocal = resource_.ubBuf.template GetBufferByByte<MainT>(
             INTRA_A_UB_BASE + slot * INTRA_MATRIX_HALF_BYTES);
         auto gLocal = resource_.ubBuf.template GetBufferByByte<GateT>(
@@ -416,8 +415,13 @@ private:
         const uint64_t vectorOffset =
             (static_cast<uint64_t>(meta.batch) * tiling_->valueHeads + hv) *
                 tiling_->seqlen + meta.tokenStart;
-        const uint64_t vdoOffset =
-            (vectorOffset + rowBegin) * tiling_->valueDim;
+        const uint64_t vdoOffset = (tiling_->layout == GDN::IntraLayout::BSND)
+            ? ((static_cast<uint64_t>(meta.batch) * tiling_->seqlen +
+                meta.tokenStart + rowBegin) * tiling_->valueHeads + hv) * tiling_->valueDim
+            : (vectorOffset + rowBegin) * tiling_->valueDim;
+        // The composite launcher keeps dO in head-major storage for all
+        // layouts; only v follows the public sequence-major layout.
+        const uint64_t dOOffset = (vectorOffset + rowBegin) * tiling_->valueDim;
 
         // MTE2 等待 Vector 释放输入 slot；搬完后把 A/g/beta/v/d_o 一并交给 Vector。
         AscendC::Mutex::Lock<PIPE_MTE2>(inputMutex_[slot]);
@@ -430,10 +434,20 @@ private:
         vectorCopy.blockLen = static_cast<uint32_t>(meta.validTokens * sizeof(BetaT));
         AscendC::DataCopyPadExtParams<BetaT> betaPad{false, 0, 0, 0};
         AscendC::DataCopyPad(betaLocal, betaGm_[vectorOffset], vectorCopy, betaPad);
-        const uint32_t vdoElements =
-            static_cast<uint32_t>(rows * tiling_->valueDim);
-        AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
-        AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
+        const uint32_t vdoElements = static_cast<uint32_t>(rows * tiling_->valueDim);
+        if (!(tiling_->layout == GDN::IntraLayout::BSND)) {
+            AscendC::DataCopy(vLocal, vGm_[vdoOffset], vdoElements);
+            AscendC::DataCopy(dOLocal, dOGm_[vdoOffset], vdoElements);
+        } else {
+            const uint32_t rowBytes = static_cast<uint32_t>(tiling_->valueDim * sizeof(MainT));
+            const uint32_t rowGap = static_cast<uint32_t>((tiling_->valueHeads - 1) *
+                                                           tiling_->valueDim * sizeof(MainT));
+            AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows), rowBytes, rowGap, 0, 0};
+            AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(vLocal, vGm_[vdoOffset], copy, pad);
+            AscendC::DataCopyExtParams dOCopy{static_cast<uint16_t>(rows), rowBytes, 0, 0, 0};
+            AscendC::DataCopyPad(dOLocal, dOGm_[dOOffset], dOCopy, pad);
+        }
         AscendC::Mutex::Unlock<PIPE_MTE2>(inputMutex_[slot]);
     }
 
@@ -441,6 +455,12 @@ private:
         const ChunkGdnBwdIntraWorkMeta &meta, uint32_t firstSlot,
         uint32_t count)
     {
+        if ((tiling_->layout == GDN::IntraLayout::BSND)) {
+            for (uint32_t offset = 0; offset < count; ++offset) {
+                PrefetchStage1Input<true>(meta, static_cast<int64_t>(firstSlot + offset));
+            }
+            return;
+        }
         constexpr uint32_t PART_ROWS = 32;
         constexpr uint32_t ROW_ELEMENTS = 64;
         const uint32_t rowBegin = static_cast<uint32_t>(part_) * PART_ROWS;

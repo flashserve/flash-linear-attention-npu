@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.util
 import os
 import re
 import shutil
@@ -17,12 +16,19 @@ from packaging.version import InvalidVersion, Version
 
 
 MIN_PYTHON = (3, 9)
-MIN_TORCH = "2.6.0"
-MIN_TRITON_ASCEND = "3.2.0"
-MIN_TRITON_ASCEND_A5 = "3.2.1"
-# CANN 9.x (9.0.0+) requires triton-ascend >= 3.2.1: 3.2.0 fails to JIT-compile
-# triton/backends/ascend/npu_utils.cpp on CANN 9.1.0 (RT_LIMIT_TYPE_SIMT_WARP_STACK_SIZE).
-MIN_TRITON_ASCEND_CANN9 = "3.2.1"
+# Runtime/version tables are shared with the PyPI import guard via
+# scripts/npu_compat.py (single source of truth).
+from npu_compat import (  # noqa: E402
+    MIN_CANN_BY_TIER,
+    MIN_TORCH,
+    MIN_TRITON_ASCEND,
+    MIN_TRITON_ASCEND_A5,
+    MIN_TRITON_ASCEND_CANN9,
+    MIN_TORCH_NPU_FUTURE_FIX_FAMILY,
+    TORCH_NPU_GDN_FIX_MINIMUMS,
+    VALIDATED_COMBOS,
+)
+from fla_npu_artifacts import get_soc, get_tier  # noqa: E402
 
 # Toolchain and build dependencies checked in addition to the torch-related
 # checks. Values mirror CMakeLists.txt (cmake_minimum_required),
@@ -30,28 +36,10 @@ MIN_TRITON_ASCEND_CANN9 = "3.2.1"
 MIN_CMAKE = "3.16"
 MIN_GCC = "7.3"
 MIN_SETUPTOOLS = "70.1"
-TORCH_NPU_GDN_FIX_MINIMUMS = {
-    "2.7.1": "2.7.1.post5",
-    "2.8.0": "2.8.0.post5",
-    "2.9.0": "2.9.0.post3",
-    "2.10.0": "2.10.0.post2",
-    "2.11.0": "2.11.0rc3",
-    "2.12.0": "2.12.0rc1",
-}
-MIN_TORCH_NPU_FUTURE_FIX_FAMILY = "2.13.0"
 TORCH_NPU_GDN_FIX_RELEASE_URL = (
     "https://gitcode.com/Ascend/pytorch/releases?"
     "presetConfig={%22tags%22:229,%22release%22:122}"
 )
-
-TORCHNPUGEN_MODULES = (
-    "torchnpugen.gen_op_plugin_functions",
-    "torchnpugen.gen_derivatives",
-    "torchnpugen.gen_op_backend",
-    "torchnpugen.gen_backend_stubs",
-    "torchnpugen.struct.gen_struct_opapi",
-)
-
 
 def _ok(message: str) -> None:
     print(f"[OK] {message}")
@@ -75,18 +63,6 @@ def _import_module(failures: list[str], module_name: str):
     origin = getattr(module, "__file__", None) or "built-in"
     _ok(f"{module_name}: {origin}")
     return module
-
-
-def _find_module(failures: list[str], module_name: str) -> None:
-    try:
-        spec = importlib.util.find_spec(module_name)
-    except Exception as exc:
-        _fail(failures, f"{module_name}: {exc}")
-        return
-    if spec is None:
-        _fail(failures, f"{module_name}: not found")
-        return
-    _ok(f"{module_name}: {spec.origin or 'namespace package'}")
 
 
 def _distribution_version(name: str) -> str:
@@ -155,7 +131,7 @@ def _check_torch_npu_gdn_fix(failures: list[str], actual: str) -> None:
 
 
 def _check_triton_ascend_a5_compat(failures: list[str], actual: str) -> None:
-    soc = os.getenv("FLA_NPU_SOC", "ascend910b")
+    soc = get_soc()
     if soc != "ascend950":
         return
     actual_version = _version_obj(actual)
@@ -404,22 +380,57 @@ def _detect_cann_version() -> str:
     return "<unknown>"
 
 
+def _report_validated_combo(cann: str, torch_version: str) -> None:
+    """Report (informationally) whether this env is on the release-validated matrix.
+
+    Unlike the minimum-version checks this never fails: an environment above
+    the documented minimums is usable even when it is not part of the release
+    test matrix. The output is a QA/support hint only; the README matrix is the
+    canonical record.
+    """
+    cann_key = ".".join(str(part) for part in (_version_key(cann) or ()))
+    torch_key = ".".join(str(part) for part in (_version_key(torch_version) or ()))
+    if (cann_key, torch_key) in VALIDATED_COMBOS:
+        print(
+            f"[INFO] environment (CANN {cann}, torch {torch_version}) is on the "
+            "release-validated matrix"
+        )
+    else:
+        print(
+            f"[INFO] environment (CANN {cann}, torch {torch_version}) is not on "
+            "the release-validated matrix; minimum-version requirements still apply"
+        )
+
+
+def _report_cann_requirement(cann: str) -> None:
+    """Report the CANN floor of the target tier (informational).
+
+    950 (a5) needs a newer CANN baseline than 910B/910_93, so the same CANN
+    version can satisfy one tier and not another. The check stays informational:
+    a build on an older CANN fails loudly later, and a false failure here would
+    block environments that work.
+    """
+    try:
+        tier = get_tier()
+    except Exception:
+        return
+    minimum = MIN_CANN_BY_TIER.get(tier)
+    if not minimum:
+        return
+    detected = _version_key(cann)
+    below = bool(detected) and detected < _version_key(minimum)
+    print(
+        f"[INFO] CANN minimum for tier {tier} is {minimum}"
+        + (f"; detected CANN {cann} is below it" if below else "")
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--build-only",
         action="store_true",
-        help="Only check dependencies required to build the Python-only wheel.",
-    )
-    parser.add_argument(
-        "--legacy-extension",
-        action="store_true",
-        help="Also check torch, torch_npu, torchnpugen and triton-ascend for legacy extension builds.",
-    )
-    parser.add_argument(
-        "--skip-torchnpugen",
-        action="store_true",
-        help="Skip torchnpugen checks. Intended only for internal maintenance builds.",
+        help="Only check build dependencies, including torch link libraries; no NPU required.",
     )
     args = parser.parse_args()
 
@@ -445,6 +456,7 @@ def main() -> int:
         _ok(f"ASCEND_HOME_PATH={ascend_home or '<unset>'}")
         _ok(f"ASCEND_OPP_PATH={ascend_opp or '<unset>'}")
         _ok(f"CANN version: {_detect_cann_version()}")
+        _report_cann_requirement(_detect_cann_version())
     else:
         _fail(failures, "ASCEND_HOME_PATH or ASCEND_OPP_PATH must be set")
 
@@ -456,20 +468,22 @@ def main() -> int:
     _check_setuptools_version(failures)
     _check_build_system_deps(failures)
 
-    check_runtime = not args.build_only or args.legacy_extension
+    check_runtime = not args.build_only
+    # The launcher links torch's C ABI shims even with vendored headers.
+    torch = _import_module(failures, "torch")
+    torch_npu = _import_module(failures, "torch_npu") if check_runtime else None
     if not check_runtime:
-        _ok("skipping torch/torch_npu/triton checks for Python-only wheel build")
-        torch = None
-        torch_npu = None
-    else:
-        torch = _import_module(failures, "torch")
-        torch_npu = _import_module(failures, "torch_npu")
+        _ok("skipping torch_npu/triton/NPU checks for Stable-ABI wheel build")
 
     if torch is not None:
         torch_version = getattr(torch, "__version__", "<unknown>")
         _ok(f"torch version: {torch_version}")
         _check_min_version(failures, "torch", torch_version, MIN_TORCH)
-        if hasattr(torch, "npu"):
+        if ascend_home or ascend_opp:
+            _report_validated_combo(_detect_cann_version(), torch_version)
+        if not check_runtime:
+            _ok("torch link libraries available; NPU runtime is not needed for building")
+        elif hasattr(torch, "npu"):
             try:
                 npu_available = bool(torch.npu.is_available())
             except Exception as exc:
@@ -488,12 +502,6 @@ def main() -> int:
         torch_npu_version = getattr(torch_npu, "__version__", "<unknown>")
         _ok(f"torch_npu version: {torch_npu_version}")
         _check_torch_npu_gdn_fix(failures, torch_npu_version)
-
-    if args.legacy_extension and not args.skip_torchnpugen:
-        for module_name in TORCHNPUGEN_MODULES:
-            _find_module(failures, module_name)
-    elif args.skip_torchnpugen:
-        _warn("skipping torchnpugen checks")
 
     if check_runtime:
         triton = _import_module(failures, "triton")

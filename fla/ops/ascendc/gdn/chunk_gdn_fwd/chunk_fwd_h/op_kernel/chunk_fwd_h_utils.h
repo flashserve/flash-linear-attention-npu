@@ -7,6 +7,8 @@
 #ifndef CHUNK_FWD_H_UTILS_H
 #define CHUNK_FWD_H_UTILS_H
 
+#include "chunk_fwd_h_struct.h"
+
 #include "chunk_fwd_h_policy.h"
 
 namespace GDN {
@@ -21,7 +23,16 @@ __aicore__ inline uint32_t FwdHAlignCube(uint32_t value)
     return (value + 15U) & ~15U;
 }
 
-__aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &args, uint32_t sequence)
+// varlen 前缀游标：sequence 随 work unit 循环严格递增，各序列的 chunk 数只算一次，
+// 换序列时增量推进——替代按 sequence 从 0 重扫 cu_seqlens 的 O(N) 读。
+struct FwdHSequenceCursor {
+    uint32_t prefix = 0;
+    uint32_t totalChunks = 0;
+    uint32_t nextSequence = 0;
+};
+
+__aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &args, uint32_t sequence,
+                                                       FwdHSequenceCursor &cursor)
 {
     FwdHSequenceSpan span{};
     span.sequence = sequence;
@@ -37,25 +48,31 @@ __aicore__ inline FwdHSequenceSpan FwdHResolveSequence(const FwdHKernelArgs &arg
 
     AscendC::GlobalTensor<int64_t> cu;
     cu.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(args.cuSeqlens));
+    if (cursor.nextSequence == 0) {
+        uint32_t totalChunks = 0;
+        for (uint32_t seq = 0; seq < static_cast<uint32_t>(args.tiling.tokenBatch); ++seq) {
+            const int64_t seqBegin = cu.GetValue(seq);
+            const int64_t seqEnd = cu.GetValue(seq + 1);
+            totalChunks += FwdHCeilDiv(static_cast<uint32_t>(seqEnd - seqBegin), FWD_H_CHUNK);
+        }
+        cursor.totalChunks = totalChunks;
+        cursor.nextSequence = 1;
+    }
+    while (cursor.nextSequence <= sequence) {
+        const uint32_t seq = cursor.nextSequence;
+        const int64_t seqBegin = cu.GetValue(seq - 1U);
+        const int64_t seqEnd = cu.GetValue(seq);
+        cursor.prefix += FwdHCeilDiv(static_cast<uint32_t>(seqEnd - seqBegin), FWD_H_CHUNK);
+        cursor.nextSequence = seq + 1U;
+    }
     const int64_t begin = cu.GetValue(sequence);
     const int64_t end = cu.GetValue(sequence + 1);
     span.physicalBatch = 0;
     span.tokenBegin = static_cast<uint32_t>(begin);
     span.length = static_cast<uint32_t>(end - begin);
     span.chunkCount = FwdHCeilDiv(span.length, FWD_H_CHUNK);
-    uint32_t prefix = 0;
-    uint32_t totalChunks = 0;
-    for (uint32_t seq = 0; seq < static_cast<uint32_t>(args.tiling.tokenBatch); ++seq) {
-        const int64_t seqBegin = cu.GetValue(seq);
-        const int64_t seqEnd = cu.GetValue(seq + 1);
-        const uint32_t chunks = FwdHCeilDiv(static_cast<uint32_t>(seqEnd - seqBegin), FWD_H_CHUNK);
-        if (seq < sequence) {
-            prefix += chunks;
-        }
-        totalChunks += chunks;
-    }
-    span.chunkPrefix = prefix;
-    span.totalChunks = totalChunks;
+    span.chunkPrefix = cursor.prefix;
+    span.totalChunks = cursor.totalChunks;
     return span;
 }
 
@@ -94,8 +111,13 @@ __aicore__ inline FwdHHeadRoundPlan FwdHBuildHeadRange(const FwdHRuntimeTiling &
         head.roundHead = roundHead;
         head.hv = hvBegin + roundHead;
         head.kh = GATE_MODE == FwdHGateMode::SCALAR_G ? head.hv / groupSize : head.hv;
+#if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+        head.aiv = 0;                     // 1:1 恒指向唯一 AIV
+        head.localSlot = roundHead;       // 两个独立 head 槽，不循环覆盖
+#else
         head.aiv = roundHead & 1U;
         head.localSlot = roundHead >> 1U;
+#endif
 
         uint32_t kgSlot = plan.requiredKhCount;
         for (uint32_t consumer = 0; consumer < roundHead; ++consumer) {
@@ -181,12 +203,14 @@ __aicore__ inline FwdHChunkSpan FwdHBuildChunk(const FwdHSequenceSpan &sequence,
 }
 
 template <FwdHGateMode GATE_MODE>
-__aicore__ inline FwdHWorkUnit FwdHResolveWorkUnit(const FwdHKernelArgs &args, uint32_t workUnitId)
+__aicore__ inline FwdHWorkUnit FwdHResolveWorkUnit(const FwdHKernelArgs &args, uint32_t workUnitId,
+                                                   FwdHSequenceCursor &cursor)
 {
     const uint32_t rounds = FwdHHeadRoundsPerSequence<GATE_MODE>(args.tiling);
     const uint32_t sequence = workUnitId / rounds;
     const uint32_t round = workUnitId % rounds;
-    return {FwdHResolveSequence(args, sequence), FwdHBuildHeadRound<GATE_MODE>(args.tiling, round)};
+    return {FwdHResolveSequence(args, sequence, cursor),
+            FwdHBuildHeadRound<GATE_MODE>(args.tiling, round)};
 }
 
 template <FwdHGateMode GATE_MODE>
@@ -217,6 +241,18 @@ __aicore__ inline FwdHCoreHeadRange FwdHResolveCoreHeadRange(const FwdHRuntimeTi
     if (coreNum == 0 || coreIdx >= coreNum || totalHeads == 0) {
         return {};
     }
+    // P1 host-injected balanced partition (varlen): spans cover [0, totalHeads)
+    // with span count == blockDim == coreNum. Every core (AIC and both AIV
+    // subblocks) reads the same GM table, so partitions agree by construction.
+    // Table/core mismatch or empty table keeps the original uniform split.
+    if (tiling.coreBoundCount == coreNum) {
+        const uint32_t begin = coreIdx == 0 ? 0
+            : static_cast<uint32_t>(tiling.coreBoundsGm[coreIdx - 1U]);
+        const uint32_t end = static_cast<uint32_t>(tiling.coreBoundsGm[coreIdx]);
+        if (begin <= end && end <= totalHeads) {
+            return {begin, end};
+        }
+    }
     const uint32_t headsPerCore = FwdHCeilDiv(totalHeads, coreNum);
     const uint32_t begin = coreIdx * headsPerCore;
     uint32_t end = begin + headsPerCore;
@@ -238,6 +274,10 @@ __aicore__ inline uint64_t FwdHKOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t physicalBatch, uint32_t kh,
                                        uint32_t tokenBegin)
 {
+    if ((tiling.layout == GDN::FwdHLayout::BSND)) {
+        return ((static_cast<uint64_t>(physicalBatch) * tiling.seqlen + tokenBegin) *
+                tiling.kNumHead + kh) * FWD_H_K;
+    }
     return ((static_cast<uint64_t>(physicalBatch) * tiling.kNumHead + kh) * tiling.seqlen +
             tokenBegin) * FWD_H_K;
 }
@@ -247,12 +287,12 @@ __aicore__ inline uint64_t FwdHHOffset(const FwdHRuntimeTiling &tiling,
                                        uint32_t globalChunk)
 {
     if (tiling.isVariedLen != 0) {
-        return (static_cast<uint64_t>(hv) * sequence.totalChunks +
-                globalChunk) * FWD_H_K * FWD_H_V;
+        return (static_cast<uint64_t>(globalChunk) * tiling.vNumHead +
+                hv) * FWD_H_K * FWD_H_V;
     }
     const uint32_t chunksPerSequence = FwdHCeilDiv(static_cast<uint32_t>(tiling.seqlen), FWD_H_CHUNK);
-    return ((static_cast<uint64_t>(sequence.physicalBatch) * tiling.vNumHead + hv) *
-                chunksPerSequence + globalChunk - sequence.chunkPrefix) * FWD_H_K * FWD_H_V;
+    return ((static_cast<uint64_t>(sequence.physicalBatch) * chunksPerSequence +
+                globalChunk - sequence.chunkPrefix) * tiling.vNumHead + hv) * FWD_H_K * FWD_H_V;
 }
 
 template <bool STATE_V_FIRST>
@@ -264,11 +304,6 @@ __aicore__ inline uint64_t FwdHStateOffset(const FwdHRuntimeTiling &tiling,
         return base + static_cast<uint64_t>(v) * FWD_H_K + k;
     }
     return base + static_cast<uint64_t>(k) * FWD_H_V + v;
-}
-
-__aicore__ inline uint64_t FwdHCoreSlotOffset(uint32_t core, uint32_t slot, uint32_t slotElements)
-{
-    return (static_cast<uint64_t>(core) * FWD_H_AIC_HEAD_SLOTS + slot) * slotElements;
 }
 
 } // namespace GDN

@@ -13,7 +13,6 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
-#include "catlass/debug.hpp"
 #include "catlass/epilogue/block/block_epilogue.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
@@ -674,7 +673,7 @@ public:
                         isVariedLen ? vecBlockScheduler.GetVarlenChunkOffset(batchIdx) : 0;
                     uint32_t shapeBatchIdx = isVariedLen ? 0 : batchIdx;
                     uint32_t hBaseOffset =
-                        (shapeBatchIdx * vNumHead * totalChunks + vHeadIdx * totalChunks + chunkOffset) *
+                        ((shapeBatchIdx * totalChunks + chunkOffset) * vNumHead + vHeadIdx) *
                         stateBlockSize;
                     uint32_t initialStateBaseOffset = taskIdx * stateBlockSize;
                     for (uint32_t rowOffset = rowBegin; rowOffset < rowEnd; rowOffset += rowsPerTile) {

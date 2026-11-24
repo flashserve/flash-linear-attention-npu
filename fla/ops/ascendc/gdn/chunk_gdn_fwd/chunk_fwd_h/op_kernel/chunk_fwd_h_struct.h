@@ -20,6 +20,21 @@
 
 #include <cstdint>
 
+// P1 均衡分区 per-core 边界表容量：覆盖全部已知平台核数上限（A5 Server 32）；
+// 超容量回退均分（coreBoundCount=0），无正确性影响。
+constexpr int64_t CHUNK_FWD_H_MAX_CORE_BOUNDS = 32;
+
+namespace GDN {
+// Runtime layout codes shared by this operator's host and kernels.
+namespace FwdHLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+};
+} // namespace FwdHLayout
+
+} // namespace GDN
+
 struct ChunkFwdHPlainTilingData {
     int64_t batch;
     int64_t seqlen;
@@ -33,10 +48,19 @@ struct ChunkFwdHPlainTilingData {
     int64_t isVariedLen;
     int64_t shapeBatch;
     int64_t tokenBatch;
+    int64_t layout;
     int64_t vWorkspaceOffset;
     int64_t vUpdateWorkspaceOffset;
     int64_t kDecayWorkspaceOffset;
     int64_t hWorkspaceOffset;
+    // P1：coreBoundCount=0 表示无表（dense/退化场景走 kernel 均分原路径）；
+    // 否则 coreTaskBounds[i] 为核 i 的 head 任务区间右端（begin=上一核 end，核 0 begin=0），
+    // 份数恒等于 blockDim。
+    int64_t coreBoundCount;
+    int64_t coreTaskBounds[CHUNK_FWD_H_MAX_CORE_BOUNDS];
+    // gated 引擎启用位（与 op_host TILING_DATA 版同步——tiling.cpp 逐字段拷贝）：
+    // host gatedEligible 原样落盘，kernel 分派以此为准（充分条件）。
+    int64_t gatedEngine;
 };
 
 #endif // CHUNK_FWD_H_STRUCT_H

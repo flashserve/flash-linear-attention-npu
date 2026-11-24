@@ -1,8 +1,12 @@
 import math
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 from typing import Optional, Tuple, List
-import ct
+try:
+    import ct
+except ModuleNotFoundError:  # CPU reference users do not need CT visualization.
+    ct = None
 import fla_npu
 
 # fp16/bf16：在尽量无 NaN 的前提下抬高输出数量级（dv2 中位 ~1e-3；dh 非零元 |x| 最大可至 ~1e-3 量级）
@@ -321,7 +325,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
             'global_end_t': global_end_t,
         })
 
-    dh = torch.zeros(B, Hv, NT, K, V, device=device, dtype=torch.float32)
+    dh = torch.zeros(B, NT, Hv, K, V, device=device, dtype=torch.float32)
     # dv2 与 dv/do 对齐为 [B,Hv,T,V]；变长时仅改写 [0, seq_total)，其余保留 dv（padding）
     if cu_seqlens is not None:
         dv2 = dv.clone()
@@ -338,7 +342,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
             global_end_t = info["global_end_t"]
             block_size_t = info["block_size_t"]
 
-            dh[:, :, i_t, :, :] = b_dh
+            dh[:, i_t, :, :, :] = b_dh
 
             last_idx = min((info["block_idx_in_token"] + 1) * BT, info["token_length"]) - 1
             global_last_idx = info["bos"] + last_idx
@@ -392,7 +396,7 @@ def chunk_gated_delta_rule_bwd_dhu_torch(
                     i_n = info['i_n']
                     b_dh = b_dh_buffers[i_n]
 
-                    dh[b, i_h, i_t] = b_dh
+                    dh[b, i_t, i_h] = b_dh
 
                     global_start_t = info['global_start_t']
                     global_end_t = info['global_end_t']
@@ -486,7 +490,7 @@ def test_fix(
     dv_npu = dv.npu()
     g_npu = g.npu()
 
-    dh_npu, dh0_npu, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh_npu, dh0_npu, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q_npu, k_npu, w_npu, d_o_npu, dv_npu, 
         scale=scale, 
         chunk_size=chunk_size,
@@ -553,7 +557,7 @@ def test_variable(
     dv_npu = dv.npu()
     g_npu = g.npu()
 
-    dh_npu, dh0_npu, dv2_npu = torch.ops.npu.npu_chunk_gated_delta_rule_bwd_dhu(
+    dh_npu, dh0_npu, dv2_npu = ascendc_ops.npu_chunk_gated_delta_rule_bwd_dhu(
         q_npu, k_npu, w_npu, d_o_npu, dv_npu, 
         scale=scale, 
         chunk_size=chunk_size,

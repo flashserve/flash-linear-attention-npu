@@ -1,0 +1,268 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * Licensed under the BSD 3-Clause License.
+ */
+#include "merge_fwd_bwd_kernel_tiling.h"
+#include "../../op_kernel/merge_fwd_bwd_kernel_struct.h"
+#include "../../op_kernel/merge_fwd_bwd_kernel_tiling_key.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <register/op_impl_registry.h>
+#include "tiling/platform/platform_ascendc.h"
+#include "tiling_base/tiling_templates_registry.h"
+#include <string>
+#include "graph/utils/type_utils.h"
+
+namespace optiling {
+
+constexpr int64_t kK = 128;
+constexpr int64_t kV = 128;
+constexpr int64_t kVK = kV + kK;
+constexpr size_t ATTR_FORWARD = 0;
+constexpr size_t ATTR_RANK = 1;
+constexpr size_t ATTR_N = 2;
+constexpr size_t ATTR_STATE_V_FIRST = 3;
+constexpr size_t INPUT_AG_HM = 0;
+constexpr size_t INPUT_H = 1;
+
+ge::graphStatus Tiling4MergeFwdBwdKernel(gert::TilingContext *context)
+{
+    auto *tiling = context->GetTilingData<MergeFwBwd::MergeFwdBwdKernelTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+
+    const auto *agDesc = context->GetInputDesc(INPUT_AG_HM);
+    const auto *agShapePtr = context->GetInputShape(INPUT_AG_HM);
+    const auto *hInDesc = context->GetInputDesc(INPUT_H);
+    const auto *hInShapePtr = context->GetInputShape(INPUT_H);
+    const auto *hDesc = context->GetOutputDesc(0);
+    const auto *hShapePtr = context->GetOutputShape(0);
+    if (agDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "ag_hm");
+        return ge::GRAPH_FAILED;
+    }
+    if (agShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "ag_hm");
+        return ge::GRAPH_FAILED;
+    }
+    if (hInDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h_in");
+        return ge::GRAPH_FAILED;
+    }
+    if (hInShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h_in");
+        return ge::GRAPH_FAILED;
+    }
+    if (hDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
+    if (hShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "h");
+        return ge::GRAPH_FAILED;
+    }
+
+    const ge::DataType dtype = agDesc->GetDataType();
+    if (dtype != ge::DT_FLOAT && dtype != ge::DT_BF16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "ag_hm",
+            ge::TypeUtils::DataTypeToSerialString(dtype), "ag_hm dtype must be FP32 or BF16");
+        return ge::GRAPH_FAILED;
+    }
+    if (hDesc->GetDataType() != dtype || hInDesc->GetDataType() != dtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "h",
+            ge::TypeUtils::DataTypeToSerialString(hDesc->GetDataType()) + "," +
+                ge::TypeUtils::DataTypeToSerialString(hInDesc->GetDataType()),
+            "h dtype must match ag_hm");
+        return ge::GRAPH_FAILED;
+    }
+
+    const gert::Shape ag = agShapePtr->GetOriginShape();
+    if (ag.GetDimNum() != 4) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "ag_hm", std::to_string(ag.GetDimNum()), "ag_hm must be rank-4 [S,HV,K,V+K]");
+        return ge::GRAPH_FAILED;
+    }
+    const int64_t S = ag.GetDim(0);
+    const int64_t Hv = ag.GetDim(1);
+    const int64_t K = ag.GetDim(2);
+    const int64_t VK = ag.GetDim(3);
+    if (S < 1 || S > 1024 || Hv < 1 || Hv > 256) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "S,HV",
+            "S=" + std::to_string(S) + ",HV=" + std::to_string(Hv),
+            "S must be in [1,1024] and HV must be in [1,256]");
+        return ge::GRAPH_FAILED;
+    }
+    if (K != kK || VK != kVK) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "K,VK",
+            "K=" + std::to_string(K) + ",VK=" + std::to_string(VK),
+            "K must be 128 and VK must be 256");
+        return ge::GRAPH_FAILED;
+    }
+
+    const gert::Shape hIn = hInShapePtr->GetOriginShape();
+    const gert::Shape h = hShapePtr->GetOriginShape();
+    // state_v_first only swaps the last two axes. K = V = 128, so both layouts are [HV,128,128].
+    const auto hOk = [](const gert::Shape &shape, int64_t hv) {
+        return shape.GetDimNum() == 3 && shape.GetDim(0) == hv && shape.GetDim(1) == kK &&
+               shape.GetDim(2) == kV;
+    };
+    const auto shapeText = [](const gert::Shape &shape) {
+        if (shape.GetDimNum() != 3) {
+            return "rank=" + std::to_string(shape.GetDimNum());
+        }
+        return "[" + std::to_string(shape.GetDim(0)) + "," + std::to_string(shape.GetDim(1)) +
+            "," + std::to_string(shape.GetDim(2)) + "]";
+    };
+    if (!hOk(hIn, Hv)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "hIn", shapeText(hIn),
+            "hIn must be [HV,128,128] for both state layouts");
+        return ge::GRAPH_FAILED;
+    }
+    if (!hOk(h, Hv)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "h", shapeText(h),
+            "h must be [HV,128,128] for both state layouts");
+        return ge::GRAPH_FAILED;
+    }
+
+    auto *attrPtr = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrPtr);
+    const bool forward = *(attrPtr->GetAttrPointer<bool>(ATTR_FORWARD));
+    const int64_t rank = *(attrPtr->GetAttrPointer<int64_t>(ATTR_RANK));
+    const int64_t N = *(attrPtr->GetAttrPointer<int64_t>(ATTR_N));
+    const bool *stateVFirstPtr = attrPtr->GetAttrPointer<bool>(ATTR_STATE_V_FIRST);
+    const bool stateVFirst = stateVFirstPtr != nullptr && *stateVFirstPtr;
+    if (N < 1 || N > S) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "preOrPostNumRanks,S",
+            std::to_string(N) + "," + std::to_string(S),
+            "preOrPostNumRanks must be in [1, S]");
+        return ge::GRAPH_FAILED;
+    }
+    if (rank < 0 || rank >= S) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "rank,S",
+            std::to_string(rank) + "," + std::to_string(S),
+            "rank must be in [0, S)");
+        return ge::GRAPH_FAILED;
+    }
+    const bool unitWorld = (S == 1 && N == 1 && rank == 0);
+    if (!unitWorld) {
+        if (forward) {
+            if (rank < N) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "rank,N",
+            std::to_string(rank) + "," + std::to_string(N),
+            "forward merge requires rank >= N");
+        return ge::GRAPH_FAILED;
+    }
+        } else {
+            if (rank + N >= S) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "rank,N,S",
+            std::to_string(rank) + "," + std::to_string(N) + "," + std::to_string(S),
+            "backward merge requires rank + N < S");
+        return ge::GRAPH_FAILED;
+    }
+        }
+    }
+    tiling->S = S;
+    tiling->Hv = Hv;
+    tiling->K = kK;
+    tiling->V = kV;
+    tiling->rank = rank;
+    tiling->N = N;
+    tiling->forward = forward ? 1 : 0;
+    tiling->stateVFirst = stateVFirst ? 1 : 0;
+
+    const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    uint32_t aicNum = ascendcPlatform.GetCoreNumAic();
+    uint32_t aivNum = ascendcPlatform.GetCoreNumAiv();
+    const uint32_t coreNum = ascendcPlatform.GetCoreNum();
+    const auto *compileInfo = context->GetCompileInfo<MergeFwdBwdKernelCompileInfo>();
+    if (aicNum <= 2U && compileInfo != nullptr && compileInfo->aicNum > 2U) {
+        aicNum = compileInfo->aicNum;
+    }
+    if (aivNum < 8U && compileInfo != nullptr && compileInfo->aivNum >= 8U) {
+        aivNum = compileInfo->aivNum;
+    }
+    if (aicNum <= 2U) {
+        if (aivNum >= 8U) {
+            aicNum = aivNum / 2U;
+        } else if (coreNum >= 8U) {
+            aicNum = coreNum;
+        } else {
+            aicNum = 28U;
+        }
+    }
+    if (aivNum < aicNum * 2U) {
+        aivNum = aicNum * 2U;
+    }
+    // Fixpipe→UB: each AIV has one C slot. Default keep ≤4 heads/Mix core
+    // (≤2/AIV). MERGE_FWD_BWD_USED_AIC pin is honored as-is for stress.
+    uint32_t usedAic = static_cast<uint32_t>(std::min<int64_t>(
+        static_cast<int64_t>(std::max(1U, aicNum)), std::max<int64_t>(1, Hv)));
+    const uint32_t minAicForUb = static_cast<uint32_t>((std::max<int64_t>(1, Hv) + 3) / 4);
+    if (usedAic < minAicForUb) {
+        usedAic = std::min(minAicForUb, std::max(1U, aicNum));
+    }
+    const char *usedAicEnv = std::getenv("MERGE_FWD_BWD_USED_AIC");
+    if (usedAicEnv != nullptr) {
+        const int64_t pin = std::strtoll(usedAicEnv, nullptr, 10);
+        if (pin > 0) {
+            usedAic = static_cast<uint32_t>(std::min<int64_t>(
+                static_cast<int64_t>(std::max(1U, aicNum)), pin));
+        }
+    }
+    tiling->usedAic = static_cast<int64_t>(usedAic);
+    uint32_t blockDim = ascendcPlatform.CalcTschBlockDim(usedAic * 2U, aicNum, aivNum);
+    if (blockDim < usedAic) {
+        blockDim = usedAic;
+    }
+    context->SetBlockDim(blockDim);
+    context->SetScheduleMode(1);
+
+    using namespace MergeFwBwd;
+    const uint64_t tilingKey = GET_TPL_TILING_KEY(
+        dtype == ge::DT_FLOAT ? MERGE_FWD_BWD_KERNEL_TPL_FP32 : MERGE_FWD_BWD_KERNEL_TPL_BF16);
+    context->SetTilingKey(tilingKey);
+
+    size_t *currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
+    const uint64_t sysWs = static_cast<uint64_t>(ascendcPlatform.GetLibApiWorkSpaceSize());
+    tiling->sysWorkspaceSize = static_cast<int64_t>(sysWs);
+    // Internal FP32 scratch [3,HV,128,128] for H + M ping-pong (not an Op input).
+    const uint64_t scratchWs = static_cast<uint64_t>(MergeFwBwd::kScratchBanks) *
+                               static_cast<uint64_t>(std::max<int64_t>(1, Hv)) *
+                               static_cast<uint64_t>(MergeFwBwd::kKvElems) * 4ULL;
+    currentWorkspace[0] = sysWs + scratchWs;
+
+    auto *rawTiling = context->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    // Kernel GET_TILING_DATA opParaSize is sizeof+8 on this CANN; mismatch
+    // makes sanitizer report an 88-byte illegal tiling LOAD and can leave
+    // tiling GM unbound.
+    rawTiling->SetDataSize(sizeof(MergeFwBwd::MergeFwdBwdKernelTilingData) + 8);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus TilingParse4MergeFwdBwdKernel(gert::TilingParseContext *context)
+{
+    auto *compileInfo = context->GetCompiledInfo<MergeFwdBwdKernelCompileInfo>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    compileInfo->aicNum = 24;
+    compileInfo->aivNum = 48;
+    auto *platformInfo = context->GetPlatformInfo();
+    if (platformInfo != nullptr) {
+        const auto platform = platform_ascendc::PlatformAscendC(platformInfo);
+        const uint32_t aicNum = platform.GetCoreNumAic();
+        const uint32_t aivNum = platform.GetCoreNumAiv();
+        if (aicNum > 2U) {
+            compileInfo->aicNum = aicNum;
+        }
+        if (aivNum >= 8U) {
+            compileInfo->aivNum = aivNum;
+        }
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
+IMPL_OP_OPTILING(MergeFwdBwdKernel)
+    .Tiling(Tiling4MergeFwdBwdKernel)
+    .TilingParse<MergeFwdBwdKernelCompileInfo>(TilingParse4MergeFwdBwdKernel);
+
+} // namespace optiling

@@ -23,6 +23,13 @@
 
 namespace GDN {
 
+namespace DhuArch92 {
+constexpr uint32_t SLOT_COUNT = 3;
+constexpr uint32_t HEADS_PER_TASK = 3;
+constexpr uint32_t VALUE_DIM = 128;
+constexpr uint32_t GATE_ELEMENTS = VALUE_DIM;
+} // namespace DhuArch92
+
 #define TPL_BF16 10
 #define TPL_FP16 20
 #define TPL_FP32 30
@@ -36,36 +43,47 @@ ASCENDC_TPL_ARGS_DECL(ChunkGatedDeltaRuleBwdDhu,
         TPL_FP32),
     ASCENDC_TPL_UINT_DECL(V, 1, ASCENDC_TPL_UI_LIST, 128, 256),
     ASCENDC_TPL_UINT_DECL(USE_GK, 1, ASCENDC_TPL_UI_LIST, 0, 1),
+    ASCENDC_TPL_BOOL_DECL(DO_TOKEN_MAJOR, 0, 1),
 );
 
-#define TPL_SEL_ONE(Q_TYPE, G_TYPE, V_VALUE, USE_GK_VALUE) \
+#define TPL_SEL_ONE(Q_TYPE, G_TYPE, V_VALUE, USE_GK_VALUE, D) \
     ASCENDC_TPL_ARGS_SEL( \
         ASCENDC_TPL_DTYPE_SEL(D_T_Q, Q_TYPE), \
         ASCENDC_TPL_DTYPE_SEL(D_T_G, G_TYPE), \
         ASCENDC_TPL_UINT_SEL(V, ASCENDC_TPL_UI_LIST, V_VALUE), \
         ASCENDC_TPL_UINT_SEL(USE_GK, ASCENDC_TPL_UI_LIST, USE_GK_VALUE), \
+        ASCENDC_TPL_BOOL_SEL(DO_TOKEN_MAJOR, D), \
     )
 
-#define TPL_SEL_FOR_PAIR(Q_TYPE, G_TYPE, USE_GK_VALUE) \
-    TPL_SEL_ONE(Q_TYPE, G_TYPE, 128, USE_GK_VALUE), \
-    TPL_SEL_ONE(Q_TYPE, G_TYPE, 256, USE_GK_VALUE)
+#define TPL_SEL_FOR_PAIR(Q_TYPE, G_TYPE, USE_GK_VALUE, D) \
+    TPL_SEL_ONE(Q_TYPE, G_TYPE, 128, USE_GK_VALUE, D), \
+    TPL_SEL_ONE(Q_TYPE, G_TYPE, 256, USE_GK_VALUE, D)
 
-#define TPL_SEL_FOR_GATE(USE_GK_VALUE) \
-    TPL_SEL_FOR_PAIR(TPL_BF16, TPL_FP32, USE_GK_VALUE), \
-    TPL_SEL_FOR_PAIR(TPL_FP16, TPL_FP32, USE_GK_VALUE), \
-    TPL_SEL_FOR_PAIR(TPL_BF16, TPL_BF16, USE_GK_VALUE), \
-    TPL_SEL_FOR_PAIR(TPL_FP16, TPL_FP16, USE_GK_VALUE)
+#define TPL_SEL_FOR_GATE(USE_GK_VALUE, D) \
+    TPL_SEL_FOR_PAIR(TPL_BF16, TPL_FP32, USE_GK_VALUE, D), \
+    TPL_SEL_FOR_PAIR(TPL_FP16, TPL_FP32, USE_GK_VALUE, D), \
+    TPL_SEL_FOR_PAIR(TPL_BF16, TPL_BF16, USE_GK_VALUE, D), \
+    TPL_SEL_FOR_PAIR(TPL_FP16, TPL_FP16, USE_GK_VALUE, D)
 
 ASCENDC_TPL_SEL(
-    TPL_SEL_FOR_GATE(0),
-    TPL_SEL_FOR_GATE(1),
+    TPL_SEL_FOR_GATE(0, 0), TPL_SEL_FOR_GATE(1, 0),
+    TPL_SEL_FOR_GATE(0, 1), TPL_SEL_FOR_GATE(1, 1),
 );
 #undef TPL_SEL_FOR_GATE
 #undef TPL_SEL_FOR_PAIR
 #undef TPL_SEL_ONE
 #endif
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace DhuLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+};
+} // namespace DhuLayout
+
 struct ChunkGatedDeltaRuleBwdDhuTilingData {
+    int64_t layout;
     int64_t B;
     int64_t HK;
     int64_t HV;

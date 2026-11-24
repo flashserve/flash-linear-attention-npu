@@ -2,6 +2,9 @@
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_local_cumsum.h"
 #include <new>
 
@@ -17,6 +20,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnChunkLocalCumsum";
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,16 +41,29 @@ struct ChunkLocalCumsumParams {
 
 static aclnnStatus CheckNotNull(ChunkLocalCumsumParams params)
 {
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "out must not be nullptr.");
-    CHECK_COND(params.outputDtypeOptional != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-               "outputDtypeOptional must not be nullptr.");
+    if (params.g == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.out == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "out");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.outputDtypeOptional == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "output_dtype");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
 static aclnnStatus CheckParams(ChunkLocalCumsumParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    {
+        const aclnnStatus checkRet = CheckNotNull(params);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
+    }
     CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID, "chunkSize must be positive.");
     return ACLNN_SUCCESS;
 }
@@ -59,8 +77,10 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkLocalCumsumParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    if (DataContiguous(params.g, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -81,6 +101,15 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     ChunkLocalCumsumParams params{
         g, cuSeqlensOptional, chunkIndicesOutOptional, chunkSize, reverse, scale, headFirst, outputDtype, out};
 
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkLocalCumsum,
                    DFX_IN(g, cuSeqlensOptional, chunkIndicesOutOptional, chunkSize, reverse, scale, headFirst,
                           outputDtypeOptional),
@@ -90,19 +119,33 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
-    auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    OP_LOGW("npu_chunk_local_cumsum",
+            "npu_chunk_local_cumsum is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_fwd instead.");
 
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    auto ret = CheckParams(params);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
+
+    if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto result = l0op::ChunkLocalCumsum(params.g, params.cuSeqlensOptional, params.chunkIndicesOutOptional,
                                         params.chunkSize, params.reverse, params.scale, params.headFirst,
                                         params.outputDtypeOptional, params.out, executorPtr);
-    CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (result == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto viewCopyResult = l0op::ViewCopy(result, params.out, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -112,8 +155,12 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
 aclnnStatus aclnnChunkLocalCumsum(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkLocalCumsum);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "ChunkLocalCumsum launch failed.");
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
     return ACLNN_SUCCESS;
 }
 

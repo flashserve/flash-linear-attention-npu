@@ -1,7 +1,14 @@
 #include "kernel_operator.h"
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+#include "arch22/chunk_gated_delta_rule_bwd_finalize_a2.h"
+#else
 #include "arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
 #include "arch35/chunk_gated_delta_rule_bwd_finalize_cube.h"
 #include "arch35/chunk_gated_delta_rule_bwd_finalize_vector.h"
+#endif
 
 namespace GDN {
 
@@ -16,7 +23,12 @@ struct DTypeTraits<TPL_FP32> { using type = float; };
 } // namespace GDN
 
 #ifndef TORCH_MODE
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
+          bool ENABLE_MHA_OWNER>
+#else
 template <int D_T_Q, int D_T_G, bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2>
+#endif
 __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR v_new, GM_ADDR dO, GM_ADDR du,
     GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR A,
@@ -36,6 +48,33 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 
     using QType = typename GDN::DTypeTraits<D_T_Q>::type;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+    using GType = typename GDN::DTypeTraits<D_T_G>::type;
+    if constexpr (ENABLE_MHA_OWNER) {
+        GDN::A2FinalizeRun<QType, GType, 128, 64, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, true>(
+            q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw,
+            cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData);
+    } else {
+    #define GDN_RUN_A2(V, BT) \
+        GDN::A2FinalizeRun<QType, GType, V, BT, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, false>( \
+            q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw, \
+            cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData)
+        if (tilingData.chunkSize == 64) {
+            if (tilingData.V == 128) {
+                GDN_RUN_A2(128, 64);
+            } else {
+                GDN_RUN_A2(256, 64);
+            }
+        } else {
+            if (tilingData.V == 128) {
+                GDN_RUN_A2(128, 128);
+            } else {
+                GDN_RUN_A2(256, 128);
+            }
+        }
+    #undef GDN_RUN_A2
+    }
+#else
     const int64_t workspaceRegionBytes = static_cast<int64_t>(AscendC::GetBlockNum()) *
         GDN::WORKSPACE_BUFFER_COUNT_8 * GDN::WORKSPACE_VECTOR_ELEMS * sizeof(QType);
     // Workspace aliases follow the actual stage lifetimes. Some regions are
@@ -71,7 +110,13 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
                  kbgDoGWorkspace,
                  beta_raw, dbeta, dsWorkspace, dqStage12Workspace, dv,
                  dk0Workspace, dk0Workspace, &tilingData, &pipe);
+        if (tilingData.headRatio > 4) {
+            GM_ADDR ws0 = userWorkspace + 7 * workspaceRegionBytes;
+            GM_ADDR ws1 = ws0 + static_cast<int64_t>(AscendC::GetBlockNum()) * GDN::GVA_ACC_CORE_BYTES;
+            vec.SetGvaAccumulators(ws0, ws1);
+        }
         vec.Process();
     }
+#endif
 }
 #endif

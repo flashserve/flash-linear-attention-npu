@@ -3,8 +3,7 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
-#include "acl/acl_base_rt.h"
-#include <string>
+#include "opdev/platform.h"
 
 using namespace op;
 
@@ -45,14 +44,13 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
     // that storage in place, avoiding a full-size cross-kernel workspace.
     const aclTensor *dgBase = dg;
 
-    const char *socName = aclrtGetSocName();
+    const bool isArch35 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
     const auto qShape = q->GetViewShape();
     // Keep the high-performance fused gate phase for the dense, aligned A5
     // safe-gate path.  Other layouts and SoCs continue to use the standalone
     // post kernel.
     const bool fuseGateInC = useGateInKernel && safeGate &&
-        socName != nullptr &&
-        std::string(socName).find("950") != std::string::npos &&
+        isArch35 &&
         cuSeqlensOptional == nullptr && qShape.GetDimNum() == 4 &&
         qShape.GetDim(1) > 0 && qShape.GetDim(2) % chunkSize == 0;
     const bool deferGatePost = useGateInKernel && !fuseGateInC;
@@ -68,8 +66,7 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
                 disableRecompute, useExp2, stateVFirst,
                 deferGatePost));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
         return {};
     }
     if (deferGatePost) {
@@ -89,8 +86,7 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
                 OP_ATTR(chunkSize, safeGate, lowerBound, false));
         }
         if (ret != ACLNN_SUCCESS) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "ADD_TO_LAUNCHER_LIST_AICORE GatePost failed.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE GatePost failed.");
             return {};
         }
     }

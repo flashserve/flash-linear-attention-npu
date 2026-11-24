@@ -6,7 +6,7 @@
 
 - `q/k` 必须为 `[B,HK,T,K]`，且二者形状完全一致。
 - `v/o` 必须为 `[B,HV,T,V]`，`g` 必须为 `[B,HV,T]`。
-- `h` 必须为 `[B,HV,num_chunks,K,V]`，其中 `num_chunks` 由 `T/chunk_size` 或变长 `chunk_indices` 推导。
+- `h` 必须为 `[B,num_chunks,HV,K,V]`，其中 `num_chunks` 由 `T/chunk_size` 或变长 `chunk_indices` 推导。
 - `q/k` 与 `v/g/o` 的 `B`、`T` 必须一致；`HV % HK == 0`。
 - `K` 固定为 `128`，`V` 支持 `128/256`，`chunk_size` 仅支持 `64/128`；`scale` 建议按 `1 / sqrt(K)` 设置。
 - `q/k/v/h/o` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/FLOAT16/BFLOAT16`。
@@ -28,6 +28,7 @@ YAML 元信息覆盖 `ascend910b`、`ascend910_93` 和 `ascend950`，可配合�
 
 - BF16 用例：`{"dtype": "bf16", "B": 1, "HK": 1, "HV": 1, "T": 16, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_fwd_o", "case_id": 0, "seed": 20260817, "route": "ascendc", "soc": "ascend910b"}`
 - FP16 用例：`{"dtype": "fp16", "B": 1, "HK": 1, "HV": 1, "T": 16, "K": 128, "V": 128, "chunk_size": 64, "op": "chunk_fwd_o", "case_id": 1, "seed": 20260818, "route": "ascendc", "soc": "ascend910b"}`
+- A5 GVA 用例（`case_id` 2~5，`soc=ascend950`）：`HK=1 HV∈{4,16}`、`HK=4 HV=20`、`HK=16 HV=128`，覆盖 GVA 上边界 16、单元素子包 5 和全满子包 8。
 
 ## 执行方式
 

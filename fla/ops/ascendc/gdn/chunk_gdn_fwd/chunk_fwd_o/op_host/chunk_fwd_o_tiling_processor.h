@@ -15,9 +15,12 @@
 #ifndef CHUNK_FWD_O_TILING_PROCESSOR_H
 #define CHUNK_FWD_O_TILING_PROCESSOR_H
 
+#include "graph/utils/type_utils.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include "op_common/log/log.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
@@ -25,6 +28,7 @@
 #include "../op_kernel/chunk_fwd_o_struct.h"
 #include "../op_kernel/chunk_fwd_o_a5_constants.h"
 #include "tiling/platform/platform_ascendc.h"
+#include <string>
 
 using GDN::ChunkFwdOTilingData;
 
@@ -47,6 +51,8 @@ static constexpr size_t CHUNK_FWD_O_ATTR_OUTPUT_LAYOUT_IDX = 4;
 static constexpr int64_t CHUNK_FWD_O_A5_BT = GDN::CHUNK_FWD_O_A5_BT;
 static constexpr int64_t CHUNK_FWD_O_A5_K = GDN::CHUNK_FWD_O_A5_K;
 static constexpr int64_t CHUNK_FWD_O_A5_V = GDN::CHUNK_FWD_O_A5_V;
+static constexpr int64_t CHUNK_FWD_O_A5_MIN_GVA_RATIO = GDN::CHUNK_FWD_O_A5_MIN_GVA_RATIO;
+static constexpr int64_t CHUNK_FWD_O_A5_MAX_GVA_RATIO = GDN::CHUNK_FWD_O_A5_MAX_GVA_RATIO;
 
 static constexpr size_t CHUNK_FWD_O_QKV_DIM_NUM = 4;
 static constexpr size_t CHUNK_FWD_O_H_DIM_NUM = 5;
@@ -58,13 +64,31 @@ static constexpr size_t CHUNK_FWD_O_DIM_BATCH = 0;
 static constexpr size_t CHUNK_FWD_O_DIM_HEAD_NUM = 1;
 static constexpr size_t CHUNK_FWD_O_DIM_SEQLEN = 2;
 static constexpr size_t CHUNK_FWD_O_DIM_HEAD_DIM = 3;
-static constexpr size_t CHUNK_FWD_O_H_DIM_CHUNKS = 2;
+static constexpr size_t CHUNK_FWD_O_H_DIM_CHUNKS = 1;
+static constexpr size_t CHUNK_FWD_O_H_DIM_HEAD_NUM = 2;
 static constexpr size_t CHUNK_FWD_O_H_DIM_K = 3;
 static constexpr size_t CHUNK_FWD_O_H_DIM_V = 4;
 
 static constexpr int64_t CHUNK_FWD_O_DTYPE_FP16 = 0;
 static constexpr int64_t CHUNK_FWD_O_DTYPE_BF16 = 1;
 static constexpr int64_t CHUNK_FWD_O_DTYPE_FP32 = 2;
+
+// 本文件的 DTYPE_* 是 kernel tiling 私有枚举，数值与 ge::DataType 不同
+// （FP16=0/BF16=1/FP32=2 vs DT_FLOAT=0/DT_FLOAT16=1/DT_INT8=2）。
+// 打印 actual 时必须经此映射，不能 static_cast<ge::DataType>，否则报错会显示成 FLOAT/FLOAT16/INT8。
+static inline const char *ChunkFwdODtypeName(int64_t dtype)
+{
+    switch (dtype) {
+        case CHUNK_FWD_O_DTYPE_FP16:
+            return "FLOAT16";
+        case CHUNK_FWD_O_DTYPE_BF16:
+            return "BFLOAT16";
+        case CHUNK_FWD_O_DTYPE_FP32:
+            return "FLOAT";
+        default:
+            return "unknown";
+    }
+}
 
 static constexpr size_t CHUNK_FWD_O_WORKSPACE_RSV_BYTE = 16 * 1024 * 1024;
 static constexpr size_t CHUNK_FWD_O_GM_ALIGN = 512;
@@ -99,6 +123,7 @@ struct ChunkFwdOTilingContext {
     bool isA5;
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
+    bool isA6 = false;
 };
 
 class ChunkFwdOTilingProcessor {
@@ -131,43 +156,53 @@ public:
     ge::graphStatus RequiredInputDimNumCheck(const gert::StorageShape *curShape, size_t validDimNum,
                                              const char *inputName)
     {
-        OP_CHECK_IF(curShape == nullptr,
-                    OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName),
-                    return ge::GRAPH_FAILED);
+        if (curShape == nullptr) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, inputName, "required input must not be nullptr");
+            return ge::GRAPH_FAILED;
+        }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
-        OP_CHECK_IF(dimNum != validDimNum,
-                    OP_LOGE(ctx_.nodeName,
-                            "Check input %s shape failed, the dim num should be %zu, but get %zu.",
-                            inputName, validDimNum, dimNum),
-                    return ge::GRAPH_FAILED);
+        if (dimNum != validDimNum) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ctx_.nodeName, inputName, std::to_string(dimNum),
+                "rank must be " + std::to_string(validDimNum));
+            return ge::GRAPH_FAILED;
+        }
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
-            OP_CHECK_IF(storageShape.GetDim(dimIndex) == 0,
-                        OP_LOGE(ctx_.nodeName,
-                                "Check input %s shape failed, the dim %zu should be non-zero, but get 0.",
-                                inputName, dimIndex),
-                        return ge::GRAPH_FAILED);
+            if (storageShape.GetDim(dimIndex) == 0) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ctx_.nodeName,
+                    (std::string(inputName) + ".dim[" + std::to_string(dimIndex) + "]").c_str(),
+                    "0", "shape dimensions must be non-zero");
+                return ge::GRAPH_FAILED;
+            }
         }
         return ge::GRAPH_SUCCESS;
     }
 
     ge::graphStatus PreCheck()
     {
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.qShape, CHUNK_FWD_O_QKV_DIM_NUM,
-                                             CHUNK_FWD_O_INPUT_Q_NAME) != ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.kShape, CHUNK_FWD_O_QKV_DIM_NUM,
-                                             CHUNK_FWD_O_INPUT_K_NAME) != ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.vShape, CHUNK_FWD_O_QKV_DIM_NUM,
-                                             CHUNK_FWD_O_INPUT_V_NAME) != ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.hShape, CHUNK_FWD_O_H_DIM_NUM,
-                                             CHUNK_FWD_O_INPUT_H_NAME) != ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.gShape, CHUNK_FWD_O_G_DIM_NUM,
-                                             CHUNK_FWD_O_INPUT_G_NAME) != ge::GRAPH_SUCCESS,
-                    , return ge::GRAPH_FAILED);
+        if (RequiredInputDimNumCheck(ctx_.qShape, CHUNK_FWD_O_QKV_DIM_NUM,
+                                     CHUNK_FWD_O_INPUT_Q_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.kShape, CHUNK_FWD_O_QKV_DIM_NUM,
+                                     CHUNK_FWD_O_INPUT_K_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.vShape, CHUNK_FWD_O_QKV_DIM_NUM,
+                                     CHUNK_FWD_O_INPUT_V_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.hShape, CHUNK_FWD_O_H_DIM_NUM,
+                                     CHUNK_FWD_O_INPUT_H_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (RequiredInputDimNumCheck(ctx_.gShape, CHUNK_FWD_O_G_DIM_NUM,
+                                     CHUNK_FWD_O_INPUT_G_NAME) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -179,41 +214,60 @@ public:
         const gert::Shape hShape = ctx_.hShape->GetStorageShape();
         const gert::Shape gShape = ctx_.gShape->GetStorageShape();
 
-        OP_CHECK_IF(qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != kShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
-                        qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
-                        qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != kShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) ||
-                        qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM),
-                    OP_LOGE(ctx_.nodeName, "Check q/k shape failed, q and k should have the same shape."),
-                    return ge::GRAPH_FAILED);
+        if (qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != kShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
+            qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
+            qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != kShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) ||
+            qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) != kShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)) {
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                ctx_.nodeName, "q,k", "q/k B,HK,T,K differ",
+                "q and k should have the same shape");
+            return ge::GRAPH_FAILED;
+        }
 
-        OP_CHECK_IF(qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
-                        qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != vShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN),
-                    OP_LOGE(ctx_.nodeName, "Check q/v shape failed, batch and seqlen should be the same."),
-                    return ge::GRAPH_FAILED);
+        if (qShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
+            qShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != vShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN)) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "q.B,q.T,v.B,v.T", "mismatch",
+                "q and v should have the same batch and seqlen");
+            return ge::GRAPH_FAILED;
+        }
 
-        OP_CHECK_IF(vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != gShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
-                        vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != gShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
-                        vShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != gShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN),
-                    OP_LOGE(ctx_.nodeName, "Check v/g shape failed, g should be [B, HV, T]."),
-                    return ge::GRAPH_FAILED);
+        if (vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != gShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
+            vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != gShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
+            vShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN) != gShape.GetDim(CHUNK_FWD_O_DIM_SEQLEN)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ctx_.nodeName, "g", "mismatch with v", "g should be [B, HV, T]");
+            return ge::GRAPH_FAILED;
+        }
 
         const int64_t hK = hShape.GetDim(ctx_.stateVFirst ? CHUNK_FWD_O_H_DIM_V : CHUNK_FWD_O_H_DIM_K);
         const int64_t hV = hShape.GetDim(ctx_.stateVFirst ? CHUNK_FWD_O_H_DIM_K : CHUNK_FWD_O_H_DIM_V);
-        OP_CHECK_IF(hShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
-                        hShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
-                        hK != qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) ||
-                        hV != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM),
-                    OP_LOGE(ctx_.nodeName, "Check h shape failed for state_v_first=%d.", ctx_.stateVFirst),
-                    return ge::GRAPH_FAILED);
+        if (hShape.GetDim(CHUNK_FWD_O_DIM_BATCH) != vShape.GetDim(CHUNK_FWD_O_DIM_BATCH) ||
+            hShape.GetDim(CHUNK_FWD_O_H_DIM_HEAD_NUM) != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) ||
+            hK != qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) ||
+            hV != vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                ctx_.nodeName, "h", "K=" + std::to_string(hK) + ",V=" + std::to_string(hV),
+                "h must align B/HV with v and K/V with q/v for stateVFirst=" +
+                    std::to_string(ctx_.stateVFirst ? 1 : 0));
+            return ge::GRAPH_FAILED;
+        }
 
-        OP_CHECK_IF(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) % qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != 0,
-                    OP_LOGE(ctx_.nodeName, "Check head num failed, vNumHead should be divisible by kNumHead."),
-                    return ge::GRAPH_FAILED);
+        if (vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) % qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM) != 0) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "kNumHead,vNumHead",
+                std::to_string(qShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM)) + "," +
+                    std::to_string(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_NUM)),
+                "vNumHead should be divisible by kNumHead");
+            return ge::GRAPH_FAILED;
+        }
 
-        OP_CHECK_IF(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) > CHUNK_FWD_O_MAX_V_HEAD_DIM,
-                    OP_LOGE(ctx_.nodeName, "Check v shape failed, vHeadDim should be <= %ld, but get %ld.",
-                            CHUNK_FWD_O_MAX_V_HEAD_DIM, vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)),
-                    return ge::GRAPH_FAILED);
+        if (vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM) > CHUNK_FWD_O_MAX_V_HEAD_DIM) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "v.V", std::to_string(vShape.GetDim(CHUNK_FWD_O_DIM_HEAD_DIM)),
+                "vHeadDim must be <= " + std::to_string(CHUNK_FWD_O_MAX_V_HEAD_DIM));
+            return ge::GRAPH_FAILED;
+        }
 
         return ge::GRAPH_SUCCESS;
     }
@@ -238,30 +292,40 @@ public:
         tiling_.dataType = ctx_.dataType;
         tiling_.gDataType = ctx_.gDataType;
 
-        OP_CHECK_IF(tiling_.chunkSize <= 0,
-                    OP_LOGE(ctx_.nodeName, "Check attr chunk_size failed, chunk_size should be positive."),
-                    return ge::GRAPH_FAILED);
+        if (tiling_.chunkSize <= 0) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "chunkSize", std::to_string(tiling_.chunkSize),
+                "chunkSize should be positive");
+            return ge::GRAPH_FAILED;
+        }
 
         if (IsVariableLength()) {
-            OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.cuSeqlensShape, CHUNK_FWD_O_SEQLENS_DIM_NUM,
-                                                 CHUNK_FWD_O_INPUT_SEQLENS_NAME) != ge::GRAPH_SUCCESS,
-                        , return ge::GRAPH_FAILED);
-            OP_CHECK_IF(RequiredInputDimNumCheck(ctx_.chunkOffsetsShape, CHUNK_FWD_O_CHUNK_OFFSETS_DIM_NUM,
-                                                 CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME) != ge::GRAPH_SUCCESS,
-                        , return ge::GRAPH_FAILED);
+            if (RequiredInputDimNumCheck(ctx_.cuSeqlensShape, CHUNK_FWD_O_SEQLENS_DIM_NUM,
+                                         CHUNK_FWD_O_INPUT_SEQLENS_NAME) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+            if (RequiredInputDimNumCheck(ctx_.chunkOffsetsShape, CHUNK_FWD_O_CHUNK_OFFSETS_DIM_NUM,
+                                         CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME) != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
             const gert::Shape cuSeqlensShape = ctx_.cuSeqlensShape->GetStorageShape();
             const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();
-            OP_CHECK_IF(chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) % CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE != 0,
-                        OP_LOGE(ctx_.nodeName,
-                                "Check chunk_offsets shape failed, the dim 0 of chunk_offsets needs to be divisible by 2, but get %ld.",
-                                chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH)),
-                        return ge::GRAPH_FAILED);
+            if (chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) % CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE != 0) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ctx_.nodeName, "chunk_offsets.size",
+                    std::to_string(chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH)),
+                    "chunk_offsets dim 0 must be divisible by 2");
+                return ge::GRAPH_FAILED;
+            }
             tiling_.isVariedLen = 1;
             tiling_.shapeBatch = 1;
             tiling_.tokenBatch = static_cast<int64_t>(cuSeqlensShape.GetDim(CHUNK_FWD_O_DIM_BATCH)) - 1;
-            OP_CHECK_IF(tiling_.tokenBatch <= 0,
-                        OP_LOGE(ctx_.nodeName, "Check cu_seqlens shape failed, tokenBatch should be positive."),
-                        return ge::GRAPH_FAILED);
+            if (tiling_.tokenBatch <= 0) {
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ctx_.nodeName, "tokenBatch", std::to_string(tiling_.tokenBatch),
+                    "tokenBatch should be positive");
+                return ge::GRAPH_FAILED;
+            }
         } else {
             tiling_.isVariedLen = 0;
             tiling_.shapeBatch = static_cast<int64_t>(qShape.GetDim(CHUNK_FWD_O_DIM_BATCH));
@@ -271,29 +335,55 @@ public:
         return ge::GRAPH_SUCCESS;
     }
 
+    ge::graphStatus OptimizedShapeCheck(const char *arch)
+    {
+        if (tiling_.chunkSize != CHUNK_FWD_O_A5_BT) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "chunkSize", std::to_string(tiling_.chunkSize),
+                std::string(arch) + " requires chunkSize=" + std::to_string(CHUNK_FWD_O_A5_BT));
+            return ge::GRAPH_FAILED;
+        }
+        if (tiling_.kHeadDim != CHUNK_FWD_O_A5_K || tiling_.vHeadDim != CHUNK_FWD_O_A5_V) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "K/V",
+                std::to_string(tiling_.kHeadDim) + "," + std::to_string(tiling_.vHeadDim),
+                std::string(arch) + " requires K=V=" + std::to_string(CHUNK_FWD_O_A5_K));
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.dataType != CHUNK_FWD_O_DTYPE_BF16) {
+            const std::string mainDtype = ChunkFwdODtypeName(ctx_.dataType);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                ctx_.nodeName, "q/k/v/h", mainDtype,
+                std::string(arch) + " chunk_fwd_o requires q/k/v/h in bf16");
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.gDataType != CHUNK_FWD_O_DTYPE_FP32 && ctx_.gDataType != CHUNK_FWD_O_DTYPE_BF16) {
+            const std::string gateDtype = ChunkFwdODtypeName(ctx_.gDataType);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                ctx_.nodeName, "g", gateDtype,
+                std::string(arch) + " chunk_fwd_o requires g in fp32 or bf16");
+            return ge::GRAPH_FAILED;
+        }
+        const int64_t headRatio = tiling_.vNumHead / tiling_.kNumHead;
+        if (headRatio < CHUNK_FWD_O_A5_MIN_GVA_RATIO || headRatio > CHUNK_FWD_O_A5_MAX_GVA_RATIO) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "HV/HK", std::to_string(headRatio),
+                std::string(arch) + " chunk_fwd_o requires HV/HK in [" +
+                        std::to_string(CHUNK_FWD_O_A5_MIN_GVA_RATIO) + "," +
+                    std::to_string(CHUNK_FWD_O_A5_MAX_GVA_RATIO) + "]");
+            return ge::GRAPH_FAILED;
+        }
+        return ge::GRAPH_SUCCESS;
+    }
+
     ge::graphStatus A5ShapeCheck()
     {
-        OP_CHECK_IF(tiling_.chunkSize != CHUNK_FWD_O_A5_BT,
-                    OP_LOGE(ctx_.nodeName,
-                            "A5 chunk_fwd_o requires chunk_size=%ld, but got %ld.",
-                            CHUNK_FWD_O_A5_BT, tiling_.chunkSize),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(tiling_.kHeadDim != CHUNK_FWD_O_A5_K || tiling_.vHeadDim != CHUNK_FWD_O_A5_V,
-                    OP_LOGE(ctx_.nodeName,
-                            "A5 chunk_fwd_o requires K=V=%ld, but got K=%ld V=%ld.",
-                            CHUNK_FWD_O_A5_K, tiling_.kHeadDim, tiling_.vHeadDim),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.dataType != CHUNK_FWD_O_DTYPE_BF16,
-                    OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires q/k/v/h in bf16."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.gDataType != CHUNK_FWD_O_DTYPE_FP32 && ctx_.gDataType != CHUNK_FWD_O_DTYPE_BF16,
-                    OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires g in fp32 or bf16."),
-                    return ge::GRAPH_FAILED);
-        const int64_t headRatio = tiling_.vNumHead / tiling_.kNumHead;
-        OP_CHECK_IF(headRatio < 1 || headRatio > 4,
-                    OP_LOGE(ctx_.nodeName, "A5 chunk_fwd_o requires HV/HK in [1,4], but got %ld.", headRatio),
-                    return ge::GRAPH_FAILED);
-        return ge::GRAPH_SUCCESS;
+        return OptimizedShapeCheck("A5");
+    }
+
+    ge::graphStatus A6ShapeCheck()
+    {
+        return OptimizedShapeCheck("A6");
     }
 
     ge::graphStatus LayoutCheck()
@@ -308,21 +398,31 @@ public:
         } else if (std::strcmp(layout, "NTD") == 0) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_NTD;
         } else {
-            OP_LOGE(ctx_.nodeName, "output_layout must be one of BNSD, BSND, TND or NTD, but got %s.", layout);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "output_layout", layout,
+                "output_layout must be one of BNSD, BSND, TND or NTD");
             return ge::GRAPH_FAILED;
         }
 
         const bool useOptimizedLayout = tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
                                         tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND;
-        OP_CHECK_IF(useOptimizedLayout && !ctx_.isA5,
-                    OP_LOGE(ctx_.nodeName, "BSND/TND output requires A5."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.useExp2 && !useOptimizedLayout,
-                    OP_LOGE(ctx_.nodeName, "use_exp2=true requires the A5 BSND/TND optimized path."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.stateVFirst && !useOptimizedLayout,
-                    OP_LOGE(ctx_.nodeName, "state_v_first=true requires the A5 BSND/TND optimized path."),
-                    return ge::GRAPH_FAILED);
+        if (useOptimizedLayout && !(ctx_.isA5 || ctx_.isA6)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "output_layout", "BSND/TND", "BSND/TND output requires A5/A6");
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.useExp2 && !useOptimizedLayout) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "use_exp2", "true",
+                "use_exp2=true requires the A5/A6 BSND/TND optimized path");
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.stateVFirst && !useOptimizedLayout) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "state_v_first", "true",
+                "state_v_first=true requires the A5/A6 BSND/TND optimized path");
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -334,43 +434,58 @@ public:
         return (a + b - 1) / b;
     }
 
-    ge::graphStatus A5ChunkTilingFixLen()
+    ge::graphStatus OptimizedChunkTiling()
     {
-        tiling_.numChunksPerBatch = CeilDiv(tiling_.seqlen, tiling_.chunkSize);
-        tiling_.chunkNum = tiling_.shapeBatch * tiling_.numChunksPerBatch;
+        if (IsVariableLength()) {
+            const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();
+            tiling_.chunkNum = chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) / CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE;
+            tiling_.numChunksPerBatch = 0;
+        } else {
+            tiling_.numChunksPerBatch = CeilDiv(tiling_.seqlen, tiling_.chunkSize);
+            tiling_.chunkNum = tiling_.shapeBatch * tiling_.numChunksPerBatch;
+        }
         tiling_.hvPerHk = tiling_.vNumHead / tiling_.kNumHead;
-        tiling_.taskGroupSize = tiling_.hvPerHk == 3 ? 3 : 4;
-        return ge::GRAPH_SUCCESS;
-    }
-
-    ge::graphStatus A5ChunkTilingVarLen()
-    {
-        OP_CHECK_IF(tiling_.shapeBatch != 1,
-                    OP_LOGE(ctx_.nodeName, "A5 varlen chunk_fwd_o requires batch=1."),
-                    return ge::GRAPH_FAILED);
-        const gert::Shape chunkOffsetsShape = ctx_.chunkOffsetsShape->GetStorageShape();
-        tiling_.chunkNum = chunkOffsetsShape.GetDim(CHUNK_FWD_O_DIM_BATCH) / CHUNK_FWD_O_CHUNK_OFFSETS_PAIR_SIZE;
-        tiling_.numChunksPerBatch = 0;
-        tiling_.hvPerHk = tiling_.vNumHead / tiling_.kNumHead;
-        tiling_.taskGroupSize = tiling_.hvPerHk == 3 ? 3 : 4;
         return ge::GRAPH_SUCCESS;
     }
 
     ge::graphStatus A5ChunkTiling()
     {
-        if (IsVariableLength()) {
-            return A5ChunkTilingVarLen();
+        if (OptimizedChunkTiling() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
         }
-        return A5ChunkTilingFixLen();
+        // Tasks group 4 HV (3 when GVA=3 so group edges stay aligned with hk).
+        // GVA>4 splits one hk across ceil(G/4) groups, repeating the Q/K load and
+        // Q @ K^T once per group; cross-group Q/K residency needs an L1 re-plan.
+        tiling_.taskGroupSize = tiling_.hvPerHk == 3 ? 3 : 4;
+        return ge::GRAPH_SUCCESS;
     }
 
-    ge::graphStatus WorkspaceTilingA5()
+    ge::graphStatus A6ChunkTiling()
+    {
+        if (OptimizedChunkTiling() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        tiling_.taskGroupSize = GDN::CHUNK_FWD_O_A6_HEAD_COUNT;
+        return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus WorkspaceTilingOptimized()
     {
         const size_t aPrimeBytes =
             static_cast<size_t>(ctx_.aicCoreNum) * static_cast<size_t>(GDN::CHUNK_FWD_O_APRIME_WORKSPACE_BYTES);
         tiling_.aPrimeWorkspaceOffset = 0;
         workspaceSize_ = ctx_.sysWorkspaceSize + aPrimeBytes;
         return ge::GRAPH_SUCCESS;
+    }
+
+    ge::graphStatus WorkspaceTilingA5()
+    {
+        return WorkspaceTilingOptimized();
+    }
+
+    ge::graphStatus WorkspaceTilingA6()
+    {
+        return WorkspaceTilingOptimized();
     }
 
     ge::graphStatus WorkspaceTiling()
@@ -404,19 +519,37 @@ public:
 
     ge::graphStatus Process()
     {
-        OP_CHECK_IF(PreCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ShapeCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CommonTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (PreCheck() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ShapeCheck() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (CommonTiling() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
-        OP_CHECK_IF(LayoutCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (LayoutCheck() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         if (tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_BSND ||
             tiling_.outputLayout == GDN::CHUNK_FWD_O_LAYOUT_TND) {
-            OP_CHECK_IF(A5ShapeCheck() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-            OP_CHECK_IF(A5ChunkTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-            OP_CHECK_IF(WorkspaceTilingA5() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+            if (ctx_.isA5) {
+                if (A5ShapeCheck() != ge::GRAPH_SUCCESS || A5ChunkTiling() != ge::GRAPH_SUCCESS ||
+                    WorkspaceTilingA5() != ge::GRAPH_SUCCESS) {
+                    return ge::GRAPH_FAILED;
+                }
+            } else if (ctx_.isA6) {
+                if (A6ShapeCheck() != ge::GRAPH_SUCCESS || A6ChunkTiling() != ge::GRAPH_SUCCESS ||
+                    WorkspaceTilingA6() != ge::GRAPH_SUCCESS) {
+                    return ge::GRAPH_FAILED;
+                }
+            }
             return ge::GRAPH_SUCCESS;
         }
-        OP_CHECK_IF(WorkspaceTiling() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
+        if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         return ge::GRAPH_SUCCESS;
     }
 };

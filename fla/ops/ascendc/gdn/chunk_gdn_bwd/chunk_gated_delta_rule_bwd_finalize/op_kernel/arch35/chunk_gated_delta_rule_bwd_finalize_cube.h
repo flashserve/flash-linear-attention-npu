@@ -1,6 +1,8 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 #define CHUNK_GATED_DELTA_RULE_BWD_FINALIZE_CUBE_H
 
+#include "chunk_gated_delta_rule_bwd_finalize_struct.h"
+
 #ifndef CATLASS_ARCH
 #define CATLASS_ARCH 3510
 #endif
@@ -60,6 +62,16 @@ public:
     }
 
     __aicore__ inline void Process()
+    {
+        if (tiling_->headRatio > 4) {
+            ProcessImpl<true>();
+        } else {
+            ProcessImpl<false>();
+        }
+    }
+
+    template <bool GVA_GT4>
+    __aicore__ inline void ProcessImpl()
     {
         Catlass::Arch::Resource<ArchTag> resource;
 
@@ -177,6 +189,7 @@ public:
         int64_t chunkTaskIdx = 0;
         int64_t headGroupIdx = 0;
         int64_t taskRound = 0;
+        int64_t windowBank = 0;
         int64_t hvBase = 0;
         int64_t taskCount = 0;
         int64_t headOffset = 0;
@@ -205,10 +218,19 @@ public:
             if (!chunk.valid) {
                 continue;
             }
-            hvBase = headGroupIdx * tiling_->taskGroupSize;
-            taskCount = Min(tiling_->taskGroupSize, tiling_->HV - hvBase);
-            taskRound = (taskIdx - coreIdx_) / coreNum_;
-            workspaceGroupRound_ = taskRound;
+            const int64_t windowCount = GVA_GT4 ?
+                tiling_->headRatio / 4 + (tiling_->headRatio % 4 != 0) : 1;
+            for (int64_t window = 0; window < windowCount; ++window) {
+                if constexpr (GVA_GT4) {
+                    hvBase = headGroupIdx * tiling_->headRatio + window * 4;
+                    taskCount = Min(int64_t(4), tiling_->headRatio - window * 4);
+                    workspaceGroupRound_ = windowBank;
+                } else {
+                    hvBase = headGroupIdx * tiling_->taskGroupSize;
+                    taskCount = Min(tiling_->taskGroupSize, tiling_->HV - hvBase);
+                    taskRound = (taskIdx - coreIdx_) / coreNum_;
+                    workspaceGroupRound_ = taskRound;
+                }
                 // 一个 AIC 顺序承包当前 chunk/task group 的全部 HEAD。du/h 的
                 // MTE2 在等待 Stage 0 vb 前发射，可与两个 AIV 的 Stage 0 重叠。
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
@@ -292,6 +314,8 @@ public:
                 // Vector->Cube 有序链。两个 AIV 只有完成本组 Stage 4 后才会
                 // 顺序进入下一组 Stage 0，因此该天然依赖已经保护跨组 UB 复用，
                 // 这里不再增加任务组边界 wait。
+                windowBank ^= 1;
+            }
         }
 
         // kernel 退出前消费所有初始/末轮事件，使每套 Set/Wait 都完整闭环。
@@ -386,6 +410,13 @@ private:
 
     static constexpr auto GM_DU_LAYOUT = tla::MakeLayout<DT, LayoutRowMajor>(
         tla::Int<CHUNK_SIZE_64>{}, tla::Int<V_SIZE_128>{});
+    __aicore__ inline auto MakePublicQkLayout() const
+    {
+        const int64_t rowStride =
+            (tiling_->layout == GDN::FinalizeLayout::BSND)
+                ? tiling_->HK * K_SIZE_128 : K_SIZE_128;
+        return tla::MakeLayoutFromTag(LayoutRowMajor(CHUNK_SIZE_64, K_SIZE_128, rowStride));
+    }
     // h/dh are physically [K,V] row-major. Reinterpret the same bytes as a
     // [V,K] column-major view so Cube consumes h.T/dh.T without a copy.
     static constexpr auto GM_STATE_TRANSPOSE_LAYOUT = tla::MakeLayout<DT, LayoutColumnMajor>(
@@ -477,7 +508,7 @@ private:
         const int64_t tokenBase =
             ((chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart) * tiling_->V;
         const int64_t stateBase =
-            ((chunk.bIdx * tiling_->HV + hv) * stateChunkNum_ + chunk.stateChunkIdx) *
+            ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
             tiling_->K * tiling_->V;
 
         AscendC::GlobalTensor<DT> gmDu;
@@ -848,8 +879,9 @@ private:
         const uint32_t localHv = static_cast<uint32_t>(headOffset / AIV_COUNT_2);
         const uint32_t l1Event = static_cast<uint32_t>(headOffset);
         const int64_t hk = hv / tiling_->headRatio;
-        const int64_t kBase =
-            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
+        const int64_t kBase = (tiling_->layout == GDN::FinalizeLayout::BSND)
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * tiling_->K
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * tiling_->K;
 
         AscendC::GlobalTensor<DT> gmDA0;
         AscendC::GlobalTensor<DT> gmK;
@@ -857,7 +889,10 @@ private:
             reinterpret_cast<__gm__ DT *>(dA0_) + WorkspaceHeadOffset(headOffset));
         gmK.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(k_) + kBase);
         auto tensorGmDA0 = tla::MakeTensor(gmDA0, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
-        auto tensorGmK = tla::MakeTensor(gmK, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmK = tla::MakeTensor(
+            gmK,
+            MakePublicQkLayout(),
+            Catlass::Arch::PositionGM{});
         auto blockGmDA0 = tla::GetTile(
             tensorGmDA0, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
         auto blockGmK = tla::GetTile(
@@ -1145,8 +1180,10 @@ private:
         AscendC::GlobalTensor<DT> gmDkbT;
         gmDA.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dA0_) + workspaceBase);
         gmKb.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(workspace_) + workspaceBase);
-        gmDkb.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbOut_) + workspaceBase);
-        gmDkbT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbTOut_) + workspaceBase);
+        gmDkb.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbOut_) + workspaceBase,
+                             WORKSPACE_VECTOR_ELEMS);
+        gmDkbT.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dkbTOut_) + workspaceBase,
+                              WORKSPACE_VECTOR_ELEMS);
         auto tensorGmDA = tla::MakeTensor(gmDA, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmKb = tla::MakeTensor(gmKb, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDkb = tla::MakeTensor(gmDkb, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
@@ -1402,11 +1439,12 @@ private:
         const uint32_t doGEvent = L1_RESIDENT_HEAD_COUNT_4 +
             (static_cast<uint32_t>(headOffset) & 1U);
         const uint32_t dhEvent = L1_RESIDENT_HEAD_COUNT_4 + BANK_COUNT_2 + dhSlot;
-        const int64_t qBase =
-            ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
+        const int64_t qBase = (tiling_->layout == GDN::FinalizeLayout::BSND)
+                                  ? ((chunk.bIdx * tiling_->T + chunk.tokenStart) * tiling_->HK + hk) * K_SIZE_128
+                                  : ((chunk.bIdx * tiling_->HK + hk) * tiling_->T + chunk.tokenStart) * K_SIZE_128;
         const int64_t workspaceBase = WorkspaceHeadOffset(headOffset);
         const int64_t stateBase =
-            ((chunk.bIdx * tiling_->HV + hv) * stateChunkNum_ + chunk.stateChunkIdx) *
+            ((chunk.bIdx * stateChunkNum_ + chunk.stateChunkIdx) * tiling_->HV + hv) *
             K_SIZE_128 * V_SIZE_128;
 
         AscendC::GlobalTensor<DT> gmQ;
@@ -1419,7 +1457,10 @@ private:
         gmDs.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(dsIn_) + workspaceBase);
         gmDoG.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(doGIn_) + workspaceBase);
         gmVDecay.SetGlobalBuffer(reinterpret_cast<__gm__ DT *>(vDecayIn_) + workspaceBase);
-        auto tensorGmQ = tla::MakeTensor(gmQ, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
+        auto tensorGmQ = tla::MakeTensor(
+            gmQ,
+            MakePublicQkLayout(),
+            Catlass::Arch::PositionGM{});
         auto tensorGmDs = tla::MakeTensor(gmDs, GM_A_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmDoG = tla::MakeTensor(gmDoG, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});
         auto tensorGmVDecay = tla::MakeTensor(gmVDecay, GM_DU_LAYOUT, Catlass::Arch::PositionGM{});

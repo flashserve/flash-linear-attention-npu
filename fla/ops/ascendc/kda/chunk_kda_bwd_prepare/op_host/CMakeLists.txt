@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Tianjin University, Ltd.
 # Licensed under the BSD 3-Clause License.
 # -----------------------------------------------------------------------------------------------------------
+unset(chunk_kda_bwd_prepare_depends CACHE)
 add_op_to_compiled_list()
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE

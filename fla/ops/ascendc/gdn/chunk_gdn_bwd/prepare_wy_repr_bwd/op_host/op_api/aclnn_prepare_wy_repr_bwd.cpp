@@ -7,6 +7,9 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_prepare_wy_repr_bwd.h"
 #include "prepare_wy_repr_bwd.h"
 
@@ -31,6 +34,8 @@
 
 using namespace op;
 
+static constexpr const char *OP_NAME = "aclnnPrepareWyReprBwd";
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,17 +59,50 @@ struct PrepareWyReprBwdParams {
 
 static aclnnStatus CheckNotNull(PrepareWyReprBwdParams params)
 {
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.v != nullptr, ACLNN_ERR_PARAM_NULLPTR, "v must not be nullptr.");
-    CHECK_COND(params.beta != nullptr, ACLNN_ERR_PARAM_NULLPTR, "beta must not be nullptr.");
-    CHECK_COND(params.a != nullptr, ACLNN_ERR_PARAM_NULLPTR, "a must not be nullptr.");
-    CHECK_COND(params.dw != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dw must not be nullptr.");
-    CHECK_COND(params.du != nullptr, ACLNN_ERR_PARAM_NULLPTR, "du must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.dkOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dkOut must not be nullptr.");
-    CHECK_COND(params.dvOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dvOut must not be nullptr.");
-    CHECK_COND(params.dbetaOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dbetaOut must not be nullptr.");
-    CHECK_COND(params.dgOut != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dgOut must not be nullptr.");
+    if (params.k == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.v == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "v");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.beta == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.a == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "a");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dw == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dw");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.du == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "du");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dkOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dkOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dvOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dvOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dbetaOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dbetaOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dgOut == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dgOut");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -88,7 +126,12 @@ static aclnnStatus CheckDtype(PrepareWyReprBwdParams params)
 
 static aclnnStatus CheckParams(PrepareWyReprBwdParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    {
+        const aclnnStatus checkRet = CheckNotNull(params);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
+    }
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -104,20 +147,34 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(PrepareWyReprBwdParams &params, aclOpExecutor *executor)
 {
-    CHECK_COND(DataContiguous(params.k, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.v, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous v failed.");
-    CHECK_COND(DataContiguous(params.beta, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous beta failed.");
-    CHECK_COND(DataContiguous(params.a, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous a failed.");
-    CHECK_COND(DataContiguous(params.dw, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dw failed.");
-    CHECK_COND(DataContiguous(params.du, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous du failed.");
-    CHECK_COND(DataContiguous(params.g, executor) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    if (DataContiguous(params.k, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.v, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous v failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.beta, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous beta failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.a, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous a failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.dw, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dw failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.du, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous du failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.g, executor) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -127,6 +184,15 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
     const aclIntArray *chunkIndicesOptional, int64_t chunkSize, const aclTensor *dkOut, const aclTensor *dvOut,
     const aclTensor *dbetaOut, const aclTensor *dgOut, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     PrepareWyReprBwdParams params{k, v, beta, a, dw, du, g, cuSeqlensOptional, chunkIndicesOptional, chunkSize,
                                   dkOut, dvOut, dbetaOut, dgOut};
     L2_DFX_PHASE_1_WITHOUT_CACHE(
@@ -138,26 +204,59 @@ aclnnStatus aclnnPrepareWyReprBwdGetWorkspaceSize(
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
 
-    CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    OP_LOGW("npu_prepare_wy_repr_bwd",
+            "npu_prepare_wy_repr_bwd is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused "
+            "npu_chunk_gated_delta_rule_bwd instead.");
+
+    {
+        const aclnnStatus checkRet = CheckParams(params);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
+    }
+    if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     auto result = l0op::PrepareWyReprBwd(params.k, params.v, params.beta, params.a, params.dw, params.du, params.g,
                                          params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize,
                                          params.dkOut, params.dvOut, params.dbetaOut, params.dgOut, executorPtr);
-    CHECK_RET(result[0] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[1] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[2] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(result[3] != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (result[0] == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    const aclTensor *tailOutputs[] = {result[1], result[2], result[3]};
+    const char *tailOutputNames[] = {"dv", "dbeta", "dg"};
+    for (size_t i = 0; i < sizeof(tailOutputs) / sizeof(tailOutputs[0]); ++i) {
+        if (tailOutputs[i] == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned null output: %s", __func__,
+                                   tailOutputNames[i]);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
+    }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dkOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     viewCopyResult = l0op::ViewCopy(result[1], params.dvOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     viewCopyResult = l0op::ViewCopy(result[2], params.dbetaOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     viewCopyResult = l0op::ViewCopy(result[3], params.dgOut, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -168,8 +267,12 @@ aclnnStatus aclnnPrepareWyReprBwd(void *workspace, uint64_t workspaceSize, aclOp
                                   aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnPrepareWyReprBwd);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in PrepareWyReprBwd launch aicore.");
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
     return ACLNN_SUCCESS;
 }
 

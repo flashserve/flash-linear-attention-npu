@@ -4,6 +4,9 @@ if(BUILD_OPEN_PROJECT)
 endif()
 
 add_modules_sources(OPTYPE chunk_gated_delta_rule_bwd_finalize ACLNNTYPE aclnn_exclude)
+
+# Host 对象保留 A2/A3 与 A5 两套实现，按 NpuArch 在运行期统一分派。
+
 add_ops_compile_options(
     OP_NAME ChunkGatedDeltaRuleBwdFinalize
     OPTIONS --cce-auto-sync=off -Wno-deprecated-declarations

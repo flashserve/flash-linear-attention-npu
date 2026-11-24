@@ -9,13 +9,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 #include "exe_graph/runtime/storage_shape.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../op_kernel/chunk_kda_bwd_recompute_struct.h"
 #include "../op_kernel/chunk_kda_bwd_recompute_tiling_key.h"
+#include <string>
+#include "graph/utils/type_utils.h"
 
 namespace optiling {
 
@@ -31,10 +32,12 @@ constexpr size_t KDA_RECOMPUTE_A_LOG_IDX = 6;
 constexpr size_t KDA_RECOMPUTE_DT_BIAS_IDX = 7;
 constexpr size_t KDA_RECOMPUTE_CU_SEQLENS_IDX = 8;
 constexpr size_t KDA_RECOMPUTE_CHUNK_INDICES_IDX = 9;
+constexpr size_t KDA_RECOMPUTE_GK_OUTPUT_IDX = 4;
 constexpr size_t KDA_RECOMPUTE_CHUNK_SIZE_ATTR = 0;
 constexpr size_t KDA_RECOMPUTE_USE_GATE_ATTR = 1;
 constexpr size_t KDA_RECOMPUTE_USE_EXP2_ATTR = 2;
 constexpr size_t KDA_RECOMPUTE_LOWER_BOUND_ATTR = 3;
+constexpr size_t KDA_RECOMPUTE_INPUT_LAYOUT_ATTR = 4;
 
 struct ChunkKdaBwdRecomputeTilingContext {
     const char *nodeName;
@@ -58,6 +61,8 @@ struct ChunkKdaBwdRecomputeTilingContext {
     float lowerBound;
     uint64_t ubSize;
     size_t sysWorkspaceSize;
+    bool enableCompactWorkspace;
+    bool isAscend960 = false;
 };
 
 class ChunkKdaBwdRecomputeTilingProcessor {
@@ -70,10 +75,15 @@ public:
 
     ge::graphStatus Process()
     {
-        OP_CHECK_IF(CheckSpec() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ComputeChunkNum() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        OP_CHECK_IF(SetVecRow() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
-        workspaceSize_ = ctx_.sysWorkspaceSize + userWorkspaceSize_;
+        if (CheckSpec() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ComputeChunkNum() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        if (SetVecRow() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
         tilingKey_ = ComputeTilingKey();
         return ge::GRAPH_SUCCESS;
     }
@@ -83,44 +93,60 @@ public:
         return tilingKey_;
     }
 
-    size_t GetWorkspaceSize() const
+    size_t GetWorkspaceSize(uint32_t usedAic) const
     {
-        return workspaceSize_;
+        return ctx_.sysWorkspaceSize + usedAic * workspaceBytesPerCore_;
     }
 
 private:
     ge::graphStatus CheckSpec()
     {
-        OP_CHECK_IF(ctx_.chunkSize != 64,
-                    OP_LOGE(ctx_.nodeName, "chunk_size must be 64."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.qShape->GetStorageShape().GetDimNum() != 4,
-                    OP_LOGE(ctx_.nodeName, "q must be rank-4 BNSD."),
-                    return ge::GRAPH_FAILED);
+        if (ctx_.chunkSize != 64) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunkSize",
+            std::to_string(ctx_.chunkSize), "chunkSize must be 64");
+        return ge::GRAPH_FAILED;
+    }
+        if (ctx_.qShape->GetStorageShape().GetDimNum() != 4) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "q", std::to_string(ctx_.qShape->GetStorageShape().GetDimNum()), "q must be rank-4 BNSD");
+        return ge::GRAPH_FAILED;
+    }
         const gert::Shape q = ctx_.qShape->GetStorageShape();
         const gert::Shape k = ctx_.kShape->GetStorageShape();
         const gert::Shape v = ctx_.vShape->GetStorageShape();
         const gert::Shape g = ctx_.gShape->GetStorageShape();
         const gert::Shape beta = ctx_.betaShape->GetStorageShape();
         const gert::Shape a = ctx_.aShape->GetStorageShape();
-        OP_CHECK_IF(q.GetDim(3) != 128 || k.GetDim(3) != 128 || v.GetDim(3) != 128,
-                    OP_LOGE(ctx_.nodeName, "K and V must be 128."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(g.GetDim(3) != 128,
-                    OP_LOGE(ctx_.nodeName, "g head dim must be 128."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.gateDtype != ge::DT_BF16 && ctx_.gateDtype != ge::DT_FLOAT,
-                    OP_LOGE(ctx_.nodeName, "g dtype must be BF16 or FP32."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(ctx_.betaDtype != ge::DT_BF16 && ctx_.betaDtype != ge::DT_FLOAT,
-                    OP_LOGE(ctx_.nodeName, "beta dtype must be BF16 or FP32."),
-                    return ge::GRAPH_FAILED);
+        if (q.GetDim(3) != 128 || k.GetDim(3) != 128 || v.GetDim(3) != 128) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_.nodeName, "K/V",
+            std::to_string(q.GetDim(3)) + "," + std::to_string(v.GetDim(3)),
+            "K and V must be 128");
+        return ge::GRAPH_FAILED;
+    }
+        if (g.GetDim(3) != 128) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ctx_.nodeName, "g", std::to_string(g.GetDim(3)), "g head dim must be 128");
+        return ge::GRAPH_FAILED;
+    }
+        if (ctx_.gateDtype != ge::DT_BF16 && ctx_.gateDtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "g",
+            ge::TypeUtils::DataTypeToSerialString(ctx_.gateDtype),
+            "g dtype must be BF16 or FP32");
+        return ge::GRAPH_FAILED;
+    }
+        if (ctx_.betaDtype != ge::DT_BF16 && ctx_.betaDtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "beta",
+            ge::TypeUtils::DataTypeToSerialString(ctx_.betaDtype),
+            "beta dtype must be BF16 or FP32");
+        return ge::GRAPH_FAILED;
+    }
         tiling_.B = q.GetDim(0);
         tiling_.Hk = k.GetDim(1);
         tiling_.Hv = v.GetDim(1);
-        OP_CHECK_IF(tiling_.Hv <= 0 || tiling_.Hk <= 0 || tiling_.Hv % tiling_.Hk != 0,
-                    OP_LOGE(ctx_.nodeName, "Invalid GQA head configuration."),
-                    return ge::GRAPH_FAILED);
+        if (tiling_.Hv <= 0 || tiling_.Hk <= 0 || tiling_.Hv % tiling_.Hk != 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "Hv/Hk", std::to_string(tiling_.Hv) + "/" + std::to_string(tiling_.Hk),
+            "Hv must be positive and divisible by Hk");
+        return ge::GRAPH_FAILED;
+    }
         tiling_.hvPerHk = tiling_.Hv / tiling_.Hk;
         tiling_.T = q.GetDim(2);
         tiling_.K = 128;
@@ -141,27 +167,43 @@ private:
                 ctx_.aLogShape != nullptr ? ctx_.aLogShape : nullptr);
             (void)aLogData;
         }
-        OP_CHECK_IF(v.GetDim(0) != q.GetDim(0) || v.GetDim(2) != q.GetDim(2),
-                    OP_LOGE(ctx_.nodeName, "q/k/v batch and T must match."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(g.GetDim(0) != v.GetDim(0) || g.GetDim(1) != v.GetDim(1) || g.GetDim(2) != v.GetDim(2),
-                    OP_LOGE(ctx_.nodeName, "g shape must match v on B/H/T."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(beta.GetDimNum() != 3,
-                    OP_LOGE(ctx_.nodeName, "beta must be rank-3 BHT."),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(a.GetDim(1) != tiling_.Hv,
-                    OP_LOGE(ctx_.nodeName, "A head dim must equal Hv."),
-                    return ge::GRAPH_FAILED);
+        if (v.GetDim(0) != q.GetDim(0) || v.GetDim(2) != q.GetDim(2)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "v",
+            std::to_string(v.GetDim(0)) + "," + std::to_string(v.GetDim(2)) + "," +
+                std::to_string(q.GetDim(0)) + "," + std::to_string(q.GetDim(2)),
+            "q/k/v batch and T must match");
+        return ge::GRAPH_FAILED;
+    }
+        if (g.GetDim(0) != v.GetDim(0) || g.GetDim(1) != v.GetDim(1) || g.GetDim(2) != v.GetDim(2)) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "g",
+            std::to_string(g.GetDim(0)) + "," + std::to_string(g.GetDim(1)) + "," +
+                std::to_string(g.GetDim(2)) + "," + std::to_string(v.GetDim(0)) + "," +
+                std::to_string(v.GetDim(1)) + "," + std::to_string(v.GetDim(2)),
+            "g shape must match v on B/H/T");
+        return ge::GRAPH_FAILED;
+    }
+        if (beta.GetDimNum() != 3) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "beta", std::to_string(beta.GetDimNum()), "beta must be rank-3 BHT");
+        return ge::GRAPH_FAILED;
+    }
+        if (a.GetDim(1) != tiling_.Hv) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "A",
+            std::to_string(a.GetDim(1)),
+            "A head dim must equal Hv=" + std::to_string(tiling_.Hv));
+        return ge::GRAPH_FAILED;
+    }
         return ge::GRAPH_SUCCESS;
     }
 
     ge::graphStatus ComputeChunkNum()
     {
         if (ctx_.cuSeqlensShape != nullptr) {
-            OP_CHECK_IF(ctx_.chunkIndicesShape == nullptr,
-                        OP_LOGE(ctx_.nodeName, "chunk_indices required for varlen."),
-                        return ge::GRAPH_FAILED);
+            if (ctx_.chunkIndicesShape == nullptr) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices",
+            "cu_seqlens=present,chunk_indices=absent",
+            "chunk_indices required for varlen");
+        return ge::GRAPH_FAILED;
+    }
             tiling_.chunkNum = ctx_.chunkIndicesShape->GetStorageShape().GetDim(0) / 2;
             tiling_.B = 1;
             return ge::GRAPH_SUCCESS;
@@ -178,6 +220,12 @@ private:
 
     ge::graphStatus SetVecRow()
     {
+        if (ctx_.isAscend960) {
+            using namespace KdaBwdRecomputeArch92;
+            tiling_.vecRow = kRows;
+            workspaceBytesPerCore_ = 0;
+            return ge::GRAPH_SUCCESS;
+        }
         constexpr uint64_t sizeofQk = 2;
         uint64_t sizeofGate = ctx_.gateDtype == ge::DT_FLOAT ? 4 : 2;
         uint64_t sizeofBeta = ctx_.betaDtype == ge::DT_FLOAT ? 4 : 2;
@@ -190,28 +238,15 @@ private:
 
         while (rowNum >= 8) {
             uint64_t useUbSize = 0;
-            useUbSize += Align32(2 * rowNum * kDim * sizeofGate);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * sizeofBeta);
-            useUbSize += Align32(2 * rowNum * kDim * sizeof(float));
-            useUbSize += Align32(2 * rowNum * kDim * sizeof(float));
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
-            useUbSize += Align32(2 * rowNum * kDim * sizeofQk);
+            useUbSize += Align32(rowNum * kDim * sizeofGate);
+            useUbSize += 2 * Align32(rowNum * kDim * sizeofQk);
+            useUbSize += Align32(rowNum * sizeofBeta);
             useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
-            useUbSize += Align32(rowNum * kDim * sizeof(float));
+            useUbSize += 3 * Align32(rowNum * kDim * sizeofQk);
+            useUbSize += 6 * Align32(rowNum * kDim * sizeof(float));
             useUbSize += Align32(rowNum * sizeof(float));
             useUbSize += Align32(rowNum * 32);
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
-            useUbSize += Align32(kDim * sizeof(float));
+            useUbSize += 3 * Align32(kDim * sizeof(float));
             useUbSize += Align32(32);
             useUbSize += 4096;
             if (useUbSize <= ubLimit) {
@@ -221,9 +256,10 @@ private:
         }
 
         tiling_.vecRow = static_cast<int64_t>(rowNum);
-        // A5 L1 path keeps kbg/vb on-chip (design §6.1). GM workspace is only the sys buffer.
-        userWorkspaceSize_ = 0;
-        workspaceSize_ = ctx_.sysWorkspaceSize;
+        if (!ctx_.enableCompactWorkspace) {
+            workspaceBytesPerCore_ = KDA::RECOMPUTE_PAGE_COUNT * KDA::RECOMPUTE_HEADS_PER_GROUP * chunkSize_ *
+                (kDim + static_cast<uint64_t>(tiling_.V)) * sizeofQk;
+        }
         return ge::GRAPH_SUCCESS;
     }
 
@@ -244,8 +280,7 @@ private:
 
     ChunkKdaBwdRecomputeTilingContext &ctx_;
     ChunkKdaBwdRecomputeTilingData &tiling_;
-    size_t workspaceSize_ = 0;
-    size_t userWorkspaceSize_ = 0;
+    size_t workspaceBytesPerCore_ = 0;
     uint64_t tilingKey_ = 1;
     uint64_t chunkSize_ = 64;
 };

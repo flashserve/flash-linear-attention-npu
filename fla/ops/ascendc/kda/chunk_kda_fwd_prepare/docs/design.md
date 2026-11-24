@@ -152,6 +152,9 @@ A2/A3、已经启用全局 head partition 或 GVA 边界不满足条件的场景
 处理 2/3；A2/A3 的两个 AIV 按 pair wave 处理 0/2 和 1/3。不同 value head 即使映射到同一
 Q/K head，也只允许 GVA 组首 owner 写 `q_hat/k_hat/q_rstd/k_rstd`，避免 GM 重叠写。
 
+A6 使用 1 AIC : 1 AIV，每个 workgroup 一轮处理 3 个 value head。唯一 AIV 与三个 local
+head/计算槽一一对应，不再使用 A5 的第四槽或 AIV1 的 `+16` flag 偏移。
+
 当前实现仍按 value-head slot 搬运和归一化 Q/K。多个 value head 映射到同一 Q/K head 时，
 会从 GM 重读对应 Q/K；这样无需引入跨 AIV 的 UB 共享、额外 VF 调用或 UB 搬位，同时保持
 静态双缓冲和既定 Stage 合同。后续若消除该重读，必须同时证明跨 AIV 共享与成对同步不会
@@ -163,11 +166,20 @@ Q/K head，也只允许 GVA 组首 owner 写 `q_hat/k_hat/q_rstd/k_rstd`，避�
 但活跃生命周期不重叠前不会复用，也不在 UB/L1 内移动数据。
 
 - A5 UB 为两个 112 KiB 计算槽和两个 12 KiB 状态槽，总计 248 KiB。
+- A6 UB 为三个 112 KiB 计算槽和三个 12 KiB 状态槽，总计 360 KiB，位于 376 KiB
+  可用容量内。
 - A2/A3 使用 184 KiB 可用 UB，按两个私有区和一个共享区规划，尾部 8 KiB 保留。
-- L1 为 512 KiB，四个 head lane 保存 C2 payload，其余区域保存 X0、negX1、T 和 Akk。
+- L1 为 512 KiB，四个 head lane 保存 C2 payload，其余区域保存 X0、negX1、T、Akk，
+  以及 C7 的 RHS（K_beta_g/V_beta）专用 lane。RHS 不再复用 head lane：C2 的
+  score 与 C7 的 RHS 同址时，下一个 chunk 的 C2 会在 C7 读完 RHS 之前把该 lane
+  覆盖成 Qplus/Kplus。
 - Arch35 每个 workspace slot 为 `0x1A400` Byte，保存 Qhat、Khat、betaEff
   和 72 KiB payload。
-- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，总计 `0x1F400` Byte；C2
+- Arch92 使用相同 `0x1A400` Byte slot，但每个 workgroup 只有 3 个在途 head/slot；
+  host workspace 必须按 3 槽计算。
+- Arch22 每个 slot 追加 20 KiB AIC 独占 relay，并再追加 32 KiB RHS 独立区
+  （V6→C7 的 K_beta_g/V_beta，不再与 V1 payload 换义地址），总计 `0x27400`
+  Byte；C2
   写四段 raw score，V3 消费后 C4 在同址前 4 KiB 写 `T`。host 根据目标
   平台选择 slot 大小，A5 不预留 Arch22 的追加区。
 
@@ -191,6 +203,9 @@ AIC: wait ready -> 消费 -> set free
 A5 在 AIC 视角使用 ready `0/1/16/17` 和 free `4/5/20/21`；A2/A3 mode2 pair wave使用
 ready `0/1` 和 free `2/3`。同一 flag ID 在上一代 set/wait 闭环后才复用，不依赖核启动顺序。
 
+A6 的单 AIV 三槽协议使用 ready `0/1/2`、free `6/7/8` 以及独立的 score/payload 通道，
+所有 ID 均落在 0..15；同一 flag 仍按一代 set/wait 闭环后复用。
+
 C4 对全部 active head 先提交一轮，再提交 C5，使后续 head 的独立 C4 能进入流水。C4 把
 B/X0/negX1/Akk 搬入每 head 独立 L1 后即可归还 workspace payload，V6 可与 C4/C5 排空重叠。
 
@@ -198,7 +213,8 @@ B/X0/negX1/Akk 搬入每 head 独立 L1 后即可归还 workspace payload，V6 �
 
 TilingKey 编译期选择 gate dtype、beta dtype、norm 模式、beta 模式、gate 模式、
 `use_exp2`、`safe_gate` 和三档 `OUTPUT_MODE`。`q/k/v` 不进入 dtype 模板轴，固定为 BF16。架构通过
-`__CCE_AICORE__` 编译宏选择，kernel 内没有运行时 Arch22/Arch35 分支。
+`__NPU_ARCH__` 编译宏选择；A5 使用 arch35，A6 使用 arch92，A2/A3 保持 arch22，
+kernel 内没有运行时跨架构分支。
 
 输出搬出在模板实例中使用 `if constexpr` 消除；设备侧 tiling 不保存运行时
 `outputMask`，Stage 和 VF 循环都不执行运行时输出判断。

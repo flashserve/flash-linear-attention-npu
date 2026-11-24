@@ -6,6 +6,9 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
 #include "aclnn_chunk_bwd_dv_local.h"
 #include "chunk_bwd_dv_local.h"
 #include <dlfcn.h>
@@ -27,8 +30,9 @@
 #include "opdev/tensor_view_utils.h"
 #include "opdev/make_op_executor.h"
 
-
 using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnChunkBwdDvLocal";
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,11 +54,26 @@ struct ChunkBwdDvLocalParams {
 
 static aclnnStatus CheckNotNull(ChunkBwdDvLocalParams params)
 {
-    CHECK_COND(params.q != nullptr, ACLNN_ERR_PARAM_NULLPTR, "q must not be nullptr.");
-    CHECK_COND(params.k != nullptr, ACLNN_ERR_PARAM_NULLPTR, "k must not be nullptr.");
-    CHECK_COND(params.dO != nullptr, ACLNN_ERR_PARAM_NULLPTR, "dO must not be nullptr.");
-    CHECK_COND(params.g != nullptr, ACLNN_ERR_PARAM_NULLPTR, "g must not be nullptr.");
-    CHECK_COND(params.out != nullptr, ACLNN_ERR_PARAM_NULLPTR, "out must not be nullptr.");
+    if (params.q == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.k == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.dO == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dO");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.g == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (params.out == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "out");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -67,9 +86,9 @@ static aclnnStatus CheckFormat(ChunkBwdDvLocalParams params)
 static aclnnStatus CheckShape(ChunkBwdDvLocalParams params)
 {
     CHECK_COND(params.chunkSize > 0, ACLNN_ERR_PARAM_INVALID,
-               "chunk_size must be positive.");
+               "chunkSize must be positive.");
     CHECK_COND(params.chunkSize == 64 || params.chunkSize == 128,
-               ACLNN_ERR_PARAM_INVALID, "chunk_size must be 64 or 128.");
+               ACLNN_ERR_PARAM_INVALID, "chunkSize must be 64 or 128.");
     CHECK_COND(params.q->GetViewShape().GetDimNum() == 4,
                ACLNN_ERR_PARAM_INVALID, "q must be a rank-4 tensor [B, H, T, K].");
     if (params.chunkIndicesOptional != nullptr) {
@@ -128,14 +147,22 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 
 static aclnnStatus ParamsDataContiguous(ChunkBwdDvLocalParams &params, aclOpExecutor *executorPtr)
 {
-    CHECK_COND(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous q failed.");
-    CHECK_COND(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous k failed.");
-    CHECK_COND(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous dO failed.");
-    CHECK_COND(DataContiguous(params.g, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "Contiguous g failed.");
+    if (DataContiguous(params.q, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous q failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.k, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.dO, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dO failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (DataContiguous(params.g, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     return ACLNN_SUCCESS;
 }
@@ -147,7 +174,12 @@ static aclnnStatus CheckDtype(ChunkBwdDvLocalParams params)
 
 static aclnnStatus CheckParams(ChunkBwdDvLocalParams params)
 {
-    CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
+    {
+        const aclnnStatus checkRet = CheckNotNull(params);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
+    }
     CHECK_RET(CheckFormat(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckShape(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckDtype(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
@@ -171,23 +203,47 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
 {
     ChunkBwdDvLocalParams params{q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, out};
     // Standard syntax, Check parameters.
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkBwdDvLocal, DFX_IN(q, k, dO, g, gGammaOptional, aOptional, cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize),
                    DFX_OUT(out));
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+
+    OP_LOGW("npu_chunk_bwd_dv_local",
+            "npu_chunk_bwd_dv_local is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_bwd instead.");
+
     // 固定写法，参数检查
     auto ret = CheckParams(params);
-    CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
-    CHECK_COND(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID,
-               "ParamsDataContiguous failed.");
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
+    if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     auto result = l0op::ChunkBwdDvLocal(params.q, params.k,  params.dO, params.g, params.gGammaOptional, params.aOptional, params.cuSeqlensOptional, params.chunkIndicesOptional, params.scale, params.chunkSize, params.out, executorPtr);
-    CHECK_RET(result != nullptr, ACLNN_ERR_PARAM_NULLPTR);
+    if (result == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result, params.out, executorPtr);
-    CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (viewCopyResult == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
 
     // Standard syntax, get the size of workspace needed during computation.
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
@@ -199,8 +255,12 @@ aclnnStatus aclnnChunkBwdDvLocalGetWorkspaceSize(
 aclnnStatus aclnnChunkBwdDvLocal(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkBwdDvLocal);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS, ACLNN_ERR_INNER,
-               "This is an error in ChunkBwdDvLocal launch aicore.");
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
     return ACLNN_SUCCESS;
 }
 

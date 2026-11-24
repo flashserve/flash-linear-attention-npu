@@ -48,26 +48,43 @@ public:
 
     ge::graphStatus Process()
     {
-        if (ctx_.q == nullptr || ctx_.k == nullptr || ctx_.v == nullptr ||
-            ctx_.gk == nullptr || ctx_.beta == nullptr || ctx_.akk == nullptr ||
-            ctx_.h == nullptr || ctx_.dh == nullptr || ctx_.dvScan == nullptr) {
-            OP_LOGE(ctx_.nodeName, "required Stage0--2 input shape is null");
-            return ge::GRAPH_FAILED;
+        const std::pair<const void *, const char *> requiredInputs[] = {
+            {ctx_.q, "q"}, {ctx_.k, "k"}, {ctx_.v, "v"}, {ctx_.gk, "gk"},
+            {ctx_.beta, "beta"}, {ctx_.akk, "akk"}, {ctx_.h, "h"},
+            {ctx_.dh, "dh"}, {ctx_.dvScan, "dv_scan"}};
+        for (const auto &item : requiredInputs) {
+            if (item.first == nullptr) {
+                OP_LOGE_WITH_INVALID_INPUT(ctx_.nodeName, item.second);
+                return ge::GRAPH_FAILED;
+            }
         }
         if (ctx_.chunkSize != 64 || !ctx_.safeGate || !ctx_.useGateInKernel ||
             !ctx_.useExp2 || ctx_.stateVFirst) {
-            OP_LOGE(ctx_.nodeName,
-                    "A5 v1 requires chunk_size=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "chunkSize,attrs",
+                std::to_string(ctx_.chunkSize) + ",safe_gate=" + (ctx_.safeGate ? "true" : "false") +
+                    ",use_gate=" + (ctx_.useGateInKernel ? "true" : "false") + ",use_exp2=" +
+                    (ctx_.useExp2 ? "true" : "false") + ",state_v_first=" +
+                    (ctx_.stateVFirst ? "true" : "false"),
+                "A5 v1 requires chunkSize=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
+
             return ge::GRAPH_FAILED;
         }
         const bool hasRstd = ctx_.qRstd != nullptr || ctx_.kRstd != nullptr;
         if ((ctx_.qRstd == nullptr) != (ctx_.kRstd == nullptr)) {
-            OP_LOGE(ctx_.nodeName, "q_rstd and k_rstd must appear together");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "q_rstd,k_rstd",
+                std::string("q_rstd=") + (ctx_.qRstd != nullptr ? "present" : "absent") +
+                    ",k_rstd=" + (ctx_.kRstd != nullptr ? "present" : "absent"),
+                "q_rstd and k_rstd must appear together");
+
             return ge::GRAPH_FAILED;
         }
         const bool variable = ctx_.cuSeqlens != nullptr || ctx_.chunkIndices != nullptr;
         if ((ctx_.cuSeqlens == nullptr) != (ctx_.chunkIndices == nullptr)) {
-            OP_LOGE(ctx_.nodeName, "cu_seqlens and chunk_indices must appear together");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "cu_seqlens,chunk_indices",
+                std::string("cu_seqlens=") + (ctx_.cuSeqlens != nullptr ? "present" : "absent") +
+                    ",chunk_indices=" + (ctx_.chunkIndices != nullptr ? "present" : "absent"),
+                "cu_seqlens and chunk_indices must appear together");
+
             return ge::GRAPH_FAILED;
         }
 
@@ -79,62 +96,73 @@ public:
         const gert::Shape akk = ctx_.akk->GetStorageShape();
         const gert::Shape h = ctx_.h->GetStorageShape();
         const gert::Shape dh = ctx_.dh->GetStorageShape();
-        const size_t tokenRank = variable ? 3 : 4;
-        const size_t scalarRank = variable ? 2 : 3;
-        const size_t stateRank = variable ? 4 : 5;
-        if (q.GetDimNum() != tokenRank || k.GetDimNum() != tokenRank ||
+        const size_t tokenRank = q.GetDimNum();
+        const size_t scalarRank = tokenRank - 1;
+        const size_t stateRank = tokenRank + 1;
+        if ((tokenRank != 3 && tokenRank != 4) || k.GetDimNum() != tokenRank ||
             v.GetDimNum() != tokenRank || gk.GetDimNum() != tokenRank ||
             akk.GetDimNum() != tokenRank || beta.GetDimNum() != scalarRank ||
             h.GetDimNum() != stateRank || dh.GetDimNum() != stateRank) {
-            OP_LOGE(ctx_.nodeName, "dense/varlen rank does not match KernelC contract");
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "ranks",
+                std::to_string(q.GetDimNum()) + "," + std::to_string(akk.GetDimNum()) + "," +
+                    std::to_string(beta.GetDimNum()) + "," + std::to_string(h.GetDimNum()) + "," +
+                    std::to_string(dh.GetDimNum()),
+                "dense/varlen rank does not match KernelC contract");
+
             return ge::GRAPH_FAILED;
         }
 
+        const size_t base = tokenRank == 3 ? 0 : 1;
+        tiling_.B = base == 0 ? 1 : k.GetDim(0);
+        tiling_.NQ = q.GetDim(base);
+        tiling_.NV = k.GetDim(base);
+        tiling_.T = k.GetDim(base + 1);
+        tiling_.K = k.GetDim(base + 2);
+        tiling_.V = v.GetDim(base + 2);
         if (variable) {
-            tiling_.B = 1;
-            tiling_.NQ = q.GetDim(0);
-            tiling_.NV = k.GetDim(0);
-            tiling_.T = k.GetDim(1);
-            tiling_.K = k.GetDim(2);
-            tiling_.V = v.GetDim(2);
+            if (tiling_.B != 1) return ge::GRAPH_FAILED;
             tiling_.denseChunkNum = 0;
-            tiling_.totalChunkNum = h.GetDim(0);
+            tiling_.totalChunkNum = h.GetDim(base);
             const gert::Shape cu = ctx_.cuSeqlens->GetStorageShape();
             const gert::Shape indices = ctx_.chunkIndices->GetStorageShape();
             if (cu.GetDimNum() != 1 || indices.GetDimNum() != 1 || cu.GetDim(0) < 2 ||
                 indices.GetDim(0) != 2 * tiling_.totalChunkNum) {
-                OP_LOGE(ctx_.nodeName, "invalid varlen metadata shape");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "metadata",
+                    std::to_string(cu.GetDimNum()) + "," + std::to_string(cu.GetDim(0)) + "," +
+                        std::to_string(indices.GetDimNum()) + "," + std::to_string(indices.GetDim(0)),
+                    "invalid varlen metadata shape");
+
                 return ge::GRAPH_FAILED;
             }
             tiling_.seqNum = cu.GetDim(0) - 1;
         } else {
-            tiling_.B = k.GetDim(0);
-            tiling_.NQ = q.GetDim(1);
-            tiling_.NV = k.GetDim(1);
-            tiling_.T = k.GetDim(2);
-            tiling_.K = k.GetDim(3);
-            tiling_.V = v.GetDim(3);
-            tiling_.denseChunkNum = h.GetDim(1);
+            tiling_.denseChunkNum = h.GetDim(base);
             tiling_.totalChunkNum = tiling_.B * tiling_.denseChunkNum;
             tiling_.seqNum = tiling_.B;
         }
         if (tiling_.B <= 0 || tiling_.NQ != tiling_.NV || tiling_.NV <= 0 ||
             tiling_.T <= 0 || tiling_.K != 128 || tiling_.V != 128 ||
             tiling_.totalChunkNum <= 0) {
-            OP_LOGE(ctx_.nodeName, "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "K,V,chunkNum",
+                std::to_string(tiling_.K) + "," + std::to_string(tiling_.V) + "," +
+                    std::to_string(tiling_.totalChunkNum),
+                "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
+
             return ge::GRAPH_FAILED;
         }
-        const bool validStates = variable
-            ? h.GetDim(1) == tiling_.NV && h.GetDim(2) == tiling_.K && h.GetDim(3) == tiling_.V &&
-              dh.GetDim(0) == tiling_.NV && dh.GetDim(1) == tiling_.totalChunkNum &&
-              dh.GetDim(2) == tiling_.K && dh.GetDim(3) == tiling_.V
-            : h.GetDim(0) == tiling_.B && h.GetDim(2) == tiling_.NV &&
-              h.GetDim(3) == tiling_.K && h.GetDim(4) == tiling_.V &&
-              tiling_.denseChunkNum == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize &&
-              dh.GetDim(0) == tiling_.B && dh.GetDim(1) == tiling_.NV &&
-              dh.GetDim(2) == tiling_.denseChunkNum && dh.GetDim(3) == tiling_.K && dh.GetDim(4) == tiling_.V;
+        const int64_t chunks = variable ? tiling_.totalChunkNum : tiling_.denseChunkNum;
+        const bool validStates = (base == 0 || (h.GetDim(0) == tiling_.B && dh.GetDim(0) == tiling_.B)) &&
+            h.GetDim(base + 1) == tiling_.NV && h.GetDim(base + 2) == tiling_.K &&
+            h.GetDim(base + 3) == tiling_.V && dh.GetDim(base) == chunks &&
+            dh.GetDim(base + 1) == tiling_.NV && dh.GetDim(base + 2) == tiling_.K &&
+            dh.GetDim(base + 3) == tiling_.V &&
+            (variable || chunks == (tiling_.T + ctx_.chunkSize - 1) / ctx_.chunkSize);
         if (!validStates) {
-            OP_LOGE(ctx_.nodeName, "expected chunk-major h and head-major dh");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "h,dh",
+                "chunks=" + std::to_string(chunks) + ",h.rank=" + std::to_string(h.GetDimNum()) +
+                    ",dh.rank=" + std::to_string(dh.GetDimNum()),
+                "expected NT-first h and dh");
+
             return ge::GRAPH_FAILED;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;
@@ -149,9 +177,8 @@ public:
         tiling_.stateVFirst = ctx_.stateVFirst ? 1U : 0U;
         tiling_.scale = static_cast<float>(ctx_.scale);
         tiling_.lowerBound = static_cast<float>(ctx_.lowerBound);
-        blockDim_ = std::min(
-            ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum,
-            static_cast<uint32_t>(tiling_.workTaskNum));
+        blockDim_ = static_cast<uint32_t>(std::min<int64_t>(
+            ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum, tiling_.workTaskNum));
         const size_t slotBytes = static_cast<size_t>(blockDim_) * 4U * 160U * 1024U;
         const size_t taskHeads = static_cast<size_t>(tiling_.totalChunkNum * tiling_.NV);
         // Give each concurrently written scalar partial a complete DMA block.

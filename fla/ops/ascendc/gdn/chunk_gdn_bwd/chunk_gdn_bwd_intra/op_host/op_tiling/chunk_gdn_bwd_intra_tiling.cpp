@@ -2,20 +2,47 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "../../op_kernel/chunk_gdn_bwd_intra_struct.h"
+#include <cstring>
+
 #include "chunk_gdn_bwd_intra_tiling.h"
 
 #include <algorithm>
+#include <limits>
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
+#include "../../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_tiling_key.h"
+#include <string>
 
 namespace optiling {
 namespace {
+
+static constexpr size_t kGTemplateMax = 4;
 
 uint64_t DataTypeKey(ge::DataType dtype, ge::DataType fp32Type,
                      uint64_t lowPrecisionKey, uint64_t fp32Key)
 {
     return dtype == fp32Type ? fp32Key : lowPrecisionKey;
+}
+
+const char *DtypeName(ge::DataType dtype)
+{
+    switch (dtype) {
+        case ge::DT_BF16: return "bf16";
+        case ge::DT_FLOAT16: return "fp16";
+        case ge::DT_FLOAT: return "fp32";
+        case ge::DT_DOUBLE: return "fp64";
+        case ge::DT_INT8: return "int8";
+        case ge::DT_UINT8: return "uint8";
+        case ge::DT_INT16: return "int16";
+        case ge::DT_UINT16: return "uint16";
+        case ge::DT_INT32: return "int32";
+        case ge::DT_INT64: return "int64";
+        case ge::DT_BOOL: return "bool";
+        default: return "unknown";
+    }
 }
 
 } // namespace
@@ -29,6 +56,31 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto *scale = attrs->GetAttrPointer<double>(INTRA_SCALE_ATTR_IDX);
     const auto *chunkSize = attrs->GetAttrPointer<int64_t>(INTRA_CHUNK_SIZE_ATTR_IDX);
     const auto *useExp2 = attrs->GetAttrPointer<bool>(INTRA_USE_EXP2_ATTR_IDX);
+    if (scale == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "scale");
+        return ge::GRAPH_FAILED;
+    }
+    if (chunkSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunkSize");
+        return ge::GRAPH_FAILED;
+    }
+    if (useExp2 == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "use_exp2");
+        return ge::GRAPH_FAILED;
+    }
+    const char *qkvLayout = attrs->GetStr(INTRA_LAYOUT_ATTR_IDX);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
+    }
+    if (std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0) {
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND");
+        return ge::GRAPH_FAILED;
+    }
+    const int64_t layoutValue =
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::IntraLayout::BSND : GDN::IntraLayout::BNSD;
+    tiling->layout = layoutValue;
     OP_CHECK_NULL_WITH_CONTEXT(context, scale);
     OP_CHECK_NULL_WITH_CONTEXT(context, chunkSize);
     OP_CHECK_NULL_WITH_CONTEXT(context, useExp2);
@@ -38,43 +90,187 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const auto *qDesc = context->GetInputDesc(INTRA_Q_IDX);
     const auto *gDesc = context->GetInputDesc(INTRA_G_IDX);
     const auto *betaDesc = context->GetInputDesc(INTRA_BETA_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qShape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, vShape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, qDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, gDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, betaDesc);
+    if (qShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
+    if (vShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "v");
+        return ge::GRAPH_FAILED;
+    }
+    if (qDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q");
+        return ge::GRAPH_FAILED;
+    }
+    if (gDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "g");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "beta");
+        return ge::GRAPH_FAILED;
+    }
+    const ge::DataType mainDtype = qDesc->GetDataType();
+    const ge::DataType gDtype = gDesc->GetDataType();
+    const ge::DataType betaDtype = betaDesc->GetDataType();
+    if (mainDtype != ge::DT_BF16 && mainDtype != ge::DT_FLOAT16) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(mainDtype), "dtype must be bf16 or fp16");
+        return ge::GRAPH_FAILED;
+    }
+    if (gDtype != ge::DT_BF16 && gDtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(gDtype), "g dtype must be bf16 or fp32");
+        return ge::GRAPH_FAILED;
+    }
+    if (betaDtype != ge::DT_BF16 && betaDtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "dtype", DtypeName(betaDtype), "beta dtype must be bf16 or fp32");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto qStorage = qShape->GetStorageShape();
     const auto vStorage = vShape->GetStorageShape();
+    if (qStorage.GetDimNum() != 4 || vStorage.GetDimNum() != 4 || *chunkSize != 64) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "chunkSize",
+            std::to_string(qStorage.GetDimNum()) + "," + std::to_string(vStorage.GetDimNum()) + "," +
+                std::to_string(*chunkSize),
+            "q/v rank must be 4 and chunkSize must be 64");
+        return ge::GRAPH_FAILED;
+    }
     const int64_t batch = qStorage.GetDim(0);
-    const int64_t qkHeads = qStorage.GetDim(1);
-    const int64_t seqlen = qStorage.GetDim(2);
+    const int64_t qkHeads = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 2 : 1);
+    const int64_t seqlen = qStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 1 : 2);
     const int64_t keyDim = qStorage.GetDim(3);
-    const int64_t valueHeads = vStorage.GetDim(1);
+    const int64_t valueHeads = vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 2 : 1);
     const int64_t valueDim = vStorage.GetDim(3);
+    if (batch <= 0 || seqlen <= 0 || qkHeads <= 0 || valueHeads <= 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "B,T,HK,HV",
+            std::to_string(batch) + "," + std::to_string(seqlen) + "," +
+                std::to_string(qkHeads) + "," + std::to_string(valueHeads),
+            "B/T/HK/HV must be positive");
+        return ge::GRAPH_FAILED;
+    }
+    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    const auto arch = platform.GetCurNpuArch();
+    const bool arch22 = arch == NpuArch::DAV_2201;
+    const bool arch92 = arch == NpuArch::DAV_9201;
+    const bool arch35 = arch == NpuArch::DAV_3510;
+    if (!arch22 && !arch92 && !arch35) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "%s: only DAV_2201, DAV_3510 and DAV_9201 are supported.", __func__);
+        return ge::GRAPH_FAILED;
+    }
+    // A6 uses fixed GVA keys; A2/A3 and A5 also support runtime GVA.
+    const int64_t maxRatio = IntraMaxGvaRatio(arch22, arch92);
     const int64_t headRatio = valueHeads / qkHeads;
+    if (valueHeads % qkHeads != 0 || headRatio < 1 || headRatio > maxRatio) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "HV/HK",
+            std::to_string(valueHeads) + "/" + std::to_string(qkHeads),
+            "unsupported HV/HK head ratio, must be an integer in [1, " +
+                std::to_string(maxRatio) + "] on this SoC");
+        return ge::GRAPH_FAILED;
+    }
+    if (!arch22 && headRatio > static_cast<int64_t>(kGTemplateMax) && mainDtype != ge::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(qkHeads) + ", HV=" + std::to_string(valueHeads) +
+            ", q dtype=" + DtypeName(mainDtype);
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "q dtype", actual, "BF16 for HV/HK > 4 on A5");
+        return ge::GRAPH_FAILED;
+    }
+    if (keyDim != 128 || valueDim != 128) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "K/V",
+            std::to_string(keyDim) + "," + std::to_string(valueDim),
+            "K and V dims must be 128");
+        return ge::GRAPH_FAILED;
+    }
+    if (vStorage.GetDim(0) != batch ||
+                    vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 1 : 2) != seqlen) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "v",
+                    std::to_string(vStorage.GetDim(0)) + "," +
+                        std::to_string(vStorage.GetDim((layoutValue == GDN::IntraLayout::BSND) ? 1 : 2)) +
+                        "," + std::to_string(batch) + "," + std::to_string(seqlen),
+                    "v batch and T dims must match q");
+        return ge::GRAPH_FAILED;
+    }
+    uint64_t tensorBytes = 0;
+    if (!IntraCheckedMultiply(batch, valueHeads, tensorBytes) ||
+                    !IntraCheckedMultiply(tensorBytes, seqlen, tensorBytes) ||
+                    !IntraCheckedMultiply(tensorBytes, 128 * sizeof(uint16_t), tensorBytes) ||
+                    tensorBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: tensor address range overflow.", __func__);
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *cuTensor = context->GetOptionalInputTensor(INTRA_CU_SEQLENS_IDX);
     const auto *chunkTensor = context->GetOptionalInputTensor(INTRA_CHUNK_INDICES_IDX);
     const bool isVarlen = cuTensor != nullptr;
-    const int64_t chunksPerBatch = (seqlen + *chunkSize - 1) / *chunkSize;
-    int64_t chunkCount = batch * chunksPerBatch;
+    if (isVarlen != (chunkTensor != nullptr) || (isVarlen && batch != 1)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "cu_seqlens,chunk_indices,B",
+            std::string("cu=") + (isVarlen ? "present" : "absent") + ",chunk=" +
+                (chunkTensor != nullptr ? "present" : "absent") + ",B=" + std::to_string(batch),
+            "varlen metadata must be paired and requires B=1");
+        return ge::GRAPH_FAILED;
+    }
+    const int64_t chunksPerBatch = seqlen / *chunkSize + (seqlen % *chunkSize != 0);
+    uint64_t fixedChunks = 0;
+    if (!IntraCheckedMultiply(batch, chunksPerBatch, fixedChunks) ||
+                    fixedChunks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "B,chunksPerBatch",
+            std::to_string(batch) + "," + std::to_string(chunksPerBatch),
+            "chunk count overflow");
+        return ge::GRAPH_FAILED;
+    }
+    int64_t chunkCount = static_cast<int64_t>(fixedChunks);
     if (isVarlen) {
         OP_CHECK_NULL_WITH_CONTEXT(context, chunkTensor);
         const auto *chunkShape = context->GetOptionalInputShape(INTRA_CHUNK_INDICES_IDX);
-        OP_CHECK_NULL_WITH_CONTEXT(context, chunkShape);
-        chunkCount = chunkShape->GetStorageShape().GetShapeSize() / 2;
+        if (chunkShape == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "chunk");
+            return ge::GRAPH_FAILED;
+        }
+        const auto metadataShape = chunkShape->GetStorageShape();
+        const bool matrixMetadata = metadataShape.GetDimNum() == 2 && metadataShape.GetDim(1) == 2;
+        const bool flatMetadata = metadataShape.GetDimNum() == 1 && metadataShape.GetDim(0) % 2 == 0;
+        if (!matrixMetadata && !flatMetadata) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "chunk_indices",
+            std::to_string(metadataShape.GetDimNum()) + "," + std::to_string(metadataShape.GetDim(0)),
+            "chunk_indices must contain flattened pairs or [Nchunk,2]");
+        return ge::GRAPH_FAILED;
     }
-    const int64_t cg = headRatio == 3 ? 3 : 4;
-    const int64_t hvSliceCount = (valueHeads + cg - 1) / cg;
-    const int64_t workCount = chunkCount * hvSliceCount;
+        chunkCount = matrixMetadata ? metadataShape.GetDim(0) : metadataShape.GetDim(0) / 2;
+    }
 
-    const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     const uint32_t aicCores = platform.GetCoreNumAic();
-    OP_CHECK_IF(workCount <= 0 || aicCores == 0,
-                OP_LOGE(context->GetNodeName(), "work count and AIC core count must be positive."),
-                return ge::GRAPH_FAILED);
-    const int64_t blockDim = std::min<int64_t>(workCount, aicCores);
+    const uint32_t cores = arch92 ? std::min<uint32_t>(aicCores, platform.GetCoreNumAiv()) : aicCores;
+    IntraSchedule schedule;
+    if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, cores, arch22, arch92,
+                            platform.GetLibApiWorkSpaceSize(), schedule)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "chunkCount,HV,HK,cores",
+            std::to_string(chunkCount) + "," + std::to_string(valueHeads) + "," +
+                std::to_string(qkHeads) + "," + std::to_string(cores),
+            "invalid schedule or workspace overflow");
+        return ge::GRAPH_FAILED;
+    }
+    if (arch22) {
+        uint64_t ubBytes = 0;
+        uint64_t l1Bytes = 0;
+        uint64_t l0aBytes = 0;
+        uint64_t l0bBytes = 0;
+        uint64_t l0cBytes = 0;
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, l1Bytes);
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, l0aBytes);
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, l0bBytes);
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, l0cBytes);
+        if (ubBytes < GDN::Arch22::UB_BYTES ||
+                        l1Bytes < GDN::Arch22::L1_SCORE_BYTES + schedule.cg * GDN::Arch22::L1_HEAD_BYTES ||
+                        l0aBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
+                        l0bBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
+                        l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: insufficient on-chip memory for arch22 schedule.", __func__);
+        return ge::GRAPH_FAILED;
+    }
+    }
     tiling->batch = batch;
     tiling->qkHeads = qkHeads;
     tiling->valueHeads = valueHeads;
@@ -84,30 +280,34 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     tiling->chunkSize = *chunkSize;
     tiling->chunksPerBatch = chunksPerBatch;
     tiling->chunkCount = chunkCount;
-    tiling->cg = cg;
-    tiling->hvSliceCount = hvSliceCount;
-    tiling->workCount = workCount;
-    tiling->blockDim = blockDim;
+    tiling->cg = schedule.cg;
+    tiling->hvSliceCount = schedule.hvSlices;
+    tiling->workCount = schedule.workCount;
+    tiling->blockDim = schedule.blockDim;
     tiling->isVarlen = isVarlen ? 1 : 0;
     tiling->useExp2 = *useExp2 ? 1 : 0;
     tiling->scale = static_cast<float>(*scale);
-    tiling->reserved = 0;
-    const uint64_t strategyKey = isVarlen ?
+    tiling->reserved = arch22 ? 2201 : 0;
+    tiling->groupSize = headRatio;
+    const bool isA5RuntimeGroup = !arch22 && headRatio > static_cast<int64_t>(kGTemplateMax);
+    const uint64_t strategyKey = isVarlen && !isA5RuntimeGroup ?
         CHUNK_GDN_BWD_INTRA_VARLEN : CHUNK_GDN_BWD_INTRA_FIXED;
-    const uint64_t gKey = static_cast<uint64_t>(headRatio);
-    const uint64_t mainKey = qDesc->GetDataType() == ge::DT_BF16 ?
+    const uint64_t gKey = headRatio <= static_cast<int64_t>(kGTemplateMax) ? static_cast<uint64_t>(headRatio) :
+        (arch22 ? CHUNK_GDN_BWD_INTRA_G_RUNTIME : G_KEY_GT4);
+    const uint64_t mainKey = mainDtype == ge::DT_BF16 ?
         CHUNK_GDN_BWD_INTRA_MAIN_BF16 : CHUNK_GDN_BWD_INTRA_MAIN_FP16;
     const uint64_t gateKey = DataTypeKey(
-        gDesc->GetDataType(), ge::DT_FLOAT,
+        gDtype, ge::DT_FLOAT,
         CHUNK_GDN_BWD_INTRA_GATE_BF16, CHUNK_GDN_BWD_INTRA_GATE_FP32);
     const uint64_t betaKey = DataTypeKey(
-        betaDesc->GetDataType(), ge::DT_FLOAT,
+        betaDtype, ge::DT_FLOAT,
         CHUNK_GDN_BWD_INTRA_BETA_BF16, CHUNK_GDN_BWD_INTRA_BETA_FP32);
     context->SetTilingKey(GET_TPL_TILING_KEY(
         strategyKey, gKey, mainKey, gateKey, betaKey));
-    context->SetBlockDim(blockDim);
+    context->SetBlockDim(schedule.blockDim);
     size_t *ws = context->GetWorkspaceSizes(1);
-    ws[0] = platform.GetLibApiWorkSpaceSize();
+    OP_CHECK_NULL_WITH_CONTEXT(context, ws);
+    ws[0] = schedule.workspaceBytes;
     OP_LOGD(context->GetNodeName(),"workspace = [%zu]", ws[0]);
     context->SetScheduleMode(1);
     return ge::GRAPH_SUCCESS;

@@ -6,8 +6,11 @@ case 按计算规模从小到大排序，便于从最小 case 开始逐步验证
 
 from __future__ import annotations
 
+import argparse
 import json
 from copy import deepcopy
+from itertools import product
+from pathlib import Path
 
 try:
     from atk.case_generator.generator.base_generator import CaseGenerator
@@ -229,6 +232,48 @@ def _dtype(dtype):
     return {"bf16": "bf16", "fp16": "fp16", "fp32": "fp32"}.get(dtype, "bf16")
 
 
+def dht_regression_profiles():
+    """非零 dht 回归；保留默认泛化用例的输入范围和精度标准。"""
+    combinations = product(("bf16", "fp16"), (128, 256), (64, 128),
+                           (False, True), (False, True), (False, True), (False, True), range(3))
+    for index, (dtype, v, chunk, v_first, varlen, use_gk, with_h0, seed_index) in enumerate(combinations):
+        lengths = [chunk + 1, 17, 2 * chunk + 3]
+        cu = [0]
+        for length in lengths:
+            cu.append(cu[-1] + length)
+        spec = {
+            "name": f"dht_{index:03d}", "dtype": dtype, "B": 1 if varlen else 3,
+            "HK": 2, "HV": 6 if use_gk else 2, "T": cu[-1] if varlen else chunk + 1,
+            "K": 128, "V": v, "chunk_size": chunk, "state_v_first": v_first,
+            "use_gk": use_gk, "with_h0": with_h0, "with_dht": True,
+            "op": OP_NAME, "case_id": index, "seed": 20261020 + seed_index,
+            "route": "ascendc", "soc": "ascend950",
+        }
+        if varlen:
+            spec["cu_seqlens"] = cu
+        yield spec
+
+
+def write_dht_regression(output: Path, minimal: bool = False):
+    template = json.loads(Path(__file__).with_name(f"atk_{OP_NAME}.json").read_text(encoding="utf-8"))[0]
+    cases = []
+    for spec in dht_regression_profiles():
+        if minimal and (spec["chunk_size"] != 64 or not spec["with_h0"] or spec["seed"] != 20261020):
+            continue
+        case = deepcopy(template)
+        case.update(id=spec["case_id"], default_seed=spec["seed"], name=f"{OP_NAME}_{spec['name']}")
+        for item in case["inputs"]:
+            cfg = item[0] if isinstance(item, list) else item
+            if cfg["name"] == "low_precision_marker":
+                cfg["dtype"] = spec["dtype"]
+            elif cfg["name"] == "case_spec":
+                cfg["range_values"] = json.dumps(spec, ensure_ascii=False, separators=(",", ":"))
+            elif cfg["name"] in spec:
+                cfg["range_values"] = spec[cfg["name"]]
+        cases.append(case)
+    output.write_text(json.dumps(cases, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
 def _spec(index):
     return deepcopy(PROFILES[index % len(PROFILES)])
 
@@ -254,4 +299,12 @@ if GENERATOR_REGISTRY is not None:
                 elif cfg.name in spec:
                     cfg.range_values = spec[cfg.name]
             return case_config
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="生成非零 dht 的 384 条 ATK 补充回归用例（每个结构 3 个种子）")
+    parser.add_argument("--dht-output", type=Path, required=True)
+    parser.add_argument("--dht-minimal", action="store_true", help="仅保留 32 条内存/确定性检查代表用例")
+    args = parser.parse_args()
+    write_dht_regression(args.dht_output, args.dht_minimal)
 

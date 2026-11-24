@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "op_common/log/log.h"
 #include "aclnn_chunk_scaled_dot_kkt.h"
 
 #include <cstddef>
@@ -23,6 +24,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnChunkScaledDotKkt";
 
 namespace {
 struct ChunkScaledDotKktParams {
@@ -140,6 +143,27 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
     CHECK_COND(workspaceSize != nullptr, ACLNN_ERR_PARAM_NULLPTR, "workspaceSize must not be nullptr.");
     CHECK_COND(executor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "executor must not be nullptr.");
     ChunkScaledDotKktParams p{k, g, beta, cuSeqlensOptional, chunkIndicesOptional, chunkSize, a};
+    if (k == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnChunkScaledDotKkt", "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (g == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnChunkScaledDotKkt", "g");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (beta == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT("aclnnChunkScaledDotKkt", "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkScaledDotKkt,
                    DFX_IN(k, g, beta, cuSeqlensOptional, chunkIndicesOptional, chunkSize), DFX_OUT(a));
     const auto status = CheckParams(p);
@@ -150,6 +174,11 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     auto executorPtr = uniqueExecutor.get();
+
+    OP_LOGW("npu_chunk_scaled_dot_kkt",
+            "npu_chunk_scaled_dot_kkt is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_gated_delta_rule_fwd instead.");
+
     auto ret = MakeContiguous(p.k, executorPtr);
     if (ret != ACLNN_SUCCESS) {
         return ret;
@@ -164,9 +193,15 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
     }
     const auto result = l0op::ChunkScaledDotKkt(
         p.k, p.g, p.beta, p.cuSeqlens, p.chunkIndices, p.chunkSize, p.a, executorPtr);
-    CHECK_RET(result != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (result == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("aclnnChunkScaledDotKkt", "%s: operator returned no output", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     const auto copied = l0op::ViewCopy(result, p.a, executorPtr);
-    CHECK_RET(copied != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    if (copied == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("aclnnChunkScaledDotKkt", "%s: view copy of a failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
@@ -176,8 +211,12 @@ aclnnStatus aclnnChunkScaledDotKkt(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkScaledDotKkt);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkScaledDotKkt launch failed.");
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
     return ACLNN_SUCCESS;
 }
 }

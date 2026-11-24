@@ -1,0 +1,214 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * the BSD 3-Clause License (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ */
+#include "aclnn_pre_process_bwd_kernel_merged.h"
+#include "pre_process_bwd_kernel_merged.h"
+#include <dlfcn.h>
+#include <new>
+
+#include "aclnn_kernels/transdata.h"
+#include "aclnn_kernels/contiguous.h"
+#include "acl/acl.h"
+#include "aclnn/aclnn_base.h"
+#include "aclnn_kernels/common/op_error_check.h"
+#include "opdev/common_types.h"
+#include "opdev/data_type_utils.h"
+#include "opdev/format_utils.h"
+#include "opdev/op_dfx.h"
+#include "opdev/op_executor.h"
+#include "opdev/op_log.h"
+#include "opdev/platform.h"
+#include "opdev/shape_utils.h"
+#include "opdev/tensor_view_utils.h"
+#include "opdev/make_op_executor.h"
+#include "op_common/log/log.h"
+
+static constexpr const char *OP_NAME = "aclnnPreProcessBwdKernelMerged";
+
+using namespace op;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct PreProcessBwdKernelMergedParams {
+    const aclTensor *q = nullptr;
+    const aclTensor *k = nullptr;
+    const aclTensor *w = nullptr;
+    const aclTensor *dO = nullptr;
+    const aclTensor *dv = nullptr;
+    const aclTensor *gOptional = nullptr;
+    const aclTensor *gkOptional = nullptr;
+    const aclIntArray *cuSeqlensOptional = nullptr;
+    double scale = 1.0;
+    int64_t chunkSize = 64;
+    const aclTensor *dhmOut = nullptr;
+};
+
+static aclnnStatus CheckNotNull(PreProcessBwdKernelMergedParams params)
+{
+    if (!(params.q != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "q");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.k != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "k");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.w != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "w");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.dO != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "d_o");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.dv != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dv");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!(params.dhmOut != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "dhm");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
+{
+    tensor = l0op::Contiguous(tensor, executor);
+    if (!(tensor != nullptr)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    return ACLNN_SUCCESS;
+}
+
+static aclnnStatus ParamsDataContiguous(PreProcessBwdKernelMergedParams &params, aclOpExecutor *executorPtr)
+{
+    if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: q Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: k Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: w Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: d_o Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (!(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: dv Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    if (params.gOptional != nullptr) {
+        if (!(DataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: g Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    }
+    if (params.gkOptional != nullptr) {
+        if (!(DataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: gk Contiguous failed.", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    }
+    return ACLNN_SUCCESS;
+}
+
+// shape/dtype 的完整约束由 host tiling 统一拦截（见 tiling_processor），此处只做非空与连续性检查，
+// 避免同一套规则在两处漂移。
+static aclnnStatus CheckParams(PreProcessBwdKernelMergedParams params)
+{
+    auto ret = CheckNotNull(params);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnPreProcessBwdKernelMergedGetWorkspaceSize(
+    const aclTensor *q,
+    const aclTensor *k,
+    const aclTensor *w,
+    const aclTensor *dO,
+    const aclTensor *dv,
+    const aclTensor *gOptional,
+    const aclTensor *gkOptional,
+    const aclIntArray *cuSeqlensOptional,
+    double scale,
+    int64_t chunkSize,
+    const aclTensor *dhmOut,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor)
+{
+    PreProcessBwdKernelMergedParams params{q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional, scale, chunkSize,
+                                          dhmOut};
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
+    L2_DFX_PHASE_1(aclnnPreProcessBwdKernelMerged,
+                   DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, cuSeqlensOptional), DFX_OUT(dhmOut));
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
+    auto executorPtr = uniqueExecutor.get();
+    auto ret = CheckParams(params);
+    if (!(ret == ACLNN_SUCCESS)) {
+        return ret;
+    }
+    if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    auto result = l0op::PreProcessBwdKernelMerged(params.q, params.k, params.w, params.dO, params.dv, params.gOptional,
+                                                 params.gkOptional, params.cuSeqlensOptional, params.scale,
+                                                 params.chunkSize, params.dhmOut, executorPtr);
+    if (!(result != nullptr)) {
+        // 与 fwd/_dhu 统一：l0op 未返回输出按内部失败上报（561103），
+        // 参数类根因以 tiling 的结构化报文为准。
+        OP_LOGE_WITHOUT_REPORT(
+            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error "
+                     "for the root cause", __func__);
+        return ACLNN_ERR_INNER_NULLPTR;
+    }
+    *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+    uniqueExecutor.ReleaseTo(executor);
+    return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnPreProcessBwdKernelMerged(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
+                                         aclrtStream stream)
+{
+    L2_DFX_PHASE_2(aclnnPreProcessBwdKernelMerged);
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
+    return ACLNN_SUCCESS;
+}
+
+#ifdef __cplusplus
+}
+#endif

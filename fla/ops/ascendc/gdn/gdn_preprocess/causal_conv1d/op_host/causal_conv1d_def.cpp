@@ -95,7 +95,7 @@ public:
         this->Attr("activation").AttrType(OPTIONAL).String("none");
 
         this->Attr("padSlotId").AttrType(OPTIONAL).Int(-1);
-        this->Attr("nullBlockId").AttrType(OPTIONAL).Int(-1);
+        this->Attr("nullBlockId").AttrType(OPTIONAL).Int(0);
 
         this->Attr("runMode").AttrType(OPTIONAL).Int(0);
 
@@ -114,11 +114,8 @@ public:
             .ExtendCfgInfo("coreType.value", "AiCore");
         this->AICore().AddConfig("ascend910b", aicoreConfig);
         this->AICore().AddConfig("ascend910_93", aicoreConfig);
-#ifdef ASCEND_SOC_VERSION
-        if (std::string(ASCEND_SOC_VERSION) == "ascend950") {
-            this->AICore().AddConfig("ascend950", aicoreConfig);
-        }
-#endif
+        this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 OP_ADD(CausalConv1d);

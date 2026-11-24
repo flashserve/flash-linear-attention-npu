@@ -9,6 +9,9 @@
 
 namespace GDN {
 
+// Two [64,128] FP32 gradients per core and per AIV.
+constexpr int64_t GVA_ACC_CORE_BYTES = 2 * 64 * 128 * sizeof(float);
+
 #define TPL_BF16 10
 #define TPL_FP32 30
 
@@ -52,6 +55,14 @@ ASCENDC_TPL_SEL(
 #undef TPL_SEL_ONE
 #endif
 
+// Runtime layout codes shared by this operator's host and kernels.
+namespace FinalizeLayout {
+enum Layout : int64_t {
+    BNSD = 0,
+    BSND = 1,
+};
+} // namespace FinalizeLayout
+
 struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     // 输入逻辑 shape。K、V、chunkSize 分别从 q、v、A 的 shape 推导；
     // 即使当前实现只支持 K=128、V=128、chunkSize=64，也必须作为运行时 tiling 数据传入。
@@ -72,7 +83,8 @@ struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     int64_t isVariable;
     int64_t stateVFirst;
 
-    // taskGroupSize 是不超过 4 的 GVA 整数倍，且选择时保证无尾组；
+    // G<=4: taskGroupSize 是不超过 4 的 GVA 整数倍，无尾组；
+    // G>4: taskGroupSize=4 是物理窗口宽度，headGroupNum=HK。
     // headGroupNum 是每个 chunk 的 HV 方向逻辑任务数。
     // 两个 AIV 按任务序号交错承包完整 HV：AIV0 处理偶数任务，AIV1 处理奇数任务。
     int64_t headRatio;
@@ -80,6 +92,8 @@ struct ChunkGatedDeltaRuleBwdFinalizeTilingData {
     int64_t headGroupNum;
 
     float scale;
+    // Runtime public Q/K/V layout shared by the host and arch35 kernels.
+    int64_t layout;
 };
 
 } // namespace GDN

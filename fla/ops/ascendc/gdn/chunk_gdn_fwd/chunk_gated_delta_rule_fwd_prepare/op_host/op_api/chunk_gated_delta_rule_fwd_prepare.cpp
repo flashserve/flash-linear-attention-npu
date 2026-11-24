@@ -67,17 +67,17 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
     const bool noHats = qHatOptional == nullptr && kHatOptional == nullptr &&
                         qRstdOptional == nullptr && kRstdOptional == nullptr;
     if (!hasHats && !noHats) {
-        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR,
                 "ChunkGatedDeltaRuleFwdPrepare qHat/kHat/qRstd/kRstd must all be set or all nullptr.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     if (useQkL2norm && !hasHats) {
-        OP_LOGE(ACLNN_ERR_PARAM_NULLPTR,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_NULLPTR,
                 "ChunkGatedDeltaRuleFwdPrepare useQkL2norm=true requires qHat, kHat, qRstd and kRstd.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     if (!useQkL2norm && !noHats) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
                 "ChunkGatedDeltaRuleFwdPrepare useQkL2norm=false requires omitting qHat/kHat/qRstd/kRstd.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
@@ -115,7 +115,7 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
         (chunkIndicesOptional != nullptr && actualChunkIndices == nullptr) ||
         actualQHat == nullptr || actualKHat == nullptr || actualQRstd == nullptr ||
         actualKRstd == nullptr || actualBetaEff == nullptr) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "Create internal tensor failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Create internal tensor failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 
@@ -125,7 +125,8 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
         OP_OUTPUT(gOut, wOut, uOut, aOut, actualQHat, actualKHat, actualQRstd, actualKRstd, actualBetaEff),
         OP_ATTR(chunkSize, allowNegEigval, useExp2, useQkL2norm, useGateInKernel, useBetaSigmoid, outputA));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGatedDeltaRuleFwdPrepare failed.");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR,
+            "ADD_TO_LAUNCHER_LIST_AICORE ChunkGatedDeltaRuleFwdPrepare failed.");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return {gOut, wOut, uOut, aOut, qHatOptional, kHatOptional, qRstdOptional, kRstdOptional, actualBetaEff};

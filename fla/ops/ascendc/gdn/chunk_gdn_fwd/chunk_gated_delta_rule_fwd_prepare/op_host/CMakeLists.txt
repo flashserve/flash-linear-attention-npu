@@ -16,7 +16,9 @@ add_ops_compile_options(
     OPTIONS --cce-auto-sync=off
             -Wno-deprecated-declarations
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel
+            -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/arch22
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/arch35
+            -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/arch92
 )
 
 if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
@@ -24,5 +26,13 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         OP_NAME ChunkGatedDeltaRuleFwdPrepare
         COMPUTE_UNIT Ascend950PR_9599
         OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
+    )
+endif()
+
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
+    add_ops_compile_options(
+        OP_NAME ChunkGatedDeltaRuleFwdPrepare
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-no-dcache-flush
     )
 endif()

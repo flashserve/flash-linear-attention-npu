@@ -5,12 +5,23 @@
  */
 
 #include "kernel_operator.h"
+#include "lib/matmul_intf.h"
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+#include "chunk_kda_fwd_prepare_runtime_key.h"
+#include "arch22/chunk_kda_fwd_prepare_vector.h"
+#include "arch22/chunk_kda_fwd_prepare_cube.h"
+#else
 #include "chunk_kda_fwd_prepare_tiling_key.h"
 #include "chunk_kda_fwd_prepare_kernel.h"
+#endif
 
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+template <uint32_t NORM_MODE, uint32_t GATE_MODE>
+#else
 template <int D_T_GATE, int D_T_BETA, uint32_t NORM_MODE,
           uint32_t BETA_MODE, uint32_t GATE_MODE,
           bool USE_EXP2, bool SAFE_GATE, uint32_t OUTPUT_MODE>
+#endif
 __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
     GM_ADDR a_log, GM_ADDR dt_bias, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -19,7 +30,11 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     GM_ADDR q_rstd, GM_ADDR k_rstd, GM_ADDR beta_eff, GM_ADDR workspace,
     GM_ADDR tiling)
 {
+    #if (defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
     REGISTER_TILING_DEFAULT(KdaPrepare::ChunkKdaFwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KdaPrepare::ChunkKdaFwdPrepareTilingData,
                                 tilingData, tiling);
@@ -67,7 +82,17 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     args.tiling.isVarLen = tilingData.isVarLen;
     args.tiling.inputSequenceMajor = tilingData.inputSequenceMajor;
     args.tiling.hasDtBias = tilingData.hasDtBias;
+    args.tiling.normMode = tilingData.normMode;
+    args.tiling.betaMode = tilingData.betaMode;
+    args.tiling.gateMode = tilingData.gateMode;
+    args.tiling.outputMode = tilingData.outputMode;
+    args.tiling.pipelineVariant = tilingData.pipelineVariant;
+    args.tiling.useExp2 = tilingData.useExp2;
 
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+    static_assert(NORM_MODE<=1 && GATE_MODE<=2);
+    KdaPrepare::Arch22::Run<NORM_MODE,GATE_MODE,DTYPE_G,DTYPE_BETA>(args);
+#else
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NORM_MODE),
         static_cast<KdaPrepare::BetaMode>(BETA_MODE),
@@ -76,4 +101,5 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     using GateT = typename KdaPrepare::PrepareStorageType<D_T_GATE>::type;
     using BetaT = typename KdaPrepare::PrepareStorageType<D_T_BETA>::type;
     KdaPrepare::RunPrepare<GateT, BetaT, Policy>(args);
+#endif
 }

@@ -1,3 +1,7 @@
+// Load structured reporters before opdev's legacy logging macros. The opdev
+// headers must retain their logging convention for CHECK_RET and DFX helpers.
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "aclnn_chunk_kda_bwd_intra.h"
 #include "chunk_kda_bwd_intra.h"
 
@@ -16,6 +20,8 @@
 #include "opdev/tensor_view_utils.h"
 
 using namespace op;
+
+static constexpr const char *OP_NAME = "aclnnChunkKdaBwdIntra";
 
 namespace {
 
@@ -172,11 +178,23 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
         p.q, p.k, p.gk, p.beta, p.dAqk, p.dAkk, p.dq, p.dk, p.db, p.dg,
         p.dqOut, p.dkOut, p.dbOut, p.dgOut
     };
-    for (const aclTensor *tensor : required) {
-        CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR,
-                   "ChunkKdaBwdIntra tensor arguments must not be nullptr.");
-        CHECK_COND(IsContiguous(tensor), ACLNN_ERR_PARAM_INVALID,
-                   "ChunkKdaBwdIntra only supports contiguous tensors.");
+    const char *requiredNames[] = {
+        "q", "k", "gk", "beta", "dAqk", "dAkk", "dq", "dk", "db", "dg",
+        "dqOut", "dkOut", "dbOut", "dgOut"
+    };
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        if (required[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, requiredNames[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+        if (!IsContiguous(required[i])) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                OP_NAME, requiredNames[i],
+                ge::TypeUtils::FormatToSerialString(
+                    static_cast<ge::Format>(required[i]->GetStorageFormat())),
+                "ChunkKdaBwdIntra only supports contiguous tensors");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const aclTensor *bf16[] = {p.q, p.k};
     for (const aclTensor *tensor : bf16) {
@@ -200,7 +218,7 @@ aclnnStatus Check(const Params &p, Layout &layout, int64_t &totalChunks)
     CHECK_COND(p.safeGate, ACLNN_ERR_PARAM_INVALID,
                "safe_gate=false is reserved but not supported in v1.");
     CHECK_COND(p.chunkSize == 64, ACLNN_ERR_PARAM_INVALID,
-               "chunk_size must be 64.");
+               "chunkSize must be 64.");
     const bool isVarLen = p.cuSeqlens != nullptr;
     CHECK_COND(isVarLen || p.chunkIndices == nullptr,
                ACLNN_ERR_PARAM_INVALID,
@@ -281,6 +299,15 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
     const aclTensor *dbOut, const aclTensor *dgOut, uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkKdaBwdIntra,
                    DFX_IN(q, k, gk, beta, dAqk, dAkk, dq, dk, db, dg,
                           cuSeqlensOptional, chunkIndicesOptional, chunkSize, safeGate, layout),
@@ -292,12 +319,20 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntraGetWorkspaceSize(
                   dqOut, dkOut, dbOut, dgOut};
     Layout parsedLayout;
     int64_t totalChunks = 0;
-    CHECK_RET(Check(params, parsedLayout, totalChunks) == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    {
+        const aclnnStatus checkRet = Check(params, parsedLayout, totalChunks);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
     aclOpExecutor *executorPtr = uniqueExecutor.get();
+
+    OP_LOGW("npu_chunk_kda_bwd_intra",
+            "npu_chunk_kda_bwd_intra is deprecated and will be removed on "
+            "January 15, 2027 (v26.12.0); use the fused npu_chunk_kda_bwd instead.");
 
     const bool isVarLen = cuSeqlensOptional != nullptr;
     const bool isInternalLayout = parsedLayout == Layout::BNSD || isVarLen;
@@ -371,7 +406,11 @@ extern "C" aclnnStatus aclnnChunkKdaBwdIntra(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkKdaBwdIntra);
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkKdaBwdIntra launch failed.");
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
+    }
     return ACLNN_SUCCESS;
 }

@@ -55,8 +55,6 @@ __simd_vf__ inline void ApplyTriScaleMaskRegbase(
 {
     constexpr uint32_t ROW = KDA_PREPARE_CHUNK;
     MaskReg full = CreateMask<float, MaskPattern::ALL>();
-    uint32_t validCount = static_cast<uint32_t>(validRows);
-    MaskReg valid = UpdateMask<float>(validCount);
     RegTensor<float> zero;
     Duplicate(zero, 0.0f, full);
     for (uint16_t row = 0; row < validRows; ++row) {
@@ -66,7 +64,9 @@ __simd_vf__ inline void ApplyTriScaleMaskRegbase(
         RegTensor<float> maskValue;
         RegTensor<float> result;
         LoadAlign(rawInput, input + offset);
-        Select(rawSafe, rawInput, zero, valid);
+        uint32_t lowerCount = static_cast<uint32_t>(row) + 1U;
+        MaskReg lower = UpdateMask<float>(lowerCount);
+        Select(rawSafe, rawInput, zero, lower);
         LoadAlign(maskValue, mask + offset);
         Mul(result, rawSafe, maskValue, full);
         StoreAlign(output + offset, result, full);
@@ -165,7 +165,7 @@ public:
                 // dAqk: preserve FP32 Cube output through mask/scale and GM.
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_V>(
                     KDA_PREPARE_READY_FLAG_BASE + slot);
-                const int64_t dAqkOffset = TokenOffset(*tiling_, chunk, head, tiling_->chunkSize);
+                const int64_t dAqkOffset = TokenOutputOffset(*tiling_, chunk, head, tiling_->chunkSize);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[slot]);
                 ApplyTriScaleMaskRegbase(
                     (__ubuf__ float *)reinterpret_cast<uint64_t>(output_[slot].GetPhyAddr()),
@@ -186,7 +186,7 @@ public:
                 // transfer entirely on MTE3 so Vector does not serialize the
                 // A post-process, and publish FREE from PIPE_MTE3 only after
                 // the corresponding GM write has completed.
-                const int64_t tokenOffset = TokenOffset(*tiling_, chunk, head, tiling_->V);
+                const int64_t tokenOffset = TokenOutputOffset(*tiling_, chunk, head, tiling_->V);
                 AscendC::CrossCoreWaitFlag<KDA_PREPARE_CROSS_CORE_MODE, PIPE_MTE3>(
                     KDA_PREPARE_Q_READY_FLAG);
                 AscendC::DataCopy(

@@ -10,7 +10,7 @@
 #pragma once
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -81,7 +81,7 @@ constexpr uint64_t KDA_WORKSPACE_ALIGN = 512;
 constexpr uint32_t KDA_GATE_TILE_ROWS = 32;
 constexpr uint32_t KDA_CUBE_MIN_REDUCTION = 16;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 using KdaArchTag = Catlass::Arch::Ascend950;
 #else
 using KdaArchTag = Catlass::Arch::AtlasA2;
@@ -306,7 +306,7 @@ private:
 
     __aicore__ inline uint64_t HOffset(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t d, uint64_t r) const
     {
-        return (((b * HV_ + hv) * NT_ + chunkIdx) * K_ + d) * V_ + r;
+        return (((b * NT_ + chunkIdx) * HV_ + hv) * K_ + d) * V_ + r;
     }
 
     __aicore__ inline uint64_t WScratchOffset(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t t, uint64_t d) const
@@ -427,20 +427,20 @@ private:
         const uint64_t rowBytes = cols * sizeof(CopyT);
         const uint64_t gapBytes = (dstStride - cols) * sizeof(CopyT);
         DataCopyParams params{
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             1,
 #else
             static_cast<uint16_t>(rows),
 #endif
             static_cast<uint16_t>(rowBytes / blockBytes),
             0,
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             0
 #else
             static_cast<uint16_t>(gapBytes / blockBytes)
 #endif
         };
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         const uint64_t dstRowBytes = dstStride * sizeof(CopyT);
         LoopModeParams loopParams{
             static_cast<uint32_t>(rows), 1, rowBytes, dstRowBytes, 0, 0};
@@ -642,7 +642,7 @@ private:
         }
         return maxRows;
     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void ComputeOutputCubeStagedArch35(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                                      uint64_t curT)
     {
@@ -1096,10 +1096,7 @@ private:
     __aicore__ inline void ComputeOutputCube(uint64_t b, uint64_t hv, uint64_t chunkIdx, uint64_t start,
                                              uint64_t curT)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
-        if (curT < KDA_CUBE_MIN_REDUCTION) {
-            return;
-        }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         SetLoadDataPaddingValue<T>(static_cast<T>(0));
         if (BT_ == 64 && curT == BT_) {
             ComputeOutputCubeStagedArch35(b, hv, chunkIdx, start, curT);
@@ -1140,10 +1137,6 @@ private:
                 blockMmad(blockQ, blockH, blockO, shapeQH);
                 PipeBarrier<PIPE_ALL>();
             }
-        }
-
-        if (curT < KDA_CUBE_MIN_REDUCTION) {
-            return;
         }
 
         auto layoutAqk = tla::MakeLayout<ElementA, LayoutTagA>(BT_, BT_);
@@ -1202,18 +1195,12 @@ private:
             LocalTensor<float> outLocal = arena[2 * elems];
             LocalTensor<T> outTyped = gateWritebackBuf_.Get<T>();
 
-            if (curT < KDA_CUBE_MIN_REDUCTION) {
-                ComputeTailStateRows(
-                    stateLocal, b, hv, chunkIdx, start, tileRow, tileRows);
-                ComputeTailLocalRows(localLocal, b, hv, start, curT, tileRow, tileRows);
-            } else {
-                CopyVectorIn(stateLocal, o_, KVOffset(b, hv, ti, 0, V_), elems);
-                SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-                CopyVectorIn(localLocal, u_, KVOffset(b, hv, ti, 0, V_), elems);
-                SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-                WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-            }
+            CopyVectorIn(stateLocal, o_, KVOffset(b, hv, ti, 0, V_), elems);
+            SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+            CopyVectorIn(localLocal, u_, KVOffset(b, hv, ti, 0, V_), elems);
+            SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
+            WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             Add(outLocal, stateLocal, localLocal, static_cast<uint32_t>(elems));
             PipeBarrier<PIPE_V>();
             ClampFp32ToOutputType(outLocal, static_cast<uint32_t>(elems));
@@ -1286,7 +1273,7 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if constexpr (IsSameType<T, bfloat16_t>::value) {
             if (!isVarLen_ && T_ % BT_ == 0 && BT_ == 64 && K_ == 128 && V_ == 128) {
                 return;
@@ -1323,7 +1310,7 @@ private:
         if constexpr (IsSameType<T, float>::value) {
             return;
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (!isVarLen_ && T_ % BT_ == 0 && BT_ == 64 && K_ == 128 && V_ == 128) {
             ProcessOutAicPipelinedArch35();
             return;

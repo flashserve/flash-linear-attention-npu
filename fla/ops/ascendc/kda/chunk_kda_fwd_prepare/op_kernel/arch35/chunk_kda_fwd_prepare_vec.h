@@ -183,9 +183,9 @@ __simd_vf__ inline void StageV0Vf(
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
-        Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
-        Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
         if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
+            Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
+            Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
             RegTensor<float> qSquareLow;
             RegTensor<float> qSquareHigh;
             RegTensor<float> kSquareLow;
@@ -214,7 +214,7 @@ __simd_vf__ inline void StageV0Vf(
             Duplicate(one, 1.0F, scalarMask);
             Div(qSumLow, one, qSumLow, scalarMask);
             Div(kSumLow, one, kSumLow, scalarMask);
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     qRstd + row, qSumLow, scalarMask);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -232,7 +232,7 @@ __simd_vf__ inline void StageV0Vf(
             Mul(kHigh, kHigh, kScale, mask);
         } else {
             // Identity 模式仅在需要反向保存量时产生公开的 rstd=1。
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 RegTensor<float> one;
                 Duplicate(one, 1.0F, scalarMask);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -241,8 +241,10 @@ __simd_vf__ inline void StageV0Vf(
                     kRstd + row, one, scalarMask);
             }
         }
-        Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
-        Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
+        if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
+            Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
+            Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
+        }
 
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
@@ -271,6 +273,10 @@ __simd_vf__ inline void StageV0Vf(
                 RegTensor<float> positiveHigh;
                 RegTensor<float> softplusLow;
                 RegTensor<float> softplusHigh;
+                RegTensor<float> sumLow;
+                RegTensor<float> sumHigh;
+                RegTensor<float> residualLow;
+                RegTensor<float> residualHigh;
                 Maxs(positiveLow, gateLow, 0.0F, mask);
                 Maxs(positiveHigh, gateHigh, 0.0F, mask);
                 Abs(softplusLow, gateLow, mask);
@@ -279,10 +285,23 @@ __simd_vf__ inline void StageV0Vf(
                 Muls(softplusHigh, softplusHigh, -1.0F, mask);
                 Exp(softplusLow, softplusLow, mask);
                 Exp(softplusHigh, softplusHigh, mask);
-                Adds(softplusLow, softplusLow, 1.0F, mask);
-                Adds(softplusHigh, softplusHigh, 1.0F, mask);
+                // log1p(u) = Ln(1+u) + r/(1+u)，r = u - (fl(1+u)-1)：
+                // 直接取 Ln(1+u) 会把 1+u 的舍入按 1/u 放大，小 u（门控
+                // 接近 0）时相对误差可达 1e-4~1e-2，双标杆 L1 下会超限。
+                Adds(sumLow, softplusLow, 1.0F, mask);
+                Adds(sumHigh, softplusHigh, 1.0F, mask);
+                Adds(residualLow, sumLow, -1.0F, mask);
+                Adds(residualHigh, sumHigh, -1.0F, mask);
+                Sub(residualLow, softplusLow, residualLow, mask);
+                Sub(residualHigh, softplusHigh, residualHigh, mask);
+                Adds(softplusLow, sumLow, 0.0F, mask);
+                Adds(softplusHigh, sumHigh, 0.0F, mask);
                 Ln(softplusLow, softplusLow, mask);
                 Ln(softplusHigh, softplusHigh, mask);
+                Div(residualLow, residualLow, sumLow, mask);
+                Div(residualHigh, residualHigh, sumHigh, mask);
+                Add(softplusLow, softplusLow, residualLow, mask);
+                Add(softplusHigh, softplusHigh, residualHigh, mask);
                 Add(gateLow, positiveLow, softplusLow, mask);
                 Add(gateHigh, positiveHigh, softplusHigh, mask);
                 Mul(gateLow, gateLow, a, mask);
@@ -396,29 +415,32 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
                                      ? validRows
                                      : prefixRows;
     const uint16_t computeRows = bandBegin < validRows ? rowsInChunk : 0;
+    // gRef 的 band 参考行与 row 无关：每 chunk-head 由 2xN 次装载降为 2 次。
+    RegTensor<float> refLow;
+    RegTensor<float> refHigh;
+    LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
+    LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
     for (uint16_t row = 0; row < computeRows; ++row) {
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
-        RegTensor<float> refLow;
-        RegTensor<float> refHigh;
+        RegTensor<float> expLow;
+        RegTensor<float> expHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
         RegTensor<float> outLow;
         RegTensor<float> outHigh;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             gateLow, gateHigh, g + row * Shape::kHeadDim);
-        LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
-        LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
-        Sub(refLow, refLow, gateLow, mask);
-        Sub(refHigh, refHigh, gateHigh, mask);
+        Sub(expLow, refLow, gateLow, mask);
+        Sub(expHigh, refHigh, gateHigh, mask);
         constexpr float lower =
             Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
         constexpr float upper =
             Domain::StoredBound(ExpDomain::kV1Bf16UpperBase2);
-        ExpPair<CompilePolicy::useExp2>(refLow, refHigh, lower, upper);
+        ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
         Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
-        Mul(outLow, kLow, refLow, mask);
-        Mul(outHigh, kHigh, refHigh, mask);
+        Mul(outLow, kLow, expLow, mask);
+        Mul(outHigh, kHigh, expHigh, mask);
         Store128FromFp32(
             kMinus + prefixBase + row * Shape::kHeadDim,
             outLow, outHigh);
@@ -447,6 +469,11 @@ __simd_callee__ inline void ComputeStageV1PlusBand(
     const uint16_t computeRows = validRows > kBandBegin
                                      ? bandEnd - kBandBegin
                                      : 0;
+    // gRef 的 band 参考行与 row 无关：每 chunk-head 由 2xN 次装载降为 2 次。
+    RegTensor<float> refLow;
+    RegTensor<float> refHigh;
+    LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
+    LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
     for (uint16_t bandRow = 0; bandRow < computeRows; ++bandRow) {
         constexpr float lower =
             Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
@@ -459,12 +486,8 @@ __simd_callee__ inline void ComputeStageV1PlusBand(
         RegTensor<float> kHigh;
         RegTensor<float> expLow;
         RegTensor<float> expHigh;
-        RegTensor<float> refLow;
-        RegTensor<float> refHigh;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             expLow, expHigh, g + row * Shape::kHeadDim);
-        LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
-        LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
         Sub(expLow, expLow, refLow, mask);
         Sub(expHigh, expHigh, refHigh, mask);
         ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
@@ -717,27 +740,24 @@ __simd_vf__ inline void StageV6Vf(
         Load128AsFp32(qLow, qHigh, qHat + row * 128);
         Load128AsFp32(kLow, kHigh, kHat + row * 128);
 
-        RegTensor<float> posLow;
-        RegTensor<float> posHigh;
         RegTensor<float> kPosLow;
         RegTensor<float> kPosHigh;
-        Adds(posLow, gateLow, 0.0F, mask);
-        Adds(posHigh, gateHigh, 0.0F, mask);
         constexpr float lower =
             Domain::StoredBound(ExpDomain::kV6LowerBase2);
         constexpr float upper =
             Domain::StoredBound(ExpDomain::kV6UpperBase2);
-        ExpPair<CompilePolicy::useExp2>(posLow, posHigh, lower, upper);
-        Mul(qLow, qLow, posLow, mask);
-        Mul(qHigh, qHigh, posHigh, mask);
-        Mul(kPosLow, kLow, posLow, mask);
-        Mul(kPosHigh, kHigh, posHigh, mask);
+        // kg 消费 (gLast - g)：必须在 ExpPair 覆写 gate 之前成形。
+        Sub(lastLow, lastLow, gateLow, mask);
+        Sub(lastHigh, lastHigh, gateHigh, mask);
+        ExpPair<CompilePolicy::useExp2>(gateLow, gateHigh, lower, upper);
+        Mul(qLow, qLow, gateLow, mask);
+        Mul(qHigh, qHigh, gateHigh, mask);
+        Mul(kPosLow, kLow, gateLow, mask);
+        Mul(kPosHigh, kHigh, gateHigh, mask);
         Store128FromFp32(qg + row * 128, qLow, qHigh);
         // 第一次舍入先落到最终 kBetaG 物理区，第二阶段再回读 FP32。
         Store128FromFp32(kBetaG + row * 128, kPosLow, kPosHigh);
 
-        Sub(lastLow, lastLow, gateLow, mask);
-        Sub(lastHigh, lastHigh, gateHigh, mask);
         ExpPair<CompilePolicy::useExp2>(lastLow, lastHigh, lower, upper);
         Mul(kLow, kLow, lastLow, mask);
         Mul(kHigh, kHigh, lastHigh, mask);
@@ -782,6 +802,18 @@ __simd_vf__ inline void StageV6Vf(
 }
 
 } // namespace Detail
+
+// AIC→AIV 的三条跨核旗通道（AIV 本地编号；AIC 侧 AIV1 的编号 = 本地 +16）。
+// 约定：同一旗号的 wait 只在一条 pipe 上，信用按 FIFO 消费——若两条 pipe
+// 的阻塞 wait 共享一个计数器，可能互相抢走对方的信用，造成跨核停等。
+// 三条通道各只服务一个消费者 stage：
+constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
+// C7→V0：槽位可复用（V0 在首个 workspace 写之前 wait，MTE3 味）。
+// C2→V3：raw Aqk/Akk 已写回、V1 payload 不再被读（V3 在波次循环里 wait，
+// PIPE_V 味）。
+constexpr uint16_t kAicToAivScoreReadyFlagId[2] = {2, 3};
+// C4→V6：payload 可原址换义（V6 在首个 workspace 写之前 wait，MTE3 味）。
+constexpr uint16_t kAicToAivPayloadRepurposeFlagId[2] = {6, 7};
 
 template <typename GateT, typename BetaT, typename CompilePolicy>
 class ChunkKdaFwdPrepareVec {
@@ -855,7 +887,7 @@ public:
         const bool fourHeadGroupPreservesGva =
             headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
         const bool balanceDenseTail =
-            !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
+            HeadPartitionCount(args_.tiling) == 1 &&
             fourHeadGroupPreservesGva && chunkWork >= coreCount &&
             chunkWork % coreCount != 0;
         if (!balanceDenseTail) {
@@ -931,11 +963,11 @@ public:
                 tailTask = segmentEnd;
             }
         }
-        // 消费最后一次 C7 free，保证每次 set 都有对应 wait。
-        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
+        // 消费最后一次 C7 free，保证每次 set 都有对应 wait
+        //（与 V0 同在 MTE3 上，保持该旗号的 FIFO）。
         for (uint32_t localSlot = 0; localSlot < 2; ++localSlot) {
             if (usedLocalSlot_[localSlot]) {
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
+                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE3>(
                     kAicToAivSlotReusableFlagId[localSlot]);
             }
         }
@@ -946,9 +978,8 @@ private:
         const ChunkRange &chunk, uint32_t headBegin, uint32_t headEnd)
     {
         // 每个 AIV 都在自己的本地 flag 空间使用同一组固定编号：
-        // localSlot0/1 的 ready=0/1，free=4/5。AIV1 不能写 16/17/20/21。
+        // localSlot0/1 的 ready=0/1，free=4/5（文件常量）。AIV1 不能写 16/17/20/21。
         constexpr uint16_t kAivToAicPayloadReadyFlagId[2] = {0, 1};
-        constexpr uint16_t kAicToAivSlotReusableFlagId[2] = {4, 5};
         for (uint32_t groupBegin = headBegin; groupBegin < headEnd;) {
             uint32_t activeHeads = headEnd - groupBegin;
             if (activeHeads > Shape::kHeadsPerGroup) {
@@ -961,9 +992,8 @@ private:
                 }
                 const uint32_t valueHead = groupBegin + localHead;
                 usedLocalSlot_[localSlot] = true;
-                // 初始 free 或上一组 C7 free；V0 首个消费者是 MTE2。
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                    kAicToAivSlotReusableFlagId[localSlot]);
+                // free-wait 在 StageV0 内、首个 workspace 写之前，
+                // 本组的装载+VF 与上一组 C7 重叠。
                 StageV0(chunk, valueHead, localHead, localSlot);
                 StageV1(chunk, localHead, localSlot);
                 // V1 的 72 KiB score payload 已经写入 workspace。
@@ -976,9 +1006,9 @@ private:
                     continue;
                 }
                 const uint32_t valueHead = groupBegin + localHead;
-                // C2 已写回 raw Aqk/Akk，且不再读取 V1 payload。
+                // 等 C2 写回 raw Aqk/Akk（此后 AIC 不再读 V1 payload）。
                 AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(
-                    kAicToAivSlotReusableFlagId[localSlot]);
+                    kAicToAivScoreReadyFlagId[localSlot]);
                 StageV3(chunk, valueHead, localHead, localSlot);
                 AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                     kAivToAicPayloadReadyFlagId[localSlot]);
@@ -989,9 +1019,7 @@ private:
                     continue;
                 }
                 const uint32_t valueHead = groupBegin + localHead;
-                // C4 已一次性读完 B/X0/negX1/Akk，V6 可以原址换义。
-                AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE2>(
-                    kAicToAivSlotReusableFlagId[localSlot]);
+                // 同理：StageV6 的装载+VF 与上一组 C4/C5 重叠。
                 StageV6(chunk, valueHead, localHead, localSlot);
                 AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(
                     kAivToAicPayloadReadyFlagId[localSlot]);
@@ -1149,6 +1177,11 @@ private:
         const AscendC::DataCopyExtParams scalarOutputCopy{
             1, static_cast<uint32_t>(chunk.validRows * sizeof(float)),
             0, 0, 0};
+        // 等上一组 C7 释放槽位（首轮为 AIC 预发布）。wait 只需保护
+        // 下面的 MTE3 workspace 写，故放在这里而不是 stage 入口：
+        // 装载+VF 得以与上一组 C7 重叠。
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE3>(
+            kAicToAivSlotReusableFlagId[localSlot]);
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         AscendC::DataCopy(qContext, q,
             chunk.validRows * Shape::kHeadDim);
@@ -1403,6 +1436,11 @@ private:
             args_.workspace + slot + Workspace::kPayload +
             Workspace::kVBeta));
         const uint32_t rhsRows = chunk.validRows > 32 ? 64 : 32;
+        // 等 C4 读完 payload（B/X0/negX1/Akk）再原址换义。wait 只需
+        // 保护下面的 MTE3 写，故放在这里而不是 stage 入口：
+        // 装载+VF 得以与上一组 C4/C5 重叠。
+        AscendC::CrossCoreWaitFlag<0x4, PIPE_MTE3>(
+            kAicToAivPayloadRepurposeFlagId[localSlot]);
         AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
         const uint64_t out = HeadTensorOffset(
             args_.tiling, chunk, valueHead, Shape::kHeadDim);

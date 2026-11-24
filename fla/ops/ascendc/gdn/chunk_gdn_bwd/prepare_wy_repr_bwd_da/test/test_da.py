@@ -1,4 +1,5 @@
 import torch
+from fla_npu.ops import ascendc as ascendc_ops
 import torch_npu
 from typing import Optional
 import math
@@ -339,7 +340,7 @@ def test_prepare_wy_repr_bwd_da_variable(
     du_npu = du.npu()
     g_npu = g.npu()
 
-    dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
+    dA_npu = ascendc_ops.npu_prepare_wy_repr_bwd_da(
         k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu,
         chunk_size=chunk_size, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
     )
@@ -409,7 +410,7 @@ def test_prepare_wy_repr_bwd_da_fix(
     du_npu = du.npu()
     g_npu = g.npu()
 
-    dA_npu = torch.ops.npu.npu_prepare_wy_repr_bwd_da(
+    dA_npu = ascendc_ops.npu_prepare_wy_repr_bwd_da(
         k_npu, v_npu, beta_npu, A_npu, dw_npu, du_npu, g_npu,
         chunk_size=chunk_size, cu_seqlens=None, chunk_indices=None
     )

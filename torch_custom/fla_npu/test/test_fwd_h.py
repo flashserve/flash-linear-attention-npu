@@ -119,7 +119,7 @@ def forward_h_trans_cpu(
 
     #S = S.to(torch.bfloat16)
     #v_new_output = v_new_output.to(torch.bfloat16)
-    S = S.to(dtype_)
+    S = S.transpose(1, 2).contiguous().to(dtype_)
     v_new_output = v_new_output.to(dtype_)
     return S, v_new_output, None
 
@@ -185,7 +185,7 @@ def parse_actual_output(h_input):
     actual_data = torch.load(h_input.data_path, map_location='cpu')
     h = actual_data['h'] if 'h' in actual_data.keys() else actual_data['ref_h']
     v = actual_data['v_new'] if 'v_new' in actual_data.keys() else actual_data['ref_v_new']
-    h = h[:, :, :h_input.v_num_head].to(h_input.dtype).transpose(1, 2).contiguous()
+    h = h[:, :, :h_input.v_num_head].to(h_input.dtype).contiguous()
     v = v[:, :, :h_input.v_num_head].to(h_input.dtype).transpose(1, 2).contiguous()
     return GDNFwdHOutputTensor(h, v)
 
