@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -486,7 +487,7 @@ def install_overlay(
         if (PACKAGE_OPP_ROOT / "wheel_layers/state.json").is_file():
             import fla_npu_wheel_overlay as layers
             current = layers.state(PACKAGE_OPP_ROOT.parent)
-            if current.get("active") or current.get("pending"):
+            if current.get("active"):
                 raise RuntimeError("Remove the wheel overlay before installing a run overlay")
         vendor_src = _resolve_overlay_source(source)
         _validate_overlay_abi(vendor_src)
@@ -510,7 +511,7 @@ def install_overlay(
     base = vendors_root / BASE_VENDOR_NAME
     _print_install_summary({
         "artifact": "run", "base_opp": str(base) if base.is_dir() else None,
-        "previous_overlay_opp": ", ".join(previous_opps) or None, "previous_state": "active",
+        "previous_overlay_opp": ", ".join(previous_opps) or None,
         "installed_opp": str(vendor_dst),
         "selection": "overlay" if overlay_name in overlay_vendor_names() else "base",
     }, "active")
@@ -584,13 +585,12 @@ def _print_install_summary(summary: dict, state: str) -> None:
     """Report committed paths, without importing or initializing the NPU runtime."""
     print(f"[fla-npu] Installation successful: mode=overlay, artifact={summary['artifact']}")
     print(f"[fla-npu] base OPP: {summary['base_opp'] or 'none'}")
-    print(f"[fla-npu] previous overlay OPP ({summary['previous_state']}): "
+    print(f"[fla-npu] previous overlay OPP (active): "
           f"{summary['previous_overlay_opp'] or 'none'}")
-    print(f"[fla-npu] installed OPP: {summary['installed_opp'] or 'none (no OPP supplied; previous selection retained)'}")
+    print(f"[fla-npu] installed OPP: {summary['installed_opp']}")
     if "opp_order" in summary:
         print(f"[fla-npu] {state} OPP order (newest first): " + " -> ".join(summary["opp_order"]))
-    detail = " (installed, not enabled; previous active combination unchanged)" if state == "pending" else ""
-    print(f"[fla-npu] combination: {state}{detail}")
+    print(f"[fla-npu] combination: {state}")
     print(f"[fla-npu] selection for a new process: {summary['selection']} (restart Python processes before use)")
 
 
@@ -611,11 +611,7 @@ def main() -> int:
     parser.add_argument("--status", action="store_true", help="Show the embedded OPP overlay state.")
     parser.add_argument("--source", type=Path, help="Delta source: a .whl, .run, vendor dir, or parent holding one.")
     parser.add_argument("--overlay-name", help=f"Overlay vendor name (default: {DEFAULT_OVERLAY_NAME}).")
-    parser.add_argument("--opp-source", type=Path, help="Matching vendor or .run for a skeleton wheel overlay")
     args = parser.parse_args()
-
-    if args.opp_source and not (args.overlay and args.source and args.source.suffix == ".whl"):
-        parser.error("--opp-source requires --overlay with a wheel --source")
 
     modes = [bool(args.install_path), args.overlay, args.remove_overlay, args.status]
     if sum(modes) != 1:
@@ -631,14 +627,16 @@ def main() -> int:
         if args.source.suffix == ".whl" or (package / layers.MANIFEST).is_file():
             if args.overlay_name and args.overlay_name != layers.NAME:
                 parser.error("component overlays use the default overlay name")
-            result = layers.install(package, args.source, opp_source=args.opp_source, force=args.force)
+            try:
+                result = layers.install(package, args.source, force=args.force)
+            except (OSError, ValueError, RuntimeError) as exc:
+                print(f"[fla-npu] {exc}", file=sys.stderr)
+                return 1
             summary = result.pop("installation")
             print(json.dumps(result, indent=2))
             _print_install_summary(summary, result["state"])
         else:
-            if args.opp_source:
-                parser.error("--opp-source requires a wheel --source")
-            if layers.state(package).get("active") or layers.state(package).get("pending"):
+            if layers.state(package).get("active"):
                 parser.error("remove the wheel overlay before installing a run overlay")
             install_overlay(args.source, overlay_name=args.overlay_name, force=args.force)
     elif args.remove_overlay:
@@ -650,7 +648,7 @@ def main() -> int:
                 wheel_state = {"active": True}  # Recovery must not require healthy metadata.
         else:
             wheel_state = {}
-        if wheel_state.get("active") or wheel_state.get("pending") or wheel_state.get("version") == 2:
+        if wheel_state.get("active") or wheel_state.get("version") == 2:
             if args.overlay_name and args.overlay_name != layers.NAME:
                 parser.error("wheel overlays use the default overlay name")
             layers.remove(PACKAGE_OPP_ROOT.parent)

@@ -8,6 +8,5 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-This directory is intentionally shipped by the standalone fla_npu Python wheel.
-Install a FLA NPU operator run package with --install or --full to merge the
-actual OPP libraries, aclnn headers, tiling/proto libraries and kernels here.
+Install the base wheel with pip before applying a .run or a wheel update.
+The installer checks this vendor directory for op_api/lib/libcust_opapi.so.

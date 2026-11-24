@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="766" viewBox="0 0 720 766" role="img" aria-labelledby="title desc">
+  <title id="title">增量安装流程</title>
+  <desc id="desc">.run 包更新 OPP，wheel 包还替换清单声明的适配层入口。首次安装从 base 开始，之后从 active 开始。校验通过后提交新组合，失败时保留原组合。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 L6 4 L1 7" fill="none" stroke="#788995" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font: 600 17px "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; text-anchor: middle; fill: #124b70; }
+      .box { fill: #e6f3fc; stroke: #c3d5e1; }
+      .decision { fill: #f5faff; stroke: #beccd7; stroke-dasharray: 3 3; }
+      .label { fill: #f5faff; stroke: #c3d5e1; }
+      .label-text { font-size: 15px; }
+      .edge { fill: none; stroke: #788995; stroke-width: 1.25; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="720" height="766" fill="white"/>
+  <g class="edge">
+    <path d="M360 62 V99"/>
+    <path d="M322 154 V175 Q322 181 316 181 H185 Q179 181 179 187 V243"/>
+    <path d="M398 154 V175 Q398 181 404 181 H535 Q541 181 541 187 V243"/>
+    <path d="M179 310 V332 Q179 338 185 338 H328 Q334 338 334 344 V366"/>
+    <path d="M541 310 V332 Q541 338 535 338 H392 Q386 338 386 344 V366"/>
+    <path d="M360 430 V471"/>
+    <path d="M322 527 V544 Q322 550 316 550 H185 Q179 550 179 556 V602"/>
+    <path d="M398 527 V544 Q398 550 404 550 H535 Q541 550 541 556 V602"/>
+    <path d="M541 668 V704"/>
+  </g>
+  <rect class="box" x="273" y="16" width="174" height="46" rx="14"/>
+  <text x="360" y="45">收到增量包</text>
+  <rect class="decision" x="254" y="101" width="212" height="53" rx="14"/>
+  <text x="360" y="134">安装哪种包？</text>
+
+  <rect class="label" x="139" y="195" width="80" height="26" rx="13"/>
+  <text class="label-text" x="179" y="213">.run 包</text>
+  <rect class="label" x="493" y="195" width="96" height="26" rx="13"/>
+  <text class="label-text" x="541" y="213">wheel 包</text>
+  <rect class="box" x="33" y="245" width="292" height="65" rx="14"/>
+  <text x="179" y="272">沿用当前适配层</text>
+  <text x="179" y="296">加入本包 OPP</text>
+  <rect class="box" x="395" y="245" width="292" height="65" rx="14"/>
+  <text x="541" y="272">替换清单声明的适配层入口</text>
+  <text x="541" y="296">加入本包 OPP</text>
+
+  <rect class="box" x="189" y="368" width="342" height="62" rx="14"/>
+  <text x="360" y="394">与当前 active 组合</text>
+  <text x="360" y="417">首次安装从 base 开始</text>
+  <rect class="decision" x="165" y="473" width="390" height="54" rx="14"/>
+  <text x="360" y="506">包校验通过，且受影响的调用都兼容吗？</text>
+
+  <rect class="label" x="156" y="558" width="46" height="25" rx="12"/>
+  <text class="label-text" x="179" y="576">是</text>
+  <rect class="label" x="518" y="558" width="46" height="25" rx="12"/>
+  <text class="label-text" x="541" y="576">否</text>
+  <rect class="box" x="36" y="604" width="286" height="64" rx="14"/>
+  <text x="179" y="631">一次性提交新的 active</text>
+  <text x="179" y="655">安装成功，返回 0</text>
+  <rect class="box" x="391" y="604" width="300" height="64" rx="14"/>
+  <text x="541" y="631">报告校验失败的原因</text>
+  <text x="541" y="655">安装失败，返回非零</text>
+  <rect class="box" x="411" y="706" width="260" height="45" rx="14"/>
+  <text x="541" y="735">继续使用安装前的组合</text>
+</svg>

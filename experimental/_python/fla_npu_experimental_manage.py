@@ -14,7 +14,6 @@ def main(argv=None):
     actions.add_argument("--status", action="store_true")
     actions.add_argument("--remove-overlay", action="store_true")
     actions.add_argument("--shell-env", action="store_true")
-    parser.add_argument("--opp-source", type=Path)
     parser.add_argument("--package-dir", type=Path,
                         default=Path(__file__).resolve().parent / "fla_npu_experimental")
     args = parser.parse_args(argv)
@@ -32,7 +31,10 @@ def main(argv=None):
         print(manager.shell_environment(package))
         return
     if args.source:
-        result = manager.install(package, args.source, opp_source=args.opp_source)
+        try:
+            result = manager.install(package, args.source)
+        except (OSError, ValueError, RuntimeError) as exc:
+            parser.exit(1, f"{exc}\n")
     elif args.remove_overlay:
         manager.remove(package)
         result = {"state": "base"}
