@@ -158,9 +158,31 @@ class WheelOverlayTests(unittest.TestCase):
         data = layers.manifest(base)
         data["operators"]["npu_b"]["requires"].update(contract())
         (base / layers.MANIFEST).write_text(json.dumps(data))
-        with self.assertRaisesRegex(RuntimeError, "base/npu_b"):
-            layers.install(base, self.update())
+        update = self.update()
+        with self.assertRaises(RuntimeError) as raised:
+            layers.install(base, update)
+        self.assertIn(f"Incompatible overlay {update}:", str(raised.exception))
+        self.assertIn(f"base/npu_b: aclnnDemoGetWorkspaceSize mismatches OPP {update} at parameter 2 "
+                      "(1-based): adapter expects int64, OPP provides bool", str(raised.exception))
         self.assertIsNone(layers.active(base))
+
+    def test_abi_error_identifies_missing_and_extra_arguments(self):
+        base = self.base()
+        # The new wrapper uses aclnnDemo from the base OPP.
+        src = package(self.root / "wrapper", exports=["npu_a"], opp={"aclnnOther": "int64"})
+        data = layers.manifest(src)
+        signature = contract()["aclnnDemo"]
+        for expected, detail in ((signature[:-1], "parameter 4 (1-based): adapter expects <missing>, OPP provides stream"),
+                                 (signature + ["bool"], "parameter 5 (1-based): adapter expects bool, OPP provides <missing>")):
+            with self.subTest(expected=expected):
+                data["operators"]["npu_a"]["requires"]["aclnnDemo"] = expected
+                (src / layers.MANIFEST).write_text(json.dumps(data))
+                update = wheel(self.root / "wrapper.whl", src)
+                with self.assertRaises(RuntimeError) as raised:
+                    layers.install(base, update)
+                self.assertIn(f"Incompatible overlay {update}:", str(raised.exception))
+                self.assertIn(f"overlay/npu_a: aclnnDemo mismatches OPP {layers._vendor(base)} at {detail}",
+                              str(raised.exception))
 
     def test_opp_component_can_update_b_while_reusing_compatible_base_adapter(self):
         base = self.base()
@@ -284,13 +306,17 @@ class WheelOverlayTests(unittest.TestCase):
     def test_run_file_updates_active_adapter(self):
         import shlex
         base = self.base()
-        layers.install(base, self.update())
         source = package(self.root / "run-payload", exports=["npu_a"], opp={"aclnnDemo": "bool"})
         run = self.root / "update.run"
         run.write_text('#!/bin/bash\nset -eu\nfor arg in "$@"; do\n'
                        'case "$arg" in --install-path=*) destination="${arg#*=}";; esac\ndone\n'
                        'mkdir -p "$destination/vendors"\ncp -R '
                        + shlex.quote(str(layers._vendor(source))) + ' "$destination/vendors/"\n')
+        with self.assertRaises(RuntimeError) as raised:
+            layers.install(base, run)
+        self.assertIn(f"base/npu_a: aclnnDemoGetWorkspaceSize mismatches OPP {run} at parameter 2 "
+                      "(1-based): adapter expects int64, OPP provides bool", str(raised.exception))
+        layers.install(base, self.update())
         self.assertEqual(layers.install(base, run)["state"], "active")
 
     def test_traversal_is_rejected(self):
@@ -544,6 +570,16 @@ a = npu_a
             self.assertIn(f"previous overlay OPP (active): {previous or 'none'}", result.stdout)
             self.assertIn(f"installed OPP: {current}", result.stdout)
             previous = current
+        # makeself prepends the invoked .run name when it calls install.sh.
+        data = layers.manifest(base)
+        data["operators"]["npu_a"]["requires"] = contract("bool")
+        (base / layers.MANIFEST).write_text(json.dumps(data))
+        result = subprocess.run(["bash", str(installer), "--./scoped.run"], cwd=stage, env=env,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Incompatible overlay ./scoped.run:", result.stderr)
+        self.assertIn("aclnnDemoGetWorkspaceSize mismatches OPP ./scoped.run at parameter 2 "
+                      "(1-based): adapter expects bool, OPP provides int64", result.stderr)
         target = self.root / "external-opp"
         for previous in ("none", str(target / "vendors" / layers.BASE)):
             result = subprocess.run(["bash", str(installer), f"--install-path={target}"], cwd=stage, env=env,

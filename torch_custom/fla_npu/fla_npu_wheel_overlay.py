@@ -12,6 +12,7 @@ import csv
 import hashlib
 import importlib.util
 import io
+from itertools import zip_longest
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -236,7 +237,7 @@ def _vendor(package):
     return directory if library.is_file() else None
 
 
-def resolve(package, layer):
+def resolve(package, layer, *, source_label=None):
     """Return explicit adapter bindings and CANN order, or readiness errors.
 
     A custom symbol has one effective CANN implementation. Updated adapters
@@ -283,8 +284,14 @@ def resolve(package, layer):
                     if owner == "overlay":
                         errors.append(f"{owner}/{name}: missing OPP symbol {symbol}")
                     continue  # A skeleton base may have unavailable, uncovered ops.
-                if tuple(expected) != contracts[str(chosen)][symbol]:
-                    errors.append(f"{owner}/{name}: {symbol} mismatches OPP {chosen}; include its matching adapter/OPP in the update")
+                actual = contracts[str(chosen)][symbol]
+                if tuple(expected) != actual:
+                    provider = source_label if source_label and chosen.is_relative_to(layer) else chosen
+                    for position, (want, got) in enumerate(zip_longest(expected, actual, fillvalue="<missing>"), 1):
+                        if want != got:
+                            errors.append(f"{owner}/{name}: {symbol} mismatches OPP {provider} at parameter "
+                                          f"{position} (1-based): adapter expects {want}, OPP provides {got}")
+                            break
     # Every selected adapter uses the same immutable, validated CANN order.
     return {"vendors": [str(p) for p in vendors],
             "bindings": {"base": libraries, "overlay": libraries},
@@ -419,7 +426,7 @@ def _adopt_vendor_overlay(package, previous, created):
     _attach_opp(source, target)
     _atomic_json(target / "installation.json", {"component_protocol": 1, "source": str(source)})
     _atomic_json(target / "components.json", {"version": 1, "adapter": None, "opp": identity})
-    plan = resolve(package, target)
+    plan = resolve(package, target, source_label=source)
     if plan["errors"]:
         raise RuntimeError("Existing vendor overlay is incompatible: " + "; ".join(plan["errors"]))
     return dict(previous, active=identity)
@@ -458,9 +465,11 @@ def install(package, source, *, force=False):
             selected["opps"].insert(0, identity)
             _atomic_json(target / "components.json", {"version": 2,
                          "adapters": selected["adapters"], "opps": selected["opps"]})
-            plan = resolve(package, target)
+            # Bare .run installers delegate their unpacked vendor directory to this manager.
+            source_label = (os.environ.get("_FLA_NPU_RUN_ARCHIVE") if source.is_dir() else None) or source
+            plan = resolve(package, target, source_label=source_label)
             if plan["errors"]:
-                raise RuntimeError("Incompatible overlay:\n" + "\n".join(plan["errors"]))
+                raise RuntimeError(f"Incompatible overlay {source_label}:\n" + "\n".join(plan["errors"]))
             base_opp = _vendor(package)
             installed_opp = _vendor(target / PACKAGE)
             _atomic_json(target / "installation.json", {"component_protocol": 1, "source": str(source.resolve())})

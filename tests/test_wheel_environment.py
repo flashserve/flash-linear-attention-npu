@@ -1519,8 +1519,9 @@ class DefaultRunInstallTest(unittest.TestCase):
 
     def test_failed_manager_does_not_fall_back_to_base_replacement(self):
         self.env["RUN_MANAGER_EXIT"] = "42"
-        result = self.run_installer()
+        result = self.run_installer("--./scoped-update.run")
         self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertIn("Incremental installation failed for ./scoped-update.run", result.stdout)
         self.assertEqual((self.base / "op_api/lib/libcust_opapi.so").read_bytes(), b"old full library")
 
     def test_missing_manager_does_not_fall_back_to_base_replacement(self):
