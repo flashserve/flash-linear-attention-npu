@@ -8,6 +8,7 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include "opdev/platform.h"
 
 using namespace op;
 
@@ -94,18 +95,24 @@ const std::array<const aclTensor *, 9> ChunkGatedDeltaRuleFwdPrepare(
     const aclTensor *actualQRstd = qRstdOptional;
     const aclTensor *actualKRstd = kRstdOptional;
     if (!useQkL2norm) {
-        // Keep optional output slots occupied so GE does not pack beta_eff into
-        // q_hat and leave later GM (tiling) as 0x80000000. Kernel aliases k̂ to k
-        // and never reads/writes these dummies.
-        actualQHat = executor->AllocTensor(q->GetViewShape(), q->GetDataType(), Format::FORMAT_ND);
-        actualKHat = executor->AllocTensor(k->GetViewShape(), k->GetDataType(), Format::FORMAT_ND);
+        // Keep the output slots populated so GE preserves the kernel argument order.
+        // DAV_2201 uses the original Q/K and skips the norm outputs in this mode.
+        const bool compactNormOutputs = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+        op::Shape placeholderShape;
+        placeholderShape.SetDimNum(1);
+        placeholderShape.SetDim(0, 1);
+        actualQHat = executor->AllocTensor(compactNormOutputs ? placeholderShape : q->GetViewShape(),
+                                          q->GetDataType(), Format::FORMAT_ND);
+        actualKHat = executor->AllocTensor(compactNormOutputs ? placeholderShape : k->GetViewShape(),
+                                          k->GetDataType(), Format::FORMAT_ND);
         op::Shape rstdShape;
         rstdShape.SetDimNum(3);
         rstdShape.SetDim(0, q->GetViewShape().GetDim(0));
         rstdShape.SetDim(1, q->GetViewShape().GetDim(1));
         rstdShape.SetDim(2, q->GetViewShape().GetDim(2));
-        actualQRstd = executor->AllocTensor(rstdShape, DataType::DT_FLOAT, Format::FORMAT_ND);
-        actualKRstd = executor->AllocTensor(rstdShape, DataType::DT_FLOAT, Format::FORMAT_ND);
+        const auto &rstdOutputShape = compactNormOutputs ? placeholderShape : rstdShape;
+        actualQRstd = executor->AllocTensor(rstdOutputShape, DataType::DT_FLOAT, Format::FORMAT_ND);
+        actualKRstd = executor->AllocTensor(rstdOutputShape, DataType::DT_FLOAT, Format::FORMAT_ND);
     }
     const aclTensor *actualBetaEff = betaEffOptional;
     if (actualBetaEff == nullptr) {
