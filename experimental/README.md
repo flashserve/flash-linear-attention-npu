@@ -102,7 +102,7 @@ RWKV8 返回 `(o, s, sa)`，`chunk_len` 范围为 `[1,4294967295]`。
 python -m fla_npu_experimental_manage --source /absolute/update.whl
 # 只更新 OPP 组件，保留当前适配层。
 python -m fla_npu_experimental_manage --source /absolute/update.run
-# 查看 active/pending 组件及兼容性问题。
+# 查看 生效的组件及兼容性问题。
 python -m fla_npu_experimental_manage --status
 # 重新设置选中组件的 OPP 顺序，然后启动新的 Python 进程。
 source /absolute/site-packages/fla_npu_experimental/opp/vendors/fla_npu_experimental_transformer/bin/set_env.bash
@@ -114,8 +114,7 @@ unset FLA_NPU_OVERLAY_VENDOR
 python -m fla_npu_experimental_manage --remove-overlay
 ```
 
-管理器支持 `--package-dir` 显式指定目标包目录；`--source update.whl --opp-source update.run`
-沿用主干配套安装机制。不修改 base 文件；ABI 不匹配时使用通用 pending 行为。
+管理器支持 `--package-dir` 显式指定目标包目录。增量 wheel 须内嵌 OPP。ABI 不匹配时命令返回非零，并保留上次成功安装的组合。
 
 ```text
 site-packages/

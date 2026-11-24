@@ -236,7 +236,7 @@ A6 的 V=256 在 arch92 engine 内按 128 切片串行处理。
 | 条件 | 返回码/异常 |
 | --- | --- |
 | workspaceSize 或 executor 为空 | `ACLNN_ERR_PARAM_NULLPTR` |
-| 必选 tensor 为空 | `ACLNN_ERR_PARAM_INVALID` |
+| 必选 tensor 为空 | `ACLNN_ERR_PARAM_NULLPTR` |
 | rank/shape/dtype/layout 或属性组合非法 | `ACLNN_ERR_PARAM_INVALID` |
 | 内部 tensor 创建或 L0 调用失败 | `ACLNN_ERR_INNER_NULLPTR` |
 | Python 输入不是 NPU tensor 或 runtime/op_api 未加载 | `RuntimeError` |

@@ -180,7 +180,7 @@ python tests/atk/pre_process_bwd_kernel_merged/scripts/reference.py
 环境要点（复现该入口时容易踩）：稳定入口要求 custom OPP 指向**本算子 run 包的安装目录**
 （`<install>/vendors/<vendor>`，同时把 `FLA_NPU_ENV` 指向该目录的 `set_env.bash`）。把 OPP
 **复制**到别处再用会在 A2 上解析不到 tiling compile-info（`InitTilingParseCtx failed ...
-compile info not contain [_pattern]`），从而在 `GetWorkspaceSize` 报 `aclnnStatus=161001`；
+compile info not contain [_pattern]`），从而在 `GetWorkspaceSize` 报 `aclnnStatus=161002`；
 指回原安装目录即恢复正常。
 
 ## 精度判据

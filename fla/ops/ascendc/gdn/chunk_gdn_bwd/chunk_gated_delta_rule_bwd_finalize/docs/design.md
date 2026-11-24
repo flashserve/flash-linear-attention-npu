@@ -1,6 +1,38 @@
 # GDN backward finalize 全融合 Ascend C 算子设计
 
-方案设计规则版本：`V1`
+方案设计规则版本：`V2`（#810 增量沿用评审确认的完整 HV owner 映射）
+
+## A5 G>4 增量（#810）
+
+接口范围以 [api.md](api.md) 为准。下文旧分组/partial/S15 描述适用于 G≤4；
+A2/A3 保持第 6 节。新增路径仅改变调度和 S14 后归约，不改变 S0～S14 数学边界。
+
+- 逻辑任务 (chunk,hk)，N=Nc×HK，C=min(availableAic,N)，grid-stride 领取。
+  每任务 ceil(G/4) 个窗口；hvBase=hk×G+4w，taskCount=min(4,G−4w)。
+  r%2 选择 AIV，r/2 选择本轮槽；每个 Cube stage 连续处理本轮所有 r。
+- bank 每个有效物理窗口切换，跨 HK 连续；S14 每轮重新载入 q 槽0，
+  同 AIV 的第二个 HV 复用。Q/K 使用真实 int64_t G。
+- 原七区 R=C×8×64×128×2 字节保留。WS0=U+7R，
+  WS1=WS0+C×65536；各 AIV/core 各有 dq、dk 两份 FP32 [64,128]。
+  用户 workspace=7R+2C×65536；G≤4 仍为7R，无公开 ABI 变化。
+- 每任务由 AIV0 普通写零四份矩阵；两 AIV 用 mode-1 ID 8～10 汇合。
+  phase 每次汇合模3递增，不按 G 或 HK 重置。每窗口 S14 后再次汇合，
+  随后按原 mode-2 归还 AIC 的组末 token。
+- S14 BF16 dq_hv/dk_raw 扩为 FP32 后分别 atomic 到本 AIV 区，立即
+  Set/Wait MTE3_V，确保每笔 atomic 完成才复用 scratch 和发下一笔。
+  dg 按原 dtype 普通写出。没有同地址多写入者。
+- scratch=UB[176,208) KiB，仅 S12 的 MTE3 完成后使用；
+  mergeAcc=[0,32)，dqFinal=[64,80)，dkFinal=[112,128)。
+  末轮 AIV0 先合并 dq 再 dk，固定 FP32(WS0+WS1) 后一次 BF16 舍入。
+  可选 norm 在独立 V_MTE2 Wait/Set 内重新载入 q/k/rstd。
+- 原 stateVToMte2 两份整组周期保持；stage12Mte3ToMte2 只归还本轮活跃槽。
+  AIV1 无 head 的尾窗仍参加握手。最终输出有 MTE3_V 完成等待，才允许新任务清零。
+  原 L1/L0 轮转及全部物理地址不变。
+
+典型任务：B=1,HK=16,HV=128,T=11264 时 N=2816、物理窗=5632；
+变长16×1024时 N=4096、物理窗=8192。C=28 时用户 workspace=28 MiB，
+其中显式新增3.5 MiB；此数不是父链峰值增量实测值。性能以父链完整调用
+t_FLAU≤1.25×t_FLA 为目标，子算子独立耗时用于定位。
 
 ## 1. 目标
 
@@ -26,7 +58,7 @@ chunk_bwd_dqkwg
 [`chunk_gated_delta_rule_bwd_dhu`](https://github.com/flashserve/flash-linear-attention-npu/tree/main/fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_dhu)
 的混合 AIC/AIV、定长/变长 offset helper、跨核同步和 workspace 管理方式，但采用不同的
 逻辑分核：**只按 chunk 分核，不按 head 分核**。每个 chunk task 在核内遍历所有
-`HK/HV` head。本版本仅支持 GVA 比例 `1:1`--`1:4`，即 `G=HV/HK in {1,2,3,4}`。
+`HK/HV` head。此处描述 A5 的原分组路径，对应 `G=HV/HK in {1,2,3,4}`。
 核内使用动态 HV 任务组：`G=3` 时组大小取 3，`G=1/2/4` 时取 4。对每个
 任务组，两个 AIV 按任务序号交错承包完整 HV：AIV0 处理 0、2、4...，AIV1
 处理 1、3、5...，不切分单个 HV 内部数据。两个 AIV 不设置 stage 级汇合；每个
@@ -929,7 +961,10 @@ UB[247.5,248)  空闲；S12 已完成 bg 的末次消费
 
 操作流程：
 
-1. `q` 从 GM 搬入；本 Stage 不读取 `q_rstd/k_rstd`。
+1. `q` 从 GM 搬入；本 Stage 不读取 `q_rstd/k_rstd`。`q` 复用 S12 的
+   `do_g` 物理区，搬入前复用当前空闲的 `stateVToMte2[qSlot]` 成对
+   set/wait，保证 S12 的 V 消费及 MTE3 读完后，MTE2 才能覆盖该区；
+   `q` 驻留复用、不再次搬入时不增加事件。
 2. 单次 VF 完成 `dk_raw_hv`、三个点积和 `dg` reverse suffix sum；`dg` 以
    FP32 驻留。FP32 ABI 直接写回，BF16 ABI 仅在最终 MTE3 前打包。
 3. `dq_hv` 写入 `dqStage12Workspace`，`dk_raw_hv` 写入

@@ -16,6 +16,7 @@
 #include "../op_kernel/chunk_kda_bwd_recompute_struct.h"
 #include "../op_kernel/chunk_kda_bwd_recompute_tiling_key.h"
 #include <string>
+#include "graph/utils/type_utils.h"
 
 namespace optiling {
 
@@ -101,11 +102,12 @@ private:
     ge::graphStatus CheckSpec()
     {
         if (ctx_.chunkSize != 64) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_size", "invalid", "chunk_size must be 64.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunkSize",
+            std::to_string(ctx_.chunkSize), "chunkSize must be 64");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.qShape->GetStorageShape().GetDimNum() != 4) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "q", std::to_string(ctx_.qShape->GetStorageShape().GetDimNum()), "q must be rank-4 BNSD.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "q", std::to_string(ctx_.qShape->GetStorageShape().GetDimNum()), "q must be rank-4 BNSD");
         return ge::GRAPH_FAILED;
     }
         const gert::Shape q = ctx_.qShape->GetStorageShape();
@@ -115,26 +117,33 @@ private:
         const gert::Shape beta = ctx_.betaShape->GetStorageShape();
         const gert::Shape a = ctx_.aShape->GetStorageShape();
         if (q.GetDim(3) != 128 || k.GetDim(3) != 128 || v.GetDim(3) != 128) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "K", "invalid", "K and V must be 128.");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_.nodeName, "K/V",
+            std::to_string(q.GetDim(3)) + "," + std::to_string(v.GetDim(3)),
+            "K and V must be 128");
         return ge::GRAPH_FAILED;
     }
         if (g.GetDim(3) != 128) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "g", std::to_string(g.GetDim(3)), "g head dim must be 128.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            ctx_.nodeName, "g", std::to_string(g.GetDim(3)), "g head dim must be 128");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.gateDtype != ge::DT_BF16 && ctx_.gateDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "g dtype must be BF16 or FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "g",
+            ge::TypeUtils::DataTypeToSerialString(ctx_.gateDtype),
+            "g dtype must be BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
         if (ctx_.betaDtype != ge::DT_BF16 && ctx_.betaDtype != ge::DT_FLOAT) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "dtype", "invalid", "beta dtype must be BF16 or FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(ctx_.nodeName, "beta",
+            ge::TypeUtils::DataTypeToSerialString(ctx_.betaDtype),
+            "beta dtype must be BF16 or FP32");
         return ge::GRAPH_FAILED;
     }
         tiling_.B = q.GetDim(0);
         tiling_.Hk = k.GetDim(1);
         tiling_.Hv = v.GetDim(1);
         if (tiling_.Hv <= 0 || tiling_.Hk <= 0 || tiling_.Hv % tiling_.Hk != 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv/Hk", std::to_string(tiling_.Hv) + "/" + std::to_string(tiling_.Hk),
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "Hv/Hk", std::to_string(tiling_.Hv) + "/" + std::to_string(tiling_.Hk),
             "Hv must be positive and divisible by Hk");
         return ge::GRAPH_FAILED;
     }
@@ -159,19 +168,28 @@ private:
             (void)aLogData;
         }
         if (v.GetDim(0) != q.GetDim(0) || v.GetDim(2) != q.GetDim(2)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "q", "invalid", "q/k/v batch and T must match.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "v",
+            std::to_string(v.GetDim(0)) + "," + std::to_string(v.GetDim(2)) + "," +
+                std::to_string(q.GetDim(0)) + "," + std::to_string(q.GetDim(2)),
+            "q/k/v batch and T must match");
         return ge::GRAPH_FAILED;
     }
         if (g.GetDim(0) != v.GetDim(0) || g.GetDim(1) != v.GetDim(1) || g.GetDim(2) != v.GetDim(2)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "g", "invalid", "g shape must match v on B/H/T.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(ctx_.nodeName, "g",
+            std::to_string(g.GetDim(0)) + "," + std::to_string(g.GetDim(1)) + "," +
+                std::to_string(g.GetDim(2)) + "," + std::to_string(v.GetDim(0)) + "," +
+                std::to_string(v.GetDim(1)) + "," + std::to_string(v.GetDim(2)),
+            "g shape must match v on B/H/T");
         return ge::GRAPH_FAILED;
     }
         if (beta.GetDimNum() != 3) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "beta", std::to_string(beta.GetDimNum()), "beta must be rank-3 BHT.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "beta", std::to_string(beta.GetDimNum()), "beta must be rank-3 BHT");
         return ge::GRAPH_FAILED;
     }
         if (a.GetDim(1) != tiling_.Hv) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "Hv", "invalid", "A head dim must equal Hv.");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_.nodeName, "A",
+            std::to_string(a.GetDim(1)),
+            "A head dim must equal Hv=" + std::to_string(tiling_.Hv));
         return ge::GRAPH_FAILED;
     }
         return ge::GRAPH_SUCCESS;
@@ -181,7 +199,9 @@ private:
     {
         if (ctx_.cuSeqlensShape != nullptr) {
             if (ctx_.chunkIndicesShape == nullptr) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices", "invalid", "chunk_indices required for varlen.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "chunk_indices",
+            "cu_seqlens=present,chunk_indices=absent",
+            "chunk_indices required for varlen");
         return ge::GRAPH_FAILED;
     }
             tiling_.chunkNum = ctx_.chunkIndicesShape->GetStorageShape().GetDim(0) / 2;

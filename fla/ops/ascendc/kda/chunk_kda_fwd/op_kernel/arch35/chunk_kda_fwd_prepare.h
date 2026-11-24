@@ -226,7 +226,7 @@ __simd_callee__ inline void ClampKdaGateRegbaseOutput(
     }
 }
 
-template <typename OutputT, bool USE_REF, bool NEGATIVE>
+template <typename OutputT, bool USE_REF, bool NEGATIVE, bool SAFE_GATE = false>
 __simd_callee__ inline void BuildKdaGateRegbaseExp(
     AscendC::MicroAPI::RegTensor<float> &expZeroReg,
     AscendC::MicroAPI::RegTensor<float> &expOneReg,
@@ -262,8 +262,10 @@ __simd_callee__ inline void BuildKdaGateRegbaseExp(
     Muls(expOneReg, expOneReg, LN2, floatMask);
     MinsFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg,
                     expInputMax, floatMask);
-    Maxs(expZeroReg, expZeroReg, expInputMin, floatMask);
-    Maxs(expOneReg, expOneReg, expInputMin, floatMask);
+    if constexpr (!SAFE_GATE) {
+        Maxs(expZeroReg, expZeroReg, expInputMin, floatMask);
+        Maxs(expOneReg, expOneReg, expInputMin, floatMask);
+    }
     ExpFloatTwoReg(expZeroReg, expOneReg, expZeroReg, expOneReg, floatMask);
 }
 
@@ -282,7 +284,7 @@ __simd_callee__ inline void StoreKdaGateRegbasePair(
     StoreAlign(dst, outputReg, inputMask);
 }
 
-template <typename InputT, typename OutputT, typename GK_T, bool USE_REF>
+template <typename InputT, typename OutputT, typename GK_T, bool USE_REF, bool SAFE_GATE = false>
 static __simd_vf__ inline void PrepareKdaGateQwRegbase(
     __ubuf__ InputT *q, __ubuf__ InputT *k, __ubuf__ OutputT *qOut,
     __ubuf__ OutputT *kOut, __ubuf__ InputT *qDirect, __ubuf__ InputT *kDirect,
@@ -311,7 +313,7 @@ static __simd_vf__ inline void PrepareKdaGateQwRegbase(
             RegTensor<float> outputOneReg;
 
             LoadKdaGateRegbasePair<GK_T>(gateZeroReg, gateOneReg, gate + offset, inputMask);
-            BuildKdaGateRegbaseExp<OutputT, USE_REF, false>(
+            BuildKdaGateRegbaseExp<OutputT, USE_REF, false, SAFE_GATE>(
                 expZeroReg, expOneReg, gateZeroReg, gateOneReg, ref + col, floatMask);
             BuildKdaGateRegbaseExp<InputT, false, false>(
                 directZeroReg, directOneReg, gateZeroReg, gateOneReg, ref + col, floatMask);
@@ -339,7 +341,7 @@ static __simd_vf__ inline void PrepareKdaGateQwRegbase(
     }
 }
 
-template <typename InputT, typename OutputT, typename GK_T, bool USE_REF>
+template <typename InputT, typename OutputT, typename GK_T, bool USE_REF, bool SAFE_GATE = false>
 static __simd_vf__ inline void PrepareKdaGateKgRegbase(
     __ubuf__ OutputT *kg, __ubuf__ InputT *k, __ubuf__ GK_T *gate,
     __ubuf__ float *ref, uint16_t rows, uint16_t cols, uint16_t validRows)
@@ -365,7 +367,7 @@ static __simd_vf__ inline void PrepareKdaGateKgRegbase(
             RegTensor<float> outputOneReg;
 
             LoadKdaGateRegbasePair<GK_T>(gateZeroReg, gateOneReg, gate + offset, inputMask);
-            BuildKdaGateRegbaseExp<OutputT, USE_REF, true>(
+            BuildKdaGateRegbaseExp<OutputT, USE_REF, true, SAFE_GATE>(
                 expZeroReg, expOneReg, gateZeroReg, gateOneReg, ref + col, floatMask);
             LoadKdaGateRegbasePair<InputT>(inputZeroReg, inputOneReg, k + offset, inputMask);
             MulFloatTwoReg(outputZeroReg, outputOneReg, inputZeroReg, inputOneReg,
@@ -383,7 +385,7 @@ static __simd_vf__ inline void PrepareKdaGateKgRegbase(
 }
 
 template <typename InputT, typename OutputT, typename GK_T, bool USE_REF, bool STORE_DIRECT,
-          bool EXPORT_FINAL_KG, bool SCALE_SCORE_W = false>
+          bool EXPORT_FINAL_KG, bool SCALE_SCORE_W = false, bool SAFE_GATE = false>
 static __simd_vf__ inline void PrepareKdaGateQwKgRegbase(
     __ubuf__ InputT *q, __ubuf__ InputT *k, __ubuf__ OutputT *qOut,
     __ubuf__ OutputT *wOut, __ubuf__ OutputT *kgOut, __ubuf__ InputT *qDirect,
@@ -457,10 +459,12 @@ static __simd_vf__ inline void PrepareKdaGateQwKgRegbase(
                             scoreExpInputMax, floatMask);
             MinsFloatTwoReg(negZeroReg, negOneReg, negZeroReg, negOneReg,
                             scoreExpInputMax, floatMask);
-            Maxs(posZeroReg, posZeroReg, scoreExpInputMin, floatMask);
-            Maxs(posOneReg, posOneReg, scoreExpInputMin, floatMask);
-            Maxs(negZeroReg, negZeroReg, scoreExpInputMin, floatMask);
-            Maxs(negOneReg, negOneReg, scoreExpInputMin, floatMask);
+            if constexpr (!SAFE_GATE) {
+                Maxs(posZeroReg, posZeroReg, scoreExpInputMin, floatMask);
+                Maxs(posOneReg, posOneReg, scoreExpInputMin, floatMask);
+                Maxs(negZeroReg, negZeroReg, scoreExpInputMin, floatMask);
+                Maxs(negOneReg, negOneReg, scoreExpInputMin, floatMask);
+            }
             ExpFloatTwoReg(posZeroReg, posOneReg, posZeroReg, posOneReg, floatMask);
             ExpFloatTwoReg(negZeroReg, negOneReg, negZeroReg, negOneReg, floatMask);
 
@@ -1097,6 +1101,9 @@ private:
     __aicore__ inline uint64_t ScoreRefToken(uint64_t start, uint64_t curT, uint64_t rowBegin,
                                              uint64_t rowCount) const
     {
+        if constexpr (SAFE_GATE) {
+            return start + rowBegin;
+        }
         uint64_t ref = rowBegin + rowCount / 2;
         if (ref >= curT) {
             ref = curT - 1;
@@ -1127,12 +1134,14 @@ private:
     {
         constexpr float expInputMax =
             IsSameType<SCORE_T, bfloat16_t>::value ? KDA_SCORE_EXP_INPUT_MAX : KDA_EXP_INPUT_MAX;
-        constexpr float expInputMin =
-            IsSameType<SCORE_T, bfloat16_t>::value ? KDA_SCORE_EXP_INPUT_MIN : KDA_EXP_INPUT_MIN;
         Mins(tensor, tensor, expInputMax, count);
         PipeBarrier<PIPE_V>();
-        Maxs(tensor, tensor, expInputMin, count);
-        PipeBarrier<PIPE_V>();
+        if constexpr (!SAFE_GATE) {
+            constexpr float expInputMin =
+                IsSameType<SCORE_T, bfloat16_t>::value ? KDA_SCORE_EXP_INPUT_MIN : KDA_EXP_INPUT_MIN;
+            Maxs(tensor, tensor, expInputMin, count);
+            PipeBarrier<PIPE_V>();
+        }
     }
 
     template <typename OutputT>
@@ -1315,18 +1324,20 @@ private:
         return GateGTyped(slot);
     }
 
+    template <int FloatOffset = 0>
     __aicore__ inline void LoadGateScoreRef(
         LocalTensor<float> dst, uint64_t b, uint64_t hv, uint64_t token)
     {
         if constexpr (IsSameType<GK_T, float>::value) {
             if (computeGateInPrepare_) {
                 const uint64_t tileRow = token - activeGateChunkStart_;
-                Adds(dst, LocalGateChunk()[tileRow * K_], 0.0f, static_cast<uint32_t>(K_));
+                Adds(dst, LocalGateChunk()[tileRow * K_], static_cast<float>(FloatOffset),
+                     static_cast<uint32_t>(K_));
                 PipeBarrier<PIPE_V>();
                 return;
             }
         }
-        LoadAsFloatRow(gk_, KVOffset(b, hv, token, 0, K_), dst, K_);
+        LoadAsFloatRow<GK_T, FloatOffset>(gk_, KVOffset(b, hv, token, 0, K_), dst, K_);
     }
 
     __aicore__ inline void PrefetchQKGate(uint64_t slot, uint64_t b, uint64_t h, uint64_t hv,
@@ -1542,15 +1553,16 @@ private:
         SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2Events_[slot]);
     }
 
-    template <typename CopyT>
+    template <typename CopyT, int FloatOffset = 0>
     __aicore__ inline void LoadAsFloatRow(GlobalTensor<CopyT> &src, uint64_t srcOffset, LocalTensor<float> &dst,
                                           uint64_t count)
     {
+        static_assert(FloatOffset == 0 || IsSameType<CopyT, float>::value);
         if constexpr (IsSameType<CopyT, float>::value) {
             CopyVectorIn(dst, src, srcOffset, count);
             SetFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
             WaitFlag<HardEvent::MTE2_V>(mte2ToVEvent_);
-            Adds(dst, dst, 0.0f, static_cast<uint32_t>(count));
+            Adds(dst, dst, static_cast<float>(FloatOffset), static_cast<uint32_t>(count));
             PipeBarrier<PIPE_V>();
             SetFlag<HardEvent::V_MTE2>(vToMte2Event_);
             WaitFlag<HardEvent::V_MTE2>(vToMte2Event_);
@@ -1639,7 +1651,7 @@ private:
             false;
 #endif
         LocalTensor<float> refFp32 = exp2Buf_.Get<float>();
-        LoadGateScoreRef(refFp32, b, hv, refToken);
+        LoadGateScoreRef<SAFE_GATE ? -112 : 0>(refFp32, b, hv, refToken);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr bool exportFinalKg =
             SAFE_GATE && COMPILE_BT == 64 && COMPILE_K == 128 && COMPILE_V == 128;
@@ -1723,7 +1735,7 @@ private:
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             bool fuseQwKg = SAFE_GATE && BT_ == 64 && K_ == 128 && V_ == 128 && subBlockNum == 1;
             if (fuseQwKg) {
-                PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
+                PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true, SAFE_GATE>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                     (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
@@ -1754,7 +1766,7 @@ private:
                         static_cast<uint16_t>(tileRows));
                 }
             } else {
-                PrepareKdaGateQwRegbase<T, SCORE_T, GK_T, true>(
+                PrepareKdaGateQwRegbase<T, SCORE_T, GK_T, true, SAFE_GATE>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                     (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
@@ -1916,7 +1928,7 @@ private:
                 PrefetchKGate(kgSlot ^ 1, b, h, hv, start + nextTileRow, nextRows * K_);
             }
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-            PrepareKdaGateKgRegbase<T, SCORE_T, GK_T, true>(
+            PrepareKdaGateKgRegbase<T, SCORE_T, GK_T, true, SAFE_GATE>(
                 (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(kgScore.GetPhyAddr()),
                 (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                 (__ubuf__ GK_T *)reinterpret_cast<uint64_t>(gateTyped.GetPhyAddr()),
@@ -1981,7 +1993,7 @@ private:
         }
         LocalTensor<float> refFp32 = exp2Buf_.Get<float>();
         if (useRef) {
-            LoadGateScoreRef(refFp32, b, hv, refToken);
+            LoadGateScoreRef<SAFE_GATE ? -112 : 0>(refFp32, b, hv, refToken);
         }
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         const bool fuseScoreWriteback =
@@ -2078,7 +2090,7 @@ private:
             }
             if (writeScoreScratch) {
                 if (fuseScoreWriteback) {
-                    PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true>(
+                    PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, true, false, true, SAFE_GATE>(
                         (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                         (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                         (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
@@ -2095,7 +2107,7 @@ private:
                         nullptr,
                         static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_), validRows);
                 } else {
-                    PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, false, false>(
+                    PrepareKdaGateQwKgRegbase<T, SCORE_T, GK_T, true, false, false, false, SAFE_GATE>(
                         (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                         (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                         (__ubuf__ SCORE_T *)reinterpret_cast<uint64_t>(qScore.GetPhyAddr()),
@@ -2108,7 +2120,7 @@ private:
                         static_cast<uint16_t>(tileRows), static_cast<uint16_t>(K_), validRows);
                 }
             } else if (useRef) {
-                PrepareKdaGateQwKgRegbase<T, T, GK_T, true, false, false>(
+                PrepareKdaGateQwKgRegbase<T, T, GK_T, true, false, false, false, SAFE_GATE>(
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(kTyped.GetPhyAddr()),
                     (__ubuf__ T *)reinterpret_cast<uint64_t>(qTyped.GetPhyAddr()),

@@ -38,13 +38,13 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
     if (allowNegEigval && !useBetaSigmoidInKernel) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
                 "allowNegEigval=true requires useBetaSigmoidInKernel=true");
         return empty;
     }
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
                 "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
         return empty;
     }
@@ -95,7 +95,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
         cuTensor = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         indicesTensor = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (cuTensor == nullptr || indicesTensor == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "failed to convert KernelC metadata");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "failed to convert KernelC metadata");
             return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
         }
         for (const aclTensor *tensor : {cuTensor, indicesTensor}) {
@@ -115,8 +115,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
                 useGateInKernel, useExp2, stateVFirst,
                 useBetaSigmoidInKernel, allowNegEigval, outputLayout, modelLayout));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdFinalize failed");
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdFinalize failed");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return requested;

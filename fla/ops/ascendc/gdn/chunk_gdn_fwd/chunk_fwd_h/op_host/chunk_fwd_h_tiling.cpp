@@ -13,6 +13,7 @@
  */
 
 #include "../op_kernel/chunk_fwd_h_struct.h"
+#include "graph/utils/type_utils.h"
 #include <cstring>
 
 #include "chunk_fwd_h_tiling.h"
@@ -98,7 +99,11 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     bool useG = gTensor != nullptr;
     bool useGk = gkTensor != nullptr;
     OP_CHECK_IF(useG == useGk,
-                OP_LOGE(context->GetNodeName(), "Exactly one of g and gk must be provided."),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context->GetNodeName(), "g,gk",
+                    std::string("g=") + (useG ? "present" : "absent") +
+                        ",gk=" + (useGk ? "present" : "absent"),
+                    "exactly one of g and gk must be provided"),
                 return ge::GRAPH_FAILED);
     auto gateTensor = useGk ? gkTensor : gTensor;
 
@@ -106,9 +111,10 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     // g/gk 仅支持 BF16/FP32，本处是唯一 dtype 校验门；
     // 扩展 dtype 时需同步评估 gated 复用支持面。
     OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken),
-                OP_LOGE(context->GetNodeName(),
-                        "g/gk dtype must be BF16 or FP32, but got dtype=%d.",
-                        static_cast<int>(gateTensor->GetDataType())),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), useGk ? "gk" : "g",
+                    ge::TypeUtils::DataTypeToSerialString(gateTensor->GetDataType()),
+                    "BF16 or FP32"),
                 return ge::GRAPH_FAILED);
 
     auto attrPtr = context->GetAttrs();
@@ -123,7 +129,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     }
     OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
                     std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
-                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "layout", qkvLayout,
+                                                      "one of BNSD, BSND, NTD or TND"),
                 return ge::GRAPH_FAILED);
     const int64_t layoutValue =
         (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
@@ -141,23 +148,23 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     } else if (storeFinalState) {
         auto finalStateDesc = context->GetOutputDesc(OUTPUT_FINAL_STATE_IDX);
         OP_CHECK_IF(finalStateDesc == nullptr,
-                    OP_LOGE(context->GetNodeName(),
-                            "final_state output descriptor must exist when storeFinalState is true."),
+                    OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "final_state"),
                     return ge::GRAPH_FAILED);
         resolvedStateDataType = finalStateDesc->GetDataType();
     }
     uint64_t stateDtypeToken = 0;
     OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(resolvedStateDataType, stateDtypeToken),
-                OP_LOGE(context->GetNodeName(),
-                        "Resolved state dtype must be BF16 or FP32, but got dtype=%d.",
-                        static_cast<int>(resolvedStateDataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "state",
+                    ge::TypeUtils::DataTypeToSerialString(resolvedStateDataType),
+                    "BF16 or FP32"),
                 return ge::GRAPH_FAILED);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201 &&
         layoutValue == GDN::FwdHLayout::BSND) {
-        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout,
-                                  "BNSD or NTD on DAV_9201");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "layout", qkvLayout,
+                                              "BNSD or NTD on DAV_9201");
         return ge::GRAPH_FAILED;
     }
 
@@ -178,11 +185,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
     // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
-    // 域不限（2026-11-10 exp 域复用释放）：useExp2 true/false 均可（域随 tiling
-    // key 的 USE_EXP2 维选实例，epilogue 内 LN2 换算按域取舍）。
-    // vfirst 不限：state 布局经 STATE_V_FIRST 模板维进 kernel，aclnn 层免翻译；
-    // gate dtype 的唯一门为函数头部入口校验；FP32 state 走通用路径保留递推精度。
-    tilingCtx.gatedEligible = useG && resolvedStateDataType == ge::DT_BF16 &&
+    tilingCtx.gatedEligible = useG &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -205,32 +208,40 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
 
     if (tilingCtx.aicCoreNum == 0) {
-        OP_LOGE(context->GetNodeName(), "Platform reports zero AIC cores; cannot build ChunkFwdH tiling.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "aicNum", "0",
+            "platform must report at least one AIC core");
         return ge::GRAPH_FAILED;
     }
 
     if (logicalBatch <= 0 || logicalSeqlen <= 0 || logicalKHeads <= 0 || logicalVHeads <= 0) {
-        OP_LOGE(context->GetNodeName(),
-                "Logical batch, sequence length and head counts must be positive, but got "
-                "batch=%ld, seqlen=%ld, HK=%ld, HV=%ld.",
-                logicalBatch, logicalSeqlen, logicalKHeads, logicalVHeads);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "B,T,HK,HV",
+            std::to_string(logicalBatch) + "," + std::to_string(logicalSeqlen) + "," +
+                std::to_string(logicalKHeads) + "," + std::to_string(logicalVHeads),
+            "batch, sequence length and head counts must be positive");
         return ge::GRAPH_FAILED;
     }
     if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
-        OP_LOGE(context->GetNodeName(),
-                "FwdH requires K=128, V=128 and chunk_size=64, but got K=%ld, V=%ld, chunk_size=%ld.",
-                logicalKDim, logicalVDim, chunkSize);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "K,V,chunk_size",
+            std::to_string(logicalKDim) + "," + std::to_string(logicalVDim) + "," +
+                std::to_string(chunkSize),
+            "requires K=128, V=128 and chunk_size=64");
         return ge::GRAPH_FAILED;
     }
     if (!saveNewValue) {
-        OP_LOGE(context->GetNodeName(), "save_new_value must be true.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "save_new_value", "false", "must be true");
         return ge::GRAPH_FAILED;
     }
     if ((useG && logicalVHeads % logicalKHeads != 0) || (useGk && logicalKHeads != logicalVHeads)) {
-        OP_LOGE(context->GetNodeName(),
-                "g-only requires HV %% HK == 0; gk-only requires k/ kg head count equal HV. "
-                "Current mode useG=%d, useGk=%d, HK=%ld, HV=%ld.",
-                useG, useGk, logicalKHeads, logicalVHeads);
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "HK,HV",
+            std::string("use_g=") + (useG ? "true" : "false") +
+                ",use_gk=" + (useGk ? "true" : "false") +
+                ",HK=" + std::to_string(logicalKHeads) + ",HV=" + std::to_string(logicalVHeads),
+            "g-only requires HV divisible by HK; gk-only requires HK equal to HV");
         return ge::GRAPH_FAILED;
     }
 
@@ -284,9 +295,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_hWorkspaceOffset(plainTiling.hWorkspaceOffset);
     tiling.set_coreBoundCount(plainTiling.coreBoundCount);
     tiling.set_coreTaskBounds(plainTiling.coreTaskBounds);
-    tiling.set_gatedTilingOffset(plainTiling.gatedTilingOffset);
-    tiling.set_gatedNumSeqOffset(plainTiling.gatedNumSeqOffset);
-    tiling.set_gatedNumChunksOffset(plainTiling.gatedNumChunksOffset);
+    tiling.set_gatedEngine(plainTiling.gatedEngine);
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());
     context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
 

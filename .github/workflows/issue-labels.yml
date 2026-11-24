@@ -1,0 +1,39 @@
+name: Issue 分类与目标分支
+
+on:
+  issues:
+    types: [opened, edited, reopened, labeled, unlabeled, transferred]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 需要校验的 Issue 编号
+        required: true
+        type: string
+
+concurrency:
+  group: issue-labels-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  labels:
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 校验分类并同步目标分支标签
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/scripts/issue_label_policy.py

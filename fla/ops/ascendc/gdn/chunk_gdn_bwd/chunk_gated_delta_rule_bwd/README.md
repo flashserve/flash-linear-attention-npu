@@ -1,5 +1,7 @@
 # ChunkGatedDeltaRuleBwd
 
+[API 文档](docs/api.md)
+
 ## 功能
 
 `ChunkGatedDeltaRuleBwd` 实现 Gated Delta Rule 的分块反向计算。所有支持的 SoC 统一
@@ -16,16 +18,12 @@ BF16/FP32 gate、`useExp2` 与 varlen（空序列无 chunk 记录，天然跳过
 A2/A3 在 ACLNN 层处理非连续输出暂存和输出重叠隔离，具体规则见[输出存储关系](#输出存储关系)。
 公共 Host 对象保留 A2/A3 与 A5 的实现，并在运行期按 `NpuArch` 选择平台分支。
 
-用于组合一致性对比的公开算子链依次由以下算子组成：
+本算子在单个 ACLNN executor 中依次调度以下 L0 算子。
 
 1. `ChunkGdnBwdIntra`（`chunk_gdn_bwd_intra`），重计算 W/U 并生成局部 Value 梯度；
 2. `ChunkFwdH`（`chunk_fwd_h`），重计算分块状态和新 Value；
 3. `ChunkGatedDeltaRuleBwdDhu`（`chunk_gated_delta_rule_bwd_dhu`），反向扫描状态梯度；
 4. `ChunkGatedDeltaRuleBwdFinalize`（`chunk_gated_delta_rule_bwd_finalize`），生成最终输入梯度。
-
-本算子不包含独立 kernel，而是在单个 ACLNN executor 中直接组合上述 L0 算子。公开 NPU
-算子链仅用于检查组合顺序、参数传导和布局转换；独立精度标杆使用四个阶段对应的 CPU
-reference，避免 DUT 与标杆复用同一 kernel。
 
 ## 输入
 
@@ -61,7 +59,7 @@ reference，避免 DUT 与标杆复用同一 kernel。
 `layout` 只控制 q/k/v 和 dq/dk/dv。g、beta 固定为 BSN；可选的 q/k rstd 固定为 BNS；
 dO 固定为 BSND，可选的 betaRaw 固定为 BSN，与 q/k/v 的 `layout` 无关。
 
-`Hv` 必须能被 `Hk` 整除。变长模式要求物理 `B=1`；`cuSeqlensOptional` 必须从 0 开始、
+`Hv` 必须能被 `Hk` 整除；A5 支持比例 1～16，A2/A3 保持 1～4。变长模式要求物理 `B=1`；`cuSeqlensOptional` 必须从 0 开始、
 以 `T` 结束且单调不降，`chunkIndicesOptional` 按逻辑序列和 chunk 顺序排列。
 相邻相等的累计长度表示空序列，不产生 chunk，各阶段统一使用原始序列编号和状态布局，
 空序列因无 chunk 记录被内核天然跳过。提供 initial state 时，空序列
@@ -78,8 +76,8 @@ dO 固定为 BSND，可选的 betaRaw 固定为 BSN，与 q/k/v 的 `layout` 无
 | `dq` | 必选 | 与 q 同 shape/dtype | Query 梯度 |
 | `dk` | 必选 | 与 k 同 shape/dtype | Key 梯度 |
 | `dv` | 必选 | 与 v 同 shape/dtype | Value 梯度 |
-| `dBeta` | 必选 | `[B,T,Hv]`；与 beta 同 dtype | Delta 系数梯度，固定为 BSND |
-| `dG` | 必选 | `[B,T,Hv]`；与 g 同 dtype | 门控值梯度，固定为 BSND |
+| `dBeta` | 必选 | `[B,T,Hv]`；与 beta 同 dtype | Delta 系数梯度，固定为 BSN |
+| `dG` | 必选 | `[B,T,Hv]`；与 g 同 dtype | 门控值梯度，固定为 BSN |
 | `dh0` | 可选 | 与 `initialStateOptional` 同 shape/dtype | 初始状态梯度；未提供 initial state 时为空 |
 | `dALog` | 预留 | 当前为空 | 当前不计算，ACLNN 输出描述符必须为 `nullptr` |
 | `dDtBias` | 预留 | 当前为空 | 当前不计算，ACLNN 输出描述符必须为 `nullptr` |
@@ -120,7 +118,6 @@ executor cache 的隔离方式见[设计说明](../chunk_gated_delta_rule_bwd_fi
 | `useQkL2normInKernel` | `true/false` | 为 true 时必须提供 q/k rstd |
 | `useBetaSigmoidInKernel` | `true/false` | 为 true 时必须提供 beta raw 输入 |
 | `stateVFirst` | `true/false` | 控制 initial state、dht 和 dh0 的末两维为 `[V,K]` 或 `[K,V]` |
-| `returnIntermediateStates` | 预留 | 当前不改变公开返回值或 executor 内部依赖 |
 
 未支持的属性组合会返回参数错误，不会静默切换到其他实现。
 
@@ -133,15 +130,25 @@ executor cache 的隔离方式见[设计说明](../chunk_gated_delta_rule_bwd_fi
   独立调用 [Finalize](../chunk_gated_delta_rule_bwd_finalize/docs/api.md) 时，g/beta 必须同为 BF16 或同为 FP32。
   dq/dk/dv 分别跟随 q/k/v；dG/dBeta 分别转回原始 g/beta dtype，混合输入时两路标量梯度的 dtype 也可不同。
 - 支持 `K=128`、`V=128`、`chunkSize=64`。
-- 支持 `Hv/Hk in {1,2,3,4}`，覆盖 MHA 和 GVA。
+- A5 支持 `Hv/Hk` 为 1～16 的整数，A2/A3 支持 1～4，覆盖 MHA 和 GVA。
 - 支持固定长度和变长序列；变长模式要求物理 `B=1`。
 - 支持 `BNSD`、`BSND`、`NTD` 和 `TND` 四种四维公开布局。
 - 支持可选 initial state、dht、Q/K L2Norm 反向和 beta sigmoid 反向。
 - `aLogOptional`、`dtBiasOptional`、`dALog` 和 `dDtBias` 当前仅保留接口槽位。
 
-本组合的规格受 FwdH 等前序组件约束，仍为 `K=V=128`、`chunkSize=64`、
-`Hv/Hk in {1,2,3,4}`。独立 A2/A3 Finalize 的 V=256、chunkSize=128 或更大头比例支持
-不代表整个 Bwd executor 已支持这些规格。
+GVA 比例按公开入口和平台分别维护：
+
+| 公开入口 | A2/A3（DAV_2201） | A5（DAV_3510） |
+| --- | --- | --- |
+| 本完整反向父链 | `1~4`，主输入 BF16 | `1~16`，主输入 BF16 |
+| 独立 [Intra](../chunk_gdn_bwd_intra/docs/api.md#输入与输出) | `1~16`，主输入 BF16/FP16 | `1~4` 支持 BF16/FP16，`5~16` 仅 BF16 |
+
+父链的 `CheckParams` 在 Host 侧按平台检查上述比例；A2/A3 的 `G>4` 会在调用子算子前被拒绝。
+独立 Intra 的 A2/A3 `1~16` 能力由其 arch22 路径提供，不会自动放宽父链准入。
+A5 的父链与独立 Intra 走各自的 A5 扩展路径，不修改 A2/A3 的比例限制。
+
+本组合还要求 `K=V=128`、`chunkSize=64`。独立 A2/A3 Finalize 的 V=256、chunkSize=128
+或更大头比例支持，也不代表整个 Bwd executor 已支持这些规格。
 
 A2/A3 与 A5 复用同一条 `ChunkGdnBwdIntra` 组合链。两个平台的 Intra 仍有不同的
 BF16 存储边界：arch22 先量化缩放后的 K/V 和 KQ score，arch35 先量化列缩放后的 A
@@ -152,20 +159,14 @@ gate 的通过结果宣称已覆盖任意 gate 值域。
 
 ## 测试
 
-测试分为以下两层：
+### 精度
 
-1. 组合一致性测试：分别调用四个公开 NPU 算子，对比 `dq/dk/dv/dBeta/dG/dh0`，验证
-   L2 组合顺序、可选参数传导、公开布局转换和 `stateVFirst` 状态转换。
-2. 本次独立快照的 ATK 精度测试：组合 `ChunkGdnBwdIntra`、`ChunkFwdH`、
-   `ChunkGatedDeltaRuleBwdDhu` 和 `ChunkGatedDeltaRuleBwdFinalize` 已有的 CPU reference，
-   使用 ATK 原生 `cv_fused_double_benchmark` 的 L1 双标杆对比全部有效梯度，不使用混合容差。
-
-`test/` 下另附模型 case 的 msprof 性能测试：`test_bwd_performance.py` 构造 B=1、
-HK=16、HV=32（G=2）、T=11264、K=V=128、chunkSize=64、定长、BF16 主输入 + FP32 g/beta
-的模型 case 并计时；`run_bwd_perf.sh` 串联功能验证、msprof 采集与
-`gen_bwd_perf_report.py` 汇总，性能结论以 `op_summary` 的 `Task Duration(us)` 为准。
+[ATK 用例与执行命令](../../../../../../tests/atk/chunk_gated_delta_rule_bwd/README.md) 提供仓内测试入口。
+NPU 节点调用公开融合接口，CPU 节点独立串联上述四个阶段的标杆，比较全部有效梯度。
+仓内基础用例使用 `mixed_tolerance_bm`。ATK 说明中的 A2 专项回归使用 `cv_fused_double_benchmark` 双标杆。
 
 用例需要覆盖 `BNSD/BSND/NTD/TND`、`Hv/Hk in {1,2,3,4}`、完整 chunk、尾块、变长序列、
 有无 initial state、`stateVFirst=true/false`、Q/K L2Norm 开关和 beta sigmoid 开关。
 `aLogOptional/dtBiasOptional` 需要覆盖非空传入但不参与计算；`dALog/dDtBias` 必须验证为
 空输出而不是 shape 为 `[0]` 的 Tensor。
+在 A5 上还需覆盖 `Hv/Hk` 为 5～16 的定长和变长用例。

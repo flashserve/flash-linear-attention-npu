@@ -123,7 +123,8 @@ gate 的存储 dtype 不进 TilingKey：aclnn 层把 BF16 gate 统一 Cast 成 F
 
 | 返回码 | 触发条件 |
 | --- | --- |
-| `ACLNN_ERR_PARAM_NULLPTR` | `k` / `w` / `u` / `hm` / `cu_seqlens` 为空（本算子 varlen-only，`cu_seqlens` 必给） |
+| `ACLNN_ERR_PARAM_NULLPTR` | `workspaceSize` / `executor` / `k` / `w` / `u` / `hm` / `cu_seqlens` 为空（本算子 varlen-only，`cu_seqlens` 必给） |
+| `ACLNN_ERR_INNER_NULLPTR` | l0op 未返回输出 / 连续化失败（561103） |
 | `ACLNN_ERR_PARAM_INVALID` | `bg` / `v` 非空（DPLR 不支持）；`g` 与 `gk` 同给或同缺；`K != 128`；`V != 128`；`chunk_size != 64`；`B != 1`；`HK > HV` 或 `HV % HK != 0`；`w` / `u` 的 shape 与 `k` 不匹配；`cu_seqlens` 元素数 < 2、非严格递增、含零长段或越界（`cu[i] < 0` 或 `cu[i] > T`）；空窗口（`T = 0`）；gate dtype 非法 |
 
 `cu[0] > 0` 与 `cu[-1] < T`（**子区间窗口**）是合法用法，不拦截。`K` / `V` 的尾块由掩码处理，

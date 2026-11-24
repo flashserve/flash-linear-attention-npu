@@ -73,6 +73,9 @@ Python 和 ACLNN 层拒绝。前反向须配套：A5 若需要 sigmoid，应在�
 
 - A2/A3 两条路径均要求 `safe_gate=True`；传入 `False` 时，总接口在
   `GetWorkspaceSize` 的前置校验阶段返回 `ACLNN_ERR_PARAM_INVALID (161002)`。
+  A5（非 ARCH22）上单布局反向整体不支持，平台能力检查先于入参校验，返回 161002；
+  A2/A3 上必选为空（含 `q_rstd/k_rstd`、`cu_seqlens/chunk_indices` 配对缺失、必选属性未提供）
+  返回 `ACLNN_ERR_PARAM_NULLPTR (161001)`；内部连续化/L0 失败返回 561103。
 - `disable_recompute=True`：传入前向保存的 gk/w/qg/kg/v_new/h。
 - `disable_recompute=False`：以上六个缓存必须为 None，仍传 Aqk/Akk。
   Recompute/FwdH 恢复缓存，再执行 Prepare → Dhu → Finalize。
@@ -96,3 +99,10 @@ ACLNN 的 A2/A3 总接口与 A5 V2 均在 kRstdOptional 后按顺序接收
 独立 Finalize 的 output_layout 仍控制全部五个梯度。总接口通过内部属性实现混合布局。
 本次不修改前向。实现见 [A5 V2 ACLNN](../op_host/op_api/aclnn_chunk_kda_bwd_v2.h)，
 流程见 [设计说明](design.md)。
+
+
+## 平台能力缺失的返回码说明
+
+当 A5（非 ARCH22）或 `soc`/`aicNum`/`ubSize` 不满足要求时，本接口返回
+161002，表示**当前平台/环境不支持**，不是入参取值错误，用户补参数无法解决；
+CANN 9.2.0-beta.2 未注册 EZ1009，暂以 161002 过渡。

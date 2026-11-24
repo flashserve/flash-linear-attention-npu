@@ -11,6 +11,7 @@
  * \file aclnn_recurrent_kda.cpp
  * \brief
  */
+#include "graph/utils/type_utils.h"
 #include "op_common/log/log.h"
 #include "aclnn_recurrent_kda.h"
 #include "recurrent_kda.h"
@@ -90,7 +91,7 @@ std::string TensorDescription(const aclTensor *tensor)
         if (i != 0) result += ",";
         result += std::to_string(tensor->GetViewStrides()[i]);
     }
-    return result + "],dtype=" + std::to_string(static_cast<int>(tensor->GetDataType()));
+    return result + "],dtype=" + ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType());
 }
 
 void ReportInvalid(const RecurrentKdaParams &params, const char *name, const char *format, ...)
@@ -482,7 +483,7 @@ bool CheckNotNull(const RecurrentKdaParams &params)
     };
     for (const auto &item : required) {
         if (item.first == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("aclnnRecurrentKda", item.second, "input argument must not be nullptr");
+            OP_LOGE_WITH_INVALID_INPUT("aclnnRecurrentKda", item.second);
             return false;
         }
     }
@@ -692,6 +693,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CREATE_EXECUTOR returned nullptr", __func__);
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -702,7 +704,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
                               useQkL2normInKernel, useGateInKernel, useBetaSigmoidInKernel,
                               allowNegEigval, safeGate, lowerBound, stateVFirst, attnOut, finalState};
 
-    if (!CheckNotNull(params)) return ACLNN_ERR_PARAM_INVALID;
+    if (!CheckNotNull(params)) return ACLNN_ERR_PARAM_NULLPTR;
     if (!CheckDtypeValid(params)) return ACLNN_ERR_PARAM_INVALID;
     if (params.layout == nullptr) {
         ReportInvalid(params, "layout", "layout must be BSND or TND.");
@@ -738,16 +740,19 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     }
     if (queryUsesDirectView) {
         if (CreateViewIfNonContiguous(params.query, executorPtr) != ACLNN_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a contiguous view", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (keyUsesDirectView) {
         if (CreateViewIfNonContiguous(params.key, executorPtr) != ACLNN_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a contiguous view", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (valueUsesDirectView) {
         if (CreateViewIfNonContiguous(params.value, executorPtr) != ACLNN_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a contiguous view", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -761,6 +766,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
             initialStateForKernel->GetViewStrides(),
             initialStateForKernel->GetViewOffset());
         if (initialStateForKernel == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: state kernel tensor allocation failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -773,6 +779,7 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
             finalStateForKernel->GetViewStrides(),
             finalStateForKernel->GetViewOffset());
         if (finalStateForKernel == nullptr) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: state kernel tensor allocation failed", __func__);
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

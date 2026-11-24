@@ -1,9 +1,10 @@
 # RecurrentGatedDeltaRule ATK 工程
 
 本目录验证统一的 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 接口。A2/A3 使用
-`op_kernel/arch22`，A5 使用 `op_kernel/arch35`；两个架构都由同一个 host V2
-接口、Python adapter 和 CPU 标杆驱动。兼容的 V1 host ABI 仍保留，但 kernel
-内部不再维护单独的 V1 实现。
+`op_kernel/arch22`，A5 使用 `op_kernel/arch35`，A6 使用 `op_kernel/arch92`。
+这些架构共用完整的 RecurrentGDN 参数契约、Python adapter 和 CPU 标杆。ACLNN 仅保留原名
+`aclnnRecurrentGatedDeltaRuleGetWorkspaceSize` / `aclnnRecurrentGatedDeltaRule`，
+参数覆盖原 V2 功能。
 
 ## 接口约束
 
@@ -74,10 +75,8 @@ python3 tests/atk/recurrent_gated_delta_rule/gen_recurrent_gated_delta_rule.py -
 `platform_focus` 与 `soc` 均改写为 `ascend960dt`（该取值已列入
 `recurrent_gated_delta_rule.yaml` 的 `soc` 合法枚举）；A2/A3 与 A5 用例族不在 A6 上执行。
 
-注意：当前 Python 稳定入口 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 只绑定 V1 主机
-ABI（无 `A_log`/`dt_bias`/融合开关参数，要求 `g` 或 `gk` 至少一个，beta=BF16、g=FP32）。
-矩阵中依赖这些能力的用例需先打通 `aclnnRecurrentGatedDeltaRuleV2` 的 Python 绑定，
-否则会在进入算子前失败，不能计入 A6 验收结果。
+Python 稳定入口 `fla_npu.ops.ascendc.recurrent_gated_delta_rule` 通过共用的 adapter
+调用原名 ACLNN 接口，支持 `A_log`、`dt_bias` 和融合开关；A6 矩阵沿用同一参数契约。
 
 ## 验证脚本的环境变量
 
@@ -114,3 +113,27 @@ YAML 的 SOC 元信息覆盖 `ascend910b`、`ascend910_93`、`ascend950` 和 `as
   kernel 报告 `No error detected`。
 - 性能：`atk_recurrent_gated_delta_rule_perf.json` 的 1 条用例成功执行，
   ATK profiler 平均设备时间为 `18.4066 us`；本轮无性能基线或性能目标变更。
+
+## ACLNN 接口收敛精度回归（2026-11-14）
+
+- 代码基线：`add_refine@dd54e688` 加本轮接口收敛变更；使用 A2 工作区已有的 513 条独立 CPU 双标杆矩阵。
+- 仅保留 `aclnnRecurrentGatedDeltaRuleGetWorkspaceSize` /
+  `aclnnRecurrentGatedDeltaRule`，采用原 V2 的完整参数表；Stable adapter 和 C++ 示例已同步。
+  描述符校验从独立头文件移入 ACLNN cpp，计算、tiling、CPU 标杆、输入分布和原生精度阈值保持一致。
+- 重新构建并安装 A2 wheel，实际加载的 opapi 和 4 个 kernel 文件与本轮构建结果一致；
+  安装后的头文件与 adapter 参数匹配，动态库只导出上述两个符号。
+
+| 用例范围 | 执行成功 | 原生双标杆通过 | 原生双标杆未通过 |
+| --- | --- | --- | --- |
+| 0–479 | 480/480 | 464 | 16 |
+| 480–512 | 33/33 | 33 | 0 |
+| 合计 | 513/513 | 497 | 16 |
+
+未通过 case_id 为 42、106、145、153、156、178、215、223、232、298、366、375、
+379、391、437、473，与改前的原生精度报告一致，未新增失败。
+另选取包含这 16 条在内的 30 条代表用例，在改前 V2 与本轮接口上使用相同输入执行：
+attention 及完整 State pool 的字节哈希 30/30 一致；无效 prefix 在比较前按原规则清零。
+该一致性检查不替代原生精度标准，本轮原生双标杆仍未全通过。
+
+C++ 两段式示例编译及执行通过。CPU beta、query dtype 错误、一维索引长度错误、非空 gk、
+缺失融合 gate 输入等 5 条负向检查均保留包含参数名的报错，且 State 数据与版本计数保持不变。

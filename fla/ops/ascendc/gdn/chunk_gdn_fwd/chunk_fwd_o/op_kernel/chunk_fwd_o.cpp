@@ -16,6 +16,8 @@
 #include "chunk_fwd_o_tiling_key.h"
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/gemm/kernel/gdn_fwd_o_kernel.hpp"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/gemm/kernel/gdn_fwd_o_kernel.hpp"
 #else
 #include "gemm/kernel/gdn_fwd_o_kernel.hpp"
 #endif
@@ -25,6 +27,8 @@
 
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_fwd_o_a5.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/chunk_fwd_o_a6.h"
 #endif
 
 namespace GDN {
@@ -43,6 +47,20 @@ __aicore__ inline void ChunkFwdOA5DispatchByGateType(GM_ADDR q, GM_ADDR k, GM_AD
         ChunkFwdOA5Dispatch<float, UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
     } else {
         ChunkFwdOA5Dispatch<bfloat16_t, UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
+    }
+}
+
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+
+template <bool UseExp2>
+__aicore__ inline void ChunkFwdOA6DispatchByGateType(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR g,
+                                                    GM_ADDR cuSeqlens, GM_ADDR chunkOffsets, GM_ADDR o,
+                                                    GM_ADDR workspace, const ChunkFwdOTilingData *tilingData)
+{
+    if (tilingData->gDataType == CHUNK_FWD_O_DTYPE_FP32) {
+        ChunkFwdOA6Dispatch<float, UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
+    } else {
+        ChunkFwdOA6Dispatch<bfloat16_t, UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, workspace, tilingData);
     }
 }
 
@@ -67,6 +85,12 @@ __aicore__ inline void ChunkFwdODispatch(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADD
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if constexpr (OutputTokenFirst) {
         ChunkFwdOA5DispatchByGateType<UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, userWorkspace,
+                                              tilingData);
+        return;
+    }
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    if constexpr (OutputTokenFirst) {
+        ChunkFwdOA6DispatchByGateType<UseExp2>(q, k, v, h, g, cuSeqlens, chunkOffsets, o, userWorkspace,
                                               tilingData);
         return;
     }
@@ -101,7 +125,11 @@ __global__ __aicore__ void chunk_fwd_o(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR 
                                                    GM_ADDR g, GM_ADDR cu_seqlens, GM_ADDR chunk_offsets,
                                                    GM_ADDR o, GM_ADDR workspace, GM_ADDR tiling)
 {
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
 
     GM_ADDR user = AscendC::GetUserWorkspace(workspace);
     REGISTER_TILING_DEFAULT(GDN::ChunkFwdOTilingData);

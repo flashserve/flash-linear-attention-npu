@@ -138,32 +138,32 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleBwdDhuParams params)
     // q/k/w/dO/dv/dv2Out 4D、g 3D、gk 4D、dhOut 5D
     if (qShape.GetDimNum() != CHUNK_BWD_DHU_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            OP_NAME, "q", std::to_string(qShape.GetDimNum()), "q should be 4D [B, HK, T, K].");
+            OP_NAME, "q", std::to_string(qShape.GetDimNum()), "q should be 4D [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (kShape.GetDimNum() != CHUNK_BWD_DHU_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            OP_NAME, "k", std::to_string(kShape.GetDimNum()), "k should be 4D [B, HK, T, K].");
+            OP_NAME, "k", std::to_string(kShape.GetDimNum()), "k should be 4D [B, HK, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (wShape.GetDimNum() != CHUNK_BWD_DHU_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            OP_NAME, "w", std::to_string(wShape.GetDimNum()), "w should be 4D [B, HV, T, K].");
+            OP_NAME, "w", std::to_string(wShape.GetDimNum()), "w should be 4D [B, HV, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dOShape.GetDimNum() != CHUNK_BWD_DHU_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            OP_NAME, "dO", std::to_string(dOShape.GetDimNum()), "dO should be 4D [B, HV, T, V].");
+            OP_NAME, "dO", std::to_string(dOShape.GetDimNum()), "dO should be 4D [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dvShape.GetDimNum() != CHUNK_BWD_DHU_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            OP_NAME, "dv", std::to_string(dvShape.GetDimNum()), "dv should be 4D [B, HV, T, V].");
+            OP_NAME, "dv", std::to_string(dvShape.GetDimNum()), "dv should be 4D [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dv2OutShape.GetDimNum() != CHUNK_BWD_DHU_QKV_DIM_NUM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-            OP_NAME, "dv2Out", std::to_string(dv2OutShape.GetDimNum()), "dv2Out should be 4D [B, HV, T, V].");
+            OP_NAME, "dv2Out", std::to_string(dv2OutShape.GetDimNum()), "dv2Out should be 4D [B, HV, T, V]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (dhOutShape.GetDimNum() != CHUNK_BWD_DHU_DH_DIM_NUM) {
@@ -416,7 +416,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
                                        ? params.gOptional->GetDataType()
                                        : params.gkOptional->GetDataType();
     if (!(gateDtype == ge::DT_FLOAT || gateDtype == inputDtype)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "g/gk", ge::TypeUtils::DataTypeToSerialString(gateDtype),
             "g/gk dtype should be float32 or the same as q: " +
                 ge::TypeUtils::DataTypeToSerialString(inputDtype));
@@ -570,6 +570,15 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
         q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
         cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, stateVFirst,
         dhOut, dh0Out, dv2Out};
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+
     L2_DFX_PHASE_1(aclnnChunkGatedDeltaRuleBwdDhu,
                    DFX_IN(q, k, w, dO, dv, gOptional, gkOptional, h0Optional, dhtOptional,
                           cuSeqlensOptional, chunkIndicesOptional, scale, chunkSize, useExp2, stateVFirst),
@@ -589,6 +598,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
         return ret;
     }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -597,23 +607,26 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
         params.h0Optional, params.dhtOptional, params.cuSeqlensOptional, params.chunkIndicesOptional,
         params.scale, params.chunkSize, params.useExp2, params.stateVFirst,
         params.dhOut, params.dh0Out, params.dv2Out, executorPtr);
+    // 本算子在 L0 已有 CheckShape、tiling 侧也有约束；l0op 返回空无法区分是
+    // tiling 拒绝参数还是内部失败，这里按内部失败 561103 上报，参数类根因以
+    // tiling 的结构化报文为准（pre_process_bwd 因全部校验在 tiling 而保留 161002）。
     if (!(result[0] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[1] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[2] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
             OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
             __func__);
-        return ACLNN_ERR_PARAM_INVALID;
+        return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dhOut, executorPtr);
@@ -643,9 +656,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdDhu);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "This is an error in ChunkGatedDeltaRuleBwdDhu launch aicore.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

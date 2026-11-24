@@ -129,18 +129,18 @@ public:
     ge::graphStatus Process()
     {
         if (PreCheck() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "PreCheck", "invalid", "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu PreCheck failed.", __func__);
 
             return ge::GRAPH_FAILED;
         }
         if (CommonTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "CommonTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu CommonTiling failed.", __func__);
 
             return ge::GRAPH_FAILED;
         }
         if (IsVariableLength()) {
             if (VariableLenTiling() != ge::GRAPH_SUCCESS) {
-                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "VariableLenTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+                OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.", __func__);
 
                 return ge::GRAPH_FAILED;
             }
@@ -153,7 +153,7 @@ public:
             tiling_.isVariable = 0;
         }
         if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "WorkspaceTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.", __func__);
 
             return ge::GRAPH_FAILED;
         }
@@ -348,7 +348,7 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
-            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                 ctx_.nodeName, "g/gk", ge::TypeUtils::DataTypeToSerialString(ctx_.gDataType),
                 "the dtype of g or gk must be float32 or match q and k");
             return ge::GRAPH_FAILED;
@@ -399,7 +399,7 @@ private:
                 std::to_string(dvShape.GetDim(DIM_1)) + "," +
                 std::to_string(dvShape.GetDim(DIM_2)) + "," +
                 std::to_string(dvShape.GetDim(DIM_3)) + "]";
-            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+            OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
                 ctx_.nodeName, "dO,dv", actualLayout.c_str(),
                 "Ascend960DT requires matching non-token-major [B,HV,T,V] layouts");
             return ge::GRAPH_FAILED;

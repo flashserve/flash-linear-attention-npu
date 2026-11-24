@@ -4,11 +4,13 @@
  */
 #include "aclnn_chunk_gdn_bwd_intra.h"
 #include "chunk_gdn_bwd_intra.h"
+#include "../chunk_gdn_bwd_intra_schedule.h"
 
 #include <array>
 #include <set>
 #include <string>
 #include <utility>
+#include "graph/utils/type_utils.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "external/aclnn_kernels/aclnn_platform.h"
 #include "opdev/common_types.h"
@@ -25,8 +27,6 @@ namespace {
 
 constexpr const char *OP_NAME = "aclnnChunkGdnBwdIntra";
 
-// GVA 比例（HV/HK）上限：DAV_2201（A2/A3）为 16，其他（含 DAV_3510/A5）为 4。
-constexpr int64_t GVA_RATIO_MAX_DAV_2201 = 16;
 constexpr int64_t GVA_RATIO_MAX_OTHER = 4;
 
 struct Params {
@@ -66,18 +66,24 @@ aclnnStatus Check(const Params &p)
 {
     const std::array<const aclTensor *, 10> tensors = {
         p.q, p.k, p.v, p.g, p.beta, p.a, p.dO, p.wOut, p.uOut, p.dvLocalOut};
-    for (const aclTensor *tensor : tensors) {
-        if (!(tensor != nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "arguments");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
-        if (!(IsContiguous(tensor))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "input tensors", "non-contiguous", "ChunkGdnBwdIntra only supports contiguous BNSD tensors");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+    const std::array<const char *, 10> names = {
+        "q", "k", "v", "g", "beta", "A", "dO", "w", "u", "dv_local"};
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        if (tensors[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, names[i]);
+            return ACLNN_ERR_PARAM_NULLPTR;
+        }
+        if (!(IsContiguous(tensors[i]))) {
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                OP_NAME, names[i],
+                ge::TypeUtils::FormatToSerialString(
+                    static_cast<ge::Format>(tensors[i]->GetStorageFormat())),
+                "ChunkGdnBwdIntra only supports contiguous BNSD tensors");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     if (!(p.chunkSize == 64)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_size", std::to_string(p.chunkSize), "chunk_size must be 64.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkSize", std::to_string(p.chunkSize), "chunkSize must be 64");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -87,20 +93,32 @@ aclnnStatus Check(const Params &p)
     const auto aShape = p.a->GetViewShape();
     if (!(qShape.GetDimNum() == 4 && vShape.GetDimNum() == 4 &&
                    gShape.GetDimNum() == 3 && aShape.GetDimNum() == 4)) {
-        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(OP_NAME, "layout", "invalid", "q/k/v/A/d_o must be rank 4 and g/beta rank 3 in BNSD layout.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(OP_NAME, "q,v,g,A",
+            std::to_string(qShape.GetDimNum()) + "," + std::to_string(vShape.GetDimNum()) + "," +
+                std::to_string(gShape.GetDimNum()) + "," + std::to_string(aShape.GetDimNum()),
+            "q/k/v/A/d_o must be rank 4 and g/beta rank 3 in BNSD layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(SameShape(p.q, p.k))) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "q", "invalid", "q and k must have the same shape.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "q",
+            std::to_string(qShape.GetDim(0)) + "," + std::to_string(qShape.GetDim(1)) + "," +
+                std::to_string(qShape.GetDim(2)) + "," + std::to_string(qShape.GetDim(3)),
+            "q and k must have the same shape");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(SameShape(p.v, p.dO) && SameShape(p.v, p.uOut) &&
                    SameShape(p.v, p.dvLocalOut))) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "v", "invalid", "v, d_o, u and dv_local must have the same shape.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "v",
+            std::to_string(vShape.GetDim(0)) + "," + std::to_string(vShape.GetDim(1)) + "," +
+                std::to_string(vShape.GetDim(2)) + "," + std::to_string(vShape.GetDim(3)),
+            "v, d_o, u and dv_local must have the same shape");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(SameShape(p.g, p.beta))) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "g", "invalid", "g and beta must have the same shape.");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "g",
+            std::to_string(gShape.GetDim(0)) + "," + std::to_string(gShape.GetDim(1)) + "," +
+                std::to_string(gShape.GetDim(2)),
+            "g and beta must have the same shape");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
@@ -110,117 +128,177 @@ aclnnStatus Check(const Params &p)
     const int64_t kDim = qShape.GetDim(3);
     const int64_t hv = vShape.GetDim(1);
     if (!(b > 0 && hk > 0 && hv > 0 && t > 0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV", "invalid", "B, HK, HV and T must be positive.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "B/HK/HV/T",
+            std::to_string(b) + "," + std::to_string(hk) + "," + std::to_string(hv) + "," + std::to_string(t),
+            "B, HK, HV and T must be positive");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(kDim == 128 && vShape.GetDim(3) == 128)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "K", "invalid", "K and V must both be 128.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K/V",
+            std::to_string(kDim) + "," + std::to_string(vShape.GetDim(3)),
+            "K and V must both be 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(vShape.GetDim(0) == b && vShape.GetDim(2) == t)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q", "invalid", "q/k and value tensors must share B and T.");
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "v.B,v.T,q.B,q.T",
+            "v.B=" + std::to_string(vShape.GetDim(0)) + ",v.T=" + std::to_string(vShape.GetDim(2)) +
+                ",q.B=" + std::to_string(b) + ",q.T=" + std::to_string(t),
+            "q/k and value tensors must share B and T");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // GVA 上限在 aclnn 参数校验层拦截：DAV_2201（A2/A3）支持 1~16，其他 1~4。
-    const int64_t gvaLimit = GetCurrentPlatformInfo().GetCurNpuArch() ==
-        NpuArch::DAV_2201 ? GVA_RATIO_MAX_DAV_2201 : GVA_RATIO_MAX_OTHER;
-    if (hv % hk != 0 || hv / hk < 1 || hv / hk > gvaLimit) {
+    const auto arch = GetCurrentPlatformInfo().GetCurNpuArch();
+    const bool isAscend950 = arch == NpuArch::DAV_3510;
+    const bool arch22 = arch == NpuArch::DAV_2201;
+    const int64_t gvaLimit = arch22 || isAscend950 ? optiling::IntraMaxGvaRatio(arch22) : GVA_RATIO_MAX_OTHER;
+    const int64_t ratio = hv / hk;
+    if (hv % hk != 0 || ratio < 1 || ratio > gvaLimit) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "hv/hk",
             std::to_string(hv) + "/" + std::to_string(hk),
-            "HV/HK ratio must be an integer in [1, 16] on DAV_2201 (A2/A3), "
-            "or [1, 4] on other SoC archs.");
+            isAscend950 ? "HV/HK ratio must be an integer in [1, 16] on DAV_3510 (A5)." :
+                "HV/HK ratio must be an integer in [1, 16] on DAV_2201 (A2/A3), "
+                "or [1, 4] on other SoC archs.");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(gShape.GetDim(0) == b && gShape.GetDim(1) == hv && gShape.GetDim(2) == t)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "g/beta shape must be [B, HV, T].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "g",
+            std::to_string(gShape.GetDim(0)) + "," + std::to_string(gShape.GetDim(1)) + "," +
+                std::to_string(gShape.GetDim(2)),
+            "g/beta shape must be [B, HV, T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!(aShape.GetDim(0) == b && aShape.GetDim(1) == hv &&
                    aShape.GetDim(2) == t && aShape.GetDim(3) == p.chunkSize)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "chunk_size", "invalid", "A shape must be [B, HV, T, chunk_size].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "A",
+            std::to_string(aShape.GetDim(0)) + "," + std::to_string(aShape.GetDim(1)) + "," +
+                std::to_string(aShape.GetDim(2)) + "," + std::to_string(aShape.GetDim(3)),
+            "A shape must be [B, HV, T, chunkSize]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto wShape = p.wOut->GetViewShape();
     if (!(wShape.GetDimNum() == 4 && wShape.GetDim(0) == b &&
                    wShape.GetDim(1) == hv && wShape.GetDim(2) == t &&
                    wShape.GetDim(3) == kDim)) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "HV", "invalid", "w shape must be [B, HV, T, K].");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "w",
+            std::to_string(wShape.GetDim(0)) + "," + std::to_string(wShape.GetDim(1)) + "," +
+                std::to_string(wShape.GetDim(2)) + "," + std::to_string(wShape.GetDim(3)),
+            "w shape must be [B, HV, T, K]");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
     const DataType mainType = p.q->GetDataType();
+    if (isAscend950 && ratio > 4 && mainType != DataType::DT_BF16) {
+        const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv) +
+            ", q dtype=" + (mainType == DataType::DT_FLOAT16 ? "FP16" : std::to_string(static_cast<int>(mainType)));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q dtype", actual, "BF16 for HV/HK > 4 on A5");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (!(mainType == DataType::DT_BF16 || mainType == DataType::DT_FLOAT16)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q", "invalid", "q/k/v/A/d_o must be BF16 or FP16.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "q",
+            ge::TypeUtils::DataTypeToSerialString(mainType),
+            "q/k/v/A/d_o must be BF16 or FP16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const std::array<const aclTensor *, 7> mainTensors = {
         p.k, p.v, p.a, p.dO, p.wOut, p.uOut, p.dvLocalOut};
-    for (const aclTensor *tensor : mainTensors) {
-        if (!(tensor->GetDataType() == mainType)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "dtype", "invalid", "all main tensors and outputs must use the same dtype.");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+    const std::array<const char *, 7> mainTensorNames = {
+        "k", "v", "A", "dO", "w", "u", "dv_local"};
+    for (size_t i = 0; i < mainTensors.size(); ++i) {
+        const DataType tensorType = mainTensors[i]->GetDataType();
+        if (!(tensorType == mainType)) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, mainTensorNames[i],
+                ge::TypeUtils::DataTypeToSerialString(tensorType),
+                "q/k/v/A/d_o and outputs must use the same dtype");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
     const DataType gateType = p.g->GetDataType();
     if (!(gateType == DataType::DT_BF16 || gateType == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "g", "invalid", "g must be BF16 or FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "g",
+            ge::TypeUtils::DataTypeToSerialString(p.g->GetDataType()),
+            "g must be BF16 or FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType betaType = p.beta->GetDataType();
     if (!(betaType == DataType::DT_BF16 || betaType == DataType::DT_FLOAT)) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "beta", "invalid", "beta must be BF16 or FP32.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "beta",
+            ge::TypeUtils::DataTypeToSerialString(p.beta->GetDataType()),
+            "beta must be BF16 or FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(p.cuSeqlens != nullptr) == (p.chunkIndices != nullptr)) {
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "cu_seqlens", "cu_seqlens and chunk_indices must be provided together.");
-        return ACLNN_ERR_PARAM_INVALID;
+    // 原写法 (cuSeqlens == nullptr) == (chunkIndices != nullptr) 为异或判定，
+    // 语义上已覆盖两个方向；本次改为等价的 != 写法，并按“必填为空 ->
+    // 161001 + EZ0004”报出真正缺失的参数名（原实现统一报 161002）。
+    if ((p.cuSeqlens == nullptr) != (p.chunkIndices == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, p.cuSeqlens == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (p.cuSeqlens != nullptr) {
         if (!(b == 1)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", std::to_string(b), "varlen BNSD requires B=1.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "B", std::to_string(b), "varlen BNSD requires B=1");
         return ACLNN_ERR_PARAM_INVALID;
     }
         if (!(p.cuSeqlens->Size() >= 2)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(p.cuSeqlens->Size()), "cu_seqlens must contain at least two boundaries.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", std::to_string(p.cuSeqlens->Size()), "cu_seqlens must contain at least two boundaries");
         return ACLNN_ERR_PARAM_INVALID;
     }
-        if (!(p.chunkIndices != nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "cu_seqlens");
-        return ACLNN_ERR_PARAM_NULLPTR;
-    }
         if (!(p.chunkIndices->Size() > 0 && p.chunkIndices->Size() % 2 == 0)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_indices", "invalid", "chunk_indices flattened length must be a positive multiple of 2.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk_indices",
+            std::to_string(p.chunkIndices->Size()),
+            "chunk_indices flattened length must be a positive multiple of 2");
         return ACLNN_ERR_PARAM_INVALID;
     }
         const aclIntArray &cu = *p.cuSeqlens;
         const aclIntArray &indices = *p.chunkIndices;
         if (!(cu[0] == 0 && cu[cu.Size() - 1] == t)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must span [0,T].");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens",
+            std::to_string(cu[0]) + "," + std::to_string(cu[cu.Size() - 1]) + "," + std::to_string(t),
+            "cu_seqlens must span [0,T]");
         return ACLNN_ERR_PARAM_INVALID;
     }
+        const bool requireCompleteChunks = isAscend950 && ratio > 4;
+        uint64_t expectedChunks = 0;
         for (size_t seq = 0; seq + 1 < cu.Size(); ++seq) {
             if (!(cu[seq] >= 0 && cu[seq + 1] >= cu[seq])) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "cu_seqlens", "invalid", "cu_seqlens must be nonnegative and nondecreasing.");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    OP_NAME, "cu_seqlens",
+                    std::to_string(cu[seq]) + "," + std::to_string(cu[seq + 1]),
+                    "cu_seqlens must be nonnegative and nondecreasing");
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+            if (requireCompleteChunks) {
+                const int64_t length = cu[seq + 1] - cu[seq];
+                expectedChunks += length / p.chunkSize + (length % p.chunkSize != 0);
+            }
+        }
+        if (requireCompleteChunks && indices.Size() / 2 != expectedChunks) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_NAME, "chunk_indices pair count", std::to_string(indices.Size() / 2),
+                "expected " + std::to_string(expectedChunks) + " to cover all nonempty sequence chunks");
+            return ACLNN_ERR_PARAM_INVALID;
         }
         std::set<std::pair<int64_t, int64_t>> seen;
         for (size_t offset = 0; offset < indices.Size(); offset += 2) {
             const int64_t seq = indices[offset];
             const int64_t chunk = indices[offset + 1];
             if (!(seq >= 0 && static_cast<uint64_t>(seq) < cu.Size() - 1)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "index", "invalid", "chunk sequence index is out of bounds.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "seq",
+            std::to_string(seq) + "," + std::to_string(cu.Size() - 1),
+            "chunk sequence index is out of bounds");
         return ACLNN_ERR_PARAM_INVALID;
     }
             const int64_t length = cu[seq + 1] - cu[seq];
             const int64_t chunks = length / p.chunkSize + (length % p.chunkSize != 0);
             if (!(chunk >= 0 && chunk < chunks)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "index", "invalid", "local chunk index is out of bounds.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunk",
+            std::to_string(chunk) + "," + std::to_string(chunks),
+            "local chunk index is out of bounds");
         return ACLNN_ERR_PARAM_INVALID;
     }
             if (!(seen.emplace(seq, chunk).second)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndices", "duplicate", "duplicate chunk indices would write overlapping outputs.");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "chunkIndices", "duplicate", "duplicate chunk indices would write overlapping outputs");
         return ACLNN_ERR_PARAM_INVALID;
     }
         }
@@ -242,15 +320,22 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
                    DFX_IN(q, k, v, g, beta, a, dO, cuSeqlensOptional,
                           chunkIndicesOptional, scale, chunkSize, useExp2),
                    DFX_OUT(wOut, uOut, dvLocalOut));
-    if (!(workspaceSize != nullptr && executor != nullptr)) {
+    if (workspaceSize == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (executor == nullptr) {
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "executor");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const Params params{q, k, v, g, beta, a, dO, cuSeqlensOptional,
                         chunkIndicesOptional, scale, chunkSize, useExp2,
                         wOut, uOut, dvLocalOut};
-    if (!(Check(params) == ACLNN_SUCCESS)) {
-        return ACLNN_ERR_PARAM_INVALID;
+    {
+        const aclnnStatus checkRet = Check(params);
+        if (checkRet != ACLNN_SUCCESS) {
+            return checkRet;
+        }
     }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
@@ -278,9 +363,11 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntra(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnChunkGdnBwdIntra);
-    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkGdnBwdIntra launch failed.", __func__);
-        return ACLNN_ERR_INNER;
+    const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+    if (runRet != ACLNN_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
+                               static_cast<int>(runRet));
+        return runRet;
     }
     return ACLNN_SUCCESS;
 }

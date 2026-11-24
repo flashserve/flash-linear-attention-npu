@@ -115,11 +115,19 @@ class KernelDispatchTests(unittest.TestCase):
         table = (kernel / "chunk_gdn_bwd_intra_tiling_key.h").read_text(encoding="utf-8")
         self.assertIn("CHUNK_GDN_BWD_INTRA_TPL_MAIN(STRATEGY, 0)", table)
         dispatch = source[source.index("__aicore__ inline void DispatchKernel("):]
-        a5 = dispatch.split("#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)", 1)[1].split("#else", 1)[0]
+        a5, arch22 = dispatch.split("#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)", 1)[1].split("#else", 1)
+        arch22 = arch22.split("#endif", 1)[0]
         self.assertNotIn("static_assert(G_KEY != 0", a5)
         guard = a5.index("if constexpr (G_KEY != CHUNK_GDN_BWD_INTRA_G_RUNTIME)")
-        self.assertLess(guard, a5.index("ChunkGdnBwdIntraCube<MainT, G_KEY>"))
-        self.assertLess(guard, a5.index("ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY>"))
+        # A5 key 5 uses runtime group=0; the arch22 key 0 must stay excluded.
+        mapping = a5.index("constexpr uint32_t group = G_KEY == G_KEY_GT4 ? 0 : G_KEY;")
+        self.assertLess(guard, mapping)
+        self.assertLess(mapping, a5.index("ChunkGdnBwdIntraCube<MainT, group>"))
+        self.assertLess(mapping, a5.index("ChunkGdnBwdIntraVector<MainT, GateT, BetaT, group>"))
+        # A2/A3 retain G_KEY and must not instantiate the A5-only key 5.
+        arch22_guard = arch22.index("if constexpr (G_KEY != G_KEY_GT4)")
+        self.assertLess(arch22_guard, arch22.index("Arch22::ChunkGdnBwdIntraCube<MainT, G_KEY>"))
+        self.assertLess(arch22_guard, arch22.index("Arch22::ChunkGdnBwdIntraVector<MainT, GateT, BetaT, G_KEY>"))
 
 
 class HeadMappingTests(unittest.TestCase):

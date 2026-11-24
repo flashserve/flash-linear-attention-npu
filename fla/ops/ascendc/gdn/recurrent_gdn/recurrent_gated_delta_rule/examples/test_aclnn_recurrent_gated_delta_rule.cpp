@@ -135,7 +135,8 @@ int main()
     std::vector<int64_t> qkShape = {batchSize * mtp, headKNum, dimK};
     std::vector<int64_t> vShape = {batchSize * mtp, headVNum, dimV};
     std::vector<int64_t> gamaShape = {batchSize * mtp, headVNum};
-    std::vector<int64_t> actSeqLenShape = {batchSize};
+    std::vector<int64_t> actSeqLenShape = {batchSize + 1};
+    std::vector<int64_t> numAccTokShape = {batchSize};
     std::vector<int64_t> ssmStaIdShape = {batchSize * mtp};
     std::vector<int16_t> stateRefHostData(GetShapeSize(stateShape));
     std::vector<int16_t> queryHostData(GetShapeSize(qkShape));
@@ -143,7 +144,8 @@ int main()
     std::vector<int16_t> valueHostData(GetShapeSize(vShape));
     std::vector<float> gamaHostData(GetShapeSize(gamaShape));
     std::vector<int16_t> betaHostData(GetShapeSize(gamaShape));
-    std::vector<int32_t> actSeqLenHostData(batchSize, mtp);
+    std::vector<int32_t> actSeqLenHostData(batchSize + 1, mtp);
+    actSeqLenHostData[0] = 0;
     std::vector<int32_t> ssmStaIdHostData(batchSize * mtp);
     std::vector<int32_t> numAccTokHostData(batchSize, 1);
     for (int i = 0; i < stateRefHostData.size(); i++) {
@@ -183,7 +185,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(ssmStaIdHostData, ssmStaIdShape, &ssmStaIdDeviceAddr, aclDataType::ACL_INT32, &ssmStaId);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(numAccTokHostData, actSeqLenShape, &numAccTokDeviceAddr, aclDataType::ACL_INT32, &numAccTok);
+    ret = CreateAclTensor(numAccTokHostData, numAccTokShape, &numAccTokDeviceAddr, aclDataType::ACL_INT32, &numAccTok);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(attnOutHostData, vShape, &attnOutDeviceAddr, aclDataType::ACL_BF16, &attnOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -194,7 +196,8 @@ int main()
     aclOpExecutor *executor;
     // 调用aclnnRecurrentGatedDeltaRuleGetWorkspaceSize第一段接口
     ret = aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(query, key, value, beta, stateRef, actSeqLen, ssmStaId, gama,
-                                                       gamak, numAccTok, scale, attnOut, &workspaceSize, &executor);
+                                                       gamak, numAccTok, nullptr, nullptr, scale,
+                                                       false, false, false, false, attnOut, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnRecurrentGatedDeltaRuleGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
 
