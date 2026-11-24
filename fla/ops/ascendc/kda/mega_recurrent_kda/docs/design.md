@@ -30,9 +30,8 @@ T02 按完整序列分组时，若 workspace 能容纳 decay-A 和 gated、输�
 
 公共 Python、Stable ABI 和 ACLNN 接口复用相同的形状校验、模板选择和状态槽映射。
 Host tiling 通过 `GetSocVersion()` 识别芯片。A2/A3 使用 `arch22/` 的分核与 workspace 布局，在混合 kernel 内选择 T01 或 T02。Ascend 950 使用 `arch35/`。TilingKey 1 和 3 对应 T01 的短序列与长序列实现，TilingKey 2 对应 T02。
-Cube 把投影写到 GM 临时区，Vector 根据每块的计数器消费结果。T01 按块分配递推任务，
-T02 按序列和 head 持有递推状态。两种模板按实际物理槽步长原地写回。
+Cube 按 64 行块发布投影。每个 Vector 核按序列和 head 领取递推任务。T01 的序列完整落在一块内，同一核可合并该块多个任务的完成计数。T02 仅在进入下一块时等待该块投影就绪，FP32 递推状态和卷积历史保留在核内 UB。每块的所有任务写完 gated 后，Cube 即可读取对应的输出投影输入。两种模板都按物理槽步长原地写回。
 
 两层 decay 投影由 Cube 使用 BF16 输入、FP32 累加，每层都由 Fixpipe 写出 BF16。
 第一层借用本行块的 gated 区，结果就绪后各 Cube 核按列执行第二层。投影权重超过目标芯片 L2 容量时，每次最多对三个 64 行 tile 复用权重。Vector 再以 FP32 计算衰减和递推。CPU 和 Cube 的点积累加顺序可能不同，舍入边界附近的差异会沿投影传播到 replay_decay。
-Host 按 token 块数分配投影、门控及同步区，跨块时另计 B×N×128×128 个 FP32 状态元素。
+Host 按 token 块数分配投影、门控及同步区。T02 每个序列和 head 只读取一次 checkpoint，用户 workspace 省去 `B × N × 128 × 128 × 4` 字节的跨块状态区。

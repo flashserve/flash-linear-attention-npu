@@ -1,4 +1,4 @@
-"""Short projection and cross-tile recurrence regressions for the public A5 kernel."""
+"""Precision regressions for the public MegaRecurrentKda operator."""
 
 import pytest
 import torch
@@ -49,3 +49,23 @@ def test_projection_and_history_handoff(lengths, heads, layout, output, atol, rt
         if previous is not None:
             assert torch.equal(result, previous)
         previous = result
+
+
+@pytest.mark.parametrize("lengths,layout", [([4, 4], "BSH"), ([63, 4], "TH")])
+def test_arch22_zero_correction(lengths, layout):
+    from fla_npu.ops.ascendc import npu_mega_recurrent_kda
+
+    chip = torch.npu.get_device_name()
+    if not chip.startswith(("Ascend910B", "Ascend910_93")):
+        pytest.skip("Checks the Atlas A2/A3 replay representation")
+    host = build_inputs(dict(name="zero", lengths=lengths, heads=3, layout=layout, conv="flat", seed=0))
+    host["hidden_states"].fill_(-0.0)
+    host["conv_state"].zero_()
+    host["checkpoint_state"].fill_(-0.0)
+    device = torch.device("npu", torch.npu.current_device())
+    args = {k: to_device(v, device) for k, v in host.items()}
+    args["a_log"] = args.pop("A_log")
+    replay_u = npu_mega_recurrent_kda(**args)[2].cpu()
+    for slot, length in zip(host["state_indices"].tolist(), lengths):
+        active = replay_u[slot, :, :length].contiguous()
+        assert torch.count_nonzero(active.view(torch.int32)).item() == 0

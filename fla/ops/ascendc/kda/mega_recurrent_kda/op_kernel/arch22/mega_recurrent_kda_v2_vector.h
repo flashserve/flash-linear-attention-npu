@@ -1,8 +1,8 @@
 /**
  * MegaRecurrentKDA v2 Vector-side (AIV) stage: Stage R.
  *
- * One work unit is a (b, head) group for the token range of that sequence that
- * falls inside one 64-row tile.  A unit performs, with H resident in UB:
+ * One AIV owns a (sequence, head) pair through its last token and retains H
+ * in UB across projection tiles. Each pair performs:
  *
  *   1. conv1d + silu for the head's 384 components (q/k/v of this head),
  *      sliding over three history rows plus this call's raw qkv rows;
@@ -12,9 +12,7 @@
  *   4. the S-step KDA recursion on H [V, K] (per-K-column decay, matvec with k,
  *      rank-1 update, matvec with q) writing replay_u / replay_k / replay_decay;
  *   5. RMSNorm + output gate -> `gated`;
- *   6. the in-place conv_state update of this head's 384 columns and, for a
- *      sequence that continues past the tile, the H hand-off through the
- *      user-workspace carry region.
+ *   6. the in-place conv_state update of this head's 384 columns.
  *
  * Cost model: per token the mandatory work is two 128x64 element-wise products
  * plus two row reductions (H@k, H@q), one rank-1 update and one per-column
@@ -91,11 +89,7 @@ constexpr uint32_t kUbRBuf = kUbStg + 64u;              // [CH][128] fp32 r
 constexpr uint32_t kUbR2 = kUbRBuf + kChunk * kD * 4u;  // [CH][128] fp32 r^2
 constexpr uint32_t kUbPack = kUbR2 + kChunk * kD * 4u;  // 2 x [CH][64] fp32
 constexpr uint32_t kUbSum = kUbPack + kChunk * kD * 4u; // 16 fp32
-// T02 group scheduler state (cursor[tile] + lastTile per owned group).  The T01
-// driver never touches it; it is placed last so the T01 UB layout is unchanged.
-constexpr uint32_t kUbGroup = kUbSum + 64u;
-constexpr uint32_t kMaxGroupsPerAiv = 64u; // slots in the UB scheduler state
-constexpr uint32_t kUbBytes = kUbGroup + 3u * kMaxGroupsPerAiv * 4u;
+constexpr uint32_t kUbBytes = kUbSum + 64u;
 
 // Small-vector offsets inside kUbVecs (floats).
 constexpr uint32_t kVecS1 = 0;  // [8]
@@ -139,22 +133,6 @@ __aicore__ inline void RowReduce128(AscendC::LocalTensor<float> const &dst, Asce
     AscendC::ReduceDataBlock<AscendC::ReduceType::SUM>(dst2, part[8u * tokens], static_cast<int32_t>(8u * tokens), 1, 1,
                                                        1, 8);
     AscendC::Add(dst, dst, dst2, static_cast<int32_t>(tokens));
-}
-
-/// Global unit index -> (tile, b, head) using the host-written expectation
-/// arrays: units[tiles], unitsPrefix[tiles+1], firstSeq[tiles].
-__aicore__ inline uint32_t PrefixAt(GM_ADDR expect, uint32_t tiles, uint32_t index)
-{
-    AscendC::GlobalTensor<uint32_t> g;
-    g.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(expect));
-    return g.GetValue(tiles + index);
-}
-
-__aicore__ inline uint32_t FirstSeqAt(GM_ADDR expect, uint32_t tiles, uint32_t index)
-{
-    AscendC::GlobalTensor<uint32_t> g;
-    g.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(expect));
-    return g.GetValue(2u * tiles + 1u + index);
 }
 
 /// conv1d_weight normalised form: [3][N][4][D].  The host also accepts the other
@@ -274,24 +252,11 @@ CATLASS_DEVICE void PrepareHeadConstants(const V2Params &p, const AscendC::Local
     cached.alpha = alpha;
 }
 
-/// Process the token range [rowBegin, rowEnd) of the (b, head) group with H
-/// resident in UB.  The range may span several 64-row tiles: the chunk loop never
-/// crosses a tile boundary (raw rings are tile-indexed), and `storeH` decides
-/// whether H is handed off through the carry region afterwards.
-/// `seqStart..seqEnd` is the sequence's token range; the caller has already read
-/// it from `prefix` (the T02 driver caches it, the T01 wrapper reads it once), so
-/// this hot path does no repeated prefix reads.
-///
-///   T01            : one call per (tile, b, head) unit; storeH = true (a T01
-///                    sequence never continues past its tile, so nothing is ever
-///                    written).
-///   T02, S > 64    : one call per tile segment; storeH = true -> write back to
-///                    carry for the next tile of the same group.
-///   T02, S <= 64   : one call for the whole sequence (<= 64 tokens, at most two
-///                    tiles); H is loaded once from checkpoint and never written
-///                    back (docs/design/T02.md 2.2 "small S branch").
-CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t> const &ub, uint32_t b, uint32_t head,
-                                uint32_t seqStart, uint32_t seqEnd, uint32_t rowBegin, uint32_t rowEnd, bool storeH,
+/// One AIV owns a whole sequence/head. T02 waits and publishes at each tile boundary;
+/// T01 batches credits in its caller. Both keep the FP32 state in UB until the sequence ends.
+template <bool StreamTiles = false>
+CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint8_t> const &ub, uint32_t b, uint32_t head,
+                                uint32_t seqStart, uint32_t seqEnd,
                                 HeadConstants &cached)
 {
     using namespace RDetail;
@@ -305,16 +270,13 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     AscendC::GlobalTensor<int32_t> gmAck;
     gmAck.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(p.accepted));
 
-    if (seqEnd <= seqStart || rowEnd <= rowBegin) {
+    if (seqEnd <= seqStart) {
         return;
     }
-    const uint32_t lo = rowBegin;
-    const uint32_t hi = rowEnd;
-    const uint32_t n = hi - lo;
+    const uint32_t n = seqEnd - seqStart;
     const uint32_t slot = static_cast<uint32_t>(gmIdx.GetValue(b));
     const uint32_t accepted = static_cast<uint32_t>(gmAck.GetValue(b));
     const uint32_t hs = accepted > 1u ? accepted - 1u : 0u;
-    const uint32_t localStart = lo - seqStart;
 
     // ---- tensor views -----------------------------------------------------
     AscendC::LocalTensor<float> h0 = ub[kUbh0].ReinterpretCast<float>();
@@ -361,10 +323,6 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     gmBeta.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(p.wBetaRaw));
     AscendC::GlobalTensor<bfloat16_t> gmGated;
     gmGated.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(p.wGated));
-    AscendC::GlobalTensor<float> gmCkpt;
-    gmCkpt.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.checkpoint));
-    AscendC::GlobalTensor<float> gmCarry;
-    gmCarry.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.carry));
     AscendC::GlobalTensor<float> gmRu;
     gmRu.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.replayU));
     AscendC::GlobalTensor<half> gmRk;
@@ -385,21 +343,10 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     const float alpha = cached.alpha;
     AscendC::LocalTensor<float> convWf = ub[kUbRepW].ReinterpretCast<float>();
 
-    // ---- H: checkpoint (first segment) or carry (continuation) ------------
-    // The carry region is addressed by b (not by the state-pool slot): its
-    // capacity is B*N*D*D*4 (docs/design/T02.md 5), so the pool index may not be
-    // used here.  Every (b, head) group is owned by exactly one AIV in T02, so a
-    // single writer/reader exists for each carry entry.
-    const size_t hOff = (static_cast<size_t>(b) * N + head) * D * D;
-    // H [V,K] = [128][128] FP32 is loaded contiguously (4 x 16 KiB bursts) and
-    // then split on-chip into the two packed [128][64] K halves.  A direct
-    // strided 32 B gather would fetch a 128 B line per 32 B block (4x traffic)
-    // and cost ~4x more than the contiguous load.
+    // Load the two K halves once and update them in place throughout recurrence.
     if ((p.skipSync & 1024u) == 0u) {
-        GM_ADDR hBase = (localStart == 0u) ? p.checkpoint : p.carry;
         AscendC::GlobalTensor<float> g;
-        g.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(hBase) +
-                          (localStart == 0 ? slot * p.checkpointStride + head * D * D : hOff));
+        g.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.checkpoint) + slot * p.checkpointStride + head * D * D);
         // H[V][K] rows are 512 B; each K half is one contiguous 256 B run, so the
         // two packed [128][64] halves are two 2D copies (128 x 256 B blocks).
         AscendC::DataCopyParams hLoad;
@@ -412,15 +359,14 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         AscendC::PipeBarrier<PIPE_ALL>();
     }
 
-    // ---- sliding raw history: 3 rows before `lo` --------------------------
-    const uint32_t histRow = (localStart == 0u) ? hs : (2u + localStart - 3u);
+    // ---- sliding raw history: 3 rows before the sequence --------------------------
     {
         const uint16_t dBlocks = static_cast<uint16_t>(D * 2u / 32u);
         const uint16_t srcGap = static_cast<uint16_t>((threeP - D) * 2u / 32u);
         const uint16_t dstGap = static_cast<uint16_t>((384u - D) * 2u / 32u);
         for (uint32_t g = 0; g < 3u; ++g) {
             const size_t src =
-                slot * p.convStride + static_cast<size_t>(histRow) * threeP + g * P + static_cast<size_t>(head) * D;
+                slot * p.convStride + static_cast<size_t>(hs) * threeP + g * P + static_cast<size_t>(head) * D;
             AscendC::DataCopyParams params;
             params.blockCount = 3;
             params.blockLen = dBlocks;
@@ -431,19 +377,17 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         AscendC::PipeBarrier<PIPE_ALL>();
         AscendC::Cast(cache, rawB, AscendC::RoundMode::CAST_NONE, static_cast<int32_t>(3u * 384u));
         AscendC::PipeBarrier<PIPE_ALL>();
-        if (localStart == 0u) {
-            // conv_state[slot, 0:2] = history[1:3]
-            AscendC::Cast(rawB, cache[384], AscendC::RoundMode::CAST_RINT, static_cast<int32_t>(2u * 384u));
-            AscendC::PipeBarrier<PIPE_ALL>();
-            for (uint32_t g = 0; g < 3u; ++g) {
-                const size_t dst = slot * p.convStride + g * P + static_cast<size_t>(head) * D;
-                AscendC::DataCopyParams params;
-                params.blockCount = 2;
-                params.blockLen = dBlocks;
-                params.srcStride = dstGap;
-                params.dstStride = srcGap;
-                AscendC::DataCopy(gmCs[dst], rawB[g * D], params);
-            }
+        // conv_state[slot, 0:2] = history[1:3]
+        AscendC::Cast(rawB, cache[384], AscendC::RoundMode::CAST_RINT, static_cast<int32_t>(2u * 384u));
+        AscendC::PipeBarrier<PIPE_ALL>();
+        for (uint32_t g = 0; g < 3u; ++g) {
+            const size_t dst = slot * p.convStride + g * P + static_cast<size_t>(head) * D;
+            AscendC::DataCopyParams params;
+            params.blockCount = 2;
+            params.blockLen = dBlocks;
+            params.srcStride = dstGap;
+            params.dstStride = srcGap;
+            AscendC::DataCopy(gmCs[dst], rawB[g * D], params);
         }
     }
 
@@ -461,7 +405,12 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
     AscendC::PipeBarrier<PIPE_ALL>();
     uint32_t t0 = 0u;
     while (t0 < n) {
-        const uint32_t gs = lo + t0;
+        const uint32_t gs = seqStart + t0;
+        if constexpr (StreamTiles) {
+            if ((t0 == 0u || gs % kTileRows == 0u) && (p.skipSync & 1u) == 0u) {
+                Sync::WaitEq(p.counts, CounterByteOffset(0u, gs / kTileRows, p.tiles), p.nProj);
+            }
+        }
         const uint32_t tileRowEnd = (gs / kTileRows + 1u) * kTileRows;
         uint32_t cl = (n - t0 < kChunk) ? (n - t0) : kChunk;
         if (gs + cl > tileRowEnd) {
@@ -486,7 +435,7 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         const uint16_t dstGap384 = static_cast<uint16_t>((384u - D) * 2u / 32u);
         const size_t rowSrcBase = (static_cast<size_t>(rowSlot) * kTileRows + ringRow);
         if (betaBatch) {
-            const uint32_t betaWords = kChunk * N;
+            const uint32_t betaWords = cl * N;
             const uint32_t copyElems = Align16(betaWords);
             const size_t src = (rowSlot * kTileRows + ringRow) * N;
             AscendC::DataCopyParams params;
@@ -521,8 +470,8 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         AscendC::DataCopy(rawF, cache, static_cast<int32_t>(3u * 384u));
         AscendC::PipeBarrier<PIPE_ALL>();
         if (loadRaw) {
-            // write this call's raw rows back into conv_state[slot, 2+localStart+t]
-            const uint32_t csRow = 2u + localStart + t0;
+            // write this call's raw rows back into conv_state[slot, 2+t]
+            const uint32_t csRow = 2u + t0;
             for (uint32_t g = 0; g < 3u; ++g) {
                 const size_t dst =
                     slot * p.convStride + static_cast<size_t>(csRow) * threeP + g * P + static_cast<size_t>(head) * D;
@@ -634,9 +583,7 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
             VBar(p);
             AscendC::Add(decV, decV, biasRep, static_cast<int32_t>(mD));
             VBar(p);
-            AscendC::Muls(decV, decV, alpha, static_cast<int32_t>(mD));
-            VBar(p);
-            AscendC::Muls(decV, decV, -1.0f, static_cast<int32_t>(mD));
+            AscendC::Muls(decV, decV, -alpha, static_cast<int32_t>(mD));
             VBar(p);
             AscendC::Exp(decV, decV, static_cast<int32_t>(mD));
             VBar(p);
@@ -670,15 +617,15 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         // ---- beta (sigmoid of the BF16 raw value) ------------------------
         float betaLocal[kChunk];
         if (betaBatch) {
-            AscendC::Cast(betaV, betaB, AscendC::RoundMode::CAST_NONE, static_cast<int32_t>(Align16(kChunk * N)));
+            AscendC::Cast(betaV, betaB, AscendC::RoundMode::CAST_NONE, static_cast<int32_t>(Align16(cl * N)));
             VBar(p);
-            AscendC::Muls(betaV, betaV, -1.0f, static_cast<int32_t>(Align16(kChunk * N)));
+            AscendC::Muls(betaV, betaV, -1.0f, static_cast<int32_t>(Align16(cl * N)));
             VBar(p);
-            AscendC::Exp(betaV, betaV, static_cast<int32_t>(Align16(kChunk * N)));
+            AscendC::Exp(betaV, betaV, static_cast<int32_t>(Align16(cl * N)));
             VBar(p);
-            AscendC::Adds(betaV, betaV, 1.0f, static_cast<int32_t>(Align16(kChunk * N)));
+            AscendC::Adds(betaV, betaV, 1.0f, static_cast<int32_t>(Align16(cl * N)));
             VBar(p);
-            AscendC::Div(betaV, ones, betaV, static_cast<int32_t>(Align16(kChunk * N)));
+            AscendC::Div(betaV, ones, betaV, static_cast<int32_t>(Align16(cl * N)));
             AscendC::PipeBarrier<PIPE_ALL>();
             for (uint32_t t = 0; t < cl; ++t) {
                 betaLocal[t] = betaV.GetValue(t * N + head);
@@ -742,20 +689,17 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
                 RowReduce64(sVec, scratch, tmp);
             }
             VBar(p);
-            // corr = beta * (v - s); keep it with a vector copy so the token
-            // stream stays on the V pipe (the epilogue stores the chunk at once)
+            // Keep the correction in its replay slot for the state update and the chunk store.
             AscendC::Sub(tmp, vRow, sVec, static_cast<int32_t>(D));
             VBar(p);
-            AscendC::Muls(sVec, tmp, beta, static_cast<int32_t>(D));
-            VBar(p);
-            AscendC::Adds(corrBuf[t * D], sVec, 0.0f, static_cast<int32_t>(D));
+            AscendC::Muls(corrBuf[t * D], tmp, beta, static_cast<int32_t>(D));
             VBar(p);
             // H += outer(corr, k): Brcb already produces a [128][8] tile whose
             // 32 B row v holds corr[v] eight times, so the product can be added
             // with block stride 0 (all eight 32 B blocks of a row read that one
             // row) instead of materialising a full [128][64] row-repeat tile.
             // Drops the 32 KiB broadcast write and its two reads per token.
-            AscendC::Brcb(tmp, sVec, 16, AscendC::BrcbRepeatParams(1, 8));
+            AscendC::Brcb(tmp, corrBuf[t * D], 16, AscendC::BrcbRepeatParams(1, 8));
             VBar(p);
             AscendC::MulAddDst(h0, tmp, kRow, 64, 128, bcastParams);
             VBar(p);
@@ -813,13 +757,14 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
 
         // ---- batched epilogue: replay_* and gated --------------------------
         if ((p.skipSync & 16777216u) == 0u) {
-            const uint32_t tIdx0 = localStart + t0;
+            // Preserve the replay format's positive zero after using the raw correction to update H.
+            AscendC::Adds(corrBuf, corrBuf, 0.0f, static_cast<int32_t>(mD));
             AscendC::PipeBarrier<PIPE_ALL>();
-            AscendC::DataCopy(gmRu[slot * p.uStride + replayBase + static_cast<size_t>(tIdx0) * D], corrBuf,
+            AscendC::DataCopy(gmRu[slot * p.uStride + replayBase + static_cast<size_t>(t0) * D], corrBuf,
                               static_cast<int32_t>(cl * D));
-            AscendC::DataCopy(gmRk[slot * p.keyStride + replayBase + static_cast<size_t>(tIdx0) * D], kHalfBuf,
+            AscendC::DataCopy(gmRk[slot * p.keyStride + replayBase + static_cast<size_t>(t0) * D], kHalfBuf,
                               static_cast<int32_t>(cl * D));
-            AscendC::DataCopy(gmRd[slot * p.decayStride + replayBase + static_cast<size_t>(tIdx0) * D], decV,
+            AscendC::DataCopy(gmRd[slot * p.decayStride + replayBase + static_cast<size_t>(t0) * D], decV,
                               static_cast<int32_t>(cl * D));
             const uint32_t row0 = gs;
             const uint32_t slotG = (row0 / kTileRows) % p.slotsGated;
@@ -841,48 +786,15 @@ CATLASS_DEVICE void ProcessRows(V2Params const &p, AscendC::LocalTensor<uint8_t>
         AscendC::DataCopy(cache, rawF[cl * 384u], static_cast<int32_t>(3u * 384u));
         AscendC::PipeBarrier<PIPE_ALL>();
         t0 += cl;
+        if constexpr (StreamTiles) {
+            if (t0 == n || gs + cl == tileRowEnd) {
+                Sync::AivAdd(stg, p.counts, CounterByteOffset(1u, gs / kTileRows, p.tiles), 1u);
+            }
+        }
     }
     // The last chunk's conv_state write-back is still in flight here; drain it so
-    // the next ProcessRows call cannot overwrite rawB under the DMA reader.
+    // the next sequence cannot overwrite rawB under the DMA reader.
     AscendC::PipeBarrier<PIPE_ALL>();
-
-    // ---- H hand-off for a sequence that continues past this range ----------
-    if (storeH && (p.skipSync & 33554432u) == 0u && hi < seqEnd) {
-        AscendC::GlobalTensor<float> g;
-        g.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(p.carry) + hOff);
-        AscendC::DataCopyParams hStore;
-        hStore.blockCount = 128;
-        hStore.blockLen = 8;
-        hStore.srcStride = 0;
-        hStore.dstStride = 8;
-        AscendC::DataCopy(g, h0, hStore);
-        AscendC::DataCopy(g[kHalf], h1, hStore);
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-}
-
-/// Process one (b, head) group of tile `tile` (intersection with the sequence).
-/// T01 uses this unit definition; the T02 S > 64 path calls ProcessRows with the
-/// same intersection, while the T02 S <= 64 path passes the whole sequence.
-CATLASS_DEVICE void ProcessGroup(V2Params const &p, AscendC::LocalTensor<uint8_t> const &ub, uint32_t tile, uint32_t b,
-                                 uint32_t head, HeadConstants &cached)
-{
-    using namespace RDetail;
-    AscendC::GlobalTensor<int32_t> gmPrefix;
-    gmPrefix.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(p.prefix));
-    const uint32_t seqStart = static_cast<uint32_t>(gmPrefix.GetValue(b));
-    const uint32_t seqEnd = static_cast<uint32_t>(gmPrefix.GetValue(b + 1u));
-    if (seqEnd <= seqStart) {
-        return;
-    }
-    const uint32_t tileRow0 = tile * kTileRows;
-    const uint32_t tileRow1 = tileRow0 + kTileRows;
-    const uint32_t lo = seqStart > tileRow0 ? seqStart : tileRow0;
-    const uint32_t hi = seqEnd < tileRow1 ? seqEnd : tileRow1;
-    if (hi <= lo) {
-        return;
-    }
-    ProcessRows(p, ub, b, head, seqStart, seqEnd, lo, hi, true, cached);
 }
 
 /// Stage R driver: walks the global unit list, publishes per-tile credits.
@@ -893,18 +805,19 @@ CATLASS_DEVICE uint32_t RunStageR(V2Params const &p, AscendC::LocalTensor<uint8_
     const uint32_t aivNum = static_cast<uint32_t>(AscendC::GetBlockNum()) * 2u;
     AscendC::LocalTensor<int32_t> stg = ub[kUbStg].ReinterpretCast<int32_t>();
 
-    AscendC::GlobalTensor<uint32_t> gmPrefix;
-    gmPrefix.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(p.expect));
-
-    const uint32_t total = PrefixAt(p.expect, p.tiles, p.tiles);
+    AscendC::GlobalTensor<int32_t> prefix;
+    prefix.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(p.prefix));
+    const uint32_t total = p.batch * p.n;
     HeadConstants cached;
     uint32_t lastTile = 0xFFFFFFFFu;
     uint32_t credits = 0u;
-    uint32_t tile = 0u;
+    // T01 puts each sequence entirely inside one tile. The global unit index
+    // therefore enumerates (sequence, head) directly in prefix order.
     for (uint32_t u = rank; u < total; u += aivNum) {
-        while (u >= PrefixAt(p.expect, p.tiles, tile + 1u)) {
-            ++tile;
-        }
+        const uint32_t b = u / p.n, head = u % p.n;
+        const uint32_t first = p.sequence ? b * p.sequence : static_cast<uint32_t>(prefix.GetValue(b));
+        const uint32_t end = p.sequence ? first + p.sequence : static_cast<uint32_t>(prefix.GetValue(b + 1u));
+        const uint32_t tile = first / kTileRows;
         if (tile != lastTile) {
             if (lastTile != 0xFFFFFFFFu) {
                 Sync::AivAdd(stg, p.counts, CounterByteOffset(1u, lastTile, p.tiles), credits);
@@ -916,11 +829,7 @@ CATLASS_DEVICE uint32_t RunStageR(V2Params const &p, AscendC::LocalTensor<uint8_
                              (p.skipSync & 4u) != 0u ? 2000000u : 0u);
             }
         }
-        const uint32_t base = PrefixAt(p.expect, p.tiles, tile);
-        const uint32_t local = u - base;
-        const uint32_t b = FirstSeqAt(p.expect, p.tiles, tile) + local / p.n;
-        const uint32_t head = local % p.n;
-        ProcessGroup(p, ub, tile, b, head, cached);
+        ProcessSequence(p, ub, b, head, first, end, cached);
         ++credits;
     }
     if (lastTile != 0xFFFFFFFFu) {

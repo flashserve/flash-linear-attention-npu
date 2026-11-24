@@ -48,7 +48,7 @@ constexpr uint32_t kConvWin = 3;       // 3 history rows fed into conv1d
 // Template identifiers (docs/design.md 2 and 3).
 //   T01: every sequence stays inside one 64-row tile.
 //   T02: at least one sequence straddles a 64-row tile; the R stage owns whole
-//        (b, head) groups and carries H across tiles.
+//        (b, head) groups and keeps H in UB across tiles.
 constexpr uint32_t kTemplateT01 = 1;
 constexpr uint32_t kTemplateT02 = 2;
 
@@ -109,12 +109,9 @@ struct KdaTiling {
     uint32_t nDecayRaw;
     uint32_t nProj; // S0 publication expectation per tile
     uint32_t nOut;  // number of output projection panels
-    uint32_t units; // total S1 units = sum_k units(k)
     uint32_t aicNum;
     uint32_t aivNum;
     uint32_t templateId; // kTemplateT01 or kTemplateT02
-    uint32_t quota;      // T02: ceil(B*N/aivNum) groups per AIV
-    uint32_t carryElems; // B*N*D*D when sequences straddle tiles else 0
     uint32_t slotsPR;    // qkv/decay_raw/gate_raw/beta_raw ring depth
     uint32_t slotsGated; // gated ring depth
     uint32_t overflow;   // 1 when the byte layout does not fit 32-bit offsets
@@ -127,7 +124,6 @@ struct KdaTiling {
     uint32_t offCounts;
     uint32_t offSyncAux;
     uint32_t offExpect;
-    uint32_t offCarry;
     uint32_t workspaceBytes;
 };
 
@@ -159,19 +155,6 @@ KDA_INLINE uint32_t CounterWords(uint32_t tiles)
 KDA_INLINE uint32_t CounterByteOffset(uint32_t stage, uint32_t tile, uint32_t tiles)
 {
     return (stage * tiles + tile) * kCounterWords * static_cast<uint32_t>(sizeof(int32_t));
-}
-
-/// Expectations region: units[tiles] (uint32) + unitsPrefix[tiles+1] (uint32)
-/// + firstSeq[tiles] (uint32).
-KDA_INLINE uint32_t ExpectWords(uint32_t tiles)
-{
-    return tiles + (tiles + 1u) + tiles;
-}
-
-/// S1 units of one tile (device side, from the host-written arrays).
-KDA_INLINE uint32_t UnitsOf(const uint32_t *units, uint32_t tile)
-{
-    return units[tile];
 }
 
 /// O row block geometry: block j covers tiles [k0, k1) with k0 = j*kObTiles and
@@ -230,7 +213,6 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     // evidence line.
 
     t.templateId = straddle ? kTemplateT02 : kTemplateT01;
-    t.quota = CeilDiv(problem.batch * problem.heads, aivNum);
     // When one pass over the projection weights exceeds L2, process up to
     // three row tiles per weight read. Otherwise publish short tiles early
     // when recurrence has enough independent work to overlap the next tile.
@@ -246,7 +228,6 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     t.nDecayRaw = CeilDiv(t.p, kNW);
     t.nProj = t.nQkv + t.nGate + t.nBeta + t.nDecayRaw;
     t.nOut = CeilDiv(kHidden, kNW);
-    t.carryElems = straddle ? static_cast<uint32_t>(problem.batch) * t.n * kHeadDim * kHeadDim : 0u;
     // Give each tile its own GM slot throughout the P, R and O stages.
     t.slotsPR = t.tiles > kPRSlotsMin ? t.tiles : kPRSlotsMin;
     t.slotsGated = t.tiles > kGatedSlotsMin ? t.tiles : kGatedSlotsMin;
@@ -267,12 +248,9 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     take(static_cast<uint64_t>(t.slotsGated) * GatedSlotBytes(t.p), t.offGated);
     take(AlignUp64(static_cast<uint64_t>(CounterWords(t.tiles)) * 4u, 1024u), t.offCounts);
     take(1024u, t.offSyncAux);
-    take(static_cast<uint64_t>(ExpectWords(t.tiles)) * 4u, t.offExpect);
-    take(static_cast<uint64_t>(t.carryElems) * 4u, t.offCarry);
+    take(static_cast<uint64_t>(t.tiles) * 4u, t.offExpect);
     t.overflow = (off > 0xFFFFFFFFull - kAlign) ? 1u : 0u;
     t.workspaceBytes = static_cast<uint32_t>(off);
-    // units is filled by FillExpectations on the host; keep a placeholder here.
-    t.units = 0;
     return t;
 }
 

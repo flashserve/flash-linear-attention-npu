@@ -49,7 +49,6 @@ CATLASS_DEVICE void BindTilingAndWorkspace(const MegaRecurrentKdaArch22TilingDat
     params.counts = workspace + t.offCounts;
     params.syncConst = workspace + t.offSyncAux;
     params.expect = workspace + t.offExpect;
-    params.carry = workspace + t.offCarry;
     params.prefix = workspace + t.workspaceBytes;
     params.stageMask = kStageP | kStageR | kStageO;
 }
@@ -69,7 +68,7 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
                 seq[b] = data.sequence ? b * data.sequence :
                                          static_cast<int32_t>(reinterpret_cast<__gm__ int64_t *>(inputPrefix)[b]);
             }
-            uint32_t first = 0, end = 0, total = 0;
+            uint32_t first = 0, end = 0;
             for (uint32_t tile = 0; tile < t.tiles; ++tile) {
                 while (first < data.batch && uint32_t(seq[first + 1]) <= tile * 64) {
                     ++first;
@@ -78,11 +77,7 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
                     ++end;
                 }
                 expect[tile] = (end - first) * data.heads;
-                expect[t.tiles + tile] = total;
-                expect[2 * t.tiles + 1 + tile] = first;
-                total += expect[tile];
             }
-            expect[2 * t.tiles] = total;
             for (uint32_t i = 0; i < CounterWords(t.tiles); ++i) {
                 counters[i] = 0;
             }
@@ -121,9 +116,8 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
             AscendC::TBuf<AscendC::TPosition::VECCALC> ubBuf;
             pipe.InitBuffer(ubBuf, RDetail::kUbBytes);
             AscendC::LocalTensor<uint8_t> ub = ubBuf.Get<uint8_t>();
-            // The R-task ownership is the only structural difference between the
-            // two templates (docs/design.md 3): T01 advances global (tile, b,
-            // head) units, T02 owns whole (b, head) groups and carries H.
+            // T01 batches completion credits within one tile. T02 publishes a credit
+            // at each tile boundary while the same core retains the sequence state.
             if (params.templateId == kTemplateT02) {
                 RunStageR02(params, ub);
             } else {

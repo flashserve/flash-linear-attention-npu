@@ -166,11 +166,9 @@ __aicore__ inline void AivAdd(AscendC::LocalTensor<int32_t> const &stg, GM_ADDR 
                               uint32_t n)
 {
     __gm__ int32_t *dst = Word(countBase, byteOffset);
-    while (n > 0u) {
-        const uint32_t chunk = n > kMaxAddPerDma ? kMaxAddPerDma : n;
-        AivStageValue(stg, static_cast<int32_t>(chunk));
+    if (n != 0u) {
+        AivStageValue(stg, static_cast<int32_t>(n));
         AivDma32(stg, dst);
-        n -= chunk;
     }
 }
 

@@ -179,8 +179,6 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     data.convLength = CheckedDimension(geometryData[geometry::ConvLength]);
     // Arch22 stores workspace offsets in uint32_t and uses a 16-bit panel stride.
     if (common.tokens > INT32_MAX || common.heads > 65535 / 24 ||
-        (common.crosses &&
-         uint64_t(common.batch) * common.heads * kHeadWidth * kHeadWidth > UINT32_MAX / sizeof(float)) ||
         uint64_t(common.tokens) * common.heads * 1536 > UINT32_MAX) {
         return ge::GRAPH_FAILED;
     }

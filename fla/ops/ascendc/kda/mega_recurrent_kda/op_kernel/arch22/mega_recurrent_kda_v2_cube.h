@@ -196,8 +196,7 @@ struct V2Params {
     GM_ADDR wGated;
     GM_ADDR counts;
     GM_ADDR syncConst;
-    GM_ADDR expect; // units[tiles], unitsPrefix[tiles+1], firstSeq[tiles]
-    GM_ADDR carry;
+    GM_ADDR expect; // number of completed sequence/head slices required for each tile
     // scalars
     float scale;
     float lowerBound;
