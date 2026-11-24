@@ -2,9 +2,14 @@
 // BSD-3-Clause. A2 独立 Prepare 包装，只消费既有公开端口。
 #ifndef GDN_PREPARE_HOST_ARCH22_TILING_H
 #define GDN_PREPARE_HOST_ARCH22_TILING_H
-#include "../../op_kernel/arch22/chunk_gated_delta_rule_fwd_prepare_standalone_tiling.h"
-#include "securec.h"
 #include <initializer_list>
+#include <string>
+
+#include "graph/utils/type_utils.h"
+#include "op_common/log/log.h"
+#include "securec.h"
+
+#include "../../op_kernel/arch22/chunk_gated_delta_rule_fwd_prepare_standalone_tiling.h"
 
 namespace optiling {
 inline bool A2PrepareShapeEquals(const gert::StorageShape *shape, std::initializer_list<int64_t> dims)
@@ -15,22 +20,63 @@ inline bool A2PrepareShapeEquals(const gert::StorageShape *shape, std::initializ
     return true;
 }
 
+namespace {
+inline std::string A2ShapeText(const gert::StorageShape *shape)
+{
+    if (shape == nullptr) return "null";
+    const auto &s = shape->GetStorageShape();
+    std::string text = "[";
+    for (size_t i = 0; i < s.GetDimNum(); ++i) {
+        if (i != 0) text += ",";
+        text += std::to_string(s.GetDim(i));
+    }
+    return text + "]";
+}
+
+inline std::string A2DtypeText(ge::DataType dtype)
+{
+    return ge::TypeUtils::DataTypeToSerialString(dtype);
+}
+} // namespace
+
 inline ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepareArch22(gert::TilingContext *context)
 {
     const auto *qShape = context->GetRequiredInputShape(PREPARE_INPUT_Q);
     const auto *vShape = context->GetRequiredInputShape(PREPARE_INPUT_V);
-    if (qShape == nullptr || vShape == nullptr || qShape->GetStorageShape().GetDimNum() != 4 ||
-        vShape->GetStorageShape().GetDimNum() != 4) return ge::GRAPH_FAILED;
+    if (qShape == nullptr || vShape == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), qShape == nullptr ? "q" : "v");
+        return ge::GRAPH_FAILED;
+    }
+    if (qShape->GetStorageShape().GetDimNum() != 4 || vShape->GetStorageShape().GetDimNum() != 4) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "q,v",
+            std::to_string(qShape->GetStorageShape().GetDimNum()) + "," +
+                std::to_string(vShape->GetStorageShape().GetDimNum()),
+            "q and v must be rank 4: [B,H,T,128] and [B,HV,T,V]");
+        return ge::GRAPH_FAILED;
+    }
     const auto &q = qShape->GetStorageShape();
     const auto &v = vShape->GetStorageShape();
     const int64_t batch = q.GetDim(0), hk = q.GetDim(1), tokens = q.GetDim(2);
     const int64_t hv = v.GetDim(1), valueDim = v.GetDim(3);
-    if (batch <= 0 || hk <= 0 || hv <= 0 || tokens <= 0 || q.GetDim(3) != 128 ||
-        !A2PrepareShapeEquals(context->GetRequiredInputShape(PREPARE_INPUT_K), {batch, hk, tokens, 128}) ||
-        !A2PrepareShapeEquals(vShape, {batch, hv, tokens, valueDim}) ||
-        !A2PrepareShapeEquals(context->GetRequiredInputShape(PREPARE_INPUT_G), {batch, hv, tokens}) ||
-        !A2PrepareShapeEquals(context->GetRequiredInputShape(PREPARE_INPUT_BETA), {batch, hv, tokens}))
+    const auto *kShape = context->GetRequiredInputShape(PREPARE_INPUT_K);
+    const auto *gShape = context->GetRequiredInputShape(PREPARE_INPUT_G);
+    const auto *betaShape = context->GetRequiredInputShape(PREPARE_INPUT_BETA);
+    const bool shapesValid =
+        batch > 0 && hk > 0 && hv > 0 && tokens > 0 && q.GetDim(3) == 128 &&
+        A2PrepareShapeEquals(kShape, {batch, hk, tokens, 128}) &&
+        A2PrepareShapeEquals(vShape, {batch, hv, tokens, valueDim}) &&
+        A2PrepareShapeEquals(gShape, {batch, hv, tokens}) &&
+        A2PrepareShapeEquals(betaShape, {batch, hv, tokens});
+    if (!shapesValid) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "q,k,v,g,beta",
+            "q=" + A2ShapeText(qShape) + ",k=" + A2ShapeText(kShape) +
+                ",v=" + A2ShapeText(vShape) + ",g=" + A2ShapeText(gShape) +
+                ",beta=" + A2ShapeText(betaShape),
+            "expect q=[B,HK,T,128], k=[B,HK,T,128], v=[B,HV,T,V], g=[B,HV,T], beta=[B,HV,T] with positive B/T");
         return ge::GRAPH_FAILED;
+    }
 
     const auto *attrs = context->GetAttrs();
     auto flag = [attrs](size_t index, bool fallback) {
@@ -47,28 +93,69 @@ inline ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepareArch22(gert::TilingCo
     const bool hasALog = context->GetOptionalInputDesc(PREPARE_INPUT_A_LOG) != nullptr;
     const bool hasBias = context->GetOptionalInputDesc(PREPARE_INPUT_DT_BIAS) != nullptr;
     const bool gate = flag(PREPARE_ATTR_USE_GATE, false) || hasALog;
-    if ((gate && !hasALog) || (hasBias && !gate) || (neg && !sigmoid)) return ge::GRAPH_FAILED;
+    if ((gate && !hasALog) || (hasBias && !gate) || (neg && !sigmoid)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "useGate,useBetaSigmoid,allowNegEigval,A_log,dt_bias",
+            std::string("useGate=") + (gate ? "true" : "false") +
+                ",useBetaSigmoid=" + (sigmoid ? "true" : "false") +
+                ",allowNegEigval=" + (neg ? "true" : "false") +
+                ",A_log=" + (hasALog ? "present" : "absent") +
+                ",dt_bias=" + (hasBias ? "present" : "absent"),
+            "gate requires A_log; dt_bias requires gate; allowNegEigval requires beta sigmoid");
+        return ge::GRAPH_FAILED;
+    }
 
     const auto *qDesc = context->GetInputDesc(PREPARE_INPUT_Q);
     const auto *kDesc = context->GetInputDesc(PREPARE_INPUT_K);
     const auto *vDesc = context->GetInputDesc(PREPARE_INPUT_V);
     const auto *gDesc = context->GetInputDesc(PREPARE_INPUT_G);
     const auto *betaDesc = context->GetInputDesc(PREPARE_INPUT_BETA);
-    if (!qDesc || !kDesc || !vDesc || !gDesc || !betaDesc) return ge::GRAPH_FAILED;
+    if (!qDesc || !kDesc || !vDesc || !gDesc || !betaDesc) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q,k,v,g,beta");
+        return ge::GRAPH_FAILED;
+    }
     const auto dtype = qDesc->GetDataType();
     if ((dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT16) || kDesc->GetDataType() != dtype ||
         vDesc->GetDataType() != dtype || gDesc->GetDataType() != ge::DT_FLOAT ||
-        betaDesc->GetDataType() != ge::DT_FLOAT) return ge::GRAPH_FAILED;
+        betaDesc->GetDataType() != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "q,k,v,g,beta",
+            "q=" + A2DtypeText(qDesc->GetDataType()) + ",k=" + A2DtypeText(kDesc->GetDataType()) +
+                ",v=" + A2DtypeText(vDesc->GetDataType()) + ",g=" + A2DtypeText(gDesc->GetDataType()) +
+                ",beta=" + A2DtypeText(betaDesc->GetDataType()),
+            "q/k/v must share one dtype of BF16/FP16; g/beta must be FP32");
+        return ge::GRAPH_FAILED;
+    }
     for (size_t input : {PREPARE_INPUT_A_LOG, PREPARE_INPUT_DT_BIAS}) {
         const auto *desc = context->GetOptionalInputDesc(input);
-        if (desc && (desc->GetDataType() != ge::DT_FLOAT ||
-                     !A2PrepareShapeEquals(context->GetOptionalInputShape(input), {hv})))
+        if (desc == nullptr) continue;
+        const char *name = input == PREPARE_INPUT_A_LOG ? "A_log" : "dt_bias";
+        if (desc->GetDataType() != ge::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                context->GetNodeName(), name, A2DtypeText(desc->GetDataType()), "FP32");
             return ge::GRAPH_FAILED;
+        }
+        if (!A2PrepareShapeEquals(context->GetOptionalInputShape(input), {hv})) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context->GetNodeName(), name,
+                A2ShapeText(context->GetOptionalInputShape(input)),
+                std::string("must be [HV] with HV=") + std::to_string(hv));
+            return ge::GRAPH_FAILED;
+        }
     }
 
     const auto *cu = context->GetOptionalInputShape(PREPARE_INPUT_CU_SEQLENS);
     const auto *indices = context->GetOptionalInputShape(PREPARE_INPUT_CHUNK_INDICES);
-    if ((cu != nullptr) != (indices != nullptr) || (bt != 64 && bt != 128)) return ge::GRAPH_FAILED;
+    if ((cu != nullptr) != (indices != nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(
+            context->GetNodeName(), cu == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ge::GRAPH_FAILED;
+    }
+    if (bt != 64 && bt != 128) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "chunk_size", std::to_string(bt), "64 or 128");
+        return ge::GRAPH_FAILED;
+    }
     const bool varlen = cu != nullptr;
     uint64_t nt = GdnUnifiedPrepare::CeilDiv(static_cast<uint64_t>(tokens), static_cast<uint64_t>(bt));
     if (varlen) {
@@ -76,45 +163,93 @@ inline ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepareArch22(gert::TilingCo
         const auto *idxDesc = context->GetOptionalInputDesc(PREPARE_INPUT_CHUNK_INDICES);
         const auto &cs = cu->GetStorageShape();
         const auto &is = indices->GetStorageShape();
-        if (!cuDesc || !idxDesc || cuDesc->GetDataType() != ge::DT_INT64 ||
-            idxDesc->GetDataType() != ge::DT_INT64 || cs.GetDimNum() != 1 || cs.GetDim(0) < 2)
+        if (!cuDesc || !idxDesc) {
+            OP_LOGE_WITH_INVALID_INPUT(
+                context->GetNodeName(), cuDesc == nullptr ? "cu_seqlens" : "chunk_indices");
             return ge::GRAPH_FAILED;
-        if (is.GetDimNum() == 1 && is.GetDim(0) > 0 && is.GetDim(0) % 2 == 0)
+        }
+        if (cuDesc->GetDataType() != ge::DT_INT64 || idxDesc->GetDataType() != ge::DT_INT64) {
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), "cu_seqlens,chunk_indices",
+                "cu_seqlens=" + A2DtypeText(cuDesc->GetDataType()) +
+                    ",chunk_indices=" + A2DtypeText(idxDesc->GetDataType()),
+                "both must be INT64");
+            return ge::GRAPH_FAILED;
+        }
+        if (cs.GetDimNum() != 1 || cs.GetDim(0) < 2) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context->GetNodeName(), "cu_seqlens", A2ShapeText(cu),
+                "must be rank 1 and contain at least 2 elements");
+            return ge::GRAPH_FAILED;
+        }
+        if (is.GetDimNum() == 1 && is.GetDim(0) > 0 && is.GetDim(0) % 2 == 0) {
             nt = static_cast<uint64_t>(is.GetDim(0) / 2);
-        else if (is.GetDimNum() == 2 && is.GetDim(0) > 0 && is.GetDim(1) == 2)
+        } else if (is.GetDimNum() == 2 && is.GetDim(0) > 0 && is.GetDim(1) == 2) {
             nt = static_cast<uint64_t>(is.GetDim(0));
-        else return ge::GRAPH_FAILED;
+        } else {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context->GetNodeName(), "chunk_indices", A2ShapeText(indices),
+                "must be flattened even [2*chunks] or [chunks,2]");
+            return ge::GRAPH_FAILED;
+        }
     }
     auto output = [context](size_t index, ge::DataType type, std::initializer_list<int64_t> shape) {
         const auto *desc = context->GetOutputDesc(index);
         return desc && desc->GetDataType() == type && A2PrepareShapeEquals(context->GetOutputShape(index), shape);
     };
-    if (!output(PREPARE_OUTPUT_G, ge::DT_FLOAT, {batch, hv, tokens}) ||
-        !output(PREPARE_OUTPUT_W, dtype, {batch, hv, tokens, 128}) ||
-        !output(PREPARE_OUTPUT_U, dtype, {batch, hv, tokens, valueDim}) ||
-        (outputA && !output(PREPARE_OUTPUT_A, dtype, {batch, hv, tokens, bt})) ||
-        (norm && (!output(PREPARE_OUTPUT_Q_HAT, dtype, {batch, hk, tokens, 128}) ||
-                  !output(PREPARE_OUTPUT_K_HAT, dtype, {batch, hk, tokens, 128}) ||
-                  !output(PREPARE_OUTPUT_Q_RSTD, ge::DT_FLOAT, {batch, hk, tokens}) ||
-                  !output(PREPARE_OUTPUT_K_RSTD, ge::DT_FLOAT, {batch, hk, tokens}))) ||
-        (sigmoid && !output(PREPARE_OUTPUT_BETA_EFF, ge::DT_FLOAT, {batch, hv, tokens})))
+    const bool outputsValid =
+        output(PREPARE_OUTPUT_G, ge::DT_FLOAT, {batch, hv, tokens}) &&
+        output(PREPARE_OUTPUT_W, dtype, {batch, hv, tokens, 128}) &&
+        output(PREPARE_OUTPUT_U, dtype, {batch, hv, tokens, valueDim}) &&
+        (!outputA || output(PREPARE_OUTPUT_A, dtype, {batch, hv, tokens, bt})) &&
+        (!norm || (output(PREPARE_OUTPUT_Q_HAT, dtype, {batch, hk, tokens, 128}) &&
+                   output(PREPARE_OUTPUT_K_HAT, dtype, {batch, hk, tokens, 128}) &&
+                   output(PREPARE_OUTPUT_Q_RSTD, ge::DT_FLOAT, {batch, hk, tokens}) &&
+                   output(PREPARE_OUTPUT_K_RSTD, ge::DT_FLOAT, {batch, hk, tokens}))) &&
+        (!sigmoid || output(PREPARE_OUTPUT_BETA_EFF, ge::DT_FLOAT, {batch, hv, tokens}));
+    if (!outputsValid) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "g,w,u,a,q_hat,k_hat,q_rstd,k_rstd,beta_eff",
+            std::string("g=") + A2ShapeText(context->GetOutputShape(PREPARE_OUTPUT_G)) +
+                ",w=" + A2ShapeText(context->GetOutputShape(PREPARE_OUTPUT_W)) +
+                ",u=" + A2ShapeText(context->GetOutputShape(PREPARE_OUTPUT_U)),
+            "outputs must follow [B,HV,T], [B,HV,T,128], [B,HV,T,V] and optional norm/sigmoid outputs");
         return ge::GRAPH_FAILED;
+    }
 
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     GdnUnifiedPrepare::StandaloneTiling tiling{};
     if (!GdnUnifiedPrepare::MakeStandalonePlan(batch, hk, hv, tokens, bt, valueDim, nt, varlen,
-            platform.GetCoreNumAic(), platform.GetCoreNumAiv(), outputA, tiling) || tiling.cores > UINT32_MAX)
+            platform.GetCoreNumAic(), platform.GetCoreNumAiv(), outputA, tiling) ||
+        tiling.cores > UINT32_MAX) {
+        OP_LOGE(context->GetNodeName(),
+                "standalone prepare plan failed: B=%ld HK=%ld HV=%ld T=%ld bt=%ld V=%ld chunks=%lu aic=%u aiv=%u",
+                batch, hk, hv, tokens, bt, valueDim, static_cast<unsigned long>(nt),
+                platform.GetCoreNumAic(), platform.GetCoreNumAiv());
         return ge::GRAPH_FAILED;
+    }
     tiling.useQkNorm = norm; tiling.useGate = gate; tiling.useDtBias = hasBias;
     tiling.useBetaSigmoid = sigmoid; tiling.allowNegEigval = neg; tiling.useExp2 = exp2;
     uint64_t workspaceBytes = 0;
-    if (!GdnUnifiedPrepare::StandaloneAdd(platform.GetLibApiWorkSpaceSize(), tiling.userWorkspaceBytes, workspaceBytes))
+    if (!GdnUnifiedPrepare::StandaloneAdd(platform.GetLibApiWorkSpaceSize(),
+                                          tiling.userWorkspaceBytes, workspaceBytes)) {
+        OP_LOGE(context->GetNodeName(),
+                "workspace size overflow: libApi=%u user=%lu",
+                platform.GetLibApiWorkSpaceSize(),
+                static_cast<unsigned long>(tiling.userWorkspaceBytes));
         return ge::GRAPH_FAILED;
+    }
     auto *raw = context->GetRawTilingData();
     auto *workspaceSizes = context->GetWorkspaceSizes(1);
     if (!raw || !workspaceSizes || raw->GetCapacity() < sizeof(tiling) ||
-        memcpy_s(raw->GetData(), raw->GetCapacity(), &tiling, sizeof(tiling)) != EOK)
+        memcpy_s(raw->GetData(), raw->GetCapacity(), &tiling, sizeof(tiling)) != EOK) {
+        OP_LOGE(context->GetNodeName(),
+                "tiling buffer invalid: raw=%p workspace=%p capacity=%lu need=%lu",
+                static_cast<void *>(raw), static_cast<void *>(workspaceSizes),
+                raw == nullptr ? 0UL : static_cast<unsigned long>(raw->GetCapacity()),
+                static_cast<unsigned long>(sizeof(tiling)));
         return ge::GRAPH_FAILED;
+    }
     raw->SetDataSize(sizeof(tiling));
     context->SetTilingKey(22);
     context->SetBlockDim(static_cast<uint32_t>(tiling.cores));
