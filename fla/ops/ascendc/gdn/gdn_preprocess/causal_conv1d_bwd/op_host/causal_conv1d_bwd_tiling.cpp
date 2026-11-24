@@ -24,6 +24,7 @@
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"
+#include "causal_conv1d_bwd_tiling_a5.h"
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -48,9 +49,7 @@ namespace {
     constexpr uint32_t B16_DTYPE_SIZE = 2U;
     constexpr uint32_t FP32_DTYPE_SIZE = 4U;
     constexpr uint32_t BLOCK_ALIGN_NUM = 8U;
-    constexpr uint32_t DIRECT_FAST_BT_MAX = 224U;
     constexpr uint32_t DIRECT_FAST_BT_MIN = 64U;
-    constexpr uint32_t DIRECT_FAST_BT_STEP = 32U;
     constexpr uint32_t DIRECT_910B_BT_BD64 = 104U;
     constexpr uint32_t DIRECT_910B_BT_BD128 = 55U;
     constexpr uint32_t ARCH35_DIRECT_W_MAX = 8U;
@@ -394,6 +393,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t fastBtStep;
     };
     ArchHostPolicy archPolicy = {};
+    NpuArch curNpuArch = NpuArch::DAV_2201;
     {
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_IF(
@@ -404,10 +404,10 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
             return ge::GRAPH_FAILED);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         const auto npuArch = ascendcPlatform.GetCurNpuArch();
+        curNpuArch = npuArch;
         isAscend910B = (npuArch == NpuArch::DAV_2201);
-        if (npuArch == NpuArch::DAV_3510) {
-            archPolicy = {true, true, true, true, false, DIRECT_FAST_BT_MAX, DIRECT_FAST_BT_STEP};
-        } else if (npuArch == NpuArch::DAV_9201) {
+        // A5(DAV_3510) 走独立 tiling 实现（见 causal_conv1d_bwd_tiling_a5.cpp），此处仅保留 A6/910B 策略。
+        if (npuArch == NpuArch::DAV_9201) {
             archPolicy = {true, true, true, true, true, 240U, 16U};
         }
         coreNum = ascendcPlatform.GetCoreNumAiv();
@@ -432,6 +432,31 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
                     OP_NAME, "D/headDim", std::to_string(alignDim),
                     std::string("expected dimension divisible by 16 for inputLayout=") + inputLayoutStr),
                 return ge::GRAPH_FAILED);
+
+    // A5(arch35/DAV_3510) 使用独立 tiling 实现：此处交由 A5 专属模块完成选路与切分。
+    if (curNpuArch == NpuArch::DAV_3510) {
+        CausalConv1dBwdHostTilingArgs a5Args;
+        a5Args.context = context;
+        a5Args.B = B;
+        a5Args.T = T;
+        a5Args.D = D;
+        a5Args.W = W;
+        a5Args.activation = activation;
+        a5Args.inputMode = inputMode;
+        a5Args.inputLayout = inputLayout;
+        a5Args.inputN = inputN;
+        a5Args.inputHeadDim = inputHeadDim;
+        a5Args.totalTokens = totalTokens;
+        a5Args.isB16Input = isB16Input;
+        a5Args.isFp32Input = isFp32Input;
+        a5Args.useInitialState = useInitialState;
+        a5Args.useFinalState = useFinalState;
+        a5Args.coreNum = coreNum;
+        a5Args.ubSize = ubSize;
+        a5Args.sysWorkspaceSize = sysWorkspaceSize;
+        return CausalConv1dBwdTilingA5(a5Args, tiling);
+    }
+
     uint32_t BD = (D % 64 == 0) ? 64 : 16;
     bool wideBlockLayoutSupported =
         (inputLayout != INPUT_LAYOUT_BNSD && inputLayout != INPUT_LAYOUT_NTD) ||

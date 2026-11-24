@@ -10,7 +10,12 @@
 #ifndef ASCENDC_CAUSAL_CONV1D_BWD_INPUT_LAYOUT_H_
 #define ASCENDC_CAUSAL_CONV1D_BWD_INPUT_LAYOUT_H_
 
+// A5(arch35) 使用独立 kernel 实现；其余架构(arch92/arch32) 使用共享实现。
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#include "arch35/causal_conv1d_bwd_a5.h"
+#else
 #include "causal_conv1d_bwd.h"
+#endif
 
 template <typename inputT, typename calT>
 class CausalConv1dBwdInputLayoutKernel : public CausalConv1dBwdKernel<inputT, calT> {
