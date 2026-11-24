@@ -342,7 +342,7 @@ def write_manifest(vendor: Path, declarations=()) -> Path:
     if not private.keys() <= exports:
         raise RuntimeError(f"Missing private ABI exports: {sorted(private.keys() - exports)}")
     _validate_exports(exports, {**contracts, **private})
-    data = {"schema_version": 2 if private else 1, "files": hashes,
+    data = {"schema_version": 1, "files": hashes,
             "contracts": {s: list(contracts[s]) for s in sorted(exports - private.keys())}}
     if private:
         data["private_contracts"] = private
@@ -370,10 +370,10 @@ def validated_contract_groups(vendor: Path, *, require_manifest: bool):
     if not isinstance(data, dict):
         raise RuntimeError(f"Invalid ABI manifest object: {path}")
     version = data.get("schema_version")
-    if version not in (1, 2):
+    if version != 1:
         raise RuntimeError(f"Unsupported OPP ABI manifest version {version!r}: {path}")
     private = data.get("private_contracts", {})
-    if (not isinstance(private, dict) or bool(private) != (version == 2)
+    if (not isinstance(private, dict)
             or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol)
                    or not isinstance(sig, list) or not all(isinstance(k, str) for k in sig)
                    for symbol, sig in private.items())):

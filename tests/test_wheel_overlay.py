@@ -109,7 +109,6 @@ class WheelOverlayTests(unittest.TestCase):
         src = package(self.root / "adapter", exports=["npu_a"], opp={"aclnnDemo": "int64"})
         inner = contract("float", "DemoInner")
         data = layers.manifest(src)
-        data.update(protocol=2)
         data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
         (src / layers.MANIFEST).write_text(json.dumps(data))
         marker = self.root / "checker-calls"
@@ -129,7 +128,7 @@ def _validate_exports(exports, signatures):
         names = set(public) | set(inner) | {abi.private_stamp(inner)}
         write_elf_exports(provider / abi.LIBRARY, names)
         (provider / abi.MANIFEST_NAME).write_text(json.dumps({
-            "schema_version": 2, "files": abi._file_hashes(provider),
+            "schema_version": 1, "files": abi._file_hashes(provider),
             "contracts": public, "private_contracts": inner}))
         update = wheel(self.root / "private.whl", src)
         self.assertEqual(layers.install(base, update)["state"], "active")
@@ -509,6 +508,22 @@ a = npu_a
             self.assertTrue(description["dispatch"], name)
             self.assertFalse(any("?" in signature for signature in description["requires"].values()), name)
 
+    def test_scoped_wheel_format_is_independent_of_private_dependencies(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_layer_manifest as builder
+
+        pkg = package(self.root / "mixed-source")
+        ops = {"npu_a": {"requires": contract()},
+               "npu_b": {"requires": {}, "private_requires": contract("float", "DemoInner")}}
+        with mock.patch.object(builder, "requirements", return_value=ops):
+            for selection in ("npu_a", "npu_b", "npu_a,npu_b"):
+                with self.subTest(selection=selection), mock.patch.dict(os.environ, FLA_NPU_OVERLAY_OPS=selection):
+                    builder.write_layer_manifest(pkg)
+                    data = layers.manifest(pkg)
+                    self.assertEqual(data["protocol"], 1)
+                    self.assertEqual(data["exports"], selection.split(","))
+                    self.assertEqual(data["operators"], ops)
+
     def test_wheel_records_private_macro_calls_and_rejects_unresolved_ones(self):
         sys.path.insert(0, str(ROOT / "scripts"))
         import build_layer_manifest as builder
@@ -642,7 +657,6 @@ a = npu_a
         base = self.summary_cli_base()
         src = package(self.root / "candidate", exports=["npu_a"], opp={"aclnnDemo": "int64"})
         data = layers.manifest(src)
-        data["protocol"] = 2
         inner = contract("float", "DemoInner")
         del inner["DemoInner"]
         data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
@@ -672,7 +686,7 @@ a = npu_a
                 self.assertEqual(layers.runtime_plan(base), plan)
                 self.assertCountEqual(layers.storage(base).glob("*"), retained)
 
-        # An adapter-only v2 wheel is rejected before running its checker.
+        # An adapter-only wheel is rejected before running its private ABI checker.
         (layers._vendor(src) / layers.LIBRARY).unlink()
         with self.assertRaisesRegex(RuntimeError, "requires an embedded OPP"):
             layers.install(base, wheel(self.root / "adapter-only.whl", src))

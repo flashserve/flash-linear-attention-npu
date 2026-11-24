@@ -58,6 +58,7 @@ class ContractTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Missing private ABI exports"):
                     abi.write_manifest(provider, [declaration])
             data = json.loads(manifest.read_text())
+            self.assertEqual(data["schema_version"], 1)
             data["private_contracts"][entry + "GetWorkspaceSize"][0] = "double"
             manifest.write_text(json.dumps(data))
             with self.assertRaisesRegex(RuntimeError, "compiled library"):

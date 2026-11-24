@@ -196,14 +196,14 @@ def environment_vendors(package):
 
 def manifest(package, *, abi_package=None):
     data = _json(package / MANIFEST)
-    if not isinstance(data, dict) or data.get("protocol") not in (1, 2):
+    if not isinstance(data, dict) or data.get("protocol") != 1:
         raise RuntimeError("Unsupported wheel layer protocol; rebuild its Python/Stable adapter package")
     exports, operators = data.get("exports"), data.get("operators")
     if (not isinstance(exports, list) or not exports or not all(isinstance(v, str) for v in exports)
             or len(exports) != len(set(exports))
             or not isinstance(operators, dict) or set(exports) - operators.keys()):
         raise RuntimeError("Invalid wheel layer operator inventory")
-    abi = abi_module(abi_package or package) if data["protocol"] == 2 else None
+    abi = None
     for name, value in operators.items():
         if (not re.fullmatch(r"npu_[a-z0-9_]+", name) or not isinstance(value, dict)
                 or not isinstance(value.get("requires"), dict)):
@@ -213,13 +213,15 @@ def manifest(package, *, abi_package=None):
                 raise RuntimeError("Invalid wheel layer ACLNN contract")
         if "private_requires" in value:
             private = value["private_requires"]
-            if (data["protocol"] != 2 or not isinstance(private, dict) or not private
+            if (not isinstance(private, dict) or not private
                     or private.keys() & value["requires"].keys()
                     or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s)
                            or not isinstance(sig, list) or not all(isinstance(k, str) for k in sig)
                            for s, sig in private.items())):
                 raise RuntimeError(f"{name}: invalid wheel layer private ABI requirements")
             signatures = {s: tuple(sig) for s, sig in private.items()}
+            if abi is None:
+                abi = abi_module(abi_package or package)
             try:
                 abi._validate_exports(set(signatures), signatures)
             except Exception as exc:
@@ -385,8 +387,11 @@ def extract_wheel(wheel, destination):
     if _vendor(package) is None:
         raise RuntimeError(f"{wheel.name}: wheel overlay requires an embedded OPP ({LIBRARY})")
     data = _json(package / MANIFEST)
-    if not isinstance(data, dict) or data.get("protocol") != 2:
-        # resolve() validates the manifest before committing any selection.
+    operators = data.get("operators") if isinstance(data, dict) else None
+    if not isinstance(operators, dict):
+        raise RuntimeError(f"{wheel.name}: invalid wheel layer operator inventory")
+    if not any(isinstance(op, dict) and "private_requires" in op for op in operators.values()):
+        # Public-only manifests are validated by resolve() before commit.
         return
     # Run the candidate checker once, after RECORD verification and before commit.
     result = subprocess.run(

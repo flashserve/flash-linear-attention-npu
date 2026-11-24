@@ -126,7 +126,6 @@ def write_layer_manifest(package: Path):
     if unknown:
         raise RuntimeError(f"Unknown FLA_NPU_OVERLAY_OPS: {sorted(unknown)}")
     stamp = literals(package / "ops/ascendc/_stable_hash.py")["SOURCE_HASH"]
-    protocol = 2 if any(op.get("private_requires") for op in ops.values()) else 1
-    data = {"protocol": protocol, "tier": get_tier(), "source_hash": stamp,
+    data = {"protocol": 1, "tier": get_tier(), "source_hash": stamp,
             "exports": selected, "operators": ops}
     (package / "layer_manifest.json").write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
