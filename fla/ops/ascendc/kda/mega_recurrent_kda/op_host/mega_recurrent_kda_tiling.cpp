@@ -101,7 +101,7 @@ MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int6
     }
     uint32_t rows = CheckedDimension(packed ? x[0] : kda::checkedProduct(batch, seq));
     if (geometryData[geometry::WorkspaceBytes] <= 0 ||
-        (geometryData[geometry::CrossesTile] != 0 && geometryData[geometry::CrossesTile] != 1)) {
+        (geometryData[geometry::CrossesTile] < 0 || geometryData[geometry::CrossesTile] > 2)) {
         throw std::invalid_argument("invalid workspace plan");
     }
     auto scale = attrs ? attrs->GetAttrPointer<float>(0) : nullptr;
@@ -122,9 +122,10 @@ MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int6
     common.tokens = rows;
     common.heads = CheckedDimension(n);
     common.capacity = CheckedDimension(capacity);
-    common.prefix64 = packed;
+    common.prefix64 =
+        packed && ctx->GetOptionalInputDesc(static_cast<size_t>(Input::CuSeqlens))->GetDataType() == ge::DT_INT64;
     common.convLayout = layout;
-    common.crosses = bool(geometryData[geometry::CrossesTile]);
+    common.crosses = geometryData[geometry::CrossesTile];
     common.scale = *scale;
     common.lowerBound = *lower;
     common.rmsNormEps = *eps;
@@ -165,13 +166,16 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     if (soc == platform_ascendc::SocVersion::ASCEND950) {
         // Transpose the checkpoint when a frame averages at least one 16-token recurrence slice per sequence.
         const bool longSequenceBatch = common.tokens >= uint64_t(common.batch) * 16;
-        const uint64_t key = common.crosses ? 2 : (longSequenceBatch ? 3 : 1);
+        const uint64_t key = common.crosses == 2 ? 4 : (common.crosses ? 2 : (longSequenceBatch ? 3 : 1));
         return PublishTiling(ctx, common, geometryData[geometry::WorkspaceBytes], systemBytes, cores, key);
     }
     if (soc != platform_ascendc::SocVersion::ASCEND910B && soc != platform_ascendc::SocVersion::ASCEND910_93) {
         return ge::GRAPH_FAILED;
     }
 
+    if (common.crosses == 2) {
+        return ge::GRAPH_FAILED;
+    }
     using namespace MegaRecurrentKdaV2;
     MegaRecurrentKdaArch22TilingData data{};
     data.common = common;

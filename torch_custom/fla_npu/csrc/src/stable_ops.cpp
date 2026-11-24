@@ -103,6 +103,8 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_npu_fast_gelu_custom_backward);
   m.def(kSchema_kda_gate_cumsum);
   m.def(kSchema_mega_recurrent_kda);
+  m.def(kSchema_mega_recurrent_kda_v2);
+  m.def(kSchema_kda_metadata);
   m.def(kSchema_chunk_kda_bwd_intra);
   m.def(kSchema_chunk_kda_bwd_prepare);
   m.def(kSchema_chunk_kda_bwd_finalize);
@@ -145,6 +147,8 @@ static void register_implementations(StableLibrary& m) {
   m.impl("npu_recurrent_gated_delta_rule",
          &fla_npu_stable::stable::boxed_adapter<run_recurrent_gated_delta_rule>);
   m.impl("npu_recurrent_kda", &boxed_recurrent_kda);
+  m.impl("npu_mega_recurrent_kda_metadata", &fla_npu_stable::stable::boxed_adapter<run_kda_metadata>);
+  m.impl("npu_mega_recurrent_kda_v2", &fla_npu_stable::stable::boxed_adapter<run_mega_recurrent_kda_v2>);
   m.impl("npu_mega_recurrent_kda",
          &fla_npu_stable::stable::boxed_adapter<run_mega_recurrent_kda>);
   m.impl("npu_fast_gelu_custom",

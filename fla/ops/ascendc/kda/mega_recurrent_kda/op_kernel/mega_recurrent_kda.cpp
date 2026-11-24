@@ -9,11 +9,13 @@
 #endif
 #include "mega_recurrent_kda_tiling_data.h"
 
-extern "C" __global__ __aicore__ void
-mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv, GM_ADDR wa, GM_ADDR wb, GM_ADDR beta, GM_ADDR gate, GM_ADDR gamma,
-                   GM_ADDR wo, GM_ADDR convW, GM_ADDR conv, GM_ADDR checkpoint, GM_ADDR u, GM_ADDR key, GM_ADDR decay,
-                   GM_ADDR indices, GM_ADDR accepted, GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR out,
-                   GM_ADDR convOut, GM_ADDR uOut, GM_ADDR keyOut, GM_ADDR decayOut, GM_ADDR workspace, GM_ADDR tiling)
+extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv, GM_ADDR wa, GM_ADDR wb, GM_ADDR beta,
+                                                         GM_ADDR gate, GM_ADDR gamma, GM_ADDR wo, GM_ADDR convW,
+                                                         GM_ADDR conv, GM_ADDR checkpoint, GM_ADDR u, GM_ADDR key,
+                                                         GM_ADDR decay, GM_ADDR indices, GM_ADDR accepted,
+                                                         GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR plan,
+                                                         GM_ADDR out, GM_ADDR convOut, GM_ADDR uOut, GM_ADDR keyOut,
+                                                         GM_ADDR decayOut, GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
 #if !defined(__NPU_ARCH__) || __NPU_ARCH__ != 3510
@@ -67,6 +69,7 @@ mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv, GM_ADDR wa, GM_ADDR wb, GM_ADDR beta,
     recurrence.indices = indices;
     recurrence.accepted = accepted;
     recurrence.prefix = prefix;
+    recurrence.plan = plan;
     recurrence.alphaLog = alphaLog;
     recurrence.bias = bias;
     recurrence.batch = tilingData.batch;
@@ -85,7 +88,20 @@ mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv, GM_ADDR wa, GM_ADDR wb, GM_ADDR beta,
     recurrence.lower = tilingData.lowerBound;
     recurrence.eps = tilingData.rmsNormEps;
 
-    if (TILING_KEY_IS(1)) {
+    if (TILING_KEY_IS(4)) {
+        recurrence.crosses = reinterpret_cast<__gm__ const int32_t *>(plan)[0];
+        recurrence.staged = recurrence.crosses ? 0 : 3;
+        if (recurrence.crosses) {
+            kda::MegaKernel<true> op;
+            op(params);
+        } else if (uint64_t(params.rows) >= uint64_t(recurrence.batch) * 16) {
+            kda::MegaKernel<false, true> op;
+            op(params);
+        } else {
+            kda::MegaKernel<false> op;
+            op(params);
+        }
+    } else if (TILING_KEY_IS(1)) {
         kda::MegaKernel<false> op;
         op(params);
     } else if (TILING_KEY_IS(2)) {

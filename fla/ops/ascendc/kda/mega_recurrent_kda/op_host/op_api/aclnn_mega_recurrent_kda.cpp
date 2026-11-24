@@ -2,6 +2,7 @@
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_def.h"
+#include "opdev/platform.h"
 #include "opdev/data_type_utils.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
@@ -169,39 +170,106 @@ aclnnStatus BuildSequencePlan(const aclTensor *hidden_states, const aclIntArray 
     }
     return ACLNN_SUCCESS;
 }
+bool IsVector(const aclTensor *tensor, op::DataType dtype, int64_t length)
+{
+    return tensor && tensor->GetDataType() == dtype && tensor->GetViewShape().GetDimNum() == 1 &&
+           tensor->Numel() == length && tensor->GetViewStrides()[0] == 1;
+}
+
+aclnnStatus BuildDevicePlan(const aclTensor *hidden, const aclTensor *ids, const aclTensor *counts,
+                            const aclTensor *prefix, const aclTensor *plan, state::Values &geometry)
+{
+    if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    const auto &dims = hidden->GetViewShape();
+    const auto rank = dims.GetDimNum();
+    if ((rank != 2 && rank != 3) || dims.GetDim(rank - 1) != 7168 || !ids) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    const int64_t batch = ids->Numel();
+    const bool packed = rank == 2;
+    const int64_t seq = packed ? 0 : dims.GetDim(1);
+    if (batch <= 0 || batch > INT32_MAX || !IsVector(ids, DataType::DT_INT32, batch) ||
+        !IsVector(counts, DataType::DT_INT32, batch) ||
+        (!packed && (dims.GetDim(0) != batch || seq <= 0 || seq > INT32_MAX / batch || prefix || plan))) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    const int64_t tokens = packed ? dims.GetDim(0) : batch * seq;
+    if (tokens < batch || tokens > INT32_MAX ||
+        (packed &&
+         ((!IsVector(prefix, DataType::DT_INT32, batch + 1) && !IsVector(prefix, DataType::DT_INT64, batch + 1)) ||
+          !IsVector(plan, DataType::DT_INT32, 2 + (tokens + 15) / 16)))) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    kda::Shape shape{batch,
+                     seq,
+                     tokens,
+                     geometry[state::Heads],
+                     geometry[state::PoolSlots],
+                     geometry[state::ConvLength],
+                     geometry[state::ReplayCapacity]};
+    try {
+        const bool crosses = !packed && tokens > 64 && 64 % seq != 0;
+        auto bytes = kda::workspaceFor(shape, crosses, 3).bytes;
+        if (packed && tokens > 64) {
+            bytes = std::max(bytes, kda::workspaceFor(shape, true, 3).bytes);
+        }
+        if (bytes > INT64_MAX) {
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        geometry[state::WorkspaceBytes] = bytes;
+        geometry[state::CrossesTile] = packed ? 2 : crosses;
+    } catch (const std::exception &) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    return ACLNN_SUCCESS;
+}
 } // namespace
 
 namespace l0op {
 OP_TYPE_REGISTER(MegaRecurrentKda);
 
+template <typename IndexInput>
 aclnnStatus LaunchMegaRecurrentKda(const aclTensor *hidden_states, const aclTensor *qkv_projection_weight,
                                    const aclTensor *decay_projection_a_weight,
                                    const aclTensor *decay_projection_b_weight, const aclTensor *beta_projection_weight,
                                    const aclTensor *output_gate_projection_weight, const aclTensor *output_norm_weight,
                                    const aclTensor *output_projection_weight, const aclTensor *conv1d_weight,
                                    aclTensor *conv_state, const aclTensor *checkpoint_state, aclTensor *replay_u,
-                                   aclTensor *replay_k, aclTensor *replay_decay, const aclIntArray *state_indices,
-                                   const aclIntArray *conv_num_accepted_tokens, const aclTensor *a_log,
-                                   const aclTensor *dt_bias, const aclIntArray *cu_seqlens, float scale,
-                                   float lower_bound, float rms_norm_eps, const aclTensor *out, aclOpExecutor *executor)
+                                   aclTensor *replay_k, aclTensor *replay_decay, const IndexInput *state_indices,
+                                   const IndexInput *conv_num_accepted_tokens, const aclTensor *a_log,
+                                   const aclTensor *dt_bias, const IndexInput *cu_seqlens, const aclTensor *plan,
+                                   float scale, float lower_bound, float rms_norm_eps, const aclTensor *out,
+                                   aclOpExecutor *executor)
 {
     state::Values geometry{};
     auto status = ReadStateGeometry(conv_state, checkpoint_state, replay_u, replay_k, replay_decay, geometry);
     if (status != ACLNN_SUCCESS) {
         return status;
     }
-    std::vector<int32_t> indices;
-    std::vector<int32_t> accepted;
-    status = BuildSequencePlan(hidden_states, state_indices, conv_num_accepted_tokens, cu_seqlens, geometry, indices,
-                               accepted);
-    if (status != ACLNN_SUCCESS) {
-        return status;
-    }
-    const auto *ids = executor->ConvertToTensor(indices.data(), indices.size(), op::DataType::DT_INT32);
-    const auto *counts = executor->ConvertToTensor(accepted.data(), accepted.size(), op::DataType::DT_INT32);
-    const auto *prefixTensor = cu_seqlens ? executor->ConvertToTensor(cu_seqlens, op::DataType::DT_INT64) : nullptr;
-    if (!ids || !counts || (cu_seqlens && !prefixTensor)) {
-        return ACLNN_ERR_INNER_NULLPTR;
+    const aclTensor *ids = nullptr, *counts = nullptr, *prefixTensor = nullptr;
+    std::vector<int32_t> indices, accepted;
+    if constexpr (std::is_same_v<IndexInput, aclIntArray>) {
+        status = BuildSequencePlan(hidden_states, state_indices, conv_num_accepted_tokens, cu_seqlens, geometry,
+                                   indices, accepted);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
+        ids = executor->ConvertToTensor(indices.data(), indices.size(), op::DataType::DT_INT32);
+        counts = executor->ConvertToTensor(accepted.data(), accepted.size(), op::DataType::DT_INT32);
+        prefixTensor = cu_seqlens ? executor->ConvertToTensor(cu_seqlens, op::DataType::DT_INT64) : nullptr;
+        if (!ids || !counts || (cu_seqlens && !prefixTensor)) {
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
+    } else {
+        ids = state_indices;
+        counts = conv_num_accepted_tokens;
+        prefixTensor = cu_seqlens;
+        status = BuildDevicePlan(hidden_states, ids, counts, prefixTensor, plan, geometry);
+        if (status != ACLNN_SUCCESS) {
+            return status;
+        }
     }
     const aclIntArray *stateInfo = executor->AllocIntArray(geometry.data(), geometry.size());
     if (!stateInfo) {
@@ -212,29 +280,24 @@ aclnnStatus LaunchMegaRecurrentKda(const aclTensor *hidden_states, const aclTens
         OP_INPUT(hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
                  beta_projection_weight, output_gate_projection_weight, output_norm_weight, output_projection_weight,
                  conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k, replay_decay, ids, counts, a_log,
-                 dt_bias, prefixTensor),
+                 dt_bias, prefixTensor, plan),
         OP_OUTPUT(out, conv_state, replay_u, replay_k, replay_decay),
         OP_ATTR(scale, lower_bound, rms_norm_eps, stateInfo));
 }
 } // namespace l0op
 
-extern "C" aclnnStatus aclnnMegaRecurrentKdaGetWorkspaceSize(
-    const aclTensor *hidden_states, const aclTensor *qkv_projection_weight, const aclTensor *decay_projection_a_weight,
-    const aclTensor *decay_projection_b_weight, const aclTensor *beta_projection_weight,
-    const aclTensor *output_gate_projection_weight, const aclTensor *output_norm_weight,
-    const aclTensor *output_projection_weight, const aclTensor *conv1d_weight, aclTensor *conv_state,
-    const aclTensor *checkpoint_state, aclTensor *replay_u, aclTensor *replay_k, aclTensor *replay_decay,
-    const aclIntArray *state_indices, const aclIntArray *conv_num_accepted_tokens, const aclTensor *a_log,
-    const aclTensor *dt_bias, const aclIntArray *cu_seqlens, double scale, double lower_bound, double rms_norm_eps,
-    const aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor)
+template <typename IndexInput>
+static aclnnStatus
+GetWorkspaceSize(const aclTensor *hidden_states, const aclTensor *qkv_projection_weight,
+                 const aclTensor *decay_projection_a_weight, const aclTensor *decay_projection_b_weight,
+                 const aclTensor *beta_projection_weight, const aclTensor *output_gate_projection_weight,
+                 const aclTensor *output_norm_weight, const aclTensor *output_projection_weight,
+                 const aclTensor *conv1d_weight, aclTensor *conv_state, const aclTensor *checkpoint_state,
+                 aclTensor *replay_u, aclTensor *replay_k, aclTensor *replay_decay, const IndexInput *state_indices,
+                 const IndexInput *conv_num_accepted_tokens, const aclTensor *a_log, const aclTensor *dt_bias,
+                 const IndexInput *cu_seqlens, const aclTensor *plan, double scale, double lower_bound,
+                 double rms_norm_eps, const aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    L2_DFX_PHASE_1(aclnnMegaRecurrentKda,
-                   DFX_IN(hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
-                          beta_projection_weight, output_gate_projection_weight, output_norm_weight,
-                          output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,
-                          replay_decay, state_indices, conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, scale,
-                          lower_bound, rms_norm_eps),
-                   DFX_OUT(out, conv_state, replay_u, replay_k, replay_decay));
     if (!workspaceSize || !executor || !out) {
         return ACLNN_ERR_PARAM_NULLPTR;
     }
@@ -290,7 +353,7 @@ extern "C" aclnnStatus aclnnMegaRecurrentKdaGetWorkspaceSize(
         hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
         beta_projection_weight, output_gate_projection_weight, output_norm_weight, output_projection_weight,
         conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k, replay_decay, state_indices,
-        conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, static_cast<float>(scale),
+        conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, plan, static_cast<float>(scale),
         static_cast<float>(lower_bound), static_cast<float>(rms_norm_eps), out, holder.get());
     if (status != ACLNN_SUCCESS) {
         return status;
@@ -303,5 +366,59 @@ extern "C" aclnnStatus aclnnMegaRecurrentKda(void *workspace, uint64_t workspace
                                              aclrtStream stream)
 {
     L2_DFX_PHASE_2(aclnnMegaRecurrentKda);
+    return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
+}
+
+extern "C" aclnnStatus aclnnMegaRecurrentKdaGetWorkspaceSize(
+    const aclTensor *hidden_states, const aclTensor *qkv_projection_weight, const aclTensor *decay_projection_a_weight,
+    const aclTensor *decay_projection_b_weight, const aclTensor *beta_projection_weight,
+    const aclTensor *output_gate_projection_weight, const aclTensor *output_norm_weight,
+    const aclTensor *output_projection_weight, const aclTensor *conv1d_weight, aclTensor *conv_state,
+    const aclTensor *checkpoint_state, aclTensor *replay_u, aclTensor *replay_k, aclTensor *replay_decay,
+    const aclIntArray *state_indices, const aclIntArray *conv_num_accepted_tokens, const aclTensor *a_log,
+    const aclTensor *dt_bias, const aclIntArray *cu_seqlens, double scale, double lower_bound, double rms_norm_eps,
+    const aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor)
+{
+    L2_DFX_PHASE_1(aclnnMegaRecurrentKda,
+                   DFX_IN(hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
+                          beta_projection_weight, output_gate_projection_weight, output_norm_weight,
+                          output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,
+                          replay_decay, state_indices, conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, scale,
+                          lower_bound, rms_norm_eps),
+                   DFX_OUT(out, conv_state, replay_u, replay_k, replay_decay));
+    return GetWorkspaceSize(hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
+                            beta_projection_weight, output_gate_projection_weight, output_norm_weight,
+                            output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,
+                            replay_decay, state_indices, conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, nullptr,
+                            scale, lower_bound, rms_norm_eps, out, workspaceSize, executor);
+}
+
+extern "C" aclnnStatus aclnnMegaRecurrentKdaV2GetWorkspaceSize(
+    const aclTensor *hidden_states, const aclTensor *qkv_projection_weight, const aclTensor *decay_projection_a_weight,
+    const aclTensor *decay_projection_b_weight, const aclTensor *beta_projection_weight,
+    const aclTensor *output_gate_projection_weight, const aclTensor *output_norm_weight,
+    const aclTensor *output_projection_weight, const aclTensor *conv1d_weight, aclTensor *conv_state,
+    const aclTensor *checkpoint_state, aclTensor *replay_u, aclTensor *replay_k, aclTensor *replay_decay,
+    const aclTensor *state_indices, const aclTensor *conv_num_accepted_tokens, const aclTensor *a_log,
+    const aclTensor *dt_bias, const aclTensor *cu_seqlens, const aclTensor *plan, double scale, double lower_bound,
+    double rms_norm_eps, const aclTensor *out, uint64_t *workspaceSize, aclOpExecutor **executor)
+{
+    L2_DFX_PHASE_1(aclnnMegaRecurrentKdaV2,
+                   DFX_IN(hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
+                          beta_projection_weight, output_gate_projection_weight, output_norm_weight,
+                          output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,
+                          replay_decay, state_indices, conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, plan,
+                          scale, lower_bound, rms_norm_eps),
+                   DFX_OUT(out, conv_state, replay_u, replay_k, replay_decay));
+    return GetWorkspaceSize(hidden_states, qkv_projection_weight, decay_projection_a_weight, decay_projection_b_weight,
+                            beta_projection_weight, output_gate_projection_weight, output_norm_weight,
+                            output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,
+                            replay_decay, state_indices, conv_num_accepted_tokens, a_log, dt_bias, cu_seqlens, plan,
+                            scale, lower_bound, rms_norm_eps, out, workspaceSize, executor);
+}
+
+extern "C" aclnnStatus aclnnMegaRecurrentKdaV2(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor,
+                                               aclrtStream stream)
+{
     return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }

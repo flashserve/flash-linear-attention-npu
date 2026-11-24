@@ -29,6 +29,7 @@ public:
         this->Input("a_log").ParamType(REQUIRED).DataTypeList({ge::DT_FLOAT}).FormatList(nd);
         this->Input("dt_bias").ParamType(REQUIRED).DataTypeList({ge::DT_FLOAT}).FormatList(nd);
         this->Input("cu_seqlens").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32, ge::DT_INT64}).FormatList(nd);
+        this->Input("sequence_plan").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32}).FormatList(nd);
         this->Output("out").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
         this->Output("conv_state_out")
             .ParamType(REQUIRED)

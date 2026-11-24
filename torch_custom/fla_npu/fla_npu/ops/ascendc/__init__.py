@@ -68,6 +68,7 @@ _ASCENDC_OPS = (
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
     "npu_mega_recurrent_kda",
+    "npu_mega_recurrent_kda_metadata",
 )
 
 BACKWARD_OPS = {

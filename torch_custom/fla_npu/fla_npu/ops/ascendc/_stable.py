@@ -613,6 +613,11 @@ def npu_recurrent_gated_delta_rule(
     return result
 
 
+def npu_mega_recurrent_kda_metadata(cu_seqlens, tokens):
+    """Create the reusable TH schedule for one batch on the current NPU stream."""
+    return _op("npu_mega_recurrent_kda_metadata")(cu_seqlens, tokens, _current_stream_ptr())
+
+
 def npu_mega_recurrent_kda(
     hidden_states,
     qkv_projection_weight,
@@ -634,6 +639,8 @@ def npu_mega_recurrent_kda(
     dt_bias,
     *,
     cu_seqlens=None,
+    metadata=None,
+    use_device_metadata=False,
     scale,
     lower_bound,
     rms_norm_eps,
@@ -657,13 +664,25 @@ def npu_mega_recurrent_kda(
         transfers.append(host)
         return host
 
-    state_indices = host_metadata(state_indices, (torch.int32,))
-    conv_num_accepted_tokens = host_metadata(conv_num_accepted_tokens, (torch.int32,))
-    if cu_seqlens is not None:
-        cu_seqlens = host_metadata(cu_seqlens, (torch.int32, torch.int64))
-    if transfers:
-        torch.npu.current_stream(hidden_states.device).synchronize()
-    return _op("npu_mega_recurrent_kda")(
+    if metadata is not None or use_device_metadata:
+        packed = hidden_states.ndim == 2
+        if (metadata is not None) != packed or (cu_seqlens is not None) != packed:
+            raise ValueError("TH requires cu_seqlens and metadata, BSH uses the sequence dimension")
+        for tensor in (state_indices, conv_num_accepted_tokens, cu_seqlens, metadata):
+            if tensor is not None and tensor.device != hidden_states.device:
+                raise ValueError("All device metadata must be on the hidden_states device")
+        symbol = "npu_mega_recurrent_kda_v2"
+        sequence_args = (cu_seqlens, metadata)
+    else:
+        state_indices = host_metadata(state_indices, (torch.int32,))
+        conv_num_accepted_tokens = host_metadata(conv_num_accepted_tokens, (torch.int32,))
+        if cu_seqlens is not None:
+            cu_seqlens = host_metadata(cu_seqlens, (torch.int32, torch.int64))
+        if transfers:
+            torch.npu.current_stream(hidden_states.device).synchronize()
+        symbol = "npu_mega_recurrent_kda"
+        sequence_args = (cu_seqlens,)
+    return _op(symbol)(
         hidden_states,
         qkv_projection_weight,
         decay_projection_a_weight,
@@ -682,7 +701,7 @@ def npu_mega_recurrent_kda(
         conv_num_accepted_tokens,
         a_log,
         dt_bias,
-        cu_seqlens,
+        *sequence_args,
         scale, lower_bound, rms_norm_eps, _current_stream_ptr(),
     )
 

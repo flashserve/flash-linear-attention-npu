@@ -85,6 +85,9 @@ private:
         bool wholeSequences = a.batch >= 2 && p.rows >= 2 * kGlobalRows;
         if (a.sequence) {
             wholeSequences = wholeSequences && a.sequence <= capacity / 2;
+        } else if (a.plan) {
+            wholeSequences =
+                wholeSequences && uint32_t(reinterpret_cast<__gm__ const int32_t *>(a.plan)[1]) <= capacity / 2;
         } else {
             for (uint32_t b = 0; wholeSequences && b < a.batch; ++b) {
                 wholeSequences = rec.prefix(a, b + 1) - rec.prefix(a, b) <= capacity / 2;
@@ -526,7 +529,9 @@ private:
         Recurrence rec;
         if constexpr (SpansTile) {
             uint32_t longest = a.sequence;
-            if (!a.sequence) {
+            if (a.plan) {
+                longest = reinterpret_cast<__gm__ const int32_t *>(a.plan)[1];
+            } else if (!a.sequence) {
                 for (uint32_t b = 0; b < a.batch; ++b) {
                     const uint32_t length = rec.prefix(a, b + 1) - rec.prefix(a, b);
                     longest = length > longest ? length : longest;
@@ -711,20 +716,11 @@ private:
             uint64_t boundary = (uint64_t(target) + a.sequence - 1) / a.sequence * a.sequence;
             return boundary - first < tileEnd ? boundary - first : tileEnd;
         }
-        uint32_t lo = 0, hi = a.batch;
-        while (lo < hi) {
-            uint32_t mid = lo + (hi - lo) / 2;
-            uint64_t v = a.prefix64 ? reinterpret_cast<__gm__ int64_t *>(a.prefix)[mid] :
-                                      reinterpret_cast<__gm__ int32_t *>(a.prefix)[mid];
-            if (v < target) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        uint64_t v = a.prefix64 ? reinterpret_cast<__gm__ int64_t *>(a.prefix)[lo] :
-                                  reinterpret_cast<__gm__ int32_t *>(a.prefix)[lo];
-        return v - first < tileEnd ? v - first : tileEnd;
+        Recurrence rec;
+        const uint32_t seq = rec.owner(a, target);
+        const uint32_t start = rec.prefix(a, seq);
+        const uint32_t boundary = start == target ? start : rec.prefix(a, seq + 1);
+        return boundary - first < tileEnd ? boundary - first : tileEnd;
     }
     CATLASS_DEVICE void StoreTile(GM_ADDR output, uint32_t row, uint32_t col, uint32_t stride, uint32_t m, uint32_t n,
                                   AscendC::LocalTensor<Bf> buffer)

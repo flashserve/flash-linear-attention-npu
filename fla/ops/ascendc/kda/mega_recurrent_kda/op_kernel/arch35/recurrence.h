@@ -7,6 +7,7 @@ struct RecurrenceArgs {
     Address convW, conv, checkpoint, u, key, decay, bias, alphaLog, gamma;
     Address indices, accepted, prefix, outWeight, output;
     uint64_t convStride, checkpointStride, uStride, keyStride, decayStride;
+    GM_ADDR plan;
     uint32_t batch, sequence, capacity, prefix64, convLayout, crosses, staged;
     float scale, lower, eps;
 };
@@ -449,6 +450,13 @@ public:
             return row / a.sequence;
         }
         uint32_t lo = 0, hi = a.batch;
+        if (a.plan) {
+            lo = reinterpret_cast<__gm__ const int32_t *>(a.plan)[2 + row / 16];
+            if (row % 16 == 0) {
+                return lo;
+            }
+            hi = lo + (a.batch - lo < 16 ? a.batch - lo : 16);
+        }
         while (lo + 1 < hi) {
             uint32_t mid = lo + (hi - lo) / 2;
             if (prefix(a, mid) <= row) {
