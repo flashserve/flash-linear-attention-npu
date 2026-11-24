@@ -64,7 +64,7 @@ BSH 和 TH 均使用设备上的状态索引和已接受 token 数。TH 支持�
 
 权重加载、完整的 forward 调用和连续两步对照方法见[模型接入指南](model_integration.md)。
 
-## Atlas A2 INT8 QKV 投影
+## Atlas A2/A3 INT8 QKV 投影
 
 向同一 Python 入口传入 INT8 `qkv_projection_weight` 和 BF16 `qkv_projection_weight_scale[3P]`。权重的列顺序为 Q、K、V。支持逻辑形状 `[7168,3P]` 的 FRACTAL_NZ 张量，也支持模型已经打包好的连续四维张量 `[3P/32,448,16,32]`。通道 scale 与列一一对应。`qkv_scale_alg` 沿用默认值 0。
 

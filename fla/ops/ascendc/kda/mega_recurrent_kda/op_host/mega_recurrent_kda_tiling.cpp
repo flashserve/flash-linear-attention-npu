@@ -179,8 +179,10 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     const auto soc = platform.GetSocVersion();
     const auto systemBytes = platform.GetLibApiWorkSpaceSize();
     const bool int8Qkv = ctx->GetInputDesc(static_cast<size_t>(Input::QkvWeight))->GetDataType() == ge::DT_INT8;
-    if (int8Qkv && soc != platform_ascendc::SocVersion::ASCEND910B) return ge::GRAPH_FAILED;
     if (soc == platform_ascendc::SocVersion::ASCEND950) {
+        if (int8Qkv) {
+            return ge::GRAPH_FAILED;
+        }
         if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
             const auto *algorithm = ctx->GetAttrs()->GetAttrPointer<int64_t>(4);
             if (!algorithm || *algorithm < 0 || *algorithm > 1) {

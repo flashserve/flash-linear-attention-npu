@@ -113,16 +113,16 @@ python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a5_model --m
 python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a5_model --mode mxfp8 --qkv-scale-alg 1 --layers 69 --graph --warmup 3 --repeats 7
 ```
 
-## Atlas A2 INT8 QKV 与设备前缀
+## Atlas A2/A3 INT8 QKV 与设备前缀
 
-在已安装本算子和 ATK 依赖的 A2 环境运行：
+在已安装对应产品算子包和 ATK 依赖的 A2 或 A3 环境运行：
 
 ```bash
 python -m pytest -q tests/atk/mega_recurrent_kda/{test_int8,test_device_metadata,test_invalid_inputs}.py
 python tests/atk/mega_recurrent_kda/benchmark_layer_reuse.py --case a2_model --mode int8 --layers 4 --warmup 5 --repeats 15
 ```
 
-11 个量化精度用例从卷积状态取回实际写入的 BF16 QKV，与设备上的 DynamicQuantV2 和 QuantMatmulWeightNz 对照，再将同一 QKV 送入 CPU 标杆核对五项输出。10 例要求 QKV 逐位相同。另一个 193-token 用例逐点检查差异，用相同的 INT8 点积分别验证两种 FP32 乘 scale 顺序的 BF16 舍入结果。模型形状为 B=8、N=6、S=4、D=128，使用 567 个状态槽并连续调用两步。若独立的 BF16 decay 投影触发已有舍入差异，另用相同初始状态与原 BF16 算子的整份 `replay_decay` 逐位比较。
+已有 A2 验证中，11 个量化精度用例从卷积状态取回实际写入的 BF16 QKV，与设备上的 DynamicQuantV2 和 QuantMatmulWeightNz 对照，再将同一 QKV 送入 CPU 标杆核对五项输出。10 例要求 QKV 逐位相同。另一个 193-token 用例逐点检查差异，用相同的 INT8 点积分别验证两种 FP32 乘 scale 顺序的 BF16 舍入结果。模型形状为 B=8、N=6、S=4、D=128，使用 567 个状态槽并连续调用两步。若独立的 BF16 decay 投影触发已有舍入差异，另用相同初始状态与原 BF16 算子的整份 `replay_decay` 逐位比较。
 
 另以可精确表示的激活、权重和 scale 运行原有 810 项 B/N/S 与布局清单。五项输出均与等价 BF16 调用逐位一致，四个原地状态的地址均符合契约。初版模型形状的 TH 融合 kernel 包含动态量化，预热 4 轮后采集 44 次，中位数为 112.08 µs。4 层复用同一份 metadata 时，15 次无 profiler 回放的设备流耗时中位数为 0.940 ms，调用到同步完成为 1.050 ms。
 

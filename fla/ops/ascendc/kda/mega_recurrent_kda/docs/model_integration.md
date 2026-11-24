@@ -1,6 +1,6 @@
 # MegaRecurrentKda 模型接入指南
 
-在 KDA 推理层，将 BF16 `hidden_states` 直接传给 `npu_mega_recurrent_kda`，一次调用得到 BF16 输出投影和本层更新后的状态。Atlas A2 使用 INT8 QKV，Ascend 950（A5）使用 MXFP8 QKV。两者共用 BSH、变长 TH 和同一套状态管理方式。
+在 KDA 推理层，将 BF16 `hidden_states` 直接传给 `npu_mega_recurrent_kda`，一次调用得到 BF16 输出投影和本层更新后的状态。Atlas A2/A3 使用 INT8 QKV，Ascend 950（A5）使用 MXFP8 QKV。两者共用 BSH、变长 TH 和同一套状态管理方式。
 
 ## 1. 在模型仓定位替换范围
 
@@ -22,7 +22,7 @@ rg -n -i 'dynamic_?(mx_?)?quant|quant_?(batch_?)?matmul|causal_conv1d|kda_recove
 
 令 `H=7168`、`D=128`、`P=N*D`，其中 N 是当前设备执行的 head 数。每层在加载时按当前 rank 绑定 Q、K、V 顺序的权重与配对的 scale，激活动态量化由融合算子完成。
 
-| 加载到本层 `weights` 的字段 | Atlas A2 · INT8 | Ascend 950（A5）· MXFP8 |
+| 加载到本层 `weights` 的字段 | Atlas A2/A3 · INT8 | Ascend 950（A5）· MXFP8 |
 |---|---|---|
 | `qkv_projection_weight` | 直接复用 INT8 NZ 权重。支持逻辑形状 `[H,3P]` 的 FRACTAL_NZ 张量，或已打包的连续四维张量 `[3P/32,H/16,16,32]`。 | 复用逻辑形状 `[1,H,3P]` 的 E4M3FN FRACTAL_NZ 权重。若加载器拿到逻辑 ND 权重，确认方向后在加载时用 `torch_npu.npu_format_cast(w, 29)` 转为 NZ。 |
 | `qkv_projection_weight_scale` | BF16 向量 `[3P]`，每个输出通道一个 scale。 | 连续 ND 张量 `[1,H/64,3P,2]`，沿 H 每 32 个元素一个 scale，使用 E8M0 或相同位模式的 uint8。 |
@@ -92,6 +92,6 @@ out, conv_state, replay_u, replay_k, replay_decay = npu_mega_recurrent_kda(
 ## 4. 用模型输入验收
 
 1. 从同一模型层取真实权重、输入、前缀和 accepted-token 数。为原路径和融合路径各复制一份相同的初始状态，保持槽映射及步长。
-2. 先从融合调用的 `conv_state[slot, 2:2+S]` 取回当前序列卷积前的 BF16 QKV，其中 S 取该序列的实际长度。A2 对照模型的 `DynamicQuantV2 + QuantBatchMatmulV3`（NZ 权重入口为 `aclnnQuantMatmulWeightNz`）。A5 对照相同 `scale_alg` 的 `npu_dynamic_mx_quant + npu_quant_matmul`。[A2 INT8 测试](../../../../../../tests/atk/mega_recurrent_kda/test_int8.py) · [A5 MXFP8 测试](../../../../../../tests/atk/mega_recurrent_kda/test_mxfp8.py)
+2. 先从融合调用的 `conv_state[slot, 2:2+S]` 取回当前序列卷积前的 BF16 QKV，其中 S 取该序列的实际长度。A2/A3 对照模型的 `DynamicQuantV2 + QuantBatchMatmulV3`（NZ 权重入口为 `aclnnQuantMatmulWeightNz`）。A5 对照相同 `scale_alg` 的 `npu_dynamic_mx_quant + npu_quant_matmul`。[A2/A3 INT8 测试](../../../../../../tests/atk/mega_recurrent_kda/test_int8.py) · [A5 MXFP8 测试](../../../../../../tests/atk/mega_recurrent_kda/test_mxfp8.py)
 3. 按模型精度门限比较最终输出及四个原地状态，核对只读 checkpoint、非活动槽和活动槽有效行以外的值逐位相同。再给两路相同的下一步输入，各自沿用上一步更新的状态复验。覆盖模型实际使用的等长及变长前缀，包括序列跨越第 64 行的情况。若 QKV 已匹配而下游有差异，再查历史窗口、accepted-token、checkpoint 方向和门控公式。
 4. 精度通过后重新采集 profiling。原模型从动态量化与辅助投影中最早启动的操作计至最后一次输出投影结束。在融合路径的时间线上确认每层只执行一次 KDA，计入全部层的完整调用。TH 另计同一批次共享的一次 metadata。两路使用相同输入、初始状态、层数、预热和设备计时口径。

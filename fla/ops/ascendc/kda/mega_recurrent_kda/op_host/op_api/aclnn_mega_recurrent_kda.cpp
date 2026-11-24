@@ -358,8 +358,10 @@ GetWorkspaceSize(const aclTensor *hidden_states, const aclTensor *qkv_projection
         const auto &view = qkv_projection_weight->GetViewShape();
         const auto &storage = qkv_projection_weight->GetStorageShape();
         const auto &replay = replay_u->GetViewShape();
-        if (soc != SocVersion::ASCEND910B || replay.GetDimNum() != 4 || replay.GetDim(1) <= 0 ||
-            replay.GetDim(1) > INT32_MAX / 384) return ACLNN_ERR_PARAM_INVALID;
+        if ((soc != SocVersion::ASCEND910B && soc != SocVersion::ASCEND910_93) ||
+            replay.GetDimNum() != 4 || replay.GetDim(1) <= 0 || replay.GetDim(1) > INT32_MAX / 384) {
+            return ACLNN_ERR_PARAM_INVALID;
+        }
         const int64_t cols = replay.GetDim(1) * 384;
         if (view.GetDimNum() != 2 || view.GetDim(0) != 7168 || view.GetDim(1) != cols ||
             storage.GetDimNum() != 4 || storage.GetDim(0) != cols / 32 || storage.GetDim(1) != 448 ||

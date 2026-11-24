@@ -1,4 +1,4 @@
-"""Validate fused A2 INT8 QKV against the native quantized projection."""
+"""Validate fused Atlas A2/A3 INT8 QKV against the native quantized projection."""
 import ctypes
 
 import pytest
@@ -9,7 +9,9 @@ from executor_mega_recurrent_kda import build_inputs, device_inputs
 from mega_recurrent_kda_reference import mega_recurrent_kda_golden
 
 pytestmark = pytest.mark.skipif(
-    not torch.npu.is_available() or "910B" not in torch.npu.get_device_name(), reason="Ascend A2 INT8 QKV"
+    not torch.npu.is_available()
+    or not torch.npu.get_device_name().startswith(("Ascend910B", "Ascend910_93", "Ascend910C")),
+    reason="Requires Atlas A2/A3 INT8 QKV",
 )
 MUTABLE = ("conv_state", "replay_u", "replay_k", "replay_decay")
 
