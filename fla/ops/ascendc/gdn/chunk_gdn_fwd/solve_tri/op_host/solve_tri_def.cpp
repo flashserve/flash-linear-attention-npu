@@ -21,23 +21,23 @@
              .DataTypeList({ge::DT_INT64})
              .FormatList({ge::FORMAT_ND})
              .ValueDepend(OPTIONAL);
- 
+
          this->Input("chunk_indices")
              .ParamType(OPTIONAL)
              .DataTypeList({ge::DT_INT64})
              .FormatList({ge::FORMAT_ND})
              .ValueDepend(OPTIONAL);
- 
+
          this->Output("x_out")
              .ParamType(REQUIRED)
              .DataType({ge::DT_FLOAT16, ge::DT_BF16})
              .FormatList({ge::FORMAT_ND})
              .AutoContiguous();
- 
+
          this->Attr("layout")
              .AttrType(OPTIONAL)
              .String("bsnd");
- 
+
          OpAICoreConfig aicore_config;
          aicore_config.DynamicCompileStaticFlag(true)
              .DynamicFormatFlag(true)
@@ -57,10 +57,11 @@
              .PrecisionReduceFlag(false)
              .ExtendCfgInfo("opFile.value", "solve_tri")
              .ExtendCfgInfo("aclnnSupport.value", "support_aclnn");
- 
+
         this->AICore().AddConfig("ascend910b", arch22_config);
         this->AICore().AddConfig("ascend910_93", arch22_config);
         this->AICore().AddConfig("ascend950", aicore_config);
+        this->AICore().AddConfig("ascend960dt", aicore_config);
     }
 };
  OP_ADD(SolveTri);

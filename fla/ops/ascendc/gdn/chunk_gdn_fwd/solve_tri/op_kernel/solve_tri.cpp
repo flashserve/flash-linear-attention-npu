@@ -5,14 +5,22 @@
 #include "kernel_operator.h"
 
 #ifndef CATLASS_ARCH
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#define CATLASS_ARCH 9201
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
 #endif
 #endif
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "solve_tri_tiling_key.h"
+#include "arch92/solve_tri_ascend960_16.h"
+#include "arch92/solve_tri_ascend960_32.h"
+#include "arch92/solve_tri_ascend960_64.h"
+#include "arch92/solve_tri_ascend960_128.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/solve_tri_ascend950_16.h"
 #include "arch35/solve_tri_ascend950_32.h"
 #include "arch35/solve_tri_ascend950_64.h"
@@ -27,7 +35,32 @@
 
 using namespace AscendC;
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+template <uint32_t CHUNK_SIZE>
+__global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
+                                     GM_ADDR workspace, GM_ADDR tiling)
+{
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+    GET_TILING_DATA(tilingData, tiling);
+    if constexpr (CHUNK_SIZE == 16) {
+        SolveTri16<DTYPE_X, DTYPE_X> op;
+        op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
+        op.Process();
+    } else if constexpr (CHUNK_SIZE == 32) {
+        SolveTri32<DTYPE_X, DTYPE_X> op;
+        op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
+        op.Process();
+    } else if constexpr (CHUNK_SIZE == 64) {
+        SolveTri64<DTYPE_X, DTYPE_X> op;
+        op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
+        op.Process();
+    } else if constexpr (CHUNK_SIZE == 128) {
+        SolveTri128<DTYPE_X, DTYPE_X> op;
+        op.Init(x, cu_seqlens, chunk_indices, x_out, workspace, &tilingData);
+        op.Process();
+    }
+}
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 __global__ __aicore__ void solve_tri(GM_ADDR x, GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR x_out,
                                      GM_ADDR workspace, GM_ADDR tiling)
 {

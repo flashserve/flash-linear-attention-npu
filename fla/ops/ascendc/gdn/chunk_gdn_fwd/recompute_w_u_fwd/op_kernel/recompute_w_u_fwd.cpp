@@ -18,12 +18,18 @@
 #endif
 #include "recompute_w_u_fwd_struct.h"
 #include "recompute_w_u_fwd_common.h"
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-#include "arch35/recompute_w_u_fwd_cube_l1resident.h"
-#include "arch35/recompute_w_u_fwd_vector_regbase.h"
-#else
+#if defined(RECOMPUTE_W_U_FWD_RUNTIME_KEYS)
 #include "recompute_w_u_fwd_cube.h"
 #include "recompute_w_u_fwd_vector.h"
+#else
+#include "recompute_w_u_fwd_tiling_key.h"
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/a96/recompute_w_u_fwd_cube_l1resident.h"
+#include "arch92/a96/recompute_w_u_fwd_vector_regbase.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#include "arch35/recompute_w_u_fwd_cube_l1resident.h"
+#include "arch35/recompute_w_u_fwd_vector_regbase.h"
+#endif
 #endif
 
 template <class... Dims>
@@ -50,7 +56,7 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     GM_ADDR w, GM_ADDR u, GM_ADDR workspace, const RecomputeWUFwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201))
         RecomputeWUFwdProcessL1Resident<kType, betaType, typename TileShapes::L1TileShape, typename TileShapes::L0TileShape>
 #else
         RecomputeWUFwdProcess<kType, betaType, typename TileShapes::L1TileShape, typename TileShapes::L0TileShape>
@@ -61,7 +67,7 @@ __aicore__ inline void RecomputeWUFwdKernelImplTyped(
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe tPipe;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201))
         RecomputeWUFwdVectorProcessRegbase<kType, betaType, VDim> recomputeWUFwdVectorProcess(
 #else
         RecomputeWUFwdVectorProcess<kType, betaType> recomputeWUFwdVectorProcess(
@@ -91,6 +97,7 @@ __aicore__ inline void RecomputeWUFwdKernelImpl(
 #ifndef TORCH_MODE
 using namespace AscendC;
 
+#if defined(RECOMPUTE_W_U_FWD_RUNTIME_KEYS)
 __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g, GM_ADDR gk,
                                             GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR w, GM_ADDR u,
                                             GM_ADDR workspace, GM_ADDR tiling)
@@ -114,4 +121,32 @@ __global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta,
             k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
     }
 }
+#else
+template <uint32_t V_DIM>
+__global__ __aicore__ void recompute_w_u_fwd(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADDR g,
+                                             GM_ADDR gk, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+                                             GM_ADDR w, GM_ADDR u, GM_ADDR workspace, GM_ADDR tiling)
+{
+    (void)gk;
+    AscendC::AscendCUtils::SetOverflow(1);
+    GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
+    if (userWS == nullptr) {
+        return;
+    }
+    REGISTER_TILING_DEFAULT(GDN::RecomputeWUFwdTilingData);
+    GET_TILING_DATA_WITH_STRUCT(GDN::RecomputeWUFwdTilingData, tilingData, tiling);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
+    if constexpr (V_DIM == 128) {
+        GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, 128>(
+            k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
+    } else {
+        GDN::RecomputeWUFwdKernelImpl<DTYPE_K, DTYPE_BETA, 256>(
+            k, v, beta, A, g, cu_seqlens, chunk_indices, w, u, userWS, &tilingData);
+    }
+}
+#endif
 #endif

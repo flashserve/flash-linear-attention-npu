@@ -17,7 +17,12 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/a96/prepare_wy_repr_bwd_da_common.h"
+#include "arch92/a96/prepare_wy_repr_bwd_da_cube.h"
+#include "arch92/a96/prepare_wy_repr_bwd_da_vector.h"
+#include "arch92/a96/prepare_wy_repr_bwd_da_tiling_data_apt.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/prepare_wy_repr_bwd_da_common.h"
 #include "arch35/prepare_wy_repr_bwd_da_cube.h"
 #include "arch35/prepare_wy_repr_bwd_da_vector.h"
@@ -32,7 +37,7 @@ using namespace GDN;
 
 using namespace AscendC;
 
-#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
+#if (!defined(__NPU_ARCH__)) || ((__NPU_ARCH__ != 3510) && (__NPU_ARCH__ != 9201))
 namespace GDN {
 
 template <typename KType, typename BetaType>
@@ -65,25 +70,29 @@ extern "C" __global__ __aicore__ void prepare_wy_repr_bwd_da(
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR dA, GM_ADDR workspace, GM_ADDR tiling)
 {
     AscendC::AscendCUtils::SetOverflow(1);
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201))
     REGISTER_TILING_DEFAULT(PrepareWyReprBwdDaTilingDataA5);
     GET_TILING_DATA(tilingData, tiling);
-    if (TILING_KEY_IS(1)) {
-        KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_2);
-        if ASCEND_IS_AIC {
-            PrepareWyReprBwdDAProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdDAProcess(
-                k, v, beta, A, dw, du, g, cu_seqlens, chunk_indices, dA, workspace);
-            prepareWyReprBwdDAProcess.Init(tilingData);
-            prepareWyReprBwdDAProcess.Process();
-        }
-        if ASCEND_IS_AIV {
-            AscendC::TPipe tPipe;
-            PrepareWyReprBwdDAVectorProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdDAVectorProcess(
-                k, v, beta, A, dw, du, g, cu_seqlens, chunk_indices, dA, workspace);
-            prepareWyReprBwdDAVectorProcess.Init(tilingData, &tPipe);
-            prepareWyReprBwdDAVectorProcess.Process();
-        }
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
+
+    if ASCEND_IS_AIC {
+        PrepareWyReprBwdDAProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdDAProcess(
+            k, v, beta, A, dw, du, g, cu_seqlens, chunk_indices, dA, workspace);
+        prepareWyReprBwdDAProcess.Init(tilingData);
+        prepareWyReprBwdDAProcess.Process();
     }
+    if ASCEND_IS_AIV {
+        AscendC::TPipe tPipe;
+        PrepareWyReprBwdDAVectorProcess<DTYPE_K, DTYPE_BETA> prepareWyReprBwdDAVectorProcess(
+            k, v, beta, A, dw, du, g, cu_seqlens, chunk_indices, dA, workspace);
+        prepareWyReprBwdDAVectorProcess.Init(tilingData, &tPipe);
+        prepareWyReprBwdDAVectorProcess.Process();
+    }
+
 #else
     REGISTER_TILING_DEFAULT(GDN::PrepareWyReprBwdDaTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::PrepareWyReprBwdDaTilingData, tilingData, tiling);

@@ -1,0 +1,471 @@
+/**
+ * Copyright (c) 2026 Tianjin University, Ltd.
+ * CANN Open Software License Agreement Version 2.0.
+ */
+
+#include "chunk_gated_delta_rule_fwd_arch35_struct.h"
+#include "ho_pipeline_context.h"
+#include <type_traits>
+
+#include "../gated_delta_rule_state_update_output/chunk_gated_delta_rule_state_update_output.cpp"
+#include "../coefficient_generation/chunk_gated_delta_rule_coefficient_generation.cpp"
+
+#define GDN_CHUNK_LOCAL_CUMSUM_IMPL_ONLY
+#include "../operators/chunk_local_cumsum/op_kernel/chunk_local_cumsum.cpp"
+#undef GDN_CHUNK_LOCAL_CUMSUM_IMPL_ONLY
+
+namespace GDN {
+namespace {
+
+constexpr uint32_t OWNER_MTE2_TO_V_EVENT = 0;
+constexpr uint32_t OWNER_V_TO_MTE3_EVENT = 1;
+constexpr uint32_t OWNER_MTE3_TO_V_EVENT = 2;
+constexpr uint32_t PHASE6_SOLVE_FIX_TO_MTE2_EVENT = 0;
+constexpr uint32_t UB_ALIGNMENT = 32;
+constexpr uint32_t PHASE6_TILING_ALIGNMENT = 8;
+constexpr uint64_t PHASE6_SOLVE_AIV_DONE_FLAG = 4;
+constexpr uint64_t PHASE6_SOLVE_DONE_FLAG = 5;
+constexpr uint64_t PHASE6_SOLVE_AIC_ALL_DONE_FLAG = 6;
+constexpr int64_t PHASE6_CUMSUM_FAST_BUFFER_LIMIT = 160 * 1024;
+constexpr AscendC::SyncAllConfig PHASE6_HO_SYNC_CONFIG = {PIPE_MTE3, PIPE_MTE2};
+
+__aicore__ inline uint64_t AlignPhase6(uint64_t value, uint64_t alignment)
+{
+    return (value + alignment - 1) / alignment * alignment;
+}
+
+__aicore__ inline const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *GetStateOutputTrailer(GM_ADDR tiling)
+{
+    const uint64_t oTilingOffset = AlignPhase6(
+        sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    return reinterpret_cast<const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *>(
+        tiling + oTilingOffset + sizeof(GdnMegaArch35FwdOTilingData));
+}
+
+__aicore__ inline const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *GetPhase6Trailer(GM_ADDR tiling)
+{
+    const uint64_t oTilingOffset = AlignPhase6(
+        sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const uint64_t stateOutputTilingEnd = oTilingOffset + sizeof(GdnMegaArch35FwdOTilingData) +
+                                          sizeof(ChunkGatedDeltaRuleStateOutputTrailer);
+    return reinterpret_cast<const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *>(
+        tiling + AlignPhase6(stateOutputTilingEnd, PHASE6_TILING_ALIGNMENT));
+}
+
+__aicore__ inline uint64_t HoCeilDiv(uint64_t value, uint64_t divisor)
+{
+    return divisor == 0 || value == 0 ? 0 : (value - 1) / divisor + 1;
+}
+
+__aicore__ inline HoPipelineContext BuildHoPipelineContext(
+    const __gm__ GdnMegaArch35FwdHTilingData *hTiling, GM_ADDR cuSeqlens)
+{
+    HoPipelineContext context{};
+    const uint64_t groupCount = static_cast<uint64_t>(AscendC::GetBlockNum());
+    const bool layoutEligible = HoPipelineLayoutEligible(
+                                    true, hTiling->dataType, hTiling->kHeadDim,
+                                    hTiling->vHeadDim, hTiling->chunkSize) &&
+                                groupCount > 0;
+    const bool isVarlen = hTiling->isVariedLen != 0;
+    context.physicalShapeBatch = isVarlen ? 1 : static_cast<uint64_t>(hTiling->shapeBatch);
+
+    uint64_t activeSequenceCount = 0;
+    uint64_t chunksPerPhysicalBatch = 0;
+    bool hasCrossChunkSequence = false;
+    if (isVarlen) {
+        if (cuSeqlens == nullptr) {
+            return context;
+        }
+        AscendC::GlobalTensor<int64_t> gmSeqlen;
+        gmSeqlen.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
+        int64_t previous = gmSeqlen.GetValue(0);
+        const uint64_t sequenceCount = static_cast<uint64_t>(hTiling->tokenBatch);
+        for (uint64_t sequence = 1; sequence <= sequenceCount; ++sequence) {
+            const int64_t current = gmSeqlen.GetValue(sequence);
+            const int64_t length = current - previous;
+            if (length > 0) {
+                ++activeSequenceCount;
+                const uint64_t chunks = HoCeilDiv(
+                    static_cast<uint64_t>(length), static_cast<uint64_t>(hTiling->chunkSize));
+                chunksPerPhysicalBatch += chunks;
+                hasCrossChunkSequence = hasCrossChunkSequence || chunks >= 2;
+            }
+            previous = current;
+        }
+    } else {
+        activeSequenceCount = static_cast<uint64_t>(hTiling->shapeBatch);
+        chunksPerPhysicalBatch = HoCeilDiv(
+            static_cast<uint64_t>(hTiling->seqlen), static_cast<uint64_t>(hTiling->chunkSize));
+        hasCrossChunkSequence = chunksPerPhysicalBatch >= 2;
+    }
+
+    context.chunksPerPhysicalBatch = chunksPerPhysicalBatch;
+    const uint64_t valueHeads = static_cast<uint64_t>(hTiling->vNumHead);
+    context.readyTaskCount = context.physicalShapeBatch * chunksPerPhysicalBatch * valueHeads;
+    const uint64_t taskCount = activeSequenceCount * valueHeads;
+    const uint64_t slotsPerGroup = (isVarlen && taskCount > groupCount) ? 2 : 1;
+    uint64_t activeGroups = HoCeilDiv(taskCount, slotsPerGroup);
+    if (activeGroups > groupCount) {
+        activeGroups = groupCount;
+    }
+    context.producerGroups = static_cast<uint32_t>(activeGroups);
+    context.consumerGroups = static_cast<uint32_t>(groupCount - activeGroups);
+    context.enabled = layoutEligible && taskCount > 0 && activeGroups > 0 &&
+                      activeGroups < groupCount && hasCrossChunkSequence &&
+                      chunksPerPhysicalBatch > 0 && context.readyTaskCount > 0;
+    return context;
+}
+
+__aicore__ inline void CopyCoefficientTiling(
+    const __gm__ Arch35ChunkGatedDeltaRuleCoefficientTiling *src, Arch35ChunkGatedDeltaRuleCoefficientTiling &dst)
+{
+    dst.B = src->B;
+    dst.Hk = src->Hk;
+    dst.Hv = src->Hv;
+    dst.hvPerHk = src->hvPerHk;
+    dst.T = src->T;
+    dst.K = src->K;
+    dst.BT = src->BT;
+    dst.NT = src->NT;
+    dst.taskNum = src->taskNum;
+    dst.usedAicNum = src->usedAicNum;
+    dst.usedAivNum = src->usedAivNum;
+    dst.btAlign = src->btAlign;
+    dst.isVarlen = src->isVarlen;
+    dst.scoreWorkspaceBytes = src->scoreWorkspaceBytes;
+    dst.aWorkspaceBytes = src->aWorkspaceBytes;
+    dst.solveWorkspacePerCoreBytes = src->solveWorkspacePerCoreBytes;
+    dst.totalTiles = src->totalTiles;
+    dst.matrixSize = src->matrixSize;
+    dst.numHeads = src->numHeads;
+    dst.seqLen = src->seqLen;
+    dst.batchSize = src->batchSize;
+    dst.isLower = src->isLower;
+    dst.hasCuSeqlens = src->hasCuSeqlens;
+    dst.tilesPerCore = src->tilesPerCore;
+    dst.chunkSize = src->chunkSize;
+    dst.numChunks = src->numChunks;
+    dst.lastChunkValidSize = src->lastChunkValidSize;
+    dst.totalChunks = src->totalChunks;
+    dst.layoutMode = src->layoutMode;
+    dst.dtypeMode = src->dtypeMode;
+    dst.totalTokens = src->totalTokens;
+
+    static_assert(sizeof(TCubeTiling) % sizeof(uint32_t) == 0,
+                  "TCubeTiling must be copied as complete 32-bit words");
+    const __gm__ uint32_t *cubeSrc =
+        reinterpret_cast<const __gm__ uint32_t *>(&src->cubeTilingData);
+    uint32_t *cubeDst = reinterpret_cast<uint32_t *>(&dst.cubeTilingData);
+    constexpr uint32_t cubeWordCount = sizeof(TCubeTiling) / sizeof(uint32_t);
+    for (uint32_t index = 0; index < cubeWordCount; ++index) {
+        cubeDst[index] = cubeSrc[index];
+    }
+}
+
+__aicore__ inline void WritePublicCumsumRows(
+    GM_ADDR gCumsumBht, GM_ADDR gCumsumBth, GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+    const Arch35ChunkGatedDeltaRuleCoefficientTiling &tiling)
+{
+    if ASCEND_IS_AIC {
+        return;
+    }
+    if (GetSubBlockIdx() != 0) {
+        return;
+    }
+
+    const uint64_t coreGroup = static_cast<uint64_t>(GetBlockIdx()) /
+                               static_cast<uint64_t>(GetSubBlockNum());
+    const uint64_t taskBegin = coreGroup * static_cast<uint64_t>(tiling.tilesPerCore);
+    const uint64_t taskEnd =
+        (taskBegin + static_cast<uint64_t>(tiling.tilesPerCore)) < tiling.taskNum
+            ? taskBegin + static_cast<uint64_t>(tiling.tilesPerCore)
+            : tiling.taskNum;
+    bool ownsChunk = false;
+    for (uint64_t task = taskBegin; task < taskEnd; ++task) {
+        const uint64_t head = (task / tiling.NT) % tiling.Hv;
+        if (head == 0) {
+            ownsChunk = true;
+            break;
+        }
+    }
+    if (!ownsChunk) {
+        return;
+    }
+
+    AscendC::TPipe pipe;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> dataBuf;
+    AscendC::TBuf<AscendC::TPosition::VECCALC> offsetBuf;
+    const uint32_t tileElements = static_cast<uint32_t>(tiling.BT * tiling.Hv);
+    const uint32_t tileBytes = static_cast<uint32_t>(
+        AlignPhase6(static_cast<uint64_t>(tileElements) * sizeof(float), UB_ALIGNMENT));
+    pipe.InitBuffer(dataBuf, 2 * tileBytes);
+    pipe.InitBuffer(offsetBuf, tileBytes);
+
+    AscendC::LocalTensor<float> dataLocal = dataBuf.Get<float>();
+    AscendC::LocalTensor<float> srcLocal = dataLocal;
+    AscendC::LocalTensor<float> dstLocal = dataLocal[tileBytes / sizeof(float)];
+    AscendC::LocalTensor<uint32_t> offsets = offsetBuf.Get<uint32_t>();
+    for (uint32_t row = 0; row < static_cast<uint32_t>(tiling.BT); ++row) {
+        for (uint32_t head = 0; head < static_cast<uint32_t>(tiling.Hv); ++head) {
+            offsets.SetValue(row * static_cast<uint32_t>(tiling.Hv) + head,
+                             (head * static_cast<uint32_t>(tiling.BT) + row) * sizeof(float));
+        }
+    }
+    AscendC::PipeBarrier<PIPE_V>();
+
+    AscendC::GlobalTensor<float> input;
+    AscendC::GlobalTensor<float> output;
+    input.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gCumsumBht),
+                          tiling.B * tiling.Hv * tiling.T);
+    output.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(gCumsumBth),
+                           tiling.B * tiling.T * tiling.Hv);
+    AscendC::GlobalTensor<int64_t> cu;
+    AscendC::GlobalTensor<int64_t> indices;
+    if (tiling.isVarlen != 0) {
+        cu.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(cuSeqlens));
+        indices.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(chunkIndices));
+    }
+    AscendC::DataCopyPadExtParams<float> padParams{false, 0, 0, 0.0f};
+
+    for (uint64_t task = taskBegin; task < taskEnd; ++task) {
+        const uint64_t chunk = task % tiling.NT;
+        const uint64_t head = (task / tiling.NT) % tiling.Hv;
+        const uint64_t batch = task / (tiling.Hv * tiling.NT);
+        if (head != 0) {
+            continue;
+        }
+        uint64_t rowStart = chunk * tiling.BT;
+        uint64_t currentRows = tiling.BT;
+        if (tiling.isVarlen != 0) {
+            const int64_t sequence = indices.GetValue(chunk * 2);
+            const int64_t localChunk = indices.GetValue(chunk * 2 + 1);
+            const int64_t bos = cu.GetValue(sequence);
+            const int64_t eos = cu.GetValue(sequence + 1);
+            const int64_t varlenRowStart = bos + localChunk * static_cast<int64_t>(tiling.BT);
+            const int64_t valid = eos - varlenRowStart;
+            if (valid <= 0) {
+                continue;
+            }
+            rowStart = static_cast<uint64_t>(varlenRowStart);
+            currentRows = static_cast<uint64_t>(valid) < tiling.BT
+                              ? static_cast<uint64_t>(valid) : tiling.BT;
+        } else {
+            const uint64_t remaining = tiling.T - rowStart;
+            currentRows = remaining < tiling.BT ? remaining : tiling.BT;
+        }
+        AscendC::DataCopyExtParams headParams{
+            1, static_cast<uint32_t>(currentRows * sizeof(float)), 0, 0, 0};
+        for (uint64_t sourceHead = 0; sourceHead < tiling.Hv; ++sourceHead) {
+            const uint64_t sourceOffset =
+                ((batch * tiling.Hv + sourceHead) * tiling.T + rowStart);
+            AscendC::DataCopyPad(srcLocal[sourceHead * tiling.BT], input[sourceOffset],
+                                headParams, padParams);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(OWNER_MTE2_TO_V_EVENT);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(OWNER_MTE2_TO_V_EVENT);
+
+        const uint32_t elementCount = static_cast<uint32_t>(currentRows * tiling.Hv);
+        AscendC::Gather(dstLocal, srcLocal, offsets, 0, elementCount);
+        AscendC::PipeBarrier<PIPE_V>();
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(OWNER_V_TO_MTE3_EVENT);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(OWNER_V_TO_MTE3_EVENT);
+        AscendC::DataCopyExtParams outputParams{
+            1, static_cast<uint32_t>(elementCount * sizeof(float)), 0, 0, 0};
+        const uint64_t outputOffset = (batch * tiling.T + rowStart) * tiling.Hv;
+        AscendC::DataCopyPad(output[outputOffset], dstLocal, outputParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(OWNER_MTE3_TO_V_EVENT);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(OWNER_MTE3_TO_V_EVENT);
+        AscendC::PipeBarrier<PIPE_ALL>();
+    }
+}
+
+__aicore__ inline void RunPhase6Cumsum(
+    GM_ADDR rawG, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR gCumsumBht,
+    const Arch35ChunkGatedDeltaRuleCoefficientTiling &tiling)
+{
+    if ASCEND_IS_AIC {
+        return;
+    }
+
+    ChunkLocalCumsumTilingData cumsumTiling{};
+    cumsumTiling.b = static_cast<int64_t>(tiling.B);
+    cumsumTiling.t = static_cast<int64_t>(tiling.T);
+    cumsumTiling.h = static_cast<int64_t>(tiling.Hv);
+    cumsumTiling.chunkSize = static_cast<int64_t>(tiling.BT);
+    cumsumTiling.blockT = static_cast<int64_t>(tiling.BT);
+    cumsumTiling.numBlocks = static_cast<int64_t>(tiling.NT);
+    cumsumTiling.seqNum = 0;
+    cumsumTiling.totalElements = static_cast<int64_t>(tiling.B * tiling.Hv * tiling.T);
+    cumsumTiling.isVarlen = static_cast<int64_t>(tiling.isVarlen);
+    cumsumTiling.reverse = 0;
+    cumsumTiling.headFirst = 1;
+    cumsumTiling.optimizedHeadFirst = 1;
+    cumsumTiling.varlenSeqTask = 0;
+    cumsumTiling.enableCumSumFastPath = 1;
+    cumsumTiling.fastBufferLimit = PHASE6_CUMSUM_FAST_BUFFER_LIMIT;
+    cumsumTiling.inputDtype = 0;
+    cumsumTiling.outputDtype = 0;
+    cumsumTiling.scale = 1.0f;
+
+    ChunkLocalCumsumKernel<float, float> cumsum;
+    cumsum.Init(rawG, cuSeqlens, chunkIndices, gCumsumBht, &cumsumTiling);
+    cumsum.Process();
+}
+
+template <typename InputT, typename TileShapes,
+          Arch35GdnSyncVariant Variant = Arch35GdnSyncVariant::B0, typename StateT = void>
+__aicore__ inline void RunPhase6(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR rawG, GM_ADDR gk,
+    GM_ADDR initialState, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR o,
+    GM_ADDR finalState, GM_ADDR gCumsumBth, GM_ADDR A, GM_ADDR workspace, GM_ADDR tiling)
+{
+    GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+    const __gm__ ChunkGatedDeltaRuleStateOutputTrailer *stateOutputTiling = GetStateOutputTrailer(tiling);
+    const __gm__ Arch35ChunkGatedDeltaRuleFwdTrailer *phase6 = GetPhase6Trailer(tiling);
+    const __gm__ GdnMegaArch35FwdHTilingData *hTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch35FwdHTilingData *>(tiling);
+    HoPipelineContext hoPipelineContext = BuildHoPipelineContext(hTiling, cuSeqlens);
+    Arch35ChunkGatedDeltaRuleCoefficientTiling coefficient{};
+    CopyCoefficientTiling(&phase6->coefficient, coefficient);
+
+    GM_ADDR scoreWorkspace = userWorkspace + phase6->scoreWorkspaceOffset;
+    GM_ADDR aWorkspace = userWorkspace + phase6->aWorkspaceOffset;
+    GM_ADDR solveWorkspaceBase = userWorkspace + phase6->solveWorkspaceOffset;
+    GM_ADDR gCumsumBht = userWorkspace + phase6->gCumsumBhtOffset;
+    uint64_t coreGroup = static_cast<uint64_t>(AscendC::GetBlockIdx());
+    if ASCEND_IS_AIV {
+        coreGroup /= static_cast<uint64_t>(AscendC::GetSubBlockNum());
+    }
+    GM_ADDR solveWorkspace =
+        solveWorkspaceBase + coreGroup * coefficient.solveWorkspacePerCoreBytes;
+
+    if ASCEND_IS_AIC {
+        NsChunkKktCube::ChunkKktCube<InputT> kktCube;
+        kktCube.Process(k, cuSeqlens, chunkIndices, scoreWorkspace, &coefficient);
+    }
+    if ASCEND_IS_AIV {
+        RunPhase6Cumsum(rawG, cuSeqlens, chunkIndices, gCumsumBht, coefficient);
+    }
+
+    AscendC::SyncAll<false>();
+
+    if ASCEND_IS_AIV {
+        AscendC::TPipe kktPipe;
+        NsChunkScaledDotKktFusedCumsum::ChunkScaledDotKktFusedCumsum<InputT, InputT> kkt;
+        kkt.Init(
+            k, gCumsumBht, beta, cuSeqlens, chunkIndices, aWorkspace, scoreWorkspace,
+            coefficient.B, coefficient.Hk, coefficient.Hv, coefficient.hvPerHk, coefficient.T, coefficient.K, coefficient.BT, coefficient.NT,
+            coefficient.taskNum, coefficient.usedAicNum, coefficient.usedAivNum, coefficient.btAlign, coefficient.isVarlen, &kktPipe);
+        kkt.ProcessEpilogueForSolve(coefficient.tilesPerCore);
+        kktPipe.Reset();
+    }
+
+    if constexpr (Arch35GdnSyncTraits<Variant>::kB30) {
+        RunSolvePhase<InputT, 64, Variant>(aWorkspace, cuSeqlens, chunkIndices, A,
+                                          solveWorkspace, &coefficient);
+    } else if (coefficient.BT == 64) {
+        RunSolvePhase<InputT, 64, Variant>(aWorkspace, cuSeqlens, chunkIndices, A,
+                                  solveWorkspace, &coefficient);
+    } else {
+        RunSolvePhase<InputT, 128, Variant>(aWorkspace, cuSeqlens, chunkIndices, A,
+                                   solveWorkspace, &coefficient);
+    }
+    if constexpr (Arch35GdnSyncTraits<Variant>::kSolveToWuGroup) {
+
+        if ASCEND_IS_AIC {
+            AscendC::PipeBarrier<PIPE_ALL>();
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
+        }
+    } else {
+
+        if ASCEND_IS_AIV {
+            Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
+            AscendC::CrossCoreSetFlag<0x4, PIPE_MTE3>(PHASE6_SOLVE_AIV_DONE_FLAG);
+        }
+        if ASCEND_IS_AIC {
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(PHASE6_SOLVE_FIX_TO_MTE2_EVENT);
+            AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(PHASE6_SOLVE_AIV_DONE_FLAG);
+
+            AscendC::CrossCoreSetFlag<0x0, PIPE_FIX>(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_AIC_ALL_DONE_FLAG);
+            AscendC::CrossCoreSetFlag<0x2, PIPE_FIX>(PHASE6_SOLVE_DONE_FLAG);
+        }
+        if ASCEND_IS_AIV {
+            AscendC::CrossCoreWaitFlag(PHASE6_SOLVE_DONE_FLAG);
+        }
+    }
+    GM_ADDR w = userWorkspace + stateOutputTiling->wIntermediateOffset;
+    GM_ADDR u = userWorkspace + stateOutputTiling->uIntermediateOffset;
+    GM_ADDR h = userWorkspace + stateOutputTiling->hIntermediateOffset;
+    GM_ADDR vNew = userWorkspace + stateOutputTiling->vNewIntermediateOffset;
+    GdnMegaArch35RecomputeWUTilingData recomputeTiling{};
+    CopyRecomputeTiling(&stateOutputTiling->recompute, recomputeTiling);
+    if constexpr (Arch35GdnSyncTraits<Variant>::kB30) {
+        DispatchRecompute<InputT, float, 128, true>(
+            k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
+            userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
+    } else if (stateOutputTiling->recompute.V == 256) {
+        DispatchRecompute<InputT, float, 256, true>(
+            k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
+            userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
+    } else {
+        DispatchRecompute<InputT, float, 128, true>(
+            k, v, beta, A, gCumsumBht, cuSeqlens, chunkIndices, w, u,
+            userWorkspace + stateOutputTiling->recomputeWorkspaceOffset, &recomputeTiling);
+    }
+
+    if (phase6->writeGCumsum != 0) {
+        WritePublicCumsumRows(gCumsumBht, gCumsumBth, cuSeqlens, chunkIndices, coefficient);
+    }
+    DispatchFwdH<InputT, TileShapes, Variant, StateT>(k, w, u, gCumsumBht, gk, initialState, cuSeqlens,
+                                      chunkIndices, h, vNew, finalState, tiling, userWorkspace,
+                                      hoPipelineContext);
+
+    if (!hoPipelineContext.enabled) {
+
+        AscendC::SyncAll<false, PHASE6_HO_SYNC_CONFIG>();
+    }
+
+    const uint64_t oTilingOffset =
+        AlignPhase6(sizeof(GdnMegaArch35FwdHTilingData), PHASE6_TILING_ALIGNMENT);
+    const __gm__ GdnMegaArch35FwdOTilingData *gmOTiling =
+        reinterpret_cast<const __gm__ GdnMegaArch35FwdOTilingData *>(tiling + oTilingOffset);
+    GdnMegaArch35FwdOTilingData oTiling{};
+    CopyOTiling(gmOTiling, oTiling);
+    DispatchFwdO<InputT, Variant>(q, k, vNew, h, gCumsumBht, cuSeqlens, chunkIndices, o,
+                  userWorkspace, &oTiling, hoPipelineContext);
+    if (hoPipelineContext.enabled) {
+
+        AscendC::SyncAll<false>();
+    }
+}
+
+}
+}
+
+extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR a_storage, GM_ADDR raw_g,
+    GM_ADDR gk, GM_ADDR initial_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+    GM_ADDR o, GM_ADDR final_state, GM_ADDR g_cumsum_bth, GM_ADDR A,
+    GM_ADDR workspace, GM_ADDR tiling)
+{
+    (void)a_storage;
+    REGISTER_TILING_DEFAULT(GDN::Arch35ChunkGatedDeltaRuleFwdTrailer);
+    if (TILING_KEY_IS(1)) {
+    KERNEL_TASK_TYPE(1, KERNEL_TYPE_MIX_AIC_1_1);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes128>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+    } else if (TILING_KEY_IS(2)) {
+    KERNEL_TASK_TYPE(2, KERNEL_TYPE_MIX_AIC_1_1);
+        GDN::RunPhase6<DTYPE_Q, Catlass::Gemm::Kernel::GDNFwdHTileShapes256>(
+            q, k, v, beta, raw_g, gk, initial_state, cu_seqlens, chunk_indices,
+            o, final_state, g_cumsum_bth, A, workspace, tiling);
+#if defined(ORIG_DTYPE_Q) && (ORIG_DTYPE_Q == DT_BF16) &&      defined(ORIG_DTYPE_INITIAL_STATE) &&      ((ORIG_DTYPE_INITIAL_STATE == DT_FLOAT) || (ORIG_DTYPE_INITIAL_STATE == DT_BF16))
+#endif
+    }
+}

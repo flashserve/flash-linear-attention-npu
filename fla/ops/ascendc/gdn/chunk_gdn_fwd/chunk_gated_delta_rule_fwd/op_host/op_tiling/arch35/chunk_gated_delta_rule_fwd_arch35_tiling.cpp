@@ -314,7 +314,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35(gert::TilingContext *context
     // contiguous group of hvPerHk value heads mapped to one logical K head.
     coefficient.taskNum = coefficient.B * coefficient.Hv * coefficient.NT;
     coefficient.usedAicNum = aicCoreNum;
-    coefficient.usedAivNum = std::min<uint64_t>(aivCoreNum, aicCoreNum * 2);
+    const uint64_t cvRatio = std::max<uint64_t>(1, aivCoreNum / aicCoreNum);
+    coefficient.usedAivNum = std::min<uint64_t>(aivCoreNum, aicCoreNum * cvRatio);
     coefficient.btAlign = AlignUp(coefficient.BT, FP32_BLOCK_ELEMS);
     coefficient.isVarlen = isVarlen ? 1 : 0;
     coefficient.scoreWorkspaceBytes =

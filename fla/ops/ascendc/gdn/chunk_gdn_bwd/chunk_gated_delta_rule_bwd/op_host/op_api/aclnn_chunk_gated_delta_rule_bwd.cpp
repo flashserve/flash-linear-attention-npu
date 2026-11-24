@@ -157,7 +157,8 @@ bool SameShape(const aclTensor *lhs, const aclTensor *rhs)
 
 bool IsAscend950()
 {
-    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510;
+    const auto arch = GetCurrentPlatformInfo().GetCurNpuArch();
+    return arch == NpuArch::DAV_3510 || arch == NpuArch::DAV_9201;
 }
 
 bool IsDav2201Device()

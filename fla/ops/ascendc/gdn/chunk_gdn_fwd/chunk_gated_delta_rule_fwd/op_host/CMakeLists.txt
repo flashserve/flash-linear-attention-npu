@@ -72,3 +72,12 @@ add_ops_compile_options(
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/stages/fwd_o/op_kernel
             -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal/arch22/stages/recompute_wu/op_kernel
 )
+
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
+    add_ops_compile_options(
+        OP_NAME ChunkGatedDeltaRuleFwd
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-no-dcache-flush
+        OPTIONS -I${CMAKE_CURRENT_SOURCE_DIR}/../op_kernel/internal_a96
+    )
+endif()

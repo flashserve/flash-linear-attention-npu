@@ -62,7 +62,8 @@ ge::graphStatus Tiling4PrepareWyReprBwdFull(gert::TilingContext *context)
     OP_LOGD(context->GetNodeName(), "Tiling4PrepareWyReprBwdFull start.");
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
 
-    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) {
+    const auto wyFullCurArch = ascendcPlatform.GetCurNpuArch();
+    if (wyFullCurArch == NpuArch::DAV_3510 || wyFullCurArch == NpuArch::DAV_9201) {
         PrepareWyReprBwdFullTilingA5 prepareWyReprBwdFullTilingA5;
         OP_CHECK_IF(!prepareWyReprBwdFullTilingA5.SetTiling(context),
                     OP_LOGE(context->GetNodeName(), "SetTiling failed."), return ge::GRAPH_FAILED);

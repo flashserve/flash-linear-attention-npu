@@ -106,13 +106,13 @@ bool MulOverflow(uint64_t a, uint64_t b, uint64_t *out)
 
 bool IsCatlassScoreArchSupported(NpuArch npuArch)
 {
-    return npuArch == NpuArch::DAV_2201 || npuArch == NpuArch::DAV_3510;
+    return npuArch == NpuArch::DAV_2201 || npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201;
 }
 
 uint64_t ScoreRowBlockSize(uint64_t bt, NpuArch npuArch)
 {
     uint64_t rowBlock = static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A2);
-    if (npuArch == NpuArch::DAV_3510) {
+    if (npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201) {
         rowBlock = bt <= static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT64)
                        ? static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT64)
                        : static_cast<uint64_t>(NsChunkScaledDotKkt::SCORE_ROW_BLOCK_A5_BT128);
@@ -301,17 +301,19 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const uint64_t pairableAicNum = std::min<uint64_t>(aicNum, aivNum / 2);
+    const uint64_t cvRatio = std::max<uint64_t>(1, aivNum / std::max<uint64_t>(1, aicNum));
+    const uint64_t pairableAicNum = std::min<uint64_t>(aicNum, aivNum / cvRatio);
     const bool useCatlassScore =
         catlassScoreArchSupported && pairableAicNum > 0 &&
         bt >= static_cast<uint64_t>(NsChunkScaledDotKkt::CATLASS_SCORE_MIN_BT) && (k % 16) == 0;
     // A2 keeps the Matmul API for unaligned K; aligned tails/varlen use CATLASS on both architectures.
-    if (npuArch == NpuArch::DAV_3510 && !useCatlassScore) {
+    if ((npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201) && !useCatlassScore) {
         return ge::GRAPH_FAILED;
     }
     const uint64_t aicTaskNum = useCatlassScore ? scoreBlockTaskNum : scoreTaskNum;
     const uint64_t usedAicNum = std::max<uint64_t>(1, std::min(aicTaskNum, useCatlassScore ? pairableAicNum : aicNum));
-    const uint64_t pairedAivNum = useCatlassScore ? usedAicNum * 2 : std::min<uint64_t>(aivNum, usedAicNum * 2);
+    const uint64_t pairedAivNum =
+        useCatlassScore ? usedAicNum * cvRatio : std::min<uint64_t>(aivNum, usedAicNum * cvRatio);
     const uint64_t usedAivNum =
         useCatlassScore
             ? pairedAivNum
@@ -358,8 +360,10 @@ ge::graphStatus TilingFunc(gert::TilingContext *context)
     tiling.set_useCatlassScore(useCatlassScore ? 1 : 0);
     tiling.set_scoreGroupBatch(scoreGroupBatch);
     tiling.set_scoreWorkspaceBytes(scoreBytes);
-    if (BuildCubeTiling(bt, k, kDtype, tiling) != ge::GRAPH_SUCCESS) {
-        return ge::GRAPH_FAILED;
+    if (!useCatlassScore) {
+        if (BuildCubeTiling(bt, k, kDtype, tiling) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     }
 
     tiling.SaveToBuffer(context->GetRawTilingData()->GetData(), context->GetRawTilingData()->GetCapacity());

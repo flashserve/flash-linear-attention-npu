@@ -20,7 +20,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwd(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
-    if (platform.GetCurNpuArch() == NpuArch::DAV_3510) {
+    const auto fwdCurArch = platform.GetCurNpuArch();
+    if (fwdCurArch == NpuArch::DAV_3510 || fwdCurArch == NpuArch::DAV_9201) {
         return Tiling4ChunkGatedDeltaRuleFwdArch35(context);
     }
     return Tiling4ChunkGatedDeltaRuleFwdArch22(context);

@@ -1,4 +1,8 @@
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/chunk_scaled_dot_kkt.h"
+#else
 #include "chunk_scaled_dot_kkt.h"
+#endif
 #include "chunk_scaled_dot_kkt_tiling_key.h"
 
 using namespace AscendC;
@@ -13,12 +17,16 @@ __global__ __aicore__ void chunk_scaled_dot_kkt(GM_ADDR k,
                                                 GM_ADDR workspace,
                                                 GM_ADDR tiling)
 {
+    #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
     GET_TILING_DATA_WITH_STRUCT(ChunkScaledDotKktTilingData, tilingData, tiling);
 
     GM_ADDR userWorkspace = GetUserWorkspace(workspace);
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201))
     if ASCEND_IS_AIC {
         TPipe pipe;
         NsChunkScaledDotKkt::ChunkScaledDotKkt<DTYPE_K, CHUNK_KEY> op;

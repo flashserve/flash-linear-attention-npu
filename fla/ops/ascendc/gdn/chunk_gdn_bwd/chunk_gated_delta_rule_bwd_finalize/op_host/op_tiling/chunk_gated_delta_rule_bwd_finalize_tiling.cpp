@@ -263,10 +263,10 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     if (npuArch == NpuArch::DAV_2201) {
         return gdn_finalize_arch22::Tiling(context, routePlatform);
     }
-    if (npuArch != NpuArch::DAV_3510) {
+    if (npuArch != NpuArch::DAV_3510 && npuArch != NpuArch::DAV_9201) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             context->GetNodeName(), "npuArch", std::to_string(static_cast<int32_t>(npuArch)),
-            "only DAV_3510 reaches this path; DAV_2201 uses the arch22 private tiling");
+            "only DAV_3510/DAV_9201 reach this path; DAV_2201 uses the arch22 private tiling");
         return ge::GRAPH_FAILED;
     }
     // 必选输入判空必须先于 ValidateShapes 的 rank 检查：
@@ -370,6 +370,8 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
 
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const uint32_t aicCoreNum = std::max<uint32_t>(1, platform.GetCoreNumAic());
+    const uint32_t aivCoreNum = std::max<uint32_t>(1, platform.GetCoreNumAiv());
+    const bool cvOneToOne = (aivCoreNum <= aicCoreNum);
     constexpr int64_t maxHeadsPerTask = 4;
     if (tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->HK) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "chunkCount,HK",
@@ -387,6 +389,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         const int64_t maxGvaPerTask = maxHeadsPerTask / tiling->headRatio;
         int64_t gvaPerTask = std::min(
             maxGvaPerTask, CeilDiv(totalGvaTaskNum, static_cast<int64_t>(aicCoreNum)));
+        if (cvOneToOne) {
+            gvaPerTask = std::min(gvaPerTask, static_cast<int64_t>(2));
+        }
         // 同一 HK 对应的 GVA 个 HV 是不可拆分原子。在 dhu 类似的
         // 目标 group size 下向下取能整除 HK 的最大值，避免轻量尾组。
         while (gvaPerTask > 1 && tiling->HK % gvaPerTask != 0) {

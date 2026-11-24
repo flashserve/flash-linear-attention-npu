@@ -17,7 +17,13 @@
 #include "lib/matmul_intf.h"
 #endif
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/a96/prepare_wy_repr_bwd_struct.h"
+#include "arch92/a96/prepare_wy_repr_bwd_tiling_key.h"
+#include "arch92/a96/prepare_wy_repr_bwd_common.h"
+#include "arch92/a96/prepare_wy_repr_bwd_cube.h"
+#include "arch92/a96/prepare_wy_repr_bwd_vector.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/prepare_wy_repr_bwd_struct.h"
 #include "arch35/prepare_wy_repr_bwd_tiling_key.h"
 #include "arch35/prepare_wy_repr_bwd_common.h"
@@ -60,7 +66,7 @@ PrepareWyReprBwdKernelImpl(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR A, GM_ADD
                            GM_ADDR workspace, const PrepareWyReprBwdTilingData *tilingData)
 {
     if ASCEND_IS_AIC {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201))
         ::PrepareWyReprBwdCubeProcess<KType, GType, V_DIM, CHUNK_SIZE> cubeProcess(
             k, A, dw, du, cuSeqlens, chunkIndices, dv, workspace);
 #else
@@ -96,7 +102,11 @@ __global__ __aicore__ void prepare_wy_repr_bwd(GM_ADDR k, GM_ADDR v, GM_ADDR bet
 
     REGISTER_TILING_DEFAULT(GDN::PrepareWyReprBwdTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::PrepareWyReprBwdTilingData, tilingData, tiling);
+    #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
 
     using KType = typename GDN::PrepareWyReprBwdDTypeTraits<D_T_K>::type;
     using GType = typename GDN::PrepareWyReprBwdDTypeTraits<D_T_G>::type;

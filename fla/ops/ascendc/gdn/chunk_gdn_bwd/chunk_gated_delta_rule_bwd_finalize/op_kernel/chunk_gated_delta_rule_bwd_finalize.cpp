@@ -1,13 +1,24 @@
+
 #include "kernel_operator.h"
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+#include "arch92/a96/chunk_gated_delta_rule_bwd_finalize_struct.h"
+#include "arch92/a96/chunk_gated_delta_rule_bwd_finalize_cube.h"
+#include "arch92/a96/chunk_gated_delta_rule_bwd_finalize_vector.h"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#ifndef TORCH_MODE
+#include "lib/matmul_intf.h"
+#endif
+#include "arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
+#include "arch35/chunk_gated_delta_rule_bwd_finalize_cube.h"
+#include "arch35/chunk_gated_delta_rule_bwd_finalize_vector.h"
+#else
 #ifndef TORCH_MODE
 #include "lib/matmul_intf.h"
 #endif
 #include "arch22/chunk_gated_delta_rule_bwd_finalize_a2.h"
-#else
-#include "arch35/chunk_gated_delta_rule_bwd_finalize_struct.h"
-#include "arch35/chunk_gated_delta_rule_bwd_finalize_cube.h"
-#include "arch35/chunk_gated_delta_rule_bwd_finalize_vector.h"
 #endif
 
 namespace GDN {
@@ -45,7 +56,11 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
 
     REGISTER_TILING_DEFAULT(GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData, tilingData, tiling);
+    #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
 
     using QType = typename GDN::DTypeTraits<D_T_Q>::type;
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)

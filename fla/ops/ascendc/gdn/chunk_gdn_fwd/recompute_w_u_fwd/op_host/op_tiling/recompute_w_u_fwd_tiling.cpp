@@ -13,6 +13,7 @@
  */
 
 #include "recompute_w_u_fwd_tiling.h"
+#include "../../op_kernel/recompute_w_u_fwd_tiling_key.h"
 #include "recompute_w_u_fwd_tiling_processor.h"
 #include <register/op_impl_registry.h>
 #include "platform/soc_spec.h"
@@ -57,8 +58,9 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     size_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+    const auto recomputeArch = ascendcPlatform.GetCurNpuArch();
     bool enableA5CompactWorkspace =
-        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510;
+        recomputeArch == NpuArch::DAV_3510 || recomputeArch == NpuArch::DAV_9201;
 
     auto cuSeqlensTensor = context->GetOptionalInputTensor(RECOMPUTE_W_U_FWD_INPUT_SEQLENS_IDX);
     auto chunkIndicesTensor = context->GetOptionalInputTensor(RECOMPUTE_W_U_FWD_INPUT_CHUNK_INDICES_IDX);
@@ -89,7 +91,11 @@ ge::graphStatus Tiling4RecomputeWUFwd(gert::TilingContext *context)
     RecomputeWUFwdTilingProcessor processor(ctx, *tiling);
     OP_CHECK_IF(processor.Process() != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
 
-    if (tiling->V == RECOMPUTE_W_U_FWD_V_DIM_256) {
+    const uint64_t recomputeVDim =
+        (tiling->V == RECOMPUTE_W_U_FWD_V_DIM_256) ? 256 : 128;
+    if (recomputeArch == NpuArch::DAV_3510 || recomputeArch == NpuArch::DAV_9201) {
+        context->SetTilingKey(GET_TPL_TILING_KEY(recomputeVDim));
+    } else if (tiling->V == RECOMPUTE_W_U_FWD_V_DIM_256) {
         context->SetTilingKey(2);
     } else {
         context->SetTilingKey(1);

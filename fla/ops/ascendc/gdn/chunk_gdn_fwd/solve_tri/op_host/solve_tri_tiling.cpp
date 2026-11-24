@@ -7,6 +7,7 @@
  #include "register/op_impl_registry.h"
  #include "log/log.h"
  #include "tiling/platform/platform_ascendc.h"
+#include "../op_kernel/solve_tri_tiling_key.h"
 #include "graph/utils/type_utils.h"
  #include <string>
 #include <algorithm>
@@ -15,7 +16,7 @@
 #include <new>
 #include <utility>
  namespace optiling {
- 
+
  constexpr uint32_t INPUT_X_IDX = 0;
  constexpr uint32_t INPUT_CU_SEQLENS_IDX = 1;
  constexpr uint32_t INPUT_CHUNK_INDICES_IDX = 2;
@@ -141,20 +142,22 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     totalChunks = expectedChunks;
     return ge::GRAPH_SUCCESS;
 }
- 
+
  template <bool IsA2A3>
  static ge::graphStatus SolveTriTilingImpl(gert::TilingContext* context)
  {
      auto platformInfo = context->GetPlatformInfo();
      auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
      int64_t coreNum = ascendcPlatform.GetCoreNumAic();
+    const auto npuArch = ascendcPlatform.GetCurNpuArch();
+    const bool isAscend9201 = (npuArch == NpuArch::DAV_9201);
      if (coreNum == 0) {
          if constexpr (IsA2A3) {
              OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri requires at least one AIC core.");
          }
          return ge::GRAPH_FAILED;
      }
- 
+
      // Get input shape:
      //   BNSD (mode 0): [B, H, S, BT]            (4D, chunks contiguous)
      //   BSND (mode 1): [B, S, H, BT]            (4D, chunks non-contiguous)
@@ -177,7 +180,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
          }
          return ge::GRAPH_FAILED;
      }
- 
+
      // Get layout attribute to determine shape parsing
      auto attrs = context->GetAttrs();
     if constexpr (IsA2A3) {
@@ -188,7 +191,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     }
      const char *layoutStr = attrs->GetStr(ATTR_LAYOUT_IDX);
      std::string layout = layoutStr ? layoutStr : "bsnd";
- 
+
      // layoutMode: 0=BNSD, 1=BSND, 2=TND, 3=NTD
      // "bhtd" 保留为 mode 0 的兼容别名（等价于 bnsd）
      int64_t layoutMode = 1;  // default to BSND
@@ -215,7 +218,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
             return ge::GRAPH_FAILED;
         }
     }
- 
+
      int64_t B, H, T, BT;
      if (ndim == 4) {
          if (layoutMode == 0) {
@@ -247,7 +250,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
              BT = shape.GetDim(2);
          }
      }
- 
+
      int64_t chunkSize = BT;
     if constexpr (IsA2A3) {
         if (B <= 0 || H <= 0 || T <= 0 ||
@@ -260,7 +263,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
             return ge::GRAPH_FAILED;
         }
     }
- 
+
     // isVarlen only for TND/NTD mode
     int64_t isVarlen = (layoutMode == 2 || layoutMode == 3) ? 1 : 0;
     int64_t hasCuSeqlens = isVarlen;
@@ -294,9 +297,8 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
         lastChunkValidSize = (remainder == 0) ? chunkSize : remainder;
     }
 
-    // chunk=16：每个 AIC 一轮处理 8 个 tile（2 Vector × 4 leaves）
     // chunk=32：每个 AIC 一轮处理 2 个 tile（单 Vector × 4 个 16×16 叶子）
-    constexpr int64_t kTilesPerAicBatch16 = 8;
+    const int64_t kTilesPerAicBatch16 = isAscend9201 ? 4 : 8;
     constexpr int64_t kTilesPerAicBatch32 = 2;
     int64_t tilesPerCore = 0;
     int64_t usedCoreNum = 0;
@@ -374,7 +376,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     tiling.set_layoutMode(layoutMode);
     tiling.set_dtypeMode(dtypeMode);
     tiling.set_totalTokens(totalTokens);
- 
+
      // tilingKey = chunkSize（16/32/64/128）；ascend950 按 key 分发到不同 kernel 类
      // 910b 路径同样按 chunkSize 设 key，kernel 入口按 key 进入统一实现
      uint64_t tilingKey = static_cast<uint64_t>(chunkSize);
@@ -382,14 +384,17 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
          if (!(chunkSize == 16 || chunkSize == 32 || chunkSize == 64 || chunkSize == 128)) {
              tilingKey = 64;
          }
+         if (isAscend9201) {
+             tilingKey = GET_TPL_TILING_KEY(tilingKey);
+         }
      }
      context->SetTilingKey(tilingKey);
      tiling.SaveToBuffer(context->GetRawTilingData()->GetData(),
                          context->GetRawTilingData()->GetCapacity());
      context->GetRawTilingData()->SetDataSize(tiling.GetDataSize());
- 
+
      context->SetBlockDim(usedCoreNum);
- 
+
      // Use the optimized A2/A3 workspace and preserve upstream sizing elsewhere.
      uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
      size_t* ws = context->GetWorkspaceSizes(1);
@@ -406,7 +411,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
          }
          ws[0] = ((userWorkspaceSize + 511) / 512) * 512 + sysWorkspaceSize;
      } else {
-    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) {
+    if (npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201) {
     // FP32 MBH：每 AIC 核一块 side×side FP32 NZ 中转（Fixpipe ChannelSplit L0C→GM→L1）
     // chunk16 纯 Vector，不需要中转；chunk32 把两个 32×32 打进 64×64 工作区
     size_t mbhSide = static_cast<size_t>(chunkSize);
@@ -445,16 +450,16 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
                          soc == platform_ascendc::SocVersion::ASCEND910_93;
      return isA2A3 ? SolveTriTilingImpl<true>(context) : SolveTriTilingImpl<false>(context);
  }
- 
+
  static ge::graphStatus SolveTriTilingParse(gert::TilingParseContext* context)
  {
      return ge::GRAPH_SUCCESS;
  }
- 
+
  struct SolveTriCompileInfo {};
- 
+
  IMPL_OP_OPTILING(SolveTri)
      .Tiling(SolveTriTilingFunc)
      .TilingParse<SolveTriCompileInfo>(SolveTriTilingParse);
- 
+
  }  // namespace optiling

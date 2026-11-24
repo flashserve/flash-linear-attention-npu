@@ -13,6 +13,8 @@
  */
 
 #include "chunk_gated_delta_rule_fwd_h_tiling.h"
+#include "platform/soc_spec.h"
+#include "../op_kernel/chunk_gated_delta_rule_fwd_h_tiling_key.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -155,7 +157,11 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     ChunkGatedDeltaRuleFwdHTilingProcessor processor(tilingCtx);
     processor.Process(plainTiling, blockDim, workspaceSize);
 
-    uint32_t tilingKey = plainTiling.vHeadDim > V_DIM_128 ? TILING_KEY_V256 : TILING_KEY_V128;
+    const auto fwdHNpuArch = ascendcPlatform.GetCurNpuArch();
+    const uint64_t fwdHVDim = plainTiling.vHeadDim > V_DIM_128 ? 256 : 128;
+    uint64_t tilingKey = (fwdHNpuArch == NpuArch::DAV_3510 || fwdHNpuArch == NpuArch::DAV_9201)
+        ? GET_TPL_TILING_KEY(fwdHVDim)
+        : (plainTiling.vHeadDim > V_DIM_128 ? TILING_KEY_V256 : TILING_KEY_V128);
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %u (vHeadDim=%ld)", tilingKey, plainTiling.vHeadDim);
 

@@ -107,7 +107,8 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         useExp2,
         stateVFirst,
         outputLayout,
-        ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510,
+        (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510) ||
+            (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201),
         aicCoreNum,
         sysWorkspaceSize,
     };

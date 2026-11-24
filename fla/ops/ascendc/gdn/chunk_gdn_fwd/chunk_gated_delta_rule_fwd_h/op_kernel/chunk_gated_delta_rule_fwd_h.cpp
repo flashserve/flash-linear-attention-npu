@@ -12,12 +12,22 @@
  * \brief
  */
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-#include "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
-#include "arch35/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
-#else
+#include "kernel_operator.h"
+
+
+
+#if defined(CHUNK_GDR_FWD_H_RUNTIME_KEYS)
 #include "gemm/kernel/gdn_fwd_h_kernel.hpp"
 #include "gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
+#else
+#include "chunk_gated_delta_rule_fwd_h_tiling_key.h"
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+#include "arch92/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "arch92/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
+#elif defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#include "arch35/gemm/kernel/gdn_fwd_h_kernel.hpp"
+#include "arch35/gemm/kernel/gdn_fwd_h_kernel_preload.hpp"
+#endif
 #endif
 
 #include "lib/matmul_intf.h"
@@ -129,6 +139,9 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatch(GM_ADDR k, GM_ADDR w, GM_
 
 } // namespace GDN
 
+using namespace AscendC;
+
+#if defined(CHUNK_GDR_FWD_H_RUNTIME_KEYS)
 extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g,
                                                          GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
                                                          GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state,
@@ -146,3 +159,25 @@ extern "C" __global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
     }
 }
+#else
+template <uint32_t V_DIM>
+__global__ __aicore__ void chunk_gated_delta_rule_fwd_h(GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g,
+                                                         GM_ADDR gk, GM_ADDR inital_state, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
+                                                         GM_ADDR h, GM_ADDR v_new, GM_ADDR final_state,
+                                                         GM_ADDR workspace, GM_ADDR tiling)
+{
+    GM_ADDR user = AscendC::GetUserWorkspace(workspace);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+#else
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#endif
+    if constexpr (V_DIM == 128) {
+        GDN::ChunkGatedDeltaRuleFwdHDispatch<Catlass::Gemm::Kernel::GDNFwdHTileShapes128, 128>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    } else {
+        GDN::ChunkGatedDeltaRuleFwdHDispatch<Catlass::Gemm::Kernel::GDNFwdHTileShapes256, 256>(
+            k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
+    }
+}
+#endif

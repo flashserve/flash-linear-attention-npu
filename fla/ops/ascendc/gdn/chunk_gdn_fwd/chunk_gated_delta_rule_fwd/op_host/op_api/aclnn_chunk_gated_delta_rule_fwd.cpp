@@ -97,8 +97,7 @@ struct GdnShapeInfo {
 static bool IsAscend950()
 {
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    using Ops::Transformer::AclnnUtil::IsRegbase;
-    return IsRegbase(npuArch);
+    return npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201;
 }
 
 static bool IsDav2201Device();

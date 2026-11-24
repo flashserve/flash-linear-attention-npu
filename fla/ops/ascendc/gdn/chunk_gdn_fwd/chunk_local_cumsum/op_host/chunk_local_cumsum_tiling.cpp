@@ -22,6 +22,7 @@
 #include "log/log.h"
 #include "err/ops_err.h"
 #include "../op_kernel/chunk_local_cumsum_tiling_data.h"
+#include "../op_kernel/chunk_local_cumsum_tiling_key.h"
 
 using namespace ge;
 
@@ -75,7 +76,7 @@ static int64_t CeilDiv(int64_t a, int64_t b)
 
 static bool IsCumSumFastPathArchSupported(NpuArch npuArch)
 {
-    return npuArch == NpuArch::DAV_2201 || npuArch == NpuArch::DAV_3510;
+    return npuArch == NpuArch::DAV_2201 || npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201;
 }
 
 static int64_t GetFastBufferLimit(int64_t ubSize)
@@ -366,12 +367,16 @@ static ge::graphStatus TilingChunkLocalCumsum(gert::TilingContext *context)
     tiling->scale = *scalePtr;
 
     context->SetBlockDim(static_cast<uint32_t>(blockDim));
-    int64_t tilingKey = 0;
+    uint64_t seg128 = 0;
     if (optimizedHeadFirst && !isVarlen) {
         if (chunkSize == 128) {
-            tilingKey = 1;
+            seg128 = 1;
         }
     }
+    const auto npuArch = ascendcPlatform.GetCurNpuArch();
+    const uint64_t tilingKey = (npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201)
+        ? GET_TPL_TILING_KEY(seg128)
+        : seg128;
     context->SetTilingKey(tilingKey);
     size_t *workspaces = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
