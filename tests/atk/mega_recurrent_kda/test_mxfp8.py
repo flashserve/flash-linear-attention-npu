@@ -59,6 +59,10 @@ def check_step(host, args, lengths):
     ([4], 1, "BSH"), ([63, 2], 2, "TH"), ([4] * 30, 12, "TH"),
     ([4] * 33, 3, "TH"), ([4] * 65, 3, "BSH"),
     ([4] * 15 + [5, 3] + [4] * 13, 12, "TH"),
+    ([1, 64, 2], 5, "TH"), ([255], 3, "TH"), ([257], 3, "TH"),
+    ([3] * 40, 8, "BSH"),
+    ([4] * 65, 6, "TH"), ([4] * 96, 6, "BSH"),
+    ([17] * 4, 8, "TH"),
 ])
 @pytest.mark.parametrize("algorithm", [0, 1])
 def test_mx_qkv(lengths, heads, layout, algorithm):
@@ -69,6 +73,13 @@ def test_mx_qkv(lengths, heads, layout, algorithm):
     if large_pool:
         spec["slots"] = 492
     host = build_inputs(spec)
+    if heads == 8 and lengths == [17] * 4:
+        # Isolate the cross-tile schedule. One product per decay-A output makes its
+        # BF16 rounding independent of the CPU and Cube accumulation orders.
+        weight = host["decay_projection_a_weight"]
+        columns = weight.abs().argmax(dim=1, keepdim=True)
+        values = weight.gather(1, columns)
+        weight.zero_().scatter_(1, columns, values)
     if large_pool:
         host["state_indices"] = torch.linspace(0, 491, len(lengths)).round().int().flip([0])
     if layout == "TH":
@@ -87,6 +98,29 @@ def test_mx_qkv(lengths, heads, layout, algorithm):
         for name in ("hidden_states", "conv_num_accepted_tokens"):
             args[name] = host[name].to(device)
         check_step(host, args, lengths)
+
+
+def test_cross_tile_carry_is_deterministic():
+    from fla_npu.ops.ascendc import npu_mega_recurrent_kda, npu_mega_recurrent_kda_metadata
+
+    # Rows 128..191 consume one request's carry and publish a different request's carry.
+    lengths = [3, 187, 7, 1, 66, 129, 3]
+    host = build_inputs(dict(name="carry", lengths=lengths, heads=12, layout="TH", conv="flat",
+                             slots=8, seed=17, qkv_scale_alg=0))
+    device = torch.device("npu", torch.npu.current_device())
+    args = device_inputs(host, device)
+    args["metadata"] = npu_mega_recurrent_kda_metadata(args["cu_seqlens"], sum(lengths))
+    initial = {key: args[key].clone() for key in MUTABLE}
+    check_step(host, args, lengths)
+    expected = None
+    for _ in range(12):
+        for key, value in initial.items():
+            args[key].copy_(value)
+        outputs = tuple(t.cpu().contiguous().view(torch.uint8) for t in npu_mega_recurrent_kda(**args))
+        if expected is None:
+            expected = outputs
+        else:
+            assert all(torch.equal(a, b) for a, b in zip(outputs, expected))
 
 
 @pytest.mark.parametrize("algorithm", [0, 1])

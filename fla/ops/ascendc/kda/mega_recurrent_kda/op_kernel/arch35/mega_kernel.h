@@ -61,12 +61,22 @@ public:
     CATLASS_DEVICE void PrepareFirstMxWave(Params &p)
     {
         const auto shape = PlanWaves(p.rows);
-        p.firstWaveReady = !p.recurrence.crosses && p.rows >= kGlobalRows && shape.count == 1 && p.heads >= 2;
+        const bool stagedFrame = p.rows > 256 && uint64_t(p.rows) <= uint64_t(p.recurrence.batch) * 4;
+        p.firstWaveReady = !p.recurrence.crosses && p.rows >= kGlobalRows && p.heads >= 2 &&
+                           (shape.count == 1 || stagedFrame);
         if ASCEND_IS_AIC {
             if (p.firstWaveReady) {
+                Params frame = p;
+                uint32_t planeRows = shape.firstCapacity;
                 GM_ADDR planes = p.decayRing + shape.decayRows * 256 + uint64_t(shape.storageRows) * p.heads * 256;
-                ProjectHeadWave(p, planes, shape.firstCapacity, 0, 2, AscendC::GetBlockIdx(),
-                                AscendC::GetBlockNum(), false, false);
+                if (stagedFrame) {
+                    const uint32_t capacity = T01FrameCapacity(p.heads);
+                    frame.rows = p.rows <= capacity ? p.rows : capacity / kGlobalRows * kGlobalRows;
+                    planeRows = (frame.rows + 15) / 16 * 16;
+                    planes = p.decayRing + planeRows * 256;
+                }
+                ProjectHeadWave(frame, planes, planeRows, 0, 2, AscendC::GetBlockIdx(),
+                                AscendC::GetBlockNum(), false, stagedFrame);
             }
         }
     }
@@ -77,6 +87,46 @@ public:
             RunDoubleBuffered(p);
             return;
         }
+        if constexpr (MxQkv && SpansTile) {
+            const uint64_t planeColumns = 4u * p.heads * 128 + (p.heads + 15) / 16 * 16;
+            const uint32_t tail = p.rows % 64;
+            if (p.rows >= 64 && uint64_t(p.rows) >= uint64_t(p.recurrence.batch) * 16 && planeColumns <= kHiddenWidth &&
+                p.recurrence.output != p.hiddenStates) {
+                const uint32_t capacity = TileCapacity(p.heads);
+                Recurrence rec;
+                uint32_t longest = p.recurrence.sequence;
+                if (!longest && p.recurrence.plan) {
+                    longest = reinterpret_cast<__gm__ const int32_t *>(p.recurrence.plan)[1];
+                } else if (!longest) {
+                    for (uint32_t b = 0; b < p.recurrence.batch; ++b) {
+                        const uint32_t n = rec.prefix(p.recurrence, b + 1) - rec.prefix(p.recurrence, b);
+                        longest = n > longest ? n : longest;
+                    }
+                }
+                bool fits = p.recurrence.batch == 1 || longest > capacity / 2;
+                // Each visible request needs nine history vectors in the existing 128-row gated slab.
+                if (p.recurrence.batch > 14) {
+                    for (uint32_t row = 0; fits && row < p.rows; row += 64) {
+                        const uint32_t last = p.rows - row <= 64 ? p.rows - 1 : row + 63;
+                        fits = rec.owner(p.recurrence, last) - rec.owner(p.recurrence, row) < 14;
+                    }
+                }
+                if (fits && tail) {
+                    const uint32_t padded = (tail + 15) / 16 * 16, width = p.heads * kHeadDim;
+                    const uint64_t projectedWords = uint64_t(padded) * planeColumns;
+                    if (projectedWords > uint64_t(tail) * kHiddenWidth) {
+                        const uint32_t active =
+                            rec.owner(p.recurrence, p.rows - 1) - rec.owner(p.recurrence, p.rows - tail) + 1;
+                        const uint64_t liveRows = tail > active * 9 ? tail : active * 9;
+                        fits = projectedWords + liveRows * width <= 128u * uint64_t(width);
+                    }
+                }
+                if (fits) {
+                    RunValueShards(p);
+                    return;
+                }
+            }
+        }
         if (p.heads >= 2 && TryRunSequenceFrames(p, AscendC::GetBlockIdx(), AscendC::GetBlockNum())) {
             return;
         }
@@ -86,6 +136,105 @@ public:
 private:
     Catlass::Arch::Resource<Arch> resource_;
 
+    CATLASS_DEVICE uint32_t TileCapacity(uint32_t heads)
+    {
+        return ((32768 + uint64_t(heads) * 98304) / (256 + uint64_t(heads) * 256)) / 16 * 16;
+    }
+    template <class T>
+    CATLASS_DEVICE AscendC::GlobalTensor<T> mem(GM_ADDR ptr, uint64_t offset = 0)
+    {
+        AscendC::GlobalTensor<T> g;
+        g.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(ptr) + offset);
+        return g;
+    }
+    CATLASS_DEVICE void RunValueShards(const Params &p)
+    {
+        const uint32_t id = AscendC::GetBlockIdx(), groups = AscendC::GetBlockNum(), width = p.heads * 128;
+        const auto &a = p.recurrence;
+        Recurrence rec;
+        GM_ADDR gated = p.decayRing + 32768;
+        // History is consumed before the same workspace is filled with gated rows.
+        GM_ADDR history = gated;
+        GM_ADDR carry = gated + uint64_t(p.heads) * 32768;
+        for (uint32_t first = 0; first < p.rows; first += 64) {
+            const uint32_t rows = p.rows - first < 64 ? p.rows - first : 64, padded = (rows + 15) / 16 * 16;
+            Params frame = p;
+            frame.hiddenStates += uint64_t(first) * kHiddenWidth * 2;
+            frame.recurrence.output += uint64_t(first) * kHiddenWidth * 2;
+            frame.rows = rows;
+            frame.recurrence.staged = 3;
+            frame.firstWaveReady = false;
+            // The future output holds FP32 y, BF16 decay/gate and the padded beta projection.
+            const uint64_t planeWords = uint64_t(padded) * (4 * width + (p.heads + 15) / 16 * 16);
+            // A short tail can place its padded projection planes above gated/history in the same workspace slab.
+            GM_ADDR planes =
+                planeWords <= uint64_t(rows) * kHiddenWidth ? frame.recurrence.output : carry - planeWords * sizeof(Bf);
+            if ASCEND_IS_AIC {
+                ProjectHeadWave<1>(frame, planes, padded, 0, 1, id, groups, false, true);
+            }
+            if ASCEND_IS_AIV {
+                const uint32_t beginSeq = rec.owner(a, first);
+                const uint32_t endSeq = rec.owner(a, first + rows - 1);
+                for (uint32_t task = id; task < (endSeq - beginSeq + 1) * p.heads; task += 2 * groups) {
+                    const uint32_t b = beginSeq + task / p.heads, h = task % p.heads;
+                    const uint32_t slot = mem<int32_t>(a.indices).GetValue(b);
+                    const uint32_t accepted = mem<int32_t>(a.accepted).GetValue(b);
+                    const uint32_t start = rec.prefix(a, b);
+                    const uint32_t hs = first > start ? first - start - 1 : (accepted ? accepted - 1 : 0);
+                    const uint64_t base = uint64_t(slot) * a.convStride + uint64_t(hs) * 3 * width + h * 128;
+                    auto local = resource_.ubBuf.template GetBufferByByte<Bf>(kMxUbOffset);
+                    AscendC::DataCopyPad(local, mem<Bf>(a.conv, base),
+                                         AscendC::DataCopyExtParams{9, 256, (width - 128) * 2, 0, 0},
+                                         AscendC::DataCopyPadExtParams<Bf>{});
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    AscendC::DataCopyPad(mem<Bf>(history, uint64_t(b - beginSeq) * 9 * width + h * 128), local,
+                                         AscendC::DataCopyExtParams{9, 256, 0, (width - 128) * 2, 0});
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                }
+            }
+            AscendC::SyncAll<false>();
+            if ASCEND_IS_AIV {
+                if (p.heads * 8 <= 2 * groups) {
+                    ConsumeStagedProjections<16>(frame, first, rows, id, 2 * groups, 0, p.heads, true, planes, carry,
+                                                 history);
+                } else {
+                    ConsumeStagedProjections<32>(frame, first, rows, id, 2 * groups, 0, p.heads, true, planes, carry,
+                                                 history);
+                }
+            }
+            AscendC::SyncAll<false>();
+            if ASCEND_IS_AIV {
+                auto y = resource_.ubBuf.template GetBufferByByte<float>(kMxUbOffset);
+                auto gate = resource_.ubBuf.template GetBufferByByte<Bf>(kMxUbOffset + 512);
+                auto gamma = resource_.ubBuf.template GetBufferByByte<float>(kMxUbOffset + 768);
+                auto out = resource_.ubBuf.template GetBufferByByte<Bf>(kMxUbOffset + 1280);
+                AscendC::DataCopy(gamma, mem<float>(a.gamma), 128);
+                for (uint32_t i = id; i < rows * p.heads; i += 2 * groups) {
+                    AscendC::DataCopy(y, mem<float>(planes, uint64_t(i) * 128), 128);
+                    AscendC::DataCopy(gate, mem<Bf>(planes, 3 * uint64_t(padded) * width + i * 128), 128);
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    vec::finish((__ubuf__ float *)y.GetPhyAddr(), (__ubuf__ Bf *)gate.GetPhyAddr(),
+                                (__ubuf__ float *)gamma.GetPhyAddr(), a.eps, (__ubuf__ Bf *)out.GetPhyAddr());
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    AscendC::DataCopy(mem<Bf>(gated, i * 128), out, 128);
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                }
+            }
+            AscendC::SyncAll<false>();
+            if ASCEND_IS_AIC {
+                for (uint32_t panel = id; panel < kHiddenWidth / 256; panel += groups) {
+                    MatmulToGm<256, 256, 64>(gated, a.outWeight, frame.recurrence.output, 0, panel * 256, 0,
+                                             panel * 256, kHiddenWidth, rows, width, 256);
+                }
+            }
+            AscendC::SyncAll<false>();
+        }
+    }
+    CATLASS_DEVICE bool ReusesCarry(Recurrence &rec, const RecurrenceArgs &a, uint32_t first, uint32_t rows,
+                                   uint32_t firstSeq, uint32_t lastSeq)
+    {
+        return firstSeq != lastSeq && rec.prefix(a, firstSeq) < first && rec.prefix(a, lastSeq + 1) > first + rows;
+    }
     CATLASS_DEVICE void RunTilePipeline(const Params &p)
     {
         uint32_t group = AscendC::GetBlockIdx();
@@ -99,7 +248,7 @@ private:
         uint32_t groups = AscendC::GetBlockNum();
         Recurrence rec;
         const auto &a = p.recurrence;
-        const uint32_t capacity = ((32768 + uint64_t(p.heads) * 98304) / (256 + uint64_t(p.heads) * 256)) / 16 * 16;
+        const uint32_t capacity = TileCapacity(p.heads);
         bool wholeSequences = a.batch >= 2 && p.rows >= 2 * kGlobalRows;
         if (a.sequence) {
             wholeSequences = wholeSequences && a.sequence <= capacity / 2;
@@ -124,8 +273,19 @@ private:
             ProjectSharedDecay(p, first, rows, group, groups, phase);
             SyncCores();
             const uint32_t cuts = wholeSequences ? endSequence - firstSequence : 4;
-            for (uint64_t work = group; work < uint64_t(cuts) * p.heads; work += groups) {
-                uint32_t part = work / p.heads, head = work % p.heads;
+            uint32_t stride = p.heads;
+            if constexpr (MxQkv) {
+                if (!wholeSequences && first && first + rows < p.rows &&
+                    ReusesCarry(rec, a, first, rows, rec.owner(a, first), rec.owner(a, first + rows - 1))) {
+                    // Consecutive cuts must consume and replace a head's single carry in order.
+                    stride = (p.heads + groups - 1) / groups * groups;
+                }
+            }
+            for (uint64_t work = group; work < uint64_t(cuts) * stride; work += groups) {
+                uint32_t part = work / stride, head = work % stride;
+                if (head >= p.heads) {
+                    continue;
+                }
                 uint32_t offset = wholeSequences ? rec.prefix(a, firstSequence + part) - first :
                                                    (part ? FindSequenceCut(p, first, rows, part * 16) : 0);
                 uint32_t end = wholeSequences ?
@@ -158,8 +318,9 @@ private:
                             LoadProjected(p, first + r, head, valid, phase);
                             AscendC::PipeBarrier<PIPE_ALL>();
                         }
-                        Recurrence{}.consume<AllowColumnMajor>(resource_, p.recurrence, gated, carry, p.heads, head,
-                                                               first + r, r, valid, LocalTile(phase, Plane::Q));
+                        Recurrence{}.consume<AllowColumnMajor, MxQkv>(resource_, p.recurrence, gated, carry, p.heads,
+                                                                      head, first + r, r, valid,
+                                                                      LocalTile(phase, Plane::Q));
                         NotifyFree(phase);
                     }
                     phase ^= 1;
@@ -190,7 +351,8 @@ private:
 
     CATLASS_DEVICE AscendC::LocalTensor<Bf> LocalTile(uint32_t phase, Plane plane)
     {
-        uint32_t offset = phase * kSlotBytes + static_cast<uint32_t>(plane) * kSliceRows * kHeadDim * sizeof(Bf);
+        uint32_t offset = (MxQkv ? kMxUbOffset : 0) + phase * kSlotBytes +
+                          static_cast<uint32_t>(plane) * kSliceRows * kHeadDim * sizeof(Bf);
         return resource_.ubBuf.template GetBufferByByte<Bf>(offset);
     }
     CATLASS_DEVICE void LoadProjected(const Params &p, uint32_t row, uint32_t head, uint32_t m, uint32_t phase)
@@ -243,9 +405,11 @@ private:
         uint32_t secondCap = left >= span ? span : (left + 15) / 16 * 16;
         return {first, firstCap, firstCap + secondCap, count, span, span == 256 ? firstCap : 128};
     }
+    template <uint16_t ValueRows = 128, uint32_t SkippedPlanes = (ValueRows < 128 ? 1 : 0)>
     CATLASS_DEVICE void ConsumeStagedProjections(const Params &p, uint32_t first, uint32_t rows, uint32_t worker,
                                                  uint32_t workers, uint32_t firstHead = 0, uint32_t count = 0,
-                                                 bool reuseQ = false, GM_ADDR framePlanes = nullptr)
+                                                 bool reuseQ = false, GM_ADDR framePlanes = nullptr,
+                                                 GM_ADDR carry = nullptr, GM_ADDR historySnapshot = nullptr)
     {
         uint32_t width = p.heads * kHeadDim;
         uint32_t span = p.recurrence.staged == 3 ? 128 : 64;
@@ -279,17 +443,33 @@ private:
         if (!count) {
             count = p.heads;
         }
-        for (uint64_t task = worker; task < uint64_t(lastSeq - firstSeq + 1) * count; task += workers) {
-            uint32_t head = firstHead + task % count, b = firstSeq + task / count;
+        constexpr uint32_t shards = 128 / ValueRows;
+        const uint32_t lanes = count * shards;
+        uint32_t stride = lanes;
+        if constexpr (ValueRows < 128) {
+            // Keep each carry stripe on its reader until a different request may overwrite it in this frame.
+            if (ReusesCarry(rec, p.recurrence, first, rows, firstSeq, lastSeq)) {
+                stride = (lanes + workers - 1) / workers * workers;
+            }
+        }
+        for (uint64_t task = worker; task < uint64_t(lastSeq - firstSeq + 1) * stride; task += workers) {
+            const uint32_t lane = task % stride;
+            if (lane >= lanes) {
+                continue;
+            }
+            uint32_t head = firstHead + lane / shards, b = firstSeq + task / stride;
             uint32_t start = rec.prefix(p.recurrence, b), end = rec.prefix(p.recurrence, b + 1);
-            for (uint32_t row = start; row < end; row += kSliceRows) {
-                uint32_t m = end - row < kSliceRows ? end - row : kSliceRows;
+            const uint32_t beginRow = carry && start < first ? first : start;
+            const uint32_t endRow = carry && end > first + rows ? first + rows : end;
+            for (uint32_t row = beginRow; row < endRow; row += kSliceRows) {
+                uint32_t m = endRow - row < kSliceRows ? endRow - row : kSliceRows;
                 if constexpr (MxQkv) {
                     LoadProjected(p, row, head, m, 0);
                 }
                 for (uint32_t i = MxQkv ? 3 : 0; i < 6; ++i) {
                     AscendC::GlobalTensor<Bf> src;
-                    src.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(planes) + uint64_t(i) * planeRows * width);
+                    src.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(planes) +
+                                        uint64_t(i - SkippedPlanes) * planeRows * width);
                     auto tile = LocalTile(0, static_cast<Plane>(i));
                     uint64_t row0 = row - first;
                     if (i == 5) {
@@ -305,9 +485,11 @@ private:
                     }
                 }
                 // consume waits for its own loads before it reads the projected inputs.
-                rec.consume<AllowColumnMajor>(resource_, p.recurrence, gated, nullptr, p.heads, head, row, row - first,
-                                              m, LocalTile(0, Plane::Q),
-                                              (row == start && row + m == end) ? b : UINT32_MAX);
+                rec.consume<AllowColumnMajor, MxQkv, ValueRows>(
+                    resource_, p.recurrence, ValueRows == 128 ? gated : planes, carry, p.heads, head, row, row - first,
+                    m, LocalTile(0, Plane::Q), (row == start && row + m == end) ? b : UINT32_MAX,
+                    (lane % shards) * ValueRows,
+                    ValueRows == 128 ? nullptr : historySnapshot + uint64_t(b - firstSeq) * 9 * width * 2);
             }
         }
     }
@@ -397,7 +579,7 @@ private:
     CATLASS_DEVICE uint32_t FirstWaveHeads(const Params &p, uint32_t groups)
     {
         const uint32_t half = p.heads / 2;
-        if (!MxQkv || !p.firstWaveReady || half + 1 >= p.heads) {
+        if (!MxQkv || !p.firstWaveReady || p.rows > 256 || half + 1 >= p.heads) {
             return half;
         }
         // Move one head only when it eliminates a scheduling round across both Vector waves.
@@ -408,8 +590,9 @@ private:
             (left + requests + workers - 1) / workers + (right - requests + workers - 1) / workers;
         return shifted < rounds ? half + 1 : half;
     }
+    template <uint32_t SkippedPlanes = 0>
     CATLASS_DEVICE void ProjectHeadWave(const Params &p, GM_ADDR planes, uint32_t planeRows, uint32_t tick,
-                                       uint32_t waves, uint32_t id, uint32_t groups, bool decayAReady, bool reuseQ)
+                                        uint32_t waves, uint32_t id, uint32_t groups, bool decayAReady, bool reuseQ)
     {
         const uint32_t width = p.heads * 128, betaStride = (p.heads + 15) / 16 * 16;
         constexpr uint32_t firstKind = MxQkv ? 3 : 0;  // Q/K/V already reside in projectedQkv.
@@ -433,7 +616,7 @@ private:
         // Keep each Cube core on one projection to avoid a second matrix pipeline setup.
         if (localDecay && id >= team) {
             cursor = stop;
-            ProjectDecayRows(p, planes + uint64_t(3) * planeRows * width * 2, id - team, workers);
+            ProjectDecayRows(p, planes + uint64_t(3 - SkippedPlanes) * planeRows * width * 2, id - team, workers);
         }
         const uint32_t kinds = tick ? 4 : 6;
         if (id < team && team >= kinds - firstKind) {
@@ -491,8 +674,9 @@ private:
                                  p.qkvWeight :
                                  (kind == 3 ? p.gateWeight : (kind == 4 ? p.decayAWeight : p.betaWeight));
             uint32_t weightCol = kind < 3 ? kind * width + col : col;
-            GM_ADDR dest =
-                kind == 4 ? p.decayRing : planes + uint64_t(kind == 3 ? 4 : kind) * planeRows * width * 2;
+            GM_ADDR dest = kind == 4 ?
+                               p.decayRing :
+                               planes + uint64_t((kind == 3 ? 4 : kind) - SkippedPlanes) * planeRows * width * 2;
             if (p.rows > 256 && p.rows <= 288) {
                 MatmulToGm<128, 256, 32, 288>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
                                               p.rows, kHiddenWidth, n);
@@ -511,15 +695,17 @@ private:
             for (uint32_t h = id; h < p.heads; h += groups) {
                 if (p.rows > 256 && p.rows <= 288) {
                     MatmulToGm<128, 128, 32, 288>(p.decayRing, p.decayBWeight,
-                                                  planes + uint64_t(3) * planeRows * width * 2, 0, h * 128,
-                                                  0, h * 128, width, p.rows, 128);
+                                                  planes + uint64_t(3 - SkippedPlanes) * planeRows * width * 2, 0,
+                                                  h * 128, 0, h * 128, width, p.rows, 128);
                 } else {
-                    MatmulToGm(p.decayRing, p.decayBWeight, planes + uint64_t(3) * planeRows * width * 2, 0,
-                               h * 128, 0, h * 128, width, p.rows, 128);
+                    MatmulToGm(p.decayRing, p.decayBWeight,
+                               planes + uint64_t(3 - SkippedPlanes) * planeRows * width * 2, 0, h * 128, 0, h * 128,
+                               width, p.rows, 128);
                 }
             }
         }
     }
+    template <uint32_t SkippedPlanes = 0>
     CATLASS_DEVICE void RunHeadPipeline(const Params &p, const Waves &shape, uint32_t id, uint32_t groups,
                                         bool decayAReady, uint32_t globalBase = 0, bool reuseQ = false,
                                         GM_ADDR framePlanes = nullptr)
@@ -536,7 +722,7 @@ private:
         for (uint32_t tick = (MxQkv && p.firstWaveReady) ? 1 : 0; tick < waves + 2; ++tick) {
             if ASCEND_IS_AIC {
                 if (tick < waves) {
-                    ProjectHeadWave(p, planes, planeRows, tick, waves, id, groups, decayAReady, reuseQ);
+                    ProjectHeadWave<SkippedPlanes>(p, planes, planeRows, tick, waves, id, groups, decayAReady, reuseQ);
                 } else if (overlap && tick == waves) {
                     if (MxQkv && FirstWaveHeads(p, groups) > p.heads / 2) {
                         StreamOutput<256, 256, 64, 1>(p, gated, id, groups);
@@ -564,7 +750,7 @@ private:
                     uint32_t split = waves == 2 ? FirstWaveHeads(p, groups) : p.heads;
                     uint32_t left = tick == 1 ? 0 : split;
                     uint32_t count = tick == 1 ? split : p.heads - split;
-                    ConsumeStagedProjections(p, globalBase, p.rows, id, 2 * groups, left, count, reuseQ, framePlanes);
+                    ConsumeStagedProjections<128, SkippedPlanes>(p, globalBase, p.rows, id, 2 * groups, left, count, reuseQ, framePlanes);
                 }
             }
             if ASCEND_IS_AIV {
@@ -577,17 +763,24 @@ private:
             }
         }
     }
+    CATLASS_DEVICE uint32_t T01FrameCapacity(uint32_t heads)
+    {
+        const uint64_t width = uint64_t(heads) * kHeadDim, beta = (uint64_t(heads) + 15) / 16 * 16;
+        const uint64_t bytes = 32768 + 512 * (6 * width + beta);
+        return bytes / (2 * (128 + 5 * width + beta)) / 16 * 16;
+    }
     CATLASS_DEVICE bool TryRunSequenceFrames(const Params &p, uint32_t id, uint32_t groups)
     {
         const uint64_t width = uint64_t(p.heads) * kHeadDim;
         const uint64_t betaStride = (uint64_t(p.heads) + 15) / 16 * 16;
         // A complete frame reuses Q for its gated result after each sequence/head reads Q.
         // Include BF16 decay-A, the five projection planes, and the padded beta columns.
-        const uint64_t bytes = SpansTile ? 32768 + uint64_t(p.heads) * 98304 : 32768 + 512 * (6 * width + betaStride);
+        const uint64_t bytes = 32768 + uint64_t(p.heads) * 98304;
         const uint64_t planeColumns = 5 * width + betaStride;
-        const uint32_t workspaceRows = bytes / (2 * (128 + planeColumns)) / 16 * 16;
+        const uint32_t workspaceRows = SpansTile ? bytes / (2 * (128 + planeColumns)) / 16 * 16 :
+                                                  T01FrameCapacity(p.heads);
         uint32_t capacity = workspaceRows;
-        bool borrowOutput = false;
+        bool borrowOutput = false, compact = false;
         const auto &a = p.recurrence;
         Recurrence rec;
         if constexpr (SpansTile) {
@@ -600,7 +793,18 @@ private:
                     longest = length > longest ? length : longest;
                 }
             }
-            if (longest > workspaceRows / 4) {
+            if constexpr (MxQkv) {
+                // QKV lives outside this frame. Use three planes for gated, decay and gate.
+                const uint32_t packedRows = bytes / (2 * (128 + 3 * width + betaStride)) / 16 * 16;
+                // Repeated frames must offer at least one independent request/head task per Cube group in each wave.
+                const bool enoughWork = longest && uint64_t(packedRows / longest) * (p.heads / 2) >= groups;
+                compact = p.rows > workspaceRows && uint64_t(longest) * 2 <= p.rows &&
+                          (p.rows <= packedRows || enoughWork);
+                if (compact) {
+                    capacity = packedRows;
+                }
+            }
+            if (!compact && longest > workspaceRows / 4) {
                 // A frame keeps gated and decay-A in workspace. Its future output can hold the six projection planes.
                 // Account for 16-row projection padding. A shorter tail can always use the original workspace.
                 if (a.output == p.hiddenStates ||
@@ -632,8 +836,16 @@ private:
             frame.recurrence.output = a.output + uint64_t(first) * kHiddenWidth * sizeof(Bf);
             frame.rows = rows;
             frame.recurrence.staged = 3;
+            frame.firstWaveReady = first == 0 && p.firstWaveReady;
             Waves single{rows, padded, padded, 1, padded, padded};
             const bool planesFit = uint64_t(padded) * planeColumns <= uint64_t(rows) * kHiddenWidth;
+            if constexpr (MxQkv && SpansTile) {
+                if (compact) {
+                    RunHeadPipeline<2>(frame, single, id, groups, false, first, true);
+                    first += rows;
+                    continue;
+                }
+            }
             RunHeadPipeline(frame, single, id, groups, false, first, true,
                             borrowOutput && planesFit ? frame.recurrence.output : nullptr);
             first += rows;

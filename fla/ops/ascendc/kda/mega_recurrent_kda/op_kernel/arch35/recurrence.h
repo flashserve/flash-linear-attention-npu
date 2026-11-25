@@ -2,6 +2,8 @@
 #include "projection_types.h"
 
 namespace kda {
+// Keep the MX mixed kernel's low UB scratch clear of projection tiles and live state.
+constexpr uint32_t kMxUbOffset = 8 * 1024;
 struct RecurrenceArgs {
     using Address = GM_ADDR;
     Address convW, conv, checkpoint, u, key, decay, bias, alphaLog, gamma;
@@ -81,8 +83,10 @@ __simd_vf__ inline void convolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf_
     StoreAlign(out + 64, result[1], m);
 }
 // A complete short sequence has no outgoing hidden-state dependency.
-__simd_callee__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf__ Bf *weights, __ubuf__ float *out,
-                                      uint16_t count, bool normalize, float scale)
+template <bool RetainHistory = false>
+__simd_callee__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf__ Bf *weights,
+                                          __ubuf__ float *out, uint16_t count, bool normalize, float scale,
+                                          uint16_t oldest = 0, uint16_t historyStride = 384)
 {
     auto m = CreateMask<float, MaskPattern::ALL>();
     F w0[2], w1[2], w2[2], w3[2], h0[2], h1[2], h2[2];
@@ -93,9 +97,9 @@ __simd_callee__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history
         readBf(w1[j], weights + 128 + i, m);
         readBf(w2[j], weights + 256 + i, m);
         readBf(w3[j], weights + 384 + i, m);
-        readBf(h0[j], history + i, m);
-        readBf(h1[j], history + 384 + i, m);
-        readBf(h2[j], history + 768 + i, m);
+        readBf(h0[j], history + (RetainHistory ? oldest * 384 : 0) + i, m);
+        readBf(h1[j], history + (RetainHistory ? (oldest + 1) % 3 * 384 : historyStride) + i, m);
+        readBf(h2[j], history + (RetainHistory ? (oldest + 2) % 3 * 384 : 2 * historyStride) + i, m);
     }
     for (uint16_t t = 0; t < count; ++t) {
         F result[2];
@@ -136,13 +140,29 @@ __simd_callee__ inline void shortConvolve(__ubuf__ Bf *raw, __ubuf__ Bf *history
         StoreAlign(out + t * 384, result[0], m);
         StoreAlign(out + t * 384 + 64, result[1], m);
     }
+    if constexpr (RetainHistory) {
+#pragma unroll
+        for (uint16_t i = 0; i < 2; ++i) {
+            RegTensor<Bf> a, b, c;
+            Cast<Bf, float, narrow>(a, h0[i], m);
+            Cast<Bf, float, narrow>(b, h1[i], m);
+            Cast<Bf, float, narrow>(c, h2[i], m);
+            StoreAlign<Bf, StoreDist::DIST_PACK_B32>(history + (oldest + count) % 3 * 384 + i * 64, a, m);
+            StoreAlign<Bf, StoreDist::DIST_PACK_B32>(history + (oldest + count + 1) % 3 * 384 + i * 64, b, m);
+            StoreAlign<Bf, StoreDist::DIST_PACK_B32>(history + (oldest + count + 2) % 3 * 384 + i * 64, c, m);
+        }
+    }
 }
+template <bool RetainHistory = false, bool PreviousRaw = false>
 __simd_vf__ inline void shortConvolveAll(__ubuf__ Bf *raw, __ubuf__ Bf *history, __ubuf__ Bf *weights,
-                                         __ubuf__ float *out, uint16_t valid, float scale)
+                                         __ubuf__ float *out, uint16_t valid, float scale, uint16_t oldest = 0)
 {
-    shortConvolve(raw, history, weights, out, valid, true, scale);
-    shortConvolve(raw + 2048, history + 128, weights + 512, out + 128, valid, true, 1.f);
-    shortConvolve(raw + 4096, history + 256, weights + 1024, out + 256, valid, false, 1.f);
+    shortConvolve<RetainHistory>(raw, PreviousRaw ? raw - 384 : history, weights, out, valid, true, scale, oldest,
+                                 PreviousRaw ? 128 : 384);
+    shortConvolve<RetainHistory>(raw + 2048, PreviousRaw ? raw + 2048 - 384 : history + 128, weights + 512, out + 128,
+                                 valid, true, 1.f, oldest, PreviousRaw ? 128 : 384);
+    shortConvolve<RetainHistory>(raw + 4096, PreviousRaw ? raw + 4096 - 384 : history + 256, weights + 1024, out + 256,
+                                 valid, false, 1.f, oldest, PreviousRaw ? 128 : 384);
 }
 __simd_vf__ inline void step(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf__ Bf *dr, __ubuf__ Bf *beta,
                              __ubuf__ float *bias, float aLog, float lower, __ubuf__ float *u, __ubuf__ float *d,
@@ -197,6 +217,54 @@ __simd_vf__ inline void step(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf_
         Add(total, p0, p1, m);
         ReduceSum(dot, total, m);
         StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(y + row, dot, m);
+    }
+}
+// Keep the FP32 state dependency between tokens. Value rows are independent within one token.
+template <uint16_t ValueRows, uint16_t Count = 0>
+__simd_vf__ inline void advanceWindow(__ubuf__ float *state, __ubuf__ float *qkv, __ubuf__ float *dec,
+                                      __ubuf__ float *beta, __ubuf__ float *updates, __ubuf__ float *outputs,
+                                      uint16_t count, uint16_t valueBegin = 0)
+{
+    auto m = CreateMask<float, MaskPattern::ALL>();
+    for (uint16_t t = 0; t < (Count ? Count : count); ++t) {
+        F d0, d1, k0, k1, q0, q1, gain;
+        auto token = qkv + t * 384;
+        LoadAlign(d0, dec + t * 128);
+        LoadAlign(d1, dec + t * 128 + 64);
+        LoadAlign(k0, token + 128);
+        LoadAlign(k1, token + 192);
+        LoadAlign(q0, token);
+        LoadAlign(q1, token + 64);
+        LoadAlign(gain, beta + t * 64);
+#pragma unroll 8
+        for (uint16_t row = 0; row < ValueRows; ++row) {
+            F h0, h1, a, b, dot, v, update, correction;
+            LoadAlign(h0, state + row * 128);
+            LoadAlign(h1, state + row * 128 + 64);
+            Mul(h0, h0, d0, m);
+            Mul(h1, h1, d1, m);
+            Mul(a, h0, k0, m);
+            Mul(b, h1, k1, m);
+            Add(a, a, b, m);
+            ReduceSum(dot, a, m);
+            LoadAlign<float, LoadDist::DIST_BRC_B32>(v, token + 256 + valueBegin + row);
+            Sub(update, v, dot, m);
+            Mul(update, update, gain, m);
+            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(updates + t * ValueRows + row, update, m);
+            Duplicate<float, HighLowPart::LOWEST>(correction, update, m);
+            Mul(a, correction, k0, m);
+            Mul(b, correction, k1, m);
+            Add(h0, h0, a, m);
+            Add(h1, h1, b, m);
+            StoreAlign(state + row * 128, h0, m);
+            StoreAlign(state + row * 128 + 64, h1, m);
+            Mul(a, h0, q0, m);
+            Mul(b, h1, q1, m);
+            Add(a, a, b, m);
+            ReduceSum(dot, a, m);
+            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(outputs + t * ValueRows + row, dot, m);
+        }
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     }
 }
 // Expand a short, complete recurrence from its read-only checkpoint. The
@@ -478,13 +546,14 @@ public:
     }
 
 public:
-    template <bool AllowColumnMajor = true>
+    template <bool AllowColumnMajor = true, bool MxQkv = false, uint16_t ValueRows = 128>
     CATLASS_DEVICE void consume(Resource &resource, const RecurrenceArgs &a, GM_ADDR gated, GM_ADDR carry,
                                 uint32_t heads, uint32_t head, uint32_t global, uint32_t ringRow, uint32_t valid,
-                                AscendC::LocalTensor<Bf> slot, uint32_t wholeSeq = UINT32_MAX)
+                                AscendC::LocalTensor<Bf> slot, uint32_t wholeSeq = UINT32_MAX, uint16_t valueBegin = 0,
+                                GM_ADDR historySnapshot = nullptr)
     {
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
-        constexpr uint32_t base = 41984;
+        constexpr uint32_t base = 41984 + (MxQkv ? kMxUbOffset : 0);
         auto state = resource.ubBuf.template GetBufferByByte<float>(base);
         auto hist = resource.ubBuf.template GetBufferByByte<Bf>(base + 65536);
         auto weights = resource.ubBuf.template GetBufferByByte<Bf>(base + 65536 + 2304);
@@ -511,46 +580,161 @@ public:
         auto chunk = resource.ubBuf.template GetBufferByByte<float>(tmp + 10 * 512);
         auto chunkDec = chunk[4 * 384], chunkBeta = chunkDec[4 * 128], weighted = chunkBeta[4 * 64];
         auto coeff = weighted[4 * 256], chunkU = coeff[64], chunkY = chunkU[4 * 128], predicted = chunkY[4 * 128];
-        bool shortSequence = a.staged >= 2 && valid <= 4 &&
+        const bool completeWindow =
+            (MxQkv || (a.staged >= 2 && valid <= 4)) && valid <= 16 &&
+            (!carry || global / 64 == (global + valid - 1) / 64) &&
             (wholeSeq != UINT32_MAX || (prefix(a, b) == global && prefix(a, b + 1) == global + valid));
-        uint32_t shortIndex = shortSequence ? gm<int32_t>(a.indices).GetValue(b) : 0;
+        const bool shortSequence = !MxQkv && a.staged >= 2 && valid <= 4 && completeWindow;
+        const bool knownSpan = MxQkv ? completeWindow : shortSequence;
+        uint32_t shortIndex = knownSpan ? gm<int32_t>(a.indices).GetValue(b) : 0;
         constexpr uint32_t shortOut = tmp + 10 * 512 + 5 * 4096;
         auto gatedRows = resource.ubBuf.template GetBufferByByte<Bf>(shortOut);
         auto keyRows = resource.ubBuf.template GetBufferByByte<half>(shortOut + 1024);
         for (uint32_t r = 0; r < valid; ++r) {
-            uint32_t row = global + r, start = shortSequence ? global : prefix(a, b),
-                     end = shortSequence ? global + valid : prefix(a, b + 1), t = row - start;
-            const bool useColumnMajor = AllowColumnMajor && (end - start) >= 16;
-            uint32_t idx = shortSequence ? shortIndex : gm<int32_t>(a.indices).GetValue(b);
+            uint32_t row = global + r, start = knownSpan ? global : prefix(a, b),
+                     end = knownSpan ? global + valid : prefix(a, b + 1), t = row - start;
+            const bool useColumnMajor = !MxQkv && ValueRows == 128 && AllowColumnMajor && (end - start) >= 16;
+            uint32_t idx = knownSpan ? shortIndex : gm<int32_t>(a.indices).GetValue(b);
             uint64_t convBase = uint64_t(idx) * a.convStride;
             if (t == 0 || (carry && row % 64 == 0)) {
                 auto src = t == 0 ? gm<float>(a.checkpoint, uint64_t(idx) * a.checkpointStride + head * 16384) :
                                     gm<float>(carry, head * 16384);
                 // Checkpoints are row-major. A carry keeps the on-chip layout between 64-row tiles.
-                AscendC::DataCopy(useColumnMajor && t != 0 ? chunk : state, src, 16384);
+                AscendC::DataCopy(useColumnMajor && t != 0 ? chunk : state, src[valueBegin * 128], ValueRows * 128);
                 uint32_t accepted = gm<int32_t>(a.accepted).GetValue(b);
                 uint32_t hs = t ? t - 1 : (accepted ? accepted - 1 : 0);
-                const uint64_t convStart = convBase + uint64_t(hs) * 3 * width + head * 128;
+                const uint64_t convStart = (ValueRows == 128 ? convBase + uint64_t(hs) * 3 * width : 0) + head * 128;
+                GM_ADDR convHistory = ValueRows == 128 ? a.conv : historySnapshot;
                 // Gather the three history rows into the cyclic UB buffer, splitting only at its wrap.
                 const uint32_t wrap = t % 3;
                 const uint32_t first = (3 - wrap) * 3;
-                AscendC::DataCopyPad(hist[wrap * 384], gm<Bf>(a.conv, convStart),
-                                     AscendC::DataCopyExtParams{static_cast<uint16_t>(first), 256, (width - 128) * 2, 0, 0},
-                                     AscendC::DataCopyPadExtParams<Bf>{});
+                AscendC::DataCopyPad(
+                    hist[wrap * 384], gm<Bf>(convHistory, convStart),
+                    AscendC::DataCopyExtParams{static_cast<uint16_t>(first), 256, (width - 128) * 2, 0, 0},
+                    AscendC::DataCopyPadExtParams<Bf>{});
                 if (wrap) {
-                    AscendC::DataCopyPad(hist, gm<Bf>(a.conv, convStart + uint64_t(first) * width),
-                                         AscendC::DataCopyExtParams{static_cast<uint16_t>(9 - first), 256, (width - 128) * 2, 0, 0},
-                                         AscendC::DataCopyPadExtParams<Bf>{});
+                    AscendC::DataCopyPad(
+                        hist, gm<Bf>(convHistory, convStart + uint64_t(first) * width),
+                        AscendC::DataCopyExtParams{static_cast<uint16_t>(9 - first), 256, (width - 128) * 2, 0, 0},
+                        AscendC::DataCopyPadExtParams<Bf>{});
                 }
                 AscendC::PipeBarrier<PIPE_ALL>();
                 if (useColumnMajor && t == 0) {
                     vec::transposeState((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)state.GetPhyAddr());
                     AscendC::PipeBarrier<PIPE_V>();
                 }
-                if (t == 0) {
+                if (t == 0 && valueBegin == 0) {
                     AscendC::DataCopyPad(gm<Bf>(a.conv, convBase + head * 128), hist[384],
                                          AscendC::DataCopyExtParams{6, 256, 0, (width - 128) * 2, 0});
                 }
+            }
+            if constexpr (MxQkv) {
+                uint32_t count = valid - r < 4 ? valid - r : 4;
+                if (count > end - row) {
+                    count = end - row;
+                }
+                // A complete staged request can cross a global 64-row boundary without a state handoff.
+                if (carry && count > 64 - row % 64) {
+                    count = 64 - row % 64;
+                }
+                auto raw = (__ubuf__ Bf *)slot[r * 128].GetPhyAddr();
+                auto history = (__ubuf__ Bf *)hist.GetPhyAddr();
+                auto filter = (__ubuf__ Bf *)weights.GetPhyAddr();
+                auto prepared = (__ubuf__ float *)chunk.GetPhyAddr();
+                if (completeWindow && r >= 3) {
+                    vec::shortConvolveAll<false, true>(raw, history, filter, prepared, count, a.scale);
+                } else if (completeWindow && r == 0) {
+                    vec::shortConvolveAll(raw, history, filter, prepared, count, a.scale);
+                } else {
+                    // The history copy at t=0 and the previous group must be complete before updating the ring.
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                    vec::shortConvolveAll<true>(raw, history, filter, prepared, count, a.scale, t % 3);
+                }
+                if (!valueBegin) {
+                    for (uint32_t i = 0; i < 3; ++i) {
+                        AscendC::DataCopyPad(
+                            gm<Bf>(a.conv, convBase + uint64_t(2 + t) * 3 * width + i * width + head * 128),
+                            slot[i * 2048 + r * 128],
+                            AscendC::DataCopyExtParams{static_cast<uint16_t>(count), 256, 0, (3 * width - 128) * 2, 0});
+                    }
+                }
+                vec::shortDecay(
+                    (__ubuf__ Bf *)slot[3 * 2048 + r * 128].GetPhyAddr(),
+                    (__ubuf__ Bf *)slot[5 * 2048 + r * 16].GetPhyAddr(), (__ubuf__ float *)bias.GetPhyAddr(), aLog,
+                    a.lower, (__ubuf__ float *)chunkDec.GetPhyAddr(), (__ubuf__ float *)chunkBeta.GetPhyAddr(), count);
+                AscendC::PipeBarrier<PIPE_V>();
+                auto statePtr = (__ubuf__ float *)state.GetPhyAddr();
+                auto qkvPtr = (__ubuf__ float *)chunk.GetPhyAddr();
+                auto decayPtr = (__ubuf__ float *)chunkDec.GetPhyAddr();
+                auto betaPtr = (__ubuf__ float *)chunkBeta.GetPhyAddr();
+                auto updatePtr = (__ubuf__ float *)chunkU.GetPhyAddr();
+                auto outputPtr = (__ubuf__ float *)chunkY.GetPhyAddr();
+                if constexpr (ValueRows == 128) {
+                    vec::advanceWindow<128>(statePtr, qkvPtr, decayPtr, betaPtr, updatePtr, outputPtr, count, 0);
+                } else {
+                    // Keep the token count explicit for each value-row stripe.
+                    switch (count) {
+                        case 1:
+                            vec::advanceWindow<ValueRows, 1>(statePtr, qkvPtr, decayPtr, betaPtr, updatePtr, outputPtr,
+                                                             1, valueBegin);
+                            break;
+                        case 2:
+                            vec::advanceWindow<ValueRows, 2>(statePtr, qkvPtr, decayPtr, betaPtr, updatePtr, outputPtr,
+                                                             2, valueBegin);
+                            break;
+                        case 3:
+                            vec::advanceWindow<ValueRows, 3>(statePtr, qkvPtr, decayPtr, betaPtr, updatePtr, outputPtr,
+                                                             3, valueBegin);
+                            break;
+                        default:
+                            vec::advanceWindow<ValueRows, 4>(statePtr, qkvPtr, decayPtr, betaPtr, updatePtr, outputPtr,
+                                                             4, valueBegin);
+                            break;
+                    }
+                }
+                AscendC::PipeBarrier<PIPE_V>();
+                if (!valueBegin) {
+                    for (uint32_t j = 0; j < count; ++j) {
+                        if constexpr (ValueRows == 128) {
+                            vec::finish((__ubuf__ float *)chunkY[j * 128].GetPhyAddr(),
+                                        (__ubuf__ Bf *)slot[4 * 2048 + (r + j) * 128].GetPhyAddr(),
+                                        (__ubuf__ float *)gamma.GetPhyAddr(), a.eps,
+                                        (__ubuf__ Bf *)gatedRows[j * 128].GetPhyAddr());
+                        }
+                        AscendC::Cast(keyRows[j * 128], chunk[j * 384 + 128], AscendC::RoundMode::CAST_RINT, 128);
+                    }
+                }
+                AscendC::PipeBarrier<PIPE_ALL>();
+                const uint64_t at = (uint64_t(head) * a.capacity + t) * 128;
+                if (!valueBegin) {
+                    AscendC::DataCopy(gm<float>(a.decay, idx * a.decayStride + at), chunkDec, count * 128);
+                    AscendC::DataCopy(gm<half>(a.key, idx * a.keyStride + at), keyRows, count * 128);
+                }
+                if constexpr (ValueRows == 128) {
+                    AscendC::DataCopy(gm<float>(a.u, idx * a.uStride + at), chunkU, count * 128);
+                } else {
+                    AscendC::DataCopyPad(gm<float>(a.u, idx * a.uStride + at + valueBegin), chunkU,
+                                         AscendC::DataCopyExtParams{static_cast<uint16_t>(count), ValueRows * 4, 0,
+                                                                    (128 - ValueRows) * 4, 0});
+                }
+                if constexpr (ValueRows == 128) {
+                    AscendC::DataCopyPad(
+                        gm<Bf>(gated, uint64_t(ringRow + r) * width + head * 128), gatedRows,
+                        AscendC::DataCopyExtParams{static_cast<uint16_t>(count), 256, 0, (width - 128) * 2, 0});
+                } else {
+                    AscendC::DataCopyPad(gm<float>(gated, uint64_t(ringRow + r) * width + head * 128 + valueBegin),
+                                         chunkY,
+                                         AscendC::DataCopyExtParams{static_cast<uint16_t>(count), ValueRows * 4, 0,
+                                                                    (width - ValueRows) * 4, 0});
+                }
+                if (carry && (row + count) % 64 == 0 && row + count < end) {
+                    AscendC::DataCopy(gm<float>(carry, head * 16384 + valueBegin * 128), state, ValueRows * 128);
+                }
+                if (row + count == end)
+                    ++b;
+                r += count - 1;
+                AscendC::PipeBarrier<PIPE_ALL>();
+                continue;
             }
             if (shortSequence) {
                 // History is ready; its writeback and the vector calculation only read it.

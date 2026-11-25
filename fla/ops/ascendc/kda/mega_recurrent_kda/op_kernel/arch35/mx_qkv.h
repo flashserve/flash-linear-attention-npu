@@ -49,9 +49,10 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(1024) inline void QuantizeHidden(
     }
 }
 
-CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
+template <uint32_t maxRows>
+CATLASS_DEVICE void ProjectMxQkvTile(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
                                  GM_ADDR weights, GM_ADDR weightScales, GM_ADDR projected, uint32_t rows,
-                                 uint32_t channels)
+                                 uint32_t channels, uint32_t tileRows)
 {
     using F8 = float8_e4m3_t;
     using S8 = float8_e8m0_t;
@@ -65,10 +66,10 @@ CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADD
     using MxCopy = Catlass::Gemm::Tile::PackedMxTileCopyTla<Arch, F8, Row, F8, NZ, S8, decltype(layoutSA),
                                                             S8, decltype(layoutSB), Bf, Row>;
     using MxTile = Catlass::Gemm::Tile::TileMmadTla<Arch, F8, typename MxCopy::LayoutTagL1A>;
-    constexpr uint32_t tileRows = 128, tileCols = 192;
+    constexpr uint32_t tileCols = 192;
     using MxBlock = Catlass::Gemm::Block::BlockMmadTla<Catlass::Gemm::MmadMx<Arch, true, 2>,
-        tla::Shape<tla::Int<tileRows>, tla::Int<tileCols>, tla::Int<512>>,
-        tla::Shape<tla::Int<tileRows>, tla::Int<tileCols>, tla::Int<64>>, F8, F8, Bf, void, MxCopy, MxTile>;
+        tla::Shape<tla::Int<maxRows>, tla::Int<tileCols>, tla::Int<512>>,
+        tla::Shape<tla::Int<maxRows>, tla::Int<tileCols>, tla::Int<64>>, F8, F8, Bf, void, MxCopy, MxTile>;
     AscendC::GlobalTensor<F8> x, w;
     AscendC::GlobalTensor<S8> sx, sw;
     AscendC::GlobalTensor<Bf> y;
@@ -100,6 +101,24 @@ CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADD
         auto as = GetTile(sa, tla::MakeCoord(row, 0), tla::MakeShape(m, groups));
         auto bs = GetTile(sb, tla::MakeCoord(0, col), tla::MakeShape(groups, n));
         op(aa, bb, cc, Catlass::GemmCoord(m, n, K), as, bs);
+    }
+}
+CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
+                                 GM_ADDR weights, GM_ADDR weightScales, GM_ADDR projected, uint32_t rows,
+                                 uint32_t channels)
+{
+    const uint32_t panels = (channels + 191) / 192, workers = AscendC::GetBlockNum();
+    const uint64_t defaultTiles = (uint64_t(rows) + 127) / 128;
+    const uint64_t defaultWaves = (defaultTiles * panels + workers - 1) / workers;
+    constexpr uint32_t maxRows = 288;
+    const uint64_t minTiles = (uint64_t(rows) + maxRows - 1) / maxRows;
+    const uint64_t minWaves = (minTiles * panels + workers - 1) / workers;
+    if (minWaves < defaultWaves) {
+        const uint64_t tiles = minWaves * workers / panels;
+        const uint32_t tileRows = ((rows + tiles - 1) / tiles + 15) / 16 * 16;
+        ProjectMxQkvTile<maxRows>(resource, codes, scales, weights, weightScales, projected, rows, channels, tileRows);
+    } else {
+        ProjectMxQkvTile<128>(resource, codes, scales, weights, weightScales, projected, rows, channels, 128);
     }
 }
 } // namespace kda

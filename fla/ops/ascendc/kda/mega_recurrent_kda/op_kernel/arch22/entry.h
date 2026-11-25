@@ -3,6 +3,7 @@
 #include "mega_recurrent_kda_v2_t02.h"
 #include "tiling_data.h"
 #include "int8_qkv.h"
+#include "long_sequence.h"
 namespace MegaRecurrentKdaV2 {
 CATLASS_DEVICE void BindTilingAndWorkspace(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params,
                                            GM_ADDR workspace)
@@ -91,7 +92,7 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
     }
 }
 
-template <bool splitSums = false>
+template <bool splitSums = false, bool splitValues = false>
 CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params, GM_ADDR sequencePlan,
                               GM_ADDR workspace)
 {
@@ -119,6 +120,14 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
             extraSums = workspace + SplitQkvSumOffset(plan.arch22, plan.common.crosses == 2);
         }
         ProjectInt8Qkv<splitSums>(params, overlapAuxiliary, extraSums);
+    }
+    if constexpr (splitValues) {
+        // An explicit caller-provided output can share storage with hidden states.
+        // That alias is only visible on device, after host tiling has chosen the geometry.
+        if (params.out != params.hiddenStates) {
+            LongSequence::Run(params, overlapAuxiliary, LongSequence::GroupCount(params));
+            return;
+        }
     }
     if ASCEND_IS_AIC {
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> resource;

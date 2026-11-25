@@ -79,6 +79,7 @@ def model_qkv(hidden, packed, channel_scale):
     ([1], 1, "BSH", torch.int32, True),
     ([1] * 65, 2, "TH", torch.int64, True),
     ([193], 8, "TH", torch.int64, False),
+    ([513], 5, "TH", torch.int32, True),
     ([4] * 17, 6, "BSH", torch.int32, True),
     ([63, 2], 6, "TH", torch.int64, True),
 ])

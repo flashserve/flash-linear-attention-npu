@@ -232,6 +232,17 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
         uint64_t ubBytes = 0;
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
         key = UseSplitQkvSums(data.arch22, common.crosses == 2, ubBytes) ? 7 : 6;
+        // With spare vector cores, independent ranges of V keep the long recurrence in parallel.
+        // Keys 8/9 share the same two INT8 QKV layouts as keys 6/7.
+        const uint64_t units = uint64_t(common.batch) * common.heads;
+        const uint64_t historyBytes = units * 9 * kHeadWidth * sizeof(uint16_t);
+        const uint64_t valuesBytes = uint64_t(common.tokens) * data.arch22.p * sizeof(float);
+        const uint64_t outputBytes = uint64_t(common.tokens) * kHiddenWidth * sizeof(uint16_t);
+        if (common.batch <= common.tokens / 128u && 2 * units <= data.arch22.aivNum &&
+            data.arch22.slotsPR >= data.arch22.tiles && historyBytes <= outputBytes &&
+            valuesBytes <= outputBytes - historyBytes) {
+            key += 2;
+        }
     }
     return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, key);
 }

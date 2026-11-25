@@ -53,6 +53,12 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     } else if (TILING_KEY_IS(7)) {
         params.weightScale = weightScale;
         RunArch22<true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(8)) {
+        params.weightScale = weightScale;
+        RunArch22<false, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(9)) {
+        params.weightScale = weightScale;
+        RunArch22<true, true>(tilingData, params, plan, userWorkspace);
     }
 #else
     REGISTER_TILING_DEFAULT(MegaRecurrentKdaTilingData);
