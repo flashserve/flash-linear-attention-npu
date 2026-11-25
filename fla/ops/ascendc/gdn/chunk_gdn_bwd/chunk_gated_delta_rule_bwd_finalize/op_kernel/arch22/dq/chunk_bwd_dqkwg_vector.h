@@ -328,6 +328,8 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, IS_BSND>::Pro
     } else {
         taskCount = coreLoops;
     }
+    // P3: seq 元数据缓存（同序列相邻 loop 省 2 次 GM 标量读，跨 task 复用）。
+    DqkwgSeqCache dqSeqCache{0, 0, 0, false};
     for (ScheduleIndex taskIdx = coreIdx; taskIdx < taskCount; taskIdx += coreNum) {
         uint32_t loopIdx;
         if constexpr (WIDE_SCHEDULE) {
@@ -344,7 +346,7 @@ __aicore__ inline void ChunkBwdDqkwgVectorProcess<DataType, GType, IS_BSND>::Pro
         // 统一算一次 bos/real_BT, 传给 4 个 stage 复用 (替代每 stage 内部 GetChunkOffset)
         uint32_t bos = 0;
         uint32_t eos = 0;
-        GetChunkOffset(cuSeqlensTensor, chunkIndicesTensor, B, HV, T, BT, loopIdx, bos, eos, isVarLen);
+        GetChunkOffset(cuSeqlensTensor, chunkIndicesTensor, B, HV, T, BT, loopIdx, bos, eos, isVarLen, &dqSeqCache);
         uint32_t real_BT = eos - bos;
         ProcessAVector<WIDE_SCHEDULE>(coreIdx, loopIdx, bos, real_BT);
         ProcessBVector(coreIdx, loopIdx, bos, real_BT);

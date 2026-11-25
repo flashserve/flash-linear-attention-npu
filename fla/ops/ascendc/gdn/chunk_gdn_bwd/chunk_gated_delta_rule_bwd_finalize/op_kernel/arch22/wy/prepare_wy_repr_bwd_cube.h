@@ -297,7 +297,13 @@ private:
     static constexpr int32_t EVENT_DW_RESIDENT_PONG = 7;
     static constexpr int32_t EVENT_SHARED_DW_K_RESIDENT_PING = 4;
     static constexpr int32_t EVENT_SHARED_DW_K_RESIDENT_PONG = 5;
-    static constexpr bool SHARE_DW_K_EVENT = CHUNK_SIZE == 64 && V_DIM == 128;
+    // Window-level A/dW prefetch batches every head's GM->L1 load before the
+    // first chain. The shared dW/K scheme releases the dW event mid-chain so K
+    // can reuse IDs 4/5 in the same head; with the loads of both heads issued
+    // up front that hand-off can wait on the wrong generation. Give dW its
+    // own IDs (6/7) and keep K on 4/5 so both rotate independently. The
+    // non-shared release discipline (loop 2 DA1) is the already-tested path.
+    static constexpr bool SHARE_DW_K_EVENT = false;
     static constexpr int32_t EVENT_L0A_PING = 0;
     static constexpr int32_t EVENT_L0B_PING = 1;
     static constexpr int32_t EVENT_L0A_PONG = 2;
@@ -541,10 +547,20 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     uint32_t coreNum = AscendC::GetBlockNum();
     uint64_t groupSize = PrepareWyReprBwdGetGroupSize(tiling_);
     uint64_t windowIdx = 0;
+    // P3: seq 元数据缓存（同序列相邻 task 省 2 次 GM 标量读）。
+    PrepareWyReprBwdSeqCache seqCache{0, 0, 0, false};
+    // P3: core 级 slot/kkt 基址外提（原 GetSlotBase/GetKktBase 回退逻辑就地展开一次）。
+    uint64_t workspaceCoreSize = tiling_.workspaceCoreSize;
+    if (workspaceCoreSize == 0) {
+        workspaceCoreSize = tiling_.workspaceBufferCount * tiling_.workspaceSlotSize +
+                            tiling_.workspaceBufferCount * tiling_.mBytes;
+    }
+    GM_ADDR coreSlotBase = workspace_ + static_cast<uint64_t>(coreIdx) * workspaceCoreSize;
+    GM_ADDR coreKktBase = coreSlotBase + tiling_.kktOffset;
 
     for (uint32_t taskIdx = coreIdx; taskIdx < static_cast<uint32_t>(tiling_.chunkNum); taskIdx += coreNum) {
         PrepareWyReprBwdTaskInfo task;
-        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, taskIdx, task);
+        PrepareWyReprBwdGetTaskInfo(cuSeqlens_, chunkIndices_, tiling_, taskIdx, task, &seqCache);
         GemmCoord shapeK{task.curChunkSize, K_DIM, task.curChunkSize};
         GemmCoord shapeV{task.curChunkSize, V_DIM, task.curChunkSize};
         GemmCoord shapeKkt{task.curChunkSize, task.curChunkSize, K_DIM};
@@ -568,8 +584,54 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                                    headWindow :
                                    static_cast<uint32_t>(hvTotal - hvBase);
             uint32_t windowStartSlot = static_cast<uint32_t>((windowIdx & 1U) * BUFFER_COUNT_2);
+            // P3: 窗口内两 slot 基址预计算，头循环内仅按奇偶选择。
+            GM_ADDR windowSlotBaseA = coreSlotBase + windowStartSlot * tiling_.workspaceSlotSize;
+            GM_ADDR windowSlotBaseB = windowSlotBaseA + tiling_.workspaceSlotSize;
 
             // Stage0 fills both workspace slots before later stages consume the first head.
+            curSlot_ = windowStartSlot;
+            // Window-level A/dW prefetch: issue every head's GM->L1 resident
+            // load before the first chain so later heads' load latency hides
+            // behind earlier heads' compute. Event generations per buffer are
+            // unchanged: each slot's MTE1_MTE2 free event was already released
+            // by the previous window's last consumer, and the MTE2_MTE1 ready
+            // flags are consumed by the same chain code below in the same order.
+            for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
+                uint32_t residentSlot = curSlot_ & 1U;
+                uint64_t hv = hvBase + headIdx;
+                uint64_t valueBase = hv * tiling_.T + task.valueBos;
+                uint32_t stage0AIdx = residentSlot;
+                int32_t stage0AEvent = stage0AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
+                uint32_t dwResidentIdx = residentSlot;
+                int32_t dwResidentEvent = SHARE_DW_K_EVENT ?
+                    (dwResidentIdx == 0 ? EVENT_SHARED_DW_K_RESIDENT_PING : EVENT_SHARED_DW_K_RESIDENT_PONG) :
+                    (dwResidentIdx == 0 ? EVENT_DW_RESIDENT_PING : EVENT_DW_RESIDENT_PONG);
+
+                AscendC::GlobalTensor<kType> gmATPre;
+                AscendC::GlobalTensor<kType> gmDwPre;
+                gmATPre.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
+                gmDwPre.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
+                auto tensorATPre = tla::MakeTensor(gmATPre, layoutAT, Arch::PositionGM{});
+                auto tensorDwPre = tla::MakeTensor(gmDwPre, layoutDw, Arch::PositionGM{});
+                auto blockATPre = GetTile(tensorATPre, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.m(), shapeK.k()));
+                auto blockDwPre = GetTile(tensorDwPre, tla::MakeCoord(0, 0), tla::MakeShape(shapeK.k(), shapeK.n()));
+                CopyGmToL1A_Dkbg<decltype(blockATPre)> copyGmToL1A_ATPre;
+                CopyGmToL1B_Dkbg<decltype(blockDwPre)> copyGmToL1B_DWPre;
+                auto tensorL1ResidentATPre =
+                    tla::MakeTensor(aResident[stage0AIdx], L1A_LAYOUT_AT, Arch::PositionL1{});
+                auto tensorL1ResidentDWPre =
+                    tla::MakeTensor(dwResident[dwResidentIdx], L1B_LAYOUT_DW, Arch::PositionL1{});
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stage0AEvent);
+                copyGmToL1A_ATPre(tensorL1ResidentATPre, blockATPre);
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stage0AEvent);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(dwResidentEvent);
+                copyGmToL1B_DWPre(tensorL1ResidentDWPre, blockDwPre);
+                if (SHARE_DW_K_EVENT) {
+                    AscendC::PipeBarrier<PIPE_MTE2>();
+                }
+                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dwResidentEvent);
+                curSlot_ ^= 1U;
+            }
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
@@ -577,7 +639,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 uint64_t hk = hv / groupSize;
                 uint64_t valueBase = hv * tiling_.T + task.valueBos;
                 uint64_t keyBase = hk * tiling_.T + task.keyBos;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
                 bool needComputeKkt = cachedKktHk_ != hk;
                 bool needLoadKResident = cachedKResidentHk_ != hk;
                 if (needLoadKResident) {
@@ -593,7 +655,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 uint32_t kktSlot = cachedKktSlot_;
                 kResidentSlotForSlot_[curSlot_] = cachedKResidentSlot_;
                 kktSlotForSlot_[curSlot_] = kktSlot;
-                GM_ADDR kktBase = PrepareWyReprBwdGetKktBase(workspace_, coreIdx, kktSlot, tiling_);
+                GM_ADDR kktBase = coreKktBase + kktSlot * tiling_.mBytes;
 
                 gmAT.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
                 gmDw.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
@@ -628,8 +690,6 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 auto blockKkt =
                     GetTile(tensorKkt, tla::MakeCoord(0, 0), tla::MakeShape(shapeKkt.m(), shapeKkt.n()));
 
-                CopyGmToL1A_Dkbg<decltype(blockATForDkbg)> copyGmToL1A_AT;
-                CopyGmToL1B_Dkbg<decltype(blockDw)> copyGmToL1B_DW;
                 CopyGmToL1B_Dvb<decltype(blockDu)> copyGmToL1B_DU;
                 CopyGmToL1A_Kkt<decltype(blockK)> copyGmToL1A_K;
                 CopyL0CToGm_Dkbg<decltype(blockDkbg)> copyL0CToGm_Dkbg;
@@ -644,15 +704,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 auto tensorL1ResidentAT = tla::MakeTensor(aResident[stage0AIdx], L1A_LAYOUT_AT, Arch::PositionL1{});
                 auto tensorL1ResidentDWForDkbg =
                     tla::MakeTensor(dwResident[dwResidentIdx], L1B_LAYOUT_DW, Arch::PositionL1{});
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(stage0AEvent);
-                copyGmToL1A_AT(tensorL1ResidentAT, blockATForDkbg);
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(stage0AEvent);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(dwResidentEvent);
-                copyGmToL1B_DW(tensorL1ResidentDWForDkbg, blockDw);
-                if (SHARE_DW_K_EVENT) {
-                    AscendC::PipeBarrier<PIPE_MTE2>();
-                }
-                AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(dwResidentEvent);
+                // A/dW GM->L1 loads were issued by the window-level prefetch
+                // pass above; the chains below only consume their ready events.
 
                 uint32_t mActualDkbg = shapeK.m();
                 if (mActualDkbg == 1) {
@@ -849,7 +902,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
 
                 gmKbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbgOffset));
                 gmVb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.vbOffset));
@@ -1028,35 +1081,50 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
             }
 
             curSlot_ = windowStartSlot;
+            // Merged DA5 + DA6T pass: each head runs the DA5 chain (from the
+            // vector's DA4) followed immediately by the DA6T chain (reading
+            // back this head's own DA5 output). The two chains share all
+            // per-head address setup; the FIX_MTE2 event still gates the
+            // DA5 fixpipe -> DA5T load dependency per head.
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint32_t residentSlot = curSlot_ & 1U;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
 
                 gmDA4.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da4Offset));
                 gmDA5.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da5Offset));
+                gmDA6T.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
 
                 auto tensorDA4 = tla::MakeTensor(gmDA4, layoutDA4, Arch::PositionGM{});
                 auto tensorDA5 = tla::MakeTensor(gmDA5, layoutDA5, Arch::PositionGM{});
+                auto tensorDA5T = tla::MakeTensor(gmDA5, layoutDA5T, Arch::PositionGM{});
+                auto tensorDA6T = tla::MakeTensor(gmDA6T, layoutDA6T, Arch::PositionGM{});
                 uint8_t fixpipeUnitFlag = 0b11;
 
                 auto blockDA4 =
                     GetTile(tensorDA4, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.k()));
                 auto blockDA5 =
                     GetTile(tensorDA5, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.n()));
+                auto blockDA5T =
+                    GetTile(tensorDA5T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.k()));
+                auto blockDA6T =
+                    GetTile(tensorDA6T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.n()));
 
                 CopyGmToL1A_DA5<decltype(blockDA4)> copyGmToL1A_DA4;
                 CopyL0CToGm_DA5<decltype(blockDA5)> copyL0CToGm_DA5;
+                CopyGmToL1A_DA6T<decltype(blockDA5T)> copyGmToL1A_DA5T;
+                CopyL0CToGm_DA6T<decltype(blockDA6T)> copyL0CToGm_DA6T;
 
-                WaitVecToCube();
                 int32_t da5FixToMte2Event =
                     residentSlot == 0 ? EVENT_FIX_TO_MTE2_PING : EVENT_FIX_TO_MTE2_PONG;
+
+                // === DA5 chain (formerly loop 3) ===
+                WaitVecToCube();
 
                 uint32_t da5L1AIdx = curL1_;
                 int32_t da5L1AEvent = da5L1AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
                 auto tensorL1A_DA4 = tla::MakeTensor(l1Scratch[da5L1AIdx], L1A_LAYOUT_DA4, Arch::PositionL1{});
-                uint32_t da5AResidentIdx = residentSlot;
                 auto tensorL1ResidentATForDA5 =
-                    tla::MakeTensor(aResident[da5AResidentIdx], L1B_LAYOUT_AT_FOR_DA5, Arch::PositionL1{});
+                    tla::MakeTensor(aResident[residentSlot], L1B_LAYOUT_AT_FOR_DA5, Arch::PositionL1{});
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(da5L1AEvent);
                 copyGmToL1A_DA4(tensorL1A_DA4, blockDA4);
                 AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(da5L1AEvent);
@@ -1105,40 +1173,14 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 copyL0CToGm_DA5(blockDA5, tensorL0C_DA5, fixpipeUnitFlag);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_M>(da5L0CEvent);
                 AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(da5FixToMte2Event);
-                curSlot_ ^= 1U;
-            }
 
-            curSlot_ = windowStartSlot;
-            for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
-                uint32_t residentSlot = curSlot_ & 1U;
-                uint64_t hv = hvBase + headIdx;
-                uint64_t valueBase = hv * tiling_.T + task.valueBos;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
-
-                gmDA5.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da5Offset));
-                gmDA6T.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
-
-                auto tensorDA5T = tla::MakeTensor(gmDA5, layoutDA5T, Arch::PositionGM{});
-                auto tensorDA6T = tla::MakeTensor(gmDA6T, layoutDA6T, Arch::PositionGM{});
-                uint8_t fixpipeUnitFlag = 0b11;
-
-                auto blockDA5T =
-                    GetTile(tensorDA5T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.k()));
-                auto blockDA6T =
-                    GetTile(tensorDA6T, tla::MakeCoord(0, 0), tla::MakeShape(shapeM.m(), shapeM.n()));
-
-                CopyGmToL1A_DA6T<decltype(blockDA5T)> copyGmToL1A_DA5T;
-                CopyL0CToGm_DA6T<decltype(blockDA6T)> copyL0CToGm_DA6T;
-                int32_t da5FixToMte2Event =
-                    residentSlot == 0 ? EVENT_FIX_TO_MTE2_PING : EVENT_FIX_TO_MTE2_PONG;
-
+                // === DA6T chain (formerly loop 4, shared setup eliminated) ===
                 uint32_t da6L1AIdx = curL1_;
                 int32_t da6L1AEvent = da6L1AIdx == 0 ? EVENT_L1_SCRATCH_PING : EVENT_L1_SCRATCH_PONG;
                 auto tensorL1A_DA5T =
                     tla::MakeTensor(l1Scratch[da6L1AIdx], L1A_LAYOUT_DA5_T, Arch::PositionL1{});
-                uint32_t da6AResidentIdx = residentSlot;
                 auto tensorL1ResidentAForDA6T =
-                    tla::MakeTensor(aResident[da6AResidentIdx], L1B_LAYOUT_A_FOR_DA6T, Arch::PositionL1{});
+                    tla::MakeTensor(aResident[residentSlot], L1B_LAYOUT_A_FOR_DA6T, Arch::PositionL1{});
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(da5FixToMte2Event);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(da6L1AEvent);
                 copyGmToL1A_DA5T(tensorL1A_DA5T, blockDA5T);
@@ -1191,11 +1233,13 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 curSlot_ ^= 1U;
             }
 
+            // Old separate loop 4 (DA6T) was merged into the DA5+DA6T pass above.
+
             curSlot_ = windowStartSlot;
             for (uint32_t headIdx = 0; headIdx < headCnt; ++headIdx) {
                 uint64_t hv = hvBase + headIdx;
                 uint64_t hk = hv / groupSize;
-                GM_ADDR slotBase = PrepareWyReprBwdGetSlotBase(workspace_, coreIdx, curSlot_, tiling_);
+                GM_ADDR slotBase = (curSlot_ & 1U) ? windowSlotBaseB : windowSlotBaseA;
 
                 gmD.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
                 gmKbeta.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbetaOffset));
