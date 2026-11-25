@@ -18,7 +18,7 @@
 #include "arch22/chunk_kda_bwd_prepare_vector.h"
 #endif
 
-template <uint32_t INPUT_LAYOUT, bool IS_VARIABLE, bool DO_TOKEN_MAJOR>
+template <uint32_t INPUT_LAYOUT, bool IS_VARIABLE, bool DO_TOKEN_MAJOR, bool IS_GVA>
 __global__ __aicore__ void chunk_kda_bwd_prepare(
     GM_ADDR aqk, GM_ADDR vNew, GM_ADDR dO, GM_ADDR h,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dAqk, GM_ADDR dv, GM_ADDR dqRaw,
@@ -26,6 +26,9 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
 {
     REGISTER_TILING_DEFAULT(KDA::ChunkKdaBwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KDA::ChunkKdaBwdPrepareTilingData, tilingData, tiling);
+    if constexpr (IS_GVA) {
+        if (tilingData.gvaRatio <= 1 || tilingData.HK * tilingData.gvaRatio != tilingData.NV) return;
+    }
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
     (void)workspace;

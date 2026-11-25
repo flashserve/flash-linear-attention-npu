@@ -33,6 +33,7 @@ public:
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
         this->Attr("layout").AttrType(REQUIRED).String();
+        this->Attr("gva_ratio").AttrType(OPTIONAL).Int(1);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

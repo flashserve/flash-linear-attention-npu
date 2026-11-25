@@ -1603,13 +1603,15 @@ def npu_chunk_kda_bwd_finalize(
 
 def npu_chunk_kda_bwd_prepare(
     aqk, v_new, d_o, h, *, scale, layout, chunk_size=64,
-    state_v_first=False, cu_seqlens=None, chunk_indices=None,
+    state_v_first=False, cu_seqlens=None, chunk_indices=None, gva_ratio=1,
 ):
     """Partial KDA gradients with contiguous head-major outputs."""
+    if type(gva_ratio) is not int or not 1 <= gva_ratio <= 16:
+        raise ValueError("gva_ratio must be an integer in 1..16")
     return _op("npu_chunk_kda_bwd_prepare")(
         aqk, v_new, d_o, h, _host_ints(cu_seqlens), _host_ints(chunk_indices),
         _char_code("npu_chunk_kda_bwd_prepare", "layout", layout),
-        float(scale), int(chunk_size), bool(state_v_first),
+        float(scale), int(chunk_size), bool(state_v_first), gva_ratio,
         _current_stream_ptr(),
     )
 

@@ -29,13 +29,13 @@ constexpr const char* kChunkKdaBwdPrepareLayoutNames[] = {
 constexpr const char* kSchema_chunk_kda_bwd_prepare =
     "npu_chunk_kda_bwd_prepare(Tensor aqk, Tensor v_new, Tensor d_o, Tensor h, "
     "Tensor? cu_seqlens, Tensor? chunk_indices, int layout, float scale, "
-    "int chunk_size, bool state_v_first, int stream) -> (Tensor, Tensor, Tensor)";
+    "int chunk_size, bool state_v_first, int gva_ratio, int stream) -> (Tensor, Tensor, Tensor)";
 
 std::tuple<Tensor, Tensor, Tensor> run_npu_chunk_kda_bwd_prepare(
     Tensor aqk, Tensor v_new, Tensor d_o, Tensor h,
     std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
     int64_t layout, double scale, int64_t chunk_size, bool state_v_first,
-    int64_t stream) {
+    int64_t gva_ratio, int64_t stream) {
   namespace layout_math = fla_npu_stable::stable::layout_math;
   const TensorMeta aqk_meta = meta_of(aqk);
   std::vector<int64_t> output;
@@ -55,7 +55,7 @@ std::tuple<Tensor, Tensor, Tensor> run_npu_chunk_kda_bwd_prepare(
       nd_tensor(meta_of(v_new)), nd_tensor(meta_of(d_o)), nd_tensor(meta_of(h)),
       int_array(cu_seqlens), int_array(chunk_indices),
       cstr(kChunkKdaBwdPrepareLayoutNames, layout), scalar(scale),
-      scalar(chunk_size), scalar(state_v_first), nd_out_tensor(meta_of(d_aqk)),
+      scalar(chunk_size), scalar(state_v_first), scalar(gva_ratio), nd_out_tensor(meta_of(d_aqk)),
       nd_out_tensor(meta_of(dv)), nd_out_tensor(meta_of(dq_raw)));
   return std::make_tuple(d_aqk, dv, dq_raw);
 }

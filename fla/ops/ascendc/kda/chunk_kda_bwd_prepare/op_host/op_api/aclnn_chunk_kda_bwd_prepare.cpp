@@ -139,7 +139,7 @@ aclnnStatus ValidateMetadata(
 
 aclnnStatus Check(
     const aclTensor *aqk, const aclTensor *vNew, const aclTensor *dO, const aclTensor *h,
-    const aclIntArray *cu, const aclIntArray *indices, const char *layout, double scale, int64_t chunkSize,
+    const aclIntArray *cu, const aclIntArray *indices, const char *layout, double scale, int64_t chunkSize, int64_t gvaRatio,
     const aclTensor *dAqkOut, const aclTensor *dvOut, const aclTensor *dqRawOut)
 {
     const aclTensor *tensors[] = {aqk, vNew, dO, h, dAqkOut, dvOut, dqRawOut};
@@ -190,6 +190,7 @@ aclnnStatus Check(
         }
     }
     const int64_t B = aShape.B, NV = aShape.H, T = aShape.T;
+    if (gvaRatio < 1 || gvaRatio > 16 || NV % gvaRatio != 0) return InvalidArgument("gva_ratio", "must be 1..16 and divide HV");
     if (variable && B != 1) return InvalidValue("B", std::to_string(B), "1 for variable lengths");
     const int64_t chunkCount = rank3 ? state.GetDim(0) : state.GetDim(1);
     const bool stateValid = rank3
@@ -222,7 +223,7 @@ aclnnStatus Check(
 extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     const aclTensor *aqk, const aclTensor *vNew, const aclTensor *dO, const aclTensor *h,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, const char *layout,
-    double scale, int64_t chunkSize, bool stateVFirst,
+    double scale, int64_t chunkSize, bool stateVFirst, int64_t gvaRatio,
     const aclTensor *dAqkOut, const aclTensor *dvOut, const aclTensor *dqRawOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
@@ -232,10 +233,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     if (executor == nullptr) return Missing("executor");
     L2_DFX_PHASE_1(aclnnChunkKdaBwdPrepare,
                    DFX_IN(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
-                          layout, scale, chunkSize, stateVFirst),
+                          layout, scale, chunkSize, stateVFirst, gvaRatio),
                    DFX_OUT(dAqkOut, dvOut, dqRawOut));
     const auto status = Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
-                             layout, scale, chunkSize, dAqkOut, dvOut, dqRawOut);
+                             layout, scale, chunkSize, gvaRatio, dAqkOut, dvOut, dqRawOut);
     if (status != ACLNN_SUCCESS) return status;
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
@@ -245,7 +246,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     }
     auto result = l0op::ChunkKdaBwdPrepare(
         aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
-        layout, scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut,
+        layout, scale, chunkSize, stateVFirst, gvaRatio, dAqkOut, dvOut, dqRawOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
         if (!(tensor != nullptr)) {

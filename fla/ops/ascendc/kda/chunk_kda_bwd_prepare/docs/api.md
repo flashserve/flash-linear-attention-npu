@@ -5,7 +5,7 @@ from fla_npu.ops.ascendc import chunk_kda_bwd_prepare
 d_aqk, dv, dq_raw = chunk_kda_bwd_prepare(
     aqk, v_new, d_o, h, scale=scale, layout="BNSD",
     chunk_size=64, state_v_first=False,
-    cu_seqlens=None, chunk_indices=None,
+    cu_seqlens=None, chunk_indices=None, gva_ratio=1,
 )
 ```
 
@@ -87,3 +87,14 @@ python tests/atk/chunk_kda_bwd_prepare/scripts/prepare_a6_smoke.py --varlen --st
 ```
 
 上面的四布局 Stable-ABI 扩展脚本用于 A2/A3 回归；A5/A6 设备验证只选择对应平台支持的组合。
+
+
+## GVA contract (2026-11-24)
+H denotes HV for all four inputs and all three outputs. Keyword-only gva_ratio
+must be an integer in [1,16] dividing HV; HK=HV/gva_ratio. No head broadcast or
+head reduction takes place. R=1 selects the original template keys; R>1 selects
+independently compiled IS_GVA templates. Ratios 2..16 share each layout/mode key.
+The ACLNN/L0 ABI adds int64_t gvaRatio immediately after bool stateVFirst.
+This requires synchronized rebuild of host, kernel, stable adapter and wheel;
+old binary callers are incompatible. Existing complete backward callers pass 1;
+this change does not claim complete backward HK<HV support.

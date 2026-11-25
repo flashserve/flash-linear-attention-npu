@@ -30,6 +30,7 @@ struct ChunkKdaBwdPrepareTilingContext {
     bool isA5 = false;
     bool doTokenMajor = false;
     bool isA6 = false;
+    int64_t gvaRatio = 1;
 };
 class ChunkKdaBwdPrepareTilingProcessor {
 public:
@@ -124,6 +125,9 @@ public:
             return FailShapeDim("h", std::to_string(h.GetDimNum()),
                                 rank3 ? "4 for NTD layout" : "5 for BNSD layout");
         }
+        if (ctx_.gvaRatio < 1 || ctx_.gvaRatio > 16 || a.H % ctx_.gvaRatio != 0)
+            return FailValue("gva_ratio", std::to_string(ctx_.gvaRatio), "must be 1..16 and divide HV");
+        tiling_.HK = a.H / ctx_.gvaRatio; tiling_.gvaRatio = ctx_.gvaRatio;
         tiling_.B = a.B; tiling_.NV = a.H; tiling_.T = a.T;
         tiling_.K = 128; tiling_.V = 128; tiling_.chunkSize = 64;
         tiling_.isVariable = variable; tiling_.stateVFirst = ctx_.stateVFirst;
@@ -177,7 +181,7 @@ public:
         blockDim_ = static_cast<uint32_t>(std::min<int64_t>(ctx_.aicCoreNum, tiling_.workTaskNum));
         tilingKey_ = GET_TPL_TILING_KEY(
             tiling_.inputLayout, tiling_.isVariable,
-            static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0));
+            static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0), static_cast<uint64_t>(ctx_.gvaRatio > 1));
         const size_t scratchSize = (ctx_.isA5 || ctx_.isA6) ? 0 : static_cast<size_t>(blockDim_) * 65536;
         workspaceSize_ = ctx_.sysWorkspaceSize + scratchSize;
         OP_LOGD(ctx_.nodeName, "layout=%u variable=%u stateVFirst=%u key=%lu blocks=%u userScratch=%lu",

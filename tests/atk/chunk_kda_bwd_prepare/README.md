@@ -144,3 +144,7 @@ acceptance remain pending. See the operator's `docs/validation.md` for local evi
 This project uses the `api_type` Python executor for CPU/NPU dispatch. It does
 not implement a direct `pyaclnn` executor: test-control attrs and canonical host
 metadata must be processed by `executor_chunk_kda_bwd_prepare.py` before dispatch.
+
+## GVA extension
+
+The numerical CPU reference replaces the zero placeholder. See ../chunk_kda_bwd_prepare_a3/README.md for the 200-case GVA suite and A2 validation. The inherited a3 suffix does not indicate A3 hardware acceptance.
