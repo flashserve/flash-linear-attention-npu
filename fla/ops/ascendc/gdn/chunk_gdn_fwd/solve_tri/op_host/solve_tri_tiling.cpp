@@ -27,7 +27,7 @@ static void InvalidMetadata(const char *node, const char *name, const std::strin
 #ifdef OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON
     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(node, name, reason);
 #else
-    OP_LOGE_WITHOUT_REPORT(node, "%s: invalid %s: %s", __func__, name, reason.c_str());
+    OP_LOGE(node, "%s: invalid %s: %s", __func__, name, reason.c_str());
 #endif
 }
 
@@ -61,13 +61,13 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     const auto *cuTensor = context->GetOptionalInputTensor(INPUT_CU_SEQLENS_IDX);
     const auto *indexTensor = context->GetOptionalInputTensor(INPUT_CHUNK_INDICES_IDX);
     if (cuTensor == nullptr || indexTensor == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "varlen metadata tensors are unavailable during tiling.");
+        OP_LOGE(context->GetNodeName(), "varlen metadata tensors are unavailable during tiling.");
         return ge::GRAPH_FAILED;
     }
     const int64_t *cu = cuTensor->GetData<int64_t>();
     const int64_t *indices = indexTensor->GetData<int64_t>();
     if (cu == nullptr || indices == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "varlen metadata value-depend data is null.");
+        OP_LOGE(context->GetNodeName(), "varlen metadata value-depend data is null.");
         return ge::GRAPH_FAILED;
     }
     if (cu[0] != 0 || cu[seqCount] != totalTokens) {
@@ -115,7 +115,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
         }
         std::unique_ptr<ChunkPair[]> sorted(new (std::nothrow) ChunkPair[pairCount]);
         if (!sorted) {
-            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Cannot allocate chunk_indices validation buffer.");
+            OP_LOGE(context->GetNodeName(), "Cannot allocate chunk_indices validation buffer.");
             return ge::GRAPH_FAILED;
         }
         for (size_t i = 0; i < pairCount; ++i) {
@@ -150,7 +150,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      int64_t coreNum = ascendcPlatform.GetCoreNumAic();
      if (coreNum == 0) {
          if constexpr (IsA2A3) {
-             OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri requires at least one AIC core.");
+             OP_LOGE(context->GetNodeName(), "SolveTri requires at least one AIC core.");
          }
          return ge::GRAPH_FAILED;
      }
@@ -163,7 +163,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      auto inputShape = context->GetInputShape(INPUT_X_IDX);
      if (inputShape == nullptr) {
          if constexpr (IsA2A3) {
-             OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri input x shape is unavailable.");
+             OP_LOGE(context->GetNodeName(), "SolveTri input x shape is unavailable.");
          }
          return ge::GRAPH_FAILED;
      }
@@ -182,7 +182,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
      auto attrs = context->GetAttrs();
     if constexpr (IsA2A3) {
         if (attrs == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri layout attributes are unavailable.");
+            OP_LOGE(context->GetNodeName(), "SolveTri layout attributes are unavailable.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -328,7 +328,7 @@ static ge::graphStatus ValidateVarlenMetadata(gert::TilingContext *context, int6
     if constexpr (IsA2A3) {
         const auto *outputDesc = context->GetOutputDesc(OUTPUT_X_OUT_IDX);
         if (inputDesc == nullptr || outputDesc == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SolveTri input or output descriptor is null.");
+            OP_LOGE(context->GetNodeName(), "SolveTri input or output descriptor is null.");
             return ge::GRAPH_FAILED;
         }
         if (outputDesc->GetDataType() != inputDesc->GetDataType()) {
