@@ -43,3 +43,37 @@ def check(actual, expected):
 def expected(case, silu=True, norm=True):
     return reference(*case, silu=silu, qk_l2norm=norm)
 
+
+
+def short_conv_weights(heads, dtype, seed=915):
+    """Independent spatial and temporal depthwise weights for the released K/V path."""
+    rng = torch.Generator().manual_seed(seed)
+    channels = heads * 128
+    return {name: ((torch.randn(channels, 1, 5, 5, generator=rng) * 0.2).to(dtype),
+                   (torch.randn(channels, 5, generator=rng) * 0.4).to(dtype))
+            for name in ("k", "v")}
+
+
+def apply_short_conv(case, frame_size, weights):
+    """CPU oracle. Reproduce the feature dtype at the spatial output and each temporal tap."""
+    height, width = frame_size
+    frames, heads, tokens, dim = case[0].shape
+    channels = heads * dim
+    prepared = list(case)
+    for idx, name in enumerate(("q", "k", "v")):
+        if name not in weights:
+            continue
+        spatial_weight, temporal_weight = weights[name]
+        dtype = case[idx].dtype
+        volume = case[idx].transpose(2, 3).reshape(frames, channels, height, width).float()
+        volume = volume.contiguous(memory_format=torch.channels_last)
+        spatial = torch.nn.functional.conv2d(volume, spatial_weight.float(), padding=2, groups=channels)
+        spatial = spatial.to(dtype).reshape(frames, heads, dim, tokens).transpose(2, 3)
+        padded = torch.nn.functional.pad(spatial, (0, 0, 0, 0, 0, 0, 2, 2))
+        accum = torch.zeros_like(spatial)
+        taps = temporal_weight.reshape(heads, dim, 5).float()
+        for tap in range(5):
+            product = (padded[tap:tap + frames].float() * taps[None, :, None, :, tap]).to(dtype)
+            accum = (accum.float() + product.float()).to(dtype)
+        prepared[idx] = accum
+    return prepared

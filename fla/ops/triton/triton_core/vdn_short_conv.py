@@ -10,7 +10,17 @@ from .vdn_features import ROW_TILE, VECTOR_PROGRAMS, _activate_values, _source_r
 
 
 @triton.jit
-def _temporal_activate(src, weight, dst,
+def _tap_round(x, kind: tl.constexpr):
+    if kind == tl.bfloat16:
+        # Keep each round-to-nearest conversion visible to the compiler.
+        # Rebuild FP32 from the resulting BF16 bits before the next operation.
+        hi = x.to(tl.bfloat16).to(tl.uint16, bitcast=True).to(tl.uint32)
+        return (hi << 16).to(tl.float32, bitcast=True)
+    return x
+
+
+@triton.jit
+def _temporal_activate(src, weight, dst, beta, WEIGHT_VALUE: tl.constexpr,
                        HEADS, TOKENS, D: tl.constexpr,
                        FIRST_OUT, HALO_FRAMES,
                        OUT_FRAMES, SILU: tl.constexpr, NORM: tl.constexpr,
@@ -31,14 +41,18 @@ def _temporal_activate(src, weight, dst,
             x = tl.load(src + addr, (token[:, None] < TOKENS) & (f >= 0) & (f < HALO_FRAMES),
                         other=0).to(tl.float32)
             w = tl.load(weight + tap * HEADS * D + feature).to(tl.float32)
-            product = _source_round(x * w[None, :], kind)
-            accum = _source_round(accum + product, kind)
+            product = _tap_round(x * w[None, :], kind)
+            accum = _tap_round(accum + product, kind)
         y = _activate_values(accum, kind, SILU, NORM, BLOCK)
+        if WEIGHT_VALUE:
+            offset = (frame * HEADS + head) * TOKENS + token
+            coeff = tl.load(beta + offset, token < TOKENS, other=0).to(tl.float32)
+            y = _source_round(y, kind) * coeff[:, None]
         dst_addr = ((frame * HEADS + head) * TOKENS + token[:, None]) * D + d[None, :]
         tl.store(dst + dst_addr, y, token[:, None] < TOKENS)
 
 
-def _short_tile(tensor, rows, frame_size, weights, *, silu, l2norm):
+def _short_tile(tensor, rows, frame_size, weights, *, silu, l2norm, beta=None):
     frames, heads, tokens, dim = tensor.shape
     channels = heads * dim
     start, end = max(rows.start - 2, 0), min(rows.stop + 2, frames)
@@ -51,10 +65,11 @@ def _short_tile(tensor, rows, frame_size, weights, *, silu, l2norm):
                       device=tensor.device, dtype=tensor.dtype)
     out_frames = rows.stop - rows.start
     programs = min(out_frames * heads * triton.cdiv(tokens, ROW_TILE), VECTOR_PROGRAMS)
-    torch.npu.current_stream(tensor.device).synchronize()
+    stream = torch.npu.current_stream(tensor.device).npu_stream
+    beta_ptr = out if beta is None else beta
     _temporal_activate[(programs,)](
-        spatial, weights[1], out, heads, tokens, dim, rows.start - start,
-        end - start, out_frames, silu, l2norm, ROW_TILE, programs)
+        spatial, weights[1], out, beta_ptr, beta is not None, heads, tokens, dim,
+        rows.start - start, end - start, out_frames, silu, l2norm, ROW_TILE, programs, stream=stream)
     return out
 
 
@@ -97,6 +112,11 @@ class _FeaturePreprocessor:
         return activate_tile(tensor[rows], silu=self.silu, l2norm=l2norm)
 
     def key_value(self, k, v, beta, rows):
+        if "v" in self.weights and beta.dtype == v.dtype and beta.is_contiguous():
+            key = self(k, rows, "k")
+            value = _short_tile(v, rows, self.frame_size, self.weights["v"],
+                                silu=self.silu, l2norm=False, beta=beta)
+            return key, value, True
         if (self.silu and self.qk_l2norm and "k" not in self.weights
                 and "v" not in self.weights and token_major(k) and token_major(v)):
             key, weighted_value = activate_kv_head_major(k[rows], v[rows], beta)

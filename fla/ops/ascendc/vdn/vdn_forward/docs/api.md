@@ -20,6 +20,17 @@ vdn_forward(q, k, v, beta, alpha, bounds, text_state=None, *,
 | `short_conv, frame_size` | 可选字典，以 `q`、`k` 或 `v` 为键。每个值为一对 depthwise 权重，空间核 `[H*128,1,5,5]`，时间核 `[H*128,5]` 或 `[H*128,1,5]`；dtype 和设备与 Q 一致。`frame_size=(height,width)`，两者乘积为 S；空间和时间端点零填充。 |
 | `frame_tile, pad_tail, value_first` | 帧块上限可设正的 2 的整幂或由实现选择。`pad_tail=True` 将尾块补至最近的上方 2 次幂；关闭时将余数拆为多个 2 次幂块。`value_first=True` 先算 value Gram 以改善缓存复用。 |
 
+发布模型对 K、V 分别使用各自的空间和时间卷积权重。Q 直接进入后续特征处理。调用方式为
+
+```python
+out = vdn_forward(q, k, v, beta, alpha, bounds, text_state,
+                  short_conv={"k": (k_spatial, k_temporal), "v": (v_spatial, v_temporal)},
+                  frame_size=(height, width), fuse_silu=True, fuse_qk_l2norm=True,
+                  delta_rule="newton_schulz", value_first=True)
+```
+
+空间阶段为逐通道 5×5 卷积。时间阶段对空间输出做逐通道五点卷积，分块边界从相邻帧取值，仅片段的两端补零。BF16 时间卷积的每次乘法和加法均按特征 dtype 舍入。时间核同时计算 SiLU 和可选的 Q/K 归一化。V 有卷积且当前块的 β 连续并与 V 同 dtype 时，时间核还会在写回前完成 β 加权。已在上游完成卷积的调用方应省略对应的权重。
+
 令每帧每头的 token 沿矩阵的行排列。对预处理输出，构造
 `A = Kᵀ diag(β) K`、`M = I + (A+Aᵀ)/2`、`B = Vᵀ diag(β) K`。
 两方向使用相同更新 `step(X,t) = (X diag(α_t) + B_t) M_t⁻¹`。
