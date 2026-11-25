@@ -267,7 +267,8 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
     const auto fwdHResult = l0op::ChunkFwdH(
         kgHead, wHead, uHead, nullptr, gkHead, args.initialState, args.cuSeqlens, args.chunkIndices,
         outputFinalState, chunkSize, true, args.useExp2, args.stateVFirst, hCompute,
-        vNewCompute, outputFinalState ? args.finalStateOut : nullptr, executor);
+        vNewCompute, outputFinalState ? args.finalStateOut : nullptr, executor, "BNSD",
+        args.checkpointOffsets, args.checkpointState);
     if (!(fwdHResult[0] != nullptr && fwdHResult[1] != nullptr &&
                    (!outputFinalState || fwdHResult[2] != nullptr))) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to launch ChunkFwdH.", __func__);

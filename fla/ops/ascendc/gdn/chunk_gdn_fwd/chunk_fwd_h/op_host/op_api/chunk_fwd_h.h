@@ -31,7 +31,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
     aclOpExecutor *executor,
-    const char *layout = "BNSD");
+    const char *layout = "BNSD",
+    const aclTensor *checkpointOffsets = nullptr,
+    const aclTensor *checkpointState = nullptr);
 }
 
 #endif

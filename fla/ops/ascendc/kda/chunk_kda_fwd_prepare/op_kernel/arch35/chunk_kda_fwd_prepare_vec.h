@@ -1347,9 +1347,20 @@ private:
         AscendC::DataCopy(akkRelay, akk,
             Shape::kChunkRows * Shape::kChunkRows);
         if constexpr (CompilePolicy::outputAkk) {
-            AscendC::DataCopy(akkGm_[AOutputOffset(
-                args_.tiling, chunk, valueHead)], akk,
-                chunk.validRows * Shape::kChunkRows);
+            const uint64_t out = AOutputOffset(
+                args_.tiling, chunk, valueHead);
+            const uint32_t topRows = chunk.validRows < 32
+                ? chunk.validRows : 32;
+            AscendC::DataCopy(akkGm_[out], akk,
+                topRows * Shape::kChunkRows);
+            if (chunk.validRows > 32) {
+                // C5 owns q10. Publish only q11 here so AIV and AIC never
+                // write the same public GM bytes, including the zero q10
+                // placeholder that C5 replaces after the payload handshake.
+                constexpr uint32_t q11 = 32 * Shape::kChunkRows + 32;
+                AscendC::DataCopy(akkGm_[out + q11], akk[q11],
+                    AscendC::DataCopyParams(chunk.validRows - 32, 2, 2, 2));
+            }
         }
         AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
     }

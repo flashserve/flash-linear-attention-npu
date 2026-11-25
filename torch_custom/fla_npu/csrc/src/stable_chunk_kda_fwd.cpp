@@ -39,6 +39,20 @@ using fla_npu_stable::stable::scalar;
 using fla_npu_stable::stable::size_of;
 using fla_npu_stable::stable::tensor;
 
+constexpr const char* kSchema_chunk_kda_fwd_checkpoint =
+    "npu_chunk_kda_fwd_checkpoint(Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta, "
+    "Tensor? A_log, Tensor? dt_bias, Tensor? initial_state, "
+    "Tensor? cu_seqlens, Tensor? chunk_indices, int layout, float scale, "
+    "int chunk_size, bool safe_gate, float lower_bound, "
+    "bool use_gate_in_kernel, bool state_v_first, float epsilon, "
+    "bool use_qk_l2norm_in_kernel, bool use_beta_sigmoid_in_kernel, "
+    "bool allow_neg_eigval, bool use_exp2, bool output_final_state, "
+    "bool disable_recompute, bool return_intermediate_states, "
+    "Tensor? q_hat_out, Tensor? k_hat_out, Tensor? q_rstd_out, "
+    "Tensor? k_rstd_out, Tensor? beta_eff_out, Tensor? checkpoint_offsets, Tensor(a!)? checkpoint_state, int stream) "
+    "-> (Tensor, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, Tensor?, "
+    "Tensor?, Tensor?, Tensor?)";
+
 // ---------------------------------------------------------------------------
 // npu_chunk_kda_fwd
 // ---------------------------------------------------------------------------
@@ -74,7 +88,7 @@ std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>,
            std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
            std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
            std::optional<Tensor>, std::optional<Tensor>>
-run_npu_chunk_kda_fwd(
+run_npu_chunk_kda_fwd_impl(
     Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta,
     std::optional<Tensor> A_log, std::optional<Tensor> dt_bias,
     std::optional<Tensor> initial_state,
@@ -87,9 +101,12 @@ run_npu_chunk_kda_fwd(
     bool return_intermediate_states,
     std::optional<Tensor> q_hat_out, std::optional<Tensor> k_hat_out,
     std::optional<Tensor> q_rstd_out, std::optional<Tensor> k_rstd_out,
-    std::optional<Tensor> beta_eff_out, int64_t stream) {
+    std::optional<Tensor> beta_eff_out, std::optional<Tensor> checkpoint_offsets, std::optional<Tensor> checkpoint_state, int64_t stream) {
   // 反向 L2 norm 保存值出口：调用方给了才导出，不给就是空槽（nullptr），
   // 因此"不传这五个输出"与改动前的 11 项返回逐位一致。
+  if (checkpoint_offsets.has_value() != checkpoint_state.has_value()) {
+    throw std::runtime_error("KDA checkpoint offsets and state must be provided together");
+  }
   const bool wants_saved =
       q_hat_out.has_value() || k_hat_out.has_value() || q_rstd_out.has_value() ||
       k_rstd_out.has_value() || beta_eff_out.has_value();
@@ -192,7 +209,7 @@ run_npu_chunk_kda_fwd(
   const char* soc = soc_name ? soc_name() : nullptr;
   const bool arch960 = soc && std::strstr(soc, "Ascend960");
   const bool use_v2 = v2_scenario &&
-                      (switches_requested || arch960 ||
+                      (switches_requested || checkpoint_state.has_value() || arch960 ||
                        work_items >= kChunkKdaFwdV2MinWorkItems);
 
   if (chunk_size == 32 && wants_saved) {
@@ -201,7 +218,42 @@ run_npu_chunk_kda_fwd(
         "backward saved values (q_hat/k_hat/q_rstd/k_rstd/beta_eff).");
   }
 
+  if (checkpoint_state.has_value() && !v2_scenario) {
+    throw std::runtime_error("KDA checkpoints require the BF16 chunk64 composition path");
+  }
   if (use_v2) {
+    if (checkpoint_state.has_value()) {
+    FLA_STABLE_EXEC(
+        "aclnnChunkKdaFwdV3", q_meta, stream, tensor(q_meta),
+        tensor(meta_of(k)), tensor(v_meta), tensor(meta_of(g)),
+        tensor(meta_of(beta)), optional_tensor(A_log), optional_tensor(dt_bias),
+        optional_tensor(initial_state), int_array(cu), int_array(ci),
+        cstr(kChunkKdaFwdLayoutNames, layout), scalar(scale),
+        scalar(chunk_size), scalar(safe_gate), scalar(lower_bound),
+        scalar(use_gate_in_kernel), scalar(state_v_first), scalar(epsilon),
+        scalar(use_qk_l2norm_in_kernel), scalar(use_beta_sigmoid_in_kernel),
+        scalar(allow_neg_eigval), scalar(use_exp2),
+        out_tensor(meta_of(out_attn)),
+        out_tensor(out_final_state.has_value() ? meta_of(*out_final_state)
+                                               : TensorMeta()),
+        out_tensor(out_gk.has_value() ? meta_of(*out_gk) : TensorMeta()),
+        out_tensor(out_aqk.has_value() ? meta_of(*out_aqk) : TensorMeta()),
+        out_tensor(out_akk.has_value() ? meta_of(*out_akk) : TensorMeta()),
+        out_tensor(out_w.has_value() ? meta_of(*out_w) : TensorMeta()),
+        out_tensor(out_u.has_value() ? meta_of(*out_u) : TensorMeta()),
+        out_tensor(out_qg.has_value() ? meta_of(*out_qg) : TensorMeta()),
+        out_tensor(out_kg.has_value() ? meta_of(*out_kg) : TensorMeta()),
+        out_tensor(out_v_new.has_value() ? meta_of(*out_v_new) : TensorMeta()),
+        out_tensor(out_h.has_value() ? meta_of(*out_h) : TensorMeta()),
+        out_tensor(q_hat_out.has_value() ? meta_of(*q_hat_out) : TensorMeta()),
+        out_tensor(k_hat_out.has_value() ? meta_of(*k_hat_out) : TensorMeta()),
+        out_tensor(q_rstd_out.has_value() ? meta_of(*q_rstd_out) : TensorMeta()),
+        out_tensor(k_rstd_out.has_value() ? meta_of(*k_rstd_out) : TensorMeta()),
+        out_tensor(beta_eff_out.has_value() ? meta_of(*beta_eff_out)
+                                           : TensorMeta()),
+        optional_tensor(checkpoint_offsets),
+        out_tensor(checkpoint_state.has_value() ? meta_of(*checkpoint_state) : TensorMeta()));
+    } else {
     FLA_STABLE_EXEC(
         "aclnnChunkKdaFwdV2", q_meta, stream, tensor(q_meta),
         tensor(meta_of(k)), tensor(v_meta), tensor(meta_of(g)),
@@ -230,6 +282,7 @@ run_npu_chunk_kda_fwd(
         out_tensor(k_rstd_out.has_value() ? meta_of(*k_rstd_out) : TensorMeta()),
         out_tensor(beta_eff_out.has_value() ? meta_of(*beta_eff_out)
                                            : TensorMeta()));
+    }
     return std::make_tuple(out_attn, out_final_state, out_gk, out_aqk, out_akk,
                            out_w, out_u, out_qg, out_kg, out_v_new, out_h);
   }
@@ -265,6 +318,48 @@ run_npu_chunk_kda_fwd(
       out_tensor(out_h.has_value() ? meta_of(*out_h) : TensorMeta()));
   return std::make_tuple(out_attn, out_final_state, out_gk, out_aqk, out_akk,
                          out_w, out_u, out_qg, out_kg, out_v_new, out_h);
+}
+
+std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>>
+run_npu_chunk_kda_fwd(
+    Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta,
+    std::optional<Tensor> A_log, std::optional<Tensor> dt_bias,
+    std::optional<Tensor> initial_state,
+    std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
+    int64_t layout, double scale, int64_t chunk_size, bool safe_gate,
+    double lower_bound, bool use_gate_in_kernel, bool state_v_first,
+    double epsilon, bool use_qk_l2norm_in_kernel,
+    bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, bool use_exp2,
+    bool output_final_state, bool disable_recompute,
+    bool return_intermediate_states,
+    std::optional<Tensor> q_hat_out, std::optional<Tensor> k_hat_out,
+    std::optional<Tensor> q_rstd_out, std::optional<Tensor> k_rstd_out,
+    std::optional<Tensor> beta_eff_out, int64_t stream) {
+  return run_npu_chunk_kda_fwd_impl(q, k, v, g, beta, A_log, dt_bias, initial_state, cu_seqlens, chunk_indices, layout, scale, chunk_size, safe_gate, lower_bound, use_gate_in_kernel, state_v_first, epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel, allow_neg_eigval, use_exp2, output_final_state, disable_recompute, return_intermediate_states, q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out, std::nullopt, std::nullopt, stream);
+}
+
+std::tuple<Tensor, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>, std::optional<Tensor>,
+           std::optional<Tensor>, std::optional<Tensor>>
+run_npu_chunk_kda_fwd_checkpoint(
+    Tensor q, Tensor k, Tensor v, Tensor g, Tensor beta,
+    std::optional<Tensor> A_log, std::optional<Tensor> dt_bias,
+    std::optional<Tensor> initial_state,
+    std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
+    int64_t layout, double scale, int64_t chunk_size, bool safe_gate,
+    double lower_bound, bool use_gate_in_kernel, bool state_v_first,
+    double epsilon, bool use_qk_l2norm_in_kernel,
+    bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, bool use_exp2,
+    bool output_final_state, bool disable_recompute,
+    bool return_intermediate_states,
+    std::optional<Tensor> q_hat_out, std::optional<Tensor> k_hat_out,
+    std::optional<Tensor> q_rstd_out, std::optional<Tensor> k_rstd_out,
+    std::optional<Tensor> beta_eff_out, std::optional<Tensor> checkpoint_offsets, std::optional<Tensor> checkpoint_state, int64_t stream) {
+  return run_npu_chunk_kda_fwd_impl(q, k, v, g, beta, A_log, dt_bias, initial_state, cu_seqlens, chunk_indices, layout, scale, chunk_size, safe_gate, lower_bound, use_gate_in_kernel, state_v_first, epsilon, use_qk_l2norm_in_kernel, use_beta_sigmoid_in_kernel, allow_neg_eigval, use_exp2, output_final_state, disable_recompute, return_intermediate_states, q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out, checkpoint_offsets, checkpoint_state, stream);
 }
 
 }  // namespace

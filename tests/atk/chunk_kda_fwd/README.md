@@ -56,3 +56,27 @@ bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=determi
 ```
 
 性能、确定性、mssanitizer 和用例生成均通过统一脚本的对应 `-scope` 执行。
+
+## 内部 checkpoint 导出参考
+
+checkpoint 用例覆盖 packed/fixed batch、初态存在/缺失、VK/KV 布局、无效选点，
+并以 H128 的多序列用例覆盖多轮 head/序列任务复用同一个 AIV 状态银行的情况；
+后者检查 checkpoint 写回必须在下一轮状态更新前完成。每个精度场景保留三个固定种子，
+相应 MSS 场景使用同一输入合同。
+
+新增 checkpoint 用例的验收对象是 FwdH 的 FP32 状态导出及恢复，保持原 KDA 混合精度计算。
+原有输出继续使用原数学参考；新增用例的末态与选点使用独立 CPU FP64 FwdH 递推，
+显式保留 BF16 H/v_new 和 FP32 状态银行的存储舍入，混合容差阈值不变。
+
+统一入口在 ATK 开始前生成共享 Prepare 输入张量，保存在结果目录的 `checkpoint_inputs/`，
+通过 `KDA_ATK_CHECKPOINT_INPUT_DIR` 传给 CPU 参考。文件只包含 kg/w/u/gk、输入指纹和用例，
+不包含 NPU 末态或 checkpoint。CPU 参考检查输入、seed和元数据一致后独立递推；
+导出中间量与原运行模式的输出还必须逐位相同。这是 FwdH/导出合同验证，不是整模型精度验收。
+独立参考位于同目录 `checkpoint_reference.py`，ATK CPU 节点和 NPU 合同测试共同复用；
+参考模块只依赖 CPU PyTorch，不导入 NPU 后端或 pytest。
+
+如需单独诊断整算子相对纯 FP64 数学参考的误差，可设
+`KDA_ATK_CHECKPOINT_REFERENCE=math`；这会保留纯数学末态/选点参考，不能把该诊断与
+状态导出验收混称。直接运行 ATK 时先执行同目录 executor 的
+`--prepare-checkpoint-inputs <case.json> --device <id> -s <start> -e <end>`，
+并为生成器和 ATK 显式设置同一个 `KDA_ATK_CHECKPOINT_INPUT_DIR`。

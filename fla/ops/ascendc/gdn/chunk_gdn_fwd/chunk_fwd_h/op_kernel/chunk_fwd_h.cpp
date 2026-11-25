@@ -96,8 +96,8 @@ template <int D_T_G, int V_DIM, bool USE_GK, bool USE_EXP2, bool STATE_FP32,
           bool STATE_V_FIRST, bool STORE_FINAL, bool DENSE_T16>
 __global__ __aicore__ void chunk_fwd_h(
     GM_ADDR k, GM_ADDR w, GM_ADDR u, GM_ADDR g, GM_ADDR gk, GM_ADDR initial_state,
-    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR h, GM_ADDR v_new,
-    GM_ADDR final_state, GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR checkpoint_offsets, GM_ADDR h, GM_ADDR v_new,
+    GM_ADDR final_state, GM_ADDR checkpoint_state, GM_ADDR workspace, GM_ADDR tiling)
 {
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
@@ -116,6 +116,8 @@ __global__ __aicore__ void chunk_fwd_h(
     args.h = h;
     args.vNew = v_new;
     args.finalState = final_state;
+    args.checkpointOffsets = checkpoint_offsets;
+    args.checkpointState = checkpoint_state;
     args.workspace = AscendC::GetUserWorkspace(workspace);
     __gm__ const ChunkFwdHTilingData *tilingData =
         reinterpret_cast<__gm__ const ChunkFwdHTilingData *>(tiling);

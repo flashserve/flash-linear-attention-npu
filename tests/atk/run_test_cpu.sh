@@ -386,6 +386,14 @@ fi
 if should_run accuracy; then
   log_info "开始精度与 NaN 检测：mixed_tolerance_bm + CPU单标杆 + GM 初始化"
   set_case_range_args "精度与 NaN 检测 case 范围" "$ACCURACY_START" "$ACCURACY_END"
+  if [[ "$OP" == "chunk_kda_fwd" && "${KDA_ATK_CHECKPOINT_REFERENCE:-export}" != "math" ]]; then
+    mkdir -p "${ATK_OUTPUT_ROOT}/checkpoint_inputs"
+    export KDA_ATK_CHECKPOINT_INPUT_DIR
+    KDA_ATK_CHECKPOINT_INPUT_DIR=$(cd "${ATK_OUTPUT_ROOT}/checkpoint_inputs" && pwd)
+    python executor_chunk_kda_fwd.py \
+      --prepare-checkpoint-inputs "./atk_${OP}.json" --device "$NPU_DEVICE_ID" \
+      "${CASE_RANGE_ARGS[@]}"
+  fi
   "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
       --output_path "${ATK_OUTPUT_ROOT}/accuracy" \
     node --name cpu_golden --backend cpu \
@@ -439,7 +447,7 @@ if should_run mssanitizer; then
   log_info "ATK mssanitizer 日志：${MSS_LOG_PATH}"
   set_case_range_args "内存检测 case 范围" "$MSS_START" "$MSS_END"
   touch "$MSS_LOG_PATH"
-  mssanitizer --tool="$MSS_TOOL" -- \
+  mssanitizer --tool="$MSS_TOOL" --log-file="$MSS_LOG_PATH" -- \
     "$ATK_BIN" node --name npu_dut --backend npu --devices "$NPU_DEVICE_ID" \
     task \
       -c "atk_${OP}_mss.json" \

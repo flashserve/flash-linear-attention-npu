@@ -200,6 +200,8 @@ struct FwdHKernelArgs {
     GM_ADDR h = nullptr;
     GM_ADDR vNew = nullptr;
     GM_ADDR finalState = nullptr;
+    GM_ADDR checkpointOffsets = nullptr;
+    GM_ADDR checkpointState = nullptr;
     GM_ADDR workspace = nullptr;
     FwdHRuntimeTiling tiling{};
 };

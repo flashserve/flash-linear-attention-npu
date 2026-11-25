@@ -89,6 +89,55 @@ aclnnStatus aclnnChunkKdaFwdV2(
     aclOpExecutor *executor,
     aclrtStream stream);
 
+/* Opt-in FP32 internal checkpoints; V1/V2 ABI is unchanged. */
+__attribute__((visibility("default")))
+aclnnStatus aclnnChunkKdaFwdV3GetWorkspaceSize(
+    const aclTensor *q,
+    const aclTensor *k,
+    const aclTensor *v,
+    const aclTensor *g,
+    const aclTensor *beta,
+    const aclTensor *aLogOptional,
+    const aclTensor *dtBiasOptional,
+    const aclTensor *initialStateOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    const char *layout,
+    double scale,
+    int64_t chunkSize,
+    bool safeGate,
+    double lowerBound,
+    bool useGateInKernel,
+    bool stateVFirst,
+    double epsilon,
+    bool useQkL2normInKernel,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
+    bool useExp2,
+    const aclTensor *attnOut,
+    const aclTensor *finalStateOut,
+    const aclTensor *gkOut,
+    const aclTensor *aqkOut,
+    const aclTensor *akkOut,
+    const aclTensor *wOut,
+    const aclTensor *uOut,
+    const aclTensor *qgOut,
+    const aclTensor *kgOut,
+    const aclTensor *vNewOut,
+    const aclTensor *hOut,
+    const aclTensor *qHatOut,
+    const aclTensor *kHatOut,
+    const aclTensor *qRstdOut,
+    const aclTensor *kRstdOut,
+    const aclTensor *betaEffOut,
+    const aclTensor *checkpointOffsets,
+    const aclTensor *checkpointState,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor);
+
+__attribute__((visibility("default")))
+aclnnStatus aclnnChunkKdaFwdV3(void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream);
+
 #ifdef __cplusplus
 }
 #endif

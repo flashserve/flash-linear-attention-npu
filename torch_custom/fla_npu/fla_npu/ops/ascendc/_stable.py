@@ -1416,7 +1416,8 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
                       # 反向 L2 norm 保存值出口：传入自己的张量才导出，
                       # 不传（None）就是空槽，接口不报错、老行为不变。
                       q_hat_out=None, k_hat_out=None, q_rstd_out=None,
-                      k_rstd_out=None, beta_eff_out=None):
+                      k_rstd_out=None, beta_eff_out=None,
+                      checkpoint_offsets=None, checkpoint_state=None):
     """KDA chunked forward, returning the saved tensors the backward needs.
 
     ``disable_recompute`` is what makes `w`/`u`/`qg`/`kg`/`v_new` real outputs
@@ -1538,7 +1539,25 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         if initial_state is not None:
             initial_state = initial_state.transpose(-1, -2).contiguous()
         state_v_first = False
-    result = _op("npu_chunk_kda_fwd")(
+    if (checkpoint_offsets is None) != (checkpoint_state is None):
+        raise ValueError("KDA checkpoint offsets and state must be provided together")
+    checkpoint_args = ()
+    op_name = "npu_chunk_kda_fwd"
+    if checkpoint_state is not None:
+        if int(chunk_size) != 64:
+            raise ValueError("KDA internal checkpoints require chunk_size=64")
+        if checkpoint_offsets.dtype != torch.int32 or checkpoint_offsets.ndim != 1:
+            raise ValueError("KDA checkpoint offsets must be an INT32 [N] device tensor")
+        if checkpoint_state.dtype != torch.float32 or checkpoint_state.ndim != 4:
+            raise ValueError("KDA checkpoint state must be a FP32 [N,H,V,K] or [N,H,K,V] tensor")
+        if any(t.device != q.device or not t.is_contiguous() for t in (checkpoint_offsets, checkpoint_state)):
+            raise ValueError("KDA checkpoint buffers must be contiguous and on the input device")
+        if any(t is not None and t.untyped_storage().data_ptr() == checkpoint_state.untyped_storage().data_ptr()
+               for t in (q, k, v, g, beta, A_log, dt_bias, caller_initial_state, checkpoint_offsets)):
+            raise ValueError("KDA checkpoint state must not alias an input or running state")
+        checkpoint_args = (checkpoint_offsets, checkpoint_state)
+        op_name = "npu_chunk_kda_fwd_checkpoint"
+    result = _op(op_name)(
         q, k, v, g, beta, A_log, dt_bias, initial_state,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
         _char_code("npu_chunk_kda_fwd", "layout", layout),
@@ -1551,7 +1570,7 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         bool(output_final_state), bool(disable_recompute),
         bool(return_intermediate_states),
         q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
-        _current_stream_ptr(),
+        *checkpoint_args, _current_stream_ptr(),
     )
     if svf_absorb and output_final_state and result[1] is not None:
         # 转回调用方期望的 V-first 布局;尾槽仍返回调用方自己的 initial_state。

@@ -75,6 +75,8 @@ struct KdaFwdV2Args {
     const aclTensor *qRstdOut = nullptr;
     const aclTensor *kRstdOut = nullptr;
     const aclTensor *betaEffOut = nullptr;
+    const aclTensor *checkpointOffsets = nullptr;
+    const aclTensor *checkpointState = nullptr;
 };
 
 // 由公开输出指针组合推导 ChunkKdaFwdPrepare 的编译期 outputMode。

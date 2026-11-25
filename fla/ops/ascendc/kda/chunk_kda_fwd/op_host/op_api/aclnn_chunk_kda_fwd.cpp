@@ -27,6 +27,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "opdev/format_utils.h"
 #include "opdev/platform.h"
 #include "opdev/tensor_view_utils.h"
 #include "graph/utils/type_utils.h"
@@ -99,6 +100,8 @@ struct ChunkKdaFwdParams {
     const aclTensor *qRstdOut = nullptr;
     const aclTensor *kRstdOut = nullptr;
     const aclTensor *betaEffOut = nullptr;
+    const aclTensor *checkpointOffsets = nullptr;
+    const aclTensor *checkpointState = nullptr;
 };
 
 struct KdaShapeInfo {
@@ -873,6 +876,8 @@ l0op::KdaFwdV2Args MakeKdaFwdV2Args(const ChunkKdaFwdParams &params,
     args.qRstdOut = params.qRstdOut;
     args.kRstdOut = params.kRstdOut;
     args.betaEffOut = params.betaEffOut;
+    args.checkpointOffsets = params.checkpointOffsets;
+    args.checkpointState = params.checkpointState;
     return args;
 }
 
@@ -1219,7 +1224,7 @@ aclnnStatus aclnnChunkKdaFwd(void *workspace, uint64_t workspaceSize,
     return ACLNN_SUCCESS;
 }
 
-aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
+static aclnnStatus KdaFwdGetWorkspaceSize(
     const aclTensor *q,
     const aclTensor *k,
     const aclTensor *v,
@@ -1258,9 +1263,17 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
     const aclTensor *qRstdOut,
     const aclTensor *kRstdOut,
     const aclTensor *betaEffOut,
+    const aclTensor *checkpointOffsets,
+    const aclTensor *checkpointState,
     uint64_t *workspaceSize,
     aclOpExecutor **executor)
 {
+    const bool hasCheckpoint = checkpointOffsets != nullptr || checkpointState != nullptr;
+    if (hasCheckpoint && (checkpointOffsets == nullptr || checkpointState == nullptr || chunkSize != 64 ||
+        GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_3510)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "checkpoints require paired buffers and Ascend950 chunk64");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const aclTensor *requiredInputs[] = {q, k, v, g, beta};
     const char *requiredInputNames[] = {"q", "k", "v", "g", "beta"};
     for (size_t i = 0; i < sizeof(requiredInputs) / sizeof(requiredInputs[0]); ++i) {
@@ -1284,16 +1297,8 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
         useBetaSigmoidInKernel, allowNegEigval, useExp2, attnOut, finalStateOut, gkOut,
         aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut,
         qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut};
-    L2_DFX_PHASE_1(
-        aclnnChunkKdaFwdV2,
-        DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
-               cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
-               safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon,
-               useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2),
-        DFX_OUT(attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
-                qgOut, kgOut, vNewOut, hOut, qHatOut, kHatOut, qRstdOut,
-                kRstdOut, betaEffOut));
-
+    params.checkpointOffsets = checkpointOffsets;
+    params.checkpointState = checkpointState;
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME,
@@ -1359,6 +1364,18 @@ aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
             "公开输出连续且 cu_seqlens 严格递增，请改用 aclnnChunkKdaFwd");
         return ACLNN_ERR_PARAM_INVALID;
     }
+    if (hasCheckpoint) {
+        if (IsPrivateFormat(checkpointOffsets->GetStorageFormat()) || IsPrivateFormat(checkpointOffsets->GetViewFormat()) ||
+            IsPrivateFormat(checkpointState->GetStorageFormat()) || IsPrivateFormat(checkpointState->GetViewFormat()) ||
+            checkpointOffsets->GetDataType() != DataType::DT_INT32 ||
+            !HasShape(checkpointOffsets, {info.seqNum}) || !IsContiguous(checkpointOffsets) ||
+            checkpointState->GetDataType() != DataType::DT_FLOAT || !IsContiguous(checkpointState) ||
+            CheckStateShape(checkpointState, "checkpointState", info, stateVFirst) != ACLNN_SUCCESS ||
+            (initialStateOptional != nullptr && initialStateOptional->GetDataType() != DataType::DT_FLOAT)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "checkpoints require INT32 [N] offsets and a contiguous FP32 state buffer");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
     const aclnnStatus kdaFwdV2Status =
         l0op::KdaFwdV2(MakeKdaFwdV2Args(params, info), executorPtr);
     if (!(kdaFwdV2Status == ACLNN_SUCCESS)) {
@@ -1381,6 +1398,137 @@ aclnnStatus aclnnChunkKdaFwdV2(void *workspace, uint64_t workspaceSize,
         return runRet;
     }
     return ACLNN_SUCCESS;
+}
+
+aclnnStatus aclnnChunkKdaFwdV2GetWorkspaceSize(
+    const aclTensor *q,
+    const aclTensor *k,
+    const aclTensor *v,
+    const aclTensor *g,
+    const aclTensor *beta,
+    const aclTensor *aLogOptional,
+    const aclTensor *dtBiasOptional,
+    const aclTensor *initialStateOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    const char *layout,
+    double scale,
+    int64_t chunkSize,
+    bool safeGate,
+    double lowerBound,
+    bool useGateInKernel,
+    bool stateVFirst,
+    double epsilon,
+    bool useQkL2normInKernel,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
+    bool useExp2,
+    const aclTensor *attnOut,
+    const aclTensor *finalStateOut,
+    const aclTensor *gkOut,
+    const aclTensor *aqkOut,
+    const aclTensor *akkOut,
+    const aclTensor *wOut,
+    const aclTensor *uOut,
+    const aclTensor *qgOut,
+    const aclTensor *kgOut,
+    const aclTensor *vNewOut,
+    const aclTensor *hOut,
+    const aclTensor *qHatOut,
+    const aclTensor *kHatOut,
+    const aclTensor *qRstdOut,
+    const aclTensor *kRstdOut,
+    const aclTensor *betaEffOut,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor)
+{
+    if (q == nullptr || k == nullptr || v == nullptr || g == nullptr || beta == nullptr ||
+        workspaceSize == nullptr || executor == nullptr) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    L2_DFX_PHASE_1(
+        aclnnChunkKdaFwdV2,
+        DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
+               cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
+               safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon,
+               useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2),
+        DFX_OUT(attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
+                qgOut, kgOut, vNewOut, hOut, qHatOut, kHatOut, qRstdOut,
+                kRstdOut, betaEffOut));
+
+
+    return KdaFwdGetWorkspaceSize(
+        q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize, safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon, useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2, attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut, qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut, nullptr, nullptr, workspaceSize, executor);
+}
+
+aclnnStatus aclnnChunkKdaFwdV3GetWorkspaceSize(
+    const aclTensor *q,
+    const aclTensor *k,
+    const aclTensor *v,
+    const aclTensor *g,
+    const aclTensor *beta,
+    const aclTensor *aLogOptional,
+    const aclTensor *dtBiasOptional,
+    const aclTensor *initialStateOptional,
+    const aclIntArray *cuSeqlensOptional,
+    const aclIntArray *chunkIndicesOptional,
+    const char *layout,
+    double scale,
+    int64_t chunkSize,
+    bool safeGate,
+    double lowerBound,
+    bool useGateInKernel,
+    bool stateVFirst,
+    double epsilon,
+    bool useQkL2normInKernel,
+    bool useBetaSigmoidInKernel,
+    bool allowNegEigval,
+    bool useExp2,
+    const aclTensor *attnOut,
+    const aclTensor *finalStateOut,
+    const aclTensor *gkOut,
+    const aclTensor *aqkOut,
+    const aclTensor *akkOut,
+    const aclTensor *wOut,
+    const aclTensor *uOut,
+    const aclTensor *qgOut,
+    const aclTensor *kgOut,
+    const aclTensor *vNewOut,
+    const aclTensor *hOut,
+    const aclTensor *qHatOut,
+    const aclTensor *kHatOut,
+    const aclTensor *qRstdOut,
+    const aclTensor *kRstdOut,
+    const aclTensor *betaEffOut,
+    const aclTensor *checkpointOffsets,
+    const aclTensor *checkpointState,
+    uint64_t *workspaceSize,
+    aclOpExecutor **executor)
+{
+    if (q == nullptr || k == nullptr || v == nullptr || g == nullptr || beta == nullptr ||
+        workspaceSize == nullptr || executor == nullptr) {
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    L2_DFX_PHASE_1(
+        aclnnChunkKdaFwdV3,
+        DFX_IN(q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional,
+               cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize,
+               safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon,
+               useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2, checkpointOffsets),
+        DFX_OUT(attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,
+                qgOut, kgOut, vNewOut, hOut, qHatOut, kHatOut, qRstdOut,
+                kRstdOut, betaEffOut, checkpointState));
+
+
+    return KdaFwdGetWorkspaceSize(
+        q, k, v, g, beta, aLogOptional, dtBiasOptional, initialStateOptional, cuSeqlensOptional, chunkIndicesOptional, layout, scale, chunkSize, safeGate, lowerBound, useGateInKernel, stateVFirst, epsilon, useQkL2normInKernel, useBetaSigmoidInKernel, allowNegEigval, useExp2, attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut, qgOut, kgOut, vNewOut, hOut, qHatOut, kHatOut, qRstdOut, kRstdOut, betaEffOut, checkpointOffsets, checkpointState, workspaceSize, executor);
+}
+
+aclnnStatus aclnnChunkKdaFwdV3(void *workspace, uint64_t workspaceSize,
+                              aclOpExecutor *executor, aclrtStream stream)
+{
+    L2_DFX_PHASE_2(aclnnChunkKdaFwdV3);
+    return CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
 }
 
 #ifdef __cplusplus
