@@ -184,6 +184,11 @@ PY
 }
 
 classify_changed_files
+if [[ "$ci_soc" == "ascend950" && "${CI_GDN_A5_MODELS:-false}" == "true" && "$change_scope" == "docs-only" ]]; then
+    # Reuse the tests-only environment to exercise the A5 gate on documentation changes.
+    change_scope=tests-only
+    export CI_CHANGE_SCOPE="$change_scope"
+fi
 if [[ "$change_scope" == "docs-only" ]]; then
     write_docs_only_reports
     exit 0
@@ -782,6 +787,10 @@ run_tests_only() {
 
 run_gdr_example_st() {
     configure_installed_fla_npu_opp
+    if [[ "$ci_soc" == "ascend950" && "${CI_GDN_A5_MODELS:-false}" == "true" ]]; then
+        GDN_TESTED_SHA="${CI_ACCURACY_HEAD_SHA:-${NPU_CI_TARGET_SHA:-}}" python3 ci/gdn_a5/run.py \
+            --device "$ci_test_device" --report .ci-tmp/gdn-a5-model.json
+    fi
     local example_st_args=(
         --device "$ci_test_device"
         --cases-file "${CI_EXAMPLE_CASES_FILE:-ci/example_st_cases.json}"

@@ -1,0 +1,12 @@
+{
+  "seed": 20261125,
+  "dimension": 128,
+  "chunk_size": 64,
+  "cases": [
+    {"name": "prefill_t10028_h8_v16", "entry": "prefill", "tokens": 10028, "qk_heads": 8, "v_heads": 16},
+    {"name": "prefill_t10028_h16_v32", "entry": "prefill", "tokens": 10028, "qk_heads": 16, "v_heads": 32},
+    {"name": "prefill_t3072_h8_v24", "entry": "prefill", "tokens": 3072, "qk_heads": 8, "v_heads": 24},
+    {"name": "decode_t160_h8_v24", "entry": "decode", "tokens": 160, "qk_heads": 8, "v_heads": 24},
+    {"name": "decode_t4_h8_v16", "entry": "decode", "tokens": 4, "qk_heads": 8, "v_heads": 16}
+  ]
+}

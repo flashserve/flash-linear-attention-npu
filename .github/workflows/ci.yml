@@ -437,6 +437,7 @@ jobs:
       CI_SOC: ${{ matrix.soc }}
       FLA_NPU_SOC: ${{ matrix.soc }}
       CI_RUN_EXAMPLE_ST: 'true'
+      CI_GDN_A5_MODELS: ${{ matrix.soc == 'ascend950' && 'true' || 'false' }}
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
       CI_ACCURACY_REPORT_FILE: .ci-tmp/gdr_accuracy_report-${{ matrix.platform }}.json
@@ -683,6 +684,7 @@ jobs:
           rm -f \
             "$CI_ACCURACY_REPORT_FILE" \
             "$CI_ACCURACY_REPORT_FILE.tmp" \
+            .ci-tmp/gdn-a5-model.json \
             "$CI_STAGE_REPORT_FILE" \
             dist/fla-npu-build.log \
             "$CI_RAW_LOG_FILE" \
@@ -883,6 +885,7 @@ jobs:
           path: |
             repo/.ci-tmp/npu-ci-result-${{ matrix.platform }}.json
             repo/${{ env.CI_ACCURACY_REPORT_FILE }}
+            repo/.ci-tmp/gdn-a5-model.json
             repo/${{ env.CI_STAGE_REPORT_FILE }}
             repo/${{ env.CI_DIAGNOSTIC_FILE }}
             repo/${{ env.CI_SUMMARY_FILE }}
