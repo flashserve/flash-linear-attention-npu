@@ -24,7 +24,7 @@
 #include "util/math_util.h"
 #include "platform/platform_info.h"
 #include "causal_conv1d_bwd_tiling.h"
-#include "causal_conv1d_bwd_tiling_a5.h"
+#include "causal_conv1d_bwd_tiling_arch35.h"
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -406,7 +406,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         const auto npuArch = ascendcPlatform.GetCurNpuArch();
         curNpuArch = npuArch;
         isAscend910B = (npuArch == NpuArch::DAV_2201);
-        // A5(DAV_3510) 走独立 tiling 实现（见 causal_conv1d_bwd_tiling_a5.cpp），此处仅保留 A6/910B 策略。
+        // A5(DAV_3510) 走独立 tiling 实现（见 causal_conv1d_bwd_tiling_arch35.cpp），此处仅保留 A6/910B 策略。
         if (npuArch == NpuArch::DAV_9201) {
             archPolicy = {true, true, true, true, true, 240U, 16U};
         }

@@ -8,15 +8,15 @@
  */
 
 /*!
- * \file causal_conv1d_bwd_tiling_a5.h
+ * \file causal_conv1d_bwd_tiling_arch35.h
  * \brief Causal Conv1D backward A5(arch35/DAV_3510) dedicated tiling interface
  *
  * A5 的 tiling 与 kernel 均已独立实现：本文件声明 A5 tiling 的入参结构体与入口函数，
  * 供共享 tiling 入口在检测到 DAV_3510 时调用。
  */
 
-#ifndef ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_A5_H
-#define ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_A5_H
+#ifndef ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_ARCH35_H
+#define ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_ARCH35_H
 
 #include <cstdint>
 #include "exe_graph/runtime/tiling_context.h"
@@ -53,4 +53,4 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
 
 } // namespace optiling
 
-#endif // ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_A5_H
+#endif // ASCEND_OPS_CAUSAL_CONV1D_BWD_TILING_ARCH35_H

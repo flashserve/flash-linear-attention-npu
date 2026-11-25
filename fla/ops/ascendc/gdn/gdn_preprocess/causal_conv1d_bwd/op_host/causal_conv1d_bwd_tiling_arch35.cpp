@@ -8,7 +8,7 @@
  */
 
 /*!
- * \file causal_conv1d_bwd_tiling_a5.cpp
+ * \file causal_conv1d_bwd_tiling_arch35.cpp
  * \brief Causal Conv1D backward A5(arch35/DAV_3510) dedicated tiling implementation
  *
  * 本文件为 A5 独立 tiling 实现，与共享 tiling 入口解耦：共享入口负责解析/校验并填充
@@ -16,20 +16,13 @@
  */
 
 #include "op_common/log/log.h"
-#include "graph/utils/type_utils.h"
-#include "register/op_def_registry.h"
-#include "tiling_base/tiling_templates_registry.h"
-#include "tiling_base/tiling_util.h"
-#include "platform/soc_spec.h"
 #include "util/math_util.h"
-#include "platform/platform_info.h"
-#include "causal_conv1d_bwd_tiling_a5.h"
+#include "causal_conv1d_bwd_tiling_arch35.h"
 #include <algorithm>
 #include <string>
 
 namespace {
     constexpr const char *OP_NAME = "CausalConv1dBwd";
-    constexpr uint32_t BYTE_BLOCK = 32;
     constexpr uint32_t RESERVED_UB = 16 * 1024;
     constexpr uint32_t B16_DTYPE_SIZE = 2U;
     constexpr uint32_t FP32_DTYPE_SIZE = 4U;
@@ -47,7 +40,6 @@ namespace {
 namespace optiling {
 using Ops::Base::CeilAlign;
 using Ops::Base::CeilDiv;
-using namespace Ops::Transformer::OpTiling;
 
 ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &args,
                                         CausalConv1dBwdTilingData *tiling)
@@ -73,8 +65,6 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
 
     // A5(arch35/DAV_3510) 的架构策略固定为：regbase 预算开启、允许 id 切分/BT 填充/2D 切分，
     // 不支持三缓冲（inputStages 恒为 2），直通 BT 上限/步长分别为 224/32。
-    const uint32_t fastBtMax = DIRECT_FAST_BT_MAX;
-    const uint32_t fastBtStep = DIRECT_FAST_BT_STEP;
 
     uint32_t BD = (D % 64 == 0) ? 64 : 16;
     uint32_t numBlksD = D / BD;
@@ -92,7 +82,6 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
         (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH || activation == ACTIVATION_NONE) &&
         !useInitialState && !useFinalState && arch35DirectPathCompatible;
     uint32_t rawDtypeSize = isB16Input ? B16_DTYPE_SIZE : FP32_DTYPE_SIZE;
-    uint32_t inputStages = 2;
 
     auto CalcArch35DirectNeed = [BD, W, rawDtypeSize, isB16Input](uint32_t bt, uint32_t stages) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
@@ -118,14 +107,12 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
         uint32_t bdAl = CeilAlign(BD, BLOCK_ALIGN_NUM);
         uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
         uint32_t wBtBdAl = CeilAlign(W * bt * BD, BLOCK_ALIGN_NUM);
-        const bool hasWeight = true;
-        const bool hasBias = true;
         uint32_t need = (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
         need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
-        if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
-        if (hasWeight && activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
-        if (hasBias)   need += bdAl * FP32_DTYPE_SIZE;
-        if (hasBias && activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
+        need += 2 * wBdAl * FP32_DTYPE_SIZE;
+        if (activation == ACTIVATION_NONE) need += wBtBdAl * FP32_DTYPE_SIZE;
+        need += bdAl * FP32_DTYPE_SIZE;
+        if (activation == ACTIVATION_NONE) need += btBdAl * FP32_DTYPE_SIZE;
         if (activation == ACTIVATION_SILU || activation == ACTIVATION_SWISH)
             need += 2 * dyBdAl * FP32_DTYPE_SIZE;
         if (useInitialState || useFinalState) {
@@ -157,9 +144,10 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
     uint32_t BT = 64;
     if (useArch35DirectFast) {
         // A5 不支持三缓冲：inputStages 恒为 2，无需三缓冲探测。
-        BT = std::min(T, fastBtMax);
-        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT, inputStages) > ubSize) {
-            BT = (BT > DIRECT_FAST_BT_MIN + fastBtStep) ? (BT - fastBtStep) : DIRECT_FAST_BT_MIN;
+        BT = std::min(T, DIRECT_FAST_BT_MAX);
+        while (BT > DIRECT_FAST_BT_MIN && CalcArch35DirectNeed(BT, 2U) > ubSize) {
+            BT = (BT > DIRECT_FAST_BT_MIN + DIRECT_FAST_BT_STEP) ? (BT - DIRECT_FAST_BT_STEP)
+                                                                 : DIRECT_FAST_BT_MIN;
         }
     } else if (T < BT) {
         BT = T;
@@ -236,7 +224,7 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
     uint32_t need = 0;
     uint32_t dwStageRows = 0;
     if (useArch35DirectFast) {
-        need = CalcArch35DirectNeed(BT, inputStages);
+        need = CalcArch35DirectNeed(BT, 2U);
     } else {
         need = CalcNormalNeed(BT);
 
@@ -344,7 +332,7 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
     tiling->use2DSplit = use2DSplit ? 1 : 0;
     tiling->dwStageRows = dwStageRows;
     tiling->redStageRows = redStageRows;
-    tiling->inputStages = useArch35DirectFast ? static_cast<int64_t>(inputStages) : 2;
+    tiling->inputStages = 2;
 
     // useIdSplit 时每个核独占 i_d 并直接写回 dw/db，不再需要 partial 归约缓冲。
     uint64_t partialDwBytes = useIdSplit ? 0ULL
@@ -368,7 +356,7 @@ ge::graphStatus CausalConv1dBwdTilingA5(const CausalConv1dBwdHostTilingArgs &arg
             BT, BD, numBlksD, numChunks,
             mainCoreNum, chunkPerCore, tailChunk, sysWorkspaceSize, wsSize,
             useIdSplit ? 1 : 0, use2DSplit ? 1 : 0, dwStageRows, redStageRows,
-            static_cast<int64_t>(useArch35DirectFast ? inputStages : 2));
+            static_cast<int64_t>(2));
 
     return ge::GRAPH_SUCCESS;
 }
