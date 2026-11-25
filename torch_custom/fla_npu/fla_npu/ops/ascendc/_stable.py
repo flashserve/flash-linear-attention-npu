@@ -1528,7 +1528,7 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         # issue #829 契约:dt_bias=None ⇔ dt≡0。host 补零张量(fp32 [HV*K],HV 由
         # A_log 形状读出),kernel 内 raw = g + 0 与原语义逐位等价,免改 kernel/dispatcher。
         dt_bias = torch.zeros(int(A_log.shape[0]) * key_dim, dtype=torch.float32, device=q.device)
-    # chunk32 在 kernel 内完成 V-first state 与内部 K-first NZ 的转换。
+    # chunk32 在 kernel 内原生读取 V-first initial state；final 的 V-first 恢复见调用后处理。
     caller_initial_state = initial_state
     result = _op("npu_chunk_kda_fwd")(
         q, k, v, g, beta, A_log, dt_bias, initial_state,
@@ -1545,6 +1545,17 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
         q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out,
         _current_stream_ptr(),
     )
+    # chunk32 原生读取 V-first initial；final 先由 kernel 写 K-first，
+    # 再恢复调用方要求的 V-first，避免核内 final Scatter 转换。
+    if int(chunk_size) == 32 and bool(state_v_first) and bool(output_final_state):
+        final_state = result[1].transpose(-1, -2).contiguous()
+        result = (result[0], final_state, *result[2:])
+        # kernel 不处理有 initial 的空序列；host 预填与 K-first 临时输出布局
+        # 不兼容，因此在恢复 V-first 后逐空序列补回 initial。
+        if initial_state is not None and cu_seqlens is not None:
+            for seq, (tok0, tok1) in enumerate(zip(cu_seqlens, cu_seqlens[1:])):
+                if tok0 == tok1:
+                    final_state[seq].copy_(initial_state[seq])
     return (*result, caller_initial_state)
 
 

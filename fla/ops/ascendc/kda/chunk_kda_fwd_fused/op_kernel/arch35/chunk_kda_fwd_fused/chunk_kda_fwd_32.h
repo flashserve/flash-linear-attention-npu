@@ -590,14 +590,10 @@ public:
 	// DINTLV 偶奇载 + f2bfZero/f2bfOne + Or 得 128 bf16 线性序(与 CastState* 同习语),
 	// 散布基址(元素) = r*16(= j*256 + k_in*16),块 p → fv=p(块距 1024 元素 = 64×32B)。
 	__aicore__ inline void LoadStateNdScatter(__ubuf__ void *s_ub, __ubuf__ void *stage_f32);
-	// V-first stage [128v,64k] → 同一 K-first NZ;不增加 UB 暂存区。
-	__aicore__ inline void LoadStateVFirstScatter(__ubuf__ void *s_ub, __ubuf__ void *stage_f32);
 	// s_ub bf16 NZ → stage fp32 ND:vsldb 块聚集载(与装载侧散布存同族镜像),
 	// 行 r 从 r*16 聚 8 块 32B(块距 64×32B=2048B=fv 步长)
 	// 得 128 bf16 线性序,cast 后 INTLV 存出 128 fp32 连续行。
 	__aicore__ inline void StoreStateGatherCast(__ubuf__ void *stage_f32, __ubuf__ void *s_ub);
-	// 同一 K-first NZ → V-first stage [128v,64k],供跨步 MTE3 写回。
-	__aicore__ inline void StoreStateVFirstCastScatter(__ubuf__ void *stage_f32, __ubuf__ void *s_ub);
 	// initial_state 装载:GM fp32 ND 的本 AIV 半幅(K-first [64k,128v] 或
 	// V-first [128v,64k])→ s_ub bf16 NZ。
 	// V_MTE2(0/1) 是输入区首个使用者的预支信号量:先消费再归还,借用期间
