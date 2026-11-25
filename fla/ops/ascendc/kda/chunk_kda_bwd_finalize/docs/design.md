@@ -100,3 +100,11 @@ A2/A3 总接口按原始 beta dtype 分配 db，通过现有 model_layout 调用
 输入 BetaT 与输出 DTYPE_D_BETA 分离，原 FP32 数学和 UB 生命周期保持不变，
 仅最终 pack/store 使用输出类型。独立 Finalize API 继续要求 db dtype 与其 beta 输入一致；
 新增组合只供融合 sigmoid 的总接口路径使用。
+
+## A5 块内梯度精度
+
+Stage5 将严格下三角的 `dAqk`、`dAkk` 和重定标后的 Q/K 操作数直接排成 FP32 NZ，供 Stage6/8 的 IEEE FP32 Cube 乘法使用。原有 UB 和 L1 分区可容纳同样大小的 FP32 数据。矩阵保留 $2^{16}$ 缩放，Stage7/9 在恢复 band 指数因子后再撤销缩放，以保留饱和门控下的小值。
+
+每个 32 行 band 只搬运和计算因果三角形覆盖的 K 范围，尾部向上对齐至 8 个 FP32 元素。转置乘法拼接右侧的两项；拼接结果占用两个 L0B 槽时，Cube 等待两个槽的读取完成信号，乘法结束后归还。
+
+Stage11 使用 `t = exp(-abs(x))`、`sigmoid'(x) = t / (1 + t)^2` 求门控导数，避免正饱和区计算 `1 - sigmoid(x)` 时丢失有效位。

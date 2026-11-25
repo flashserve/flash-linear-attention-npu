@@ -128,9 +128,7 @@ public:
                 RunStage4(resource, chunk, owner, aiv, slot);
             }
 
-            // Each row band has its own stable gate anchor. The existing
-            // residual GEMMs operate on 32 output rows, with no extra FLOPs
-            // for full chunks. Each band reuses the same owner L1 slot.
+            // Reuse the owner L1 slot for each independently rebased 32-row band.
             for (uint32_t rowBegin = 0; rowBegin < chunk.validRows;
                  rowBegin += KDA_FINALIZE_INTRA_ROWS) {
                 headGeneration -= static_cast<uint64_t>(headEnd - headBegin);
@@ -665,7 +663,7 @@ private:
         Catlass::Arch::Resource<ArchTag> &resource,
         AscendC::LocalTensor<FinalizeLocalType> a, AscendC::LocalTensor<FinalizeLocalType> b,
         uint32_t aiv, uint32_t aivSlot, uint32_t ubOffset,
-        uint64_t freeFlag, uint64_t readyFlag, uint32_t rowBegin,
+        uint64_t freeFlag, uint64_t readyFlag, uint32_t rowBegin, uint32_t validRows,
         AscendC::LocalTensor<FinalizeLocalType> aSecond = {},
         AscendC::LocalTensor<FinalizeLocalType> bSecond = {})
     {
@@ -674,46 +672,58 @@ private:
             ArchTag, FinalizeLocalType, ALayout, FinalizeLocalType, LayoutRM, float, LayoutRM>;
         const uint32_t slot = NextSlot();
         auto l0a = resource.l0ABuf.template GetBufferByByte<FinalizeLocalType>(slot * L0_BYTES);
-        auto l0b = resource.l0BBuf.template GetBufferByByte<FinalizeLocalType>(slot * L0_BYTES);
         auto l0c = resource.l0CBuf.template GetBufferByByte<float>(slot * L0C_BYTES);
-        constexpr uint32_t reduction = CONCAT_RIGHT ? 128U : 64U;
+        // Causal tiles only consume columns up to this band for A, or
+        // rows starting at this band for A transpose. Round K for L0Copy.
+        const uint32_t kBegin = TRANSPOSE_A ? rowBegin : 0U;
+        const uint32_t kEnd = TRANSPOSE_A ? validRows : FinalizeMin(validRows, rowBegin + KDA_FINALIZE_INTRA_ROWS);
+        const uint32_t reduction = (kEnd - kBegin + 7U) / 8U * 8U;
+        const uint32_t tileK = CONCAT_RIGHT ? 2U * reduction : reduction;
+        const bool wideB = tileK * KDA_FINALIZE_DIM * sizeof(FinalizeLocalType) > L0_BYTES;
+        auto l0b = resource.l0BBuf.template GetBufferByByte<FinalizeLocalType>(wideB ? 0U : slot * L0_BYTES);
         constexpr uint32_t outputRows = STACK_LEFT ? 2U * KDA_FINALIZE_INTRA_ROWS : KDA_FINALIZE_INTRA_ROWS;
         auto ta = tla::MakeTensor(l0a,
-            tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL0A>(outputRows, reduction), Catlass::Arch::PositionL0A{});
+            tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL0A>(outputRows, tileK), Catlass::Arch::PositionL0A{});
         auto tb = tla::MakeTensor(l0b,
-            tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL0B>(reduction, 128), Catlass::Arch::PositionL0B{});
+            tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL0B>(tileK, 128), Catlass::Arch::PositionL0B{});
         auto tc = tla::MakeTensor(l0c, tla::MakeLayoutL0C(outputRows, 128), Catlass::Arch::PositionL0C{});
         auto tileC = tla::GetTile(tc, tla::MakeCoord(0, 0), tla::MakeShape(outputRows, 128));
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(slot);
-        // BF16 K=128 fits one 32-KiB L0B slot; concatenate both right terms.
-        for (uint32_t term = 0; term < 3U; ++term) {
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
-            for (uint32_t part = 0; part < ((CONCAT_RIGHT || STACK_LEFT) ? 2U : 1U); ++part) {
-                auto sourceA = part == 0 ? a : aSecond;
-                auto sourceB = (part == 0 || STACK_LEFT) ? b : bSecond;
-                auto sa = tla::MakeTensor(sourceA[term == 1U ? KDA_FINALIZE_MATRIX_ELEMS : 0U],
-                    tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1A>(64, 64), Catlass::Arch::PositionL1{});
-                auto sb = tla::MakeTensor(sourceB[term == 0U ? KDA_FINALIZE_VECTOR_ELEMS : 0U],
-                    tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1B>(64, 128), Catlass::Arch::PositionL1{});
-                auto tileA = tla::GetTile(sa, tla::MakeCoord(rowBegin, 0), tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, 64));
-                auto tileB = tla::GetTile(sb, tla::MakeCoord(0, 0), tla::MakeShape(64, 128));
-                auto dstA = tla::GetTile(ta,
-                    tla::MakeCoord(STACK_LEFT ? part * KDA_FINALIZE_INTRA_ROWS : 0U,
-                                   CONCAT_RIGHT ? part * 64U : 0U),
-                    tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, 64));
-                auto dstB = tla::GetTile(tb, tla::MakeCoord(CONCAT_RIGHT ? part * 64U : 0U, 0), tla::MakeShape(64, 128));
-                typename Copy::CopyL1ToL0A{}(dstA, tileA);
-                if (!STACK_LEFT || part == 0) {
-                    typename Copy::CopyL1ToL0B{}(dstB, tileB);
-                }
+        // A full transposed band uses both L0B slots. Hold both B credits
+        // until its concatenated FP32 product has consumed the operands.
+        if (wideB) {
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * (slot ^ 1U) + 1);
+        }
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
+        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
+        for (uint32_t part = 0; part < (STACK_LEFT || CONCAT_RIGHT ? 2U : 1U); ++part) {
+            const bool second = part != 0;
+            auto sourceA = second ? aSecond : a;
+            auto sourceB = CONCAT_RIGHT && second ? bSecond : b;
+            const uint32_t dstK = CONCAT_RIGHT ? part * reduction : 0U;
+            auto sa = tla::MakeTensor(sourceA,
+                tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1A>(64, 64), Catlass::Arch::PositionL1{});
+            auto sb = tla::MakeTensor(sourceB,
+                tla::MakeLayout<FinalizeLocalType, typename Copy::LayoutTagL1B>(64, 128), Catlass::Arch::PositionL1{});
+            auto tileA = tla::GetTile(sa, tla::MakeCoord(rowBegin, kBegin), tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, reduction));
+            auto tileB = tla::GetTile(sb, tla::MakeCoord(kBegin, 0), tla::MakeShape(reduction, 128));
+            auto dstA = tla::GetTile(ta,
+                tla::MakeCoord(STACK_LEFT ? part * KDA_FINALIZE_INTRA_ROWS : 0U, dstK),
+                tla::MakeShape(KDA_FINALIZE_INTRA_ROWS, reduction));
+            auto dstB = tla::GetTile(tb, tla::MakeCoord(dstK, 0), tla::MakeShape(reduction, 128));
+            typename Copy::CopyL1ToL0A{}(dstA, tileA);
+            if (!STACK_LEFT || part == 0) {
+                typename Copy::CopyL1ToL0B{}(dstB, tileB);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
-            Catlass::Gemm::Tile::TileMmadTla<ArchTag, FinalizeLocalType, typename Copy::LayoutTagL1A>{}(
-                tileC, ta, tb, term == 0, 0);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
+        Catlass::Gemm::Tile::TileMmadTla<ArchTag, FinalizeLocalType, typename Copy::LayoutTagL1A>{}(
+            tileC, ta, tb, true, 0);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot);
+        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * slot + 1);
+        if (wideB) {
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(2 * (slot ^ 1U) + 1);
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(slot);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(slot);
@@ -751,7 +761,7 @@ private:
             KDA_FINALIZE_UB_DQ_LOCAL_RAW +
                 aivSlot * KDA_FINALIZE_VECTOR_FP32_BYTES,
             KDA_FINALIZE_DQ_LOCAL_FREE_BASE,
-            KDA_FINALIZE_DQ_LOCAL_READY_BASE, rowBegin,
+            KDA_FINALIZE_DQ_LOCAL_READY_BASE, rowBegin, chunk.validRows,
             local[KDA_FINALIZE_LOCAL_DAKK / sizeof(FinalizeLocalType)]);
     }
 
@@ -769,7 +779,7 @@ private:
         constexpr uint32_t rows = KDA_FINALIZE_CHUNK;
         RunLocalGemm<true, true>(
             resource, daq, qp, aiv, slot, 64 * 1024 + slot * KDA_FINALIZE_VECTOR_FP32_BYTES,
-            KDA_FINALIZE_KE_READY_BASE, KDA_FINALIZE_ZW_READY_BASE, rowBegin, dak, bp);
+            KDA_FINALIZE_KE_READY_BASE, KDA_FINALIZE_ZW_READY_BASE, rowBegin, chunk.validRows, dak, bp);
     }
 
     __aicore__ inline uint32_t NextSlot()
