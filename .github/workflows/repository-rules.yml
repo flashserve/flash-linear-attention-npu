@@ -33,6 +33,7 @@ jobs:
               'woey',
               'zhangshuolei-hfut',
               'chen-linxin',
+              'Ensley0304',
             ]);
             const actor = context.actor;
             const branch = context.payload.ref;

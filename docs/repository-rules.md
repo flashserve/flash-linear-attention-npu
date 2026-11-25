@@ -28,6 +28,7 @@ workflow 从表单补标是对遗漏情况的补救；信息缺失、冲突或�
 - `woey`
 - `zhangshuolei-hfut`
 - `chen-linxin`
+- `Ensley0304`
 
 其他成员请 fork 本仓库到个人仓库，并从个人仓库向主仓库提交 Pull Request。
 
