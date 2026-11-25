@@ -146,6 +146,26 @@ const aclTensor *Transpose(const aclTensor *input, const std::vector<int64_t> &p
     return reshaped;
 }
 
+// 连续张量透传时，storage/origin 可能被描述成扁平 [numel]；
+// 统一 reshape 到 view shape 并归一 storage/origin，避免 tiling 读到 rank=1。
+const aclTensor *NormalizeDenseShape(const aclTensor *input, aclOpExecutor *executor)
+{
+    if (input == nullptr) {
+        return nullptr;
+    }
+    const auto &viewShape = input->GetViewShape();
+    if (input->GetStorageShape().GetDimNum() == viewShape.GetDimNum()) {
+        return input;
+    }
+    const aclTensor *reshaped = l0op::Reshape(input, viewShape, executor);
+    if (reshaped == nullptr) {
+        return nullptr;
+    }
+    reshaped->SetStorageShape(reshaped->GetViewShape());
+    reshaped->SetOriginalShape(reshaped->GetViewShape());
+    return reshaped;
+}
+
 const aclTensor *TransposeLastTwo(const aclTensor *input, aclOpExecutor *executor)
 {
     const size_t rank = input->GetViewShape().GetDimNum();
@@ -1017,6 +1037,20 @@ aclnnStatus aclnnChunkKdaFwdGetWorkspaceSize(
                     std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
             return ACLNN_ERR_INNER_NULLPTR;
         }
+    }
+
+    qHead = NormalizeDenseShape(qHead, executorPtr);
+    kHead = NormalizeDenseShape(kHead, executorPtr);
+    vHead = NormalizeDenseShape(vHead, executorPtr);
+    gHead = NormalizeDenseShape(gHead, executorPtr);
+    betaHead = NormalizeDenseShape(betaHead, executorPtr);
+    if (!(qHead != nullptr && kHead != nullptr && vHead != nullptr && gHead != nullptr &&
+          betaHead != nullptr)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view",
+            std::string("view normalization failed, ret = ") +
+                std::to_string(static_cast<int>(ACLNN_ERR_INNER_NULLPTR)));
+        return ACLNN_ERR_INNER_NULLPTR;
     }
 
     const op::Shape gkShape4 = MakeShape({info.batch, info.hvNum, info.seqlen, info.kDim});

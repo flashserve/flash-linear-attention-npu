@@ -94,8 +94,13 @@ bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &i
         OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "layout");
         return false;
     }
-    const auto &qShape = qShapePtr->GetStorageShape();
-    const auto &vShape = vShapePtr->GetStorageShape();
+    // torch 连续张量透传时 origin/storage 可能退化为 [numel]；合法 rank 优先。
+    const auto &qOrigin = qShapePtr->GetOriginShape();
+    const auto &vOrigin = vShapePtr->GetOriginShape();
+    const bool qOriginValid = qOrigin.GetDimNum() == 3 || qOrigin.GetDimNum() == 4;
+    const bool vOriginValid = vOrigin.GetDimNum() == 3 || vOrigin.GetDimNum() == 4;
+    const auto &qShape = qOriginValid ? qOrigin : qShapePtr->GetStorageShape();
+    const auto &vShape = vOriginValid ? vOrigin : vShapePtr->GetStorageShape();
     info.rank = qShape.GetDimNum();
     if (info.rank != vShape.GetDimNum() || (info.rank != 3 && info.rank != 4)) {
         OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
