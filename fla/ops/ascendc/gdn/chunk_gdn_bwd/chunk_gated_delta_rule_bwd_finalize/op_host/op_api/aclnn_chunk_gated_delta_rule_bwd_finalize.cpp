@@ -136,10 +136,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (npuArch != NpuArch::DAV_3510) {
+    if (npuArch != NpuArch::DAV_3510 && npuArch != NpuArch::DAV_9201) {
         const std::string actual = std::to_string(static_cast<int32_t>(npuArch));
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "npuArch", actual.c_str(), "DAV_2201 or DAV_3510");
+            OP_NAME, "npuArch", actual.c_str(), "DAV_2201, DAV_3510 or DAV_9201");
         return ACLNN_ERR_PARAM_INVALID;
     }
 
