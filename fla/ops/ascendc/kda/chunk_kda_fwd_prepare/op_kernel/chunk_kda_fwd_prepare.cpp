@@ -8,6 +8,7 @@
 #include "lib/matmul_intf.h"
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
 #include "chunk_kda_fwd_prepare_runtime_key.h"
+#include "arch22/chunk_kda_fwd_prepare_general_launch.h"
 #include "arch22/chunk_kda_fwd_prepare_vector.h"
 #include "arch22/chunk_kda_fwd_prepare_cube.h"
 #else
@@ -38,6 +39,19 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     REGISTER_TILING_DEFAULT(KdaPrepare::ChunkKdaFwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KdaPrepare::ChunkKdaFwdPrepareTilingData,
                                 tilingData, tiling);
+
+#if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
+    if constexpr (GATE_MODE == 3) {
+        if ASCEND_IS_AIV {
+            KdaPrepare::Arch22::GeneralPrepareBuffers buffers{
+                q,k,v,g,beta,a_log,dt_bias,gk,aqk,akk,w,u,qg,kg,qg_scaled,
+                q_hat,k_hat,q_rstd,k_rstd,beta_eff};
+            KdaPrepare::Arch22::RunGeneral<DTYPE_Q,DTYPE_G,DTYPE_BETA>(
+                buffers,cu_seqlens,chunk_indices,tilingData);
+        }
+        return;
+    }
+#endif
 
     KdaPrepare::PrepareKernelArgs args{};
     args.q = q;
@@ -90,8 +104,10 @@ __global__ __aicore__ void chunk_kda_fwd_prepare(
     args.tiling.useExp2 = tilingData.useExp2;
 
 #if defined(CHUNK_KDA_PREPARE_RUNTIME_KEYS)
-    static_assert(NORM_MODE<=1 && GATE_MODE<=2);
-    KdaPrepare::Arch22::Run<NORM_MODE,GATE_MODE,DTYPE_G,DTYPE_BETA>(args);
+    static_assert(NORM_MODE<=1 && GATE_MODE<=3);
+    if constexpr (GATE_MODE != 3) {
+        KdaPrepare::Arch22::Run<NORM_MODE,GATE_MODE,DTYPE_G,DTYPE_BETA>(args);
+    }
 #else
     using Policy = KdaPrepare::PrepareCompilePolicy<
         static_cast<KdaPrepare::QkNormMode>(NORM_MODE),

@@ -126,6 +126,7 @@ struct FinalizeTilingData {
     float scale = 1.0f;
     float lowerBound = -5.0f;
     uint64_t partialOffset = 0;
+    uint32_t keyDim = 128, valueDim = 128, gateMode = 2, useExp2 = 1, stateVFirst = 0;
 };
 
 struct FinalizeTailArgs {
@@ -209,7 +210,7 @@ static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * sizeof(float) <= WS_QPOS);
 static_assert(WS_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= WS_BANK_BYTES);
 static_assert(CAPTURE_DAKK_RAW + CHUNK_SIZE * CHUNK_SIZE * 4 <= CAPTURE_BYTES);
 static_assert(sizeof(ChunkInfo) == 32);
-static_assert(sizeof(FinalizeTilingData) == 88);
+static_assert(sizeof(FinalizeTilingData) == 112);
 static_assert(L1_V + CHUNK_SIZE * HEAD_DIM * 2 <= L1_HEAD_BYTES);
 static_assert(L1_BYTES <= 512 * 1024);
 static_assert(2 * L0_AB_SLOT_BYTES == 64 * 1024);

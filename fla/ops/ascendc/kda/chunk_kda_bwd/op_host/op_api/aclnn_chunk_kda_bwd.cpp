@@ -148,6 +148,10 @@ bool CopyGradient(const aclTensor *source, const aclTensor *target, aclOpExecuto
 
 } // namespace
 
+#ifdef KDA_BWD_STAGES_ARCH22
+#include "chunk_kda_bwd_general.h"
+#endif
+
 extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
     const aclTensor *q, const aclTensor *k, const aclTensor *v,
     const aclTensor *beta, const aclTensor *gk,
@@ -215,6 +219,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             OP_NAME, qRstdOptional == nullptr ? "q_rstd" : "k_rstd");
         return ACLNN_ERR_PARAM_NULLPTR;
     }
+#ifdef KDA_BWD_STAGES_ARCH22
+    if(aqk->GetDataType()==DataType::DT_FLOAT)
+        return GeneralChunkKdaBwdGetWorkspaceSize(q,k,v,beta,gk,aqk,akk,wOptional,qgOptional,kgOptional,vNewOptional,hOptional,dO,
+            rawGOptional,aLogOptional,dtBiasOptional,initialStateOptional,dhtOptional,cuSeqlensOptional,chunkIndicesOptional,
+            scale,chunkSize,safeGate,useGateInKernel,lowerBound,disableRecompute,useExp2,stateVFirst,qRstdOptional,kRstdOptional,
+            betaEffOptional,layout,useBetaSigmoidInKernel,allowNegEigval,dqOut,dkOut,dvOut,dbOut,dgOut,dh0OutOptional,
+            dAOutOptional,dBiasOutOptional,workspaceSize,executor);
+#endif
     if (!useGateInKernel) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "useGateInKernel", "false", "use_gate_in_kernel must be true");

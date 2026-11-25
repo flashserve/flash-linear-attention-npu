@@ -465,6 +465,33 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    if(context->GetInputDesc(0)->GetDataType()==ge::DT_FLOAT){
+        if(platform.GetCurNpuArch()!=NpuArch::DAV_2201)return ge::GRAPH_FAILED;
+        const auto &q=context->GetRequiredInputShape(0)->GetStorageShape();
+        const auto &v=context->GetRequiredInputShape(2)->GetStorageShape();
+        const auto &h=context->GetRequiredInputShape(10)->GetStorageShape();
+        const auto rank=q.GetDimNum();if((rank!=3 && rank!=4) || v.GetDimNum()!=rank || h.GetDimNum()!=rank+1)return ge::GRAPH_FAILED;
+        if(std::strcmp(outputLayout,rank==3?"NTD":"BNSD")!=0 || *chunkSize!=64 || (*allowNegEigval && !*useBetaSigmoid))return ge::GRAPH_FAILED;
+        auto *t=context->GetTilingData<KDA::Arch22::FinalizeTilingData>();*t={};
+        t->batch=rank==3?1:q.GetDim(0);t->heads=q.GetDim(rank-3);t->tokens=q.GetDim(rank-2);
+        t->keyDim=q.GetDim(rank-1);t->valueDim=v.GetDim(rank-1);
+        auto K=t->keyDim,V=t->valueDim;
+        if(t->batch<=0 || t->heads<=0 || t->tokens<=0 ||
+            !((K==V && (K==60 || K==64 || K==100 || K==128 || K==256)) || (K==64 && V==32)))return ge::GRAPH_FAILED;
+        t->chunks=rank==3?h.GetDim(0):h.GetDim(0)*h.GetDim(1);
+        auto *cu=context->GetOptionalInputShape(17);t->isVariable=cu && cu->GetStorageShape().GetShapeSize()>0;
+        auto *rstd=context->GetOptionalInputShape(15);t->hasQkL2Norm=rstd && rstd->GetStorageShape().GetShapeSize()>0;
+        t->scale=*scale;t->lowerBound=*lowerBound;t->gateMode=*useGate?(*safeGate?2:1):0;
+        t->betaMode=*useBetaSigmoid?(*allowNegEigval?2:1):0;t->useExp2=*useExp2;t->stateVFirst=*stateVFirst;
+        const bool *reduce=attrs->GetAttrPointer<bool>(11);const bool reducing=reduce && *reduce;
+        const uint64_t tasks=reducing?t->heads:t->chunks*t->heads;
+        t->usedCoreNum=std::max<uint64_t>(1,std::min<uint64_t>(platform.GetCoreNumAiv(),tasks));
+        const uint64_t elements=static_cast<uint64_t>(t->batch)*t->heads*t->tokens;
+        if(elements>UINT64_MAX/(4*(4*K+1)))return ge::GRAPH_FAILED;
+        context->SetTilingKey(reducing?202:201);context->SetBlockDim(t->usedCoreNum);
+        context->GetWorkspaceSizes(1)[0]=platform.GetLibApiWorkSpaceSize()+(reducing?0:elements*(4*K+1)*4);
+        context->GetRawTilingData()->SetDataSize(sizeof(*t));return ge::GRAPH_SUCCESS;
+    }
     uint32_t aicCoreNum = static_cast<uint32_t>(platform.GetCoreNumAic());
     if (aicCoreNum == 0) {
         // The A5 aclnn direct-launch context may omit platform info.  This

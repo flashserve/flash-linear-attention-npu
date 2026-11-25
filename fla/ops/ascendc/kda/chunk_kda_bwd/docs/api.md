@@ -1,5 +1,29 @@
 # KDA 反向总接口
 
+## A2/A3 通用反向契约（本分支）
+
+`chunk_size=64`、相同 Q/K/V head 数；支持 `(K,V)=(60,60)、(64,64)、(100,100)、(128,128)、(256,256)、(64,32)`。
+模型输入与输出梯度为 FP16/BF16。A5、chunk32、GVA、Graph 不在本轮范围。
+
+- 新路径以 FP32 `Aqk` 识别，`Akk/w/qg/kg/v_new/h` 全为 FP32；原 BF16/128 缓存继续使用既有优化路径。
+- 无 norm 时 q/k 为原输入，随 `layout`；有成对 rstd 时传前向保存的 FP32 head-major q_hat/k_hat。
+  即使保存的 q_hat/k_hat 为 FP32，dq/dk 仍使用原模型 dtype（与 v 一致）。norm 关闭不读取 rstd。
+- `do/raw_g/beta` 及对应 dg/db 固定 token-major；dg/db 分别跟随 raw_g/beta dtype。
+  raw_g/beta 支持模型 dtype 或 FP32，A_log/dt_bias 及其梯度为 FP32。
+- `use_gate_in_kernel=True` 要求 safe_gate、raw_g 和 A_log；`False` 表示预激活 gate，保存/重算均保留 FP32 累计 gk。
+- sigmoid 关闭直接返回 dBetaEff；普通 sigmoid 乘 `beta_eff*(1-beta_eff)`；
+  `allow_neg_eigval=True` 乘 `beta_eff*(1-beta_eff/2)`，且要求 sigmoid 开启。
+- 保存模式消费前向的 gk/w/qg/kg/v_new/h；重算模式消费 q_hat/k_hat（或原 q/k）、有效 beta、Akk，
+  重建缓存与 h，不重复归一化、sigmoid 或三角求逆。raw gate 在重算时按前向相同算法恢复 G。
+- 运行状态、入口 h 快照、Dhu 的 dh 快照均为 FP32。`dh[c]` 保存更新前 Dnext；
+  先跨完整 K 求 dvScan，再更新 Dprev。qg 未乘 scale，Dhu 在 `qg.T @ do` 归约后乘 scale。
+- 通用组合接口仅支持 K-first，仍不接收 h0/dht/dh0；独立阶段的状态布局不据此扩展组合接口。
+- 通用 packed 路径允许非递减 cu_seqlens（含空段，但总 T>0），chunk_indices 使用原始序列编号的规范顺序。
+- Python 仅路由和序列化；语义校验位于 ACLNN。返回顺序保持 `(dq,dk,dv,db,dg,dh0,dA,dbias)`。
+
+下文的 26.10 历史迁移表和 BF16 表描述既有优化路径；上述通用分支的差异以本节为准。
+设备验证范围与未覆盖项见 [validation.md](validation.md)。
+
 ## 版本变更：26.9.1 → main / 26.10.0
 
 **本次反向总接口是非兼容变更。** 本文描述 main 分支本次变更后的接口；

@@ -8,20 +8,18 @@ class ChunkKdaFwdFinalize : public OpDef {
 public:
     explicit ChunkKdaFwdFinalize(const char *name) : OpDef(name)
     {
-        const std::initializer_list<ge::DataType> bf16Types = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> indexTypes = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
-        const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+        const std::initializer_list<ge::DataType> cacheTypes = {ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> outputTypes = {ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16};
+        const std::initializer_list<ge::DataType> indexTypes = {ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
+        const std::initializer_list<ge::Format> formats = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
 
-        this->Input("qg_scaled").ParamType(REQUIRED).DataType(bf16Types)
+        this->Input("qg_scaled").ParamType(REQUIRED).DataType(cacheTypes)
             .Format(formats).UnknownShapeFormat(formats).AutoContiguous();
-        this->Input("aqk").ParamType(REQUIRED).DataType(bf16Types)
+        this->Input("aqk").ParamType(REQUIRED).DataType(cacheTypes)
             .Format(formats).UnknownShapeFormat(formats).AutoContiguous();
-        this->Input("v_new").ParamType(REQUIRED).DataType(bf16Types)
+        this->Input("v_new").ParamType(REQUIRED).DataType(cacheTypes)
             .Format(formats).UnknownShapeFormat(formats).AutoContiguous();
-        this->Input("h").ParamType(REQUIRED).DataType(bf16Types)
+        this->Input("h").ParamType(REQUIRED).DataType(cacheTypes)
             .Format(formats).UnknownShapeFormat(formats).AutoContiguous();
         this->Input("cu_seqlens").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats)
@@ -29,11 +27,12 @@ public:
         this->Input("chunk_indices").ParamType(OPTIONAL).ValueDepend(OPTIONAL)
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats)
             .AutoContiguous();
-        this->Output("attn_out").ParamType(REQUIRED).DataType(bf16Types)
+        this->Output("attn_out").ParamType(REQUIRED).DataType(outputTypes)
             .Format(formats).UnknownShapeFormat(formats);
 
         this->Attr("output_layout").AttrType(OPTIONAL).String("BSND");
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("output_fp16").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

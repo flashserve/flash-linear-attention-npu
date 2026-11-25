@@ -3,6 +3,7 @@
 #include "aclnn_chunk_kda_fwd_finalize.h"
 #include "chunk_kda_fwd_finalize.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/format_utils.h"
+#include "opdev/platform.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
@@ -44,6 +46,8 @@ struct FinalizeShape {
     int64_t heads = 0;
     int64_t seqLen = 0;
     int64_t totalChunks = 0;
+    int64_t keyDim = 0;
+    int64_t valueDim = 0;
     bool packed = false;
     bool sequenceMajor = false;
 };
@@ -87,12 +91,21 @@ aclnnStatus CheckDtypeAndFormat(const FinalizeParams &params)
         params.qgScaled, params.aqk, params.vNew, params.h, params.attnOut};
     const char *names[] = {
         "qgScaled", "aqk", "vNew", "h", "attnOut"};
+    const bool general = params.qgScaled->GetDataType() == DataType::DT_FLOAT;
+    if (general && GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "qgScaled", "FP32 cache path requires A2/A3");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     for (size_t index = 0; index < 5; ++index) {
-        if (tensors[index]->GetDataType() != DataType::DT_BF16) {
+        const auto type = tensors[index]->GetDataType();
+        const bool valid = index == 4
+            ? (type == DataType::DT_BF16 || (general && type == DataType::DT_FLOAT16))
+            : type == (general ? DataType::DT_FLOAT : DataType::DT_BF16);
+        if (!valid) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                 OP_NAME, names[index],
                 ge::TypeUtils::DataTypeToSerialString(tensors[index]->GetDataType()),
-                "only BF16 is supported");
+                "legacy caches/output must be BF16; general caches FP32 and output FP16/BF16");
             return ACLNN_ERR_PARAM_INVALID;
         }
         const auto storage = tensors[index]->GetStorageFormat();
@@ -118,43 +131,55 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
                               FinalizeShape &shape)
 {
     const auto &q = params.qgScaled->GetViewShape();
+    const auto &v = params.vNew->GetViewShape();
+    if (q.GetDimNum() == 0 || v.GetDimNum() == 0) return ACLNN_ERR_PARAM_INVALID;
+    shape.keyDim = q.GetDim(q.GetDimNum()-1);
+    shape.valueDim = v.GetDim(v.GetDimNum()-1);
+    const bool equalPair = shape.keyDim == shape.valueDim &&
+        (shape.keyDim == 60 || shape.keyDim == 64 || shape.keyDim == 100 || shape.keyDim == 128 || shape.keyDim == 256);
+    const bool general = params.qgScaled->GetDataType() == DataType::DT_FLOAT;
+    if ((!general && (shape.keyDim != 128 || shape.valueDim != 128)) ||
+        (general && !equalPair && !(shape.keyDim == 64 && shape.valueDim == 32))) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "K,V", "unsupported K/V pair for the selected cache dtype");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (shape.packed) {
-        if (!(q.GetDimNum() == 3 && q.GetDim(2) == 128)) {
+        if (!(q.GetDimNum() == 3)) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
                 OP_NAME, "qgScaled", std::string(op::ToString(q).GetString()),
-                "head-major [HV,T,128] for NTD/TND");
+                "head-major [HV,T,K] for NTD/TND");
             return ACLNN_ERR_PARAM_INVALID;
         }
         shape.batch = 1;
         shape.heads = q.GetDim(0);
         shape.seqLen = q.GetDim(1);
         if (!(HasShape(params.aqk, {shape.heads, shape.seqLen, 64}) &&
-              (HasShape(params.vNew, {shape.heads, shape.seqLen, 128}) ||
-               HasShape(params.vNew, {1, shape.heads, shape.seqLen, 128})))) {
+              (HasShape(params.vNew, {shape.heads, shape.seqLen, shape.valueDim}) ||
+               HasShape(params.vNew, {1, shape.heads, shape.seqLen, shape.valueDim})))) {
             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                 OP_NAME, "aqk,vNew",
                 "aqk=" + std::string(op::ToString(params.aqk->GetViewShape()).GetString()) +
                     ",vNew=" + std::string(op::ToString(params.vNew->GetViewShape()).GetString()),
-                "packed requires Aqk=[HV,T,64] and vNew=[HV,T,128] or [1,HV,T,128]");
+                "packed requires Aqk=[HV,T,64] and vNew=[HV,T,V] or [1,HV,T,V]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     } else {
-        if (!(q.GetDimNum() == 4 && q.GetDim(3) == 128)) {
+        if (!(q.GetDimNum() == 4)) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
                 OP_NAME, "qgScaled", std::string(op::ToString(q).GetString()),
-                "head-major [B,HV,T,128] for BNSD/BSND");
+                "head-major [B,HV,T,K] for BNSD/BSND");
             return ACLNN_ERR_PARAM_INVALID;
         }
         shape.batch = q.GetDim(0);
         shape.heads = q.GetDim(1);
         shape.seqLen = q.GetDim(2);
         if (!(HasShape(params.aqk, {shape.batch, shape.heads, shape.seqLen, 64}) &&
-              HasShape(params.vNew, {shape.batch, shape.heads, shape.seqLen, 128}))) {
+              HasShape(params.vNew, {shape.batch, shape.heads, shape.seqLen, shape.valueDim}))) {
             OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                 OP_NAME, "aqk,vNew",
                 "aqk=" + std::string(op::ToString(params.aqk->GetViewShape()).GetString()) +
                     ",vNew=" + std::string(op::ToString(params.vNew->GetViewShape()).GetString()),
-                "dense requires Aqk=[B,HV,T,64] and vNew=[B,HV,T,128]");
+                "dense requires Aqk=[B,HV,T,64] and vNew=[B,HV,T,V]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -174,7 +199,7 @@ aclnnStatus ResolveInputShape(const FinalizeParams &params,
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t t = static_cast<uint64_t>(shape.seqLen);
-    if (!(b <= std::numeric_limits<uint64_t>::max() / hv / t / 128)) {
+    if (!(b <= std::numeric_limits<uint64_t>::max() / hv / t / static_cast<uint64_t>(std::max(shape.keyDim, shape.valueDim)))) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "qgScaled", "B*HV*T*128 exceeds uint64 element index range");
         return ACLNN_ERR_PARAM_INVALID;
@@ -259,17 +284,17 @@ aclnnStatus ResolveSequenceShape(const FinalizeParams &params,
             }
         }
     }
-    if (!HasShape(params.h, {shape.batch, shape.totalChunks, shape.heads, 128, 128})) {
+    if (!HasShape(params.h, {shape.batch, shape.totalChunks, shape.heads, params.stateVFirst ? shape.valueDim : shape.keyDim, params.stateVFirst ? shape.keyDim : shape.valueDim})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             OP_NAME, "h", std::string(op::ToString(params.h->GetViewShape()).GetString()),
-            "[B,C,HV,128,128] with B=" + std::to_string(shape.batch) +
+            "[B,C,HV,K,V] (or [B,C,HV,V,K] for stateVFirst) with B=" + std::to_string(shape.batch) +
                 ",HV=" + std::to_string(shape.heads) + ",C=" + std::to_string(shape.totalChunks));
         return ACLNN_ERR_PARAM_INVALID;
     }
     const uint64_t b = static_cast<uint64_t>(shape.batch);
     const uint64_t hv = static_cast<uint64_t>(shape.heads);
     const uint64_t c = static_cast<uint64_t>(shape.totalChunks);
-    if (!(b <= std::numeric_limits<uint64_t>::max() / hv / c / 128 / 128)) {
+    if (!(b <= std::numeric_limits<uint64_t>::max() / hv / c / static_cast<uint64_t>(shape.keyDim) / static_cast<uint64_t>(shape.valueDim))) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             OP_NAME, "h", "B*HV*C*128*128 exceeds uint64 element index range");
         return ACLNN_ERR_PARAM_INVALID;
@@ -282,17 +307,17 @@ aclnnStatus CheckOutputShape(const FinalizeParams &params,
 {
     const bool shapeValid = shape.packed
         ? (shape.sequenceMajor
-            ? HasShape(params.attnOut, {shape.seqLen, shape.heads, 128})
-            : HasShape(params.attnOut, {shape.heads, shape.seqLen, 128}))
+            ? HasShape(params.attnOut, {shape.seqLen, shape.heads, shape.valueDim})
+            : HasShape(params.attnOut, {shape.heads, shape.seqLen, shape.valueDim}))
         : (shape.sequenceMajor
-            ? HasShape(params.attnOut, {shape.batch, shape.seqLen, shape.heads, 128})
-            : HasShape(params.attnOut, {shape.batch, shape.heads, shape.seqLen, 128}));
+            ? HasShape(params.attnOut, {shape.batch, shape.seqLen, shape.heads, shape.valueDim})
+            : HasShape(params.attnOut, {shape.batch, shape.heads, shape.seqLen, shape.valueDim}));
     if (!shapeValid) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             OP_NAME, "attnOut", std::string(op::ToString(params.attnOut->GetViewShape()).GetString()),
             std::string("attnOut shape must match outputLayout=") + params.outputLayout +
                 " with B=" + std::to_string(shape.batch) + ",HV=" + std::to_string(shape.heads) +
-                ",T=" + std::to_string(shape.seqLen) + ",V=128");
+                ",T=" + std::to_string(shape.seqLen) + ",V=" + std::to_string(shape.valueDim));
         return ACLNN_ERR_PARAM_INVALID;
     }
     return ACLNN_SUCCESS;

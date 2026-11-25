@@ -68,10 +68,11 @@ run_npu_chunk_kda_bwd_recompute(
   const TensorMeta g_meta = meta_of(g);
   // `w`/`u` follow their source `v`; `qg`/`kg` are the bfloat16 gate tensors
   // (even when `g` itself is fp32), and the gate cumsum is fp32.
-  Tensor out_w = allocate_sizes(v_meta.sizes, v_meta.scalar_type, v_meta);
-  Tensor out_u = allocate_sizes(v_meta.sizes, v_meta.scalar_type, v_meta);
-  Tensor out_qg = allocate_sizes(g_meta.sizes, kBFloat16, g_meta);
-  Tensor out_kg = allocate_sizes(g_meta.sizes, kBFloat16, g_meta);
+  const bool general = meta_of(q).scalar_type == kFloat;
+  Tensor out_w = allocate_sizes(general ? meta_of(q).sizes : v_meta.sizes, general ? kFloat : v_meta.scalar_type, v_meta);
+  Tensor out_u = allocate_sizes(v_meta.sizes, general ? kFloat : v_meta.scalar_type, v_meta);
+  Tensor out_qg = allocate_sizes(g_meta.sizes, general ? kFloat : kBFloat16, g_meta);
+  Tensor out_kg = allocate_sizes(g_meta.sizes, general ? kFloat : kBFloat16, g_meta);
   std::optional<Tensor> out_gk;
   if (use_gate_in_kernel) {
     out_gk = allocate_sizes(g_meta.sizes, kFloat, g_meta);

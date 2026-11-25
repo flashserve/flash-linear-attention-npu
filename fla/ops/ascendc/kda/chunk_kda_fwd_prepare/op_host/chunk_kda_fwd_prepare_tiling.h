@@ -46,6 +46,7 @@ enum ChunkKdaFwdPrepareAttrIndex : size_t {
     PREPARE_ATTR_LOWER_BOUND,
     PREPARE_ATTR_USE_EXP2,
     PREPARE_ATTR_OUTPUT_MODE,
+    PREPARE_ATTR_GENERAL_PATH,
 };
 
 struct ChunkKdaFwdPrepareCompileInfo {};

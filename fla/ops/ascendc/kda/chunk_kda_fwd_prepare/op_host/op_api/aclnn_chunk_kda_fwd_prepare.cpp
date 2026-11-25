@@ -22,6 +22,7 @@
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/format_utils.h"
 #include "opdev/make_op_executor.h"
+#include "opdev/platform.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
@@ -283,31 +284,47 @@ aclnnStatus CheckFormat(const ChunkKdaFwdPrepareParams &params)
     return ACLNN_SUCCESS;
 }
 
+bool GeneralPath(const ChunkKdaFwdPrepareParams &params)
+{
+    const auto &qShape = params.q->GetViewShape();
+    const auto &vShape = params.v->GetViewShape();
+    return params.q->GetDataType() == DataType::DT_FLOAT16 ||
+        qShape.GetDim(qShape.GetDimNum() - 1) != 128 ||
+        vShape.GetDim(vShape.GetDimNum() - 1) != 128;
+}
+
+bool SupportedGeneralDimensions(int64_t key, int64_t value)
+{
+    return (key == value && (key == 60 || key == 64 || key == 100 || key == 128 || key == 256)) ||
+        (key == 64 && value == 32);
+}
+
 aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
 {
-    if (!(params.q->GetDataType() == DataType::DT_BF16 &&
-          params.k->GetDataType() == DataType::DT_BF16 &&
-          params.v->GetDataType() == DataType::DT_BF16)) {
+    const auto inputType = params.q->GetDataType();
+    const auto cacheType = GeneralPath(params) ? DataType::DT_FLOAT : DataType::DT_BF16;
+    if (!((inputType == DataType::DT_BF16 || inputType == DataType::DT_FLOAT16) &&
+          params.k->GetDataType() == inputType && params.v->GetDataType() == inputType)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "q,k,v",
             "q=" + ge::TypeUtils::DataTypeToSerialString(params.q->GetDataType()) +
                 ",k=" + ge::TypeUtils::DataTypeToSerialString(params.k->GetDataType()) +
                 ",v=" + ge::TypeUtils::DataTypeToSerialString(params.v->GetDataType()),
-            "q/k/v support BF16 only");
+            "q/k/v must have the same FP16 or BF16 dtype");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto gateDtype = params.g->GetDataType();
     const auto betaDtype = params.beta->GetDataType();
-    if (gateDtype != DataType::DT_BF16 && gateDtype != DataType::DT_FLOAT) {
+    if (gateDtype != inputType && gateDtype != DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             OP_NAME, "g", ge::TypeUtils::DataTypeToSerialString(gateDtype),
-            "g supports BF16 or FP32 only");
+            "g must match q dtype or be FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (betaDtype != DataType::DT_BF16 && betaDtype != DataType::DT_FLOAT) {
+    if (betaDtype != inputType && betaDtype != DataType::DT_FLOAT) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             OP_NAME, "beta", ge::TypeUtils::DataTypeToSerialString(betaDtype),
-            "beta supports BF16 or FP32 only");
+            "beta must match q dtype or be FP32");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.aLogOptional != nullptr) {
@@ -338,11 +355,11 @@ aclnnStatus CheckDtype(const ChunkKdaFwdPrepareParams &params)
         if (bf16Outputs[i] == nullptr) {
             continue;
         }
-        if (!(bf16Outputs[i]->GetDataType() == DataType::DT_BF16)) {
+        if (!(bf16Outputs[i]->GetDataType() == cacheType)) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                 OP_NAME, bf16OutputNames[i],
                 ge::TypeUtils::DataTypeToSerialString(bf16Outputs[i]->GetDataType()),
-                "output must be bf16");
+                "cache dtype must match the selected legacy BF16 or general FP32 path");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -501,11 +518,17 @@ aclnnStatus ResolveShape(const ChunkKdaFwdPrepareParams &params,
             "B/T/HK/HV must be positive and representable by uint32");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (info.kDim != PREPARE_K_DIM || info.vDim != PREPARE_V_DIM) {
+    if (!SupportedGeneralDimensions(info.kDim, info.vDim)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "q.K,v.V",
             std::to_string(info.kDim) + "," + std::to_string(info.vDim),
-            "K=V=128 is required by the current implementation");
+            "supported (K,V): (60,60),(64,64),(100,100),(128,128),(256,256),(64,32)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (GeneralPath(params) &&
+        (info.valueHeadNum != info.qkHeadNum || op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "general_path",
+            "FP16 or generalized dimensions require A2/A3 and HK=HV");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (info.valueHeadNum < info.qkHeadNum || info.valueHeadNum % info.qkHeadNum != 0) {
@@ -548,13 +571,13 @@ aclnnStatus CheckModesAndOptionalInputs(
 
     if (!params.useGateInKernel) {
         if (!(params.aLogOptional == nullptr && params.dtBiasOptional == nullptr &&
-              !params.safeGate)) {
+              (!params.safeGate || GeneralPath(params)))) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
                 OP_NAME, "aLogOptional,dtBiasOptional,safeGate",
                 std::string(params.aLogOptional == nullptr ? "aLog=absent" : "aLog=present") +
                     "," + (params.dtBiasOptional == nullptr ? "dtBias=absent" : "dtBias=present") +
                     "," + (params.safeGate ? "safeGate=true" : "safeGate=false"),
-                "aLogOptional/dtBiasOptional must be absent and safeGate false when useGateInKernel=false");
+                "preactivated gate requires absent A_log/dt_bias; legacy path also requires safeGate=false");
             return ACLNN_ERR_PARAM_INVALID;
         }
         return ACLNN_SUCCESS;

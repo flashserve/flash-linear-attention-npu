@@ -10,6 +10,7 @@
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
 #include "opdev/make_op_executor.h"
+#include "opdev/platform.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/tensor_view_utils.h"
@@ -163,13 +164,17 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     }
 #endif
+    const bool general=q->GetDataType()==DataType::DT_FLOAT;
+    const auto data=v->GetDataType();
+    if(general && (GetCurrentPlatformInfo().GetCurNpuArch()!=NpuArch::DAV_2201 ||
+        (data!=DataType::DT_FLOAT16 && data!=DataType::DT_BF16)))return ACLNN_ERR_PARAM_INVALID;
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(q, "q"),
              {k, "k"}, {v, "v"}, {akk, "akk"},
              {vNew, "v_new"}, {h, "h"}, {dh, "dh"}, {dvScan, "dv_scan"},
              {dqOut, "dq"}, {dkOut, "dk"}, {dvOut, "dv"}}) {
         {
-            const aclnnStatus checkStatus = CheckRequired(item.first, DataType::DT_BF16, item.second);
+            const aclnnStatus checkStatus = CheckRequired(item.first, general ? ((item.first==v || item.first==dqOut || item.first==dkOut || item.first==dvOut)?data:DataType::DT_FLOAT) : DataType::DT_BF16, item.second);
             if (checkStatus != ACLNN_SUCCESS) {
                 return checkStatus;
             }
@@ -212,7 +217,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
              std::pair<const aclTensor *, const aclTensor *>(rawG, dGOut)}) {
         if (item.first == nullptr ||
             (item.first->GetDataType() != DataType::DT_FLOAT &&
-             item.first->GetDataType() != DataType::DT_BF16)) {
+             item.first->GetDataType() != DataType::DT_BF16 && !(general && item.first->GetDataType()==DataType::DT_FLOAT16))) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                 OP_NAME, "rawG",
                 item.first == nullptr ? "nullptr" : ge::TypeUtils::DataTypeToSerialString(item.first->GetDataType()),
@@ -292,7 +297,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
             "scale must be finite and lowerBound must be in [-5,0)");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst)) {
+    if (!(general ? (chunkSize==64 && (!useGateInKernel || safeGate)) : (chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst))) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "chunkSize,safeGate,useGateInKernel,useExp2,stateVFirst",
             std::to_string(chunkSize) + "," + (safeGate ? "true" : "false") + "," +

@@ -1,5 +1,12 @@
 # ChunkKdaBwdFinalize 输出约定
 
+## A2/A3 通用分支（本次新增）
+
+通用缓存全部为 FP32，v 为 FP16/BF16，dq/dk/dv 跟随 v。独立 db 跟随有效 beta 输入类型；组合入口最后转回原始 logits dtype。norm 关闭直传梯度；sigmoid 三分支及稳定 safe-gate 导数见组合设计。两个内部 launch 分别生成私有 partial 和按 chunk 顺序归并参数梯度。
+
+C64、等 head，六组 K/V 和 FP32 缓存契约见 [组合接口](../../chunk_kda_bwd/docs/api.md)。其余旧路径约束仍按下文。
+
+
 沿用现有 Python/ACLNN 签名及七个返回值顺序 `(dq, dk, dv, db, dg, dA, dbias)`。
 输入 shape、可选属性和数学语义不变；参数 dtype 支持范围见下文。
 

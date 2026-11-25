@@ -1,5 +1,12 @@
 # ChunkKdaBwdPrepare 接口
 
+## A2/A3 通用分支（本次新增）
+
+FP32 Aqk/v_new/h 缓存配 FP16/BF16 dO；dAqk、dv、dq_raw 均为 FP32。K 与 V 分别从状态和 value 取值，K-first 使用 dO@h.T，V-first 使用 dO@h。
+
+C64、等 head，六组 K/V 和 FP32 缓存契约见 [组合接口](../../chunk_kda_bwd/docs/api.md)。其余旧路径约束仍按下文。
+
+
 ```python
 from fla_npu.ops.ascendc import chunk_kda_bwd_prepare
 d_aqk, dv, dq_raw = chunk_kda_bwd_prepare(

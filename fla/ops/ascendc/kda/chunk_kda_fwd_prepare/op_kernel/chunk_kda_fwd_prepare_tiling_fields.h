@@ -27,7 +27,9 @@
     F(uint32_t, gateMode); \
     F(uint32_t, outputMode); \
     F(uint32_t, pipelineVariant); \
-    F(bool, useExp2)
+    F(bool, useExp2); \
+    F(uint32_t, keyDim); \
+    F(uint32_t, valueDim)
 
 namespace KdaPrepare {
 struct PrepareTilingWire {
@@ -40,6 +42,6 @@ static_assert(offsetof(PrepareTilingWire, isVarLen) == 44);
 static_assert(offsetof(PrepareTilingWire, normMode) == 48);
 static_assert(offsetof(PrepareTilingWire, pipelineVariant) == 64);
 static_assert(offsetof(PrepareTilingWire, useExp2) == 68);
-static_assert(sizeof(PrepareTilingWire) == 72);
+static_assert(sizeof(PrepareTilingWire) == 80);
 } // namespace KdaPrepare
 #endif

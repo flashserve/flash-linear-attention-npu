@@ -53,9 +53,11 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor> run_npu_chunk
     }
     auto betaShape = qkvShape;
     betaShape.pop_back();
-    Tensor dq = allocate_sizes(qkvShape, kBFloat16, meta);
-    Tensor dk = allocate_sizes(qkvShape, kBFloat16, meta);
-    Tensor dv = allocate_sizes(qkvShape, kBFloat16, meta);
+    Tensor dq = allocate_sizes(qkvShape, meta_of(v).scalar_type, meta);
+    Tensor dk = allocate_sizes(qkvShape, meta_of(v).scalar_type, meta);
+    auto valueShape = qkvShape;
+    valueShape.back() = meta_of(v).sizes.back();
+    Tensor dv = allocate_sizes(valueShape, meta_of(v).scalar_type, meta);
     Tensor db = allocate_sizes(betaShape, meta_of(beta).scalar_type, meta);
     Tensor dg = allocate_sizes(qkvShape, meta_of(raw_g).scalar_type, meta);
     Tensor da = allocate_sizes(meta_of(a_log).sizes, kFloat, meta);

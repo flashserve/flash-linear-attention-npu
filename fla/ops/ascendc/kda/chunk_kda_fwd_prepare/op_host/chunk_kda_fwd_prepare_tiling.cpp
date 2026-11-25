@@ -534,9 +534,16 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
     const uint64_t outputMode = static_cast<uint64_t>(*outputModePtr);
+    const auto *generalPtr = attrs->GetAttrPointer<bool>(PREPARE_ATTR_GENERAL_PATH);
+    const bool generalPath = generalPtr != nullptr && *generalPtr;
+    const bool supportedPair = (shape.kDim == shape.vDim &&
+        (shape.kDim == 60 || shape.kDim == 64 || shape.kDim == 100 || shape.kDim == 128 || shape.kDim == 256)) ||
+        (shape.kDim == 64 && shape.vDim == 32);
+
     if (!FitsUint32(shape.batch) || !FitsUint32(shape.seqLen) ||
         !FitsUint32(shape.qkHeadNum) || !FitsUint32(shape.valueHeadNum) ||
-        shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM ||
+        (!generalPath && (shape.kDim != PREPARE_K_DIM || shape.vDim != PREPARE_V_DIM)) ||
+        (generalPath && (!supportedPair || shape.valueHeadNum != shape.qkHeadNum)) ||
         shape.valueHeadNum < shape.qkHeadNum ||
         shape.valueHeadNum % shape.qkHeadNum != 0) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
@@ -548,14 +555,14 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
 
         return ge::GRAPH_FAILED;
     }
-    if (qDesc->GetDataType() != ge::DT_BF16 ||
-        kDesc->GetDataType() != ge::DT_BF16 ||
-        vDesc->GetDataType() != ge::DT_BF16 ||
-        !IsGateDtype(gDesc->GetDataType()) ||
-        !IsGateDtype(betaDesc->GetDataType())) {
+    const auto inputType = qDesc->GetDataType();
+    if ((inputType != ge::DT_BF16 && !(generalPath && inputType == ge::DT_FLOAT16)) ||
+        kDesc->GetDataType() != inputType || vDesc->GetDataType() != inputType ||
+        (gDesc->GetDataType() != inputType && gDesc->GetDataType() != ge::DT_FLOAT) ||
+        (betaDesc->GetDataType() != inputType && betaDesc->GetDataType() != ge::DT_FLOAT)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             context->GetNodeName(), "q,k,v,g,beta", "dtype mismatch",
-            "q/k/v 只支持 BF16，g/beta 分别支持 BF16 或 FP32");
+            "q/k/v must share the selected FP16/BF16 dtype; g/beta match q or FP32");
         return ge::GRAPH_FAILED;
     }
     if (shape.sequenceMajor) {
@@ -581,7 +588,7 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     }
 
     bool hasDtBias = false;
-    if (!CheckOptionalInput(context, shape, *useGatePtr, *safeGatePtr,
+    if (!CheckOptionalInput(context, shape, *useGatePtr, *safeGatePtr && (!generalPath || *useGatePtr),
                             hasDtBias)) {
         return ge::GRAPH_FAILED;
     }
@@ -607,6 +614,11 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     const bool isAscend9201 =
         platform.GetCurNpuArch() == NpuArch::DAV_9201;
     const bool isNonArch22 = isAscend950 || isAscend9201;
+    if (generalPath && platform.GetCurNpuArch() != NpuArch::DAV_2201) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "general_path", "requires A2/A3");
+        return ge::GRAPH_FAILED;
+    }
+
     ChunkKdaFwdPrepareScheduleContext scheduleContext;
     scheduleContext.batch = static_cast<uint64_t>(shape.batch);
     scheduleContext.qkHeadNum = static_cast<uint64_t>(shape.qkHeadNum);
@@ -619,7 +631,20 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.isArch22 = !isNonArch22;
     scheduleContext.isArch92 = isAscend9201;
     ChunkKdaFwdPrepareSchedule schedule;
-    if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
+    if (generalPath) {
+        const uint64_t batches = isVarLen ? 1 : static_cast<uint64_t>(shape.batch);
+        const uint64_t heads = static_cast<uint64_t>(shape.valueHeadNum);
+        const uint64_t limit = std::numeric_limits<uint32_t>::max();
+        if (batches == 0 || heads == 0 || totalChunks == 0 ||
+            batches > limit / heads || totalChunks > limit / (batches * heads) ||
+            platform.GetCoreNumAiv() == 0) {
+            return ge::GRAPH_FAILED;
+        }
+        const uint64_t work = totalChunks * batches * heads;
+        schedule.usedCoreNum = static_cast<uint32_t>(std::min(work, static_cast<uint64_t>(platform.GetCoreNumAiv())));
+        schedule.headsPerPartition = 1;
+        schedule.workspaceBytes = platform.GetLibApiWorkSpaceSize();
+    } else if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE_WITHOUT_REPORT(
             context->GetNodeName(),
             "%s: failed to build chunk-first/GVA schedule (aicCoreNum=%lu, totalChunks=%lu)",
@@ -630,8 +655,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
 
     uint64_t gateDtypeToken = 0;
     uint64_t betaDtypeToken = 0;
-    if (!DtypeToTemplateToken(gDesc->GetDataType(), gateDtypeToken) ||
-        !DtypeToTemplateToken(betaDesc->GetDataType(), betaDtypeToken)) {
+    if (!generalPath && (!DtypeToTemplateToken(gDesc->GetDataType(), gateDtypeToken) ||
+        !DtypeToTemplateToken(betaDesc->GetDataType(), betaDtypeToken))) {
         return ge::GRAPH_FAILED;
     }
     const uint64_t normMode = *useNormPtr
@@ -651,8 +676,8 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         static_cast<uint64_t>(*useExp2Ptr),
         static_cast<uint64_t>(*safeGatePtr),
         outputMode);
-    const uint64_t tilingKey = isNonArch22 ? legacyTilingKey
-        : RuntimeKey::Encode(normMode, gateMode);
+    const uint64_t tilingKey = generalPath ? RuntimeKey::Encode(0, 3) :
+        (isNonArch22 ? legacyTilingKey : RuntimeKey::Encode(normMode, gateMode));
 
     ChunkKdaFwdPrepareTilingData tiling;
     tiling.set_batch(static_cast<uint32_t>(shape.batch));
@@ -676,10 +701,12 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     // 当前只有通用流水线；字段保留在 TilingData 中，不改变既有布局。
     tiling.set_pipelineVariant(0U);
     tiling.set_useExp2(*useExp2Ptr);
+    tiling.set_keyDim(static_cast<uint32_t>(shape.kDim));
+    tiling.set_valueDim(static_cast<uint32_t>(shape.vDim));
 
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(schedule.usedCoreNum);
-    if (context->SetScheduleMode(PREPARE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
+    if (!generalPath && context->SetScheduleMode(PREPARE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 MIX AIC/AIV batch 调度模式失败。", __func__);
 
         return ge::GRAPH_FAILED;

@@ -20,6 +20,7 @@
 #include "opdev/data_type_utils.h"
 #include "opdev/format_utils.h"
 #include "opdev/make_op_executor.h"
+#include "opdev/platform.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
@@ -260,13 +261,16 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleBwdDhuParams params)
         return ACLNN_ERR_PARAM_INVALID;
     }
 
+    const bool general=params.q->GetDataType()==ge::DT_FLOAT;
+    if(general && (HK!=HV || params.chunkSize!=64 || params.gOptional || !params.gkOptional ||
+        !((K==V && (K==60 || K==64 || K==100 || K==128 || K==256)) || (K==64 && V==32))))return ACLNN_ERR_PARAM_INVALID;
     // K = 128，V ∈ {128, 256}，chunkSize ∈ {64, 128}
-    if (K != CHUNK_BWD_DHU_K_HEAD_DIM) {
+    if (!general && K != CHUNK_BWD_DHU_K_HEAD_DIM) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "K", std::to_string(K), "K should be " + std::to_string(CHUNK_BWD_DHU_K_HEAD_DIM));
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(V == CHUNK_BWD_DHU_V_HEAD_DIM_128 || V == CHUNK_BWD_DHU_V_HEAD_DIM_256)) {
+    if (!general && !(V == CHUNK_BWD_DHU_V_HEAD_DIM_128 || V == CHUNK_BWD_DHU_V_HEAD_DIM_256)) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "V", std::to_string(V),
             "V should be " + std::to_string(CHUNK_BWD_DHU_V_HEAD_DIM_128) + " or " +
@@ -315,9 +319,10 @@ static aclnnStatus CheckShape(ChunkGatedDeltaRuleBwdDhuParams params)
         isVarlen ? static_cast<int64_t>(params.chunkIndicesOptional->Size() /
                                         CHUNK_BWD_DHU_CHUNK_INDICES_PAIR)
                  : (T + params.chunkSize - 1) / params.chunkSize;
+    const bool generalVFirst = params.q->GetDataType() == DataType::DT_FLOAT && params.stateVFirst;
     if (!(dhOutShape.GetDim(0) == B && dhOutShape.GetDim(1) == numChunks &&
-          dhOutShape.GetDim(2) == HV && dhOutShape.GetDim(CHUNK_BWD_DHU_DIM_HEAD_DIM) == K &&
-          dhOutShape.GetDim(4) == V)) {
+          dhOutShape.GetDim(2) == HV && dhOutShape.GetDim(CHUNK_BWD_DHU_DIM_HEAD_DIM) == (generalVFirst ? V : K) &&
+          dhOutShape.GetDim(4) == (generalVFirst ? K : V))) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             OP_NAME, "dhOut", std::string(op::ToString(dhOutShape).GetString()),
             "[B, NT, HV, K, V] with NT=" + std::to_string(numChunks));
@@ -369,7 +374,8 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
     // 与 def.cpp 动态 dtype 组一致）：
     // q/k/w/dO/dv/h0/dht/dhOut/dh0Out/dv2Out 与 q 同 dtype ∈ {BF16, FP16}；g/gk ∈ {FP32, 与 q 同}
     const ge::DataType inputDtype = params.q->GetDataType();
-    if (!(inputDtype == ge::DT_BF16 || inputDtype == ge::DT_FLOAT16)) {
+    const bool general=inputDtype==ge::DT_FLOAT && GetCurrentPlatformInfo().GetCurNpuArch()==NpuArch::DAV_2201;
+    if (!(general || inputDtype == ge::DT_BF16 || inputDtype == ge::DT_FLOAT16)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             OP_NAME, "q", ge::TypeUtils::DataTypeToSerialString(inputDtype),
             "q dtype should be bfloat16 or float16");
@@ -387,7 +393,7 @@ static aclnnStatus CheckDtype(ChunkGatedDeltaRuleBwdDhuParams params)
             "dtype should be the same as q: " + ge::TypeUtils::DataTypeToSerialString(inputDtype));
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (params.dO->GetDataType() != inputDtype) {
+    if (general ? (params.dO->GetDataType()!=ge::DT_FLOAT16 && params.dO->GetDataType()!=ge::DT_BF16) : params.dO->GetDataType() != inputDtype) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
             OP_NAME, "dO", ge::TypeUtils::DataTypeToSerialString(params.dO->GetDataType()),
             "dtype should be the same as q: " + ge::TypeUtils::DataTypeToSerialString(inputDtype));

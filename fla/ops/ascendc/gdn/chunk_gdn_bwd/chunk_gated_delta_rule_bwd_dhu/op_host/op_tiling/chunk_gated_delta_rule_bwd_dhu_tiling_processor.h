@@ -638,7 +638,7 @@ private:
         tilingKey_ = GET_TPL_TILING_KEY(
             static_cast<uint64_t>(DtypeKey(ctx_.qDataType)), static_cast<uint64_t>(DtypeKey(ctx_.gDataType)),
             static_cast<uint64_t>(tiling_.V), static_cast<uint64_t>(ctx_.hasGk ? 1 : 0),
-            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0));
+            static_cast<uint64_t>(doTokenMajor_ ? 1 : 0),0ULL);
         return ge::GRAPH_SUCCESS;
     }
 

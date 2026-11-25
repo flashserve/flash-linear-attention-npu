@@ -1,179 +1,260 @@
-# KDA 反向优化设计
+# KDA Chunk 前反向维度与 FP16 泛化设计
 
-## A2/A3 输出直写
+版本 D1.3，状态为可开始首版功能 kernel 开发的设计。实现基线 fc0bc08e；分支 feat/fla-compat。工作流参考 PR833 / 9ec4253b。本文冻结首版算法、缓存、调度和同步；实现后的编译与设备验证记录见 [validation.md](validation.md)；本文不将 A3 结果视为 A2 验收或性能结论。
 
-设计规则版本：V2。本轮调整 Finalize 输出寻址及总接口的输出适配，Stage、tiling、workspace
-地址和同步不变，接口以 [api.md](api.md) 的 A2/A3 输出约定为准。
+## 1. 范围与实施决策
+目标为A2/A3、C64、HK=HV，K/V为60×60、64×64、100×100、128×128、256×256、64×32。Q/K/V同类型FP16/BF16，dq/dk/dv回写原类型。支持已有前向norm和beta sigmoid组合、A2/A3的两倍sigmoid，训练沿raw safe gate/exp2支持域实现保存与重算。
+A3首先开发与实测，A2独立验收。新增GVA、C32、Graph协议、组合h0/dht反向另列需求。所有公开规格校验在ACLNN，Python只路由。
 
-- Stable C++ 与 ctypes 直接按 q/k dtype 分配 dq/dk，Finalize 直写。
-- dq/dk/dv/db/dg 统一按 output_layout 分配，Finalize 直接写回，删除总接口中的布局转置。
-- db/dg 按原始 beta/raw_g dtype 分配，dA/dbias 固定 FP32，A2/A3 和 A5 V2 由 Finalize
-  写回时转换；内部 FP32 工作张量不会改变对外输出 dtype。A5 legacy 保留
-  FP32 kernel ABI，通过 L2 转换输出。
-- Finalize 的 A2/A3 写回使用 outputTokenMajor 选择输出地址和行间 stride；A5 总接口
-  另外区分 q/k/v 梯度与固定 token-major 的 Gate 梯度寻址。
-- A5 V2 的公开 dg/db 固定 token-major，dq/dk/dv 随单一 layout；输入 Gate 的必要适配见
-  “A5 V2 单 layout 适配”。
-- C++ 绑定在 legacy/auto/optimized 全部模式下识别 A2/A3；A5 分支按 PR993 契约分配输出。
+首版新增通用路径采用纯Vector、内部FP32数据流。这样能直接消费FP32 score和状态，无需假设混合精度Cube指令支持；全部新规格先获得相同的计算与训练契约。既有匹配的BF16/128热路径保留。预计通用路径显著慢于专用Cube路径，首版目标是可验证的泛化与精度，后续优化必须以本版数学和缓存契约为基线。
 
-## 原 ACLNN 入口的形状描述
+本轮选择改变了前稿的“全链64×64 Cube候选”。独立C/C++算子保留原入口并增加通用模板，ACLNN根据实际dtype/shape分派。新路径的各阶段均为Vector任务，无跨AIC/AIV共享结果槽。旧混合路径不借用新模板的缓冲和同步。
 
-A2/A3 总接口在创建 executor 和调用 L0 前校验 `safe_gate=True`，覆盖保存缓存和
-重计算路径。组合调用直接复用 Finalize 的 L0，不经过独立 Finalize ACLNN 入口，
-因此总接口须自行保证这一属性约束，避免由 tiling 失败转换成内部空指针错误。
+## 2. 接口和缓存契约
+### 2.1 输入与输出
+公开参数顺序、默认值和返回槽位沿现有接口。ACLNN完成shape/dtype/layout、组合开关、索引和大小溢出检查。新通用路径各公开缓存允许FP32描述符；旧类型继续用于旧路径。
 
-`aclnnChunkKdaBwdGetWorkspaceSize` 在调用 L0 前，将所有非空输入和输出的
-`OriginalShape` 统一为 `ViewShape`，避免一维存储描述导致 tiling 误判逻辑 rank。
-该操作原地更新 descriptor，不改变 StorageShape、stride、offset 或数据布局；
-连续布局要求及 dense/varlen 的 rank 校验保持不变。V2 入口不受本次修改影响。
+|数据|新通用路径存储|逻辑末维|
+|---|---|---|
+|q/k/v，最终o，dq/dk/dv|输入类型T|K/K/V|
+|q_hat/k_hat，qg/qg_scaled/kg/W|FP32|K|
+|U/Vnew|FP32|V|
+|G，rstd，beta_eff|FP32|K/标量/标量|
+|Aqk/Akk|FP32|C|
+|h快照、运行状态、反向状态|FP32|K×V|
+|d_aqk、dq_raw、dv_local和反向其它缓存|FP32|C/K/V|
+|dA_log/ddt_bias|FP32|H/H×K|
+|dg/db|各自原输入dtype|K/标量|
 
-## 执行流程
+新增内部FP32缓存不是把整个用户接口改成FP32主输入。前后向必须消费同一条路径的缓存，ACLNN拒绝混合不兼容缓存集合。更新涉及的算子def、InferShape、tiling实例、ACLNN及launcher输出描述；依赖新缓存的wheel/OPP必须配套。旧直接调用的合法缓存仍路由旧模板。
 
-V2 由三个阶段组成，保存中间量模式跳过前向重计算：
+final_state按现有StateT约定转换。新路径从最后FP32运行状态直接转换，默认无初态时为FP32。独立入口支持的物理状态布局使用真实K/V stride；组合反向仍按原入口边界拒绝非空h0/dht。
 
-| 阶段 | 工作 |
-|---|---|
-| Prepare | 生成 dAqk、dq_raw 及后续阶段所需数据 |
-| Dhu | 反向扫描状态，生成 dh 与 dv_scan |
-| Finalize | 合并 dq/dk/dv/db，计算 Gate 与参数梯度；可融合 Q/K 归一化反向 |
+### 2.2 beta反向接口类型
+|调用层|beta输入|sigmoid开启时输出db|写回责任|
+|---|---|---|---|
+|独立Finalize|FP32 beta_eff|FP32，已应用激活导数|独立算子按其输入描述符分配|
+|组合反向|原始beta/logits及FP32 beta_eff|原始beta/logits dtype|消费独立Finalize FP32结果后cast一次|
+|sigmoid关闭|有效beta|跟随对应入口beta dtype|导数因子1|
 
-重计算模式先恢复 gk/w/qg/kg/v_new/h 等中间量，再执行同一反向链路。
-A2/A3 与 A5 V2 总接口直接将原始 dtype 的 raw_g 传给 Recompute；BF16 在其 Vector
-读入后转为 FP32，移除总接口的独立 Cast 及 FP32 GM 临时张量。FP32 输入路径、
-计算公式和 kernel 同步不变；回归覆盖 BF16/FP32、四种 layout、定长/变长及 L2Norm 开关。
-保存模式直接读取前向的 chunk-major h；Prepare 与 Finalize 使用对应偏移，
-Finalize 对 h、dh 分别寻址，Dhu 和内嵌 state_scan 均产生 NT-first dh。
-重计算模式由 ChunkFwdH 直接写出 chunk-major h，不再增加 Transpose/Contiguous；
-保存模式不增加转换。h 与 dh 均按 dense `[B,NT,H,K,V]` 或 packed `[totalNT,H,K,V]` 分配。
-入口约束见 [接口说明](api.md)。
+### 2.3 保存与重算
+保存模式保留Aqk/Akk、G/W/qg/kg/Vnew/h，以及开启norm时的q_hat/k_hat/rstd、开启sigmoid时的beta_eff与原始beta信息。
+重算模式必须保留Aqk/Akk、q_hat/k_hat/rstd及对应beta信息；BwdRecompute.A直接引用前向Akk。重算恢复G/W/U/qg/kg，FwdH恢复h/Vnew。
+重算不再激活q_hat/k_hat或beta_eff，不重新求逆。共享前向派生量函数，使同一数据在两条模式具有相同运算次序。
+无norm时q_hat/k_hat由原输入提升FP32；有norm时使用保存FP32结果。
 
-## 数值处理
+## 3. 数学与数值定义
+以下为新路径精确的运算图，所有中间算术FP32；按显式顺序执行，最终输出才cast_T。数学reference使用高精度递推独立核对，control模拟FP32节点。
 
-- 按 32 行分带，使用首尾 Gate 值的中点平移指数，并在指数计算前屏蔽无效位置。
-- 矩阵计算使用 BF16 高位与残差补偿，累加及归约使用 FP32。
-- 严格下三角 dA 放大 2^16 后计算，再乘 2^-16 还原；对角项单独处理，不计入 Gate 梯度。
-- 保留标准 DFX 初始化，避免 BF16 冷启动转换异常。
+### 3.1 gate和归一化
+qhat=q*rsqrt(sum_K(q²)+epsilon)，khat同理；sum只包括逻辑K。norm关闭时直接提升输入。
+x=raw_g+dt_bias，a=exp(A_log)。
+safe模式delta=ell*sigmoid(a*x)，ell为负下界。
+softplus前向delta=-a*softplus(x)。
+预激活前向delta=输入log-step。
+G=c*cumsum(delta)，每chunk从零开始；exp2时c=1/ln2，否则c=1。E为对应底数指数。
 
-## 存储与流水
+beta_eff=sigmoid(beta_raw)或2*sigmoid(beta_raw)，关闭时为输入有效beta。激活在FP32完成。safe sigmoid采用稳定正负分支，softplus采用max(x,0)+log1p(exp(-abs(x)))等价稳定形式，实际API组合按现有实现复用。
 
-- Prepare 使用 128 KiB UB。
-- Finalize 使用每 AIV 248 KiB UB、每 AIC 128 KiB L1；双头窗口内每个 AIV 处理一个头。
-- Q/K/beta 常驻片上，矩阵数据直接组织为 NZ，按分带写回输出。
-- **O1**：A5 Finalize 的 Stage2、Stage5 dAqk、Stage10、dW residual 和 residual 五组 VF
-  在同一成对循环内交错两组独立操作 A/B，循环外保留独立单尾；逐行/逐块算术、掩码及
-  写回顺序不变。
-- **O2**：Stage7 将 `exp2(g-center)` 的 FP32 bandExp 保存在已释放的 qPos 高位区
-  [80,96) KiB，Stage9 按同布局复用；下一 band 才复用 qPos，UB 峰值、算术顺序和
-  跨核旗均不变。
-- 本轮性能机制为上述 O1/O2，以及后文 O4 原生 token-major do 输入。A5 raw tiling、
-  DFX、host/ATK 资产和文档调整均为非性能修改，不据此分配性能收益。普通 beta 的
-  既有转置不属于 O4，也不计入其收益。
-- A5 host 的 `ChunkKdaBwdFinalizeTilingData` 逻辑大小为 184 字节，raw tiling size 设为
-  `sizeof(TilingData)+8`，即 192 字节，与设备 `opParaSize` 一致；Arch22 路径不变。
-- dg 及参数梯度部分和写入 workspace，采用固定顺序归约，不使用原子累加。
-- 融合反向入口在同一块私有 workspace 内依次铺设 dv0/dq_raw/dAqk/dh/dv_scan/dAkk 六个跨阶段缓冲、
-  Kernel B 与 Kernel C 区域；各区域按 512 字节对齐，跨阶段偏移以 512 字节为单位写入 tiling，
-  因此在 tiling payload 大小不变的前提下，单次发射可寻址的私有 workspace 上限由 4 GiB 提升到 2 TiB。
-- q_rstd/k_rstd 成对提供时，在 Finalize 内完成归一化反向，不增加第四个 kernel。
-- A5/V2 的 dq/dk/dv 按公开 layout 写回，dg/db 固定按 token-major 写回；Finalize 分别
-  使用 outputTokenMajor 与 gateOutputTokenMajor 选择地址和 stride。独立 Finalize 的
-  output_layout 仍控制全部五个梯度，内部 model_layout 默认空字符串表示独立调用。
-  输出 shape 仅用于校验，`T == H` 时不猜测布局；这些布局与 ABI 修正不属于 O1/O2。
+### 3.2 score与三角逆
+对有效i,j逐对直接计算指数差。未进入因果域的(i,j)不执行指数。
+R_qk(i,j)=sum_K(qhat_i*khat_j*E(G_i-G_j))。
+R_kk(i,j)=sum_K(khat_i*khat_j*E(G_i-G_j))。
+Aqk(i,j)=FP32(scale*R_qk(i,j))，j≤i，其余为0。
+L(i,i)=1，L(i,j)=beta_eff_i*R_kk(i,j)，j<i，其余为0。
+物理L为diag(L_valid,I_(64-M))，交叉块为0。
 
-Python 层统一处理参数校验、空序列压缩和规范 chunk 元数据。
+新路径统一用FP32前代求单位下三角逆，取消新路径内部快慢求逆分支。按列j、行i递增
+A(i,i)=1；
+A(i,j)=-sum_(k=j..i-1)L(i,k)*A(k,j)，i>j；
+A(i,j)=0，i<j。
+所有累加以固定k升序FP32执行，写Akk时不降精度。M外的物理对角为1，交叉块为0。Akk与旧分支不要求逐位相等，但须满足数学误差策略。
 
-### 通用 state_scan 初始化同步
+此定义同时解决Akk舍入未决项和190KiB旧求逆arena依赖。旧快速模板仍使用原计算方式，其接口回归独立验证。
 
-通用融合路径的 state UB 使用 ping/pong 缓冲。正常加载通过
-`MTE3_MTE2 → MTE2 DataCopy → MTE2_V` 保护复用；零初始化不执行
-MTE2 DataCopy，因此等待缓冲可复用后仍需显式 Set/Wait `MTE2_V`，
-将此前 MTE3 读取完成的依赖传给 Vector，再执行 Duplicate。
-复用既有的逐缓冲事件，不新增事件资源或更改内存布局。
+### 3.3 派生量和前向
+qg=FP32(qhat*E(G))；
+qg_scaled=FP32(qg*scale)；
+kg=FP32(khat*E(G_last-G))；
+Rk=FP32(FP32(khat*E(G))*beta_eff)；
+Rv=FP32(v*beta_eff)；
+W=Akk@Rk，U=Akk@Rv。
+Vnew=U-W@H；
+O=qg_scaled@H+Aqk@Vnew；
+Hnext=diag(E(G_last))*H+kg.T@Vnew。
+各矩阵乘用第5节Vector外积累加模板，运行次序固定。
 
-### WY/Intra 的掩码与源缓冲生命周期
+### 3.4 状态精度
+新路径Hrun、公开h快照和矩阵乘读取的H均为FP32。chunk入口复制Hrun到h；WH读取同一FP32入口状态，产生FP32 Vnew；Hnext以FP32写入另一个运行槽，交换后作为下一chunk输入。final_state仅在返回时按StateT转换。
+因此新路径不存在FP16 h快照在WH前的隐式舍入。保存与重算均用同一FwdH模板。旧路径仍沿其BF16快照和StateT运行规则，不能以旧输出dtype推导新路径。
 
-WY 的逐行 Duplicate 使用两个 uint64_t 的位掩码数组，FP32 的高位掩码
-显式置零，避免 API 读取数组外的元素。WY/Intra 的 FP32 Store 先用 Adds
-将源 Plane 复制到输出队列；Adds 后执行 PIPE_V 屏障，再允许调用方覆写源
-Plane。输出队列的事件继续负责队列缓冲与 MTE3 之间的同步。
+### 3.5 反向
+BwdPrepare输出
+d_aqk=scale*tril(dO@Vnew.T)，FP32；
+dv_local=Aqk.T@dO，FP32；
+dq_raw为FP32。K-first物理h[K,V]时dq_raw=dO[M,V]@h.T；V-first物理h[V,K]时dq_raw=dO[M,V]@h，结果均为M×K。
+d_aqk是未缩放score的梯度，dv_local使用已含scale的Aqk。
 
-WY 的 EndFusedMmadPhase 消费最后一个 FIX_M 信号后，通过 M_FIX 的
-Set/Wait 将消费完成传回 FIX，再允许 BeginFusedMmadPhase 重发 FIX_M。
-这使阶段重置的发送端等待接收端消费完成，避免 FIX 流水连续发送同一事件。
+Dhu接收未乘scale的qg和独立scale，与保存及重算输出一致。从Dnext开始倒序处理每个chunk c：
+先写dh[c]=Dnext，保存decay及状态更新之前的FP32值；
+dVnew=dv_local+kg@Dnext；
+termQ=qg.T@dO；
+Dprev=FP32(scale*termQ)+diag(E(G_last))*Dnext-W.T@dVnew。
+termQ先完成FP32归约，再乘scale；control与kernel使用同一顺序，不改为预先缩放qg。
+完成整个K域依赖后以Dprev作为下一轮Dnext。终端取零或独立入口支持的dht。Finalize的dkg=Vnew@dh[c].T，读取更新前快照。支持dh0的独立入口在完成最早chunk后返回Dprev。
 
-Finalize 的输入输出及源码入口见
-[算子说明](../../chunk_kda_bwd_finalize/README.md)。
+Finalize按反向计算图执行
+dU=dVnew；dW=-dVnew@h.T；
+dkg=Vnew@Dnext.T；
+Finalize先按前向FP32节点重建Rk=FP32(FP32(khat*E(G))*beta_eff)、Rv=FP32(v*beta_eff)，按tile临时生成并在最后消费者结束后复用；Rk/Rv不作为额外autograd保存量。保存与重算两条链都使用同一重建函数。随后计算dA=dW@Rk.T+dU@Rv.T；
+dL=-Akk.T@dA@Akk.T，取严格下三角；
+dRk=Akk.T@dW；dRv=Akk.T@dU。
+最终dv=cast_T(beta_eff[:,None]*dRv)，乘法在FP32执行；这里使用有效beta，sigmoid链式导数只应用于dbeta。beta_eff为0时对应dv为0，而dbeta仍可非零。
+由直接差值score公式求qhat/khat/G贡献，对每有效(i,j,d)，指数差梯度对G_i加、G_j减。合并qg、kg、Rk及状态decay贡献后执行本chunk gate逆扫。
+qg相关梯度按独立dq_raw与scale定义应用一次，禁止再次给dv_local乘scale。
 
+在所有score/qg/Rk贡献之外，显式合并kg及状态decay的末行贡献。令b=ln(2)（exp2域）或1（自然指数域），逐元素
+t_i=b*dkg_i*kg_i；
+dG_i -= t_i；
+dG_last += sum_i(t_i)；
+dG_last += b*E(G_last)*sum_V(h*Dnext)。
+i=last时kg的加减贡献数学上相消，实现可跳过该项的成对更新以避免不必要舍入。其余末行贡献使用累加，不能覆盖已有dG。scratch由当前task单owner顺序更新。
+以上全部合并后才执行逆向cumsum。
 
-## 原始 beta 与 beta_eff 分离（A2/A3）
+G的实际存储域梯度记dG：
+dDelta_j=c*sum_(i=j..M-1)dG_i，每chunk初始化suffix为0。求E导数时对应底数系数在dG形成处保留，禁止重复换底。
+safe模式的数学导数含sigmoid(a*x)*(1-sigmoid(a*x))，实际FP32实现固定用稳定形式：
+t=exp(-abs(a*x))，sigma_prime=t/((1+t)*(1+t))；
+dRaw=dDelta*ell*a*sigma_prime；
+禁止从已舍入为1的sigmoid值计算1-z。kernel和FP32 control采用同一稳定计算顺序。
+dA_log=sum_(token,K)(dRaw*x)；
+ddt_bias=sum_token(dRaw)。
+softplus数学导数为dRaw=-dDelta*a*sigmoid(x)、dA_log=sum(dDelta*delta)，仅用于已支持路径；本轮训练能力边界见第1节。
 
-接口以 [api.md](api.md) 为准。本次数学公式、FP32 累加、分核、tile、workspace 和同步不变。
-总接口从 beta descriptor 分配 db，从 beta_eff（融合）或转换后的 beta（不融合）选择计算输入。
-Prepare/Dhu 不新增 beta 输入；Recompute/Finalize 共享所选有效 beta。
-Finalize 注册额外两种组合：raw_g 为 BF16/FP32、有效 beta FP32、db BF16；原四种组合保留。
-仅融合且 model_layout 路径可解耦有效 beta 和 db dtype，独立小接口的校验保持原约定。
-A2/A3 vector 写回改用输出 DTYPE_D_BETA，使用已有每行 32 字节对齐的 UB 暂存和 DataCopyPad；输入仍用 BetaT。
-梯度先在 FP32 中完成 sigmoid 导数，再在写回时一次 CAST_RINT 至 BF16，不新增 GM 临时张量或独立 Cast。
-CPU 公式不变；新增 BF16 db 的预期为旧 FP32 梯度按模型 beta dtype 舍入。验证需覆盖原始 beta 两种 dtype、融合开关/scale=2、保存/重计算、四种 layout、两套 Python 后端、独立 Finalize 回归与非法缓存。
+每个有效token i的beta_eff梯度明确为
+dBetaEff_i = sum_d(dRk_id * FP32(khat_id*E(G_id)))
+          + sum_v(dRv_iv * v_iv)
+          + sum_(j<i)(dL_ij * R_kk(i,j))。
+R_kk(i,j)按3.2直接差值指数重算，使用有效(i,j)且固定K归约顺序。不能用L_ij/beta_eff_i恢复R_kk，因为beta_eff为0时该导数仍可非零。
+以上三项均在FP32内归并完成，再按三个分支生成dbeta：
+use_beta_sigmoid_in_kernel=False时dbeta=dBetaEff，链式因子为1；
+sigmoid开启且allow_neg_eigval=False时dbeta=dBetaEff*beta_eff*(1-beta_eff)；
+sigmoid开启且allow_neg_eigval=True时dbeta=dBetaEff*beta_eff*(1-beta_eff/2)。
+ACLNN拒绝sigmoid关闭而allow_neg_eigval开启的组合。最后按调用层次处理类型。独立Finalize的db跟随其beta入参dtype，sigmoid模式该入参是FP32 beta_eff，所以db保持FP32；组合入口持有原始logits的描述符，在独立Finalize结果返回后才cast到原始beta的dtype。数学上sigmoid模式db已是logits梯度，组合入口只做dtype转换，不能再乘一次导数。
+L2Norm关闭时dq=cast_T(dqhat)、dk=cast_T(dkhat)，不读取rstd，不做投影。
+L2Norm开启时按完整逻辑K归约，dq=rstd*(dqhat-qhat*sum_K(qhat*dqhat))，k同理，再cast_T；rstd和qhat使用同一前向保存值。返回dq/dk/dv与各自原输入dtype一致，dg跟随raw_g，db遵循上述独立/组合入口分层契约。
 
+### 3.6 有限性承诺
+M16接近-5 gate的band反例使用直接差值计算，不产生人为Inf*0。
+M1、q=k=256、scale1、norm关闭时Aqk=65536以FP32保存，v0/h00时输出必须有限且为0。
+所有中间缓存FP32，避免这些half relay溢出。对于真实数学结果或FP32中间量超出FP32范围，遵循FP32算术语义；不承诺任意有限输入均返回有限结果，不通过裁剪改变数学定义。验收值域和误差阈值由reference/precision policy明确，不能只以有限性替代精度。
 
-## A5 V2 单 layout 适配
+## 4. 调度和Tiling
+新路径为Vector-only kernel，各AIV独立拥有任务与UB，不存在两个AIV共同读取一个结果slot。任务编号使用实际Vector核数分配。
+独立chunk阶段为(seq,chunk,head)，grid-stride；计算score/逆矩阵时单owner处理完整64阶矩阵，避免参数或矩阵写入冲突。
+FwdH/Dhu为(seq,head,Vtile)，TV=32。每owner按序列顺序/逆序处理完整K×32状态，K256时该状态为32KiB。
+独立梯度stage按(seq,chunk,head)处理，按输出列片32遍历，参数梯度写每任务独立partial，再启动独立Vector归约kernel按固定任务顺序归并。
+TK=64用于直接差值score沿K的分段；归约固定tile次序。K/V行距使用逻辑尺寸，内部tile不足32/64时补零。
+新tiling分派条件由ACLNN选择general-fp32模板并按输入T设置最终cast。代码实现时使用未占用的key值；旧key含义保持原定义。未匹配已有或新增模板的组合由ACLNN报错。
 
-本节扩展总接口；历史 legacy 的流水和 workspace 说明不代表 V2 实现。
-公开契约以 [api.md](api.md) 为准。前向及 A5 重计算 H 限制保持原样。
+## 5. Kernel Stage和FP32消费者实现
+所有新Stage为Vector，矩阵乘统一采用行外积累加：对输出行i和32列片，初始化acc[32]=0，按归约r递增，加载B[r,col:col+32]，广播A[i,r]，Mul后Add到acc，最后一次写回。输入以FP32读；用户半精度输入在入口Cast升精度。转置访问通过分行DataCopyPad收集到UB，禁止将不连续GM当作连续tile。
+该实现只依赖FP32向量Add/Mul/Muls、Exp、Cast和归约，避免混合Cube输入限制。
 
-| 阶段 | 当前设计 |
-|---|---|
-| Python/Stable/ctypes | 共用单一 layout 的校验和输出分配；A5 auto/optimized 路由 V2，legacy 拒绝新契约 |
-| ACLNN V2 | 按 v 与 layout 解析维度；缓存固定 head-major；do 以原始 token-major 直接传给 Prepare/Dhu，普通 beta 转置一次供 Recompute/Finalize；A5 保留 sigmoid 参数并拒绝非默认值 |
-| Prepare | 接收原始 token-major do；四维变长通过 B=1 的 reshape view 进入现有 NTD kernel |
-| Dhu | 与 Prepare 共用原始 token-major do；内部可选标志控制实际行距，独立调用默认 head-major |
-| Recompute | reserved 位分别控制 raw_g、q/k、v 的 stride 读取；两条 Vector 分支一致，缓存写出不变；BF16 raw_g 片上升精度，接收已转换的 head-major 普通 beta |
-| Finalize | q/k、v、raw_g 分别按标志读取，有 rstd 时 q/k 固定 head-major；Cube 两处 v 读取同步调整；内部 beta 为 head-major，dq/dk/dv 随 layout，公开 dg/db 固定 token-major |
+|kernel|Stage次序|关键依赖|
+|---|---|---|
+|FwdPrepare|输入升精度/norm/激活 → 直接差值score → scale/mask → FP32前代求逆 → 派生量 → W/U|score全K归约结束后写Aqk；Akk在求逆结束后供两次乘法使用|
+|FwdH|跨K求WH → Vnew → kg.T@Vnew → decay状态更新|先完整WH，后更新所有K行|
+|FwdFinalize|qg_scaled@h → Aqk@Vnew → 合并/最终cast|两消费者直接读FP32 h/Aqk|
+|Recompute|读取保存qhat/khat/beta_eff/Akk → gate与派生量 → W/U|不重做norm/sigmoid/求逆|
+|BwdPrepare|dO@Vnew.T → scale/mask；Aqk.T@dO；按state_v_first取dO@h.T或dO@h|三路全FP32暂存|
+|Dhu|保存dh[c]=Dnext → kg@Dnext → dVnew → termQ及termW → scale/decay/状态交换|输入为qg及独立scale；快照在更新之前写出|
+|Finalize|矩阵梯度 → score逐对梯度 → gate逆扫 → norm/beta链式导数 → cast|每task独占输入梯度区，参数写partial|
+|参数归并|按head/K片读取全部partial求和|最后写FP32参数梯度一次|
 
-公开 do/raw_g/beta 始终为 token-major，dg/db 同样固定 token-major；dg 跟随 raw_g
-dtype（BF16/FP32），db 跟随 beta dtype，A_log/dt_bias 及其梯度固定 FP32。
-总接口不增加 input_layout/output_layout 参数；独立 Finalize 的 output_layout 语义不变。
+Finalize中score梯度逐行/列串行累加至GM任务私有FP32 scratch；其每个输出元素由同一task owner更新，不使用跨核原子。当q/k等头时无需GVA归约。
 
-不改变数学公式、累加 dtype、tile、分核、UB/L1 布局、workspace 或事件协议。
-GM→UB 每行连续 128 元素，非连续行使用 DataCopyPad；GM→L1 保持原 CATLASS
-搬运与尾块清零，只调整实际 GM leading dimension。beta 的 BF16/FP32 转换仍在片上完成。
+## 6. 内存与workspace
+### 6.1 UB地址
+新模板每AIV固定128KiB arena。以下为字节半开区间。
+[0,32768) A，FP32，最大K256×TV32状态或64×128矩阵输入；
+[32768,65536) B，同大小，第二状态或第二操作数；
+[65536,81920) C，64×64 FP32 L/A/score之一；
+[81920,98304) D，64×64 FP32逆矩阵或结果；
+[98304,106496) E，输入DataCopyPad/TQue区，8192 bytes；
+[106496,114688) F，输出TQue区，8192 bytes；
+[114688,122880) G，FP32乘法/归约scratch；
+[122880,131072) J，FP32统计、cast临时和索引小表。
+同一Stage内A/B/C/D的角色以调用次序固定。Stage边界先将后续需保留的缓存写GM并等待完成，再复用区域。前代求逆只用C/D与G，所有64阶对象可完全驻留；原190KiB求逆arena不进入新模板。
 
-验证分三层：保留独立小接口的 output_layout 组合为布局等价基线，使用独立 CPU
-递推标杆检查数学结果，再检查真实前向缓存接入。覆盖定长/三维及四维变长、四种 layout、
-`T == H`、尾块、空段压缩、L2Norm、raw_g/beta 四种 dtype、保存/重算、双 Python 后端及
-直接 ACLNN 拒绝检查。当前 ATK 入口保持 BSND/TND，CPU golden 保持 head-major，
-输出在比较前转回该排列；资产设计不替代实际设备结果。
+H/Dhu阶段A/B容纳FP32运行状态双槽，C/D用于当前32列输出和暂存，score按行流入E。最大K256时双状态共64KiB。跨chunk状态留在A/B；不同seq/head任务结束后才重用。
+TQue实际初始化分配必须保持上述E/F各8192byte预算，其余采用TBuf；总分配不超过128KiB。源码arch22已有190KiB使用事实支撑预算，Host仍查询实际UB大小并在不足时拒绝该模板。新路径L1/L0分配为0。
 
-BF16 raw_g 的 Stage 11 转换使用 BF16 全掩码，覆盖全部 128 个元素；此前误用 FP32 掩码会遗漏部分 BF16 lane，影响 dg/dA/dbias。本次同步修正，不改变 FP32 路径。
+### 6.2 GM缓存公式
+P为有效token总数×H，N为chunk总数×H。每条分配按32byte对齐并做64位溢出检查。
+Aqk/Akk合计8PC；
+G、W、qg、kg、qg_scaled每份4PK；
+U、Vnew每份4PV；
+qhat/khat每份4PK；
+rstd每份4P，beta_eff为4P；
+h为4NKV，反向dh为4NKV；
+d_aqk为4PC，dq_raw为4PK，dv_local/dv_scan各4PV。
+各量是否分配由输出档位与最后消费者决定；autograd返回缓存直到反向末次使用才释放。运行状态位于UB，没有每owner GM双状态scratch。
 
-## A5 V2 原生 token-major do 输入
+Finalize task私有scratch最保守预算为dA/dL两份64阶矩阵、dQ/dK/dG三份C×K、dV/dU两份C×V以及dW/dKG两份C×K：
+4*(2*C*C+5*C*K+2*C*V) bytes/task。
+实际按活动Vector核数分配并跨grid-stride work复用；输出参数partial单独按N*(K+1)*4，归约kernel最终写H*(K+1)*4。存在bias时才分配对应K列，dA_log按每head归并。
+前向峰值、反向留存和executor暂存按上述集合的实际生命周期分别求和。SDK系统workspace另计。
 
-模型输入 do 始终为 BSND/TND，与 qkv 的 layout 无关。旧路径先在总接口执行
-`SwapHeadToken + Contiguous`，生成 head-major dOHead，再由 Prepare 和 Dhu 顺序共用。
-O4′ 在非方形 shape 上直接下传原始 do，不再生成 dOHead：
+## 7. 搬运、同步和边界
+新模板采用深度1的输入/输出TQue，CopyIn后EnQue、计算前DeQue；计算结束释放输入，CopyOut使用输出EnQue/DeQue并在搬运完成后释放。API内部管理MTE2/V/MTE3事件，禁止同时手工复用这些事件。
+A/B/C/D驻留区只有当前AIV访问，连续Vector依赖显式PipeBarrier<PIPE_V>；通过E/F队列完成所有GM读写。循环中下一结果必须先Alloc到空闲输出队列，前一次MTE3未完成时无法复用F。这是新模板结果槽的唯一信用机制。
+无跨核ready/free、无跨AIC/AIV flag、无共享L0C/Fixpipe结果。各kernel之间通过executor顺序和正常kernel完成依赖传递GM数据。旧混合模板保留原同步并单独回归。
 
-```text
-旧：do GM -> Transpose/Contiguous -> dOHead GM -> Prepare/Dhu L1/L0
-新：do GM -- 原生 stride 读取 ----------> Prepare/Dhu L1/L0
-```
+采用源码已使用的DataCopyPad/DataCopyExtParams接口，单行blockCount=1，blockLen=有效元素数*元素字节宽，源/目的stride=0；多行逻辑stride在外层行循环计算。输入补零只发生在UB物理tile，GM输出长度保持有效byte数。100维half末片36元素只写72bytes；FP32缓存同片只写144bytes。
+M外score为0，求逆对角为1；空序列不生成chunk，状态owner按实际入口契约处理，不能在Python静默压缩索引。
 
-Prepare 用 vNew、Dhu 用 dv 推导规范 B/H/T/V。仅在 A5、输入满足交换后的 shape
-且 H!=T 时，host 才能无歧义识别 token-major：Dhu 选择私有 `DO_TOKEN_MAJOR`
-TilingKey，Prepare 仅选择 `(BNSD,fixed)` 或 `(NTD,varlen)` 的 direct 实例。
-外层 kernel 将该编译期值传给 Cube 的内部 Init，按 `((b*T+t)*H+h)*V` 和 H*V
-行距读取，head 间距为 V；packed 的 b 为 0。四维变长 Prepare 去 B=1 view、Dhu
-补 B=1 view，均不搬运数据。
+## 8. 标杆与验证
+验收使用 fla-org/flash-linear-attention 原始测试，不修改其输入和精度断言，不使用本地 ATK。固定上游提交 c55dc553edf44701bf703715ed052d811f8a6376，记录 pytest node ID、实际 AscendC 路由及结果；回退 Triton 或被 skip 的用例不计为本次算子通过。FP64递推/autograd仅为独立公式自检，FP32逐节点control仅用于定位，不替代上游测试。
+本轮不接通组合反向 h0/dht。上游 test_chunk/test_chunk_varlen 中依赖非零初态、末态梯度及 dh0 断言的用例记为未覆盖，不置零输入、不删除断言，也不计为通过。test_chunk_varlen_prefill 的前向初态支持保持原契约；无 h0/dht 依赖的 test_chunk_varlen_fused_training_contract 用于保存/重算训练验证。
+现有precision policy优先复用；新增FP32缓存精度规则在测试资产中明确，不用扩大阈值掩盖非有限值。进入04前先运行CPU矩阵公式与递推一致性、反向autograd一致性检查。
 
-T==H 时两种布局具有相同 shape 和连续 stride，不能通过 shape 消歧。总 V2 仅在该
-情况下保留 `SwapHeadToken + Contiguous`，让独立小接口继续收到确定的 head-major 输入；
-非 direct 和非法 shape 仍按原校验处理，不能根据 shape 猜测布局。
+必测
+1. M16、接近-5 safe gate、单位基向量，所有有效score有限。
+2. M1、q=k=256、scale1、norm关闭、v0/h00，Aqk65536、o0。
+3. K64/V32、T65、scale0.37、FP16，四组norm/sigmoid开关、保存/重算。
+4. allow_neg_eigval=True、logit0、非零beta梯度，beta_eff1、导数因子0.5。
+5. T65分别检查第二chunk FP32入口状态、WH、Vnew和最终状态转换。反向另取dht=0，仅最后token的dO非零，检查末chunk的dh快照为0、首chunk的dh等于末chunk计算的Dprev；使用scale0.37逐chunk比较独立reference。
+6. sigmoid关闭时以有效beta=1、dBetaEff=1做局部导数检查，期望dbeta=1；组合梯度另与autograd比较，不能把不可控组合dBetaEff当作恒1。
+7. 独立BwdPrepare用K64/V32的同一逻辑状态，分别以[K,V]及[V,K]物理布局输入，比较dq_raw及其余两输出一致。
+8. M1/15/63检查物理求逆单位对角。
+9. packed cu=[0,0,1,66,66,129]与逐序列独立执行比较；只扰动65序列，其余输入梯度和输出不变，参数梯度按独立结果求和。入口不支持空段时先验证独立阶段并记录组合能力依赖。
+10. norm关闭的局部导数用q=e1、dqhat=e1，检查dq=e1；保存/重算均覆盖，rstd缺省时不得读取。
+11. raw safe gate使用a*x=+20/-20与非零dDelta，核对sigma_prime约2.0611536e-9及FP32 dA_log/ddt_bias；dg输出低精度时同时核对cast前值和目标dtype参考，避免把允许的最终舍入误判为内部提前归零。
+12. sigmoid开启使用低精度原始logits和FP32 beta_eff，分别验证独立Finalize db为FP32、组合db为原始dtype，并检查导数只应用一次。
+13. M2、sigmoid关闭、beta_eff[1]=0，构造严格下三角dL贡献非零，比较显式三项dBetaEff与独立autograd；禁止除以beta恢复score。
+14. beta_eff为0的token显式检查dv为0并允许dbeta非零；逐元素核对逆扫前dG，特别是kg末行抵消与状态decay贡献。
+15. 六组K/V×FP16/BF16，T1/15/63/64/65/127及长序列，布局、保护区、重复运行。
+A3直调Stage → 模板full → 总链 → wheel + fla-org 原始测试；A2独立验收。共享Host改动回归旧A5及旧BF16路径。
 
-该方案不增加 op_def 属性、L0 尾参或 raw tiling 字段，公开 Python、总 ACLNN 和独立
-小接口契约均不改变。tiling 数据布局保持原样，A2/A3 与 legacy 保持原寻址；direct
-仅改变私有 TilingKey 和 GM 地址生成。L1/L0 tile、UB/workspace、cache hint、分核和
-事件协议保持不变，HV*V/NV*128 的 uint32 行距检查继续生效。
+CPU数学验证记录：check_kda_design.py使用NumPy float64手写块前向和完整基础反向，独立逐token递推由autograd自动求导。固定seed20261125，共8例，M/K/V为1/4/3、2/4/3、5/7/3、16/64/32，每组覆盖末token beta为零与非零，scale0.37，非零初态和末态梯度。比较q/k/v/beta_eff/delta/h0六类梯度，最大绝对差1.7763568394002505e-15；块前向与递推最大差8.326672684688674e-17。beta零的dv=0且dbeta非零检查通过。结果见check_kda_design.results.json。
+该验证只覆盖单chunk自然对数域、高精度基础公式，未覆盖FP32舍入、norm/raw-gate激活链、packed跨chunk、完整规格矩阵或设备执行。非零状态用于数学验证，不扩大组合入口支持域。
 
-普通 beta 仍由总接口转置一次为 head-major，供 Recompute/Finalize 共用；本项不改变
-该数据流，也不计入 beta 的性能或显存变化。do 的独立性能与显存结果以 ATK README
-和最终 wheel 的实测记录为准。
+## 9. 性能与后续优化
+本首版为FP32 Vector通用实现，计算复杂度包含O(C²K)直接score、O(C³)前代求逆，以及O(CKV)状态乘法。预计吞吐低于旧Cube路径，不作性能提升承诺。
+同机记录msprof各kernel Task Duration固定求和、总调用耗时和GM峰值。功能精度通过后，逐个将范围可证明的矩阵乘替换为Cube或优化Vector归约；每次保持FP32缓存契约与基准，不一次更改缓存、算法和调度。
+
+## 10. 开发映射与进入条件
+FwdPrepare新增general-fp32模板、资源和tiling；共享FwdH/Dhu新增FP32缓存输入实例；两个Finalize、BwdPrepare和Recompute增加FP32消费者；ACLNN统一描述符检查/输出推导；launcher按新路径分配缓存，Python保持原始参数透传。
+
+开发顺序为唯一标杆 → FwdPrepare的M1/M16 → FwdH/Finalize → BwdPrepare/Dhu/Finalize → 保存/重算 → 完整矩阵。每个模板编译时验证实际API签名和资源报告，设备运行失败按首个偏离Stage回流。
+
+本版已经选定消费者算法、Aqk/Akk和状态精度、求逆运算顺序、Vector调度与队列同步；可以进入首版实现。尚未完成的是实现产物的编译、资源报告、精度和性能验收。CANNBot运行状态未执行，不能把本文状态等同于工作流工具已标记complete。
+
+## 11. 证据
+- PR833 head 9ec4253b 的算子自动开发工作流。
+- fc0bc08e FwdPrepare arch22 resource.h及vector.h，提供190KiB UB、DataCopyPad和FP32 Vector算术的现有使用证据。
+- FwdH arch22 vec.h区分stateFp32、stateBf16与h/final_state写回；新路径明确采用FP32运行和快照。
+- BwdPrepare docs/api.md明确三路scale与dtype约定，BwdRecompute和总反向实现明确Akk输入依赖。
+- BwdFinalize和组合反向docs/api.md明确beta_eff及两倍sigmoid导数。
+- 本地Ascend C API资料中的DataCopyPad与TQue EnQue/DeQue同步用法；编译阶段仍需对目标CANN头文件核验。

@@ -1,5 +1,6 @@
 #include "chunk_kda_fwd_finalize_tiling.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -27,6 +28,8 @@ struct FinalizeShape {
     uint64_t batch = 0;
     uint64_t heads = 0;
     uint64_t seqLen = 0;
+    int64_t keyDim = 0;
+    int64_t valueDim = 0;
     bool packed = false;
     bool sequenceMajor = false;
 };
@@ -111,8 +114,16 @@ bool ResolveInputs(gert::TilingContext *context, FinalizeShape &info)
     const gert::Shape &vShape = vNew->GetOriginShape();
     const gert::Shape &hShape = h->GetOriginShape();
     const gert::Shape &oShape = out->GetOriginShape();
+    if (qShape.GetDimNum() == 0 || vShape.GetDimNum() == 0) return false;
+    info.keyDim = qShape.GetDim(qShape.GetDimNum()-1);
+    info.valueDim = vShape.GetDim(vShape.GetDimNum()-1);
+    const bool general = context->GetInputDesc(FINALIZE_INPUT_QG_SCALED)->GetDataType() == ge::DT_FLOAT;
+    const bool equalPair = info.keyDim == info.valueDim &&
+        (info.keyDim == 60 || info.keyDim == 64 || info.keyDim == 100 || info.keyDim == 128 || info.keyDim == 256);
+    if ((!general && (info.keyDim != 128 || info.valueDim != 128)) ||
+        (general && !equalPair && !(info.keyDim == 64 && info.valueDim == 32))) return false;
     if (info.packed) {
-        if (qShape.GetDimNum() != 3 || qShape.GetDim(2) != 128) {
+        if (qShape.GetDimNum() != 3) {
             return false;
         }
         info.batch = 1;
@@ -120,9 +131,9 @@ bool ResolveInputs(gert::TilingContext *context, FinalizeShape &info)
         info.seqLen = static_cast<uint64_t>(qShape.GetDim(1));
         const bool vShapeValid =
             HasShape(vShape, {static_cast<int64_t>(info.heads),
-                              static_cast<int64_t>(info.seqLen), 128}) ||
+                              static_cast<int64_t>(info.seqLen), info.valueDim}) ||
             HasShape(vShape, {1, static_cast<int64_t>(info.heads),
-                              static_cast<int64_t>(info.seqLen), 128});
+                              static_cast<int64_t>(info.seqLen), info.valueDim});
         if (!HasShape(aShape, {static_cast<int64_t>(info.heads),
                                static_cast<int64_t>(info.seqLen), 64}) ||
             !vShapeValid) {
@@ -130,11 +141,11 @@ bool ResolveInputs(gert::TilingContext *context, FinalizeShape &info)
         }
         return info.sequenceMajor
             ? HasShape(oShape, {static_cast<int64_t>(info.seqLen),
-                                static_cast<int64_t>(info.heads), 128})
+                                static_cast<int64_t>(info.heads), info.valueDim})
             : HasShape(oShape, {static_cast<int64_t>(info.heads),
-                                static_cast<int64_t>(info.seqLen), 128});
+                                static_cast<int64_t>(info.seqLen), info.valueDim});
     }
-    if (qShape.GetDimNum() != 4 || qShape.GetDim(3) != 128) {
+    if (qShape.GetDimNum() != 4) {
         return false;
     }
     info.batch = static_cast<uint64_t>(qShape.GetDim(0));
@@ -145,16 +156,16 @@ bool ResolveInputs(gert::TilingContext *context, FinalizeShape &info)
                            static_cast<int64_t>(info.seqLen), 64}) ||
         !HasShape(vShape, {static_cast<int64_t>(info.batch),
                            static_cast<int64_t>(info.heads),
-                           static_cast<int64_t>(info.seqLen), 128})) {
+                           static_cast<int64_t>(info.seqLen), info.valueDim})) {
         return false;
     }
     return info.sequenceMajor
         ? HasShape(oShape, {static_cast<int64_t>(info.batch),
                             static_cast<int64_t>(info.seqLen),
-                            static_cast<int64_t>(info.heads), 128})
+                            static_cast<int64_t>(info.heads), info.valueDim})
         : HasShape(oShape, {static_cast<int64_t>(info.batch),
                             static_cast<int64_t>(info.heads),
-                            static_cast<int64_t>(info.seqLen), 128});
+                            static_cast<int64_t>(info.seqLen), info.valueDim});
 }
 
 bool ResolveSequenceInfo(gert::TilingContext *context,
@@ -219,7 +230,8 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     }
     totalChunks = 0;
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
-        if (lengths[seq + 1] <= lengths[seq] ||
+        if (lengths[seq + 1] < lengths[seq] ||
+            (lengths[seq + 1] == lengths[seq] && context->GetInputDesc(FINALIZE_INPUT_QG_SCALED)->GetDataType() != ge::DT_FLOAT) ||
             lengths[seq + 1] > static_cast<int64_t>(info.seqLen)) {
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             context->GetNodeName(), "cu_seqlens", std::to_string(seq),
@@ -228,7 +240,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         }
         const uint64_t length = static_cast<uint64_t>(
             lengths[seq + 1] - lengths[seq]);
-        totalChunks += (length - 1) / FINALIZE_CHUNK_ROWS + 1;
+        totalChunks += (length + FINALIZE_CHUNK_ROWS - 1) / FINALIZE_CHUNK_ROWS;
         if (totalChunks > std::numeric_limits<uint32_t>::max()) {
             return false;
         }
@@ -249,7 +261,7 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
     for (uint64_t seq = 0; seq < seqNum; ++seq) {
         const uint64_t length = static_cast<uint64_t>(
             lengths[seq + 1] - lengths[seq]);
-        const uint64_t chunks = (length - 1) / FINALIZE_CHUNK_ROWS + 1;
+        const uint64_t chunks = (length + FINALIZE_CHUNK_ROWS - 1) / FINALIZE_CHUNK_ROWS;
         for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
             if (pairs[offset] != static_cast<int64_t>(seq) ||
                 pairs[offset + 1] != static_cast<int64_t>(chunk)) {
@@ -286,10 +298,12 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
         return ge::GRAPH_FAILED;
     }
+    const auto *qDesc = context->GetInputDesc(FINALIZE_INPUT_QG_SCALED);
+    const bool general = qDesc != nullptr && qDesc->GetDataType() == ge::DT_FLOAT;
     const char *dtypeInputNames[] = {"qg_scaled", "Aqk", "v_new", "h"};
     for (size_t index = 0; index <= FINALIZE_INPUT_H; ++index) {
         const auto *desc = context->GetInputDesc(index);
-        if (desc == nullptr || desc->GetDataType() != ge::DT_BF16) {
+        if (desc == nullptr || desc->GetDataType() != (general ? ge::DT_FLOAT : ge::DT_BF16)) {
             const std::string actual = desc == nullptr
                 ? std::string("nullptr")
                 : ge::TypeUtils::DataTypeToSerialString(desc->GetDataType());
@@ -300,7 +314,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         }
     }
     const auto *outputDesc = context->GetOutputDesc(0);
-    if (outputDesc == nullptr || outputDesc->GetDataType() != ge::DT_BF16 ||
+    if (outputDesc == nullptr || (outputDesc->GetDataType() != ge::DT_BF16 && !(general && outputDesc->GetDataType() == ge::DT_FLOAT16)) ||
         !ResolveInputs(context, info) || info.batch == 0 || info.heads == 0 ||
         info.seqLen == 0 ||
         info.batch > std::numeric_limits<uint32_t>::max() ||
@@ -358,7 +372,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     const auto &h = context->GetInputShape(FINALIZE_INPUT_H)->GetOriginShape();
     const int64_t hBatch = static_cast<int64_t>(info.batch);
     if (!HasShape(h, {hBatch, static_cast<int64_t>(totalChunks),
-                      static_cast<int64_t>(info.heads), 128, 128})) {
+                      static_cast<int64_t>(info.heads), *stateVFirst ? info.valueDim : info.keyDim, *stateVFirst ? info.keyDim : info.valueDim})) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             context->GetNodeName(), "h", "C=" + std::to_string(totalChunks),
             "h 必须为 [B,C,HV,128,128]");
@@ -367,6 +381,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
 
     const auto platform = platform_ascendc::PlatformAscendC(
         context->GetPlatformInfo());
+    if (general && platform.GetCurNpuArch() != NpuArch::DAV_2201) return ge::GRAPH_FAILED;
     const bool isNonArch22 =
         platform.GetCurNpuArch() == NpuArch::DAV_3510 ||
         platform.GetCurNpuArch() == NpuArch::DAV_9201;
@@ -380,7 +395,19 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.headGroupSize = isNonArch22 ? 0 : FINALIZE_A2A3_HEAD_GROUP_SIZE;
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
-    if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
+    if (general) {
+        const uint64_t tiles = (info.valueDim + 31) / 32;
+        const uint64_t limit = std::numeric_limits<uint32_t>::max();
+        const uint64_t batches = isVarLen ? 1 : info.batch;
+        if (info.heads > limit / tiles || batches > limit / (info.heads * tiles) ||
+            totalChunks == 0 || totalChunks > limit / (batches * info.heads * tiles) ||
+            platform.GetCoreNumAiv() == 0) return ge::GRAPH_FAILED;
+        const uint64_t work = batches * totalChunks * info.heads * tiles;
+        schedule.usedCoreNum = static_cast<uint32_t>(std::min(work, static_cast<uint64_t>(platform.GetCoreNumAiv())));
+        schedule.headsPerPartition = 1;
+        schedule.chunkWorkItems = work;
+        schedule.workspaceBytes = platform.GetLibApiWorkSpaceSize();
+    } else if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
         OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
             "%s: chunk-first/head 分核或 workspace 规划失败。", __func__);
 
@@ -398,6 +425,8 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     tiling.set_isVarLen(isVarLen);
     tiling.set_outputSequenceMajor(info.sequenceMajor);
     tiling.set_stateVFirst(*stateVFirst);
+    tiling.set_keyDim(info.keyDim);
+    tiling.set_valueDim(info.valueDim);
     const uint64_t minimumChunksPerCore =
         schedule.chunkWorkItems / schedule.usedCoreNum;
     const uint64_t moverMinimumChunksPerCore = isVarLen
@@ -408,7 +437,7 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
         minimumChunksPerCore >= moverMinimumChunksPerCore;
     using namespace KdaFinalize;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
-        static_cast<uint64_t>(useAivInputMover ? 1 : 0));
+        static_cast<uint64_t>(useAivInputMover ? 1 : 0), static_cast<uint64_t>(general));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu, useAivInputMover: %d",
             static_cast<unsigned long>(tilingKey), useAivInputMover);

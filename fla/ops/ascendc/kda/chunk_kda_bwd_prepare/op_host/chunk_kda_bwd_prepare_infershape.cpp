@@ -17,7 +17,11 @@ static ge::graphStatus InferShapeChunkKdaBwdPrepare(gert::InferShapeContext *con
         const size_t base = packed ? 0 : 1;
         if (!packed) out->SetDim(0, shape.B);
         out->SetDim(base, shape.H); out->SetDim(base + 1, shape.T);
-        out->SetDim(base + 2, i == 0 ? 64 : 128);
+        auto *v=context->GetInputShape(1);auto *h=context->GetInputShape(3);
+        if(!v || !h)return ge::GRAPH_FAILED;
+        const bool *vf=attrs->GetAttrPointer<bool>(2);
+        const int64_t k=h->GetDim(h->GetDimNum()-((vf && *vf)?1:2));
+        out->SetDim(base + 2,i==0?64:i==1?v->GetDim(v->GetDimNum()-1):k);
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -25,7 +29,7 @@ static ge::graphStatus InferDataTypeChunkKdaBwdPrepare(gert::InferDataTypeContex
 {
     context->SetOutputDataType(0, ge::DT_FLOAT);
     // The optimized prepare accepts BF16 inputs only.
-    context->SetOutputDataType(1, ge::DT_BF16);
+    context->SetOutputDataType(1, context->GetInputDataType(1));
     context->SetOutputDataType(2, ge::DT_FLOAT);
     return ge::GRAPH_SUCCESS;
 }

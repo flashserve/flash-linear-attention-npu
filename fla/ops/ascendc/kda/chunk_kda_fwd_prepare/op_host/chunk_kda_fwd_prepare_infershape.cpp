@@ -250,8 +250,9 @@ static ge::graphStatus InferDataTypeChunkKdaFwdPrepare(
         optiling::PREPARE_OUTPUT_K_RSTD,
         optiling::PREPARE_OUTPUT_BETA_EFF,
     };
+    const auto *general = context->GetAttrs()->GetAttrPointer<bool>(optiling::PREPARE_ATTR_GENERAL_PATH);
     for (size_t output : bf16Outputs) {
-        context->SetOutputDataType(output, ge::DT_BF16);
+        context->SetOutputDataType(output, general != nullptr && *general ? ge::DT_FLOAT : ge::DT_BF16);
     }
     for (size_t output : fp32Outputs) {
         context->SetOutputDataType(output, ge::DT_FLOAT);

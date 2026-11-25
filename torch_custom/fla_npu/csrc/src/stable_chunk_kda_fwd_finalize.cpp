@@ -45,12 +45,12 @@ constexpr const char* kChunkKdaFwdFinalizeLayoutNames[] = {"BSND", "BNSD",
 constexpr const char* kSchema_chunk_kda_fwd_finalize =
     "npu_chunk_kda_fwd_finalize(Tensor qg_scaled, Tensor aqk, Tensor v_new, "
     "Tensor h, Tensor? cu_seqlens, Tensor? chunk_indices, int output_layout, "
-    "bool state_v_first, int stream) -> Tensor";
+    "bool state_v_first, int stream, bool output_fp16=False) -> Tensor";
 
 Tensor run_npu_chunk_kda_fwd_finalize(
     Tensor qg_scaled, Tensor aqk, Tensor v_new, Tensor h,
     std::optional<Tensor> cu_seqlens, std::optional<Tensor> chunk_indices,
-    int64_t output_layout, bool state_v_first, int64_t stream) {
+    int64_t output_layout, bool state_v_first, int64_t stream, bool output_fp16) {
   namespace layout_math = fla_npu_stable::stable::layout_math;
   const TensorMeta qg_meta = meta_of(qg_scaled);
   const std::vector<int64_t> cu = int_values(cu_seqlens);
@@ -62,7 +62,8 @@ Tensor run_npu_chunk_kda_fwd_finalize(
   const int64_t batch = packed ? 1 : SIZE_OF(qg_meta, 0);
   const int64_t heads = packed ? SIZE_OF(qg_meta, 0) : SIZE_OF(qg_meta, 1);
   const int64_t tokens = packed ? SIZE_OF(qg_meta, 1) : SIZE_OF(qg_meta, 2);
-  const int64_t head_dim = 128;
+  const auto v_meta = meta_of(v_new);
+  const int64_t head_dim = v_meta.sizes.back();
   const bool sequence_major = output_layout == 0 || output_layout == 2;
   std::vector<int64_t> attn_sizes;
   if (packed) {
@@ -73,7 +74,9 @@ Tensor run_npu_chunk_kda_fwd_finalize(
                      ? std::vector<int64_t>{batch, tokens, heads, head_dim}
                      : std::vector<int64_t>{batch, heads, tokens, head_dim};
   }
-  Tensor out_attn = allocate_sizes(attn_sizes, qg_meta.scalar_type, qg_meta);
+  const int64_t output_type = output_fp16 ? fla_npu_stable::stable::at_shim::kHalf
+      : fla_npu_stable::stable::at_shim::kBFloat16;
+  Tensor out_attn = allocate_sizes(attn_sizes, output_type, qg_meta);
   FLA_STABLE_EXEC(
       "aclnnChunkKdaFwdFinalize", qg_meta, stream, nd_tensor(qg_meta),
       nd_tensor(meta_of(aqk)), nd_tensor(meta_of(v_new)), nd_tensor(meta_of(h)),

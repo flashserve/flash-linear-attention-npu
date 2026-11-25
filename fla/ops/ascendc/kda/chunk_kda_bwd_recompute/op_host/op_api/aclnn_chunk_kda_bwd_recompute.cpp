@@ -6,6 +6,7 @@
 #include "aclnn_kernels/common/op_error_check.h"
 #include "aclnn_kernels/contiguous.h"
 #include "opdev/make_op_executor.h"
+#include "opdev/platform.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
@@ -152,6 +153,25 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
+    if(q->GetDataType()==DataType::DT_FLOAT){
+        if(GetCurrentPlatformInfo().GetCurNpuArch()!=NpuArch::DAV_2201 || chunkSize!=64)return ACLNN_ERR_PARAM_INVALID;
+        const auto qs=q->GetViewShape();const auto vs=v->GetViewShape();
+        if(qs.GetDimNum()!=4 || vs.GetDimNum()!=4)return ACLNN_ERR_PARAM_INVALID;
+        const int64_t K=qs.GetDim(3),V=vs.GetDim(3),H=qs.GetDim(1);
+        if(qs.GetDim(0)<=0 || H<=0 || qs.GetDim(2)<=0 ||
+           !((K==V && (K==60 || K==64 || K==100 || K==128 || K==256)) || (K==64 && V==32)))return ACLNN_ERR_PARAM_INVALID;
+        auto matches=[](const aclTensor *x,const op::Shape &shape,DataType type){return x && x->GetViewShape()==shape && x->GetDataType()==type;};
+        auto value=qs;value.SetDim(3,V);auto scalar=qs;scalar.SetDimNum(3);auto matrix=qs;matrix.SetDim(3,64);
+        for(auto *x:{k,wOut,qgOut,kgOut})if(!matches(x,qs,DataType::DT_FLOAT))return ACLNN_ERR_PARAM_INVALID;
+        if(!matches(beta,scalar,DataType::DT_FLOAT) || !matches(a,matrix,DataType::DT_FLOAT) ||
+           !matches(uOut,value,DataType::DT_FLOAT) || !matches(v,value,v->GetDataType()) ||
+           (v->GetDataType()!=DataType::DT_FLOAT16 && v->GetDataType()!=DataType::DT_BF16) ||
+           !matches(g,qs,g->GetDataType()))return ACLNN_ERR_PARAM_INVALID;
+        if(gkOutOptional && !matches(gkOutOptional,qs,DataType::DT_FLOAT))return ACLNN_ERR_PARAM_INVALID;
+        if(!gkOutOptional && g->GetDataType()!=DataType::DT_FLOAT)return ACLNN_ERR_PARAM_INVALID;
+        if(gkOutOptional && (!aLogOptional || aLogOptional->GetDataType()!=DataType::DT_FLOAT || aLogOptional->GetViewShape().GetShapeSize()!=H))return ACLNN_ERR_PARAM_INVALID;
+        if(dtBiasOptional && (dtBiasOptional->GetDataType()!=DataType::DT_FLOAT || dtBiasOptional->GetViewShape().GetShapeSize()!=H*K))return ACLNN_ERR_PARAM_INVALID;
+    }
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME,

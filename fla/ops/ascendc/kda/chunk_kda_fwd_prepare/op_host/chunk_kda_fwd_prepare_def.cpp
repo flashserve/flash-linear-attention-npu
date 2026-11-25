@@ -14,19 +14,21 @@ class ChunkKdaFwdPrepare : public OpDef {
 public:
     explicit ChunkKdaFwdPrepare(const char *name) : OpDef(name)
     {
-        // gate 与 beta 可以独立选择 BF16/FP32，因此显式登记四种 dtype 组合。
+        // Legacy BF16 caches and A2/A3 FP32-cache signatures.
         const std::initializer_list<ge::DataType> dataTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT16};
         const std::initializer_list<ge::DataType> gateTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> betaTypes = {
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> cacheTypes = {
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> fp32Types = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> indexTypes = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
 
         this->Input("q").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
             .UnknownShapeFormat(formats).AutoContiguous();
@@ -49,23 +51,23 @@ public:
 
         this->Output("gk").ParamType(REQUIRED).DataType(fp32Types).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("aqk").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("aqk").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("akk").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("akk").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("w").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("w").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("u").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("u").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("qg").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("qg").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("kg").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("kg").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("qg_scaled").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("qg_scaled").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("q_hat").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("q_hat").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
-        this->Output("k_hat").ParamType(REQUIRED).DataType(dataTypes).Format(formats)
+        this->Output("k_hat").ParamType(REQUIRED).DataType(cacheTypes).Format(formats)
             .UnknownShapeFormat(formats);
         this->Output("q_rstd").ParamType(REQUIRED).DataType(fp32Types).Format(formats)
             .UnknownShapeFormat(formats);
@@ -87,6 +89,7 @@ public:
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
         // L2 根据 nullptr 输出组合设置；仅用于选择编译期搬出策略。
         this->Attr("output_mode").AttrType(OPTIONAL).Int(2);
+        this->Attr("general_path").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

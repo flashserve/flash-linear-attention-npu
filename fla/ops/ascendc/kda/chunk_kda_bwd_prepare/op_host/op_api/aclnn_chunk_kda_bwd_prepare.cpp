@@ -11,6 +11,7 @@
 #include "../chunk_kda_bwd_prepare_validation.h"
 
 #include "opdev/common_types.h"
+#include "opdev/platform.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
@@ -139,13 +140,18 @@ aclnnStatus ValidateMetadata(
 
 aclnnStatus Check(
     const aclTensor *aqk, const aclTensor *vNew, const aclTensor *dO, const aclTensor *h,
-    const aclIntArray *cu, const aclIntArray *indices, const char *layout, double scale, int64_t chunkSize,
+    const aclIntArray *cu, const aclIntArray *indices, const char *layout, double scale, int64_t chunkSize, bool stateVFirst,
     const aclTensor *dAqkOut, const aclTensor *dvOut, const aclTensor *dqRawOut)
 {
     const aclTensor *tensors[] = {aqk, vNew, dO, h, dAqkOut, dvOut, dqRawOut};
     const char *names[] = {"aqk", "v_new", "d_o", "h", "d_aqk", "dv", "dq_raw"};
-    const DataType types[] = {DataType::DT_BF16, DataType::DT_BF16, DataType::DT_BF16,
-        DataType::DT_BF16, DataType::DT_FLOAT, DataType::DT_BF16, DataType::DT_FLOAT};
+    const bool general=aqk && aqk->GetDataType()==DataType::DT_FLOAT;
+    if(general && GetCurrentPlatformInfo().GetCurNpuArch()!=NpuArch::DAV_2201)
+        return InvalidArgument("aqk","FP32 caches require A2/A3");
+    const auto cache=general?DataType::DT_FLOAT:DataType::DT_BF16;
+    const auto data=general && dO?dO->GetDataType():DataType::DT_BF16;
+    if(data!=DataType::DT_BF16 && data!=DataType::DT_FLOAT16)return InvalidArgument("d_o","requires FP16 or BF16");
+    const DataType types[] = {cache,cache,data,cache,DataType::DT_FLOAT,cache,DataType::DT_FLOAT};
     for (size_t i = 0; i < 7; ++i) {
         const auto status = CheckTensor(tensors[i], types[i], names[i]);
         if (status != ACLNN_SUCCESS) return status;
@@ -159,6 +165,7 @@ aclnnStatus Check(
     if (!KDA::ParseLayout(layout, inputLayout)) {
         return InvalidValue("layout", layout, "BNSD, BSND, NTD or TND");
     }
+    if(general && KDA::SequenceMajorLayout(inputLayout))return InvalidArgument("layout","FP32 caches require BNSD or NTD");
     const bool rank3 = KDA::Rank3Layout(inputLayout);
     const bool variable = cu != nullptr;
     if (!variable && indices != nullptr) {
@@ -176,6 +183,11 @@ aclnnStatus Check(
     if (state.GetDimNum() != rank + 1) {
         return InvalidShape(h, "h", rank3 ? "[Nc,H,128,128]" : "[B,Nc,H,128,128]");
     }
+    const int64_t K=state.GetDim(state.GetDimNum()-(stateVFirst?1:2));
+    const int64_t V=state.GetDim(state.GetDimNum()-(stateVFirst?2:1));
+    if(general && !((K==V && (K==60 || K==64 || K==100 || K==128 || K==256)) || (K==64 && V==32)))
+        return InvalidArgument("K,V","unsupported general dimensions");
+    if(!general && (K!=128 || V!=128))return InvalidArgument("K,V","legacy path requires 128/128");
     KDA::TokenShape aShape, vShape, oShape;
     if (!KDA::ParseTokenShape(a, inputLayout, aShape)) return InvalidShape(aqk, "aqk", tokenPattern);
     if (!KDA::ParseTokenShape(v, inputLayout, vShape)) return InvalidShape(vNew, "v_new", tokenPattern);
@@ -183,9 +195,9 @@ aclnnStatus Check(
     if (aShape.D != 64) return InvalidValue("aqk.D", std::to_string(aShape.D), "64");
     for (size_t i = 1; i < 3; ++i) {
         const auto &s = i == 1 ? vShape : oShape;
-        if (s.B != aShape.B || s.H != aShape.H || s.T != aShape.T || s.D != 128) {
+        if (s.B != aShape.B || s.H != aShape.H || s.T != aShape.T || s.D != V) {
             auto expected = a;
-            expected.SetDim(rank - 1, 128);
+            expected.SetDim(rank - 1, V);
             return InvalidShape(tensors[i], names[i], ShapeText(expected));
         }
     }
@@ -193,9 +205,9 @@ aclnnStatus Check(
     if (variable && B != 1) return InvalidValue("B", std::to_string(B), "1 for variable lengths");
     const int64_t chunkCount = rank3 ? state.GetDim(0) : state.GetDim(1);
     const bool stateValid = rank3
-        ? state.GetDim(1) == NV && state.GetDim(2) == 128 && state.GetDim(3) == 128
+        ? state.GetDim(1) == NV && state.GetDim(2) == (stateVFirst?V:K) && state.GetDim(3) == (stateVFirst?K:V)
         : state.GetDim(0) == B && state.GetDim(2) == NV &&
-              state.GetDim(3) == 128 && state.GetDim(4) == 128;
+              state.GetDim(3) == (stateVFirst?V:K) && state.GetDim(4) == (stateVFirst?K:V);
     if (!stateValid) {
         return InvalidShape(h, "h",
             (rank3 ? "[" : "[" + std::to_string(B) + ",") +
@@ -208,7 +220,7 @@ aclnnStatus Check(
         return InvalidValue("h.chunks", std::to_string(chunkCount), std::to_string((T + 63) / 64));
     }
     for (size_t i = 4; i < 7; ++i) {
-        const int64_t width = i == 4 ? 64 : 128;
+        const int64_t width = i == 4 ? 64 : i == 5 ? V : K;
         if (!KDA::HeadOutputShape(tensors[i]->GetViewShape(), aShape, width, rank3)) {
             return InvalidShape(tensors[i], names[i],
                 (rank3 ? "[" : "[" + std::to_string(B) + ",") + std::to_string(NV) + "," +
@@ -235,7 +247,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
                           layout, scale, chunkSize, stateVFirst),
                    DFX_OUT(dAqkOut, dvOut, dqRawOut));
     const auto status = Check(aqk, vNew, dO, h, cuSeqlensOptional, chunkIndicesOptional,
-                             layout, scale, chunkSize, dAqkOut, dvOut, dqRawOut);
+                             layout, scale, chunkSize, stateVFirst, dAqkOut, dvOut, dqRawOut);
     if (status != ACLNN_SUCCESS) return status;
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {

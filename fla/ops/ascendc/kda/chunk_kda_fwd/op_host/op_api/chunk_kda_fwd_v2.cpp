@@ -147,6 +147,8 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         NormalizeTensorMeta(tensor);
     }
 
+    const DataType cacheType = (args.q->GetDataType() == DataType::DT_FLOAT16 || args.kDim != 128 || args.vDim != 128)
+        ? DataType::DT_FLOAT : DataType::DT_BF16;
     const int64_t chunkSize = args.chunkSize;
     const int64_t valueHeads = args.valueHeads;
     const bool packed = args.packed;
@@ -180,26 +182,26 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
     const aclTensor *gkCompute =
         ReuseOrAlloc(args.gkOut, valueMatrix(args.kDim), DataType::DT_FLOAT, executor);
     const aclTensor *aqkCompute = ReuseOrAlloc(args.aqkOut, valueMatrix(KDA_FWD_V2_AQK_COLUMNS),
-                                               DataType::DT_BF16, executor);
+                                               cacheType, executor);
     const aclTensor *akkCompute = needAkk
-        ? ReuseOrAlloc(args.akkOut, valueMatrix(KDA_FWD_V2_AQK_COLUMNS), DataType::DT_BF16,
+        ? ReuseOrAlloc(args.akkOut, valueMatrix(KDA_FWD_V2_AQK_COLUMNS), cacheType,
                        executor)
         : nullptr;
     const aclTensor *wCompute =
-        ReuseOrAlloc(args.wOut, valueMatrix(args.kDim), DataType::DT_BF16, executor);
+        ReuseOrAlloc(args.wOut, valueMatrix(args.kDim), cacheType, executor);
     const aclTensor *uCompute =
-        ReuseOrAlloc(args.uOut, valueMatrix(args.vDim), DataType::DT_BF16, executor);
+        ReuseOrAlloc(args.uOut, valueMatrix(args.vDim), cacheType, executor);
     const aclTensor *qgCompute =
-        needSavedQ ? ReuseOrAlloc(args.qgOut, valueMatrix(args.kDim), DataType::DT_BF16, executor)
+        needSavedQ ? ReuseOrAlloc(args.qgOut, valueMatrix(args.kDim), cacheType, executor)
                    : nullptr;
     const aclTensor *kgCompute =
-        ReuseOrAlloc(args.kgOut, valueMatrix(args.kDim), DataType::DT_BF16, executor);
-    const aclTensor *qgScaledCompute = AllocTensor(executor, valueMatrix(args.kDim), DataType::DT_BF16);
+        ReuseOrAlloc(args.kgOut, valueMatrix(args.kDim), cacheType, executor);
+    const aclTensor *qgScaledCompute = AllocTensor(executor, valueMatrix(args.kDim), cacheType);
     const aclTensor *qHatCompute =
-        needBackwardAux ? ReuseOrAlloc(args.qHatOut, qkMatrix(), DataType::DT_BF16, executor)
+        needBackwardAux ? ReuseOrAlloc(args.qHatOut, qkMatrix(), cacheType, executor)
                         : nullptr;
     const aclTensor *kHatCompute =
-        needBackwardAux ? ReuseOrAlloc(args.kHatOut, qkMatrix(), DataType::DT_BF16, executor)
+        needBackwardAux ? ReuseOrAlloc(args.kHatOut, qkMatrix(), cacheType, executor)
                         : nullptr;
     const aclTensor *qRstdCompute =
         needBackwardAux ? ReuseOrAlloc(args.qRstdOut, qkScalar(), DataType::DT_FLOAT, executor)
@@ -253,11 +255,11 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
     // state_v_first 由 ChunkFwdH 原生解释，不做 host 侧转置。
     const bool outputFinalState = args.finalStateOut != nullptr;
     const aclTensor *hCompute = AllocTensor(
-        executor, MakeShape({args.batch, args.totalChunks, valueHeads, args.kDim, args.vDim}),
-        DataType::DT_BF16);
+        executor, MakeShape({args.batch, args.totalChunks, valueHeads, args.stateVFirst ? args.vDim : args.kDim, args.stateVFirst ? args.kDim : args.vDim}),
+        cacheType);
     const aclTensor *vNewCompute =
         ReuseOrAlloc(args.vNewOut,
-                     MakeShape({args.batch, valueHeads, args.seqLen, args.vDim}), DataType::DT_BF16,
+                     MakeShape({args.batch, valueHeads, args.seqLen, args.vDim}), cacheType,
                      executor);
     if (!(hCompute != nullptr && vNewCompute != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to allocate FwdH output tensors.", __func__);
@@ -305,7 +307,7 @@ aclnnStatus KdaFwdV2(const KdaFwdV2Args &args, aclOpExecutor *executor)
         const aclTensor *hDst = args.hOut;
         if (Rank(hDst) == 4) {
             hDst = l0op::Reshape(
-                hDst, MakeShape({args.batch, args.totalChunks, valueHeads, args.kDim, args.vDim}),
+                hDst, MakeShape({args.batch, args.totalChunks, valueHeads, args.stateVFirst ? args.vDim : args.kDim, args.stateVFirst ? args.kDim : args.vDim}),
                 executor);
             if (!(hDst != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaFwdV2: failed to reorder hOut.", __func__);

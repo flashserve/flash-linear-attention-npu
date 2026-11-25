@@ -74,6 +74,39 @@ ge::graphStatus Tiling4ChunkKdaBwdRecompute(gert::TilingContext *context)
                                                "A6 arch92 does not support mixed model layout yet");
         return ge::GRAPH_FAILED;
     }
+    if(context->GetInputDesc(0)->GetDataType()==ge::DT_FLOAT){
+        if(ascendcPlatform.GetCurNpuArch()!=NpuArch::DAV_2201 || qkTm)return ge::GRAPH_FAILED;
+        const auto &q=context->GetRequiredInputShape(0)->GetStorageShape();
+        const auto &v=context->GetRequiredInputShape(2)->GetStorageShape();
+        if(q.GetDimNum()!=4 || v.GetDimNum()!=4)return ge::GRAPH_FAILED;
+        *tiling={};tiling->B=q.GetDim(0);tiling->Hk=q.GetDim(1);tiling->Hv=tiling->Hk;
+        tiling->T=q.GetDim(2);tiling->K=q.GetDim(3);tiling->V=v.GetDim(3);tiling->hvPerHk=1;
+        const auto K=tiling->K,V=tiling->V;
+        if(tiling->B<=0 || tiling->Hv<=0 || tiling->T<=0 ||
+            !((K==V && (K==60 || K==64 || K==100 || K==128 || K==256)) || (K==64 && V==32)))return ge::GRAPH_FAILED;
+        if(*attrPtr->GetAttrPointer<int64_t>(0)!=64)return ge::GRAPH_FAILED;
+        tiling->chunkSize=64;tiling->useGateInKernel=*attrPtr->GetAttrPointer<bool>(1);
+        tiling->useExp2=*attrPtr->GetAttrPointer<bool>(2);
+        float lower=*attrPtr->GetAttrPointer<float>(3);uint32_t bits;std::memcpy(&bits,&lower,4);tiling->lowerBoundBits=bits;
+        tiling->hasALog=context->GetOptionalInputDesc(6)!=nullptr;
+        tiling->hasDtBias=context->GetOptionalInputDesc(7)!=nullptr;
+        tiling->reserved=mixed?(1 | (modelTm?4:0)):0;
+        tiling->isVariable=cuSeqlensData!=nullptr;tiling->vecRow=0;
+        if(tiling->isVariable){
+            auto count=cuSeqlensTensor->GetShapeSize();if(count<2 || tiling->B!=1)return ge::GRAPH_FAILED;
+            tiling->vecRow=count-1;
+            if(cuSeqlensData[0]!=0 || cuSeqlensData[count-1]!=tiling->T)return ge::GRAPH_FAILED;
+            for(int64_t i=0;i<count-1;++i){
+                if(cuSeqlensData[i+1]<cuSeqlensData[i])return ge::GRAPH_FAILED;
+                tiling->chunkNum+=(cuSeqlensData[i+1]-cuSeqlensData[i]+63)/64;
+            }
+        }else tiling->chunkNum=tiling->B*((tiling->T+63)/64);
+        tiling->usedAic=std::max<int64_t>(1,std::min<int64_t>(ascendcPlatform.GetCoreNumAiv(),tiling->chunkNum*tiling->Hv));
+        using namespace KDA;
+        context->SetTilingKey(GET_TPL_TILING_KEY(30ULL,30ULL,128ULL,1ULL));
+        context->SetBlockDim(tiling->usedAic);context->GetWorkspaceSizes(1)[0]=ascendcPlatform.GetLibApiWorkSpaceSize();
+        context->GetRawTilingData()->SetDataSize(sizeof(*tiling));return ge::GRAPH_SUCCESS;
+    }
     if (mixed) {
         const auto &canonical = context->GetOutputShape(4)->GetStorageShape();
         if (canonical.GetDimNum() != 4) {

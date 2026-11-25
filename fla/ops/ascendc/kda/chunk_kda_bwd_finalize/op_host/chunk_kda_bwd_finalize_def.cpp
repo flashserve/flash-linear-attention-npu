@@ -12,20 +12,22 @@ public:
         // may write BF16 db when the total API receives BF16 original logits.
         constexpr auto gateParam = REQUIRED;
         const std::initializer_list<ge::DataType> bf16 = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> fp32 = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> int64 = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::DataType> rawTypes = {
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> betaTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::Format> nd = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
-        const auto gradTypes = bf16;
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+        const std::initializer_list<ge::DataType> gradTypes = {
+            ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,
+            ge::DT_FLOAT16,ge::DT_FLOAT16,ge::DT_BF16,ge::DT_BF16};
         const std::initializer_list<ge::DataType> dbTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
 
 #define ADD_INPUT(NAME, PARAM, TYPES) \
         this->Input(NAME).ParamType(PARAM).DataType(TYPES).Format(nd).UnknownShapeFormat(nd).AutoContiguous()
@@ -34,7 +36,7 @@ public:
 
         ADD_INPUT("q", REQUIRED, bf16);
         ADD_INPUT("k", REQUIRED, bf16);
-        ADD_INPUT("v", REQUIRED, bf16);
+        ADD_INPUT("v", REQUIRED, gradTypes);
         ADD_INPUT("gk", REQUIRED, fp32);
         ADD_INPUT("raw_g", gateParam, rawTypes);
         ADD_INPUT("beta", REQUIRED, betaTypes);
@@ -52,14 +54,18 @@ public:
         ADD_INPUT("cu_seqlens", OPTIONAL, int64).ValueDepend(OPTIONAL);
         ADD_INPUT("chunk_indices", OPTIONAL, int64).ValueDepend(OPTIONAL);
 
+        ADD_INPUT("partial_a", OPTIONAL, fp32);
+        ADD_INPUT("partial_bias", OPTIONAL, fp32);
         ADD_OUTPUT("dq", gradTypes);
         ADD_OUTPUT("dk", gradTypes);
-        ADD_OUTPUT("dv", bf16);
+        ADD_OUTPUT("dv", gradTypes);
         ADD_OUTPUT("d_beta", dbTypes);
         ADD_OUTPUT("d_g", rawTypes);
         ADD_OUTPUT("d_a_log", fp32);
         ADD_OUTPUT("d_dt_bias", fp32);
 
+        this->Output("partial_a_out").ParamType(OPTIONAL).DataType(fp32).Format(nd).UnknownShapeFormat(nd);
+        this->Output("partial_bias_out").ParamType(OPTIONAL).DataType(fp32).Format(nd).UnknownShapeFormat(nd);
 #undef ADD_OUTPUT
 #undef ADD_INPUT
 
@@ -74,6 +80,8 @@ public:
         this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
         this->Attr("output_layout").AttrType(OPTIONAL).String("BNSD");
         this->Attr("model_layout").AttrType(OPTIONAL).String("");
+
+        this->Attr("general_reduce").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig config;
         config.DynamicCompileStaticFlag(true)

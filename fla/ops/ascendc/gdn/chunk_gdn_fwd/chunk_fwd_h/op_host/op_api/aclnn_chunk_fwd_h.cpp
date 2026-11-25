@@ -291,11 +291,15 @@ static aclnnStatus CheckShape(ChunkFwdHParams params)
             "k/w/u must match in B and T, w/u in HV, k/w in K");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    if (!(kShape.GetDim(3) == 128 && uShape.GetDim(3) == 128)) {
+    const bool general = params.k->GetDataType() == DataType::DT_FLOAT;
+    const int64_t key = kShape.GetDim(3), value = uShape.GetDim(3);
+    const bool pair = (key == value && (key == 60 || key == 64 || key == 100 || key == 128 || key == 256)) ||
+        (key == 64 && value == 32);
+    if ((!general && !(key == 128 && value == 128)) || (general && !pair)) {
           OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
           OP_NAME, "K/V",
           std::to_string(kShape.GetDim(3)) + "," + std::to_string(uShape.GetDim(3)),
-          "FwdH requires K=128 and V=128");
+          "legacy FwdH requires K=V=128; FP32 cache path requires a supported K/V pair");
           return ACLNN_ERR_PARAM_INVALID;
     }
     if (params.gOptional != nullptr) {
@@ -384,7 +388,13 @@ static aclnnStatus CheckShape(ChunkFwdHParams params)
 static aclnnStatus CheckDtype(ChunkFwdHParams params)
 {
     auto inputDtype = params.k->GetDataType();
-    if (inputDtype != DataType::DT_BF16) {
+    const bool general = inputDtype == DataType::DT_FLOAT;
+    if (general && (op::GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201 ||
+        params.gkOptional == nullptr || params.gkOptional->GetDataType() != DataType::DT_FLOAT)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, "k,gk", "FP32 cache path requires A2/A3 and FP32 gk");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (inputDtype != DataType::DT_BF16 && !general) {
           OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
           OP_NAME, "k", ge::TypeUtils::DataTypeToSerialString(inputDtype),
           "only bfloat16 is supported");

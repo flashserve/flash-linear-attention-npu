@@ -43,8 +43,11 @@ public:
                             : (!ctx_.vNewShape ? "v_new"
                                : (!ctx_.dOShape ? "d_o" : "h")));
         }
-        if (ctx_.aqkDataType != ge::DT_BF16 || ctx_.vNewDataType != ge::DT_BF16 ||
-            ctx_.dODataType != ge::DT_BF16 || ctx_.hDataType != ge::DT_BF16) {
+        const bool general=ctx_.aqkDataType==ge::DT_FLOAT && !ctx_.isA5 && !ctx_.isA6;
+        const bool generalTypes=general && ctx_.vNewDataType==ge::DT_FLOAT && ctx_.hDataType==ge::DT_FLOAT &&
+            (ctx_.dODataType==ge::DT_FLOAT16 || ctx_.dODataType==ge::DT_BF16);
+        if (!generalTypes && (ctx_.aqkDataType != ge::DT_BF16 || ctx_.vNewDataType != ge::DT_BF16 ||
+            ctx_.dODataType != ge::DT_BF16 || ctx_.hDataType != ge::DT_BF16)) {
             return FailDtypes(
                 "aqk,v_new,d_o,h",
                 std::string("aqk=") + ge::TypeUtils::DataTypeToSerialString(ctx_.aqkDataType) +
@@ -63,6 +66,8 @@ public:
             return FailValue("layout", ctx_.layout == nullptr ? "absent" : std::string(ctx_.layout),
                              "must be one of BNSD, BSND, NTD or TND");
         }
+        if(general && KDA::SequenceMajorLayout(tiling_.inputLayout))
+            return FailValue("layout",ctx_.layout,"FP32 caches require BNSD or NTD");
         const bool rank3 = KDA::Rank3Layout(tiling_.inputLayout);
         const bool variable = ctx_.cuSeqlensShape != nullptr;
         if ((ctx_.cuSeqlensShape != nullptr) != variable ||
@@ -95,7 +100,7 @@ public:
             return FailShape("d_o", "rank or layout parse failed",
                              "d_o must be 4D BNSD or 3D NTD like v_new");
         }
-        if (a.D != 64 || v.D != 128 || o.D != 128 || a.B != v.B || a.B != o.B ||
+        if (a.D != 64 || (!general && v.D != 128) || o.D != v.D || a.B != v.B || a.B != o.B ||
             a.H != v.H || a.H != o.H || a.T != v.T || a.T != o.T) {
             return FailShape("aqk,v_new,d_o",
                              "aqk(B=" + std::to_string(a.B) + ",H=" + std::to_string(a.H) +
@@ -125,14 +130,16 @@ public:
                                 rank3 ? "4 for NTD layout" : "5 for BNSD layout");
         }
         tiling_.B = a.B; tiling_.NV = a.H; tiling_.T = a.T;
-        tiling_.K = 128; tiling_.V = 128; tiling_.chunkSize = 64;
+        tiling_.K = general ? h.GetDim(h.GetDimNum()-(ctx_.stateVFirst?1:2)) : 128; tiling_.V = v.D;
+        if(general && !((tiling_.K==tiling_.V && (tiling_.K==60 || tiling_.K==64 || tiling_.K==100 || tiling_.K==128 || tiling_.K==256)) || (tiling_.K==64 && tiling_.V==32)))
+            return FailValue("K,V",std::to_string(tiling_.K)+","+std::to_string(tiling_.V),"unsupported general dimensions"); tiling_.chunkSize = 64;
         tiling_.isVariable = variable; tiling_.stateVFirst = ctx_.stateVFirst;
         tiling_.scale = static_cast<float>(ctx_.scale);
         tiling_.denseChunkNum = variable ? 0 : (a.T + 63) / 64;
         const int64_t chunks = h.GetDim(rank3 ? 0 : 1);
         const size_t stateBase = rank3 ? 1 : 2;
         if (chunks <= 0 || h.GetDim(stateBase) != a.H ||
-            h.GetDim(stateBase + 1) != 128 || h.GetDim(stateBase + 2) != 128 ||
+            h.GetDim(stateBase + 1) != (ctx_.stateVFirst?tiling_.V:tiling_.K) || h.GetDim(stateBase + 2) != (ctx_.stateVFirst?tiling_.K:tiling_.V) ||
             (!rank3 && h.GetDim(0) != a.B) ||
             (!variable && chunks != tiling_.denseChunkNum)) {
             return FailShape("h", "chunks=" + std::to_string(chunks) +
@@ -163,7 +170,7 @@ public:
             tiling_.seqNum = cu.GetDim(0) - 1;
         }
         tiling_.chunkTaskNum = tiling_.totalChunkNum;
-        tiling_.headWindowNum = ctx_.isA6 ? a.H : a.H / 4 + (a.H % 4 != 0);
+        tiling_.headWindowNum = (general || ctx_.isA6) ? a.H : a.H / 4 + (a.H % 4 != 0);
         if (tiling_.chunkTaskNum > std::numeric_limits<int64_t>::max() / tiling_.headWindowNum ||
             tiling_.totalChunkNum > std::numeric_limits<int64_t>::max() / a.H / (128 * 128 * 2)) {
             return FailValue("workTaskNum", std::to_string(tiling_.chunkTaskNum) + "," +
@@ -177,8 +184,8 @@ public:
         blockDim_ = static_cast<uint32_t>(std::min<int64_t>(ctx_.aicCoreNum, tiling_.workTaskNum));
         tilingKey_ = GET_TPL_TILING_KEY(
             tiling_.inputLayout, tiling_.isVariable,
-            static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0));
-        const size_t scratchSize = (ctx_.isA5 || ctx_.isA6) ? 0 : static_cast<size_t>(blockDim_) * 65536;
+            static_cast<uint64_t>(ctx_.doTokenMajor ? 1 : 0),static_cast<uint64_t>(general));
+        const size_t scratchSize = (general || ctx_.isA5 || ctx_.isA6) ? 0 : static_cast<size_t>(blockDim_) * 65536;
         workspaceSize_ = ctx_.sysWorkspaceSize + scratchSize;
         OP_LOGD(ctx_.nodeName, "layout=%u variable=%u stateVFirst=%u key=%lu blocks=%u userScratch=%lu",
                 tiling_.inputLayout, tiling_.isVariable, tiling_.stateVFirst, tilingKey_,

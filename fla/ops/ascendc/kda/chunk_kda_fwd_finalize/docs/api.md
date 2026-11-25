@@ -14,14 +14,15 @@ attn_out = chunk_kda_fwd_finalize(
     state_v_first=False,
     cu_seqlens=None,
     chunk_indices=None,
+    output_fp16=False,
 )
 ```
 
-这是 ctypes 直调 `aclnnChunkKdaFwdFinalize` 的稳定入口，不注册
+这是 Stable ABI 调用 `aclnnChunkKdaFwdFinalize` 的稳定入口，不注册
 legacy `torch.ops.npu` 接口。输入、输出和变长元数据的形状与约束
 见下文及[算子 README](../README.md#输入输出)。
 
-返回：单个 BF16 张量 `attn_out`，布局由 `output_layout` 决定，形状见
+返回：单个 BF16 张量（`output_fp16=True` 时为 FP16；只用于 A2/A3 FP32 缓存分支） `attn_out`，布局由 `output_layout` 决定，形状见
 [算子 README](../README.md#输入输出)。dtype、layout 与变长约束见 `## aclnn`
 和[算子 README](../README.md#支持范围)；平台支持范围为 A2/A3/A5/A6。
 
@@ -50,12 +51,14 @@ aclnnStatus aclnnChunkKdaFwdFinalize(
 
 四个 tensor 输入和 `attnOut` 必传，且 descriptor 必须为非私有
 ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
-均为 BF16，`K=V=128`，`Aqk` 的列数为 64；支持 A2/A3/A5/A6
+旧分支的输入/输出均为 BF16，`K=V=128`，`Aqk` 的列数为 64；支持 A2/A3/A5/A6
 （A6 为 Ascend960DT、`__NPU_ARCH__=9201`，单 AIV 串行搬移）。
+A2/A3 新分支要求四个输入全部为 FP32，K/V 支持 (60,60)、(64,64)、(100,100)、(128,128)、(256,256)、(64,32)。`attnOut` 可为 FP16/BF16；ACLNN 根据输出 descriptor 推导内部类型属性，不改变 C ABI。状态和矩阵积在 FP32 计算，最终输出只 cast 一次。该分支已编译，设备公开入口验证仍在进行。
+
 `outputLayout` 对 rank-4 `qgScaled/Aqk` 只接受 `BSND/BNSD`，
 对 rank-3 `qgScaled/Aqk` 只接受 `TND/NTD`；packed 场景的
-`vNew` 可为 FwdH 的 `[1,HV,T,128]` 或独立调用的
-`[HV,T,128]`，区分大小写。输入形状和输出形状见
+`vNew` 可为 FwdH 的 `[1,HV,T,V]` 或独立调用的
+`[HV,T,V]`，区分大小写。输入形状和输出形状见
 [算子 README](../README.md#输入输出)。
 
 `stateVFirst=false` 时 `h` 表示 `[K,V]`；为 true 时表示 `[V,K]`。
@@ -64,10 +67,10 @@ ND 格式；输入允许 L2 连续化，kernel 直接写的输出必须连续。
 若提供必须与 `cuSeqlensOptional` 同时存在，且为规范的
 sequence-major `(sequence_id,local_chunk_id)` 列表。
 
-唯一输出 `attnOut` 是 BF16。`BSND/TND` 按 token 优先写出，
+唯一输出 `attnOut` 的类型按上述分支约定。`BSND/TND` 按 token 优先写出，
 `BNSD/NTD` 按 value head 优先写出；三个 token 输入仍然按 value head
-优先排列；h 为 NT-first，未传 cu_seqlens 时为 `[B,C,HV,128,128]`，
-传入 cu_seqlens 时为 `[1,C,HV,128,128]`，与 token 输入的 rank 分开判断。
+优先排列；h 为 NT-first，未传 cu_seqlens 时为 `[B,C,HV,K,V]`，
+传入 cu_seqlens 时为 `[1,C,HV,K,V]`，与 token 输入的 rank 分开判断。
 旧 head-first h 调用者需要交换 chunk/head 轴并连续化，不能只 reshape。
 数值精度边界见[设计文档](design.md#数学与精度)。
 

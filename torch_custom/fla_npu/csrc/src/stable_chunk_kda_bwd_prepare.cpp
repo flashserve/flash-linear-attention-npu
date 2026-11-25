@@ -46,8 +46,11 @@ std::tuple<Tensor, Tensor, Tensor> run_npu_chunk_kda_bwd_prepare(
   output.push_back(SIZE_OF(aqk_meta, layout_math::token_axis(layout)));
   output.push_back(64);
   Tensor d_aqk = allocate_sizes(output, kFloat, aqk_meta);
-  output.back() = 128;
-  Tensor dv = allocate_sizes(output, kBFloat16, aqk_meta);
+  const auto value_meta = meta_of(v_new);
+  const auto state_meta = meta_of(h);
+  output.back() = value_meta.sizes.back();
+  Tensor dv = allocate_sizes(output, value_meta.scalar_type, aqk_meta);
+  output.back() = state_meta.sizes.at(state_meta.sizes.size() - (state_v_first ? 1 : 2));
   Tensor dq_raw = allocate_sizes(output, kFloat, aqk_meta);
 
   FLA_STABLE_EXEC(

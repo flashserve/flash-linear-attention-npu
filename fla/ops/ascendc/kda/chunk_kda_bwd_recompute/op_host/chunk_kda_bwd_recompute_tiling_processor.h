@@ -275,7 +275,7 @@ private:
         return GET_TPL_TILING_KEY(
             DtypeToTemplateToken(ctx_.gateDtype),
             DtypeToTemplateToken(ctx_.betaDtype),
-            static_cast<uint64_t>(tiling_.K));
+            static_cast<uint64_t>(tiling_.K),0ULL);
     }
 
     ChunkKdaBwdRecomputeTilingContext &ctx_;

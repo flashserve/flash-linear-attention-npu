@@ -419,14 +419,16 @@ aclnnStatus CheckDtypes(const ChunkKdaFwdParams &params)
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType gateType = params.g->GetDataType();
-    if (gateType != DataType::DT_FLOAT && gateType != DataType::DT_BF16) {
+    if (gateType != DataType::DT_FLOAT && gateType != DataType::DT_BF16 &&
+        !(GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201 && gateType == dataType)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "g",
                                               ge::TypeUtils::DataTypeToSerialString(gateType),
                                               "g must be float32 or bfloat16");
         return ACLNN_ERR_PARAM_INVALID;
     }
     const DataType betaType = params.beta->GetDataType();
-    if (betaType != DataType::DT_FLOAT && betaType != DataType::DT_BF16) {
+    if (betaType != DataType::DT_FLOAT && betaType != DataType::DT_BF16 &&
+        !(GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201 && betaType == dataType)) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(OP_NAME, "beta",
                                               ge::TypeUtils::DataTypeToSerialString(betaType),
                                               "beta must be float32 or bfloat16");
@@ -481,12 +483,15 @@ aclnnStatus CheckStateShape(const aclTensor *state, const char *name, const KdaS
 
 aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
 {
-    const DataType dataType = params.q->GetDataType();
+    const DataType inputType = params.q->GetDataType();
+    const bool general = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201 &&
+        (inputType == DataType::DT_FLOAT16 || info.kDim != 128 || info.vDim != 128);
+    const DataType dataType = general ? DataType::DT_FLOAT : inputType;
     const bool attnShapeValid = info.isRank3
                                     ? HasShape(params.attnOut, {info.seqlen, info.hvNum, info.vDim})
                                     : HasShape(params.attnOut,
                                                {info.batch, info.seqlen, info.hvNum, info.vDim});
-    if (!(attnShapeValid && params.attnOut->GetDataType() == dataType)) {
+    if (!(attnShapeValid && params.attnOut->GetDataType() == inputType)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "attnOut,q",
             std::string("attnOut=") +
@@ -592,6 +597,24 @@ aclnnStatus CheckOutputShapes(const ChunkKdaFwdParams &params, const KdaShapeInf
         return ACLNN_ERR_PARAM_INVALID;
     }
     }
+    const aclTensor *aux[] = {params.qHatOut,params.kHatOut,params.qRstdOut,params.kRstdOut,params.betaEffOut};
+    const char *names[] = {"qHatOut","kHatOut","qRstdOut","kRstdOut","betaEffOut"};
+    for (size_t index=0;index<5;++index) {
+        if (aux[index] == nullptr) continue;
+        const int64_t heads = index == 4 ? info.hvNum : info.hNum;
+        const bool matrix = index < 2;
+        const bool valid = matrix
+            ? (info.isRank3 ? HasShape(aux[index],{heads,info.seqlen,info.kDim})
+                            : HasShape(aux[index],{info.batch,heads,info.seqlen,info.kDim}))
+            : (info.isRank3 ? HasShape(aux[index],{heads,info.seqlen})
+                            : HasShape(aux[index],{info.batch,heads,info.seqlen}));
+        if (!valid || aux[index]->GetDataType() != (matrix ? dataType : DataType::DT_FLOAT) ||
+            !IsContiguous(aux[index])) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME,names[index],
+                "saved output must have canonical head-major shape, cache dtype and contiguous storage");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -645,11 +668,16 @@ aclnnStatus CheckParams(const ChunkKdaFwdParams &params, KdaFwdLayout &layout, K
     }
     // K/V 仅支持 K=V=64 与 K=V=128 两档，不支持混合档（如 K=64/V=128）或
     // 其它取值；报错打印实际 K/V，便于调用方直接定位 shape。
-    const bool kvDimSupported =
-        (info.kDim == KDA_FWD_KV_DIM_SMALL && info.vDim == KDA_FWD_KV_DIM_SMALL) ||
-        (info.kDim == KDA_FWD_KV_DIM_LARGE && info.vDim == KDA_FWD_KV_DIM_LARGE);
-    if (!(kvDimSupported)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K/V", std::to_string(info.kDim) + "/" + std::to_string(info.vDim), "K/V must both be 64 or both be 128; mixed K/V and other dims are not");
+    const bool arch22 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+    const bool equalPair = info.kDim == info.vDim && (info.kDim == 60 || info.kDim == 64 ||
+        info.kDim == 100 || info.kDim == 128 || info.kDim == 256);
+    const bool kvDimSupported = arch22
+        ? (equalPair || (info.kDim == 64 && info.vDim == 32))
+        : ((info.kDim == 64 && info.vDim == 64) || (info.kDim == 128 && info.vDim == 128));
+    if (!kvDimSupported || (arch22 && (params.q->GetDataType() == DataType::DT_FLOAT16 ||
+        info.kDim != 128 || info.vDim != 128) && info.hNum != info.hvNum)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "K/V/HK/HV", std::to_string(info.kDim) + "/" + std::to_string(info.vDim),
+            "unsupported dimension pair or grouped heads on the general path");
         return ACLNN_ERR_PARAM_INVALID;
     }
     {
@@ -798,17 +826,16 @@ bool AllOutputsContiguous(const ChunkKdaFwdParams &params)
 // cu_seqlens 严格递增）全部满足时才允许走组合实现。
 bool CanUseKdaFwdV2Path(const ChunkKdaFwdParams &params, const KdaShapeInfo &info)
 {
-    if (params.q->GetDataType() != DataType::DT_BF16) {
-        return false;
-    }
-    if (info.kDim != 128 || info.vDim != 128) {
+    const bool arch22 = GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+    if (!arch22 && (params.q->GetDataType() != DataType::DT_BF16 || info.kDim != 128 || info.vDim != 128)) {
         return false;
     }
     if (params.chunkSize != 64) {
         return false;
     }
-    // 本算子的 L2 允许 cuSeqlens 非递减（即空序列），三个独立算子要求严格递增。
-    if (params.cuSeqlensOptional != nullptr) {
+    // The general FP32-cache stages preserve empty sequence boundaries.
+    const bool general = arch22 && (params.q->GetDataType() == DataType::DT_FLOAT16 || info.kDim != 128 || info.vDim != 128);
+    if (!general && params.cuSeqlensOptional != nullptr) {
         const aclIntArray *cuSeqlens = params.cuSeqlensOptional;
         for (size_t idx = 0; idx + 1 < cuSeqlens->Size(); ++idx) {
             if ((*cuSeqlens)[idx] >= (*cuSeqlens)[idx + 1]) {

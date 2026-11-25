@@ -10,21 +10,30 @@ public:
     explicit ChunkKdaBwdRecompute(const char *name) : OpDef(name)
     {
         const std::initializer_list<ge::DataType> bf16 = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_BF16, ge::DT_BF16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> gateTypes = {
-            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT,
+            ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> betaTypes = {
-            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+            ge::DT_BF16, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> fp32 = {
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
             ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
         const std::initializer_list<ge::DataType> int64 = {
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
             ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64};
         const std::initializer_list<ge::Format> nd = {
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
             ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
 
+        const std::initializer_list<ge::DataType> values = {
+            ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,
+            ge::DT_FLOAT16,ge::DT_FLOAT16,ge::DT_BF16,ge::DT_BF16};
         this->Input("q").ParamType(REQUIRED).DataType(bf16).Format(nd).UnknownShapeFormat(nd);
         this->Input("k").ParamType(REQUIRED).DataType(bf16).Format(nd).UnknownShapeFormat(nd);
-        this->Input("v").ParamType(REQUIRED).DataType(bf16).Format(nd).UnknownShapeFormat(nd);
+        this->Input("v").ParamType(REQUIRED).DataType(values).Format(nd).UnknownShapeFormat(nd);
         this->Input("g").ParamType(REQUIRED).DataType(gateTypes).Format(nd).UnknownShapeFormat(nd)
             .AutoContiguous();
         this->Input("beta").ParamType(REQUIRED).DataType(betaTypes).Format(nd).UnknownShapeFormat(nd)

@@ -45,6 +45,8 @@ struct ChunkKdaFwdFinalizeTilingData {
     bool isVarLen;
     bool outputSequenceMajor;
     bool stateVFirst;
+    uint32_t keyDim;
+    uint32_t valueDim;
 };
 
 struct FinalizeChunk {

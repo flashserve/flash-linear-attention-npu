@@ -5,6 +5,7 @@
 #include "opdev/make_op_executor.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
+#include "op_common/log/log.h"
 
 using namespace op;
 
@@ -38,13 +39,13 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
            dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut);
     const std::array<const aclTensor *, 7> empty{};
     if (allowNegEigval && !useBetaSigmoidInKernel) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
+        OP_LOGE_WITHOUT_REPORT("ChunkKdaBwdFinalize",
                 "allowNegEigval=true requires useBetaSigmoidInKernel=true");
         return empty;
     }
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
+        OP_LOGE_WITHOUT_REPORT("ChunkKdaBwdFinalize",
                 "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
         return empty;
     }
@@ -95,7 +96,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
         cuTensor = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         indicesTensor = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (cuTensor == nullptr || indicesTensor == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "failed to convert KernelC metadata");
+            OP_LOGE_WITHOUT_REPORT("ChunkKdaBwdFinalize", "failed to convert KernelC metadata");
             return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
         }
         for (const aclTensor *tensor : {cuTensor, indicesTensor}) {
@@ -105,18 +106,68 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
             mutableTensor->SetOriginalFormat(Format::FORMAT_ND);
         }
     }
+    const bool general=q->GetDataType()==DataType::DT_FLOAT;
+    const aclTensor *partialA=nullptr,*partialBias=nullptr;
+    if(general){
+        if(tokenMajor || (modelLayout && modelLayout[0]))return empty;
+        const auto &ks=q->GetViewShape();auto vs=ks;vs.SetDim(rank-1,v->GetViewShape().GetDim(rank-1));
+        auto ss=ks;ss.SetDimNum(rank-1);auto ms=ks;ms.SetDim(rank-1,64);
+        const auto data=v->GetDataType();
+        auto matches=[](const aclTensor *x,const op::Shape &shape,DataType type){return x && x->GetViewShape()==shape && x->GetDataType()==type;};
+        for(auto *x:{k,gk,dqRaw})if(!matches(x,ks,DataType::DT_FLOAT))return empty;
+        for(auto *x:{akk,dAqk})if(!matches(x,ms,DataType::DT_FLOAT))return empty;
+        for(auto *x:{vNew,dvScan})if(!matches(x,vs,DataType::DT_FLOAT))return empty;
+        if(!matches(v,vs,data) || !matches(beta,ss,DataType::DT_FLOAT) ||
+           !matches(dqOut,ks,data) || !matches(dkOut,ks,data) || !matches(dvOut,vs,data) ||
+           !matches(dBetaOut,ss,DataType::DT_FLOAT) || !rawG || !matches(rawG,ks,rawG->GetDataType()) ||
+           !matches(dGOut,ks,rawG->GetDataType()))return empty;
+        if((qRstdOptional==nullptr)!=(kRstdOptional==nullptr))return empty;
+        if(qRstdOptional && (!matches(qRstdOptional,ss,DataType::DT_FLOAT) || !matches(kRstdOptional,ss,DataType::DT_FLOAT)))return empty;
+        if(h->GetDataType()!=DataType::DT_FLOAT || !matches(dh,h->GetViewShape(),DataType::DT_FLOAT))return empty;
+        const auto &hs=h->GetViewShape();
+        if(hs.GetDimNum()!=rank+1 || hs.GetDim(rank-2)!=ks.GetDim(rank-3) ||
+           hs.GetDim(rank-1)!=(stateVFirst?vs.GetDim(rank-1):ks.GetDim(rank-1)) ||
+           hs.GetDim(rank)!=(stateVFirst?ks.GetDim(rank-1):vs.GetDim(rank-1)))return empty;
+        const int64_t chunks=rank3?hs.GetDim(0):hs.GetDim(0)*hs.GetDim(1);
+        const int64_t heads=q->GetViewShape().GetDim(rank-3),keys=q->GetViewShape().GetDim(rank-1);
+        op::Shape as;as.AppendDim(chunks);as.AppendDim(heads);
+        op::Shape bs=as;bs.AppendDim(keys);
+        partialA=executor->AllocTensor(as,DataType::DT_FLOAT,Format::FORMAT_ND);
+        partialBias=executor->AllocTensor(bs,DataType::DT_FLOAT,Format::FORMAT_ND);
+        if(!partialA || !partialBias)return empty;
+    }
+    // Optional outputs are omitted from the runtime argument list when null.
+    // Keep both slots present for every launch so the kernel ABI stays fixed.
+    if (!general) {
+        op::Shape placeholderShape; placeholderShape.AppendDim(1);
+        partialA = executor->AllocTensor(placeholderShape, DataType::DT_FLOAT, Format::FORMAT_ND);
+        partialBias = executor->AllocTensor(placeholderShape, DataType::DT_FLOAT, Format::FORMAT_ND);
+        if (!partialA || !partialBias) return empty;
+    }
     const auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
         ChunkKdaBwdFinalize,
         OP_INPUT(q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh,
                  dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
-                 cuTensor, indicesTensor),
-        OP_OUTPUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut),
+                 cuTensor, indicesTensor, nullptr, nullptr),
+        OP_OUTPUT(dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut, partialA, partialBias),
         OP_ATTR(scale, lowerBound, chunkSize, safeGate,
                 useGateInKernel, useExp2, stateVFirst,
-                useBetaSigmoidInKernel, allowNegEigval, outputLayout, modelLayout));
+                useBetaSigmoidInKernel, allowNegEigval, outputLayout, modelLayout, false));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdFinalize failed");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkKdaBwdFinalize", "launcher", "Finalize stage launch preparation failed");
         return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
+    if(general){
+        const auto reduce=ADD_TO_LAUNCHER_LIST_AICORE(ChunkKdaBwdFinalize,
+            OP_INPUT(q,k,v,gk,rawG,beta,aLog,dtBias,akk,vNew,h,dh,dvScan,dAqk,dqRaw,
+                qRstdOptional,kRstdOptional,cuTensor,indicesTensor,partialA,partialBias),
+            OP_OUTPUT(dqOut,dkOut,dvOut,dBetaOut,dGOut,dALogOut,dDtBiasOut,partialA,partialBias),
+            OP_ATTR(scale,lowerBound,chunkSize,safeGate,useGateInKernel,useExp2,stateVFirst,
+                useBetaSigmoidInKernel,allowNegEigval,outputLayout,modelLayout,true));
+        if(reduce!=ACLNN_SUCCESS){
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON("ChunkKdaBwdFinalize", "general_reduce", "parameter reduction launch preparation failed");
+            return empty;
+        }
     }
     return requested;
 }

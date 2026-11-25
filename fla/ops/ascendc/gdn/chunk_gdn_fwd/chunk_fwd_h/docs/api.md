@@ -71,7 +71,9 @@ aclnnStatus aclnnChunkFwdH(
 `g` 与 `gk` 必须且只能提供一个。g-only 要求 `HV%HK==0`；gk-only 要求 `k` 的 head 数等于
 HV，本算子不会再次把 gk 应用到 prepared kg。
 
-`B/HK/HV/T` 必须为正；固定 `K=V=128`、`chunk_size=64`、`save_new_value=true`。
+`B/HK/HV/T` 必须为正；旧分支固定 `K=V=128`、`chunk_size=64`、`save_new_value=true`。
+
+A2/A3 新增 KDA FP32 缓存分支：k(已准备的 kg)/w/u/gk/h/v_new 均为 FP32，g 为空，HK=HV，输入为 head-major；K/V 支持 (60,60)、(64,64)、(100,100)、(128,128)、(256,256)、(64,32)。chunk_size=64、save_new_value=true。h 形状为 [B,C,HV,K,V]，state_v_first 时末两维为 [V,K]。运行状态保留 FP32，WH 读取该状态；h 写入每个 chunk 更新前的 FP32 快照。initial_state/final_state 沿用 StateT=BF16/FP32，最终状态从末次 FP32 运行状态转换，不从 h 快照恢复。该分支已编译，设备公开入口验证仍在进行。
 变长模式要求输入容器 `B=1`。
 
 所有 aclnn tensor descriptor 的 storage/view format 必须是非私有 ND。输入 ND view 会由 host

@@ -20,6 +20,8 @@ TILING_DATA_FIELD_DEF(uint32_t, headsPerPartition);
 TILING_DATA_FIELD_DEF(bool, isVarLen);
 TILING_DATA_FIELD_DEF(bool, outputSequenceMajor);
 TILING_DATA_FIELD_DEF(bool, stateVFirst);
+TILING_DATA_FIELD_DEF(uint32_t, keyDim);
+TILING_DATA_FIELD_DEF(uint32_t, valueDim);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ChunkKdaFwdFinalize, ChunkKdaFwdFinalizeTilingData)
@@ -36,6 +38,7 @@ enum ChunkKdaFwdFinalizeInputIndex : size_t {
 enum ChunkKdaFwdFinalizeAttrIndex : size_t {
     FINALIZE_ATTR_OUTPUT_LAYOUT = 0,
     FINALIZE_ATTR_STATE_V_FIRST,
+    FINALIZE_ATTR_OUTPUT_FP16,
 };
 
 struct ChunkKdaFwdFinalizeCompileInfo {};

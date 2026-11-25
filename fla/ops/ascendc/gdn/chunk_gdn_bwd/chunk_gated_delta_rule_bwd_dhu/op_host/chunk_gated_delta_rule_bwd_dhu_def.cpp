@@ -21,18 +21,20 @@ public:
     explicit ChunkGatedDeltaRuleBwdDhu(const char *name) : OpDef(name)
     {
         const std::initializer_list<ge::DataType> dataTypes = {
-            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16,
+            ge::DT_BF16, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT,
         };
         const std::initializer_list<ge::DataType> gateTypes = {
-            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT16,
+            ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT,
         };
         const std::initializer_list<ge::DataType> indexTypes = {
-            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
+            ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64, ge::DT_INT64,
         };
         const std::initializer_list<ge::Format> formats = {
-            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+            ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
         };
 
+        const std::initializer_list<ge::DataType> gradTypes = {
+            ge::DT_BF16,ge::DT_FLOAT16,ge::DT_BF16,ge::DT_FLOAT16,ge::DT_FLOAT16,ge::DT_BF16};
         this->Input("q")
             .ParamType(REQUIRED)
             .DataType(dataTypes)
@@ -53,7 +55,7 @@ public:
             .AutoContiguous();
         this->Input("d_o")
             .ParamType(REQUIRED)
-            .DataType(dataTypes)
+            .DataType(gradTypes)
             .Format(formats)
             .UnknownShapeFormat(formats)
             .AutoContiguous();

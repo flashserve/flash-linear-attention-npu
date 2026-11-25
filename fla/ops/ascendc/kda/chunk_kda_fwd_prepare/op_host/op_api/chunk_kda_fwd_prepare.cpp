@@ -120,23 +120,26 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
     const float epsilonAttr = static_cast<float>(epsilon);
     const float lowerBoundAttr = static_cast<float>(lowerBound);
 
-    // REQUIRED 输出不能把 nullptr 直接交给 launcher，否则部分 CANN 版本会
-    // 压缩参数并使后续 kernel 参数错位。零元素 descriptor 不承载真实数据，
-    // 编译期 outputMode 同时保证对应 kernel 形参不发生搬出。
-    const aclTensor *akkForKernel = OutputOrEmptyDescriptor(
-        akkOut, DataType::DT_BF16, executor);
-    const aclTensor *qgForKernel = OutputOrEmptyDescriptor(
-        qgOut, DataType::DT_BF16, executor);
-    const aclTensor *qHatForKernel = OutputOrEmptyDescriptor(
-        qHatOut, DataType::DT_BF16, executor);
-    const aclTensor *kHatForKernel = OutputOrEmptyDescriptor(
-        kHatOut, DataType::DT_BF16, executor);
-    const aclTensor *qRstdForKernel = OutputOrEmptyDescriptor(
-        qRstdOut, DataType::DT_FLOAT, executor);
-    const aclTensor *kRstdForKernel = OutputOrEmptyDescriptor(
-        kRstdOut, DataType::DT_FLOAT, executor);
-    const aclTensor *betaEffForKernel = OutputOrEmptyDescriptor(
-        betaEffOut, DataType::DT_FLOAT, executor);
+    const auto &qShape = q->GetViewShape();
+    const auto &vShape = v->GetViewShape();
+    const bool generalPath = q->GetDataType() == DataType::DT_FLOAT16 ||
+        qShape.GetDim(qShape.GetDimNum()-1) != 128 || vShape.GetDim(vShape.GetDimNum()-1) != 128;
+    const auto keyShape = gkOut->GetViewShape();
+    auto scalarShape = keyShape;
+    scalarShape.SetDimNum(keyShape.GetDimNum()-1);
+    // Missing public caches remain private executor tensors on the general path:
+    // Prepare needs them between stages even when the caller does not retain them.
+    const auto cache = [&](const aclTensor *output, const op::Shape &shape, DataType legacyType) {
+        if (!generalPath) return OutputOrEmptyDescriptor(output, legacyType, executor);
+        return output != nullptr ? output : executor->AllocTensor(shape, DataType::DT_FLOAT, Format::FORMAT_ND);
+    };
+    const aclTensor *akkForKernel = cache(akkOut, aqkOut->GetViewShape(), DataType::DT_BF16);
+    const aclTensor *qgForKernel = cache(qgOut, keyShape, DataType::DT_BF16);
+    const aclTensor *qHatForKernel = cache(qHatOut, keyShape, DataType::DT_BF16);
+    const aclTensor *kHatForKernel = cache(kHatOut, keyShape, DataType::DT_BF16);
+    const aclTensor *qRstdForKernel = cache(qRstdOut, scalarShape, DataType::DT_FLOAT);
+    const aclTensor *kRstdForKernel = cache(kRstdOut, scalarShape, DataType::DT_FLOAT);
+    const aclTensor *betaEffForKernel = cache(betaEffOut, scalarShape, DataType::DT_FLOAT);
     if (akkForKernel == nullptr || qgForKernel == nullptr ||
         qHatForKernel == nullptr || kHatForKernel == nullptr ||
         qRstdForKernel == nullptr || kRstdForKernel == nullptr ||
@@ -154,7 +157,7 @@ ChunkKdaFwdPrepareOutputs ChunkKdaFwdPrepare(
                   qRstdForKernel, kRstdForKernel, betaEffForKernel),
         OP_ATTR(layout, scaleAttr, chunkSize, epsilonAttr, useQkL2normInKernel,
                 useGateInKernel, useBetaSigmoidInKernel, allowNegEigval,
-                safeGate, lowerBoundAttr, useExp2, outputMode));
+                safeGate, lowerBoundAttr, useExp2, outputMode, generalPath));
     if (status != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "添加 ChunkKdaFwdPrepare AI Core 任务失败。");

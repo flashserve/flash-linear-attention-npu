@@ -121,6 +121,36 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdDhu(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
+    if(qInputDesc->GetDataType()==ge::DT_FLOAT){
+        if(ascendcPlatform.GetCurNpuArch()!=NpuArch::DAV_2201 || layoutValue!=GDN::DhuLayout::BNSD ||
+            !gkInputDesc || gkInputDesc->GetDataType()!=ge::DT_FLOAT)return ge::GRAPH_FAILED;
+        const auto &q=context->GetRequiredInputShape(0)->GetStorageShape();
+        const auto &dv=context->GetRequiredInputShape(4)->GetStorageShape();
+        if(q.GetDimNum()!=4 || dv.GetDimNum()!=4)return ge::GRAPH_FAILED;
+        *tiling={};tiling->B=q.GetDim(0);tiling->HK=q.GetDim(1);tiling->HV=tiling->HK;
+        tiling->T=q.GetDim(2);tiling->K=q.GetDim(3);tiling->V=dv.GetDim(3);tiling->HRatio=1;
+        auto K=tiling->K,V=tiling->V;
+        if(tiling->B<=0 || tiling->HV<=0 || tiling->T<=0 ||
+            !((K==V && (K==60 || K==64 || K==100 || K==128 || K==256)) || (K==64 && V==32)))return ge::GRAPH_FAILED;
+        if(!chunkSizePtr || *chunkSizePtr!=64)return ge::GRAPH_FAILED;
+        tiling->chunkSize=64;tiling->chunkNumForT=(tiling->T+63)/64;tiling->scale=scalePtr?*scalePtr:1.;
+        tiling->useExp2=useExp2Ptr && *useExp2Ptr;tiling->stateVFirst=stateVFirstPtr && *stateVFirstPtr;tiling->hasGk=1;
+        auto *cu=context->GetOptionalInputTensor(CGDR_BWD_DHU_INPUT_CU_SEQLENS_IDX);
+        const int64_t *bounds=cu?cu->GetData<int64_t>():nullptr;
+        tiling->isVariable=bounds!=nullptr;tiling->seqNum=tiling->B;
+        if(bounds){
+            auto n=cu->GetShapeSize();if(n<2 || tiling->B!=1 || bounds[0]!=0 || bounds[n-1]!=tiling->T)return ge::GRAPH_FAILED;
+            tiling->seqNum=n-1;
+            for(int64_t i=0;i<n-1;++i){if(bounds[i+1]<bounds[i])return ge::GRAPH_FAILED;tiling->totalChunkNum+=(bounds[i+1]-bounds[i]+63)/64;}
+        }else tiling->totalChunkNum=tiling->B*tiling->chunkNumForT;
+        auto *dh0=context->GetOutputShape(1);tiling->hasDh0=dh0 && dh0->GetStorageShape().GetShapeSize()>0;
+        tiling->taskNum=tiling->seqNum*tiling->HV*((V+31)/32);
+        using namespace GDN;
+        context->SetTilingKey(GET_TPL_TILING_KEY(10ULL,30ULL,128ULL,1ULL,0ULL,1ULL));
+        context->SetBlockDim(std::max<int64_t>(1,std::min<int64_t>(ascendcPlatform.GetCoreNumAiv(),tiling->taskNum)));
+        context->GetWorkspaceSizes(1)[0]=ascendcPlatform.GetLibApiWorkSpaceSize();
+        context->GetRawTilingData()->SetDataSize(sizeof(*tiling));return ge::GRAPH_SUCCESS;
+    }
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
 

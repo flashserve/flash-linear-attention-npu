@@ -26,6 +26,7 @@
 #include "arch35/chunk_gated_delta_rule_bwd_dhu_vector.h"
 #else
 #include "chunk_gated_delta_rule_bwd_dhu_struct.h"
+#include "arch22/chunk_gated_delta_rule_bwd_dhu_general_launch.h"
 #include "chunk_gated_delta_rule_bwd_dhu_cube.h"
 #include "chunk_gated_delta_rule_bwd_dhu_vector.h"
 #endif
@@ -85,7 +86,7 @@ struct ChunkGatedDeltaRuleBwdDhuDTypeTraits<TPL_FP32> {
 } // namespace GDN
 
 #ifndef TORCH_MODE
-template <int D_T_Q, int D_T_G, int V, int USE_GK, bool DO_TOKEN_MAJOR>
+template <int D_T_Q, int D_T_G, int V, int USE_GK, bool DO_TOKEN_MAJOR, bool GENERAL_PATH>
 __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     GM_ADDR q, GM_ADDR k, GM_ADDR w, GM_ADDR d_o, GM_ADDR dv, GM_ADDR g,
     GM_ADDR gk, GM_ADDR h0, GM_ADDR dht, GM_ADDR cu_seqlens, GM_ADDR chunk_indices,
@@ -96,12 +97,19 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_dhu(
     AscendC::AscendCUtils::SetOverflow(1);
 
     GM_ADDR userWS = AscendC::GetUserWorkspace(workspace);
-    if (userWS == nullptr) {
+    if (userWS == nullptr && !GENERAL_PATH) {
         return;
     }
 
     REGISTER_TILING_DEFAULT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData);
     GET_TILING_DATA_WITH_STRUCT(GDN::ChunkGatedDeltaRuleBwdDhuTilingData, tilingData, tiling);
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 2201
+    if constexpr(GENERAL_PATH){
+        GDN::Arch22::GeneralDhuBuffers b{q,k,w,gk,d_o,dv,dht,dh,dv2,tilingData.hasDh0?dh0:nullptr};
+        GDN::Arch22::RunGeneralDhu<DTYPE_D_O>(b,cu_seqlens,tilingData);return;
+    }
+#endif
+
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 9201
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
 #else

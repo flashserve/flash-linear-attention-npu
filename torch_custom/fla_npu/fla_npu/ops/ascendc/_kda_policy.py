@@ -84,7 +84,7 @@ def _prepare_kda_bwd_optimized(args):
     import torch
 
     _validate_kda_bwd_a5_options(args)
-    a = _prepare_kda_bwd_arch22(args)
+    a = _prepare_kda_bwd_a5_inputs(args)
     q = a["q"]
     index = q.device.index if q.device.index is not None else torch.npu.current_device()
     if q.device.type != "npu" or "Ascend950" not in torch.npu.get_device_name(index):
@@ -130,8 +130,8 @@ def _validate_kda_bwd_a5_options(args):
         raise ValueError("A5 beta sigmoid backward is reserved: beta_eff=None and both flags False required")
 
 
-def _prepare_kda_bwd_arch22(args):
-    """Shared single-layout tensor contract; A5 adds V2 eligibility checks."""
+def _prepare_kda_bwd_a5_inputs(args):
+    """Existing A5 input policy; unchanged by A2/A3 generalization."""
     import math
     import torch
     import torch_npu
@@ -155,8 +155,6 @@ def _prepare_kda_bwd_arch22(args):
         raise ValueError("scale and lower_bound must be finite")
     if a["chunk_size"] != 64 or not a["use_exp2"] or a["state_v_first"]:
         raise ValueError("KDA backward requires C=64, exp2 and K-first state")
-    if a["initial_state"] is not None or a["dht"] is not None:
-        raise ValueError("initial_state/dht are not supported")
     if (a["q_rstd"] is None) != (a["k_rstd"] is None):
         raise ValueError("q_rstd and k_rstd must be supplied together")
     if a["allow_neg_eigval"] and not a["use_beta_sigmoid_in_kernel"]:
@@ -234,4 +232,21 @@ def _prepare_kda_bwd_arch22(args):
     a.update(cu_seqlens=cu, chunk_indices=indices,
              _output_token_shape=shape, _output_gate_shape=gate_token,
              _output_beta_shape=gate_token[:-1])
+    return a
+
+
+def _prepare_kda_bwd_arch22(args):
+    """Serialize A2/A3 attributes; ACLNN owns tensor and combination checks."""
+    from ._parameters import optional_bool, optional_float
+
+    a = dict(args)
+    for name, default in (("disable_recompute", True), ("safe_gate", True),
+                          ("use_gate_in_kernel", True), ("use_exp2", True),
+                          ("state_v_first", False), ("use_beta_sigmoid_in_kernel", False),
+                          ("allow_neg_eigval", False)):
+        a[name] = optional_bool(a[name], default)
+    a["lower_bound"] = optional_float(a["lower_bound"], -5.0)
+    a["scale"] = float(a["scale"])
+    a["chunk_size"] = int(a["chunk_size"])
+    # Preserve sequence IDs, empty segments and caller-provided chunk indices.
     return a

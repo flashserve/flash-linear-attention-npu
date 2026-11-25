@@ -61,9 +61,11 @@ run_npu_chunk_gated_delta_rule_bwd_dhu(
   const std::vector<int64_t> cu = int_values(cu_seqlens);
   const std::vector<int64_t> ci = int_values(chunk_indices);
   const int64_t chunks = count_chunks(ci, chunk_size, SIZE_OF(q_meta, 2));
+  const bool general_v_first = q_meta.scalar_type == fla_npu_stable::stable::at_shim::kFloat && transpose_state_layout;
   const std::vector<int64_t> dh_sizes = {
-      SIZE_OF(q_meta, 0), chunks, SIZE_OF(dv_meta, 1), SIZE_OF(q_meta, 3),
-      SIZE_OF(dv_meta, 3)};
+      SIZE_OF(q_meta, 0), chunks, SIZE_OF(dv_meta, 1),
+      general_v_first ? SIZE_OF(dv_meta, 3) : SIZE_OF(q_meta, 3),
+      general_v_first ? SIZE_OF(q_meta, 3) : SIZE_OF(dv_meta, 3)};
 
   Tensor out_dh = allocate_sizes(dh_sizes, q_meta.scalar_type, q_meta);
   // dh0 mirrors h0's presence: without an initial state there is nothing to

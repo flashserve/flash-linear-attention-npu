@@ -20,16 +20,11 @@ class ChunkFwdH : public OpDef {
 public:
     explicit ChunkFwdH(const char *name) : OpDef(name)
     {
-        const std::initializer_list<ge::DataType> dataTypes = {ge::DT_BF16, ge::DT_BF16,
-                                                               ge::DT_BF16, ge::DT_BF16};
-        const std::initializer_list<ge::DataType> gateTypes = {ge::DT_BF16, ge::DT_BF16,
-                                                               ge::DT_FLOAT, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> stateTypes = {ge::DT_BF16, ge::DT_FLOAT,
-                                                                ge::DT_BF16, ge::DT_FLOAT};
-        const std::initializer_list<ge::DataType> indexTypes = {ge::DT_INT64, ge::DT_INT64,
-                                                                ge::DT_INT64, ge::DT_INT64};
-        const std::initializer_list<ge::Format> formats = {ge::FORMAT_ND, ge::FORMAT_ND,
-                                                           ge::FORMAT_ND, ge::FORMAT_ND};
+        const std::initializer_list<ge::DataType> dataTypes = {ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,ge::DT_BF16,ge::DT_FLOAT,ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> gateTypes = {ge::DT_BF16,ge::DT_BF16,ge::DT_FLOAT,ge::DT_FLOAT,ge::DT_FLOAT,ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> stateTypes = {ge::DT_BF16,ge::DT_FLOAT,ge::DT_BF16,ge::DT_FLOAT,ge::DT_BF16,ge::DT_FLOAT};
+        const std::initializer_list<ge::DataType> indexTypes = {ge::DT_INT64,ge::DT_INT64,ge::DT_INT64,ge::DT_INT64,ge::DT_INT64,ge::DT_INT64};
+        const std::initializer_list<ge::Format> formats = {ge::FORMAT_ND,ge::FORMAT_ND,ge::FORMAT_ND,ge::FORMAT_ND,ge::FORMAT_ND,ge::FORMAT_ND};
 
         this->Input("k")
             .ParamType(REQUIRED)

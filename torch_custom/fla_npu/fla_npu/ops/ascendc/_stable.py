@@ -1388,9 +1388,6 @@ def npu_chunk_kda_bwd_recompute(q, k, v, g, beta, a, chunk_size, *,
     so the adapter reorders the results before returning them.
     """
 
-    from ._kda_policy import _validate_kda_recompute_layout
-
-    _validate_kda_recompute_layout(input_layout)
     return _op("npu_chunk_kda_bwd_recompute")(
         q, k, v, g, beta, a, A_log, dt_bias,
         _host_ints(cu_seqlens), _host_ints(chunk_indices),
@@ -1431,6 +1428,26 @@ def npu_chunk_kda_fwd(q, k, v, g, beta, scale, chunk_size=64, *,
     bfloat16 q/k/v、K=V=128、safe_gate=True、核内 norm/sigmoid、
     allow_neg_eigval=False 和 use_exp2=True。
     """
+
+    from ._kda_policy import _is_kda_bwd_arch22
+    if _is_kda_bwd_arch22(q):
+        cu_seqlens, chunk_indices = _normalize_chunk_metadata(cu_seqlens, chunk_indices)
+        if cu_seqlens and chunk_indices is None:
+            chunk_indices = _canonical_chunk_indices(cu_seqlens, chunk_size)
+        result = _op("npu_chunk_kda_fwd")(
+            q, k, v, g, beta, A_log, dt_bias, initial_state,
+            _host_ints(cu_seqlens), _host_ints(chunk_indices),
+            _char_code("npu_chunk_kda_fwd", "layout", layout),
+            float(scale), chunk_size, bool(safe_gate),
+            -5.0 if lower_bound is None else float(lower_bound),
+            bool(use_gate_in_kernel), bool(state_v_first),
+            1e-6 if epsilon is None else float(epsilon),
+            bool(use_qk_l2norm_in_kernel), bool(use_beta_sigmoid_in_kernel),
+            bool(allow_neg_eigval), True if use_exp2 is None else bool(use_exp2),
+            bool(output_final_state), bool(disable_recompute), bool(return_intermediate_states),
+            q_hat_out, k_hat_out, q_rstd_out, k_rstd_out, beta_eff_out, _current_stream_ptr(),
+        )
+        return (*result, initial_state)
 
     epsilon = 1e-6 if epsilon is None else float(epsilon)
     if not epsilon > 0.0:
@@ -1573,22 +1590,8 @@ def npu_chunk_kda_bwd_finalize(
     Gate computation and parameter reductions remain FP32.
     On A5, use_beta_sigmoid_in_kernel is reserved and must remain False.
     """
-    if allow_neg_eigval and not use_beta_sigmoid_in_kernel:
-        raise ValueError(
-            "npu_chunk_kda_bwd_finalize: allow_neg_eigval=True requires "
-            "use_beta_sigmoid_in_kernel=True.")
-    if q.ndim not in (3, 4):
-        raise ValueError("q must have rank 3 or 4")
-    rank3 = q.ndim == 3
     if output_layout is None:
-        output_layout = "NTD" if rank3 else "BNSD"
-    valid_layouts = ("NTD", "TND") if rank3 else ("BNSD", "BSND")
-    if output_layout not in valid_layouts:
-        raise ValueError("output_layout does not match input rank")
-    if cu_seqlens is None and chunk_indices is not None:
-        raise ValueError("chunk_indices requires cu_seqlens")
-    if (q_rstd is None) != (k_rstd is None):
-        raise ValueError("q_rstd and k_rstd must appear together")
+        output_layout = "NTD" if q.ndim == 3 else "BNSD"
     return _op("npu_chunk_kda_bwd_finalize")(
         q, k, v, gk, raw_g, beta, a_log, dt_bias, akk, v_new, h, dh,
         dv_scan, d_aqk, dq_raw, q_rstd, k_rstd,
@@ -1663,6 +1666,12 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
     value_scalar_shape = (value_heads, seq_len) if rank3 \
         else (batch, value_heads, seq_len)
 
+    from ._kda_policy import _is_kda_bwd_arch22
+    cache_dtype = torch.float32 if (
+        _is_kda_bwd_arch22(q) and
+        (q.dtype == torch.float16 or key_dim != 128 or value_dim != 128)
+    ) else q.dtype
+
     def _alloc(shape, dtype):
         return torch.empty(shape, dtype=dtype, device=q.device)
 
@@ -1670,15 +1679,15 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
     # 直接传 None（空槽），不参与公开 GM 写回。
     shapes = {
         "gk": (key_shape, torch.float32),
-        "Aqk": (matrix_shape, q.dtype),
-        "Akk": (matrix_shape, q.dtype),
-        "w": (key_shape, q.dtype),
-        "u": (value_shape, q.dtype),
-        "qg": (key_shape, q.dtype),
-        "kg": (key_shape, q.dtype),
-        "qg_scaled": (key_shape, q.dtype),
-        "q_hat": (qk_head_shape, q.dtype),
-        "k_hat": (qk_head_shape, q.dtype),
+        "Aqk": (matrix_shape, cache_dtype),
+        "Akk": (matrix_shape, cache_dtype),
+        "w": (key_shape, cache_dtype),
+        "u": (value_shape, cache_dtype),
+        "qg": (key_shape, cache_dtype),
+        "kg": (key_shape, cache_dtype),
+        "qg_scaled": (key_shape, cache_dtype),
+        "q_hat": (qk_head_shape, cache_dtype),
+        "k_hat": (qk_head_shape, cache_dtype),
         "q_rstd": (qk_scalar_shape, torch.float32),
         "k_rstd": (qk_scalar_shape, torch.float32),
         "beta_eff": (value_scalar_shape, torch.float32),
@@ -1732,7 +1741,7 @@ def npu_chunk_kda_fwd_prepare(q, k, v, g, beta, scale, chunk_size=64, *,
 
 def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
                                output_layout="BSND", state_v_first=False,
-                               cu_seqlens=None, chunk_indices=None):
+                               cu_seqlens=None, chunk_indices=None, output_fp16=False):
     """KDA chunked forward 的 finalize 段（唯一的公开输出是 ``attn_out``）。
 
     ``output_layout`` 只描述输出的拼写：BSND/TND 是 sequence-major，
@@ -1749,7 +1758,7 @@ def npu_chunk_kda_fwd_finalize(qg_scaled, aqk, v_new, h, *,
         _char_code("npu_chunk_kda_fwd_finalize", "output_layout",
                    output_layout),
         bool(state_v_first),
-        _current_stream_ptr(),
+        _current_stream_ptr(), bool(output_fp16),
     )
 
 
@@ -2050,7 +2059,7 @@ def _kda_bwd_arch22_launch(args, optimized=False):
         optimized, a["q_rstd"], a["k_rstd"], a["beta_eff"],
         _char_code("npu_chunk_kda_bwd", "layout", a["layout"]),
         a["use_beta_sigmoid_in_kernel"], a["allow_neg_eigval"],
-        _current_stream_ptr(),
+        _current_stream_ptr(), a["initial_state"], a["dht"],
     )
     if bias_shape is not None:
         outputs = (*outputs[:-1], outputs[-1].view(bias_shape))
@@ -2086,11 +2095,10 @@ def npu_chunk_kda_bwd(q, k, v, beta, gk, Aqk, Akk, w, qg, kg, v_new, h, d_o,
     )
 
     use_gate_in_kernel = _optional_bool(use_gate_in_kernel, True)
-    if not use_gate_in_kernel:
-        raise ValueError("npu_chunk_kda_bwd: use_gate_in_kernel must be True.")
-
     if _is_kda_bwd_arch22(q):
         return _kda_bwd_arch22_launch(locals())
+    if not use_gate_in_kernel:
+        raise ValueError("npu_chunk_kda_bwd: use_gate_in_kernel must be True.")
     _validate_kda_bwd_a5_options(locals())
     if _select_kda_bwd_optimized(
             implementation, q_rstd, k_rstd,

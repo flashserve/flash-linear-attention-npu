@@ -76,6 +76,8 @@ ge::graphStatus Tiling4ChunkKdaBwdPrepare(gert::TilingContext *context)
         static_cast<size_t>(platform.GetLibApiWorkSpaceSize()),
         platform.GetCurNpuArch() == NpuArch::DAV_3510,
     };
+    if(aqkDesc->GetDataType()==ge::DT_FLOAT && platform.GetCurNpuArch()==NpuArch::DAV_2201)
+        ctx.aicCoreNum=platform.GetCoreNumAiv();
     ctx.isA6 = platform.GetCurNpuArch() == NpuArch::DAV_9201;
     ChunkKdaBwdPrepareTilingProcessor processor(ctx, *tiling);
     if (processor.Process() != ge::GRAPH_SUCCESS) {

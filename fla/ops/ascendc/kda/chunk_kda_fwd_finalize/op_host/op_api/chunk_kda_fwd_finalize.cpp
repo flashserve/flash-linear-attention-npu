@@ -58,7 +58,7 @@ const aclTensor *ChunkKdaFwdFinalize(
         ChunkKdaFwdFinalize,
         OP_INPUT(qgScaled, aqk, vNew, h, cuSeqlens, chunkIndices),
         OP_OUTPUT(attnOut),
-        OP_ATTR(outputLayout, stateVFirst));
+        OP_ATTR(outputLayout, stateVFirst, attnOut->GetDataType() == DataType::DT_FLOAT16));
     if (status != ACLNN_SUCCESS) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
                 "添加 ChunkKdaFwdFinalize AI Core 任务失败。");

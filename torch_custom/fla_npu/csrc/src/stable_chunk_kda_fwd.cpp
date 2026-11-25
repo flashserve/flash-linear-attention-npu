@@ -113,6 +113,14 @@ run_npu_chunk_kda_fwd(
     leading.push_back(batch_size);
   }
   const int64_t q_dtype = q_meta.scalar_type;
+  using SocNameFn = const char* (*)();
+  const auto soc_name = reinterpret_cast<SocNameFn>(
+      fla_npu_stable::Runtime::instance().symbol("aclrtGetSocName"));
+  const char* soc = soc_name ? soc_name() : nullptr;
+  const bool arch22 = soc && (std::strstr(soc, "Ascend910B") || std::strstr(soc, "Ascend910C") || std::strstr(soc, "Ascend910_93"));
+  const int64_t cache_dtype = arch22 && (q_dtype != kBFloat16 || k_dim != 128 || v_dim != 128)
+      ? kFloat : q_dtype;
+
 
   auto head_sizes = [&](int64_t channel_dim,
                         std::vector<int64_t> prefix) {
@@ -139,8 +147,8 @@ run_npu_chunk_kda_fwd(
   std::optional<Tensor> out_akk;
   if (chunk_size != 32) {
     // chunk32 大融合不导出中间量；保留空返回槽且不给 ACLNN 分配/传输出指针。
-    out_aqk = allocate_sizes(head_sizes(chunk_size, leading), q_dtype, q_meta);
-    out_akk = allocate_sizes(head_sizes(chunk_size, leading), q_dtype, q_meta);
+    out_aqk = allocate_sizes(head_sizes(chunk_size, leading), cache_dtype, q_meta);
+    out_akk = allocate_sizes(head_sizes(chunk_size, leading), cache_dtype, q_meta);
   }
   std::optional<Tensor> out_w;
   std::optional<Tensor> out_u;
@@ -148,11 +156,11 @@ run_npu_chunk_kda_fwd(
   std::optional<Tensor> out_kg;
   std::optional<Tensor> out_v_new;
   if (disable_recompute) {
-    out_w = allocate_sizes(head_sizes(k_dim, leading), q_dtype, q_meta);
-    out_u = allocate_sizes(head_sizes(v_dim, leading), q_dtype, q_meta);
-    out_qg = allocate_sizes(head_sizes(k_dim, leading), q_dtype, q_meta);
-    out_kg = allocate_sizes(head_sizes(k_dim, leading), q_dtype, q_meta);
-    out_v_new = allocate_sizes(head_sizes(v_dim, leading), q_dtype, q_meta);
+    out_w = allocate_sizes(head_sizes(k_dim, leading), cache_dtype, q_meta);
+    out_u = allocate_sizes(head_sizes(v_dim, leading), cache_dtype, q_meta);
+    out_qg = allocate_sizes(head_sizes(k_dim, leading), cache_dtype, q_meta);
+    out_kg = allocate_sizes(head_sizes(k_dim, leading), cache_dtype, q_meta);
+    out_v_new = allocate_sizes(head_sizes(v_dim, leading), cache_dtype, q_meta);
   }
   std::optional<Tensor> out_h;
   if (disable_recompute || return_intermediate_states) {
@@ -161,7 +169,7 @@ run_npu_chunk_kda_fwd(
                    {layout_math::chunks(cu, ci, chunk_size, tokens), heads,
                     state_v_first ? v_dim : k_dim,
                     state_v_first ? k_dim : v_dim});
-    out_h = allocate_sizes(h_sizes, q_dtype, q_meta);
+    out_h = allocate_sizes(h_sizes, cache_dtype, q_meta);
   }
 
   // chunk64 命中三算子组合；chunk32 命中同一公开 V2 入口的大融合分支。
@@ -186,14 +194,10 @@ run_npu_chunk_kda_fwd(
   // A6（Ascend960DT / DAV_9201）没有融合单 kernel（aclnnChunkKdaFwd 未注册），
   // 只有三算子组合（V2）可用。work_items 门控只是 A2/A3/A5 上 V2 与 V1 融合
   // 的性能取舍；A6 无 V1 可退，故绕过工作量门槛，v2_scenario 即走 V2。
-  using SocNameFn = const char* (*)();
-  const auto soc_name = reinterpret_cast<SocNameFn>(
-      fla_npu_stable::Runtime::instance().symbol("aclrtGetSocName"));
-  const char* soc = soc_name ? soc_name() : nullptr;
   const bool arch960 = soc && std::strstr(soc, "Ascend960");
-  const bool use_v2 = v2_scenario &&
+  const bool use_v2 = arch22 || (v2_scenario &&
                       (switches_requested || arch960 ||
-                       work_items >= kChunkKdaFwdV2MinWorkItems);
+                       work_items >= kChunkKdaFwdV2MinWorkItems));
 
   if (chunk_size == 32 && wants_saved) {
     throw std::runtime_error(

@@ -56,7 +56,7 @@ constexpr const char* kSchema_chunk_kda_bwd =
     "float lower_bound, bool disable_recompute, bool use_exp2, "
     "bool state_v_first, bool optimized, Tensor? q_rstd, Tensor? k_rstd, Tensor? beta_eff, "
     "int layout, bool use_beta_sigmoid_in_kernel, "
-    "bool allow_neg_eigval, int stream) "
+    "bool allow_neg_eigval, int stream, Tensor? initial_state=None, Tensor? dht=None) "
     "-> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor?, Tensor?, Tensor?)";
 
 std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor, std::optional<Tensor>,
@@ -72,14 +72,8 @@ run_npu_chunk_kda_bwd(
     double lower_bound, bool disable_recompute, bool use_exp2,
     bool state_v_first, bool optimized, std::optional<Tensor> q_rstd,
     std::optional<Tensor> k_rstd, std::optional<Tensor> beta_eff, int64_t layout,
-    bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, int64_t stream) {
-  if ((A_log.has_value() && meta_of(*A_log).scalar_type != kFloat) ||
-      (dt_bias.has_value() && meta_of(*dt_bias).scalar_type != kFloat)) {
-    throw std::runtime_error("npu_chunk_kda_bwd: A_log and dt_bias must be FP32.");
-  }
-  if (!use_gate_in_kernel || !raw_g.has_value() || !A_log.has_value()) {
-    throw std::runtime_error("npu_chunk_kda_bwd: use_gate_in_kernel=True requires raw_g and A_log.");
-  }
+    bool use_beta_sigmoid_in_kernel, bool allow_neg_eigval, int64_t stream,
+    std::optional<Tensor> initial_state, std::optional<Tensor> dht) {
   // Direct dispatcher callers must also keep A2/A3 on the original total L2.
   using SocNameFn = const char* (*)();
   const auto soc_name = reinterpret_cast<SocNameFn>(
@@ -87,6 +81,15 @@ run_npu_chunk_kda_bwd(
   const char* soc = soc_name();
   const bool arch22 = soc && (std::strstr(soc, "Ascend910B") ||
       std::strstr(soc, "Ascend910C") || std::strstr(soc, "Ascend910_93"));
+  if (!arch22) {
+  if ((A_log.has_value() && meta_of(*A_log).scalar_type != kFloat) ||
+      (dt_bias.has_value() && meta_of(*dt_bias).scalar_type != kFloat)) {
+    throw std::runtime_error("npu_chunk_kda_bwd: A_log and dt_bias must be FP32.");
+  }
+  if (!use_gate_in_kernel || !raw_g.has_value() || !A_log.has_value()) {
+    throw std::runtime_error("npu_chunk_kda_bwd: use_gate_in_kernel=True requires raw_g and A_log.");
+  }
+  }
   const bool arch35 = soc && std::strstr(soc, "Ascend950");
   if (!arch22 && (!arch35 || !optimized)) {
     throw std::runtime_error("Single-layout backward requires A2/A3 or A5 V2 (optimized=true)");
@@ -94,7 +97,7 @@ run_npu_chunk_kda_bwd(
   if (arch35 && (beta_eff.has_value() || use_beta_sigmoid_in_kernel || allow_neg_eigval)) {
     throw std::runtime_error("A5 beta sigmoid backward is reserved: beta_eff=None and both flags False required");
   }
-  if (disable_recompute && !gk.has_value()) {
+  if (!arch22 && disable_recompute && !gk.has_value()) {
     throw std::runtime_error("saved KDA backward requires gk");
   }
   const TensorMeta q_meta = meta_of(q);
@@ -109,21 +112,24 @@ run_npu_chunk_kda_bwd(
   const size_t first = packed ? 0 : 1;
   const int64_t key_heads = SIZE_OF(v_meta, first + (input_tm ? 1 : 0));
   auto output_shape = v_meta.sizes;
-  auto gate_shape = output_shape;
+  auto key_shape = output_shape;
+  key_shape.back() = SIZE_OF(q_meta, q_meta.ndim - 1);
+  auto gate_shape = key_shape;
   if (!input_tm) std::swap(gate_shape.at(first), gate_shape.at(first + 1));
   auto beta_shape = gate_shape;
   beta_shape.pop_back();
   // q/k/v gradients follow layout; gate gradients are always token-major.
-  Tensor out_dq = allocate_sizes(output_shape, q_meta.scalar_type, q_meta);
-  Tensor out_dk = allocate_sizes(output_shape, k_meta.scalar_type, k_meta);
+  const bool general = arch22 && meta_of(Aqk).scalar_type == kFloat;
+  Tensor out_dq = allocate_sizes(key_shape, general ? v_meta.scalar_type : q_meta.scalar_type, q_meta);
+  Tensor out_dk = allocate_sizes(key_shape, general ? v_meta.scalar_type : k_meta.scalar_type, k_meta);
   Tensor out_dv = allocate_sizes(output_shape, v_meta.scalar_type, v_meta);
   Tensor out_db = allocate_sizes(beta_shape, meta_of(beta).scalar_type, q_meta);
-  Tensor out_dg = allocate_sizes(gate_shape, meta_of(*raw_g).scalar_type, q_meta);
+  Tensor out_dg = allocate_sizes(gate_shape, raw_g.has_value() ? meta_of(*raw_g).scalar_type : kFloat, q_meta);
   std::optional<Tensor> out_d_a_log;
   std::optional<Tensor> out_d_dt_bias;
   // Parameter gradients are independent of the model token layout.
   if (use_gate_in_kernel) {
-    out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
+    if (A_log.has_value()) out_d_a_log = allocate_sizes({key_heads}, kFloat, q_meta);
     if (dt_bias.has_value()) {
       out_d_dt_bias = allocate_sizes(
           {key_heads, SIZE_OF(q_meta, q_meta.ndim - 1)}, kFloat, q_meta);
@@ -140,8 +146,8 @@ run_npu_chunk_kda_bwd(
         nd_optional_tensor(v_new), nd_optional_tensor(h),
         nd_tensor(meta_of(d_o)), nd_optional_tensor(raw_g),
         nd_optional_tensor(A_log), nd_optional_tensor(dt_bias),
-        /*initial_state=*/nd_optional_tensor(std::nullopt),
-        /*dht=*/nd_optional_tensor(std::nullopt), int_array(cu_seqlens),
+        nd_optional_tensor(initial_state),
+        nd_optional_tensor(dht), int_array(cu_seqlens),
         int_array(chunk_indices), scalar(scale), scalar(chunk_size),
         scalar(safe_gate), scalar(use_gate_in_kernel), scalar(lower_bound),
         scalar(disable_recompute), scalar(use_exp2), scalar(state_v_first),
@@ -167,8 +173,8 @@ run_npu_chunk_kda_bwd(
         nd_optional_tensor(v_new), nd_optional_tensor(h),
         nd_tensor(meta_of(d_o)), nd_optional_tensor(raw_g),
         nd_optional_tensor(A_log), nd_optional_tensor(dt_bias),
-        /*initial_state=*/nd_optional_tensor(std::nullopt),
-        /*dht=*/nd_optional_tensor(std::nullopt), int_array(cu_seqlens),
+        nd_optional_tensor(initial_state),
+        nd_optional_tensor(dht), int_array(cu_seqlens),
         int_array(chunk_indices), scalar(scale), scalar(chunk_size),
         scalar(safe_gate), scalar(use_gate_in_kernel), scalar(lower_bound),
         scalar(disable_recompute), scalar(use_exp2), scalar(state_v_first),

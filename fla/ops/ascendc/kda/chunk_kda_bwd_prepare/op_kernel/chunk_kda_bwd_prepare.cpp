@@ -14,11 +14,12 @@
 #include "arch35/chunk_kda_bwd_prepare_cube.h"
 #include "arch35/chunk_kda_bwd_prepare_vector.h"
 #else
+#include "arch22/chunk_kda_bwd_prepare_general_launch.h"
 #include "arch22/chunk_kda_bwd_prepare_cube.h"
 #include "arch22/chunk_kda_bwd_prepare_vector.h"
 #endif
 
-template <uint32_t INPUT_LAYOUT, bool IS_VARIABLE, bool DO_TOKEN_MAJOR>
+template <uint32_t INPUT_LAYOUT, bool IS_VARIABLE, bool DO_TOKEN_MAJOR, bool GENERAL_PATH>
 __global__ __aicore__ void chunk_kda_bwd_prepare(
     GM_ADDR aqk, GM_ADDR vNew, GM_ADDR dO, GM_ADDR h,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dAqk, GM_ADDR dv, GM_ADDR dqRaw,
@@ -26,6 +27,14 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
 {
     REGISTER_TILING_DEFAULT(KDA::ChunkKdaBwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KDA::ChunkKdaBwdPrepareTilingData, tilingData, tiling);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+    if constexpr(GENERAL_PATH){
+        KDA::Arch22::GeneralBwdPrepareBuffers b{aqk,vNew,dO,h,dAqk,dv,dqRaw};
+        KDA::Arch22::RunGeneralBwdPrepare<DTYPE_D_O>(b,cuSeqlens,chunkIndices,tilingData);
+        return;
+    }
+#endif
+
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
     (void)workspace;

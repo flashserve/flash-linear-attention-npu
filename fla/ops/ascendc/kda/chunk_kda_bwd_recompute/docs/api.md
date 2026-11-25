@@ -1,5 +1,12 @@
 # ChunkKdaBwdRecompute API
 
+## A2/A3 通用分支（本次新增）
+
+通用路径接收 FP32 head-major q_hat/k_hat、有效 beta 和前向 Akk，v 为 FP16/BF16；输出 w/u/qg/kg 为 FP32。q/k 的 K 与 v 的 V 独立。复用 Akk，不重复求逆或激活。
+
+C64、等 head，六组 K/V 和 FP32 缓存契约见 [组合接口](../../chunk_kda_bwd/docs/api.md)。其余旧路径约束仍按下文。
+
+
 公开语义与支持范围以本文和 [算子 README](../README.md) 为准；流水、存储与同步见
 [设计文档](design.md)。
 

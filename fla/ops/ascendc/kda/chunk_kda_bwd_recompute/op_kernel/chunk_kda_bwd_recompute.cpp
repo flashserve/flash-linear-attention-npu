@@ -17,6 +17,7 @@
 #include "arch35/chunk_kda_bwd_recompute_cube.h"
 #include "arch35/chunk_kda_bwd_recompute_vector.h"
 #else
+#include "arch22/chunk_kda_bwd_recompute_general_launch.h"
 #include "chunk_kda_bwd_recompute_cube.h"
 #include "chunk_kda_bwd_recompute_vector.h"
 #endif
@@ -91,7 +92,7 @@ __aicore__ inline void CopyTilingFromGm(
     dst.reserved = src->reserved;
 }
 
-template <int D_T_G, int D_T_BETA, int K_DIM>
+template <int D_T_G, int D_T_BETA, int K_DIM, bool GENERAL_PATH>
 __global__ __aicore__ void chunk_kda_bwd_recompute(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta, GM_ADDR a, GM_ADDR a_log, GM_ADDR dt_bias,
     GM_ADDR cu_seqlens, GM_ADDR chunk_indices, GM_ADDR w, GM_ADDR u, GM_ADDR qg, GM_ADDR kg, GM_ADDR gk,
@@ -112,6 +113,13 @@ __global__ __aicore__ void chunk_kda_bwd_recompute(
     CopyTilingFromGm(
         reinterpret_cast<__gm__ KDA::ChunkKdaBwdRecomputeTilingData *>(tiling), tilingData);
 
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
+    if constexpr(GENERAL_PATH){
+        KDA::Arch22::RunGeneralRecompute<DTYPE_V,DTYPE_G>(q,k,v,g,beta,a,a_log,dt_bias,
+            cu_seqlens,chunk_indices,w,u,qg,kg,gk,tilingData);
+        return;
+    }
+#endif
     using Traits = KDA::RecomputeKernelTraits<D_T_G, D_T_BETA, K_DIM>;
     KDA::ChunkKdaBwdRecomputeKernelImpl<bfloat16_t, typename Traits::GateT, typename Traits::BetaT>(
         q, k, v, g, beta, a, a_log, dt_bias, cu_seqlens, chunk_indices, w, u, qg, kg, gk, userWorkspace,

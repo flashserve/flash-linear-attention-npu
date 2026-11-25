@@ -25,8 +25,9 @@ static ge::graphStatus InferShapeChunkKdaFwdFinalize(
 {
     const auto *qShape = context->GetInputShape(
         optiling::FINALIZE_INPUT_QG_SCALED);
+    const auto *vShape = context->GetInputShape(optiling::FINALIZE_INPUT_V_NEW);
     auto *out = context->GetOutputShape(0);
-    if (qShape == nullptr || out == nullptr || context->GetAttrs() == nullptr) {
+    if (qShape == nullptr || vShape == nullptr || vShape->GetDimNum() == 0 || out == nullptr || context->GetAttrs() == nullptr) {
         return ge::GRAPH_FAILED;
     }
     const char *layout = context->GetAttrs()->GetStr(
@@ -43,7 +44,7 @@ static ge::graphStatus InferShapeChunkKdaFwdFinalize(
         out->SetDimNum(3);
         out->SetDim(0, sequenceMajor ? qShape->GetDim(1) : qShape->GetDim(0));
         out->SetDim(1, sequenceMajor ? qShape->GetDim(0) : qShape->GetDim(1));
-        out->SetDim(2, 128);
+        out->SetDim(2, vShape->GetDim(vShape->GetDimNum()-1));
     } else {
         if (qShape->GetDimNum() != 4) {
             return ge::GRAPH_FAILED;
@@ -52,7 +53,7 @@ static ge::graphStatus InferShapeChunkKdaFwdFinalize(
         out->SetDim(0, qShape->GetDim(0));
         out->SetDim(1, sequenceMajor ? qShape->GetDim(2) : qShape->GetDim(1));
         out->SetDim(2, sequenceMajor ? qShape->GetDim(1) : qShape->GetDim(2));
-        out->SetDim(3, 128);
+        out->SetDim(3, vShape->GetDim(vShape->GetDimNum()-1));
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -60,7 +61,8 @@ static ge::graphStatus InferShapeChunkKdaFwdFinalize(
 static ge::graphStatus InferDataTypeChunkKdaFwdFinalize(
     gert::InferDataTypeContext *context)
 {
-    context->SetOutputDataType(0, ge::DT_BF16);
+    const auto *fp16 = context->GetAttrs()->GetAttrPointer<bool>(optiling::FINALIZE_ATTR_OUTPUT_FP16);
+    context->SetOutputDataType(0, fp16 != nullptr && *fp16 ? ge::DT_FLOAT16 : ge::DT_BF16);
     return ge::GRAPH_SUCCESS;
 }
 

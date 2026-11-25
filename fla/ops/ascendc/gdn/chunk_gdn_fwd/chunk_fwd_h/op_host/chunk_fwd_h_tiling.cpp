@@ -17,6 +17,8 @@
 #include <cstring>
 
 #include "chunk_fwd_h_tiling.h"
+#include <limits>
+#include <algorithm>
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
@@ -222,7 +224,12 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
             "batch, sequence length and head counts must be positive");
         return ge::GRAPH_FAILED;
     }
-    if (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128 || chunkSize != CHUNK_SIZE_64) {
+    const bool general = context->GetInputDesc(0)->GetDataType() == ge::DT_FLOAT;
+    const bool pair = (logicalKDim == logicalVDim && (logicalKDim == 60 || logicalKDim == 64 ||
+        logicalKDim == 100 || logicalKDim == 128 || logicalKDim == 256)) || (logicalKDim == 64 && logicalVDim == 32);
+    if (chunkSize != CHUNK_SIZE_64 || (!general && (logicalKDim != K_DIM_128 || logicalVDim != V_DIM_128)) ||
+        (general && (!pair || !useGk || gateTensor->GetDataType() != ge::DT_FLOAT ||
+        ascendcPlatform.GetCurNpuArch() != NpuArch::DAV_2201 || layoutValue != GDN::FwdHLayout::BNSD))) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             context->GetNodeName(), "K,V,chunk_size",
             std::to_string(logicalKDim) + "," + std::to_string(logicalVDim) + "," +
@@ -249,11 +256,27 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     uint32_t blockDim = 0;
     size_t workspaceSize = 0;
     ChunkFwdHTilingProcessor processor(tilingCtx);
-    processor.Process(plainTiling, blockDim, workspaceSize);
+    if (general) {
+        const uint64_t sequences = cuSeqlensTensor == nullptr ? logicalBatch : tilingCtx.cuSeqlensDim0-1;
+        const uint64_t tiles = (logicalVDim+31)/32;
+        const uint64_t limit = std::numeric_limits<uint32_t>::max();
+        if (sequences == 0 || logicalVHeads > limit/tiles || sequences > limit/(logicalVHeads*tiles) ||
+            ascendcPlatform.GetCoreNumAiv() == 0 || logicalSeqlen > limit) return ge::GRAPH_FAILED;
+        blockDim = static_cast<uint32_t>(std::min(sequences*logicalVHeads*tiles, static_cast<uint64_t>(ascendcPlatform.GetCoreNumAiv())));
+        workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
+        plainTiling.batch=sequences;plainTiling.seqlen=logicalSeqlen;
+        plainTiling.kNumHead=logicalKHeads;plainTiling.vNumHead=logicalVHeads;
+        plainTiling.kHeadDim=logicalKDim;plainTiling.vHeadDim=logicalVDim;plainTiling.chunkSize=64;
+        plainTiling.useInitialState=useInitialState;plainTiling.storeFinalState=storeFinalState;
+        plainTiling.isVariedLen=cuSeqlensTensor!=nullptr;plainTiling.shapeBatch=logicalBatch;
+        plainTiling.tokenBatch=logicalBatch;plainTiling.layout=layoutValue;
+    } else {
+        processor.Process(plainTiling, blockDim, workspaceSize);
+    }
 
     // T16：dense 且总 head 任务数（batch × vNumHead）≤ 2×blockDim 时选 1（每
     // AIV 单 head 链，单 slot 大缓冲布局）；超限则 slot1 链缓冲与大缓冲重叠，走 T8。
-    const bool denseT16Eligible = !plainTiling.isVariedLen &&
+    const bool denseT16Eligible = !general && !plainTiling.isVariedLen &&
         plainTiling.batch * plainTiling.vNumHead <= 2 * static_cast<int64_t>(blockDim) &&
         plainTiling.seqlen > 0 &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
@@ -261,13 +284,13 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     using namespace GDN;
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         gateDtypeToken,
-        static_cast<uint64_t>(logicalVDim),
+        static_cast<uint64_t>(128),
         static_cast<uint64_t>(useGk ? 1 : 0),
         static_cast<uint64_t>(useExp2 ? 1 : 0),
         static_cast<uint64_t>(stateDtypeToken == CHUNK_FWD_H_TPL_FP32 ? 1 : 0),
         static_cast<uint64_t>(stateVFirst ? 1 : 0),
         static_cast<uint64_t>(storeFinalState ? 1 : 0),
-        static_cast<uint64_t>(denseT16Eligible ? 1 : 0));
+        static_cast<uint64_t>(denseT16Eligible ? 1 : 0), static_cast<uint64_t>(general));
     context->SetTilingKey(tilingKey);
     OP_LOGD(context->GetNodeName(), "tilingKey: %lu", static_cast<unsigned long>(tilingKey));
 
