@@ -126,6 +126,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
         useInitialState ? GdnFwdHDtypeToEnum(initialStateTensor->GetDataType()) : GDN_FWD_H_DTYPE_FP32;
     tilingCtx.useG = useG;
     tilingCtx.storeFinalState = storeFinalState;
+    tilingCtx.usePrivateFp32State = !storeFinalState && tilingCtx.stateDataType == GDN_FWD_H_DTYPE_FP32;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.useGk = useGk;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
@@ -172,6 +173,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
     tiling.set_chunkSize(plainTiling.chunkSize);
     tiling.set_useInitialState(plainTiling.useInitialState);
     tiling.set_storeFinalState(plainTiling.storeFinalState);
+    tiling.set_stateWorkspaceOffset(plainTiling.stateWorkspaceOffset);
     tiling.set_dataType(plainTiling.dataType);
     tiling.set_stateDataType(plainTiling.stateDataType);
     tiling.set_gDataType(plainTiling.gDataType);

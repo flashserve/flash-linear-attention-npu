@@ -71,7 +71,8 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHLaunchTyped(
                 k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
         }
     } else {
-        if (V_DIM == 128) {
+        // The preload epilogue reloads h in the token dtype. FP32 carry uses the state epilogue.
+        if constexpr (V_DIM == 128 && !std::is_same<StateT, float>::value) {
             ChunkGatedDeltaRuleFwdHKernelPreloadImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, false, true, useExp2>(
                 k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
         } else {
@@ -117,6 +118,9 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHDispatch(GM_ADDR k, GM_ADDR w, GM_
     bool useG = tilingData->useG;
     constexpr int64_t DTYPE_FP32 = 2;
     if (tilingData->stateDataType == DTYPE_FP32) {
+        if (tilingData->stateWorkspaceOffset != 0) {
+            final_state = user + tilingData->stateWorkspaceOffset;
+        }
         ChunkGatedDeltaRuleFwdHDispatchGate<DTYPE_K, float, TileShapes, false, V_DIM>(
             k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new,
             final_state, tiling, user, tilingData->gDataType, useGk, useG);
