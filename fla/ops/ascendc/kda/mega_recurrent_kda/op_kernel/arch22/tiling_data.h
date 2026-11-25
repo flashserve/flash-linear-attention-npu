@@ -4,6 +4,7 @@
 
 struct MegaRecurrentKdaArch22TilingData {
     MegaRecurrentKdaTilingData common;
-    uint32_t poolSlots, convLength;
+    uint64_t sourceConvStride;
+    uint32_t inputTokens, poolSlots, convLength;
     MegaRecurrentKdaV2::KdaTiling arch22;
 };

@@ -106,9 +106,10 @@ MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int6
     }
     CheckProjectionShapes(ctx, batch, n);
     uint32_t layout = GetConvLayout(ctx, n);
-    const bool packed = x.size() == 2;
-    uint32_t seq = packed ? 0 : CheckedDimension(x[1]);
-    if (!packed && x[0] != batch) {
+    const bool verify = geometryData[geometry::VerifyConvStride] != 0;
+    const bool packed = x.size() == 2 && !verify;
+    uint32_t seq = verify ? CheckedDimension(capacity) : (packed ? 0 : CheckedDimension(x[1]));
+    if (x.size()==3 && x[0] != batch) {
         throw std::invalid_argument("BSH batch mismatch");
     }
     if (packed) {
@@ -244,7 +245,14 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
             key += 2;
         }
     }
-    return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, key);
+    data.sourceConvStride = geometryData[geometry::VerifyConvStride];
+    uint64_t bytes = data.arch22.workspaceBytes;
+    if (data.sourceConvStride) {
+        const auto dims = GetDimensions(ctx, Input::HiddenStates);
+        data.inputTokens = dims.size()==2 ? CheckedDimension(dims[0]) : common.tokens;
+        bytes = ((bytes + 511) & ~uint64_t(511)) + uint64_t(common.tokens) * 7168 * 4;
+    }
+    return PublishTiling(ctx, data, bytes, systemBytes, cores, key);
 }
 
 ge::graphStatus TileMegaRecurrentKda(gert::TilingContext *ctx)

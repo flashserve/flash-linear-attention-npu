@@ -31,6 +31,9 @@ public:
         this->Input("cu_seqlens").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32, ge::DT_INT64}).FormatList(nd);
         this->Input("sequence_plan").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32}).FormatList(nd);
         this->Input("qkv_projection_weight_scale").ParamType(OPTIONAL).DataTypeList({ge::DT_FLOAT8_E8M0, ge::DT_BF16}).FormatList(nd);
+        this->Input("verify_conv_source").ParamType(OPTIONAL).DataTypeList({ge::DT_BF16}).FormatList(nd).IgnoreContiguous();
+        this->Input("verify_starts").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32}).FormatList(nd);
+        this->Input("verify_flag").ParamType(OPTIONAL).DataTypeList({ge::DT_INT32}).FormatList(nd);
         this->Output("out").ParamType(REQUIRED).DataTypeList({ge::DT_BF16}).FormatList(nd);
         this->Output("conv_state_out")
             .ParamType(REQUIRED)

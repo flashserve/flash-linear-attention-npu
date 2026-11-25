@@ -178,6 +178,10 @@ struct V2Params {
     GM_ADDR wOut;
     GM_ADDR convWeight;
     GM_ADDR convState;
+    GM_ADDR sourceConv;
+    GM_ADDR verifyStarts;
+    GM_ADDR verifyFlag;
+    uint64_t sourceConvStride;
     GM_ADDR checkpoint;
     GM_ADDR replayU;
     GM_ADDR replayK;

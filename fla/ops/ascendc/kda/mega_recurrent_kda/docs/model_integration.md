@@ -95,3 +95,11 @@ out, conv_state, replay_u, replay_k, replay_decay = npu_mega_recurrent_kda(
 2. 先从融合调用的 `conv_state[slot, 2:2+S]` 取回当前序列卷积前的 BF16 QKV，其中 S 取该序列的实际长度。A2/A3 对照模型的 `DynamicQuantV2 + QuantBatchMatmulV3`（NZ 权重入口为 `aclnnQuantMatmulWeightNz`）。A5 对照相同 `scale_alg` 的 `npu_dynamic_mx_quant + npu_quant_matmul`。[A2/A3 INT8 测试](../../../../../../tests/atk/mega_recurrent_kda/test_int8.py) · [A5 MXFP8 测试](../../../../../../tests/atk/mega_recurrent_kda/test_mxfp8.py)
 3. 按模型精度门限比较最终输出及四个原地状态，核对只读 checkpoint、非活动槽和活动槽有效行以外的值逐位相同。再给两路相同的下一步输入，各自沿用上一步更新的状态复验。覆盖模型实际使用的等长及变长前缀，包括序列跨越第 64 行的情况。若 QKV 已匹配而下游有差异，再查历史窗口、accepted-token、checkpoint 方向和门控公式。
 4. 精度通过后重新采集 profiling。原模型从动态量化与辅助投影中最早启动的操作计至最后一次输出投影结束。在融合路径的时间线上确认每层只执行一次 KDA，计入全部层的完整调用。TH 另计同一批次共享的一次 metadata。两路使用相同输入、初始状态、层数、预热和设备计时口径。
+
+## 5. A3 RecoverSSM 四位置验证
+
+Atlas A3 的稳定入口 `npu_mega_recurrent_kda_verify_a3` 对应 `aclnnMegaRecurrentKdaVerifyA3`。调用方提供 INT8 NZ 的 QKV 权重、每输出通道的 BF16 scale、宽度 4 的验证批次和当前流上的输出缓冲区。输入是 BF16 的 `[B,4,7168]` 或 `[T,7168]`。
+
+物理卷积状态和 checkpoint 按缓存槽读取。候选卷积状态、U、K 和 decay 按请求行写入。提供 INT32 的槽号、已接受数、长度为 B+1 的 token 起始偏移，以及单元素 INT32 标志。算子置位标志，采样后的 commit 消费这些候选记录。槽号 0 和负槽号表示空行。固定宽度稠密批次直接写输出，变长回放在同一 kernel 内按偏移重排，填充的输出行清零。
+
+在已安装上述入口的 A3 环境，可运行 `pytest -q tests/atk/mega_recurrent_kda/test_verify_a3.py` 比对稠密和变长批次的物理页、候选记录及输出。

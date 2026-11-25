@@ -3,6 +3,7 @@
 #include "mega_recurrent_kda_v2_t02.h"
 #include "tiling_data.h"
 #include "int8_qkv.h"
+#include "verify_io.h"
 #include "long_sequence.h"
 namespace MegaRecurrentKdaV2 {
 CATLASS_DEVICE void BindTilingAndWorkspace(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params,
@@ -97,6 +98,24 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
                               GM_ADDR workspace)
 {
     BindTilingAndWorkspace(plan, params, workspace);
+    const auto callerOut = params.out;
+    const bool remap = params.sourceConvStride && !IsDenseVerifyBatch(params, plan.inputTokens);
+    if (params.sourceConvStride) {
+        if ASCEND_IS_AIV {
+            if (AscendC::GetBlockIdx() == 0) {
+                auto flag = Int8Qkv::Global<int32_t>(params.verifyFlag);
+                flag.SetValue(0, 1);
+                AscendC::DataCacheCleanAndInvalid<int32_t, AscendC::CacheLine::ENTIRE_DATA_CACHE>(flag);
+            }
+        }
+        if (remap) {
+            GM_ADDR dense = workspace + ((uint64_t(plan.arch22.workspaceBytes)+511) & ~uint64_t(511));
+            CopyVerifyRows<false>(params, params.hiddenStates, dense, plan.inputTokens);
+            AscendC::SyncAll<false>();
+            params.hiddenStates = dense;
+            params.out = dense + uint64_t(params.tokens)*kHidden*2;
+        }
+    }
     if (plan.common.crosses == 2 && reinterpret_cast<__gm__ const int32_t *>(sequencePlan)[0]) {
         params.templateId = kTemplateT02;
         params.pSplit = 0;
@@ -156,6 +175,10 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
                 RunStageR(params, ub);
             }
         }
+    }
+    if (remap) {
+        AscendC::SyncAll<false>();
+        CopyVerifyRows<true>(params, params.out, callerOut, plan.inputTokens);
     }
 }
 } // namespace MegaRecurrentKdaV2

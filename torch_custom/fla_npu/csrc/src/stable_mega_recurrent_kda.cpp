@@ -177,6 +177,60 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor> run_mega_recurrent_kda_mx(
                       a_log, dt_bias, nd_optional_tensor(cu_seqlens), scale, lower_bound, rms_norm_eps, stream,
                       "aclnnMegaRecurrentKdaMx", nd_optional_tensor(plan), TensorArg(sw, kAclFormatNd, 37, sw.sizes), scalar(mx_alg));
 }
+constexpr const char *kSchema_mega_recurrent_kda_verify_a3 =
+    "npu_mega_recurrent_kda_verify_a3(Tensor hidden_states, Tensor "
+    "qkv_projection_weight, "
+    "Tensor decay_projection_a_weight, Tensor decay_projection_b_weight, "
+    "Tensor beta_projection_weight, "
+    "Tensor output_gate_projection_weight, Tensor output_norm_weight, Tensor "
+    "output_projection_weight, "
+    "Tensor conv1d_weight, Tensor(a!) conv_state, Tensor checkpoint_state, "
+    "Tensor(b!) replay_u, "
+    "Tensor(c!) replay_k, Tensor(d!) replay_decay, Tensor state_indices, "
+    "Tensor conv_num_accepted_tokens, "
+    "Tensor a_log, Tensor dt_bias, Tensor? cu_seqlens, Tensor? plan, Tensor qkv_projection_weight_scale, float "
+    "scale, float lower_bound, float rms_norm_eps, "
+    "Tensor source_conv, Tensor starts, Tensor(e!) flag, Tensor(f!) result, int stream) -> Tensor(f!)";
+
+Tensor run_mega_recurrent_kda_verify_a3(
+    Tensor hidden_states, Tensor qkv_projection_weight, Tensor decay_projection_a_weight,
+    Tensor decay_projection_b_weight, Tensor beta_projection_weight, Tensor output_gate_projection_weight,
+    Tensor output_norm_weight, Tensor output_projection_weight, Tensor conv1d_weight, Tensor conv_state,
+    Tensor checkpoint_state, Tensor replay_u, Tensor replay_k, Tensor replay_decay, Tensor state_indices,
+    Tensor conv_num_accepted_tokens, Tensor a_log, Tensor dt_bias, std::optional<Tensor> cu_seqlens,
+    std::optional<Tensor> plan, Tensor weight_scale, double scale, double lower_bound, double rms_norm_eps, Tensor source_conv, Tensor starts, Tensor flag, Tensor result, int64_t stream)
+{
+    auto w = meta_of(qkv_projection_weight);
+    const auto sw = meta_of(weight_scale);
+    // Explicit packed weights from QuantMatmulWeightNz have four storage axes.
+    // Normalise their ACL view to the same logical matrix as an NZ-format Tensor.
+    if (w.ndim == 4 && w.sizes[0] > 0 && w.sizes[0] <= INT32_MAX / 32 &&
+        w.sizes[1] == 448 && w.sizes[2] == 16 && w.sizes[3] == 32) {
+        w.ndim = 2;
+        w.sizes = {7168, w.sizes[0] * 32};
+        w.strides = {w.sizes[1], 1};
+    }
+    if (w.scalar_type != 1 || sw.scalar_type != 15 || w.ndim != 2 || w.sizes[0] != 7168 || w.sizes[1] <= 0 ||
+        w.sizes[1] % 384 || sw.sizes != std::vector<int64_t>{w.sizes[1]} || !w.contiguous || !sw.contiguous ||
+        w.storage_offset || sw.device_index != w.device_index) {
+        throw std::invalid_argument("expected packed INT8 NZ QKV weights and one BF16 scale per column");
+    }
+    TensorArg qkv(w, 29, acl_dtype(w.scalar_type), {w.sizes[1] / 32, 448, 16, 32});
+    const auto hidden = meta_of(hidden_states);
+    FLA_STABLE_EXEC("aclnnMegaRecurrentKdaVerifyA3", hidden, stream, nd_tensor(hidden), qkv,
+                    nd_tensor(meta_of(decay_projection_a_weight)), nd_tensor(meta_of(decay_projection_b_weight)),
+                    nd_tensor(meta_of(beta_projection_weight)), nd_tensor(meta_of(output_gate_projection_weight)),
+                    nd_tensor(meta_of(output_norm_weight)), nd_tensor(meta_of(output_projection_weight)),
+                    nd_tensor(meta_of(conv1d_weight)), nd_out_tensor(meta_of(conv_state)),
+                    nd_tensor(meta_of(checkpoint_state)), nd_out_tensor(meta_of(replay_u)),
+                    nd_out_tensor(meta_of(replay_k)), nd_out_tensor(meta_of(replay_decay)),
+                    nd_tensor(meta_of(state_indices)), nd_tensor(meta_of(conv_num_accepted_tokens)),
+                    nd_tensor(meta_of(a_log)), nd_tensor(meta_of(dt_bias)), nd_optional_tensor(cu_seqlens),
+                    nd_optional_tensor(plan), nd_tensor(sw), nd_tensor(meta_of(source_conv)), nd_tensor(meta_of(starts)),
+                    nd_out_tensor(meta_of(flag)), scalar(scale), scalar(lower_bound), scalar(rms_norm_eps),
+                    nd_out_tensor(meta_of(result)));
+    return result;
+}
 std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor> run_mega_recurrent_kda_int8(
     Tensor hidden_states, Tensor qkv_projection_weight, Tensor decay_projection_a_weight,
     Tensor decay_projection_b_weight, Tensor beta_projection_weight, Tensor output_gate_projection_weight,

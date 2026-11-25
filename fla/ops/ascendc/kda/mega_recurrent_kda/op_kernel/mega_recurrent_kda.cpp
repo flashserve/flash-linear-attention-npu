@@ -15,6 +15,7 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
                                                          GM_ADDR conv, GM_ADDR checkpoint, GM_ADDR u, GM_ADDR key,
                                                          GM_ADDR decay, GM_ADDR indices, GM_ADDR accepted,
                                                          GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR plan, GM_ADDR weightScale,
+                                                         GM_ADDR sourceConv, GM_ADDR verifyStarts, GM_ADDR verifyFlag,
                                                          GM_ADDR out, GM_ADDR convOut, GM_ADDR uOut, GM_ADDR keyOut,
                                                          GM_ADDR decayOut, GM_ADDR workspace, GM_ADDR tiling)
 {
@@ -33,6 +34,10 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     params.wOut = wo;
     params.convWeight = convW;
     params.convState = convOut;
+    params.sourceConv = sourceConv;
+    params.verifyStarts = verifyStarts;
+    params.verifyFlag = verifyFlag;
+    params.sourceConvStride = tilingData.sourceConvStride;
     params.checkpoint = checkpoint;
     params.replayU = uOut;
     params.replayK = keyOut;

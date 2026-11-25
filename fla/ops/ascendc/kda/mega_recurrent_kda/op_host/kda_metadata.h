@@ -26,7 +26,7 @@ enum class Input : std::size_t {
     DtBias,
     CuSeqlens,
     SequencePlan,
-    WeightScale
+    WeightScale, VerifyConv, VerifyStarts, VerifyFlag
 };
 
 // The ACLNN executor sends state_geometry to GE as a list of int64_t.
@@ -43,6 +43,7 @@ enum Field : std::size_t {
     DecayStride,
     WorkspaceBytes,
     CrossesTile,
+    VerifyConvStride,
     FieldCount
 };
 using Values = std::array<int64_t, FieldCount>;

@@ -261,8 +261,11 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         return;
     }
     const uint32_t n = seqEnd - seqStart;
-    const uint32_t slot = static_cast<uint32_t>(gmIdx.GetValue(b));
-    const uint32_t accepted = static_cast<uint32_t>(gmAck.GetValue(b));
+    const int32_t id = gmIdx.GetValue(b);
+    const uint32_t slot = p.sourceConvStride && (id < 0 || uint32_t(id) >= p.blockNum) ? 0u : uint32_t(id);
+    const uint32_t record = p.sourceConvStride ? b : slot;
+    const uint32_t count = static_cast<uint32_t>(gmAck.GetValue(b));
+    const uint32_t accepted = p.sourceConvStride && (id <= 0 || count > p.convLength-2) ? 1u : count;
     const uint32_t hs = accepted > 1u ? accepted - 1u : 0u;
 
     // ---- tensor views -----------------------------------------------------
@@ -348,15 +351,19 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
     {
         const uint16_t dBlocks = static_cast<uint16_t>(D * 2u / 32u);
         const uint16_t gap = static_cast<uint16_t>((P - D) / 16u);
-        const size_t headBase = slot * p.convStride + static_cast<size_t>(head) * D;
+        const size_t headBase = record * p.convStride + static_cast<size_t>(head) * D;
         AscendC::DataCopyParams load{9, dBlocks, gap, 0};
         if constexpr (SplitValues) {
             AscendC::GlobalTensor<bfloat16_t> history;
             history.SetGlobalBuffer(
                 reinterpret_cast<__gm__ bfloat16_t *>(p.out + uint64_t(p.tokens) * P * sizeof(float)));
             AscendC::DataCopy(rawB, history[(uint64_t(b) * N + head) * 9 * D], 9 * D);
-        } else
-            AscendC::DataCopy(rawB, gmCs[headBase + static_cast<size_t>(hs) * threeP], load);
+        } else {
+            AscendC::GlobalTensor<bfloat16_t> source;
+        source.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(p.sourceConvStride ? p.sourceConv : p.convState));
+        const size_t sourceBase = slot * (p.sourceConvStride ? p.sourceConvStride : p.convStride) + size_t(head)*D;
+        AscendC::DataCopy(rawB, source[sourceBase + static_cast<size_t>(hs) * threeP], load);
+        }
         AscendC::PipeBarrier<PIPE_ALL>();
         AscendC::Cast(cache, rawB, AscendC::RoundMode::CAST_NONE, static_cast<int32_t>(3u * 384u));
         AscendC::PipeBarrier<PIPE_ALL>();
@@ -441,7 +448,7 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
         if (loadRaw) {
             // write this call's raw rows back into conv_state[slot, 2+t]
             const uint32_t csRow = 2u + t0;
-            const size_t dst = slot * p.convStride + static_cast<size_t>(csRow) * threeP + static_cast<size_t>(head) * D;
+            const size_t dst = record * p.convStride + static_cast<size_t>(csRow) * threeP + static_cast<size_t>(head) * D;
             AscendC::DataCopyParams copy{static_cast<uint16_t>(3u * cl), static_cast<uint16_t>(dBlocks16), 0, srcGapP};
             if (valueStart == 0)
                 AscendC::DataCopy(gmCs[dst], rawB, copy);
@@ -746,11 +753,11 @@ CATLASS_DEVICE void ProcessSequence(V2Params const &p, AscendC::LocalTensor<uint
                 // Preserve the replay format's positive zero after using the raw correction to update H.
                 AscendC::Adds(corrBuf, corrBuf, 0.0f, static_cast<int32_t>(mD));
                 AscendC::PipeBarrier<PIPE_ALL>();
-                AscendC::DataCopy(gmRu[slot * p.uStride + replayBase + static_cast<size_t>(t0) * D], corrBuf,
+                AscendC::DataCopy(gmRu[record * p.uStride + replayBase + static_cast<size_t>(t0) * D], corrBuf,
                                   static_cast<int32_t>(cl * D));
-                AscendC::DataCopy(gmRk[slot * p.keyStride + replayBase + static_cast<size_t>(t0) * D], kHalfBuf,
+                AscendC::DataCopy(gmRk[record * p.keyStride + replayBase + static_cast<size_t>(t0) * D], kHalfBuf,
                                   static_cast<int32_t>(cl * D));
-                AscendC::DataCopy(gmRd[slot * p.decayStride + replayBase + static_cast<size_t>(t0) * D], decV,
+                AscendC::DataCopy(gmRd[record * p.decayStride + replayBase + static_cast<size_t>(t0) * D], decV,
                                   static_cast<int32_t>(cl * D));
                 const uint32_t row0 = gs;
                 const uint32_t slotG = (row0 / kTileRows) % p.slotsGated;
