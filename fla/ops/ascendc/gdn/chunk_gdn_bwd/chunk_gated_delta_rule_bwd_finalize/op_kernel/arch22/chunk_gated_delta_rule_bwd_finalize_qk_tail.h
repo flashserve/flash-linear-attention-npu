@@ -154,7 +154,8 @@ __aicore__ inline void A2FinalizeNormQkTile(
 }
 
 // 原 32 行 Tail 的搬运/加法/舍入/norm 顺序；DKwy offset 独立于全序列地址。
-template <typename QT, bool USE_QK_L2NORM, bool PREFETCH_RSTD = false, bool FUSE_QK_NORM = false>
+template <typename QT, bool USE_QK_L2NORM, bool PREFETCH_RSTD = false, bool FUSE_QK_NORM = false,
+          bool IS_BSND = false>
 __aicore__ inline void A2FinalizeQkTailRows(
     const A2FinalizeQkTailGm<QT> &gm, const A2FinalizeQkTailViews<QT> &views,
     int64_t scalarOffset, int64_t dkWyOffset, uint32_t rows)
@@ -164,7 +165,7 @@ __aicore__ inline void A2FinalizeQkTailRows(
     constexpr uint32_t K = 128;
     const uint32_t count = rows * K;
     const int64_t offset = scalarOffset * K;
-    const int64_t publicOffset = gm.sequenceMajor ?
+    const int64_t publicOffset = IS_BSND ?
         ((scalarOffset / (gm.qkHeads * gm.tokens) * gm.tokens + scalarOffset % gm.tokens) *
          gm.qkHeads + scalarOffset / gm.tokens % gm.qkHeads) * K : offset;
     const auto &qInput = views.qInput;
@@ -192,7 +193,7 @@ __aicore__ inline void A2FinalizeQkTailRows(
     AscendC::DataCopy(dkInput, dk1Gm[offset], count);
     AscendC::DataCopy(dkWyInput, dk2Gm[dkWyOffset], count);
     if constexpr (USE_QK_L2NORM) {
-        if (gm.sequenceMajor) {
+        if constexpr (IS_BSND) {
             const AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
                 static_cast<uint32_t>(K * sizeof(QT)),
                 static_cast<uint32_t>((gm.qkHeads - 1) * K * sizeof(QT)), 0, 0};
@@ -239,7 +240,7 @@ __aicore__ inline void A2FinalizeQkTailRows(
     }
     // 等待最终 Cast 写完 UB，再允许 MTE3 读取同一输出缓冲。
     AscendC::PipeBarrier<PIPE_ALL>();
-    if (gm.sequenceMajor) {
+    if constexpr (IS_BSND) {
         const AscendC::DataCopyExtParams copy{static_cast<uint16_t>(rows),
             static_cast<uint32_t>(K * sizeof(QT)), 0,
             static_cast<uint32_t>((gm.qkHeads - 1) * K * sizeof(QT)), 0};

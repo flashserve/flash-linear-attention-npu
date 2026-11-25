@@ -51,12 +51,12 @@ __global__ __aicore__ void chunk_gated_delta_rule_bwd_finalize(
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     using GType = typename GDN::DTypeTraits<D_T_G>::type;
     if constexpr (ENABLE_MHA_OWNER) {
-        GDN::A2FinalizeRun<QType, GType, 128, 64, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, true>(
+        GDN::A2FinalizeDispatch<QType, GType, 128, 64, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, true>(
             q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw,
             cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData);
     } else {
     #define GDN_RUN_A2(V, BT) \
-        GDN::A2FinalizeRun<QType, GType, V, BT, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, false>( \
+        GDN::A2FinalizeDispatch<QType, GType, V, BT, USE_QK_L2NORM, USE_BETA_SIGMOID, USE_EXP2, false>( \
             q, k, v, v_new, dO, du, g, beta, h, dh, A, q_rstd, k_rstd, beta_raw, \
             cu_seqlens, chunk_indices, dq, dk, dv, dbeta, dg, userWorkspace, tilingData)
         if (tilingData.chunkSize == 64) {

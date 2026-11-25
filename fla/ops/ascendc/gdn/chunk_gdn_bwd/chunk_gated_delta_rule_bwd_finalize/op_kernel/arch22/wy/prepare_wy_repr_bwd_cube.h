@@ -35,7 +35,7 @@
 using namespace Catlass;
 using namespace tla;
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND = false>
 class PrepareWyReprBwdCubeProcess {
 public:
     __aicore__ inline PrepareWyReprBwdCubeProcess(GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens,
@@ -333,16 +333,16 @@ private:
     Arch::CrossCoreFlag cubeToVecFlag_{PREPARE_WY_REPR_BWD_CUBE_TO_VEC_FLAG_READY};
 };
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::PrepareWyReprBwdCubeProcess(
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::PrepareWyReprBwdCubeProcess(
     GM_ADDR k, GM_ADDR A, GM_ADDR dw, GM_ADDR du, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR workspace)
     : k_(k), A_(A), dw_(dw), du_(du), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), workspace_(workspace)
 {
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
 __aicore__ inline void
-PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::Init(const GDN::PrepareWyReprBwdTilingData &tiling)
+PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::Init(const GDN::PrepareWyReprBwdTilingData &tiling)
 {
     tiling_ = tiling;
     curSlot_ = 0;
@@ -362,8 +362,8 @@ PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::Init(const GDN::Pr
     InitPipeFlags();
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::InitPipeFlags()
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::InitPipeFlags()
 {
     AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_L1_SCRATCH_PING);
     AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_DU_RESIDENT_PING);
@@ -383,47 +383,47 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     }
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
 __aicore__ inline int32_t
-PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::GetL0CEvent(uint32_t l0CIdx) const
+PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::GetL0CEvent(uint32_t l0CIdx) const
 {
     return l0CIdx == 0 ? EVENT_L0C_PING : EVENT_L0C_PONG;
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::SwitchL0C()
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::SwitchL0C()
 {
     if constexpr (L0C_BUFFER_COUNT > 1) {
         curL0C_ ^= 1U;
     }
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::Process()
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::Process()
 {
     ProcessImpl();
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::WaitVecToCube()
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::WaitVecToCube()
 {
     Arch::CrossCoreWaitFlag(vecToCubeFlag_);
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::SetCubeToVec()
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::SetCubeToVec()
 {
     Arch::CrossCoreSetFlag<0x2, PIPE_FIX>(cubeToVecFlag_);
 }
 
-template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE>
-__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE>::ProcessImpl()
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SIZE, IS_BSND>::ProcessImpl()
 {
     LayoutTagAT tagAT = LayoutTagAT::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDw tagDw = LayoutTagDw::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
     LayoutTagDu tagDu = LayoutTagDu::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
     LayoutTagK tagK = LayoutTagK::MakeLayout<kType>(CHUNK_SIZE,
-        (tiling_.layout == GDN::FinalizeLayout::BSND) ? static_cast<uint64_t>(tiling_.HK) * K_DIM : K_DIM);
+        IS_BSND ? static_cast<uint64_t>(tiling_.HK) * K_DIM : K_DIM);
     LayoutTagKbgT tagKbgT = LayoutTagKbgT::MakeLayout<kType>(K_DIM, CHUNK_SIZE);
     LayoutTagVbT tagVbT = LayoutTagVbT::MakeLayout<kType>(V_DIM, CHUNK_SIZE);
     LayoutTagDkbg tagDkbg = LayoutTagDkbg::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
@@ -599,7 +599,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 gmDw.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
                 gmDu.SetGlobalBuffer((__gm__ kType *)du_ + valueBase * V_DIM);
                 uint64_t keyOffset = keyBase * K_DIM;
-                if ((tiling_.layout == GDN::FinalizeLayout::BSND)) {
+                if constexpr (IS_BSND) {
                     const uint64_t headTokens = static_cast<uint64_t>(tiling_.HK) * tiling_.T;
                     const uint64_t batch = (cuSeqlens_ == nullptr) ? task.keyBos / headTokens : 0;
                     const uint64_t token = (cuSeqlens_ == nullptr) ? task.keyBos % headTokens : task.keyBos;

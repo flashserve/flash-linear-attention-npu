@@ -419,7 +419,7 @@ __aicore__ inline void A2FinalizeGateTail(
 }
 
 // S4：独占 (chunk, HK)，合并两条 DK 支路后执行可选 Q/K norm。
-template <typename QT, bool USE_QK_L2NORM>
+template <typename QT, bool USE_QK_L2NORM, bool IS_BSND = false>
 __aicore__ inline void A2FinalizeQkTail(
     GM_ADDR q, GM_ADDR k, GM_ADDR qRstd, GM_ADDR kRstd,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dq, GM_ADDR dk,
@@ -448,7 +448,7 @@ __aicore__ inline void A2FinalizeQkTail(
     const bool reuseOutputs = A2FinalizeUseOutputReuse(t);
     const A2FinalizeQkTailArgs args{q, k, qRstd, kRstd,
         reuseOutputs ? dq : workspace + layout.dqOffset,
-        reuseOutputs ? dk : workspace + layout.dkOffset, dq, dk, USE_QK_L2NORM, t.HK, t.T, t.layout == GDN::FinalizeLayout::BSND};
+        reuseOutputs ? dk : workspace + layout.dkOffset, dq, dk, USE_QK_L2NORM, t.HK, t.T, IS_BSND};
     A2FinalizeQkTailGm<QT> gm;
     gm.Init(args, workspace + layout.dkWyOffset);
     const auto wyTiling = A2FinalizeWyTiling(t);
@@ -462,7 +462,7 @@ __aicore__ inline void A2FinalizeQkTail(
             const uint32_t rows = task.curChunkSize - row < ROWS ? task.curChunkSize - row : ROWS;
             const int64_t scalarOffset = hk * t.T + task.keyBos + row;
             const int64_t offset = scalarOffset * K;
-            A2FinalizeQkTailRows<QT, USE_QK_L2NORM>(gm, views, scalarOffset, offset, rows);
+            A2FinalizeQkTailRows<QT, USE_QK_L2NORM, false, false, IS_BSND>(gm, views, scalarOffset, offset, rows);
         }
     }
     pipe.Reset();
@@ -470,15 +470,21 @@ __aicore__ inline void A2FinalizeQkTail(
 
 template <typename QT, typename GT, uint32_t V_DIM, uint32_t CHUNK_SIZE,
           bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
-          bool ENABLE_MHA_OWNER = false>
+          bool ENABLE_MHA_OWNER = false, bool IS_BSND = false>
 __aicore__ inline void A2FinalizeRun(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR vNew, GM_ADDR dO, GM_ADDR du,
     GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR a,
     GM_ADDR qRstd, GM_ADDR kRstd, GM_ADDR betaRaw,
     GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
     GM_ADDR dq, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg,
-    GM_ADDR workspace, const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
+    GM_ADDR workspace, const ChunkGatedDeltaRuleBwdFinalizeTilingData &runtimeTiling)
 {
+    // The existing host geometry/layout dispatch fixes these fields for this instance.
+    // Keep a private copy so downstream helpers see the same compile-time constants.
+    auto t = runtimeTiling;
+    t.V = V_DIM;
+    t.chunkSize = CHUNK_SIZE;
+    t.layout = IS_BSND ? FinalizeLayout::BSND : FinalizeLayout::BNSD;
     const A2FinalizeWorkspaceLayout layout(t, AscendC::GetBlockNum(), std::is_same<GT, float>::value);
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
@@ -500,7 +506,7 @@ __aicore__ inline void A2FinalizeRun(
     GM_ADDR dw = reuseOutputs ? dv : workspace + layout.dwOffset;
     GM_ADDR stageWorkspace = workspace + layout.stageOffset;
     if ASCEND_IS_AIC {
-        ChunkBwdDqkwgCubeProcess<QT, float> cube(
+        ChunkBwdDqkwgCubeProcess<QT, float, IS_BSND> cube(
             q, k, vNew, standardH, dO, standardDh, du, cuSeqlens, chunkIndices,
             dq1, dk1, dw, stageWorkspace);
         cube.Init(dqTiling);
@@ -513,7 +519,7 @@ __aicore__ inline void A2FinalizeRun(
     }
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
-        ChunkBwdDqkwgVectorProcess<QT, float> vec(
+        ChunkBwdDqkwgVectorProcess<QT, float, IS_BSND> vec(
             q, k, vNew, workspace + layout.gOffset, standardH, dO, standardDh, du,
             cuSeqlens, chunkIndices, dq1, dk1, dw,
             std::is_same<GT, float>::value ? dg : workspace + layout.dgDqOffset, stageWorkspace);
@@ -530,7 +536,7 @@ __aicore__ inline void A2FinalizeRun(
     AscendC::SyncAll<false>();
     const auto wyTiling = A2FinalizeWyTiling(t);
     if ASCEND_IS_AIC {
-        PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE> cube(
+        PrepareWyReprBwdCubeProcess<QT, float, V_DIM, CHUNK_SIZE, IS_BSND> cube(
             k, a, dw, du, cuSeqlens, chunkIndices, stageWorkspace);
         cube.Init(wyTiling);
         cube.Process();
@@ -538,12 +544,12 @@ __aicore__ inline void A2FinalizeRun(
     if ASCEND_IS_AIV {
         AscendC::TPipe pipe;
         GM_ADDR dbeta32 = std::is_same<GT, float>::value ? dbeta : workspace + layout.dbetaOffset;
-        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER> vec(
+        PrepareWyReprBwdVectorProcess<QT, float, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND> vec(
             k, v, workspace + layout.betaOffset, workspace + layout.gOffset,
             cuSeqlens, chunkIndices, workspace + layout.dkWyOffset, dv,
             dbeta32, workspace + layout.dgWyOffset, stageWorkspace);
         vec.Init(wyTiling, &pipe, static_cast<uint64_t>(t.seqNum), chunkDkBytes, chunkDkSlots);
-        const A2FinalizeQkTailArgs qkTailArgs{q, k, qRstd, kRstd, dq1, dk1, dq, dk, USE_QK_L2NORM, t.HK, t.T, t.layout == GDN::FinalizeLayout::BSND};
+        const A2FinalizeQkTailArgs qkTailArgs{q, k, qRstd, kRstd, dq1, dk1, dq, dk, USE_QK_L2NORM, t.HK, t.T, IS_BSND};
         vec.Process(qkTailArgs);
         AscendC::PipeBarrier<PIPE_ALL>();
         pipe.Reset();
@@ -555,9 +561,35 @@ __aicore__ inline void A2FinalizeRun(
         A2FinalizeGateTail<GT, USE_BETA_SIGMOID, CHUNK_SIZE>(
             betaRaw, cuSeqlens, chunkIndices, dbeta, dg, workspace, t, layout, pipe);
         if (chunkDkBytes == 0) {
-            A2FinalizeQkTail<QT, USE_QK_L2NORM>(
+            A2FinalizeQkTail<QT, USE_QK_L2NORM, IS_BSND>(
                 q, k, qRstd, kRstd, cuSeqlens, chunkIndices, dq, dk, workspace, t, layout, pipe);
         }
+    }
+}
+
+// Select layout before the AIC/AIV split; both engines use the same specialization.
+// Layout remains private to arch22, preserving the existing TilingKey and tiling ABI.
+template <typename QT, typename GT, uint32_t V_DIM, uint32_t CHUNK_SIZE,
+          bool USE_QK_L2NORM, bool USE_BETA_SIGMOID, bool USE_EXP2,
+          bool ENABLE_MHA_OWNER = false>
+__aicore__ inline void A2FinalizeDispatch(
+    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR vNew, GM_ADDR dO, GM_ADDR du,
+    GM_ADDR g, GM_ADDR beta, GM_ADDR h, GM_ADDR dh, GM_ADDR a,
+    GM_ADDR qRstd, GM_ADDR kRstd, GM_ADDR betaRaw,
+    GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
+    GM_ADDR dq, GM_ADDR dk, GM_ADDR dv, GM_ADDR dbeta, GM_ADDR dg,
+    GM_ADDR workspace, const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
+{
+    if (t.layout == FinalizeLayout::BSND) {
+        A2FinalizeRun<QT, GT, V_DIM, CHUNK_SIZE, USE_QK_L2NORM, USE_BETA_SIGMOID,
+                      USE_EXP2, ENABLE_MHA_OWNER, true>(
+            q, k, v, vNew, dO, du, g, beta, h, dh, a, qRstd, kRstd, betaRaw,
+            cuSeqlens, chunkIndices, dq, dk, dv, dbeta, dg, workspace, t);
+    } else {
+        A2FinalizeRun<QT, GT, V_DIM, CHUNK_SIZE, USE_QK_L2NORM, USE_BETA_SIGMOID,
+                      USE_EXP2, ENABLE_MHA_OWNER, false>(
+            q, k, v, vNew, dO, du, g, beta, h, dh, a, qRstd, kRstd, betaRaw,
+            cuSeqlens, chunkIndices, dq, dk, dv, dbeta, dg, workspace, t);
     }
 }
 

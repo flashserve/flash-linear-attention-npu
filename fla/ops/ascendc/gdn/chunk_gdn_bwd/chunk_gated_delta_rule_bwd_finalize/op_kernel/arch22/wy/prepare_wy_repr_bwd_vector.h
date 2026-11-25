@@ -28,7 +28,7 @@
 using namespace AscendC;
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER = false>
+          bool ENABLE_MHA_OWNER = false, bool IS_BSND = false>
 class PrepareWyReprBwdVectorProcess {
 public:
     __aicore__ inline PrepareWyReprBwdVectorProcess(GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR g, GM_ADDR cuSeqlens,
@@ -370,8 +370,8 @@ private:
 };
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::PrepareWyReprBwdVectorProcess(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::PrepareWyReprBwdVectorProcess(
     GM_ADDR k, GM_ADDR v, GM_ADDR beta, GM_ADDR g, GM_ADDR cuSeqlens, GM_ADDR chunkIndices, GM_ADDR dk, GM_ADDR dv,
     GM_ADDR dbeta, GM_ADDR dg, GM_ADDR workspace)
     : k_(k), v_(v), beta_(beta), g_(g), cuSeqlens_(cuSeqlens), chunkIndices_(chunkIndices), dk_(dk), dv_(dv),
@@ -380,9 +380,9 @@ __aicore__ inline PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE,
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 __aicore__ inline void
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::Init(const GDN::PrepareWyReprBwdTilingData &tiling,
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::Init(const GDN::PrepareWyReprBwdTilingData &tiling,
                                                                      AscendC::TPipe *pipe, uint64_t seqNum, int64_t chunkDkBytes,
                                                                      uint32_t chunkDkSlots)
 {
@@ -490,8 +490,8 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::InitVectorEvents()
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::InitVectorEvents()
 {
     for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT; ++eventIdx_) {
         mte2ToVEvent_[eventIdx_] = static_cast<event_t>(pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
@@ -507,8 +507,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ReleaseVectorEvents()
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ReleaseVectorEvents()
 {
     for (eventIdx_ = 0; eventIdx_ < PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT; ++eventIdx_) {
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vToMte2Event_[eventIdx_]);
@@ -524,10 +524,10 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 template <typename copyType>
 __aicore__ inline uint32_t
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyInRows(AscendC::GlobalTensor<copyType> &inputTensor,
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyInRows(AscendC::GlobalTensor<copyType> &inputTensor,
                                                                            AscendC::LocalTensor<copyType> dstTensor,
                                                                            uint64_t inputOffset, uint32_t elements)
 {
@@ -540,15 +540,15 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 __aicore__ inline uint32_t
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyPublicRowsIn(
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyPublicRowsIn(
     AscendC::GlobalTensor<kType> &inputTensor, AscendC::LocalTensor<kType> dstTensor,
     uint64_t base, uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows)
 {
     inputIdx_ = curInputPingPong_;
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(vToMte2Event_[inputIdx_]);
-    if (!(tiling_.layout == GDN::FinalizeLayout::BSND)) {
+    if constexpr (!IS_BSND) {
         DataCopy(dstTensor, inputTensor[(head * tiling_.T + base) * dim], rows * dim);
     } else {
         const uint64_t headTokens = heads * tiling_.T;
@@ -566,8 +566,8 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CastInputRows(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CastInputRows(
     AscendC::LocalTensor<float32_t> dstTensor, AscendC::LocalTensor<kType> srcTensor, uint32_t elements,
     uint32_t inputIdx)
 {
@@ -577,9 +577,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 template <typename copyType>
-__aicore__ inline uint32_t PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyInBetaGRows(
+__aicore__ inline uint32_t PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyInBetaGRows(
     AscendC::GlobalTensor<copyType> &inputTensor, AscendC::LocalTensor<copyType> dstTensor, uint64_t inputOffset,
     uint32_t elements)
 {
@@ -593,10 +593,10 @@ __aicore__ inline uint32_t PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CH
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 template <typename copyType>
 __aicore__ inline void
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CastBetaGInputRows(
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CastBetaGInputRows(
     AscendC::LocalTensor<float32_t> dstTensor, AscendC::LocalTensor<copyType> srcTensor, uint32_t elements,
     uint32_t betaGInputIdx)
 {
@@ -610,9 +610,9 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 __aicore__ inline void
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::SetBetaGResidentTensors(uint32_t slot)
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::SetBetaGResidentTensors(uint32_t slot)
 {
     uint32_t residentOffset = slot * CHUNK_SIZE;
     betaAllFp32Tensor_ = betaAllFp32_.Get<float32_t>()[residentOffset];
@@ -621,23 +621,23 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::SetVecToCube()
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::SetVecToCube()
 {
     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecToCubeFlag_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::WaitCubeToVec()
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::WaitCubeToVec()
 {
     Arch::CrossCoreWaitFlag(cubeToVecFlag_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 __aicore__ inline void
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CastOutputRows(
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CastOutputRows(
     AscendC::LocalTensor<float32_t> srcTensor, uint32_t elements)
 {
     outputIdx_ = curOutputPingPong_;
@@ -646,9 +646,9 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 __aicore__ inline void
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyOutRows(AscendC::GlobalTensor<kType> &outTensor,
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyOutRows(AscendC::GlobalTensor<kType> &outTensor,
                                                                             AscendC::LocalTensor<kType> srcTensor,
                                                                             uint64_t outOffset, uint32_t elements)
 {
@@ -660,15 +660,15 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 __aicore__ inline void
-PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyPublicRowsOut(
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyPublicRowsOut(
     AscendC::GlobalTensor<kType> &outTensor, AscendC::LocalTensor<kType> srcTensor,
     uint64_t base, uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows)
 {
     AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
     AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event_[outputIdx_]);
-    if (!(tiling_.layout == GDN::FinalizeLayout::BSND)) {
+    if constexpr (!IS_BSND) {
         DataCopy(outTensor[(head * tiling_.T + base) * dim], srcTensor, rows * dim);
     } else {
         const uint64_t headTokens = heads * tiling_.T;
@@ -684,8 +684,8 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::CopyOutBetaGRows(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyOutBetaGRows(
     AscendC::GlobalTensor<gType> &outTensor, AscendC::LocalTensor<float32_t> srcTensor, uint64_t outOffset,
     uint32_t elements)
 {
@@ -705,8 +705,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessVectorTask(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ProcessVectorTask(
     const PrepareWyReprBwdTaskInfo &task, uint64_t hv, uint64_t hk, GM_ADDR slotBase)
 {
     SetBetaGResidentTensors(curSlot_ & 1U);
@@ -742,8 +742,13 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.kVecRow);
 
-        inputIdx_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
-                                     task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
+        if constexpr (!IS_BSND) {
+            inputIdx_ = CopyInRows<kType>(kTensor_, matrixInputBuf_[curInputPingPong_],
+                                         (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        } else {
+            inputIdx_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
+                                         task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
+        }
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * K_DIM, inputIdx_);
         PipeBarrier<PIPE_V>();
         Mul(scaleFp32Tensor_, betaAllFp32Tensor_[rowOffset_], gExpAllFp32Tensor_[rowOffset_], curRow_);
@@ -780,8 +785,13 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.vVecRow);
 
-        inputIdx_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
-                                     task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
+        if constexpr (!IS_BSND) {
+            inputIdx_ = CopyInRows<kType>(vTensor_, matrixInputBuf_[curInputPingPong_],
+                                         (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+        } else {
+            inputIdx_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
+                                         task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
+        }
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * V_DIM, inputIdx_);
         PipeBarrier<PIPE_V>();
         Brcb(brcbFp32Tensor_, betaAllFp32Tensor_[rowOffset_],
@@ -801,8 +811,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessDa4Task(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ProcessDa4Task(
     const PrepareWyReprBwdTaskInfo &task, GM_ADDR slotBase)
 {
     gmDA1_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da1Offset));
@@ -844,8 +854,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessDTask(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ProcessDTask(
     const PrepareWyReprBwdTaskInfo &task, uint64_t hv, GM_ADDR slotBase)
 {
     SetBetaGResidentTensors(curSlot_ & 1U);
@@ -908,9 +918,9 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
 template <bool HEAD_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessOutputTask(
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ProcessOutputTask(
     const PrepareWyReprBwdTaskInfo &task, uint64_t hv, uint64_t hk, uint64_t groupSize, GM_ADDR slotBase)
 {
     SetBetaGResidentTensors(curSlot_ & 1U);
@@ -955,8 +965,13 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         curRow_ = rowOffset_ + rowOwned > task.curChunkSize ? task.curChunkSize - rowOffset_ : rowOwned;
         repeatStride_ = K_DIM * sizeof(float32_t) / PRONE_BLOCK_BYTES_32;
 
-        inputIdxA_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
-                                      task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
+        if constexpr (!IS_BSND) {
+            inputIdxA_ = CopyInRows<kType>(kTensor_, matrixInputBuf_[curInputPingPong_],
+                                          (keyBase_ + rowOffset_) * K_DIM, curRow_ * K_DIM);
+        } else {
+            inputIdxA_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
+                                          task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
+        }
         inputIdxB_ =
             CopyInRows<kType>(gmDkb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxA_], curRow_ * K_DIM, inputIdxA_);
@@ -1082,8 +1097,13 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
         inputIdxA_ =
             CopyInRows<kType>(gmDvb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * V_DIM, curRow_ * V_DIM);
-        inputIdxB_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
-                                      task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
+        if constexpr (!IS_BSND) {
+            inputIdxB_ = CopyInRows<kType>(vTensor_, matrixInputBuf_[curInputPingPong_],
+                                          (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+        } else {
+            inputIdxB_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
+                                          task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
+        }
         CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curRow_ * V_DIM, inputIdxA_);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curRow_ * V_DIM, inputIdxB_);
         PipeBarrier<PIPE_V>();
@@ -1116,8 +1136,12 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
         CastOutputRows(calcFp32BTensor_, curRow_ * V_DIM);
-        CopyPublicRowsOut(dvTensor_, outputBuf_[outputIdx_], task.valueBos + rowOffset_, hv,
-                          tiling_.HV, V_DIM, curRow_);
+        if constexpr (!IS_BSND) {
+            CopyOutRows(dvTensor_, outputBuf_[outputIdx_], (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
+        } else {
+            CopyPublicRowsOut(dvTensor_, outputBuf_[outputIdx_], task.valueBos + rowOffset_, hv,
+                              tiling_.HV, V_DIM, curRow_);
+        }
     }
 
     if constexpr (CHUNK_SIZE == 64) {
@@ -1308,8 +1332,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::ProcessChunkQkTail(
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ProcessChunkQkTail(
     const PrepareWyReprBwdTaskInfo &task, uint32_t coreIdx, uint32_t slot, const GDN::A2FinalizeQkTailArgs &args)
 {
     using Layout = QkTailUbLayout;
@@ -1339,17 +1363,17 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             const int64_t dkWyOffset = (((static_cast<int64_t>(coreIdx) * chunkDkSlots_ + slot) *
                                         tiling_.HK + hk) * CHUNK_SIZE + row) * K_DIM;
             if (args.useQkL2norm) {
-                GDN::A2FinalizeQkTailRows<kType, true, true, true>(gm, views, scalarOffset, dkWyOffset, rows);
+                GDN::A2FinalizeQkTailRows<kType, true, true, true, IS_BSND>(gm, views, scalarOffset, dkWyOffset, rows);
             } else {
-                GDN::A2FinalizeQkTailRows<kType, false>(gm, views, scalarOffset, dkWyOffset, rows);
+                GDN::A2FinalizeQkTailRows<kType, false, false, false, IS_BSND>(gm, views, scalarOffset, dkWyOffset, rows);
             }
         }
     }
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
-          bool ENABLE_MHA_OWNER>
-__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER>::Process(const GDN::A2FinalizeQkTailArgs &qkTailArgs)
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::Process(const GDN::A2FinalizeQkTailArgs &qkTailArgs)
 {
     uint32_t coreIdx = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
     uint32_t coreNum = AscendC::GetBlockNum();
