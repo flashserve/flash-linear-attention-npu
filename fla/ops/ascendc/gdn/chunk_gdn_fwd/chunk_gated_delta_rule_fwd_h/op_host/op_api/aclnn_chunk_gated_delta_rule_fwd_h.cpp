@@ -632,9 +632,11 @@ aclnnStatus aclnnChunkGatedDeltaRuleFwdHGetWorkspaceSize(
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
+    // finalStateCompute also serves as the private recurrence buffer when the FP32 output is omitted.
+    const bool storeState = params.outputFinalState || finalStateCompute->GetDataType() == DataType::DT_FLOAT;
     auto result = l0op::ChunkGatedDeltaRuleFwdH(
         params.k, params.w, params.u, params.gOptional, params.gkOptional, initialStateCompute,
-        params.cuSeqlensOptional, params.chunkIndicesOptional, params.outputFinalState, params.chunkSize,
+        params.cuSeqlensOptional, params.chunkIndicesOptional, storeState, params.chunkSize,
         hCompute, params.vNewOut, finalStateCompute, executorPtr);
     if (!(result[0] != nullptr)) {
         OP_LOGE_WITHOUT_REPORT(
