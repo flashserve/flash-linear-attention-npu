@@ -19,6 +19,8 @@
 
 namespace GDN {
 
+inline constexpr char kFusedA2BsndOutput[] = "BSND_A2_FUSED";
+
 // A6 head group size shared by host tiling and the kernel.
 constexpr uint32_t CHUNK_FWD_O_A6_HEAD_COUNT = 3U;
 

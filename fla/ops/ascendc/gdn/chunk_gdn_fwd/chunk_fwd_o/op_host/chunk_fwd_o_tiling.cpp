@@ -114,6 +114,7 @@ ge::graphStatus Tiling4ChunkFwdO(gert::TilingContext *context)
         aicCoreNum,
         sysWorkspaceSize,
         isA6,
+        npuArch == NpuArch::DAV_2201,
     };
 
     ChunkFwdOTilingProcessor processor(ctx, *tiling);
