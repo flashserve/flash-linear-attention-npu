@@ -292,6 +292,15 @@ foreach(_opbase_host_include OPAPI_INCLUDE OP_TILING_INCLUDE OP_PROTO_INCLUDE)
 endforeach()
 unset(_opbase_host_include)
 
+# Same for metadef: keep the pinned metadef source headers
+# (exe_graph/runtime/...) ahead of the installed CANN SDK headers.
+foreach(_metadef_host_include OPAPI_INCLUDE OP_TILING_INCLUDE OP_PROTO_INCLUDE)
+  list(PREPEND ${_metadef_host_include}
+       ${METADEF_SOURCE_INCLUDE}
+       ${METADEF_SOURCE_INCLUDE}/exe_graph)
+endforeach()
+unset(_metadef_host_include)
+
 set(AICPU_INCLUDE
   ${OPBASE_INC_DIRS}
   ${AICPU_INC_DIRS}
