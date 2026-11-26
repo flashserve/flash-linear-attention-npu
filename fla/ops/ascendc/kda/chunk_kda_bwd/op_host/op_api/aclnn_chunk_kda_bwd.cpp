@@ -193,13 +193,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
-#ifndef KDA_BWD_STAGES_ARCH22
-    // 平台能力优先于入参校验：A5 上单布局反向整体不支持，先报能力缺失。
-    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-        OP_NAME, "soc", NpuArchName(),
-        "single-layout backward supports NpuArch DAV_2201 only; DAV_3510 requires the fused backward");
-    return ACLNN_ERR_PARAM_INVALID;
-#endif
     const aclTensor *requiredLive[] = {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut};
     const char *requiredLiveNames[] = {"q", "k", "v", "beta", "aqk", "akk", "dO",
                                        "dqOut", "dkOut", "dvOut", "dbOut", "dgOut"};
@@ -231,6 +224,14 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
+#ifndef KDA_BWD_STAGES_ARCH22
+    // 平台能力优先于入参校验：A5 上单布局反向整体不支持，先报能力缺失。
+    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+        OP_NAME, "soc", NpuArchName(),
+        "single-layout backward supports NpuArch DAV_2201 only; DAV_3510 requires the fused backward");
+    return ACLNN_ERR_PARAM_INVALID;
+#endif
+
 #ifdef KDA_BWD_STAGES_ARCH22
     if (!safeGate) {
         const std::vector<const char *> keys = {"param_name", "op_name", "incorrect_value", "correct_value"};
