@@ -193,6 +193,13 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
 
+#ifndef KDA_BWD_STAGES_ARCH22
+    // 平台能力优先于入参校验：A5 上单布局反向整体不支持，先报能力缺失。
+    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+        OP_NAME, "soc", NpuArchName(),
+        "single-layout backward supports NpuArch DAV_2201 only; DAV_3510 requires the fused backward");
+    return ACLNN_ERR_PARAM_INVALID;
+#endif
     const aclTensor *requiredLive[] = {q, k, v, beta, aqk, akk, dO, dqOut, dkOut, dvOut, dbOut, dgOut};
     const char *requiredLiveNames[] = {"q", "k", "v", "beta", "aqk", "akk", "dO",
                                        "dqOut", "dkOut", "dvOut", "dbOut", "dgOut"};
@@ -224,14 +231,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             return ACLNN_ERR_PARAM_NULLPTR;
         }
     }
-#ifndef KDA_BWD_STAGES_ARCH22
-    // 平台能力优先于入参校验：A5 上单布局反向整体不支持，先报能力缺失。
-    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-        OP_NAME, "soc", NpuArchName(),
-        "single-layout backward supports NpuArch DAV_2201 only; DAV_3510 requires the fused backward");
-    return ACLNN_ERR_PARAM_INVALID;
-#endif
-
 #ifdef KDA_BWD_STAGES_ARCH22
     if (!safeGate) {
         const std::vector<const char *> keys = {"param_name", "op_name", "incorrect_value", "correct_value"};
@@ -379,6 +378,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                 ",dg=" + ShapeDesc(dgOut),
             "dv/db/dg must match the layout");
         return ACLNN_ERR_PARAM_INVALID;
+    }
+    // 空值优先：缺 raw_g/a_log/dA 时返回 161001，避免落入形状检查被改写成 161002
+    if (useGateInKernel &&
+        (rawGOptional == nullptr || aLogOptional == nullptr || dAOutOptional == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g,a_log,dA");
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     if (useGateInKernel &&
         !((MatchesTensor(rawGOptional, gateToken, DataType::DT_FLOAT) ||
@@ -681,12 +686,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "cu_seqlens,chunk_indices",
-            std::string(cuSeqlensOptional == nullptr ? "cu_seqlens=absent" : "cu_seqlens=present") + "," +
-                (chunkIndicesOptional == nullptr ? "chunk_indices=absent" : "chunk_indices=present"),
-            "cu_seqlens and chunk_indices must be supplied together");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, cuSeqlensOptional == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     // PR291 has not completed the reviewed dht/dh0 semantics. Keep the
     // public composition honest until that implementation is repaired.
@@ -697,10 +699,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                 (dhtOptional != nullptr ? "dht=present" : "dht=absent") + "," +
                 (dh0OutOptional != nullptr ? "dh0=present" : "dh0=absent"),
             "initial_state, dht and dh0 are not supported by this integration");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-    if (useGateInKernel && (rawGOptional == nullptr || aLogOptional == nullptr || dAOutOptional == nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g,aLogOptional,dA");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!useGateInKernel &&

@@ -611,11 +611,9 @@ aclnnStatus CheckVariableLengthInputs(
 {
     if (params.cuSeqlensOptional == nullptr) {
         if (params.chunkIndicesOptional != nullptr) {
-            // 组合非法（缺 cu_seqlens），按参数组合错误返回 161002。
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
-                OP_NAME, "chunkIndicesOptional",
-                "cuSeqlensOptional is required when chunkIndicesOptional is given");
-            return ACLNN_ERR_PARAM_INVALID;
+            // 配对缺失按“必填为空”处理，与其他算子保持 161001 + EZ0004。
+            OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "cuSeqlensOptional");
+            return ACLNN_ERR_PARAM_NULLPTR;
         }
         return ACLNN_SUCCESS;
     }
