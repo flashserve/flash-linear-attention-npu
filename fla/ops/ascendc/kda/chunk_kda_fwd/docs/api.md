@@ -391,3 +391,14 @@ assert final_state.shape == (B, H, K, V)
 ## V2 chunk64 多序列验证范围
 
 移除通用 L2 的 1024 条逻辑序列限制；本次在 A2 上专项验证 BF16、K=V=128、chunk64 的 V2 三算子路径，序列数 1024–4096。chunk32 保留其独立的 1024 条限制。本次 20 个 case 均运行和精度通过，逐 case 记录随任务报告独立归档。
+
+## 返回码（aclnnChunkKdaFwd / V2）
+
+| 返回码 | 触发条件 |
+|---|---|
+| `ACLNN_ERR_PARAM_NULLPTR (161001)` | 必选输入/属性为空：q/k/v/g/beta、layout 等 |
+| `ACLNN_ERR_PARAM_INVALID (161002)` | rank/shape/dtype/layout/stride/属性取值非法，或平台能力不支持（EZ0026） |
+| `ACLNN_ERR_INNER_TILING_ERROR (561002)` | 参数校验通过后 tiling/launch 失败（本次由 561103 收敛，报文带 stage 与 ret） |
+| `ACLNN_ERR_INNER_NULLPTR (561103)` | 内部视图/张量分配返回空指针 |
+
+**兼容性说明**：launch 阶段失败由 `561103` 改为 `561002`；仅错误码与报文变化，成功路径与输出不变。
