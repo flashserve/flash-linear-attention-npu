@@ -263,7 +263,8 @@ max<=1/32或max为非有限值时保留原Cube路径。max有限且超界时，�
 检测混合NaN；非负有限数之和溢出为+Inf仍走回退，不当作特殊值输入。
 Small[128,193)已在rstd/beta checkpoint退休后复用，beta广播及只读索引不受影响。
 Aqk/P使用独立临时区；P的Abs和系数复制共享只读源，band末V屏障覆盖到下一band复用。
-第一轮max到第二轮max的依赖由已存在的Aqk写回及choice-store drain覆盖。
+第一轮max写入Small后，通过PIPE_V屏障保证第二轮max读取前归约结果已就绪。
+Aqk采用异步写回，仅建立V→MTE3依赖。后续choice-store drain发生在两轮max之后。
 选择和必要的普通Lower/fast Akk清零排空后发布flag10/11，风险分支直接使用保存的FP32 P。
 LeafInverse16按[row,col,leaf]交错存四叶，每行64float后补8float，work_[0,1152)为物理逆矩阵。
 初始化先清零逆矩阵，再用两条stride19-block的Duplicate设置四叶对角；最多15轮前代，顺序不变。
