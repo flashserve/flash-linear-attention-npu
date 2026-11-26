@@ -188,21 +188,15 @@ def _forward(q, k, v, beta, alpha, bounds, text_state, *, inverse_solver, prepro
         left = (log_prefix.index_select(0, row + 1) - log_prefix.index_select(0, lo)).exp()
         right = (log_prefix.index_select(0, after) - log_prefix.index_select(0, row)).exp()
     output = q.new_empty(q.shape)
-    for rows, width in blocks:
+    for rows, _ in blocks:
         if use_bridge:
             state = vdn_native.bridge(native, prefix, suffix, bounds, log_prefix, rows, q.dtype)
         else:
             state = (prefix.index_select(0, lo[rows]) * left[rows].unsqueeze(-2)
                      + suffix.index_select(0, after[rows]) * right[rows].unsqueeze(-2))
         query = q[rows] if preprocess is None else preprocess(q, rows, "q")
-        real = rows.stop - rows.start
         state = state.to(q.dtype)
-        if real < width:
-            query, state = (_pad_frames(t, width) for t in (query, state))
-        writeback = output[rows].flatten(0, 1) if real == width else None
-        out = torch.bmm(query.flatten(0, 1).contiguous(),
-                        state.flatten(0, 1).mT, out=writeback)
-        if writeback is None:
-            output[rows].copy_(out[:real * heads].unflatten(0, (-1, heads)))
+        torch.bmm(query.flatten(0, 1).contiguous(), state.flatten(0, 1).mT,
+                  out=output[rows].flatten(0, 1))
         del query
     return output

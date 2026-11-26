@@ -36,12 +36,13 @@ def inverse_merge(chol, inv, initial_width=1):
 
 
 @triton.jit
-def _chol_inverse_panel(src, factor_ptr, inverse_ptr, WIDTH: tl.constexpr):
-    b = tl.program_id(0)
+def _chol_inverse_panel(src, inverse_ptr, src_batch_stride, src_row_stride, src_col_stride,
+                        WIDTH: tl.constexpr):
+    b = tl.program_id(0).to(tl.int64)
     row = tl.arange(0, WIDTH)
     col = tl.arange(0, WIDTH)
-    offset = b * WIDTH * WIDTH + row[:, None] * WIDTH + col[None, :]
-    work = tl.load(src + offset)
+    work = tl.load(src + b * src_batch_stride + row[:, None] * src_row_stride
+                   + col[None, :] * src_col_stride)
     factor = tl.full((WIDTH, WIDTH), 0.0, tl.float32)
     inverse = tl.full((WIDTH, WIDTH), 0.0, tl.float32)
     for j in range(WIDTH):
@@ -57,32 +58,28 @@ def _chol_inverse_panel(src, factor_ptr, inverse_ptr, WIDTH: tl.constexpr):
         x = tl.where(row >= j, column / pivot, 0.0)
         factor = tl.where(col[None, :] == j, x[:, None], factor)
         work = work - x[:, None] * x[None, :]
-    tl.store(factor_ptr + offset, factor)
-    tl.store(inverse_ptr + offset, inverse)
+    tl.store(inverse_ptr + b * WIDTH * WIDTH + row[:, None] * WIDTH + col[None, :], inverse)
 
 
 def factor_and_seeds(system, width):
     batch, dim, _ = system.shape
     if dim % width:
         raise ValueError("dimension must be divisible by the panel width")
-    result = torch.zeros_like(system)
-    seeds = system.new_empty((batch, dim // width, width, width))
+    seeds = system.new_empty((dim // width, batch, width, width))
     for i in range(dim // width):
         start = i * width
         end = start + width
-        active = system[:, start:end, start:end].contiguous()
-        diagonal = torch.empty_like(active)
-        diag_inv = torch.empty_like(active)
+        active = system[:, start:end, start:end]
+        diag_inv = seeds[i]
         # Order direct launches with queued torch_npu ops.
         torch.npu.current_stream(system.device).synchronize()
-        _chol_inverse_panel[(batch,)](active, diagonal, diag_inv, width, enable_fp_fusion=False)
-        result[:, start:end, start:end].copy_(diagonal)
-        seeds[:, i].copy_(diag_inv)
+        _chol_inverse_panel[(batch,)](active, diag_inv, *active.stride(), width, enable_fp_fusion=False)
         if end < dim:
             panel = torch.bmm(system[:, end:, start:end].contiguous(), diag_inv.mT)
-            result[:, end:, start:end].copy_(panel)
+            # inverse_merge reads only the panels strictly below the diagonal.
+            system[:, end:, start:end].copy_(panel)
             system[:, end:, end:].sub_(torch.bmm(panel, panel.mT))
-    return result, seeds
+    return system, seeds.transpose(0, 1)
 
 
 def solve(system):
