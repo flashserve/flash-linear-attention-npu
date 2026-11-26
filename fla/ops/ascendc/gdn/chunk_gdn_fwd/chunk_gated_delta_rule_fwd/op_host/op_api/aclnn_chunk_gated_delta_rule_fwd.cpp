@@ -48,7 +48,7 @@ constexpr int64_t CHUNK_GATED_DELTA_RULE_FWD_CHUNK_128 = 128;
 // This is a transport-field bound, so larger Hv stays on the BHT route.
 constexpr int64_t CUMSUM_PREPARE_MAX_HEADS =
     static_cast<int64_t>(0xffffffffULL / sizeof(float) + 1);
-// Ascend950 Prepare/H/O route: Hv/Hk may span the GVA range 1..16.
+// Ascend950 and Ascend960DT Prepare/H/O route: Hv/Hk may span the GVA range 1..16.
 constexpr int64_t PREPARE_PATH_MAX_HV_PER_HK = 16;
 
 struct ChunkGatedDeltaRuleFwdParams {
@@ -103,6 +103,11 @@ static bool IsAscend950()
 
 static bool IsDav2201Device();
 
+static bool IsAscend960DT()
+{
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201;
+}
+
 static bool IsNativeQkvLayout(const ChunkGatedDeltaRuleFwdParams &params)
 {
     return IsDav2201Device() && params.layout != nullptr &&
@@ -146,9 +151,8 @@ static bool UseA2PreparePath(const ChunkGatedDeltaRuleFwdParams &params)
 
 static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    if (IsAscend950()) {
-        // On Ascend950 the supported new path is selected by its shape contract.
-        // use_exp2 and layout are independent features of that path.
+    if (IsAscend950() || IsAscend960DT()) {
+        // A5 and A6 use the same shape contract to select Prepare/H/O.
         if (params.q == nullptr || params.k == nullptr || params.v == nullptr || params.layout == nullptr ||
             params.q->GetViewShape().GetDimNum() != 4 || params.k->GetViewShape().GetDimNum() != 4 ||
             params.v->GetViewShape().GetDimNum() != 4) {
@@ -596,10 +600,18 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
-    if (UsePreparePath(params)) {
-        if (!(IsAscend950() || IsDav2201Device())) {
+    const bool isAscend960DT = IsAscend960DT();
+    const bool usePrepare = UsePreparePath(params);
+    if (isAscend960DT && !usePrepare) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "q,k,v,chunkSize", "unsupported combination",
+            "DAV_9201 Prepare/H/O requires rank-4 BF16 q/k/v, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (usePrepare) {
+        if (!(IsAscend950() || IsDav2201Device() || isAscend960DT)) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                OP_NAME, "soc", "unsupported", "the prepare path requires Ascend950 or DAV_2201");
+                OP_NAME, "soc", "unsupported", "the prepare path requires Ascend950, DAV_2201 or DAV_9201");
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "BSND") == 0 ||
@@ -1170,7 +1182,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                 OP_NAME, "dtype,V,chunkSize,Hv/Hk",
                 ge::TypeUtils::DataTypeToSerialString(dtype) + "," + std::to_string(info.vDim) + "," +
                     std::to_string(params.chunkSize) + "," + std::to_string(info.hv / info.hq),
-                "Ascend950 prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
+                "the prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -1430,9 +1442,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
 
     const aclTensor *betaUsed = params.beta;
     const aclTensor *gUsed = params.g;
-    // The legacy Phase6 kernels consume FP32 gate/beta. Keep A5's native
-    // low-precision prepare contract while normalizing the legacy inputs.
-    if (!IsAscend950() || params.beta->GetDataType() == DataType::DT_FLOAT ||
+    // Preserve the native BF16 gate/beta combination for A5/A6 Prepare.
+    if (!(IsAscend950() || IsAscend960DT()) || params.beta->GetDataType() == DataType::DT_FLOAT ||
         params.g->GetDataType() == DataType::DT_FLOAT) {
         betaUsed = params.beta->GetDataType() == DataType::DT_FLOAT
                        ? params.beta : l0op::Cast(params.beta, DataType::DT_FLOAT, executorPtr);
