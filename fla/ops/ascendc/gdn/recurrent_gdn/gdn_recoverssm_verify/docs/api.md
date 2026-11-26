@@ -16,8 +16,8 @@ checkpoint 全程只读，replay cache 按有效请求和有效 token 原地写�
 GE/Ascend C 算子名为 `GdnRecoverssmVerify`。公开入口固定为：
 
 ```text
-GdnRecoverssmVerifyInnerGetWorkspaceSize   # 内部接口，不对外发布
-GdnRecoverssmVerifyInner                  # 内部接口，不对外发布
+aclnnInnerGdnRecoverssmVerifyGetWorkspaceSize   # 内部接口，不对外发布
+aclnnInnerGdnRecoverssmVerify                  # 内部接口，不对外发布
 fla_npu.ops.ascendc.gdn_recoverssm_verify # 唯一公开入口
 ```
 
@@ -44,7 +44,7 @@ def gdn_recoverssm_verify(
 ) -> Tensor
 ```
 
-固定参数顺序如下。Stable-ABI schema 与内部 launcher 参数表必须保持同一顺序和名称。
+下表列出 Python 接口的参数。CANN 从 OpDef 生成内部两阶段接口；适配器按生成头传入三个 `double` 属性，`replay_cache` 作为引用张量只传一次。
 
 | 位置 | 参数 | 方向 | Shape | dtype | 说明 |
 | ---: | --- | --- | --- | --- | --- |
@@ -126,8 +126,8 @@ assert out.dtype == torch.bfloat16
 assert replay.dtype == torch.float32
 ```
 
-`gdn_recoverssm_verify` 是唯一公开 Python 入口。`GdnRecoverssmVerifyInnerGetWorkspaceSize`
-和 `GdnRecoverssmVerifyInner` 仅作为内部 launcher ABI，不安装公开头文件。
+`gdn_recoverssm_verify` 是唯一公开 Python 入口。`aclnnInnerGdnRecoverssmVerifyGetWorkspaceSize`
+和 `aclnnInnerGdnRecoverssmVerify` 仅作为内部 launcher ABI，不安装公开头文件。
 
 ## 数学语义
 

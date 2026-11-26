@@ -25,8 +25,8 @@ public:
         this->Input("v").ParamType(REQUIRED).DataTypeList(bf16).FormatList(formats).IgnoreContiguous();
         this->Input("checkpoint_state").ParamType(REQUIRED).DataTypeList(state).FormatList(formats).IgnoreContiguous();
         this->Input("replay_cache").ParamType(REQUIRED).DataTypeList(fp32).FormatList(formats).IgnoreContiguous();
-        this->Input("query_start_loc").ParamType(REQUIRED).DataTypeList(metadata).FormatList(formats);
-        this->Input("state_indices").ParamType(REQUIRED).DataTypeList(metadata).FormatList(formats);
+        this->Input("query_start_loc").ParamType(REQUIRED).DataTypeList(metadata).FormatList(formats).IgnoreContiguous();
+        this->Input("state_indices").ParamType(REQUIRED).DataTypeList(metadata).FormatList(formats).IgnoreContiguous();
 
         this->Output("out").ParamType(REQUIRED).DataTypeList(bf16).FormatList(formats).IgnoreContiguous();
         this->Output("replay_cache").ParamType(REQUIRED).DataTypeList(fp32).FormatList(formats).IgnoreContiguous();

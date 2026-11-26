@@ -73,12 +73,12 @@ Tensor run_npu_gdn_recoverssm_verify(Tensor A_log, Tensor a, Tensor b, Tensor dt
     }
     Tensor result = out ? *out : allocate_like(v_meta);
     FLA_STABLE_EXEC(
-        "aclnnGdnRecoverssmVerify", v_meta, stream, TensorArg(a_log_meta, kAclFormatNd),
+        "aclnnInnerGdnRecoverssmVerify", v_meta, stream, TensorArg(a_log_meta, kAclFormatNd),
         TensorArg(a_meta, kAclFormatNd), TensorArg(b_meta, kAclFormatNd), TensorArg(bias_meta, kAclFormatNd),
         TensorArg(q_meta, kAclFormatNd), TensorArg(k_meta, kAclFormatNd), TensorArg(v_meta, kAclFormatNd),
         TensorArg(checkpoint_meta, kAclFormatNd), TensorArg(replay_meta, kAclFormatNd),
-        TensorArg(starts_meta, kAclFormatNd), TensorArg(indices_meta, kAclFormatNd), scalar(static_cast<float>(scale)),
-        scalar(static_cast<float>(softplus_beta)), scalar(static_cast<float>(softplus_threshold)),
+        TensorArg(starts_meta, kAclFormatNd), TensorArg(indices_meta, kAclFormatNd), scalar(scale),
+        scalar(softplus_beta), scalar(softplus_threshold),
         scalar(use_qk_l2norm_in_kernel), nd_out_tensor(meta_of(result)));
     return result;
 }

@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------------------------------------
 add_op_to_compiled_list()
 if (BUILD_OPEN_PROJECT)
-    target_sources(op_host_aclnnExc PRIVATE
+    target_sources(op_host_aclnnInner PRIVATE
         gdn_recoverssm_verify_def.cpp
     )
 endif()

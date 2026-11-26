@@ -1,5 +1,5 @@
 // Stable-ABI adapter for npu_gdn_recoverssm_commit.
-// aclnn: aclnnGdnRecoverssmCommit
+// aclnn: aclnnInnerGdnRecoverssmCommit
 
 #include "stable/boxed.h"
 #include "stable/exec.h"
@@ -57,7 +57,7 @@ Tensor run_gdn_recoverssm_commit(Tensor state, Tensor replay, Tensor state_commi
                              std::pair<TensorMeta, const char *>{recovery_meta, "boundary_recovery_lens"}}) {
         check_device(item.first, item.second);
     }
-    FLA_STABLE_EXEC("aclnnGdnRecoverssmCommit", state_meta, stream, TensorArg(state_meta, kAclFormatNd),
+    FLA_STABLE_EXEC("aclnnInnerGdnRecoverssmCommit", state_meta, stream, TensorArg(state_meta, kAclFormatNd),
                     TensorArg(replay_meta, kAclFormatNd), TensorArg(table_meta, kAclFormatNd),
                     TensorArg(source_meta, kAclFormatNd), TensorArg(lengths_meta, kAclFormatNd),
                     TensorArg(final_meta, kAclFormatNd), TensorArg(boundary_meta, kAclFormatNd),

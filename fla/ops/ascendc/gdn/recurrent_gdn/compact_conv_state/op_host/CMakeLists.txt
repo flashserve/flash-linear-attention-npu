@@ -4,12 +4,12 @@
 # -----------------------------------------------------------------------------------------------------------
 add_op_to_compiled_list()
 if (BUILD_OPEN_PROJECT)
-    target_sources(op_host_aclnn PRIVATE
+    target_sources(op_host_aclnnInner PRIVATE
         compact_conv_state_def.cpp
     )
 endif()
 
-add_modules_sources(OPTYPE compact_conv_state ACLNNTYPE aclnn)
+add_modules_sources(OPTYPE compact_conv_state ACLNNTYPE aclnn_inner)
 add_ops_compile_options(
     OP_NAME CompactConvState
     OPTIONS --cce-auto-sync=off

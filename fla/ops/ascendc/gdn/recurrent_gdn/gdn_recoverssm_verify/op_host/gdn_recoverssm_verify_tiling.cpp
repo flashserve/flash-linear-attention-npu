@@ -197,7 +197,8 @@ ge::graphStatus GdnRecoverssmVerifyTiling::AnalyzeShapesAndStrides()
                                                  "rank4 required, actual=" + ShapeText(outShape));
         return ge::GRAPH_FAILED;
     }
-    const auto *outStride = context_->GetOutputStride(0);
+    // Empty outputs may have a zero stride and never address device memory.
+    const auto *outStride = total > 0 ? context_->GetOutputStride(0) : nullptr;
     uint64_t dense = 1;
     for (size_t dim = 4; dim > 0; --dim) {
         const int64_t value = outStride != nullptr && outStride->GetDimNum() == 4 ? outStride->GetStride(dim - 1) :

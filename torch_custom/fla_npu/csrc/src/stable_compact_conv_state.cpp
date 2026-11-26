@@ -1,5 +1,5 @@
 // Stable-ABI adapter for npu_compact_conv_state.
-// aclnn: aclnnCompactConvState
+// aclnn: aclnnInnerCompactConvState
 
 #include "stable/boxed.h"
 #include "stable/exec.h"
@@ -63,7 +63,7 @@ Tensor run_compact_conv_state(Tensor conv_state, Tensor base_addrs, Tensor block
                              std::pair<TensorMeta, const char *>{recovery_meta, "boundary_recovery_lens"}}) {
         check_device(item.first, item.second);
     }
-    FLA_STABLE_EXEC("aclnnCompactConvState", state_meta, stream, TensorArg(state_meta, kAclFormatNd),
+    FLA_STABLE_EXEC("aclnnInnerCompactConvState", state_meta, stream, TensorArg(state_meta, kAclFormatNd),
                     TensorArg(base_meta, kAclFormatNd), TensorArg(block_meta, kAclFormatNd),
                     TensorArg(dim_meta, kAclFormatNd), TensorArg(token_meta, kAclFormatNd),
                     TensorArg(source_meta, kAclFormatNd), TensorArg(lengths_meta, kAclFormatNd),

@@ -33,11 +33,11 @@ gdn_recoverssm_commit(
 ) -> None
 ```
 
-Stable-ABI 内部入口：
+CANN 根据 OpDef 自动生成以下 Stable-ABI 内部入口。
 
 ```text
-GdnRecoverssmCommitInnerGetWorkspaceSize
-GdnRecoverssmCommitInner
+aclnnInnerGdnRecoverssmCommitGetWorkspaceSize
+aclnnInnerGdnRecoverssmCommit
 ```
 
 | 位置 | 参数 | 方向 | Shape | dtype | 说明 |

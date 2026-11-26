@@ -1,5 +1,7 @@
 # CompactConvState 接口
 
+CANN 根据 OpDef 生成内部两阶段接口 `aclnnInnerCompactConvStateGetWorkspaceSize` 和 `aclnnInnerCompactConvState`。Python 适配器调用这两个入口。
+
 公开 Python 入口为 `compact_conv_state`，AscendC 算子名为
 `CompactConvState`。
 
