@@ -184,6 +184,11 @@ PY
 }
 
 classify_changed_files
+if [[ "$change_scope" == "docs-only" && -n "${CI_ATK_SMOKE_OPS:-}" ]]; then
+    # A document under a guarded operator still exercises its smoke suites.
+    change_scope=tests-only
+    export CI_CHANGE_SCOPE="$change_scope"
+fi
 if [[ "$change_scope" == "docs-only" ]]; then
     write_docs_only_reports
     exit 0
@@ -801,6 +806,33 @@ run_gdr_example_st() {
         echo "[CI][ERROR] Accuracy report was not generated: $accuracy_report_file" >&2
         return 1
     fi
+    if [[ -n "${CI_ATK_SMOKE_OPS:-}" ]]; then
+        run_changed_atk_smoke
+    fi
+}
+
+run_changed_atk_smoke() {
+    local op platform="${CI_ACCURACY_PLATFORM^^}"
+    if [[ -d /opt/fla-atk-smoke/atk ]]; then
+        export PYTHONPATH="/opt/fla-atk-smoke${PYTHONPATH:+:$PYTHONPATH}"
+    fi
+    python3 - <<'PY'
+from importlib.util import find_spec
+from atk.tasks.post_process import ACCURACY_REGISTRY
+
+standard = "cv_fused_double_benchmark"
+if standard not in ACCURACY_REGISTRY and find_spec("atk.tasks.post_process.cv_fused_double_benchmark_compare"):
+    import atk.tasks.post_process.cv_fused_double_benchmark_compare
+if standard not in ACCURACY_REGISTRY:
+    raise SystemExit(f"[CI][ATK] The runner needs an ATK build with {standard} in its image or fla-atk-smoke-cp312 volume")
+PY
+    local status=0
+    while IFS= read -r op; do
+        echo "[CI][ATK] Running $op on $platform, device $ci_test_device"
+        python3 tests/atk/smoke/run.py run --platform "$platform" --op "$op" \
+            --device "$ci_test_device" --output "${CI_TMPDIR:-$TMPDIR}/atk-smoke" || status=1
+    done <<< "$CI_ATK_SMOKE_OPS"
+    return "$status"
 }
 
 check_wheel_install_layouts() {

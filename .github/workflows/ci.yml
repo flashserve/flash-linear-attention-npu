@@ -723,6 +723,7 @@ jobs:
           echo "::group::${{ matrix.name }} 完整构建与测试日志（默认折叠）"
           (
             set -o pipefail
+            export CI_ATK_BASE_SHA="$NPU_CI_BASE_SHA"
             bash ci/run_ci_container.sh 2>&1 | tee "$CI_RAW_LOG_FILE"
           ) &
           ci_pid=$!
@@ -820,6 +821,18 @@ jobs:
             repo/dist/fla-npu-build.log
           if-no-files-found: warn
           include-hidden-files: true
+          retention-days: 7
+
+      - name: 保存 ${{ matrix.name }} 命中算子的 ATK 冒烟报告
+        if: always() && steps.npu_ci.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: atk-smoke-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CI_HOST_TMPDIR }}/atk-smoke/**/report/*.json
+            ${{ env.CI_HOST_TMPDIR }}/atk-smoke/**/report/*.xlsx
+            ${{ env.CI_HOST_TMPDIR }}/atk-smoke/**/atk.log
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: 清理 ${{ matrix.name }} 临时完整日志

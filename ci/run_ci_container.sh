@@ -239,6 +239,22 @@ mount_args=(
     -v "$gdr_accuracy_cache:$gdr_accuracy_cache_container"
     -w /workspace/repo
 )
+atk_smoke_ops=""
+# The workflow supplies the first parent of the merge actually being tested.
+# ops=... diagnostics only compile and do not enter the runtime stage.
+if [[ -n "${CI_ATK_BASE_SHA:-}" && "${CI_STAGE:-all}" == "all" && -z "${CI_OPS:-}" ]]; then
+    platform="${CI_ACCURACY_PLATFORM:?CI accuracy platform is required for ATK selection}"
+    atk_smoke_ops="$(python3 tests/atk/smoke/run.py affected --platform "${platform^^}" \
+        --git-range "$CI_ATK_BASE_SHA" HEAD)"
+    if [[ -n "$atk_smoke_ops" ]]; then
+        echo "[CI][ATK] ${platform^^}: ${atk_smoke_ops//$'\n'/ }"
+    else
+        echo "[CI][ATK] No matching operator on ${platform^^}."
+    fi
+    if [[ -n "$atk_smoke_ops" ]] && docker volume inspect fla-atk-smoke-cp312 >/dev/null 2>&1; then
+        mount_args+=(--mount type=volume,src=fla-atk-smoke-cp312,dst=/opt/fla-atk-smoke,readonly)
+    fi
+fi
 if [[ -n "$host_tmpdir" ]]; then
     mount_args+=(-v "$host_tmpdir:$container_tmpdir")
 fi
@@ -288,6 +304,7 @@ docker run --rm \
     -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
+    -e CI_ATK_SMOKE_OPS="$atk_smoke_ops" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \

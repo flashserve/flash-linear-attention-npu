@@ -78,6 +78,8 @@ python3() {
         return 0
     elif [[ "$entrypoint" == "-" && -n "${CI_TEST_FAKE_PACKAGE_DIR:-}" ]]; then
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
+    elif [[ "$entrypoint" == "tests/atk/smoke/run.py" && "${CI_TEST_FAIL_STAGE:-}" == "atk-smoke" ]]; then
+        return 27
     elif [[ "$entrypoint" == "ci/run_example_st_cases.py" ]]; then
         mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")"
         printf '{}\n' >"$CI_ACCURACY_REPORT_FILE"
@@ -321,5 +323,12 @@ run_case \
     true
 
 run_case partial all false 0 success success,success,success,success,success true '' false false partial
+
+CI_ACCURACY_PLATFORM=a5 CI_ATK_SMOKE_OPS=$'chunk_fwd_h\nrecurrent_kda' \
+    run_case atk-smoke-failure all false 1 failure success,success,success,success,failure true atk-smoke
+for op in chunk_fwd_h recurrent_kda; do
+    grep -Fq "tests/atk/smoke/run.py run --platform A5 --op $op --device 0" \
+        "$test_root/atk-smoke-failure/commands.log"
+done
 
 echo "run_checks stage pipeline integration tests passed"

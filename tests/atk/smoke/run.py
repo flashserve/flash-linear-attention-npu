@@ -17,6 +17,27 @@ def read(path):
     return json.loads(path.read_bytes())
 
 
+def source_roots(suites):
+    roots = read(ROOT / "source_roots.json")
+    if set(roots) != {suite["op"] for suite in suites}:
+        raise ValueError("Every smoke operator needs one source directory in source_roots.json")
+    return roots
+
+
+def affected_ops(roots, base, head, repo):
+    # Disabling rename detection returns both the deleted and the added path.
+    # NUL delimiters preserve file names containing tabs, spaces and newlines.
+    data = subprocess.check_output(
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--", "fla/ops/ascendc/"],
+        cwd=repo,
+    )
+    paths = [os.fsdecode(raw) for raw in data.split(b"\0") if raw]
+    return {
+        op for op, root in roots.items()
+        if any(path == root or path.startswith(root + "/") for path in paths)
+    }
+
+
 def case_path(suite):
     return ROOT / "cases" / suite["op"] / suite["platform"] / (suite["group"] + ".json")
 
@@ -211,7 +232,11 @@ def run_suite(suite, output, device):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    actions.add_parser("matrix", help="Print a GitHub Actions include matrix")
+    matrix = actions.add_parser("matrix", help="Print a GitHub Actions include matrix")
+    matrix.add_argument("--git-range", nargs=2, metavar=("BASE", "HEAD"))
+    affected = actions.add_parser("affected", help="List changed smoke operators for one CI platform")
+    affected.add_argument("--git-range", nargs=2, metavar=("BASE", "HEAD"), required=True)
+    affected.add_argument("--platform", choices=("A2", "A5"), required=True)
     actions.add_parser("validate", help="Check every case file without an NPU")
     run = actions.add_parser("run", help="Run the suites for one platform and operator")
     run.add_argument("--op", required=True)
@@ -243,8 +268,15 @@ def main():
         (ROOT / "cases").glob("*/*/*.json")
     ):
         raise ValueError("Case files and suites.json must match one-to-one")
-    if args.action == "matrix":
-        pairs = sorted({(s["op"], s["platform"]) for s in suites})
+    if args.action in ("matrix", "affected"):
+        roots = source_roots(suites)
+        ops = affected_ops(roots, *args.git_range, ROOT.parents[2]) if args.git_range else roots
+        pairs = sorted({(s["op"], s["platform"]) for s in suites if s["op"] in ops})
+        if args.action == "affected":
+            for op, platform in pairs:
+                if platform == args.platform:
+                    print(op)
+            return
         print(
             json.dumps(
                 {
@@ -256,6 +288,7 @@ def main():
             )
         )
     elif args.action == "validate":
+        source_roots(suites)
         print(f"{sum(len(cases_for(s)) for s in suites)} cases in {len(suites)} suites")
     else:
         selected = [
