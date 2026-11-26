@@ -1,0 +1,272 @@
+"""Discover and run the passing FLA ATK smoke suites. Requires Python 3.10+."""
+
+import argparse
+import ast
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent
+REFERENCE_SHA = "72d372032214b8866cd6073431b0d478e7744ba5"
+STANDARD = "cv_fused_double_benchmark"
+
+
+def read(path):
+    return json.loads(path.read_bytes())
+
+
+def case_path(suite):
+    return ROOT / "cases" / suite["op"] / suite["platform"] / (suite["group"] + ".json")
+
+
+def cases_for(suite):
+    cases = read(case_path(suite))
+    identities = {(case["id"], case["name"]) for case in cases}
+    if not cases or len(identities) != len(cases) or len(cases) != suite["count"]:
+        raise ValueError(
+            f"Invalid case count or duplicate identity in {suite['group']}"
+        )
+    for case in cases:
+        acc = case["standard"]["acc"]
+        if (list(acc) if isinstance(acc, dict) else [acc]) != [STANDARD] or case[
+            "api_type"
+        ] != "fla_smoke":
+            raise ValueError(
+                f"Unexpected executor or standard in {suite['group']}/{case['id']}"
+            )
+    return cases
+
+
+def reference_path(path):
+    path = path.resolve()
+    commit = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if commit != REFERENCE_SHA:
+        raise ValueError(f"work_tool HEAD must be {REFERENCE_SHA}; received {commit}")
+    subprocess.run(
+        ["git", "-C", str(path), "diff", "--quiet", "HEAD", "--", "FLA_ATK"], check=True
+    )
+    if not (path / "FLA_ATK/common").is_dir():
+        raise ValueError("work_tool checkout must include FLA_ATK")
+    return path / "FLA_ATK"
+
+
+def check_report(folder, cases):
+    reports = list(folder.glob("atk_output/*/report/*.json")) or list(
+        folder.glob("atk_output/*/report/*.xlsx")
+    )
+    if len(reports) != 1:
+        raise ValueError(f"Expected one ATK report in {folder}, found {len(reports)}")
+    report = reports[0]
+    if report.suffix == ".xlsx":
+        import openpyxl
+
+        book = openpyxl.load_workbook(report, read_only=True, data_only=True)
+        try:
+            it = iter(book.active.values)
+            header = next(it)
+            rows = [dict(zip(header, row)) for row in it]
+        finally:
+            book.close()
+    else:
+        rows = read(report)
+    expected = {(c["id"], c["name"]) for c in cases}
+    roles = {}
+    for role in ("dut", "low", "high"):
+        seen = {}
+        for line in (folder / f"events.{role}").read_text(encoding="utf8").splitlines():
+            ident, name, tensors = json.loads(line)
+            if (ident, name) in seen or not tensors:
+                raise ValueError(
+                    f"Missing outputs or duplicate {role} record for {ident}/{name}"
+                )
+            seen[ident, name] = [shape for shape, dtype in tensors]
+        if set(seen) != expected:
+            raise ValueError(f"{role} did not execute the complete suite in {folder}")
+        roles[role] = seen
+    if roles["dut"] != roles["low"] or roles["dut"] != roles["high"]:
+        raise ValueError(f"DUT and CPU reference shapes differ in {folder}")
+    seen = set()
+    failures = []
+    for row in rows:
+        config = row["用例json信息"]
+        if isinstance(config, str):
+            config = json.loads(config)
+        acc = config["standard"]["acc"]
+        if (list(acc) if isinstance(acc, dict) else [acc]) != [STANDARD]:
+            raise ValueError(f"Unexpected accuracy standard in {report}")
+        key = config["id"], config["name"]
+        if key not in expected or key in seen:
+            raise ValueError(f"Unexpected report entry {key} in {report}")
+        seen.add(key)
+        details = row["精度详情"]
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except ValueError:
+                details = ast.literal_eval(details)
+        outputs = [
+            entry
+            for group in details.values()
+            if isinstance(group, list)
+            for entry in group
+            if isinstance(entry, dict)
+        ]
+        expected_files = {f"output_{i}.pt" for i in range(len(roles["dut"][key]))}
+        if (
+            row.get("cpu_cpu_golden_精度通过") is not True
+            or len(outputs) != len(expected_files)
+            or {e.get("filename") for e in outputs} != expected_files
+            or any(
+                e.get("result") is not True
+                or not (
+                    e.get("new_benchmark_indicate")
+                    or any(
+                        "Benchmark_" in str(value) or "相对误差比例" in str(value)
+                        for value in e.values()
+                    )
+                )
+                for e in outputs
+            )
+        ):
+            failures.append(key)
+    if seen != expected or failures:
+        raise ValueError(
+            f"{len(expected - seen)} missing, {len(failures)} failed: {failures[:20]} ({report})"
+        )
+
+
+def run_suite(suite, reference, output, device):
+    cases = cases_for(suite)
+    folder = output / suite["group"]
+    folder.mkdir()
+    env = os.environ.copy()
+    for flag in (
+        "KDA_ATK_KERNEL_SEMANTICS",
+        "KDA_ATK_VISIBLE_OUTPUTS",
+        "CHUNK_FWD_O_A5_OPT",
+    ):
+        env.pop(flag, None)
+    env.update(
+        FLA_ATK_REFERENCE=str(reference),
+        FLA_ATK_SUITE=json.dumps(suite),
+        FLA_ATK_TRACE=str(folder / "events"),
+        GDN_ATK_BENCHMARK_ARCH="arch22" if suite["platform"] == "A2" else "arch35",
+        OMP_NUM_THREADS="1",
+        MKL_NUM_THREADS="1",
+        OPENBLAS_NUM_THREADS="1",
+        KDA_ATK_REFERENCE_WORKERS="1",
+    )
+    if suite.get("mode") == "state":
+        env.update(
+            KDA_ATK_KERNEL_SEMANTICS="state",
+            KDA_ATK_VISIBLE_OUTPUTS="attn_out,final_state",
+        )
+    if suite.get("mode") == "opt":
+        env["CHUNK_FWD_O_A5_OPT"] = "1"
+    command = [
+        "atk",
+        "node",
+        "--name",
+        "npu_dut",
+        "--backend",
+        "npu",
+        "--devices",
+        str(device),
+        "-o",
+        str(folder),
+        "node",
+        "--name",
+        "cpu_golden",
+        "--backend",
+        "cpu",
+        "-o",
+        str(folder),
+        "task",
+        "-c",
+        str(case_path(suite)),
+        "-p",
+        str(ROOT / "executor.py"),
+        "--task",
+        "accuracy",
+        "-sp",
+        "-mt",
+        "1",
+        "-to",
+        "300",
+        "--bm_device",
+        "cpu",
+    ]
+    if suite["platform"] == "A5":
+        command.append("--save_report_json")
+    print(f"Running {suite['group']} ({len(cases)} cases): {folder}", flush=True)
+    with (folder / "atk.log").open("w", encoding="utf8") as log:
+        subprocess.run(
+            command, env=env, stdout=log, stderr=subprocess.STDOUT, check=True
+        )
+    check_report(folder, cases)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    actions = parser.add_subparsers(dest="action", required=True)
+    actions.add_parser("matrix", help="Print a GitHub Actions include matrix")
+    actions.add_parser("validate", help="Check every case file without an NPU")
+    run = actions.add_parser("run", help="Run the suites for one platform and operator")
+    run.add_argument("--op", required=True)
+    run.add_argument("--platform", choices=("A2", "A5"), required=True)
+    run.add_argument(
+        "--reference", type=Path, required=True, help="Pinned work_tool checkout"
+    )
+    run.add_argument(
+        "--device", type=int, default=0, help="Logical NPU in the CI container"
+    )
+    run.add_argument("--output", type=Path, default=Path("atk-results"))
+    run.add_argument("--group", help="Run a single suite for local reproduction")
+    args = parser.parse_args()
+    suites = read(ROOT / "suites.json")
+    indexed = {case_path(s) for s in suites}
+    if len(indexed) != len(suites) or indexed != set(
+        (ROOT / "cases").glob("*/*/*.json")
+    ):
+        raise ValueError("Case files and suites.json must match one-to-one")
+    if args.action == "matrix":
+        pairs = sorted({(s["op"], s["platform"]) for s in suites})
+        print(
+            json.dumps(
+                {
+                    "include": [
+                        {"op": op, "platform": platform} for op, platform in pairs
+                    ]
+                },
+                separators=(",", ":"),
+            )
+        )
+    elif args.action == "validate":
+        print(f"{sum(len(cases_for(s)) for s in suites)} cases in {len(suites)} suites")
+    else:
+        selected = [
+            s
+            for s in suites
+            if s["platform"] == args.platform
+            and s["op"] == args.op
+            and (not args.group or args.group == s["group"])
+        ]
+        if not selected:
+            parser.error("No passing cases are registered for this selection")
+        reference = reference_path(args.reference)
+        args.output.mkdir(parents=True, exist_ok=True)
+        output = Path(
+            tempfile.mkdtemp(
+                prefix=f"{args.op}-{args.platform}-", dir=args.output.resolve()
+            )
+        )
+        for suite in selected:
+            run_suite(suite, reference, output, args.device)
+
+
+if __name__ == "__main__":
+    main()
