@@ -93,6 +93,10 @@ def check_report(folder, cases):
             book.close()
     else:
         rows = read(report)
+        if isinstance(rows, dict):
+            rows = rows.get("statistic")
+        if not isinstance(rows, list):
+            raise ValueError(f"Expected ATK accuracy rows in {report}")
     expected = {(c["id"], c["name"]) for c in cases}
     roles = {}
     for role in ("dut", "low", "high"):
@@ -218,9 +222,8 @@ def run_suite(suite, output, device):
         "300",
         "--bm_device",
         "cpu",
+        "--save_report_json",
     ]
-    if suite["platform"] == "A5":
-        command.append("--save_report_json")
     print(f"Running {suite['group']} ({len(cases)} cases): {folder}", flush=True)
     with (folder / "atk.log").open("w", encoding="utf8") as log:
         subprocess.run(
