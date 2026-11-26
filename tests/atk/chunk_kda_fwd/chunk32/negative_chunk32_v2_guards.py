@@ -2,8 +2,8 @@
 """Negative regression for chunk32 guard diagnostics via aclnnChunkKdaFwdV2.
 
 chunk32 大融合由独立 L0 算子 ChunkKdaFwdFused 承载，仅 aclnnChunkKdaFwdV2 路由
-可达；七个守卫（safeGate/缺 A_log/缺 dt_bias/K=V=128/q 必须 BF16/varlen 拒绝
-BNSD/不导出 gkOut）的诊断文案逐条验证，全部返回 ACLNN_ERR_PARAM_INVALID
+可达；七个守卫（safeGate/缺 A_log/缺 dt_bias/K=V=128/q 必须 BF16/rank-4 varlen
+B>1/不导出 gkOut）的诊断文案逐条验证，全部返回 ACLNN_ERR_PARAM_INVALID
 (161002) 且带参数名。V1 对 chunk_size=32 的整体拒绝由
 negative_chunk32_v1_rejects_chunk32.py 覆盖。
 """
@@ -31,12 +31,13 @@ DIM = 128
 
 
 def _base_tensors(k_dim: int = DIM, q_dtype: torch.dtype = torch.bfloat16,
-                  layout: str = "BSND", varlen: bool = False):
+                  layout: str = "BSND", varlen: bool = False, batch: int = 1):
     """构造一组满足 chunk32 契约的合法输入，供各 mutation 单独破坏一项。"""
     if layout == "BNSD":
-        q = torch.zeros((1, HEADS, SEQLEN, k_dim), dtype=q_dtype, device="npu")
-        beta = torch.zeros((1, HEADS, SEQLEN), dtype=torch.float32, device="npu")
+        q = torch.zeros((batch, HEADS, SEQLEN, k_dim), dtype=q_dtype, device="npu")
+        beta = torch.zeros((batch, HEADS, SEQLEN), dtype=torch.float32, device="npu")
     else:
+        assert batch == 1
         q = torch.zeros((1, SEQLEN, HEADS, k_dim), dtype=q_dtype, device="npu")
         beta = torch.zeros((1, SEQLEN, HEADS), dtype=torch.float32, device="npu")
     k = torch.zeros_like(q) if q_dtype == torch.bfloat16 else torch.zeros(q.shape, dtype=torch.bfloat16, device="npu")
@@ -44,16 +45,16 @@ def _base_tensors(k_dim: int = DIM, q_dtype: torch.dtype = torch.bfloat16,
     g = torch.zeros(q.shape, dtype=torch.float32, device="npu")
     a_log = torch.zeros((HEADS,), dtype=torch.float32, device="npu")
     dt_bias = torch.zeros((HEADS * k_dim,), dtype=torch.float32, device="npu")
-    attn_out = torch.zeros((1, SEQLEN, HEADS, DIM), dtype=torch.bfloat16, device="npu")
+    attn_out = torch.zeros((batch, SEQLEN, HEADS, DIM), dtype=torch.bfloat16, device="npu")
     cu = [0, SEQLEN] if varlen else None
     return q, k, v, g, beta, a_log, dt_bias, attn_out, cu
 
 
 def _call_v2(label: str, *, safe_gate=True, a_log="real", dt_bias="real",
              k_dim=DIM, q_dtype=torch.bfloat16, layout="BSND", varlen=False,
-             gk_out=None) -> str | None:
+             gk_out=None, batch=1) -> str | None:
     q, k, v, g, beta, a_log_t, dt_bias_t, attn_out, cu = _base_tensors(
-        k_dim=k_dim, q_dtype=q_dtype, layout=layout, varlen=varlen)
+        k_dim=k_dim, q_dtype=q_dtype, layout=layout, varlen=varlen, batch=batch)
     layout_buffer = ctypes.create_string_buffer(layout.encode("utf-8"))
     try:
         _raw_abi.reject_workspace(
@@ -105,8 +106,8 @@ def main() -> int:
             "Parameter K/V of aclnnChunkKdaFwd", "64/128")
     _expect("q fp32", _call_v2("q_fp32", q_dtype=torch.float32),
             "Parameter q of aclnnChunkKdaFwd", "BF16")
-    _expect("BNSD varlen", _call_v2("bnsd", layout="BNSD", varlen=True),
-            "Parameter layout of aclnnChunkKdaFwd", "BNSD with cuSeqlensOptional")
+    _expect("B>1 BNSD varlen", _call_v2("bnsd_batch2", layout="BNSD", varlen=True, batch=2),
+            "Parameter B of aclnnChunkKdaFwd", "1 for rank4 varlen")
     gk = torch.zeros((1, SEQLEN, HEADS, DIM), dtype=torch.float32, device="npu")
     _expect("gkOut provided", _call_v2("gk", gk_out=gk),
             "Parameter gkOut of aclnnChunkKdaFwd", "provided")
