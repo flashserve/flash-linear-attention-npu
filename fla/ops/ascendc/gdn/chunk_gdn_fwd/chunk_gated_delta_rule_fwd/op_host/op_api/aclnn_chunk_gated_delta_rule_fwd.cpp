@@ -7,10 +7,10 @@
 #include "aclnn_chunk_gated_delta_rule_fwd.h"
 
 #include "chunk_gated_delta_rule_fwd.h"
-#include "../../../chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
-#include "../../../chunk_fwd_o/op_host/op_api/chunk_fwd_o.h"
-#include "../../../chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
-#include "../../../chunk_gated_delta_rule_fwd_prepare/op_host/op_api/chunk_gated_delta_rule_fwd_prepare.h"
+#include "chunk_fwd_h.h"
+#include "chunk_fwd_o.h"
+#include "chunk_fwd_o_layout.h"
+#include "chunk_gated_delta_rule_fwd_prepare.h"
 
 #include "acl/acl.h"
 #include "aclnn/aclnn_base.h"

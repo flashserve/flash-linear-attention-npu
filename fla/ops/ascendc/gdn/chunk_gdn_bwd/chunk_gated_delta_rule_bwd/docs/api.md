@@ -75,7 +75,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwd(
 | `cu_seqlens` | `cuSeqlensOptional` | 变长累计长度，`Nseq + 1` 个 INT64 整数。 |
 | `chunk_indices` | `chunkIndicesOptional` | 按序列号和序列内 chunk 号排列的 INT64 整数对，展平后长度为总 chunk 数的两倍。 |
 
-`g` 和 `beta` 可以各自选择 BF16 或 FP32。只要其中一项为 FP32，两项和参与计算的 `beta_raw` 均按 FP32 进入后续计算。对应梯度按各自输入 dtype 写回。
+`g` 和 `beta` 的类型分别校验，可独立选择 BF16 或 FP32。只要其中一项为 FP32，两项和参与计算的 `beta_raw` 均按 FP32 进入后续计算。
 
 ## 属性
 
@@ -131,6 +131,13 @@ Python 按表中顺序返回固定八元组。ACLNN 前五个输出描述符必�
 | `dh0` | `dh0OutOptional` | 提供 `initial_state` 时，与初始状态同 shape、布局和 dtype。缺省初始状态时，Python 返回 `None`，ACLNN 传 `nullptr`，包括仅提供 `dht` 的情况。 |
 | `d_a_log` | `dALogOutOptional` | 预留。Python 固定返回 `None`，ACLNN 传 `nullptr`。 |
 | `d_dt_bias` | `dDtBiasOutOptional` | 预留。Python 固定返回 `None`，ACLNN 传 `nullptr`。 |
+
+两路标量梯度分别按对应输入的原始类型写回。混合类型输入的输出分配如下。
+
+| `g` | `beta` | `d_g`（`dGOut`） | `d_beta`（`dBetaOut`） |
+| --- | --- | --- | --- |
+| BF16 | FP32 | BF16 | FP32 |
+| FP32 | BF16 | FP32 | BF16 |
 
 ### 输出存储关系
 

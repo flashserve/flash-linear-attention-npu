@@ -135,7 +135,7 @@ ChunkFwdOTilingResult CalcTilingParams(const at::Tensor &q, const at::Tensor &k,
         false,
         false,
         "BNSD",
-        false,
+        NpuArch::DAV_2201,
         coreNum,
         sysWorkspaceSize,
     };
