@@ -399,8 +399,10 @@ public:
                 1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
                 static_cast<ElementA>(0));
             AscendC::InitConstValue(l1ATensorList[l1AListId], clearParams);
-            // The GM load overwrites the valid region of the same L1 tile.
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+            // Order the A5 L1 clear before the GM load overwrites its valid region.
             AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
         }
         auto tensorL1A = tla::MakeTensor(
             useExternalL1AThisCall ? externalL1ATensor : l1ATensorList[l1AListId],
@@ -434,8 +436,10 @@ public:
                 1, static_cast<uint16_t>(L1B_TILE_SIZE / 32), 0,
                 static_cast<ElementB>(0));
             AscendC::InitConstValue(l1BTensorList[l1BListId], clearParams);
-            // The GM load overwrites the valid region of the same L1 tile.
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+            // Order the A5 L1 clear before the GM load overwrites its valid region.
             AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
         }
         auto tensorL1B = tla::MakeTensor(l1BTensorList[l1BListId], L1B_LAYOUT, Arch::PositionL1{});
         auto tensorTileB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(kL1Actual, nBlockActual));
@@ -502,8 +506,10 @@ public:
                         1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
                         static_cast<ElementA>(0));
                     AscendC::InitConstValue(l1ATensorList[l1AListIdNext], clearParams);
-                    // The GM load overwrites the valid region of the same L1 tile.
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+                    // Order the A5 L1 clear before the GM load overwrites its valid region.
                     AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
                 }
                 if constexpr (ENABLE_L1_RESIDENT) {
                     if (lastAddrA[l1AListIdNext] != tensorTileA.data().GetPhyAddr()
@@ -530,8 +536,10 @@ public:
                         1, static_cast<uint16_t>(L1B_TILE_SIZE / 32), 0,
                         static_cast<ElementB>(0));
                     AscendC::InitConstValue(l1BTensorList[l1BListIdNext], clearParams);
-                    // The GM load overwrites the valid region of the same L1 tile.
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+                    // Order the A5 L1 clear before the GM load overwrites its valid region.
                     AscendC::PipeBarrier<PIPE_MTE2>();
+#endif
                 }
                 if constexpr (ENABLE_L1_RESIDENT) {
                     if (lastAddrB[l1BListIdNext] != tensorTileB.data().GetPhyAddr()

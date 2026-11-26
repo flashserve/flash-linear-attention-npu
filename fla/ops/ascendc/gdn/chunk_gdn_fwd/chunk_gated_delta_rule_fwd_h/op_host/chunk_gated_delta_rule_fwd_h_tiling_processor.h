@@ -62,7 +62,6 @@ struct ChunkGatedDeltaRuleFwdHTilingContext {
     // platform
     uint32_t aicCoreNum;
     size_t libApiWorkSpaceSize;
-    bool usePrivateFp32State = false;
 };
 
 class ChunkGatedDeltaRuleFwdHTilingProcessor {
@@ -118,13 +117,6 @@ public:
         tiling.numChunksWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
         workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 1) * static_cast<int64_t>(sizeof(int64_t))));
 
-        // Place the carry before the trailing system reserve, just like the other user buffers.
-        tiling.stateWorkspaceOffset = 0;
-        if (ctx_.usePrivateFp32State) {
-            tiling.stateWorkspaceOffset = static_cast<int64_t>(workspaceOffset);
-            workspaceOffset += AlignUp(static_cast<size_t>(batch) * ctx_.vNumHead * kHeadDim * vHeadDim *
-                                       sizeof(float));
-        }
         workspaceOffset += GDN_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;
 
@@ -136,7 +128,7 @@ public:
         tiling.vHeadDim = ctx_.vHeadDim;
         tiling.chunkSize = chunkSize;
         tiling.useInitialState = ctx_.useInitialState;
-        tiling.storeFinalState = ctx_.storeFinalState || ctx_.usePrivateFp32State;
+        tiling.storeFinalState = ctx_.storeFinalState;
         tiling.dataType = ctx_.dataType;
         tiling.gDataType = ctx_.gDataType;
         tiling.stateDataType = ctx_.stateDataType;
