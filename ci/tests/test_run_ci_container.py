@@ -117,13 +117,13 @@ class RunCiContainerTests(unittest.TestCase):
         calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
         return result, calls, env
 
-    def test_atk_selection_is_forwarded_with_a_read_only_dependency_volume(self):
+    def test_atk_selection_is_forwarded_to_the_ci_image(self):
         with tempfile.TemporaryDirectory() as temporary:
             result, calls, _ = self.run_ci(Path(temporary), smoke=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             job = next(call for call in calls if "--cidfile" in call)
             self.assertIn("CI_ATK_SMOKE_OPS=chunk_fwd_h\nrecurrent_kda", job)
-            self.assertIn("type=volume,src=fla-atk-smoke-cp312,dst=/opt/fla-atk-smoke,readonly", job)
+            self.assertFalse(any("fla-atk-smoke-cp312" in arg for arg in job))
 
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -697,6 +697,7 @@ PY
 }
 
 check_environment_contracts() {
+    python3 ci/atk_release.py
     python3 tests/test_wheel_environment.py -b
     python3 torch_custom/fla_npu/tools/stable_coverage.py --strict
     python3 torch_custom/fla_npu/tools/op_abi_parity.py
@@ -813,9 +814,6 @@ run_gdr_example_st() {
 
 run_changed_atk_smoke() {
     local op platform="${CI_ACCURACY_PLATFORM^^}"
-    if [[ -d /opt/fla-atk-smoke/atk ]]; then
-        export PYTHONPATH="/opt/fla-atk-smoke${PYTHONPATH:+:$PYTHONPATH}"
-    fi
     python3 - <<'PY'
 from importlib.util import find_spec
 from atk.tasks.post_process import ACCURACY_REGISTRY
@@ -824,7 +822,7 @@ standard = "cv_fused_double_benchmark"
 if standard not in ACCURACY_REGISTRY and find_spec("atk.tasks.post_process.cv_fused_double_benchmark_compare"):
     import atk.tasks.post_process.cv_fused_double_benchmark_compare
 if standard not in ACCURACY_REGISTRY:
-    raise SystemExit(f"[CI][ATK] The runner needs an ATK build with {standard} in its image or fla-atk-smoke-cp312 volume")
+    raise SystemExit(f"[CI][ATK] The CI image must register {standard}")
 PY
     local status=0
     while IFS= read -r op; do

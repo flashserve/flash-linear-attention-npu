@@ -21,13 +21,13 @@ python3 tests/atk/smoke/run.py affected --platform A5 --git-range BASE MERGED_HE
 
 ## Runner 依赖和结果
 
-在 runner 镜像内提供支持 `cv_fused_double_benchmark` 的 ATK，或在该 runner 上预配同架构和 Python ABI 的 Docker 卷 `fla-atk-smoke-cp312`。卷根目录应直接包含 `atk/` 和对应发行包元数据，镜像应提供 `atk` 命令。命中用例时 CI 将已有卷只读挂载到 `/opt/fla-atk-smoke`，冒烟进程优先从该目录导入。缺少双标杆时该平台任务失败。
+A2、A5 的 CI 镜像统一使用 ATK `26.11.11`。镜像构建时按 CPython ABI 和 CPU 架构下载发布页对应的 wheel 并核验 SHA-256。CI 的环境检查会核对已安装和实际导入的版本；冒烟开始前再检查 `cv_fused_double_benchmark` 是否可用。[官方 wheel](https://gitcode.com/AscendTest/ATK/releases/v26.11.11)
 
 冒烟复用 Example/ST 阶段已配置的算子包环境和容器逻辑卡号。Actions 日志中的 `[CI][ATK]` 列出选中的算子。报告保存在该次运行的 `atk-smoke-<平台>-<run_id>-<attempt>` 附件里，任一算子精度失败会使平台 CI 失败。
 
 ## 在 CI 容器运行一项
 
-容器需要已启用 CANN、已安装待测 FLA wheel、torch、torch_npu，以及支持 `cv_fused_double_benchmark` 的 ATK。基线使用 CANN 9.2.1，A2 为 ATK 26.7.8，A5 为 26.9.24。A2 的 XLSX 报告读取需要 openpyxl。
+容器需要已启用 CANN、已安装待测 FLA wheel、torch、torch_npu，以及支持 `cv_fused_double_benchmark` 的 ATK。当前 CI 使用 CANN 9.2.1 和 ATK 26.11.11。A2 的 XLSX 报告读取需要 openpyxl。
 
 每个算子的 CPU 标杆放在 `cases/<算子>/executor_*.py`，A2、A5 共用。每个来源组在 `suites.json` 的 `reference` 字段指定实际文件。公共模块位于 `cases/common/`，算子专用的参考函数和输入生成器随算子存放。运行时直接使用仓内文件。
 

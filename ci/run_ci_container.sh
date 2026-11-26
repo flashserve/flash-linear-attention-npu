@@ -251,9 +251,6 @@ if [[ -n "${CI_ATK_BASE_SHA:-}" && "${CI_STAGE:-all}" == "all" && -z "${CI_OPS:-
     else
         echo "[CI][ATK] No matching operator on ${platform^^}."
     fi
-    if [[ -n "$atk_smoke_ops" ]] && docker volume inspect fla-atk-smoke-cp312 >/dev/null 2>&1; then
-        mount_args+=(--mount type=volume,src=fla-atk-smoke-cp312,dst=/opt/fla-atk-smoke,readonly)
-    fi
 fi
 if [[ -n "$host_tmpdir" ]]; then
     mount_args+=(-v "$host_tmpdir:$container_tmpdir")
