@@ -1,0 +1,1642 @@
+[
+  {
+    "id": 200,
+    "default_seed": 20261132,
+    "name": "r1_regression_200",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 200, \"seed\": 20261132, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"dense\", \"layout\": \"BNSD\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": -0.125, \"state_v_first\": false, \"name\": \"r1_regression_200\", \"B\": 1, \"H\": 10, \"T\": 16, \"HK\": 10, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 10,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 16,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 200,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261132,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 201,
+    "default_seed": 20261124,
+    "name": "r1_regression_201",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 201, \"seed\": 20261124, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"varlen\", \"layout\": \"BNSD\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": 0.0, \"state_v_first\": false, \"name\": \"r1_regression_201\", \"B\": 1, \"H\": 2, \"T\": 1, \"HK\": 2, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"], \"seqlens\": [0, 0, 1]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 201,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261124,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 202,
+    "default_seed": 20261154,
+    "name": "r1_regression_202",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 202, \"seed\": 20261154, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"dense\", \"layout\": \"BSND\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": 0.0, \"state_v_first\": true, \"name\": \"r1_regression_202\", \"B\": 1, \"H\": 2, \"T\": 127, \"HK\": 2, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 127,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 202,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261154,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 203,
+    "default_seed": 20261156,
+    "name": "r1_regression_203",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 203, \"seed\": 20261156, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"varlen\", \"layout\": \"BSND\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": -0.125, \"state_v_first\": false, \"name\": \"r1_regression_203\", \"B\": 1, \"H\": 4, \"T\": 128, \"HK\": 4, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"], \"seqlens\": [0, 64, 64]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 203,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261156,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 204,
+    "default_seed": 20261184,
+    "name": "r1_regression_204",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 204, \"seed\": 20261184, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"dense\", \"layout\": \"NTD\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": 0.0, \"state_v_first\": true, \"name\": \"r1_regression_204\", \"B\": 1, \"H\": 2, \"T\": 17, \"HK\": 2, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 17,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 204,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261184,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 205,
+    "default_seed": 20261188,
+    "name": "r1_regression_205",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 205, \"seed\": 20261188, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"varlen\", \"layout\": \"NTD\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": 0.08838834764831843, \"state_v_first\": false, \"name\": \"r1_regression_205\", \"B\": 1, \"H\": 6, \"T\": 63, \"HK\": 6, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"], \"seqlens\": [0, 31, 32]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 6,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 63,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 205,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261188,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 206,
+    "default_seed": 20261214,
+    "name": "r1_regression_206",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 206, \"seed\": 20261214, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"dense\", \"layout\": \"TND\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": 0.0, \"state_v_first\": false, \"name\": \"r1_regression_206\", \"B\": 1, \"H\": 2, \"T\": 193, \"HK\": 2, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 193,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 206,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261214,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 207,
+    "default_seed": 20261220,
+    "name": "r1_regression_207",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\": \"chunk_kda_bwd_prepare\", \"case_id\": 207, \"seed\": 20261220, \"soc\": \"ascend910_93\", \"route\": \"aclnn\", \"mode\": \"varlen\", \"layout\": \"TND\", \"dtype\": \"bf16\", \"C\": 64, \"K\": 128, \"V\": 128, \"chunk_size\": 64, \"scale\": 0.0, \"state_v_first\": false, \"name\": \"r1_regression_207\", \"B\": 1, \"H\": 8, \"T\": 1, \"HK\": 8, \"gva_ratio\": 1, \"explicit_chunk_indices\": false, \"tags\": [\"gva\", \"small\"], \"seqlens\": [0, 0, 1]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 207,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261220,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  }
+]

@@ -571,7 +571,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdV2GetWorkspaceSize(
     }
     const auto prepare = l0op::ChunkKdaBwdPrepare(
         prepareView(aqk), prepareView(vNew), prepareView(dOInput), prepareView(h),
-        cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst,
+        cuSeqlensOptional, chunkIndicesOptional, variable ? "NTD" : "BNSD", scale, chunkSize, stateVFirst, 1,
         prepareView(dAqk), prepareView(dvLocal), prepareView(dqRaw), ex);
     for (const auto *value : prepare) {
         if (!(value)) {

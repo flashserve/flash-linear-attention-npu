@@ -41,7 +41,7 @@ def check_raw(name, updates, code, parameter, *, null_output_pointer=None, statu
     context = _raw_abi._CallContext(runtime, case["v_new"].device)
     api = runtime.symbol("aclnnChunkKdaBwdPrepareGetWorkspaceSize")
     api.argtypes = ([ctypes.c_void_p] * 6 +
-                    [ctypes.c_char_p, ctypes.c_double, ctypes.c_int64, ctypes.c_bool] +
+                    [ctypes.c_char_p, ctypes.c_double, ctypes.c_int64, ctypes.c_bool, ctypes.c_int64] +
                     [ctypes.c_void_p] * 3 +
                     [ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)])
     api.restype = ctypes.c_int
@@ -54,7 +54,7 @@ def check_raw(name, updates, code, parameter, *, null_output_pointer=None, statu
         args = [tensor(key) for key in ("aqk", "v_new", "d_o", "h")]
         args += [context.int_array(case["cu"]), context.int_array(case["indices"]),
                  case["layout"].encode() if case["layout"] is not None else None,
-                 case["scale"], case["chunk_size"], False]
+                 case["scale"], case["chunk_size"], False, case.get("gva_ratio", 1)]
         args += [tensor(key) for key in ("d_aqk", "dv", "dq_raw")]
         args += [None if null_output_pointer == "workspaceSize" else ctypes.byref(workspace),
                  None if null_output_pointer == "executor" else ctypes.byref(executor)]

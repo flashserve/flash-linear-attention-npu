@@ -12,6 +12,8 @@ namespace KDA {
 struct ChunkKdaBwdPrepareTilingData {
     int64_t B;
     int64_t NV;
+    int64_t HK;
+    int64_t gvaRatio;
     int64_t T;
     int64_t K;
     int64_t V;

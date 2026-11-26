@@ -14,12 +14,12 @@ OP_TYPE_REGISTER(ChunkKdaBwdPrepare);
 const std::array<const aclTensor *, 3> ChunkKdaBwdPrepare(
     const aclTensor *aqk, const aclTensor *vNew, const aclTensor *dO, const aclTensor *h,
     const aclIntArray *cuSeqlensOptional, const aclIntArray *chunkIndicesOptional, const char *layout,
-    double scale, int64_t chunkSize, bool stateVFirst,
+    double scale, int64_t chunkSize, bool stateVFirst, int64_t gvaRatio,
     const aclTensor *dAqkOut, const aclTensor *dvOut, const aclTensor *dqRawOut,
     aclOpExecutor *executor)
 {
     L0_DFX(ChunkKdaBwdPrepare, aqk, vNew, dO, h, cuSeqlensOptional,
-           chunkIndicesOptional, layout, scale, chunkSize, stateVFirst,
+           chunkIndicesOptional, layout, scale, chunkSize, stateVFirst, gvaRatio,
            dAqkOut, dvOut, dqRawOut);
     const aclTensor *cuTensor = nullptr;
     const aclTensor *indicesTensor = nullptr;
@@ -68,7 +68,7 @@ const std::array<const aclTensor *, 3> ChunkKdaBwdPrepare(
         ChunkKdaBwdPrepare,
         OP_INPUT(aqk, vNew, dO, h, cuTensor, indicesTensor),
         OP_OUTPUT(dAqkOut, dvOut, dqRawOut),
-        OP_ATTR(static_cast<float>(scale), chunkSize, stateVFirst, layout));
+        OP_ATTR(static_cast<float>(scale), chunkSize, stateVFirst, layout, gvaRatio));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdPrepare failed");
         return {nullptr, nullptr, nullptr};

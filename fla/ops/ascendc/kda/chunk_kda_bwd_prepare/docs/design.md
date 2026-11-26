@@ -310,3 +310,12 @@ ACLNN 参数检查使用 opbase 的 Error Message 宏；Stable-ABI 读取失败�
 本轮最终精度回归按用户指定以原始用例 id 0..19 为范围；其余历史验收结果不代表优化版本
 已重新完成全量、确定性或内存验收。模型性能继续使用 case 198/199，原输入和种子不变，
 每条预热 5 次后采集一次正式调用，读取 msprof 的 Task Duration(us)。
+
+## GVA implementation delta (2026-11-24)
+User design: /home/yqw/requirement/chunk_kda_bwd_prepare_GVA_详设方案_v1.md.
+Append IS_GVA after INPUT_LAYOUT, IS_VARIABLE, DO_TOKEN_MAJOR, preserving existing
+bit positions. TilingData carries HK and gvaRatio. Both compiled paths retain
+HV-flat four-head scheduling and exclusive output ownership. No scratch, buffer,
+event or arithmetic change is introduced; A2 scratch remains 65536*blockDim bytes.
+The GVA entry checks the ratio/head invariant before processing shared helpers.
+A5 source is adapted but only A2 910B3 can be validated on this server.

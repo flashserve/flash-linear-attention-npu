@@ -1,0 +1,4102 @@
+[
+  {
+    "id": 136,
+    "default_seed": 20261260,
+    "name": "gva200_136_r3",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":136,\"seed\":20261260,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"BNSD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.08838834764831843,\"state_v_first\":false,\"name\":\"gva200_136_r3\",\"B\":1,\"H\":9,\"T\":193,\"HK\":3,\"gva_ratio\":3,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 9,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 193,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 136,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261260,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 140,
+    "default_seed": 20261264,
+    "name": "gva200_140_r7",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":140,\"seed\":20261264,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"BNSD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":true,\"name\":\"gva200_140_r7\",\"B\":1,\"H\":21,\"T\":257,\"HK\":3,\"gva_ratio\":7,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 21,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 257,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 140,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261264,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 128,
+    "default_seed": 20261252,
+    "name": "gva200_128_r10",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":128,\"seed\":20261252,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"BNSD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":false,\"name\":\"gva200_128_r10\",\"B\":1,\"H\":10,\"T\":128,\"HK\":1,\"gva_ratio\":10,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,64,64]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 10,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261252,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 132,
+    "default_seed": 20261256,
+    "name": "gva200_132_r14",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":132,\"seed\":20261256,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"BNSD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.0,\"state_v_first\":true,\"name\":\"gva200_132_r14\",\"B\":1,\"H\":14,\"T\":129,\"HK\":1,\"gva_ratio\":14,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,64,65]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BNSD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 14,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 129,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 132,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261256,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 40,
+    "default_seed": 20261164,
+    "name": "gva200_040_r12",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":40,\"seed\":20261164,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"BSND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.08838834764831843,\"state_v_first\":false,\"name\":\"gva200_040_r12\",\"B\":1,\"H\":12,\"T\":193,\"HK\":1,\"gva_ratio\":12,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 12,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 193,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 40,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261164,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 44,
+    "default_seed": 20261168,
+    "name": "gva200_044_r16",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":44,\"seed\":20261168,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"BSND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":true,\"name\":\"gva200_044_r16\",\"B\":2,\"H\":16,\"T\":257,\"HK\":1,\"gva_ratio\":16,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 16,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 257,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 44,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261168,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 32,
+    "default_seed": 20261156,
+    "name": "gva200_032_r4",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":32,\"seed\":20261156,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"BSND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":false,\"name\":\"gva200_032_r4\",\"B\":1,\"H\":4,\"T\":128,\"HK\":1,\"gva_ratio\":4,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,64,64]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 32,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261156,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 36,
+    "default_seed": 20261160,
+    "name": "gva200_036_r8",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":36,\"seed\":20261160,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"BSND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.0,\"state_v_first\":true,\"name\":\"gva200_036_r8\",\"B\":1,\"H\":8,\"T\":129,\"HK\":1,\"gva_ratio\":8,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,64,65]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "BSND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 8,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 129,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 36,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261160,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 88,
+    "default_seed": 20261212,
+    "name": "gva200_088_r15",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":88,\"seed\":20261212,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.08838834764831843,\"state_v_first\":false,\"name\":\"gva200_088_r15\",\"B\":1,\"H\":45,\"T\":193,\"HK\":3,\"gva_ratio\":15,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 45,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 193,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 88,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261212,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 188,
+    "default_seed": 20261312,
+    "name": "gva200_188_r10",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":188,\"seed\":20261312,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":true,\"name\":\"gva200_188_r10\",\"B\":1,\"H\":10,\"T\":257,\"HK\":1,\"gva_ratio\":10,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 10,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 257,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 188,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261312,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 80,
+    "default_seed": 20261204,
+    "name": "gva200_080_r7",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":80,\"seed\":20261204,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":false,\"name\":\"gva200_080_r7\",\"B\":1,\"H\":21,\"T\":128,\"HK\":3,\"gva_ratio\":7,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,64,64]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 21,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 80,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261204,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 84,
+    "default_seed": 20261208,
+    "name": "gva200_084_r11",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":84,\"seed\":20261208,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.0,\"state_v_first\":true,\"name\":\"gva200_084_r11\",\"B\":1,\"H\":33,\"T\":129,\"HK\":3,\"gva_ratio\":11,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,64,65]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 33,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 129,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 84,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261208,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 90,
+    "default_seed": 20261214,
+    "name": "gva200_090_r2",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":90,\"seed\":20261214,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"TND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.0,\"state_v_first\":false,\"name\":\"gva200_090_r2\",\"B\":1,\"H\":2,\"T\":193,\"HK\":1,\"gva_ratio\":2,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 2,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 193,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 90,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261214,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 92,
+    "default_seed": 20261216,
+    "name": "gva200_092_r4",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":92,\"seed\":20261216,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"dense\",\"layout\":\"TND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":true,\"name\":\"gva200_092_r4\",\"B\":1,\"H\":4,\"T\":257,\"HK\":1,\"gva_ratio\":4,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "dense",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 4,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 257,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 92,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261216,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 112,
+    "default_seed": 20261236,
+    "name": "gva200_112_r9",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":112,\"seed\":20261236,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"TND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.08838834764831843,\"state_v_first\":false,\"name\":\"gva200_112_r9\",\"B\":1,\"H\":27,\"T\":63,\"HK\":3,\"gva_ratio\":9,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,31,32]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 27,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 63,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": false,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 112,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261236,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 116,
+    "default_seed": 20261240,
+    "name": "gva200_116_r13",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":116,\"seed\":20261240,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"TND\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":-0.125,\"state_v_first\":true,\"name\":\"gva200_116_r13\",\"B\":1,\"H\":39,\"T\":64,\"HK\":3,\"gva_ratio\":13,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,32,32]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "TND",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 39,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": -0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 116,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261240,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 199,
+    "default_seed": 20261323,
+    "name": "gva200_199_r6",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":199,\"seed\":20261323,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.125,\"state_v_first\":true,\"name\":\"gva200_199_r6\",\"B\":1,\"H\":18,\"T\":15,\"HK\":3,\"gva_ratio\":6,\"explicit_chunk_indices\":true,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,7,8]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 18,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 15,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.125,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 199,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261323,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 198,
+    "default_seed": 20261322,
+    "name": "gva200_198_r5",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":198,\"seed\":20261322,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.0,\"state_v_first\":true,\"name\":\"gva200_198_r5\",\"B\":1,\"H\":15,\"T\":15,\"HK\":3,\"gva_ratio\":5,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,7,8]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 15,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 15,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 198,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261322,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 197,
+    "default_seed": 20261321,
+    "name": "gva200_197_r4",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":197,\"seed\":20261321,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":1.0,\"state_v_first\":true,\"name\":\"gva200_197_r4\",\"B\":1,\"H\":12,\"T\":15,\"HK\":3,\"gva_ratio\":4,\"explicit_chunk_indices\":true,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,7,8]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 12,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 15,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 1.0,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 197,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261321,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  },
+  {
+    "id": 196,
+    "default_seed": 20261320,
+    "name": "gva200_196_r3",
+    "aclnn_name": "ChunkKdaBwdPrepare",
+    "version": "v2.1",
+    "api": "pytorch",
+    "api_type": "executor_chunk_kda_bwd_prepare_a3",
+    "expected_error_msg": null,
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 5,
+          "avg_re_ratio": 1.5,
+          "root_mean_squared_ratio": 1.5
+        }
+      },
+      "perf": "not_key"
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "low_precision_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "fp32_marker",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false
+      },
+      {
+        "name": "case_spec",
+        "type": "attr",
+        "required": true,
+        "dtype": "non_param",
+        "shape": null,
+        "range_values": "{\"op\":\"chunk_kda_bwd_prepare\",\"case_id\":196,\"seed\":20261320,\"soc\":\"ascend910_93\",\"route\":\"aclnn\",\"mode\":\"varlen\",\"layout\":\"NTD\",\"dtype\":\"bf16\",\"C\":64,\"K\":128,\"V\":128,\"chunk_size\":64,\"scale\":0.08838834764831843,\"state_v_first\":true,\"name\":\"gva200_196_r3\",\"B\":1,\"H\":9,\"T\":15,\"HK\":3,\"gva_ratio\":3,\"explicit_chunk_indices\":false,\"tags\":[\"gva\",\"small\"],\"seqlens\":[0,7,8]}",
+        "backward": false
+      },
+      {
+        "name": "dtype",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "bf16",
+        "backward": false
+      },
+      {
+        "name": "mode",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "varlen",
+        "backward": false
+      },
+      {
+        "name": "layout",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "NTD",
+        "backward": false
+      },
+      {
+        "name": "B",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 1,
+        "backward": false
+      },
+      {
+        "name": "H",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 9,
+        "backward": false
+      },
+      {
+        "name": "T",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 15,
+        "backward": false
+      },
+      {
+        "name": "C",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "K",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "V",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 128,
+        "backward": false
+      },
+      {
+        "name": "chunk_size",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 64,
+        "backward": false
+      },
+      {
+        "name": "state_v_first",
+        "type": "attr",
+        "required": true,
+        "dtype": "bool",
+        "shape": null,
+        "range_values": true,
+        "backward": false
+      },
+      {
+        "name": "scale",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.08838834764831843,
+        "backward": false
+      },
+      {
+        "name": "case_id",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 196,
+        "backward": false
+      },
+      {
+        "name": "seed",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": 20261320,
+        "backward": false
+      },
+      {
+        "name": "route",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "aclnn",
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910_93",
+        "backward": false
+      }
+    ]
+  }
+]
