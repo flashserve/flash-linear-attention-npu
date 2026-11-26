@@ -339,6 +339,8 @@ template <typename T, bool IsVarlen, bool HasTail>
 
 		this->template copy_l1_to_ub<0, 2*key_dim, 4>(gamma_ub, gamma);
 		this->template copy_l1_to_ub<0, 2*chunk_size, 4>(beta_ub, beta);
+		// Serialize overlapping MTE1 writes before targeting the other Vector subcore.
+		AscendC::PipeBarrier<PIPE_MTE1>();
 		this->template copy_l1_to_ub<1, 2*key_dim, 4>(gamma_ub, gamma);
 		this->template copy_l1_to_ub<1, 2*chunk_size, 4>(beta_ub, beta);
 	}
