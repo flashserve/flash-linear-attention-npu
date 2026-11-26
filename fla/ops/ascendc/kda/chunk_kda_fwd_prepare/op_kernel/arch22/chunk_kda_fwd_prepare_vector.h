@@ -564,7 +564,7 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
                            ReduceOrder::ORDER_ONLY_VALUE);
             // Aqk is stored asynchronously. Its V->MTE3 dependency does
             // not order the next Vector reduction reading small_.
-            VBarrier();
+            PipeBarrier<PIPE_V>();
         }
         // Packed masks were initialized once. The selected FP32 zeros cast
         // to the same +0 BF16 bits as the former per-row Duplicate operations.
