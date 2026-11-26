@@ -117,6 +117,12 @@ __simd_callee__ inline void LoadGateRegbasePair(
     }
 }
 
+// BF16 cache writes round halfway products to even, including beta * v.
+template <typename OutputT>
+constexpr CastTrait kCacheCast = {
+    RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::MERGING,
+    std::is_same<OutputT, bfloat16_t>::value ? AscendC::RoundMode::CAST_RINT : AscendC::RoundMode::CAST_ROUND};
+
 template <typename OutputT>
 __simd_callee__ inline void StoreGateRegbasePair(
     __ubuf__ OutputT *dst,
@@ -134,9 +140,9 @@ __simd_callee__ inline void StoreGateRegbasePair(
         (void)inputMask;
         (void)outputReg;
     } else {
-        Cast<OutputT, float, ctFp322HalfZero>(outputReg, zeroReg, floatMask);
+        Cast<OutputT, float, kCacheCast<OutputT>>(outputReg, zeroReg, floatMask);
         StoreAlign<OutputT, StoreDist::DIST_PACK_B32>(dst, outputReg, floatMask);
-        Cast<OutputT, float, ctFp322HalfZero>(outputReg, oneReg, floatMask);
+        Cast<OutputT, float, kCacheCast<OutputT>>(outputReg, oneReg, floatMask);
         StoreAlign<OutputT, StoreDist::DIST_PACK_B32>(dst + FLOAT_ELEMENTS_PER_REG, outputReg, floatMask);
         (void)inputMask;
     }
