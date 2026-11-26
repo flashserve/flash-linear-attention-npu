@@ -80,3 +80,65 @@ checkpoint 用例覆盖 packed/fixed batch、初态存在/缺失、VK/KV 布局�
 状态导出验收混称。直接运行 ATK 时先执行同目录 executor 的
 `--prepare-checkpoint-inputs <case.json> --device <id> -s <start> -e <end>`，
 并为生成器和 ATK 显式设置同一个 `KDA_ATK_CHECKPOINT_INPUT_DIR`。
+
+## A5 native FP32 checkpoint validation
+
+Validated on Ascend950DT with CANN 9.3, Python 3.12, PyTorch 2.10 and
+torch_npu 2.10.post7, against a pristine build of upstream `79164d12`.
+The scope is the existing mixed-precision FwdH state export/resume contract,
+not a change to the original KDA mathematical reference or whole-model accuracy.
+
+| Check | Result |
+| --- | --- |
+| Native export, resume, layouts, invalid offsets, H128 bank reuse and graph replay | 34 passed |
+| CPU wrapper validation | 8 passed |
+| KDA / shared FwdH ATK accuracy | 63 / 200 passed |
+| Determinism | All 7 profiles passed 50 bitwise repetitions |
+| Complete 7-profile memcheck | ATK checker 7/7; 111 kernel starts/finishes; no ERROR, tool communication failure, fallback or lost records |
+| All 5 new profiles, combined memcheck/racecheck | ATK checker 5/5; 76 kernel starts/finishes; no WARNING/ERROR, fallback or lost records |
+| Linux CI contract | 338 unit tests and staged pipeline integration passed |
+
+The complete memcheck is not a zero-warning result: the two unchanged legacy
+fused profiles produce 18,596 ownership warnings, also reproduced by the
+pristine upstream build. Their 16 kernel/metadata files are byte-identical and
+14 visible tensors are bitwise equal. Profile 250 has 7,936 matching normalized
+size/core/address findings; profile 298 has 10,660 matching access-size/core
+counts, without an address-by-address equivalence claim. The changed Prepare
+publication path separately reduces its previous 160 ownership warnings to zero.
+
+Complete racecheck of the legacy fused path remains inconclusive. Combined
+checking, disabling the PyTorch memory pool, and racecheck alone all encounter
+the installed tool's 600-second response timeout in legacy profile 298.
+The kernel completion record is missing, so zero ERROR in the partial raw trace
+does not constitute a pass. This limitation is recorded separately from the
+complete memcheck and the successful combined check of every new profile.
+
+Same-card no-checkpoint composed-path graph measurements used seed 17,
+BF16 Q/K/V, head dimension 128, chunk64 and the same initial-state clone.
+Packed sequence boundaries were `[0, 65, 258, 275]` for H2 and
+`[0, 1537, 4465, 4482]` for H12, with in-kernel Q/K normalization enabled.
+Each of 40 samples contained 50 graph replays. H2 stayed near 39.6-39.7 us;
+H12 changed from 327.30-327.40 us to 331.17-331.21 us in both measurement
+orders, approximately +3.8 us / +1.2%. This regression is reported explicitly.
+Default fused ATK device time changed from 1108.08 us to 1109.20 us (+0.10%).
+These are component measurements, not an end-to-end throughput or TTFT claim.
+
+For large legacy kernels, runtime instrumentation needed an explicit ATK
+per-case budget of `-to 10800` seconds. The unified MSS wrapper does not override
+ATK's default budget; the equivalent direct invocation is:
+
+```bash
+cd tests/atk/chunk_kda_fwd
+mss_log="$PWD/kda-memcheck.log"
+mssanitizer --tool=memcheck --log-file "$mss_log" -- \
+  atk node --name npu_dut --backend npu --devices 0 \
+  task -c atk_chunk_kda_fwd_mss.json -p executor_chunk_kda_fwd.py \
+  --task run --mssanitizer -msl "$mss_log" -to 10800
+python ../common/check_atk_result.py --type mssanitizer --output-root ./atk_output --op chunk_kda_fwd
+```
+
+The five new profiles additionally passed combined checking with
+`PYTORCH_NO_NPU_MEMORY_CACHING=1`, default trace capacity, no block filter, and
+ATK range `-s 2 -e 7`. A2/A5 repository CI, ABI-owner review and full-model
+integration remain separate requirements; this report does not certify A2
+or claim multi-host model validation.
