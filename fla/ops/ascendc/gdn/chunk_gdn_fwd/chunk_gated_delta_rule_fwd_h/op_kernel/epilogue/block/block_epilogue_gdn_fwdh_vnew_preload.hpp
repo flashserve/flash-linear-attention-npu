@@ -220,19 +220,48 @@ public:
         AscendC::Sub<float>(wsUbTensor, calcUbTensor, wsUbTensor, mActualThisSubBlock * nvActual);
         AscendC::PipeBarrier<PIPE_V>();
         
-        AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareBuffer_);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+        if (gbrcEffEnd <= 64) {
+            AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareBuffer_);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
 
-        AscendC::Mul(calcUbTensor[gbrcEffStart*nvActual], wsUbTensor, calcUbTensor[gbrcEffStart*nvActual], mActualThisSubBlock * nvActual);
-        AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(calcUbTensor[gbrcEffStart*nvActual], wsUbTensor, calcUbTensor[gbrcEffStart*nvActual], mActualThisSubBlock * nvActual);
+            AscendC::PipeBarrier<PIPE_V>();
         
-        AscendC::Cast(vNewDecayUbTensor, calcUbTensor[gbrcEffStart*nvActual], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
-        AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(vNewDecayUbTensor, calcUbTensor[gbrcEffStart*nvActual], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
+            AscendC::PipeBarrier<PIPE_V>();
+        } else {
+            // 尾块 m-gbrcRealStart>64 时广播/Mul 的目的区会越过 calc 的 32K（覆写相邻 wsUb 里的 v_new）。
+            // 按 64 行边界拆两段：段A覆盖 [gbrcEffStart,64)（广播恰好 32K），段B从 gUb[gbrcRealStart+64]
+            // （16 对齐）重新广播，两段 calc 用量都不超 32K；g 的 V->MTE2 释放移到段B广播之后。
+            uint32_t rowsA = 64 - gbrcEffStart;
+            uint32_t rowsB = gbrcEffEnd - 64;
+            uint32_t dstShapeA_[2] = {64, nvActual};
+            uint32_t srcShapeA_[2] = {64, 1};
+            AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShapeA_, srcShapeA_, shareBuffer_);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Mul(calcUbTensor[gbrcEffStart*nvActual], wsUbTensor, calcUbTensor[gbrcEffStart*nvActual], rowsA * nvActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(vNewDecayUbTensor, calcUbTensor[gbrcEffStart*nvActual], AscendC::RoundMode::CAST_RINT, rowsA * nvActual);
+            AscendC::PipeBarrier<PIPE_V>();
+
+            uint32_t rowsBPad = (rowsB + 7) / 8 * 8;
+            uint32_t dstShapeB_[2] = {rowsBPad, nvActual};
+            uint32_t srcShapeB_[2] = {rowsBPad, 1};
+            AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart + 64], dstShapeB_, srcShapeB_, shareBuffer_);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+            AscendC::Mul(calcUbTensor, wsUbTensor[rowsA*nvActual], calcUbTensor, rowsB * nvActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Cast(vNewDecayUbTensor[rowsA*nvActual], calcUbTensor, AscendC::RoundMode::CAST_RINT, rowsB * nvActual);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
         
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
-        AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
+        if (mActualThisSubBlock > 0) {
+            AscendC::DataCopy(vnewdecayOutputThisSubBlock, vNewDecayUbTensor, mActualThisSubBlock * nvActual);
+        }
         Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vec1Done);
 
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1 + pingpongFlag);
@@ -242,7 +271,9 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);
-        AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
+        if (mActualThisSubBlock > 0) {
+            AscendC::DataCopy(vnewOutputThisSubBlock, vNewOutputUbTensor, mActualThisSubBlock * nvActual);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID1 + pingpongFlag);
 
     }

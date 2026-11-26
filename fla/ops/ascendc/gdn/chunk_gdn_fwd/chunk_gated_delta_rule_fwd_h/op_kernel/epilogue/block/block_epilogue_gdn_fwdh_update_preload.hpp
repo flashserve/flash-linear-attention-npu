@@ -95,7 +95,9 @@ public:
         bool isInitialState,
         bool isFinalState,
         bool storeFinalState,
-        bool isPing
+        bool isPing,
+        AscendC::GlobalTensor<FinalStateElement> initialState,
+        bool useInitialState
     )
     {
         uint32_t mActual = kHeadDim;
@@ -121,19 +123,24 @@ public:
         AscendC::LocalTensor<HElementOutput> hUbTensor = isPing ? hUbTensor_ping : hUbTensor_pong;
         AscendC::LocalTensor<float> glastUbTensor = isPing ? glastUbTensor_ping : glastUbTensor_pong;
 
-        if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
-        } else {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
-        }
-        AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+        const bool useFp32Recurrence = storeFinalState
+            && std::is_same<FinalStateElement, float>::value
+            && (!isInitialState || useInitialState);
+        if (!useFp32Recurrence) {
+            if (storeFinalState && isInitialState && std::is_same<FinalStateElement, float>::value) {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+            } else {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+            }
+            AscendC::DataCopy(hUbTensor, hInputThisSubBlock, mActualThisSubBlock * nActual);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
 
-        AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
-        AscendC::PipeBarrier<PIPE_V>();
-        if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+            AscendC::Cast(calcUbTensor, hUbTensor, AscendC::RoundMode::CAST_NONE, mActualThisSubBlock * nActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            if (storeFinalState && isFinalState && std::is_same<FinalStateElement, float>::value) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+            }
         }
         
         GElementInput gLastVal = gInputThisSubBlock.GetValue(chunkSize-1);
@@ -155,10 +162,42 @@ public:
         float muls = glastUbTensor.GetValue(0);
         AscendC::SetFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
         AscendC::WaitFlag<AscendC::HardEvent::S_V>(EVENT_ID3 + pingpongFlag);
-        AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
-        AscendC::PipeBarrier<PIPE_V>();
+        if (!useFp32Recurrence) {
+            AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
 
         Arch::CrossCoreWaitFlag(cube2Done);
+
+        if constexpr (std::is_same<FinalStateElement, float>::value) {
+          if (useFp32Recurrence) {
+            // 母本 A 同构：状态不走 bf16 h 工作区往返，直接装载 fp32 初态/上块落槽，消除每块
+            // ~|R|*2^-9 的量化噪声。装载放在 cube2Done 门后：vec1Done->C2->cube2Done 链保证
+            // vnew 对 calc 的全部 V 读已完成，MTE2 写 calc 安全；等待沿用原 ID2 配对
+            // （首块 V_MTE2 预置 / 后续块 MTE3_MTE2，由上块 h 快照写释放，MTE3 顺序连带保证
+            // fp32 落槽写已完成），事件计数与原版完全一致。
+            if (isInitialState) {
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+                AscendC::DataCopy(calcUbTensor, initialState[offsetH],
+                                  mActualThisSubBlock * nActual);
+            } else {
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+                AscendC::DataCopy(calcUbTensor, finalStateThisSubBlock,
+                                  mActualThisSubBlock * nActual);
+            }
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID2 + pingpongFlag);
+            AscendC::Muls(calcUbTensor, calcUbTensor, muls, mActualThisSubBlock * nActual);
+            AscendC::PipeBarrier<PIPE_V>();
+            if (storeFinalState && isFinalState) {
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2 + pingpongFlag);
+            }
+          }
+          // 衰减仅应用一次：useFp32Recurrence 路径在装载后上方 Muls；其余路径（全部
+          // 非 float state、float 无初态首块）已在 cube2Done 前的 !useFp32Recurrence
+          // 块（stock 位置）Muls。此处不得再重复，否则携带态衰减被平方（ACCU 不限制
+          // 口径下 state=主 dtype 全量回归，最终态/中间 h 全错）。
+        }
 
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
         AscendC::DataCopy(hUpdateUbTensor, hUpdateInputThisSubBlock, mActualThisSubBlock * nActual);
@@ -168,11 +207,29 @@ public:
         AscendC::PipeBarrier<PIPE_V>();
 
         if constexpr(std::is_same<FinalStateElement, float>::value) {
-            if (storeFinalState && isFinalState) {
+            if (storeFinalState) {
+                // 母本 A 同构：终块与中间块都把 fp32 状态落槽（finalState 作跨块直传槽），
+                // 中间块再补 bf16 h 快照输出。所有 Set/Wait 方向与计数与原版一致；新增的
+                // MTE3_V(ID0) 自配对把 ws 区释放（V_MTE2 ID0）推迟到 fp32 落槽读完成之后，
+                // 对应母本 A 的 updateReadyEvent 双方向释放语义。
+                if (!isFinalState) {
+                    AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
+                    AscendC::PipeBarrier<PIPE_V>();
+                }
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0 + pingpongFlag);
                 AscendC::DataCopy(finalStateThisSubBlock, hUpdateUbTensor, mActualThisSubBlock * nActual);
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                if (!isFinalState) {
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0 + pingpongFlag);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID0 + pingpongFlag);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID2 + pingpongFlag);
+                    AscendC::DataCopy(hOutputThisSubBlock, hUbTensor, mActualThisSubBlock * nActual);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID2 + pingpongFlag);
+                } else {
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0 + pingpongFlag);
+                }
             } else {
                 AscendC::Cast(hUbTensor, hUpdateUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nActual);
                 AscendC::PipeBarrier<PIPE_V>();
