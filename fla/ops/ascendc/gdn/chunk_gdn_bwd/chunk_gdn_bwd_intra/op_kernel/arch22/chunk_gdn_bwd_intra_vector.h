@@ -12,6 +12,7 @@
 namespace GDN::Arch22 {
 template <typename MainT, typename GateT, typename BetaT, uint32_t G>
 class ChunkGdnBwdIntraVector {
+    using ScoreT = ScoreType<MainT>;
 public:
     __aicore__ inline void Init(GM_ADDR k, GM_ADDR v, GM_ADDR g, GM_ADDR beta,
         GM_ADDR workspace, GM_ADDR cu, GM_ADDR indices,
@@ -23,6 +24,7 @@ public:
         g_.SetGlobalBuffer(reinterpret_cast<__gm__ GateT *>(g));
         beta_.SetGlobalBuffer(reinterpret_cast<__gm__ BetaT *>(beta));
         ws_.SetGlobalBuffer(reinterpret_cast<__gm__ MainT *>(workspace));
+        score_.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(workspace));
         mapper_.Init(cu, indices, tiling);
         pipe_.InitBuffer(buffer_, UB_BYTES);
     }
@@ -52,15 +54,15 @@ public:
                 Convert(gate, rawG, CHUNK_TOKENS);
                 Convert(beta, rawBeta, CHUNK_TOKENS);
                 AscendC::PipeBarrier<PIPE_V>();
-                ScaleInputs(m, hv, part, Record(core, t_->cg, r), gate, beta);
+                ScaleInputs(m, hv, part, Record<ScoreT>(core, t_->cg, r), gate, beta);
                 const int64_t leader = ChunkGdnBwdIntraLeaderR<G>(
                     m.hvBegin, r, t_->groupSize);
                 if (!scoreSeen[leader]) {
                     Wait(static_cast<uint16_t>(leader));
                     scoreSeen[leader] = true;
                 }
-                GateScore(m, part, Record(core, t_->cg, leader),
-                    Record(core, t_->cg, r), gate);
+                GateScore(m, part, ScoreRecord<ScoreT>(core, t_->cg, leader),
+                    Record<ScoreT>(core, t_->cg, r), gate);
                 Notify<PIPE_MTE3>(INPUTS_READY + slot);
             }
             const int64_t firstPending = m.validHeads > INPUT_SLOTS ?
@@ -205,8 +207,9 @@ private:
     __aicore__ inline void GateScore(const ChunkGdnBwdIntraWorkMeta &m,
         int64_t part, uint64_t source, uint64_t rec, AscendC::LocalTensor<float> gate)
     {
-        auto si = Slice<MainT>(UB_SCORE_RAW_OFFSET);
-        auto sf = Slice<float>(UB_SCORE_FLOAT_OFFSET);
+        auto si = Slice<ScoreT>(UB_SCORE_RAW_OFFSET);
+        // The row coefficients are dead here; BF16 reuses their scratch for FP32 Score.
+        auto sf = Slice<float>(std::is_same_v<ScoreT, float> ? UB_SCORE_RAW_OFFSET : UB_SCORE_FLOAT_OFFSET);
         auto delta = Slice<float>(UB_DELTA_OFFSET);
         auto result = Slice<MainT>(UB_SCORE_OUT_OFFSET);
         const uint32_t begin = part * VECTOR_PART_TOKENS;
@@ -218,9 +221,11 @@ private:
         // Only effective Score rows are read; the Cube need not clear its padded GM rows.
         if (validRows != 0) {
             Fence<AscendC::HardEvent::V_MTE2>();
-            AscendC::DataCopy(si, ws_[source + S_OFFSET + begin * CHUNK_TOKENS], validRows * CHUNK_TOKENS);
+            AscendC::DataCopy(si, score_[source + begin * CHUNK_TOKENS], validRows * CHUNK_TOKENS);
             Fence<AscendC::HardEvent::MTE2_V>();
-            AscendC::Cast(sf, si, AscendC::RoundMode::CAST_NONE, validRows * CHUNK_TOKENS);
+            if constexpr (!std::is_same_v<ScoreT, float>) {
+                AscendC::Cast(sf, si, AscendC::RoundMode::CAST_NONE, validRows * CHUNK_TOKENS);
+            }
             Fence<AscendC::HardEvent::V_S>();
             auto rowGate = Slice<float>(UB_ROW_GATE_OFFSET);
             AscendC::Brcb(rowGate, gate[begin], static_cast<uint8_t>((validRows + 7) / 8), {1, 8});
@@ -270,6 +275,7 @@ private:
     AscendC::TPipe pipe_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> buffer_;
     AscendC::GlobalTensor<MainT> k_, v_, ws_;
+    AscendC::GlobalTensor<ScoreT> score_;
     AscendC::GlobalTensor<GateT> g_;
     AscendC::GlobalTensor<BetaT> beta_;
 };

@@ -118,7 +118,7 @@ __aicore__ inline GM_ADDR PrepareWyReprBwdGetSlotBase(GM_ADDR workspace, uint32_
     uint64_t workspaceCoreSize = tiling.workspaceCoreSize;
     if (workspaceCoreSize == 0) {
         workspaceCoreSize =
-            tiling.workspaceBufferCount * tiling.workspaceSlotSize + tiling.workspaceBufferCount * tiling.mBytes;
+            tiling.workspaceBufferCount * tiling.workspaceSlotSize + tiling.workspaceBufferCount * 2 * tiling.mBytes;
     }
     return workspace + coreIdx * workspaceCoreSize + curSlot * tiling.workspaceSlotSize;
 }
@@ -129,9 +129,9 @@ __aicore__ inline GM_ADDR PrepareWyReprBwdGetKktBase(GM_ADDR workspace, uint32_t
     uint64_t workspaceCoreSize = tiling.workspaceCoreSize;
     if (workspaceCoreSize == 0) {
         workspaceCoreSize =
-            tiling.workspaceBufferCount * tiling.workspaceSlotSize + tiling.workspaceBufferCount * tiling.mBytes;
+            tiling.workspaceBufferCount * tiling.workspaceSlotSize + tiling.workspaceBufferCount * 2 * tiling.mBytes;
     }
-    return workspace + coreIdx * workspaceCoreSize + tiling.kktOffset + kktSlot * tiling.mBytes;
+    return workspace + coreIdx * workspaceCoreSize + tiling.kktOffset + kktSlot * 2 * tiling.mBytes;
 }
 
 __aicore__ inline uint64_t PrepareWyReprBwdGetGroupSize(const GDN::PrepareWyReprBwdTilingData &tiling)

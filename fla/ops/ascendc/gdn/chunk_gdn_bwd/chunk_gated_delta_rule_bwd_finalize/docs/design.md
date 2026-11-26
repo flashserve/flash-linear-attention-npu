@@ -1473,6 +1473,10 @@ GateTail 由一个 AIV 独占 `(chunk,head group)`：BT64 每组最多 128 个 h
 | A2 S3-Vector | `dg=reverse_cumsum_chunk(dg1+dg2)`；可选 `dbeta=dbeta32*sigmoid(beta_raw)*(1-sigmoid(beta_raw))` | FP32 内部计算，最终才转 g/beta dtype；dg 不另乘 ln(2) |
 | A2 QK-Vector | `dkRaw=BF16(FP32(dk1)+FP32(dk2))`；可选 `rstd*(d-y*sum(y*d))` | 紧凑 DK 在 WY 每批内执行，全 T fallback 在 S4 执行；dq/dk 最终 CAST_RINT |
 
+DQ 的 mm3、ds0、dqState、dqIntra、dkState、dkIntra 以 FP32 交给 Vector。WY 的 dkbg、
+dvb、dA 两路乘积、dA6T、dKb、dK、KKT 同样以 FP32 交接。这些结果参与门控、缩放或
+归约后，再在下一次 Cube 输入或阶段输出需要时转 BF16。
+
 S3 合并两支 FP32 DG，用 Gather 将 `[head,row]` 转为 `[row,head]`。各 head 独立令 `s[m]=+0`，
 按 `r=m-1,...,0` 执行 `s[r]=FP32(s[r+1]+x[r])`；一条 Add 同时推进 head group 的各 lane，
 首步读取独立正零 seed，逆 Gather 恢复输出布局。单 head 加法顺序不变；无效 head/尾行先置零。
@@ -1516,10 +1520,12 @@ g32、beta32 和 dg2 各自保留独立区域。
 inputPing/inputPong 区域，按 32 行 tile 预取两路 rstd，合并 Q/K 的 FP32 归约并保持原
 BF16 CAST_RINT 边界。全 T fallback 继续在全核 WY 退出后执行独立 QK tail。
 
-令 `H=DqWorkspaceHeads(t,C,P)`、`BK=2*C*H*BT*K`、`BB=2*C*H*BT*BT`，
-`DQ_bytes=4*BK+2*BB+align512(4*C*HV)`：四个 BTxK、两个 BTxBT 矩阵及 FP32 dg_last。
-令 `k=2*BT*K`、`v=2*BT*V`、`m=2*BT*BT`，`WY_bytes=C*4*(5*k+2*v+7*m)`；
-每核 4 个 slot，每 slot 为 `5*k+2*v+6*m`，另有四份 KKT 共 `4*m`。持久结果与临时区不重叠。
+令 `H=DqWorkspaceHeads(t,C,P)`。DQ 每个 core/head 有四个 FP32 BTxK 矩阵、两个 FP32 BTxBT 矩阵和独立的 BF16 ds。
+`DQ_bytes=C*H*(16*BT*K+10*BT*BT)+align512(4*C*HV)`。分开存储 ds0 与 ds，Cube 和 Vector
+以各自 dtype 的紧凑步长访问，同一缓冲区内相邻 head 的数据不会交叠。
+令 `k=2*BT*K`、`v=2*BT*V`、`m=2*BT*BT`，`WY_bytes=C*4*(8*k+3*v+11*m)`。
+每核 4 个 slot，每 slot 为 `8*k+3*v+9*m`，另有四份 FP32 KKT 共 `8*m`。
+DQ 与 WY 依次取用同一阶段临时区，Host 按两路最大值分配。
 V128 取 `H=HV/P`，各 core 的 scratch 按分区内 head 索引。V256 仅在 compact DQ 主导共享
 临时区容量时取 `HV/P`，其余取 HV。评分在 U32 资格内以 U64 计算 `N*P` 并检查 INT64 上界，
 由 `P|HV` 得 `score<=N*HV<=UINT32_MAX²`。
@@ -1632,8 +1638,9 @@ Scalar→Vector 由 SDK 内部 S_V 闭合；输入→merge 使用 PIPE_ALL，mer
 
 ### 6.5 数值与验证边界
 
-g/beta 在 S0 转 FP32，exp2 仅将输入乘 ln(2)，dg 不另乘 ln(2)。矩阵路径保持 BF16 乘数、Cube 累加及
-BF16 输出；norm 的 dot/减法使用 FP32，dq/dk 最终 CAST_RINT，dbeta/dg 仅在最终输出处转换存储 dtype。
+g/beta 在 S0 转 FP32，exp2 仅将输入乘 ln(2)，dg 不另乘 ln(2)。Cube 以 BF16 操作数做 FP32 累加，
+上述 14 项结果以 FP32 传给 Vector。norm 的 dot/减法使用 FP32，dq/dk 最终 CAST_RINT，
+dbeta/dg 仅在最终输出处转换存储 dtype。
 高风险 exp 前按 m 排除无效行；Gather 只读已初始化区间。scan 保持从正零开始的逐步 FP32 加法，
 subnormal、NaN/Inf 和 sigmoid 饱和端点单独验证，不由有限值精度结果推定。
 

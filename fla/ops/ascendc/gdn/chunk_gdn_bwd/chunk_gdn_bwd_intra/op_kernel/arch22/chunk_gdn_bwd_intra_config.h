@@ -20,7 +20,17 @@ constexpr uint32_t K_OFFSET = 0;
 constexpr uint32_t V_OFFSET = K_OFFSET + KV_ELEMENTS;
 constexpr uint32_t D_OFFSET = V_OFFSET + KV_ELEMENTS;
 constexpr uint32_t S_OFFSET = D_OFFSET + SCORE_ELEMENTS;
-constexpr uint32_t RECORD_ELEMENTS = S_OFFSET + SCORE_ELEMENTS;
+// K/V/D keep the 16-bit main dtype; only BF16's unscaled Score uses FP32.
+template <uint32_t SCORE_BYTES>
+struct WorkspaceLayout {
+    static_assert(SCORE_BYTES == MAIN_BYTES || SCORE_BYTES == FLOAT_BYTES, "Unsupported Score dtype");
+    static constexpr uint32_t SCORE_OFFSET = S_OFFSET * MAIN_BYTES / SCORE_BYTES;
+    static constexpr uint32_t RECORD_BYTES = S_OFFSET * MAIN_BYTES + SCORE_ELEMENTS * SCORE_BYTES;
+    static constexpr uint32_t RECORD_MAIN_ELEMENTS = RECORD_BYTES / MAIN_BYTES;
+    static constexpr uint32_t RECORD_SCORE_ELEMENTS = RECORD_BYTES / SCORE_BYTES;
+    static_assert(SCORE_OFFSET * SCORE_BYTES % DMA_BLOCK_BYTES == 0 &&
+        RECORD_BYTES % DMA_BLOCK_BYTES == 0, "Workspace Score alignment");
+};
 constexpr uint32_t L1_SCORE_HEAD_BYTES = KV_ELEMENTS * MAIN_BYTES;
 constexpr uint32_t MAX_HEADS_PER_WORK = 4;
 constexpr uint32_t L1_SCORE_BYTES = 2 * MAX_HEADS_PER_WORK * L1_SCORE_HEAD_BYTES;
@@ -61,7 +71,9 @@ constexpr uint32_t UB_ROW_GATE_OFFSET = UB_SCORE_OUT_OFFSET + PART_SCORE_ELEMENT
 // Brcb expands each row gate into one 32B block, consumed once per score row.
 constexpr uint32_t ROW_GATE_BYTES = VECTOR_PART_TOKENS * DMA_BLOCK_BYTES;
 constexpr uint32_t UB_BYTES = UB_ROW_GATE_OFFSET + ROW_GATE_BYTES;
-static_assert(RECORD_ELEMENTS == 24576 && UB_BYTES == 97 * 1024,
+static_assert(WorkspaceLayout<MAIN_BYTES>::RECORD_MAIN_ELEMENTS == 24576 &&
+    WorkspaceLayout<MAIN_BYTES>::RECORD_BYTES == 49152 &&
+    WorkspaceLayout<FLOAT_BYTES>::RECORD_BYTES == 57344 && UB_BYTES == 97 * 1024,
     "K/V-GateScore overlap layout compatibility");
 static_assert(UB_BETA_ROWS_OFFSET == 8192, "Phase-overlapped scratch compatibility");
 static_assert(K_OFFSET == 0 && V_OFFSET == 8192 && D_OFFSET == 16384 && S_OFFSET == 20480,
@@ -86,5 +98,8 @@ static_assert(UB_KV_RAW_END <= UB_DELTA_OFFSET &&
     UB_ROW_GATE_OFFSET + ROW_GATE_BYTES == UB_BYTES, "GateScore scratch bounds");
 static_assert(UB_K_RAW_OFFSET % DMA_BLOCK_BYTES == 0 && UB_V_RAW_OFFSET % DMA_BLOCK_BYTES == 0,
     "Raw staging alignment");
+static_assert(UB_SCORE_RAW_OFFSET + PART_SCORE_ELEMENTS * FLOAT_BYTES <= UB_K_OUT_OFFSET &&
+    UB_SCORE_FLOAT_OFFSET + PART_SCORE_ELEMENTS * FLOAT_BYTES <= UB_K_OUT_OFFSET,
+    "FP32 Score scratch overlaps K/V writeback");
 }
 #endif

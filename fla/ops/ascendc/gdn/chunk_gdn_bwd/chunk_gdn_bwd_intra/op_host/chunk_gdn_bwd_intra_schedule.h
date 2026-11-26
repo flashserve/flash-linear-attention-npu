@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 
+#include "../op_kernel/arch22/chunk_gdn_bwd_intra_config.h"
 #include "../op_kernel/arch92/chunk_gdn_bwd_intra_common.h"
 
 namespace optiling {
@@ -46,7 +47,7 @@ inline bool IntraCheckedMultiply(uint64_t a, uint64_t b, uint64_t &result)
 
 inline bool BuildIntraSchedule(int64_t chunks, int64_t hv, int64_t hk,
                               uint32_t cores, bool arch22, bool arch92, size_t systemBytes,
-                              IntraSchedule &result)
+                              IntraSchedule &result, bool fp32Score)
 {
     if (chunks <= 0 || hv <= 0 || hk <= 0 || cores == 0 || hv % hk != 0 ||
         hv / hk < 1 || hv / hk > IntraMaxGvaRatio(arch22, arch92)) {
@@ -63,7 +64,10 @@ inline bool BuildIntraSchedule(int64_t chunks, int64_t hv, int64_t hk,
     candidate.workCount = static_cast<int64_t>(work);
     candidate.blockDim = static_cast<uint32_t>(std::min<uint64_t>(work, cores));
     uint64_t userBytes = 0;
-    if (arch22 && !IntraCheckedMultiply(candidate.blockDim, candidate.cg * 49152ULL, userBytes)) {
+    const uint32_t recordBytes = fp32Score ? GDN::Arch22::WorkspaceLayout<sizeof(float)>::RECORD_BYTES :
+        GDN::Arch22::WorkspaceLayout<sizeof(uint16_t)>::RECORD_BYTES;
+    if (arch22 && !IntraCheckedMultiply(candidate.blockDim,
+        static_cast<uint64_t>(candidate.cg) * recordBytes, userBytes)) {
         return false;
     }
     if (userBytes > std::numeric_limits<size_t>::max() - systemBytes) {

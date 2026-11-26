@@ -77,23 +77,23 @@ private:
     using LayoutTagDA6T = layout::RowMajor;
 
     using TileCopyDkbg =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDw, kType, LayoutTagDkbg>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDw, float, LayoutTagDkbg>;
     using TileCopyDvb =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDu, kType, LayoutTagDvb>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagAT, kType, LayoutTagDu, float, LayoutTagDvb>;
     using TileCopyKkt =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagK, kType, LayoutTagKT, kType, LayoutTagKkt>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagK, kType, LayoutTagKT, float, LayoutTagKkt>;
     using TileCopyDA1 =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDw, kType, LayoutTagKbgT, kType, LayoutTagDA1>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDw, kType, LayoutTagKbgT, float, LayoutTagDA1>;
     using TileCopyDA2 =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDu, kType, LayoutTagVbT, kType, LayoutTagDA2>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDu, kType, LayoutTagVbT, float, LayoutTagDA2>;
     using TileCopyDA5 =
         Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDA4, kType, LayoutTagAT, kType, LayoutTagDA5>;
     using TileCopyDA6T =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDA5T, kType, LayoutTagA, kType, LayoutTagDA6T>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDA5T, kType, LayoutTagA, float, LayoutTagDA6T>;
     using TileCopyDkb =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDT, kType, LayoutTagK, kType, LayoutTagDkb>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagDT, kType, LayoutTagK, float, LayoutTagDkb>;
     using TileCopyDK =
-        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagD, kType, LayoutTagKbeta, kType, LayoutTagDK>;
+        Gemm::Tile::PackedTileCopyTla<ArchTag, kType, LayoutTagD, kType, LayoutTagKbeta, float, LayoutTagDK>;
 
     using ElementAccumulator = typename TileCopyDkbg::ElementAccumulator;
     using CopyL1ToL0A_Dkbg = typename TileCopyDkbg::CopyL1ToL0A;
@@ -432,20 +432,20 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
         IS_BSND ? static_cast<uint64_t>(tiling_.HK) * K_DIM : K_DIM);
     LayoutTagKbgT tagKbgT = LayoutTagKbgT::MakeLayout<kType>(K_DIM, CHUNK_SIZE);
     LayoutTagVbT tagVbT = LayoutTagVbT::MakeLayout<kType>(V_DIM, CHUNK_SIZE);
-    LayoutTagDkbg tagDkbg = LayoutTagDkbg::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
-    LayoutTagDvb tagDvb = LayoutTagDvb::MakeLayout<kType>(CHUNK_SIZE, V_DIM);
-    LayoutTagKkt tagKkt = LayoutTagKkt::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
+    LayoutTagDkbg tagDkbg = LayoutTagDkbg::MakeLayout<float>(CHUNK_SIZE, K_DIM);
+    LayoutTagDvb tagDvb = LayoutTagDvb::MakeLayout<float>(CHUNK_SIZE, V_DIM);
+    LayoutTagKkt tagKkt = LayoutTagKkt::MakeLayout<float>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagD tagD = LayoutTagD::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDT tagDT = LayoutTagDT::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagKbeta tagKbeta = LayoutTagKbeta::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
-    LayoutTagDkb tagDkb = LayoutTagDkb::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
-    LayoutTagDK tagDK = LayoutTagDK::MakeLayout<kType>(CHUNK_SIZE, K_DIM);
-    LayoutTagDA1 tagDA1 = LayoutTagDA1::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
-    LayoutTagDA2 tagDA2 = LayoutTagDA2::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
+    LayoutTagDkb tagDkb = LayoutTagDkb::MakeLayout<float>(CHUNK_SIZE, K_DIM);
+    LayoutTagDK tagDK = LayoutTagDK::MakeLayout<float>(CHUNK_SIZE, K_DIM);
+    LayoutTagDA1 tagDA1 = LayoutTagDA1::MakeLayout<float>(CHUNK_SIZE, CHUNK_SIZE);
+    LayoutTagDA2 tagDA2 = LayoutTagDA2::MakeLayout<float>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA4 tagDA4 = LayoutTagDA4::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA5 tagDA5 = LayoutTagDA5::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
     LayoutTagDA5T tagDA5T = LayoutTagDA5T::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
-    LayoutTagDA6T tagDA6T = LayoutTagDA6T::MakeLayout<kType>(CHUNK_SIZE, CHUNK_SIZE);
+    LayoutTagDA6T tagDA6T = LayoutTagDA6T::MakeLayout<float>(CHUNK_SIZE, CHUNK_SIZE);
 
     auto layoutAT = MakeLayoutFromTag(tagAT);
     auto layoutDw = MakeLayoutFromTag(tagDw);
@@ -530,18 +530,18 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     AscendC::GlobalTensor<kType> gmK;
     AscendC::GlobalTensor<kType> gmKbg;
     AscendC::GlobalTensor<kType> gmVb;
-    AscendC::GlobalTensor<kType> gmDkbg;
-    AscendC::GlobalTensor<kType> gmDvb;
-    AscendC::GlobalTensor<kType> gmKkt;
-    AscendC::GlobalTensor<kType> gmDA1;
-    AscendC::GlobalTensor<kType> gmDA2;
+    AscendC::GlobalTensor<float> gmDkbg;
+    AscendC::GlobalTensor<float> gmDvb;
+    AscendC::GlobalTensor<float> gmKkt;
+    AscendC::GlobalTensor<float> gmDA1;
+    AscendC::GlobalTensor<float> gmDA2;
     AscendC::GlobalTensor<kType> gmDA4;
     AscendC::GlobalTensor<kType> gmDA5;
-    AscendC::GlobalTensor<kType> gmDA6T;
+    AscendC::GlobalTensor<float> gmDA6T;
     AscendC::GlobalTensor<kType> gmD;
     AscendC::GlobalTensor<kType> gmKbeta;
-    AscendC::GlobalTensor<kType> gmDkb;
-    AscendC::GlobalTensor<kType> gmDK;
+    AscendC::GlobalTensor<float> gmDkb;
+    AscendC::GlobalTensor<float> gmDK;
 
     uint32_t coreIdx = AscendC::GetBlockIdx();
     uint32_t coreNum = AscendC::GetBlockNum();
@@ -553,7 +553,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
     uint64_t workspaceCoreSize = tiling_.workspaceCoreSize;
     if (workspaceCoreSize == 0) {
         workspaceCoreSize = tiling_.workspaceBufferCount * tiling_.workspaceSlotSize +
-                            tiling_.workspaceBufferCount * tiling_.mBytes;
+                            tiling_.workspaceBufferCount * 2 * tiling_.mBytes;
     }
     GM_ADDR coreSlotBase = workspace_ + static_cast<uint64_t>(coreIdx) * workspaceCoreSize;
     GM_ADDR coreKktBase = coreSlotBase + tiling_.kktOffset;
@@ -655,7 +655,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                 uint32_t kktSlot = cachedKktSlot_;
                 kResidentSlotForSlot_[curSlot_] = cachedKResidentSlot_;
                 kktSlotForSlot_[curSlot_] = kktSlot;
-                GM_ADDR kktBase = coreKktBase + kktSlot * tiling_.mBytes;
+                GM_ADDR kktBase = coreKktBase + kktSlot * 2 * tiling_.mBytes;
 
                 gmAT.SetGlobalBuffer((__gm__ kType *)A_ + valueBase * CHUNK_SIZE);
                 gmDw.SetGlobalBuffer((__gm__ kType *)dw_ + valueBase * K_DIM);
@@ -668,9 +668,9 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
                     keyOffset = ((batch * tiling_.T + token) * tiling_.HK + hk) * K_DIM;
                 }
                 gmK.SetGlobalBuffer((__gm__ kType *)k_ + keyOffset);
-                gmDkbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbgOffset));
-                gmDvb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dvbOffset));
-                gmKkt.SetGlobalBuffer((__gm__ kType *)kktBase);
+                gmDkbg.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.dkbgOffset));
+                gmDvb.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.dvbOffset));
+                gmKkt.SetGlobalBuffer((__gm__ float *)kktBase);
 
                 auto tensorAT = tla::MakeTensor(gmAT, layoutAT, Arch::PositionGM{});
                 auto tensorDw = tla::MakeTensor(gmDw, layoutDw, Arch::PositionGM{});
@@ -906,8 +906,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 
                 gmKbg.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbgOffset));
                 gmVb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.vbOffset));
-                gmDA1.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da1Offset));
-                gmDA2.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da2Offset));
+                gmDA1.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.da1Offset));
+                gmDA2.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.da2Offset));
 
                 auto tensorKbgT = tla::MakeTensor(gmKbg, layoutKbgT, Arch::PositionGM{});
                 auto tensorVbT = tla::MakeTensor(gmVb, layoutVbT, Arch::PositionGM{});
@@ -1092,7 +1092,7 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 
                 gmDA4.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da4Offset));
                 gmDA5.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da5Offset));
-                gmDA6T.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
+                gmDA6T.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.da6Offset));
 
                 auto tensorDA4 = tla::MakeTensor(gmDA4, layoutDA4, Arch::PositionGM{});
                 auto tensorDA5 = tla::MakeTensor(gmDA5, layoutDA5, Arch::PositionGM{});
@@ -1243,8 +1243,8 @@ __aicore__ inline void PrepareWyReprBwdCubeProcess<kType, gType, V_DIM, CHUNK_SI
 
                 gmD.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
                 gmKbeta.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.kbetaOffset));
-                gmDkb.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbOffset));
-                gmDK.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkOffset));
+                gmDkb.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.dkbOffset));
+                gmDK.SetGlobalBuffer((__gm__ float *)(slotBase + tiling_.dkOffset));
 
                 auto tensorD = tla::MakeTensor(gmD, layoutD, Arch::PositionGM{});
                 auto tensorDT = tla::MakeTensor(gmD, layoutDT, Arch::PositionGM{});

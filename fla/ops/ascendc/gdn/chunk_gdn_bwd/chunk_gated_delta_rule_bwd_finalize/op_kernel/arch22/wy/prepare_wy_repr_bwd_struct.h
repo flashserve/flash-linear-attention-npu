@@ -116,6 +116,7 @@ struct PrepareWyReprBwdTilingData {
     int64_t workspaceSlotSize;
     int64_t workspaceCoreSize;
 
+    // k/v/mBytes 仍为 BF16 tile 字节数；FP32 Cube 结果区和 KKT 槽使用两倍容量。
     int64_t kBytes;
     int64_t vBytes;
     int64_t mBytes;

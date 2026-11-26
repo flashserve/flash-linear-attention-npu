@@ -205,6 +205,9 @@ private:
     __aicore__ inline uint32_t CopyInRows(AscendC::GlobalTensor<copyType> &inputTensor,
                                           AscendC::LocalTensor<copyType> dstTensor, uint64_t inputOffset,
                                           uint32_t elements);
+    __aicore__ inline void CopyInFp32Rows(AscendC::GlobalTensor<float32_t> &inputTensor,
+                                          AscendC::LocalTensor<float32_t> dstTensor, uint64_t inputOffset,
+                                          uint32_t elements);
     __aicore__ inline uint32_t CopyPublicRowsIn(AscendC::GlobalTensor<kType> &inputTensor,
                                                 AscendC::LocalTensor<kType> dstTensor, uint64_t base,
                                                 uint64_t head, uint64_t heads, uint64_t dim, uint32_t rows);
@@ -325,16 +328,16 @@ private:
     AscendC::GlobalTensor<kType> gmKbg_;
     AscendC::GlobalTensor<kType> gmVb_;
     AscendC::GlobalTensor<kType> gmKbeta_;
-    AscendC::GlobalTensor<kType> gmDkbg_;
-    AscendC::GlobalTensor<kType> gmDvb_;
-    AscendC::GlobalTensor<kType> gmKKT_;
-    AscendC::GlobalTensor<kType> gmDA1_;
-    AscendC::GlobalTensor<kType> gmDA2_;
+    AscendC::GlobalTensor<float32_t> gmDkbg_;
+    AscendC::GlobalTensor<float32_t> gmDvb_;
+    AscendC::GlobalTensor<float32_t> gmKKT_;
+    AscendC::GlobalTensor<float32_t> gmDA1_;
+    AscendC::GlobalTensor<float32_t> gmDA2_;
     AscendC::GlobalTensor<kType> gmDA4_;
-    AscendC::GlobalTensor<kType> gmDA6T_;
+    AscendC::GlobalTensor<float32_t> gmDA6T_;
     AscendC::GlobalTensor<kType> gmD_;
-    AscendC::GlobalTensor<kType> gmDkb_;
-    AscendC::GlobalTensor<kType> gmDK_;
+    AscendC::GlobalTensor<float32_t> gmDkb_;
+    AscendC::GlobalTensor<float32_t> gmDK_;
 
     event_t mte2ToVEvent_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
     event_t vToMte2Event_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
@@ -342,6 +345,8 @@ private:
     event_t betaGVToMte2Event_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
     event_t vToMte3Event_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
     event_t mte3ToVEvent_[PREPARE_WY_REPR_BWD_UB_PING_PONG_COUNT]{};
+    event_t fp32Mte2ToVEvent_{};
+    event_t fp32VToMte2Event_{};
     uint32_t subBlockNum_ = 1;
     uint32_t subBlockIdx_ = 0;
     uint64_t keyBase_ = 0;
@@ -504,6 +509,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(betaGVToMte2Event_[eventIdx_]);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[eventIdx_]);
     }
+    fp32Mte2ToVEvent_ = static_cast<event_t>(pipe_->AllocEventID<AscendC::HardEvent::MTE2_V>());
+    fp32VToMte2Event_ = static_cast<event_t>(pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>());
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
@@ -521,6 +528,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE3>(vToMte3Event_[eventIdx_]);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(mte3ToVEvent_[eventIdx_]);
     }
+    pipe_->ReleaseEventID<AscendC::HardEvent::MTE2_V>(fp32Mte2ToVEvent_);
+    pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(fp32VToMte2Event_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
@@ -537,6 +546,22 @@ PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER,
     AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(mte2ToVEvent_[inputIdx_]);
     curInputPingPong_ ^= 1U;
     return inputIdx_;
+}
+
+template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
+          bool ENABLE_MHA_OWNER, bool IS_BSND>
+__aicore__ inline void
+PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::CopyInFp32Rows(
+    AscendC::GlobalTensor<float32_t> &inputTensor, AscendC::LocalTensor<float32_t> dstTensor,
+    uint64_t inputOffset, uint32_t elements)
+{
+    // FP32 tile 直接进入 32KiB calc/cache，避开 16KiB 的 BF16 输入槽。
+    // 搬入前闭合目的区旧 Vector 读写，搬入后闭合 MTE2->Vector RAW；每次调用均消费两个事件。
+    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(fp32VToMte2Event_);
+    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(fp32VToMte2Event_);
+    DataCopy(dstTensor, inputTensor[inputOffset], elements);
+    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(fp32Mte2ToVEvent_);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(fp32Mte2ToVEvent_);
 }
 
 template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
@@ -815,8 +840,8 @@ template <typename kType, typename gType, uint32_t V_DIM, uint32_t CHUNK_SIZE,
 __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_SIZE, ENABLE_MHA_OWNER, IS_BSND>::ProcessDa4Task(
     const PrepareWyReprBwdTaskInfo &task, GM_ADDR slotBase)
 {
-    gmDA1_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da1Offset));
-    gmDA2_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da2Offset));
+    gmDA1_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.da1Offset));
+    gmDA2_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.da2Offset));
     gmDA4_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da4Offset));
 
     subBlockNum_ = AscendC::GetSubBlockNum();
@@ -830,12 +855,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.mVecRow);
 
-        inputIdxA_ = CopyInRows<kType>(gmDA1_, matrixInputBuf_[curInputPingPong_],
-                                              rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
-        inputIdxB_ = CopyInRows<kType>(gmDA2_, matrixInputBuf_[curInputPingPong_],
-                                              rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
-        CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxA_], curRow_ * CHUNK_SIZE, inputIdxA_);
-        CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxB_], curRow_ * CHUNK_SIZE, inputIdxB_);
+        CopyInFp32Rows(gmDA1_, calcFp32ATensor_, rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
+        CopyInFp32Rows(gmDA2_, calcFp32BTensor_, rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
         Add(calcFp32BTensor_, calcFp32ATensor_, calcFp32BTensor_, curRow_ * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
@@ -860,7 +881,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 {
     SetBetaGResidentTensors(curSlot_ & 1U);
 
-    gmDA6T_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.da6Offset));
+    gmDA6T_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.da6Offset));
     gmD_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
     valueBase_ = hv * tiling_.T + task.valueBos;
 
@@ -875,9 +896,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                       task.curChunkSize - rowOffset_ :
                       static_cast<uint32_t>(tiling_.mVecRow);
 
-        inputIdx_ = CopyInRows<kType>(gmDA6T_, matrixInputBuf_[curInputPingPong_],
-                                             rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
-        CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdx_], curRow_ * CHUNK_SIZE, inputIdx_);
+        CopyInFp32Rows(gmDA6T_, calcFp32ATensor_, rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
 
         repeatStride_ = CHUNK_SIZE * sizeof(float32_t) / PRONE_BLOCK_BYTES_32;
@@ -925,14 +944,14 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 {
     SetBetaGResidentTensors(curSlot_ & 1U);
 
-    gmDkbg_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbgOffset));
-    gmDvb_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dvbOffset));
+    gmDkbg_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.dkbgOffset));
+    gmDvb_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.dvbOffset));
     gmD_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dOffset));
-    gmDkb_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkbOffset));
-    gmDK_.SetGlobalBuffer((__gm__ kType *)(slotBase + tiling_.dkOffset));
+    gmDkb_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.dkbOffset));
+    gmDK_.SetGlobalBuffer((__gm__ float32_t *)(slotBase + tiling_.dkOffset));
     GM_ADDR kktBase = PrepareWyReprBwdGetKktBase(workspace_, AscendC::GetBlockIdx() / AscendC::GetSubBlockNum(),
                                                  kktSlotForSlot_[curSlot_], tiling_);
-    gmKKT_.SetGlobalBuffer((__gm__ kType *)kktBase);
+    gmKKT_.SetGlobalBuffer((__gm__ float32_t *)kktBase);
 
     keyBase_ = hk * tiling_.T + task.keyBos;
     const uint64_t dkBase = chunkDkBytes_ != 0 ?
@@ -972,10 +991,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             inputIdxA_ = CopyPublicRowsIn(kTensor_, matrixInputBuf_[curInputPingPong_],
                                           task.keyBos + rowOffset_, hk, tiling_.HK, K_DIM, curRow_);
         }
-        inputIdxB_ =
-            CopyInRows<kType>(gmDkb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxA_], curRow_ * K_DIM, inputIdxA_);
-        CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxB_], curRow_ * K_DIM, inputIdxB_);
+        CopyInFp32Rows(gmDkb_, calcFp32BTensor_, rowOffset_ * K_DIM, curRow_ * K_DIM);
         PipeBarrier<PIPE_V>();
         Mul(calcFp32CTensor_, calcFp32BTensor_, calcFp32ATensor_, curRow_ * K_DIM);
         PipeBarrier<PIPE_V>();
@@ -997,8 +1014,6 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             WholeReduceSum(dbetaAccFp32Tensor_[rowOffset_], brcbFp32Tensor_, wholeReduceKCnt, curRow_, 1, 1, 1);
         }
         PipeBarrier<PIPE_V>();
-        inputIdxC_ =
-            CopyInRows<kType>(gmDkbg_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         Brcb(brcbFp32Tensor_, betaAllFp32Tensor_[rowOffset_], static_cast<uint8_t>(PrepareWyReprBwdCeilDiv(curRow_, 8)),
              {1, 8});
         PipeBarrier<PIPE_V>();
@@ -1008,7 +1023,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         }
         PipeBarrier<PIPE_V>();
 
-        CastInputRows(calcFp32CTensor_, matrixInputBuf_[inputIdxC_], curRow_ * K_DIM, inputIdxC_);
+        CopyInFp32Rows(gmDkbg_, calcFp32CTensor_, rowOffset_ * K_DIM, curRow_ * K_DIM);
         PipeBarrier<PIPE_V>();
         Brcb(brcbFp32Tensor_, gExpAllFp32Tensor_[rowOffset_],
              static_cast<uint8_t>(PrepareWyReprBwdCeilDiv(curRow_, 8)),
@@ -1025,8 +1040,6 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             WaitCubeToVec();
             waitedDK = true;
         }
-        inputIdxC_ =
-            CopyInRows<kType>(gmDK_, matrixInputBuf_[curInputPingPong_], rowOffset_ * K_DIM, curRow_ * K_DIM);
         if constexpr (HEAD_OWNER) {
             if (subBlockIdx_ == 1 && rowOffset_ == 0) {
                 // Wait before issuing the peer carry read, not after CopyIn.
@@ -1057,7 +1070,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         Mul(dgAccFp32Tensor_[rowOffset_], scaleFp32Tensor_, betaAllFp32Tensor_[rowOffset_], curRow_);
         PipeBarrier<PIPE_V>();
 
-        CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxC_], curRow_ * K_DIM, inputIdxC_);
+        CopyInFp32Rows(gmDK_, calcFp32ATensor_, rowOffset_ * K_DIM, curRow_ * K_DIM);
         PipeBarrier<PIPE_V>();
         Brcb(brcbFp32Tensor_, betaAllFp32Tensor_[rowOffset_], static_cast<uint8_t>(PrepareWyReprBwdCeilDiv(curRow_, 8)),
              {1, 8});
@@ -1095,8 +1108,6 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
         curRow_ = rowOffset_ + rowOwned > task.curChunkSize ? task.curChunkSize - rowOffset_ : rowOwned;
         repeatStride_ = V_DIM * sizeof(float32_t) / PRONE_BLOCK_BYTES_32;
 
-        inputIdxA_ =
-            CopyInRows<kType>(gmDvb_, matrixInputBuf_[curInputPingPong_], rowOffset_ * V_DIM, curRow_ * V_DIM);
         if constexpr (!IS_BSND) {
             inputIdxB_ = CopyInRows<kType>(vTensor_, matrixInputBuf_[curInputPingPong_],
                                           (valueBase_ + rowOffset_) * V_DIM, curRow_ * V_DIM);
@@ -1104,7 +1115,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             inputIdxB_ = CopyPublicRowsIn(vTensor_, matrixInputBuf_[curInputPingPong_],
                                           task.valueBos + rowOffset_, hv, tiling_.HV, V_DIM, curRow_);
         }
-        CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curRow_ * V_DIM, inputIdxA_);
+        CopyInFp32Rows(gmDvb_, calcFp32BTensor_, rowOffset_ * V_DIM, curRow_ * V_DIM);
         CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curRow_ * V_DIM, inputIdxB_);
         PipeBarrier<PIPE_V>();
         Mul(calcFp32ATensor_, calcFp32BTensor_, calcFp32ATensor_, curRow_ * V_DIM);
@@ -1145,17 +1156,13 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     }
 
     if constexpr (CHUNK_SIZE == 64) {
-        // Keep the BF16 KKT rounding point: contraction through rounded
-        // DK/Dkb panels changes dg accuracy against the frozen reference.
+        // KKT 保留 Cube 的 FP32 结果；D 的 BF16 Cube 操作数边界沿用原样。
         // Reuse the full 64x64 FP32 D*KKT product from UB for both reductions.
         // calc C is 32 KiB; this panel needs at most 16 KiB.
         const bool useKktFp32Resident = CanUseKktFp32Resident(task, groupSize);
         if (useKktFp32Resident && cachedKktFp32Hk_ != hk) {
             // This UB tag is independent of the GM tag advanced by Stage0.
-            inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_],
-                                          0, CHUNK_SIZE * CHUNK_SIZE);
-            CastInputRows(kktFp32CacheTensor_, matrixInputBuf_[inputIdxB_],
-                          CHUNK_SIZE * CHUNK_SIZE, inputIdxB_);
+            CopyInFp32Rows(gmKKT_, kktFp32CacheTensor_, 0, CHUNK_SIZE * CHUNK_SIZE);
             PipeBarrier<PIPE_V>();
             cachedKktFp32Hk_ = hk;
         }
@@ -1174,10 +1181,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
                 uint32_t srcRows = srcOffset + rowOwned > task.curChunkSize ? task.curChunkSize - srcOffset : rowOwned;
                 inputIdxA_ = CopyInRows<kType>(gmD_, matrixInputBuf_[curInputPingPong_],
                                               srcOffset * CHUNK_SIZE, srcRows * CHUNK_SIZE);
-                inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_],
-                                              srcOffset * CHUNK_SIZE, srcRows * CHUNK_SIZE);
                 CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxA_], srcRows * CHUNK_SIZE, inputIdxA_);
-                CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxB_], srcRows * CHUNK_SIZE, inputIdxB_);
+                CopyInFp32Rows(gmKKT_, calcFp32BTensor_, srcOffset * CHUNK_SIZE, srcRows * CHUNK_SIZE);
                 PipeBarrier<PIPE_V>();
                 Mul(calcFp32CTensor_[srcOffset * CHUNK_SIZE], calcFp32ATensor_, calcFp32BTensor_,
                     srcRows * CHUNK_SIZE);
@@ -1235,10 +1240,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
         inputIdxA_ = CopyInRows<kType>(gmD_, matrixInputBuf_[curInputPingPong_], rowOffset_ * CHUNK_SIZE,
                                               curRow_ * CHUNK_SIZE);
-        inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_], rowOffset_ * CHUNK_SIZE,
-                                              curRow_ * CHUNK_SIZE);
         CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curRow_ * CHUNK_SIZE, inputIdxA_);
-        CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curRow_ * CHUNK_SIZE, inputIdxB_);
+        CopyInFp32Rows(gmKKT_, calcFp32ATensor_, rowOffset_ * CHUNK_SIZE, curRow_ * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
         Mul(calcFp32ATensor_, calcFp32BTensor_, calcFp32ATensor_, curRow_ * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
@@ -1272,9 +1275,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
 
         uint32_t curSrcRow = rowOwned > task.curChunkSize ? task.curChunkSize : rowOwned;
         inputIdxA_ = CopyInRows<kType>(gmD_, matrixInputBuf_[curInputPingPong_], 0, curSrcRow * CHUNK_SIZE);
-        inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_], 0, curSrcRow * CHUNK_SIZE);
         CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curSrcRow * CHUNK_SIZE, inputIdxA_);
-        CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curSrcRow * CHUNK_SIZE, inputIdxB_);
+        CopyInFp32Rows(gmKKT_, calcFp32ATensor_, 0, curSrcRow * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
         Mul(calcFp32ATensor_, calcFp32BTensor_, calcFp32ATensor_, curSrcRow * CHUNK_SIZE);
         PipeBarrier<PIPE_V>();
@@ -1293,10 +1295,8 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
             uint32_t curSrcRow = srcOffset + rowOwned > task.curChunkSize ? task.curChunkSize - srcOffset : rowOwned;
             inputIdxA_ = CopyInRows<kType>(gmD_, matrixInputBuf_[curInputPingPong_], srcOffset * CHUNK_SIZE,
                                                   curSrcRow * CHUNK_SIZE);
-            inputIdxB_ = CopyInRows<kType>(gmKKT_, matrixInputBuf_[curInputPingPong_], srcOffset * CHUNK_SIZE,
-                                                  curSrcRow * CHUNK_SIZE);
             CastInputRows(calcFp32BTensor_, matrixInputBuf_[inputIdxA_], curSrcRow * CHUNK_SIZE, inputIdxA_);
-            CastInputRows(calcFp32ATensor_, matrixInputBuf_[inputIdxB_], curSrcRow * CHUNK_SIZE, inputIdxB_);
+            CopyInFp32Rows(gmKKT_, calcFp32ATensor_, srcOffset * CHUNK_SIZE, curSrcRow * CHUNK_SIZE);
             PipeBarrier<PIPE_V>();
             Mul(calcFp32ATensor_, calcFp32BTensor_, calcFp32ATensor_, curSrcRow * CHUNK_SIZE);
             PipeBarrier<PIPE_V>();
@@ -1384,7 +1384,7 @@ __aicore__ inline void PrepareWyReprBwdVectorProcess<kType, gType, V_DIM, CHUNK_
     uint64_t workspaceCoreSize = tiling_.workspaceCoreSize;
     if (workspaceCoreSize == 0) {
         workspaceCoreSize = tiling_.workspaceBufferCount * tiling_.workspaceSlotSize +
-                            tiling_.workspaceBufferCount * tiling_.mBytes;
+                            tiling_.workspaceBufferCount * 2 * tiling_.mBytes;
     }
     GM_ADDR coreSlotBase = workspace_ + static_cast<uint64_t>(coreIdx) * workspaceCoreSize;
 

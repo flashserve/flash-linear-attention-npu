@@ -17,11 +17,12 @@ namespace GDN::Arch22 {
 template <typename MainT, uint32_t G>
 class ChunkGdnBwdIntraCube {
     using Arch = Catlass::Arch::AtlasA2;
-    template <class BLayout>
+    using ScoreT = ScoreType<MainT>;
+    template <class BLayout, typename ResultT = MainT>
     using Copy = Catlass::Gemm::Tile::PackedTileCopyTla<Arch, MainT,
-        Catlass::layout::RowMajor, MainT, BLayout, MainT, Catlass::layout::RowMajor>;
+        Catlass::layout::RowMajor, MainT, BLayout, ResultT, Catlass::layout::RowMajor>;
     using RowCopy = Copy<Catlass::layout::RowMajor>;
-    using ScoreCopy = Copy<Catlass::layout::ColumnMajor>;
+    using ScoreCopy = Copy<Catlass::layout::ColumnMajor, ScoreT>;
     static_assert(sizeof(MainT) == 2, "Main dtype must be FP16/BF16");
     static_assert(L1_SCORE_BYTES + MAX_HEADS_PER_WORK * L1_HEAD_BYTES <= Arch::L1_SIZE, "L1 budget exceeded");
     static_assert(CHUNK_TOKENS * HEAD_DIM * sizeof(MainT) <= Arch::L0A_SIZE, "L0A budget exceeded");
@@ -41,6 +42,7 @@ public:
         u_.SetGlobalBuffer(reinterpret_cast<__gm__ MainT *>(u));
         dv_.SetGlobalBuffer(reinterpret_cast<__gm__ MainT *>(dv));
         ws_.SetGlobalBuffer(reinterpret_cast<__gm__ MainT *>(workspace));
+        score_.SetGlobalBuffer(reinterpret_cast<__gm__ ScoreT *>(workspace));
         mapper_.Init(cu, indices, tiling);
     }
 
@@ -66,8 +68,8 @@ public:
                     Catlass::layout::RowMajor>(CHUNK_TOKENS, qkStride), Catlass::Arch::PositionGM{});
                 auto qGm = tla::MakeTensor(q_[qk], tla::MakeLayout<MainT,
                     Catlass::layout::ColumnMajor>(qkStride, CHUNK_TOKENS), Catlass::Arch::PositionGM{});
-                auto score = tla::MakeTensor(ws_[Record(core, t_->cg, r) + S_OFFSET],
-                    tla::MakeLayout<MainT, Catlass::layout::RowMajor>(CHUNK_TOKENS, CHUNK_TOKENS),
+                auto score = tla::MakeTensor(score_[ScoreRecord<ScoreT>(core, t_->cg, r)],
+                    tla::MakeLayout<ScoreT, Catlass::layout::RowMajor>(CHUNK_TOKENS, CHUNK_TOKENS),
                     Catlass::Arch::PositionGM{});
                 auto kL1 = LoadA<ScoreCopy>(resource, kGm, r * L1_SCORE_HEAD_BYTES, CHUNK_TOKENS, HEAD_DIM,
                     m.validTokens, HEAD_DIM);
@@ -88,7 +90,7 @@ public:
                     * t_->seqlen + m.tokenStart) * HEAD_DIM;
                 const uint64_t aOffset = ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv)
                     * t_->seqlen + m.tokenStart) * CHUNK_TOKENS;
-                const uint64_t rec = Record(core, t_->cg, r);
+                const uint64_t rec = Record<ScoreT>(core, t_->cg, r);
                 const uint32_t base = L1_SCORE_BYTES + r * L1_HEAD_BYTES;
                 auto aGm = Matrix(a_, aOffset, CHUNK_TOKENS);
                 auto kGm = Matrix(ws_, rec + K_OFFSET, HEAD_DIM);
@@ -271,6 +273,7 @@ private:
     const ChunkGdnBwdIntraTilingData *t_ = nullptr;
     ChunkGdnBwdIntraWorkMapper mapper_;
     AscendC::GlobalTensor<MainT> q_, k_, a_, dO_, w_, u_, dv_, ws_;
+    AscendC::GlobalTensor<ScoreT> score_;
 };
 } // namespace GDN::Arch22
 #endif
