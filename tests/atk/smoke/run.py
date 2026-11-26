@@ -6,9 +6,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parents[2] / "ci"))
+from smoke_cache import ResultCache
+
 REFERENCE_SHA = "72d372032214b8866cd6073431b0d478e7744ba5"
 STANDARD = "cv_fused_double_benchmark"
 
@@ -74,7 +78,40 @@ def verify_upstream_checkout(path):
         raise ValueError("work_tool checkout must include FLA_ATK")
 
 
-def check_report(folder, cases):
+def metrics_passed(row, shapes):
+    details = row["精度详情"]
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except ValueError:
+            details = ast.literal_eval(details)
+    outputs = [
+        entry
+        for group in details.values()
+        if isinstance(group, list)
+        for entry in group
+        if isinstance(entry, dict)
+    ]
+    expected_files = {f"output_{i}.pt" for i in range(len(shapes))}
+    return not (
+        row.get("cpu_cpu_golden_精度通过") is not True
+        or len(outputs) != len(expected_files)
+        or {e.get("filename") for e in outputs} != expected_files
+        or any(
+            e.get("result") is not True
+            or not (
+                e.get("new_benchmark_indicate")
+                or any(
+                    "Benchmark_" in str(value) or "相对误差比例" in str(value)
+                    for value in e.values()
+                )
+            )
+            for e in outputs
+        )
+    )
+
+
+def check_report(folder, cases, store=None):
     reports = list(folder.glob("atk_output/*/report/*.json")) or list(
         folder.glob("atk_output/*/report/*.xlsx")
     )
@@ -113,6 +150,7 @@ def check_report(folder, cases):
         roles[role] = seen
     if roles["dut"] != roles["low"] or roles["dut"] != roles["high"]:
         raise ValueError(f"DUT and CPU reference shapes differ in {folder}")
+    evidence = {}
     seen = set()
     failures = []
     for row in rows:
@@ -126,37 +164,16 @@ def check_report(folder, cases):
         if key not in expected or key in seen:
             raise ValueError(f"Unexpected report entry {key} in {report}")
         seen.add(key)
-        details = row["精度详情"]
-        if isinstance(details, str):
-            try:
-                details = json.loads(details)
-            except ValueError:
-                details = ast.literal_eval(details)
-        outputs = [
-            entry
-            for group in details.values()
-            if isinstance(group, list)
-            for entry in group
-            if isinstance(entry, dict)
-        ]
-        expected_files = {f"output_{i}.pt" for i in range(len(roles["dut"][key]))}
-        if (
-            row.get("cpu_cpu_golden_精度通过") is not True
-            or len(outputs) != len(expected_files)
-            or {e.get("filename") for e in outputs} != expected_files
-            or any(
-                e.get("result") is not True
-                or not (
-                    e.get("new_benchmark_indicate")
-                    or any(
-                        "Benchmark_" in str(value) or "相对误差比例" in str(value)
-                        for value in e.values()
-                    )
-                )
-                for e in outputs
-            )
-        ):
+        shapes = roles["dut"][key]
+        if metrics_passed(row, shapes):
+            # ATK's unused performance columns contain NaN in accuracy-only runs.
+            accuracy = {field: row[field] for field in ("用例json信息", "cpu_cpu_golden_精度通过", "精度详情")}
+            evidence[key] = {"row": accuracy, "shapes": shapes}
+        else:
             failures.append(key)
+    if seen == expected and store is not None:
+        for ident, value in evidence.items():
+            store(ident, value)
     if seen != expected or failures:
         raise ValueError(
             f"{len(expected - seen)} missing, {len(failures)} failed: {failures[:20]} ({report})"
@@ -167,6 +184,40 @@ def run_suite(suite, output, device):
     cases = cases_for(suite)
     folder = output / suite["group"]
     folder.mkdir()
+    cache = ResultCache()
+    pending = []
+    reused = []
+    keys = {}
+    for case in cases:
+        # Without an explicit input seed we cannot prove the next ATK tensors are identical.
+        if case.get("default_seed") is None or cache.root is None:
+            pending.append(case)
+            continue
+        ident = case["id"], case["name"]
+        key = cache.key("atk", [{k: v for k, v in suite.items() if k != "count"}, case])
+        keys[ident] = key
+        entry = cache.get(key)
+        try:
+            value = entry["value"] if entry else None
+            valid = value and value["shapes"] and metrics_passed(value["row"], value["shapes"])
+        except (KeyError, TypeError, SyntaxError, ValueError, AttributeError):
+            valid = False
+        if not valid:
+            pending.append(case)
+        else:
+            reused.append({"id": ident[0], "name": ident[1], "key": key, "origin": entry["origin"],
+                           "evidence": entry["value"]})
+    if reused:
+        report_dir = folder / "cache" / "report"
+        report_dir.mkdir(parents=True)
+        (report_dir / "reused.json").write_text(json.dumps(reused, ensure_ascii=False), encoding="utf8")
+    print(f"[smoke-cache] ATK {suite['group']}: {len(reused)} reused, {len(pending)} to run", flush=True)
+    if not pending:
+        return
+    config = case_path(suite)
+    if reused:
+        config = folder / "pending.json"
+        config.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf8")
     env = os.environ.copy()
     for flag in (
         "KDA_ATK_KERNEL_SEMANTICS",
@@ -210,7 +261,7 @@ def run_suite(suite, output, device):
         str(folder),
         "task",
         "-c",
-        str(case_path(suite)),
+        str(config),
         "-p",
         str(ROOT / "executor.py"),
         "--task",
@@ -224,12 +275,17 @@ def run_suite(suite, output, device):
         "cpu",
         "--save_report_json",
     ]
-    print(f"Running {suite['group']} ({len(cases)} cases): {folder}", flush=True)
+    print(f"Running {suite['group']} ({len(pending)} cases): {folder}", flush=True)
     with (folder / "atk.log").open("w", encoding="utf8") as log:
-        subprocess.run(
-            command, env=env, stdout=log, stderr=subprocess.STDOUT, check=True
-        )
-    check_report(folder, cases)
+        run = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, check=False)
+
+    def store(ident, value):
+        if ident in keys:
+            cache.put(keys[ident], value)
+
+    # Only complete, checked three-role evidence can contribute passing cases.
+    check_report(folder, pending, store if run.returncode == 0 else None)
+    run.check_returncode()
 
 
 def main():

@@ -10,6 +10,10 @@ import time
 import traceback
 
 from daily_plan import daily_plan
+from verdict import passed
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from smoke_cache import ResultCache
 
 HERE = Path(__file__).resolve().parent
 
@@ -85,6 +89,8 @@ def main():
         print(args.case, result["passed"], result.get("error", ""), flush=True)
         return 0 if result["passed"] else 1
 
+    cache = ResultCache()
+    hits = 0
     report = dict(platform=args.platform, date=args.date.isoformat(), head_sha=os.getenv("CI_ACCURACY_HEAD_SHA"),
                   run_id=os.getenv("CI_ACCURACY_RUN_ID"), attempt=os.getenv("CI_ACCURACY_RUN_ATTEMPT"), cases={})
     path = args.report_dir / "summary.json"
@@ -92,14 +98,34 @@ def main():
     for case in cases:
         ident = case["id"]
         detail = args.report_dir / (ident + ".json")
+        key = cache.key("model", [args.platform, case])
+        entry = cache.get(key)
+        if entry and passed(case, entry["value"], args.platform):
+            print(f"[smoke-cache] HIT model {ident} from {entry['origin']}", flush=True)
+            save(detail, dict(entry["value"], cache={"hit": True, "origin": entry["origin"], "key": key}))
+            hits += 1
+            report["cases"][ident] = True
+            save(path, report)
+            continue
+        print(f"[smoke-cache] RUN model {ident}", flush=True)
         detail.unlink(missing_ok=True)
         # Isolate large cases so CPU and NPU allocations are released even after an error.
         run = subprocess.run([sys.executable, __file__, *sys.argv[1:], "--case", ident], check=False)
         if not detail.is_file():
             save(detail, dict(case, passed=False, error=f"Case process exited {run.returncode} without a report"))
-        report["cases"][ident] = run.returncode == 0 and json.loads(detail.read_bytes())["passed"] is True
+        row = json.loads(detail.read_bytes())
+        ok = run.returncode == 0 and passed(case, row, args.platform)
+        if ok:
+            cache.put(key, row)
+        save(detail, dict(row, cache={"hit": False, "key": key if cache.root else None}))
+        report["cases"][ident] = ok
         save(path, report)
-    return 0 if all(report["cases"].values()) else 1
+    report["cache_hits"] = hits
+    report["executed"] = len(cases) - hits
+    save(path, report)
+    print(f"[CI][MODELS] {sum(report['cases'].values())}/{len(cases)} passed, "
+          f"{hits} reused, {len(cases)-hits} executed", flush=True)
+    return 0 if len(report["cases"]) == len(cases) and all(report["cases"].values()) else 1
 
 
 if __name__ == "__main__":

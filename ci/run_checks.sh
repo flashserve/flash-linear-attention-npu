@@ -184,18 +184,8 @@ PY
 }
 
 classify_changed_files
-if [[ -n "${CI_MODEL_DATE:-}" ]]; then
-    if [[ -n "${CI_OPS:-}" || "${CI_STAGE:-all}" != "all" ]]; then
-        echo "[CI][ERROR] Model cases require the full PR runtime." >&2
-        exit 2
-    fi
-    # Model chains span several operators. Build the merged PR wheel once for both suites.
-    change_scope=full
-    ci_ops=""
-    export CI_CHANGE_SCOPE=full CI_CHANGE_OPS=""
-fi
-if [[ "$change_scope" == "docs-only" && -n "${CI_ATK_SMOKE_OPS:-}" ]]; then
-    # A document under a guarded operator still exercises its smoke suites.
+if [[ "$change_scope" == "docs-only" && -n "${CI_ATK_SMOKE_OPS:-}${CI_MODEL_DATE:-}" ]]; then
+    # An explicit PR smoke run still exercises the models with the platform wheel.
     change_scope=tests-only
     export CI_CHANGE_SCOPE="$change_scope"
 fi
@@ -817,14 +807,38 @@ run_gdr_example_st() {
         echo "[CI][ERROR] Accuracy report was not generated: $accuracy_report_file" >&2
         return 1
     fi
-    if [[ -n "${CI_ATK_SMOKE_OPS:-}" ]]; then
-        run_changed_atk_smoke
+    local platform="${CI_ACCURACY_PLATFORM:-}" status=0
+    if [[ -z "$platform" ]]; then
+        case "$ci_soc" in
+            ascend910b) platform=a2 ;;
+            ascend950) platform=a5 ;;
+        esac
     fi
+    if [[ "$platform" != a2 && "$platform" != a5 ]]; then
+        return 0
+    fi
+    export CI_ACCURACY_PLATFORM="$platform"
+    # A cache failure is a miss; precision failures still fail this stage.
+    if [[ -n "${CI_SMOKE_CACHE_DIR:-}" ]]; then
+        CI_SMOKE_RUNTIME=$(python3 ci/smoke_cache.py) || CI_SMOKE_RUNTIME=""
+        export CI_SMOKE_RUNTIME
+    fi
+    if [[ -n "${CI_ATK_SMOKE_OPS:-}" ]]; then
+        run_changed_atk_smoke || status=1
+    fi
+    local day="${CI_MODEL_DATE:-$(TZ=Asia/Shanghai date +%F)}"
+    echo "[CI][MODELS] Starting 39 KDA and 5 GDN cases on $platform ($day)"
+    export ATK_TASK_OUTPUT_PATH="${CI_TMPDIR:-$TMPDIR}/model-atk"
+    mkdir -p "$ATK_TASK_OUTPUT_PATH"
+    ATEN_CPU_CAPABILITY=default OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 KDA_BWD_ATK_CPU_THREADS=1 \
+        python3 ci/model_cases/run.py --date "$day" --platform "$platform" --device "$ci_test_device" \
+        --report-dir "${CI_TMPDIR:-$TMPDIR}/model-cases" || status=1
+    return "$status"
 }
 
 run_changed_atk_smoke() {
     local op platform="${CI_ACCURACY_PLATFORM^^}"
-    python3 - <<'PY'
+    python3 - <<'PY' || return 1
 from importlib.util import find_spec
 from atk.tasks.post_process import ACCURACY_REGISTRY
 
@@ -1024,20 +1038,10 @@ if [[ "$requested_stage" != "all" || "$change_scope" == "tests-only" ]]; then
 fi
 run_pipeline_stage \
     gdr-example-st \
-    "run all enabled GDR Example/ST accuracy cases" \
+    "run GDR Example/ST, affected operator ATK, then KDA and GDN model smoke" \
     "$gdr_example_enabled" \
     run_gdr_example_st
 
 stage_report_status=0
 python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize || stage_report_status=$?
-if (( stage_report_status == 0 )) && [[ -n "${CI_MODEL_DATE:-}" ]]; then
-    configure_installed_fla_npu_opp
-    # The optional job evaluates both platform reports. Keep the ordinary stage statuses independent.
-    export ATK_TASK_OUTPUT_PATH="${CI_TMPDIR:-$TMPDIR}/model-atk"
-    mkdir -p "$ATK_TASK_OUTPUT_PATH"
-    ATEN_CPU_CAPABILITY=default OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 KDA_BWD_ATK_CPU_THREADS=1 \
-        python3 ci/model_cases/run.py --date "$CI_MODEL_DATE" --platform "$CI_ACCURACY_PLATFORM" \
-        --device "$ci_test_device" --report-dir "${CI_TMPDIR:-$TMPDIR}/model-cases" || \
-        echo "[CI][MODELS] See the KDA / GDN model job for failures." >&2
-fi
 exit "$stage_report_status"

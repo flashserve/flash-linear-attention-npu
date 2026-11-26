@@ -10,7 +10,7 @@
 
 name: NPU CI
 
-run-name: "NPU CI · PR #${{ inputs.pr_number }}${{ inputs.model_cases && ' · models' || '' }}${{ inputs.debug && ' · debug' || '' }}"
+run-name: "NPU CI · PR #${{ inputs.pr_number }}${{ inputs.debug && ' · debug' || '' }}"
 
 on:
   workflow_dispatch:
@@ -22,11 +22,6 @@ on:
         description: "CI mode: quick or full"
         required: false
         default: quick
-      model_cases:
-        description: "Run KDA (39 forward/backward) and GDN (5 forward) model cases on A2 and A5"
-        type: boolean
-        required: false
-        default: false
       debug:
         description: "Save existing complete build logs for this run"
         type: boolean
@@ -80,7 +75,7 @@ jobs:
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
-      model_date: ${{ steps.prepare.outputs.model_date }}
+      model_date: ${{ steps.model_plan.outputs.day }}
       debug: ${{ steps.prepare.outputs.debug }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
@@ -99,6 +94,16 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
+      - name: 固定本次冒烟的北京时间日期
+        id: model_plan
+        if: inputs.ops == ''
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: context.runId });
+            const day = new Date(Date.parse(run.created_at) + 8 * 3600 * 1000).toISOString().slice(0, 10);
+            core.setOutput('day', day);
+
       - name: 解析 PR 和 CI 参数
         id: prepare
         uses: actions/github-script@v8
@@ -108,6 +113,7 @@ jobs:
           NPU_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
           NPU_CI_WORKFLOW_REF: ${{ github.ref_name }}
           NPU_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          NPU_CI_MODEL_DATE: ${{ steps.model_plan.outputs.day }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -190,7 +196,10 @@ jobs:
                     run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
                     run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
                 // An ordinary run cannot satisfy a request to collect debug logs.
-                if (modelCases && !run.display_title?.includes(' · models')) return null;
+                if (!ops.trim() && process.env.NPU_CI_MODEL_DATE) {
+                  const previousDay = new Date(Date.parse(run.created_at) + 8 * 3600 * 1000).toISOString().slice(0, 10);
+                  if (previousDay !== process.env.NPU_CI_MODEL_DATE) return null;
+                }
                 if (debug && !run.display_title?.endsWith(' · debug')) return null;
                 return run;
               } catch (error) {
@@ -202,11 +211,6 @@ jobs:
             prNumber = Number(workflowInputs.pr_number);
             ciMode = workflowInputs.ci_mode || 'quick';
             ops = workflowInputs.ops || '';
-            const modelCases = String(workflowInputs.model_cases ?? 'false') === 'true';
-            if (modelCases && ops.trim()) {
-              core.setFailed('models 与仅编译的 ops= 不能同时使用。');
-              return;
-            }
             const debugValue = String(workflowInputs.debug ?? 'false');
             if (!['true', 'false'].includes(debugValue)) {
               core.setFailed('debug 参数必须为 true 或 false。');
@@ -303,9 +307,9 @@ jobs:
                   latestStatus.target_url === latestExecutionCi.target_url;
               })
             );
-            // Debug requests must create fresh logs even after a successful run.
-            if (!debug && isInitialWorkflowAttempt &&
-                !modelCases && matchingExecutionRun && latestExecutionCi.state === 'success' &&
+            // Runtime smoke checks the installed wheel and OPP before it can reuse results.
+            if (!debug && isInitialWorkflowAttempt && requestScope === 'scoped' &&
+                matchingExecutionRun && latestExecutionCi.state === 'success' &&
                 allContextsPassedInSameRun) {
               core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
               commentId = await upsertComment(
@@ -365,12 +369,6 @@ jobs:
             }
 
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            if (modelCases) {
-              // Anchor the daily plan to the original dispatch, including retries after midnight.
-              const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: context.runId });
-              const day = new Date(new Date(run.created_at).getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-              core.setOutput('model_date', day);
-            }
             const pendingResults = await Promise.allSettled(checkContexts.map(([statusContext, label]) =>
               github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
@@ -392,7 +390,6 @@ jobs:
                 `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
                 '',
                 `- 模式：\`${ciMode}\``,
-                modelCases ? '- 模型回归：A2、A5 各执行 39 条 KDA 和 5 条 GDN' : '',
                 debug ? '- 调试日志：开启；完整日志作为独立 artifact 保存 7 天' : '',
                 `- 触发人：@${requestedBy}`,
                 `- CI 定义分支：\`${workflowRef}\``,
@@ -443,7 +440,7 @@ jobs:
             dockerfile: ci/Dockerfile.ascend950
             require_preloaded_image: 'true'
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
-    timeout-minutes: ${{ inputs.model_cases && 960 || 240 }}
+    timeout-minutes: ${{ needs.prepare.outputs.ops == '' && 960 || 240 }}
     permissions:
       contents: read
     env:
@@ -689,6 +686,29 @@ jobs:
           fi
           echo "[CI] Offline source validation passed: head=$fetched_head merged=$(git rev-parse HEAD)"
 
+      - name: 确定冒烟结果缓存范围
+        id: smoke_cache
+        if: needs.prepare.outputs.ops == ''
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          # PR code can write test output. Only checkouts with the same executable source
+          # share writable snapshots. Each case also keys its effective runtime and input data.
+          source=$(git ls-files --stage -z -- . ':(exclude,glob)**/*.md' \
+            ':(exclude,glob)tests/atk/smoke/cases/*/*/*.json' ':(exclude)tests/atk/smoke/suites.json' \
+            ':(exclude,glob)ci/model_cases/*_cases.json' | sha256sum)
+          source=${source%% *}
+          echo "prefix=npu-smoke-v1-${{ matrix.platform }}-${{ runner.arch }}-$source-" >> "$GITHUB_OUTPUT"
+
+      - name: 恢复同平台的冒烟通过结果
+        if: steps.smoke_cache.outputs.prefix != ''
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .npu-smoke-cache/${{ steps.smoke_cache.outputs.prefix }}
+          key: ${{ steps.smoke_cache.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ steps.smoke_cache.outputs.prefix }}
+
       - name: 运行 ${{ matrix.name }} NPU CI 容器
         id: npu_ci
         working-directory: repo
@@ -696,6 +716,7 @@ jobs:
           NPU_CI_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
           NPU_CI_TARGET_SHA: ${{ needs.prepare.outputs.head_sha }}
           NPU_CI_HEAD_POLL_SECONDS: '60'
+          CI_SMOKE_CACHE_HOST_DIR: ${{ steps.smoke_cache.outputs.prefix && format('{0}/.npu-smoke-cache/{1}', github.workspace, steps.smoke_cache.outputs.prefix) || '' }}
         run: |
           set -euo pipefail
 
@@ -703,6 +724,7 @@ jobs:
           rm -f \
             "$CI_ACCURACY_REPORT_FILE" \
             "$CI_ACCURACY_REPORT_FILE.tmp" \
+            .ci-tmp/smoke-cache-dirty \
             "$CI_STAGE_REPORT_FILE" \
             dist/fla-npu-build.log \
             "$CI_RAW_LOG_FILE" \
@@ -843,14 +865,21 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+      - name: 缓存本次新增的冒烟通过结果
+        if: ${{ !cancelled() && steps.smoke_cache.outputs.prefix != '' && hashFiles('repo/.ci-tmp/smoke-cache-dirty') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .npu-smoke-cache/${{ steps.smoke_cache.outputs.prefix }}
+          key: ${{ steps.smoke_cache.outputs.prefix }}${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: 保存 ${{ matrix.name }} KDA / GDN 模型逐条结果
-        if: always() && inputs.model_cases && steps.npu_ci.outcome != 'skipped'
+        if: always() && needs.prepare.outputs.ops == '' && steps.npu_ci.outcome != 'skipped'
         uses: actions/upload-artifact@v6
         with:
-          name: model-cases-${{ matrix.platform }}-${{ github.run_id }}
+          name: model-cases-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.CI_HOST_TMPDIR }}/model-cases/*.json
-          overwrite: true
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: 保存 ${{ matrix.name }} 命中算子的 ATK 冒烟报告
@@ -864,6 +893,14 @@ jobs:
             ${{ env.CI_HOST_TMPDIR }}/atk-smoke/**/atk.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: 清理本次冒烟缓存的本机副本
+        if: always() && steps.smoke_cache.outputs.prefix != ''
+        env:
+          SNAPSHOT: ${{ steps.smoke_cache.outputs.prefix }}
+        run: |
+          [[ "$SNAPSHOT" =~ ^npu-smoke-v1-(a2|a5)-(ARM64|X64)-[a-f0-9]{64}-$ ]] || exit 1
+          rm -rf -- ".npu-smoke-cache/$SNAPSHOT"
 
       - name: 清理 ${{ matrix.name }} 临时完整日志
         if: always()
@@ -932,35 +969,6 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
-
-  model-cases:
-    name: KDA / GDN 模型用例（A2 + A5）
-    needs: [prepare, ascend-npu]
-    if: always() && !cancelled() && inputs.model_cases && needs.prepare.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.workflow_sha }}
-          sparse-checkout: ci/model_cases
-          persist-credentials: false
-      - uses: actions/download-artifact@v6
-        with:
-          pattern: model-cases-*-${{ github.run_id }}
-          path: reports
-      - name: 核对两个平台的逐条结果
-        env:
-          MODEL_DATE: ${{ needs.prepare.outputs.model_date }}
-          PR_HEAD: ${{ needs.prepare.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          python3 ci/model_cases/verdict.py reports "$MODEL_DATE" "$PR_HEAD" "$GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: 检查两个平台的执行状态
-        if: needs.ascend-npu.result != 'success'
-        run: exit 1
 
   finalize:
     name: 校验并发布 A2 + A5 分项状态

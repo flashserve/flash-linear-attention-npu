@@ -1,6 +1,6 @@
 # PR 模型回归
 
-在 PR 评论区输入 `/run-npu-ci models`，或在 Actions 的 **NPU CI → Run workflow** 勾选 **model_cases**。默认关闭。与 `quick`、`full`、`debug` 可以组合使用。`ops=...` 用于定向编译，与模型回归互斥。评论分发需要目标分支已经支持此开关。
+在 PR 评论区输入 `/run-npu-ci quick` 或 `/run-npu-ci full`，也可以从 Actions 的 **NPU CI** 触发。A2、A5 各自在 **05 GDR Example/ST** 先跑 Example/ST，再跑命中的算子 ATK，最后必跑模型用例。没有算子命中也会进入模型验证。单独的 `ops=...` 编译诊断在构建阶段结束。
 
 | 每个平台的用例 | 验证内容 |
 | --- | --- |
@@ -8,9 +8,15 @@
 | GDN，3 条 Qwen Prefill | 验证分组头的输出。A5 还通过 profiler 核对 Prepare → H → O 三段调用。 |
 | GDN，2 条 Qwen Decode | 验证输出和原地更新的状态。每个请求解码一个 token，使用独立状态槽。 |
 
-选中后，CI 为 A2 和 A5 各构建一次当前 PR 合并后的完整 wheel。模型回归复用常规 CI 容器中准备好的运行时。KDA 的 `safe_gate=True`，三条用例固定 `lower_bound`，其余 36 条按这次 Actions 运行的北京时间日期分层抽样。报告记录实际取值和张量种子。
+模型和算子 ATK 使用同一容器内实际安装的 wheel 和 OPP。修改单个算子时也包含本次 CI 安装的 OPP overlay。KDA 的 `safe_gate=True`，三条用例固定 `lower_bound`，其余 36 条按这次 Actions 运行的北京时间日期分层抽样。报告记录实际取值和张量种子。
 
-在 Actions 中打开 **KDA / GDN 模型用例（A2 + A5）** 查看各平台结果，从 `model-cases-<平台>-<run_id>` 下载逐条 JSON。缺报告、漏用例或数值超差都会使模型任务失败。修复后对新提交再次触发；同一提交需要重新实测时，也可以再发一次 `/run-npu-ci models`。
+在 Actions 的 **05 GDR Example/ST** 查看结果，从 `model-cases-<平台>-<run_id>-<attempt>` 下载逐条 JSON 和 `summary.json`。任何一条用例失败都会使该平台冒烟失败。
+
+## 结果缓存
+
+GitHub Actions 在可执行源码相同的运行之间共享已通过的结果，可跨 PR 和提交，也可在同平台、同架构的匹配 runner 上恢复。记录按用例保存，身份包含实际安装的 FLA 包及生效的 OPP、容器镜像 ID、CPU/NPU 与驱动信息、测试与标杆代码，以及这条用例的参数和种子。Markdown 或提交元数据变化可以复用结果；修改某条清单参数只使输入变化的用例失效。
+
+每次冒烟都会核对全部 44 条模型用例。命中时保留原始数值指标和来源 run/head，未命中或缓存损坏时实跑。KDA 的实际 `lower_bound` 参与匹配。算子 ATK 按本次命中的算子逐条匹配；缺少显式随机种子的用例每次实跑。`summary.json` 记录模型缓存命中数和实跑数，ATK 附件中的 `cache/report/reused.json` 保存复用的原生指标和来源。
 
 在已经安装该平台 wheel、配置好 OPP 和 ATK 的 CI 容器内，可以复现一条失败用例。日期、平台和用例 ID 取自报告，设备号使用容器内的逻辑编号。
 

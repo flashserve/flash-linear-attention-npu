@@ -8,7 +8,7 @@ A2、A5 在各自的 NPU CI 任务中运行本次改动命中的算子用例。�
 
 - 修改 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/`，A2 和 A5 都运行 `chunk_fwd_h`。
 - 修改同级的 `chunk_gated_delta_rule_fwd_h/`，只有 A5 有登记用例。融合算子目录下的 `op_kernel/internal/operators/` 归其外层算子。
-- 未命中已登记目录时跳过 ATK。显式指定 `ops=...` 的编译诊断沿用现有流程。
+- 未命中已登记目录时直接进入模型回归。显式指定 `ops=...` 的编译诊断沿用现有流程。
 
 在本地预览选择结果时，将下面的 `BASE` 和 `MERGED_HEAD` 换成两次提交的 SHA。在 CI 的合并提交上也可以使用 `HEAD^1 HEAD`。
 
@@ -23,7 +23,7 @@ python3 tests/atk/smoke/run.py affected --platform A5 --git-range BASE MERGED_HE
 
 A2、A5 的 CI 镜像统一使用 ATK `26.11.11`。镜像构建时按 CPython ABI 和 CPU 架构下载发布页对应的 wheel 并核验 SHA-256。CI 的环境检查会核对已安装和实际导入的版本；冒烟开始前再检查 `cv_fused_double_benchmark` 是否可用。[官方 wheel](https://gitcode.com/AscendTest/ATK/releases/v26.11.11)
 
-冒烟复用 Example/ST 阶段已配置的算子包环境和容器逻辑卡号。Actions 日志中的 `[CI][ATK]` 列出选中的算子。报告保存在该次运行的 `atk-smoke-<平台>-<run_id>-<attempt>` 附件里，任一算子精度失败会使平台 CI 失败。
+算子 ATK 后必跑 [KDA/GDN 模型回归](../../../ci/model_cases/README.md)。两者按单条用例缓存通过结果，并在报告中区分实跑和复用。冒烟复用 Example/ST 阶段已配置的算子包环境和容器逻辑卡号。Actions 日志中的 `[CI][ATK]` 列出选中的算子。报告保存在该次运行的 `atk-smoke-<平台>-<run_id>-<attempt>` 附件里，任一算子精度失败会使平台 CI 失败。
 
 ## 在 CI 容器运行一项
 

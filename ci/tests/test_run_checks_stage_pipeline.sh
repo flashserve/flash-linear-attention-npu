@@ -80,6 +80,8 @@ python3() {
         printf '%s\n' "$CI_TEST_FAKE_PACKAGE_DIR"
     elif [[ "$entrypoint" == "tests/atk/smoke/run.py" && "${CI_TEST_FAIL_STAGE:-}" == "atk-smoke" ]]; then
         return 27
+    elif [[ "$entrypoint" == "ci/model_cases/run.py" && "${CI_TEST_FAIL_STAGE:-}" == "model-smoke" ]]; then
+        return 28
     elif [[ "$entrypoint" == "ci/run_example_st_cases.py" ]]; then
         mkdir -p "$(dirname "$CI_ACCURACY_REPORT_FILE")"
         printf '{}\n' >"$CI_ACCURACY_REPORT_FILE"
@@ -330,5 +332,16 @@ for op in chunk_fwd_h recurrent_kda; do
     grep -Fq "tests/atk/smoke/run.py run --platform A5 --op $op --device 0" \
         "$test_root/atk-smoke-failure/commands.log"
 done
+
+# All selected operators run before the required models, even after a numerical ATK failure.
+awk '/tests\/atk\/smoke\/run.py run / { last_atk=NR }
+     /ci\/model_cases\/run.py / { model=NR }
+     END { exit !(last_atk && model > last_atk) }' "$test_root/atk-smoke-failure/commands.log"
+
+# Runtime smoke without an operator match must still run the models and propagate a failed case.
+CI_ACCURACY_PLATFORM=a2 CI_MODEL_DATE=2026-11-27 \
+    run_case model-failure all false 1 failure success,success,success,success,failure true model-smoke
+grep -Fq 'ci/model_cases/run.py --date 2026-11-27 --platform a2 --device 0' "$test_root/model-failure/commands.log"
+if grep -Fq 'ci/model_cases/run.py' "$test_root/scoped/commands.log"; then exit 1; fi
 
 echo "run_checks stage pipeline integration tests passed"

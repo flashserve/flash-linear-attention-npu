@@ -66,7 +66,6 @@ jobs:
             let ops = '';
             let opsProvided = false;
             let debug = false;
-            let modelCases = false;
             for (const part of parts) {
               if (part === 'quick' || part === 'full') {
                 if (modeProvided) {
@@ -75,12 +74,6 @@ jobs:
                 }
                 ciMode = part;
                 modeProvided = true;
-              } else if (part === 'models') {
-                if (modelCases) {
-                  core.setFailed('models 参数只能指定一次。');
-                  return;
-                }
-                modelCases = true;
               } else if (part === 'debug') {
                 if (debug) {
                   core.setFailed('debug 参数只能指定一次。');
@@ -100,10 +93,6 @@ jobs:
               }
             }
 
-            if (modelCases && opsProvided) {
-              core.setFailed('models 与仅编译的 ops= 不能同时使用。');
-              return;
-            }
             const opsItems = ops.split(',').map((item) => item.trim());
             if ((opsProvided && !ops.trim()) ||
                 (ops.trim() && opsItems.some((item) =>
@@ -168,7 +157,6 @@ jobs:
               pr_number: String(prNumber),
               ci_mode: ciMode,
               ...(debug ? { debug: 'true' } : {}),
-              ...(modelCases ? { model_cases: 'true' } : {}),
               ops,
               requested_by: actor,
               expected_head_sha: pr.head.sha,
@@ -176,10 +164,6 @@ jobs:
               expected_base_sha: baseBranch.commit.sha,
               expected_workflow_sha: baseBranch.commit.sha,
             });
-            if (modelCases && dispatchInputs.model_cases !== 'true') {
-              core.setFailed('目标分支的 NPU CI 尚不支持 models。');
-              return;
-            }
             if (debug && dispatchInputs.debug !== 'true') {
               core.setFailed(`分支 \`${targetRef}\` 的 NPU CI 尚不支持 debug，请先更新目标分支的 CI workflow。`);
               return;

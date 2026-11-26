@@ -61,7 +61,7 @@ required Code Owners review 保证每个 PR 至少获得一名 Code Owner approv
 
 ## NPU CI 门禁
 
-需要验证模型时，在 PR 评论中使用 `/run-npu-ci models`，或在 NPU CI 的手动入口勾选 `model_cases`。A2、A5 各验证 39 条 KDA 正反向模型用例和 5 条 GDN 前向模型用例，结果在独立的 Actions 任务展示。[用例、标杆与复现](../ci/model_cases/README.md)
+常规 NPU 冒烟在第 05 项依次执行 Example/ST、命中的算子 ATK，以及每个平台 39 条 KDA 和 5 条 GDN 模型用例。模型用例是必跑项。ATK 和模型按实际输入复用已通过的数值结果，失败或缺失的结果重新实测。[用例、缓存与复现](../ci/model_cases/README.md)
 
 检查项的 context 名称、顺序和阶段映射统一维护在 `.github/scripts/npu_ci_checks.json`；触发、默认状态、结果发布、异常收敛和分支保护配置均读取这份定义。非默认目标分支按固定 base commit 读取其定义，尚未迁移的旧分支兼容读取原 workflow 中的 context。默认状态检查或写入异常时，workflow 失败，并尽力将当前及历史 NPU 状态写为 failure，使旧成功结果失效。
 
@@ -82,7 +82,7 @@ A2/A5 共用 Git 源码获取流程：首次 checkout 直连，失败后启用�
 
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
-新版 CI 在复用成功结果或等待已有任务前，还会读取该任务的运行信息，确认目标分支及 base commit 与本次请求一致；无法确认时启动新验证。最终发布结果前再次检查 PR 状态和 head/base，运行期间目标分支切换或 base commit 更新会使本次结果失效。
+常规冒烟重新触发时会在运行时校验逐条结果缓存。CI 在复用已成功的定向编译诊断或等待已有任务前，还会读取该任务的运行信息，确认目标分支及 base commit 与本次请求一致；无法确认时启动新验证。最终发布结果前再次检查 PR 状态和 head/base，运行期间目标分支切换或 base commit 更新会使本次结果失效。
 
 默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。默认评论分发和新版手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
