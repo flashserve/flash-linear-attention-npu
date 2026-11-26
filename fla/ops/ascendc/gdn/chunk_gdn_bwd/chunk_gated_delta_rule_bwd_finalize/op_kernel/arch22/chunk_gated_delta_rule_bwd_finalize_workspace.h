@@ -190,6 +190,83 @@ GDN_A2_HOST_DEVICE bool A2FinalizeUseChunkDkScratch(
     return A2FinalizeChunkDkScratchBytes(t, blocks) != 0;
 }
 
+struct A2FinalizeDqStageLayout {
+    int64_t mm3Offset;
+    int64_t mm4Offset;
+    int64_t mm6Offset;
+    int64_t mm5Offset;
+    int64_t mm7Offset;
+    int64_t dsRawOffset;
+    int64_t dsTempOffset;
+    int64_t dgLastOffset;
+    int64_t totalBytes;
+
+    GDN_A2_HOST_DEVICE A2FinalizeDqStageLayout(
+        const ChunkGatedDeltaRuleBwdFinalizeTilingData &t, int64_t blocks, int64_t heads)
+    {
+        const int64_t rows = blocks * heads * t.chunkSize;
+        const int64_t keyBytes = rows * t.K * sizeof(float);
+        const int64_t rawScoreBytes = rows * t.chunkSize * sizeof(float);
+        const int64_t scoreBytes = rows * t.chunkSize * sizeof(uint16_t);
+        const int64_t dgLastBytes = blocks * t.HV * sizeof(float);
+        mm3Offset = 0;
+        mm4Offset = mm3Offset + rawScoreBytes;
+        mm6Offset = mm4Offset + keyBytes;
+        mm5Offset = mm6Offset + keyBytes;
+        mm7Offset = mm5Offset + keyBytes;
+        dsRawOffset = mm7Offset + keyBytes;
+        dsTempOffset = dsRawOffset + rawScoreBytes;
+        dgLastOffset = dsTempOffset + scoreBytes;
+        totalBytes = dgLastOffset + (dgLastBytes + 511) / 512 * 512;
+    }
+};
+
+struct A2FinalizeWyStageLayout {
+    static constexpr int64_t SLOTS = 4;
+    int64_t kBytes;
+    int64_t vBytes;
+    int64_t mBytes;
+    int64_t kbgOffset;
+    int64_t vbOffset;
+    int64_t kbetaOffset;
+    int64_t dkbgOffset;
+    int64_t dvbOffset;
+    int64_t da1Offset;
+    int64_t da2Offset;
+    int64_t da4Offset;
+    int64_t da5Offset;
+    int64_t da6Offset;
+    int64_t dOffset;
+    int64_t dkbOffset;
+    int64_t dkOffset;
+    int64_t slotBytes;
+    int64_t kktOffset;
+    int64_t coreBytes;
+
+    GDN_A2_HOST_DEVICE explicit A2FinalizeWyStageLayout(const ChunkGatedDeltaRuleBwdFinalizeTilingData &t)
+    {
+        kBytes = t.chunkSize * t.K * sizeof(uint16_t);
+        vBytes = t.chunkSize * t.V * sizeof(uint16_t);
+        mBytes = t.chunkSize * t.chunkSize * sizeof(uint16_t);
+        kbgOffset = 0;
+        vbOffset = kbgOffset + kBytes;
+        kbetaOffset = vbOffset + vBytes;
+        dkbgOffset = kbetaOffset + kBytes;
+        dvbOffset = dkbgOffset + 2 * kBytes;
+        da1Offset = dvbOffset + 2 * vBytes;
+        da2Offset = da1Offset + 2 * mBytes;
+        da4Offset = da2Offset + 2 * mBytes;
+        da5Offset = da4Offset + mBytes;
+        da6Offset = da5Offset + mBytes;
+        dOffset = da6Offset + 2 * mBytes;
+        dkbOffset = dOffset + mBytes;
+        dkOffset = dkbOffset + 2 * kBytes;
+        slotBytes = dkOffset + 2 * kBytes;
+        kktOffset = SLOTS * slotBytes;
+        coreBytes = kktOffset + SLOTS * 2 * mBytes;
+    }
+};
+
 // Host 和 device 共用同一份字节布局。DQ/WY 的临时区只在全核 barrier 后复用。
 struct A2FinalizeWorkspaceLayout {
     int64_t gOffset;
@@ -221,14 +298,9 @@ struct A2FinalizeWorkspaceLayout {
         if (A2FinalizeUseOutputReuse(t)) {
             return compactHeads;
         }
-        const int64_t btk = blocks * compactHeads * t.chunkSize * t.K * 2;
-        const int64_t btb = blocks * compactHeads * t.chunkSize * t.chunkSize * 2;
-        const int64_t compactDqBytes = 4 * btk + 2 * btb + Align(blocks * t.HV * 4);
-        const int64_t kBytes = t.chunkSize * t.K * 2;
-        const int64_t vBytes = t.chunkSize * t.V * 2;
-        const int64_t mBytes = t.chunkSize * t.chunkSize * 2;
-        const int64_t wyBytes = blocks * 4 * (5 * kBytes + 2 * vBytes + 7 * mBytes);
-        return compactDqBytes >= wyBytes ? compactHeads : t.HV;
+        const A2FinalizeDqStageLayout dq(t, blocks, compactHeads);
+        const A2FinalizeWyStageLayout wy(t);
+        return dq.totalBytes >= blocks * wy.coreBytes ? compactHeads : t.HV;
     }
 
     GDN_A2_HOST_DEVICE A2FinalizeWorkspaceLayout(
@@ -270,13 +342,8 @@ struct A2FinalizeWorkspaceLayout {
         stageOffset = offset;
 
         const int64_t dqHeads = DqWorkspaceHeads(t, blocks, A2FinalizeDqPartitionCount(t, blocks));
-        const int64_t btk = blocks * dqHeads * t.chunkSize * t.K * 2;
-        const int64_t btb = blocks * dqHeads * t.chunkSize * t.chunkSize * 2;
-        dqWorkspaceBytes = 4 * btk + 2 * btb + Align(blocks * t.HV * 4);
-        const int64_t kBytes = t.chunkSize * t.K * 2;
-        const int64_t vBytes = t.chunkSize * t.V * 2;
-        const int64_t mBytes = t.chunkSize * t.chunkSize * 2;
-        wyWorkspaceBytes = blocks * 4 * (5 * kBytes + 2 * vBytes + 7 * mBytes);
+        dqWorkspaceBytes = A2FinalizeDqStageLayout(t, blocks, dqHeads).totalBytes;
+        wyWorkspaceBytes = blocks * A2FinalizeWyStageLayout(t).coreBytes;
         offset += Align(dqWorkspaceBytes > wyWorkspaceBytes ? dqWorkspaceBytes : wyWorkspaceBytes);
         totalBytes = offset;
     }

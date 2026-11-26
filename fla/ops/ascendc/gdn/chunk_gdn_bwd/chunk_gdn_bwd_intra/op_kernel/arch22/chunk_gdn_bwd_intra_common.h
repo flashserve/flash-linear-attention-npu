@@ -10,6 +10,7 @@
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
 #include "chunk_gdn_bwd_intra_config.h"
+#include <type_traits>
 
 namespace GDN::Arch22 {
 constexpr uint16_t INPUTS_READY = 4;
@@ -17,7 +18,8 @@ constexpr uint16_t INPUTS_FREE = 6;
 constexpr uint16_t INPUT_SLOTS = 2;
 static_assert(INPUTS_FREE + INPUT_SLOTS - 1 <= Catlass::Arch::FFTS_MAX_FLAG,
     "Cross-core flag budget exceeded");
-static_assert(S_OFFSET + SCORE_ELEMENTS == RECORD_ELEMENTS, "Invalid workspace record");
+template <typename MainT>
+using ScoreType = std::conditional_t<std::is_same_v<MainT, bfloat16_t>, float, MainT>;
 
 template <AscendC::HardEvent EVENT>
 __aicore__ inline void Fence()
@@ -39,9 +41,18 @@ __aicore__ inline void Notify(uint16_t id)
     Catlass::Arch::CrossCoreSetFlag<0x2, PIPE>(flag);
 }
 
+template <typename ScoreT>
 __aicore__ inline uint64_t Record(int64_t core, int64_t cg, int64_t head)
 {
-    return (static_cast<uint64_t>(core) * cg + head) * RECORD_ELEMENTS;
+    return (static_cast<uint64_t>(core) * cg + head) *
+        WorkspaceLayout<sizeof(ScoreT)>::RECORD_MAIN_ELEMENTS;
+}
+
+template <typename ScoreT>
+__aicore__ inline uint64_t ScoreRecord(int64_t core, int64_t cg, int64_t head)
+{
+    return (static_cast<uint64_t>(core) * cg + head) *
+        WorkspaceLayout<sizeof(ScoreT)>::RECORD_SCORE_ELEMENTS + WorkspaceLayout<sizeof(ScoreT)>::SCORE_OFFSET;
 }
 } // namespace GDN::Arch22
 #endif

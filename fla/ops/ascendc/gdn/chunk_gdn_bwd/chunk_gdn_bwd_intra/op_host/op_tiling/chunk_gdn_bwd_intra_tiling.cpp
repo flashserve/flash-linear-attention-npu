@@ -244,7 +244,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const uint32_t cores = arch92 ? std::min<uint32_t>(aicCores, platform.GetCoreNumAiv()) : aicCores;
     IntraSchedule schedule;
     if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, cores, arch22, arch92,
-                            platform.GetLibApiWorkSpaceSize(), schedule)) {
+                            platform.GetLibApiWorkSpaceSize(), schedule, mainDtype == ge::DT_BF16)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "chunkCount,HV,HK,cores",
             std::to_string(chunkCount) + "," + std::to_string(valueHeads) + "," +
                 std::to_string(qkHeads) + "," + std::to_string(cores),

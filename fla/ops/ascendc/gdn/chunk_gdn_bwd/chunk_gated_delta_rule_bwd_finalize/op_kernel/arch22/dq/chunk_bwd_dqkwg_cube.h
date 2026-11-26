@@ -100,6 +100,7 @@ public:
     using ElementA = typename BlockMmadPart2::ElementA;
     using ElementB = typename BlockMmadPart2::ElementB;
     using ElementC = typename BlockMmadPart2::ElementC;
+    using ElementDw = typename BlockMmadPart1::ElementC;
 
     // Layout 定义
     using LayoutRowMajor = layout::RowMajor;
@@ -135,6 +136,7 @@ public:
         uint64_t wsMm6Offset;
         uint64_t wsMm5Offset;
         uint64_t wsMm7Offset;
+        uint64_t wsDsRawOffset;
         uint64_t wsDsTempOffset;
 
         // 形状参数 (GVA: H 拆为 HV/HK, HV = n_ratio * HK)
@@ -156,11 +158,13 @@ public:
         Params(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR do_, GM_ADDR dh, GM_ADDR dv, GM_ADDR cu_seqlen,
                GM_ADDR chunk_indices, GM_ADDR dq, GM_ADDR dk, GM_ADDR dw,GM_ADDR workspace, uint64_t B, uint64_t HV, uint64_t HK,
                uint64_t T, uint64_t K, uint64_t V, uint64_t BT, uint64_t numChunks, uint64_t n_ratio, bool isVarLen,
-               uint64_t wsMm3, uint64_t wsMm4, uint64_t wsMm6, uint64_t wsMm5, uint64_t wsMm7, uint64_t wsDsTemp)
+               uint64_t wsMm3, uint64_t wsMm4, uint64_t wsMm6, uint64_t wsMm5, uint64_t wsMm7,
+               uint64_t wsDsRaw, uint64_t wsDsTemp)
             : ptrQ(q), ptrK(k), ptrV(v), ptrH(h), ptrDo(do_), ptrDh(dh), ptrDv(dv), ptrCuSeqLens(cu_seqlen),
               ptrChunkIndices(chunk_indices), ptrDq(dq), ptrDk(dk), ptrDw(dw), ptrWorkspace(workspace),
               wsMm3Offset(wsMm3), wsMm4Offset(wsMm4), wsMm6Offset(wsMm6), wsMm5Offset(wsMm5),
-              wsMm7Offset(wsMm7), wsDsTempOffset(wsDsTemp), B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT),
+              wsMm7Offset(wsMm7), wsDsRawOffset(wsDsRaw), wsDsTempOffset(wsDsTemp),
+              B(B), HV(HV), HK(HK), T(T), K(K), V(V), BT(BT),
               numChunks(numChunks), n_ratio(n_ratio), isVarLen(isVarLen)
         {
         }
@@ -174,9 +178,9 @@ public:
     GlobalTensor<ElementA> gmDo;
     GlobalTensor<ElementA> gmDh;
     GlobalTensor<ElementA> gmDv;
-    GlobalTensor<ElementC> gmDq;
-    GlobalTensor<ElementC> gmDk;
-    GlobalTensor<ElementC> gmDw;
+    GlobalTensor<ElementA> gmDq;
+    GlobalTensor<ElementA> gmDk;
+    GlobalTensor<ElementDw> gmDw;
     GlobalTensor<ElementC> gmMm3;
     GlobalTensor<ElementC> gmMm4;
     GlobalTensor<ElementC> gmMm6;
@@ -210,7 +214,7 @@ public:
         uint32_t coreIdx = AscendC::GetBlockIdx();
         uint32_t coreNum = params.aicCoreNum; // CV 深融合 blockDim (cube/vector 共用)
         const uint64_t workspaceHeads = params.wsMm4Offset /
-            (uint64_t{2} * coreNum * params.BT * params.BT);
+            (sizeof(ElementC) * coreNum * params.BT * params.BT);
         using ScheduleIndex = typename DqkwgScheduleIndex<WIDE_SCHEDULE>::Type;
         const ScheduleIndex scheduleNumChunks = static_cast<ScheduleIndex>(params.numChunks);
         const ScheduleIndex scheduleRatio = static_cast<ScheduleIndex>(params.n_ratio);
@@ -231,15 +235,15 @@ public:
         gmDo.SetGlobalBuffer((__gm__ ElementA *)params.ptrDo);
         gmDh.SetGlobalBuffer((__gm__ ElementA *)params.ptrDh);
         gmDv.SetGlobalBuffer((__gm__ ElementA *)params.ptrDv);
-        gmDq.SetGlobalBuffer((__gm__ ElementC *)params.ptrDq);
-        gmDk.SetGlobalBuffer((__gm__ ElementC *)params.ptrDk);
-        gmDw.SetGlobalBuffer((__gm__ ElementC *)params.ptrDw);
+        gmDq.SetGlobalBuffer((__gm__ ElementA *)params.ptrDq);
+        gmDk.SetGlobalBuffer((__gm__ ElementA *)params.ptrDk);
+        gmDw.SetGlobalBuffer((__gm__ ElementDw *)params.ptrDw);
         gmMm3.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsMm3Offset));
         gmMm4.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsMm4Offset));
         gmMm6.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsMm6Offset));
         gmMm5.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsMm5Offset));
         gmMm7.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsMm7Offset));
-        gmDs.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsDsTempOffset));
+        gmDs.SetGlobalBuffer((__gm__ ElementC *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsDsRawOffset));
         gmDsTemp.SetGlobalBuffer((__gm__ ElementA *)((__gm__ uint8_t *)params.ptrWorkspace + params.wsDsTempOffset));
         if (params.isVarLen) {
             cuSeqlensTensor.SetGlobalBuffer((__gm__ uint64_t *)params.ptrCuSeqLens);
@@ -256,8 +260,10 @@ public:
         // dO, dV-local and dW are internal head-major tensors even when the
         // public q/k/v tensors use sequence-major layout.
         auto layoutBTxKHead = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.K);
+        auto layoutBTxKWork = LayoutRowMajor::MakeLayout<ElementC>(params.BT, params.K);
         auto layoutBTxVHead = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.V);
         auto layoutBTxBT = LayoutRowMajor::MakeLayout<ElementA>(params.BT, params.BT);
+        auto layoutBTxBTWork = LayoutRowMajor::MakeLayout<ElementC>(params.BT, params.BT);
         auto layoutBTxBT_T = LayoutColMajor::MakeLayout<ElementA>(params.BT, params.BT);
         auto layoutVxK = LayoutColMajor::MakeLayout<ElementA>(params.V, params.K);
 
@@ -346,7 +352,7 @@ public:
 
                     auto tensorQ = tla::MakeTensor(gmQ[qkOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK[qkOffset], MakeLayoutFromTag(layoutKxBT), Arch::PositionGM{}); // k^T
-                    auto tensorMm3 = tla::MakeTensor(gmMm3[mm3Offset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
+                    auto tensorMm3 = tla::MakeTensor(gmMm3[mm3Offset], MakeLayoutFromTag(layoutBTxBTWork), Arch::PositionGM{});
 
                     auto tensorBlockQ = GetTile(tensorQ, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape2.m(), actualBlockShape2.k()));
@@ -358,7 +364,7 @@ public:
                     blockMmadPart2(tensorBlockQ, tensorBlockK, tensorBlockMm3, actualBlockShape2);
                 }
             }
-            // --- Part3: ds = do @ v^T -> wsDsTemp ---
+            // --- Part3: FP32 ds = do @ v^T -> wsDsRaw；门控后的 BF16 ds_temp 独立保存 ---
             {
                 BlockMmadPart3 blockMmadPart3(resource);
                 for (uint32_t h = hBegin; h < hEnd; h++) {
@@ -370,7 +376,7 @@ public:
 
                     auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutVxBT), Arch::PositionGM{}); // v^T
-                    auto tensorDs = tla::MakeTensor(gmDs[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
+                    auto tensorDs = tla::MakeTensor(gmDs[dsOffset], MakeLayoutFromTag(layoutBTxBTWork), Arch::PositionGM{});
 
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape3.m(), actualBlockShape3.k()));
@@ -393,7 +399,7 @@ public:
 
                     auto tensorDo = tla::MakeTensor(gmDo[doOffset], MakeLayoutFromTag(layoutBTxVHead), Arch::PositionGM{});
                     auto tensorH = tla::MakeTensor(gmH[hOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
-                    auto tensorMm4 = tla::MakeTensor(gmMm4[mm4Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
+                    auto tensorMm4 = tla::MakeTensor(gmMm4[mm4Offset], MakeLayoutFromTag(layoutBTxKWork), Arch::PositionGM{});
 
                     auto tensorBlockDo = GetTile(tensorDo, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape4.m(), actualBlockShape4.k()));
@@ -419,7 +425,7 @@ public:
 
                     auto tensorDsTemp = tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT), Arch::PositionGM{});
                     auto tensorK = tla::MakeTensor(gmK[kOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-                    auto tensorMm6 = tla::MakeTensor(gmMm6[mm6Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
+                    auto tensorMm6 = tla::MakeTensor(gmMm6[mm6Offset], MakeLayoutFromTag(layoutBTxKWork), Arch::PositionGM{});
 
                     auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
                                                     tla::MakeShape(actualBlockShape6.m(), actualBlockShape6.k()));
@@ -443,7 +449,7 @@ public:
 
                     auto tensorV = tla::MakeTensor(gmV[vOffset], MakeLayoutFromTag(layoutBTxV), Arch::PositionGM{});
                     auto tensorDh = tla::MakeTensor(gmDh[dhOffset], MakeLayoutFromTag(layoutVxK), Arch::PositionGM{});
-                    auto tensorMm5 = tla::MakeTensor(gmMm5[mm5Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
+                    auto tensorMm5 = tla::MakeTensor(gmMm5[mm5Offset], MakeLayoutFromTag(layoutBTxKWork), Arch::PositionGM{});
 
                     auto tensorBlockV = GetTile(tensorV, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape5.m(), actualBlockShape5.k()));
@@ -468,7 +474,7 @@ public:
 
                     auto tensorDsTemp =tla::MakeTensor(gmDsTemp[dsOffset], MakeLayoutFromTag(layoutBTxBT_T), Arch::PositionGM{});
                     auto tensorQ = tla::MakeTensor(gmQ[qOffset], MakeLayoutFromTag(layoutBTxK), Arch::PositionGM{});
-                    auto tensorMm7 = tla::MakeTensor(gmMm7[mm7Offset], MakeLayoutFromTag(layoutBTxKHead), Arch::PositionGM{});
+                    auto tensorMm7 = tla::MakeTensor(gmMm7[mm7Offset], MakeLayoutFromTag(layoutBTxKWork), Arch::PositionGM{});
 
                     auto tensorBlockDsTemp = GetTile(tensorDsTemp, tla::MakeCoord(0, 0),
                                                         tla::MakeShape(actualBlockShape7.m(), actualBlockShape7.k()));
@@ -546,6 +552,7 @@ private:
     uint64_t wsMm6Offset;
     uint64_t wsMm5Offset;
     uint64_t wsMm7Offset;
+    uint64_t wsDsRawOffset;
     uint64_t wsDsTempOffset;
 };
 
@@ -570,6 +577,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, IS_BSND>::Init(
     wsMm6Offset = tiling.wsMm6Offset;
     wsMm5Offset = tiling.wsMm5Offset;
     wsMm7Offset = tiling.wsMm7Offset;
+    wsDsRawOffset = tiling.wsDsRawOffset;
     wsDsTempOffset = tiling.wsDsTempOffset;
 }
 
@@ -602,29 +610,29 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, IS_BSND>::Proce
     using BlockMmadPart1Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
                                                           DataType, void, TileCopyPart1Tiled>;
     using TileCopyPart2Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType,
-                                                             LayoutColMajor, DataType, LayoutRowMajor>;
+                                                             LayoutColMajor, float, LayoutRowMajor>;
     using BlockMmadPart2Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
-                                                          DataType, void, TileCopyPart2Tiled>;
+                                                          float, void, TileCopyPart2Tiled>;
     using TileCopyPart3Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType,
-                                                             LayoutColMajor, DataType, LayoutRowMajor>;
+                                                             LayoutColMajor, float, LayoutRowMajor>;
     using BlockMmadPart3Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
-                                                          DataType, void, TileCopyPart3Tiled>;
+                                                          float, void, TileCopyPart3Tiled>;
     using TileCopyPart4Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType,
-                                                             LayoutColMajor, DataType, LayoutRowMajor>;
+                                                             LayoutColMajor, float, LayoutRowMajor>;
     using BlockMmadPart4Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
-                                                          DataType, void, TileCopyPart4Tiled>;
+                                                          float, void, TileCopyPart4Tiled>;
     using TileCopyPart5Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType,
-                                                             LayoutColMajor, DataType, LayoutRowMajor>;
+                                                             LayoutColMajor, float, LayoutRowMajor>;
     using BlockMmadPart5Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
-                                                          DataType, void, TileCopyPart5Tiled>;
+                                                          float, void, TileCopyPart5Tiled>;
     using TileCopyPart6Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutRowMajor, DataType,
-                                                             LayoutRowMajor, DataType, LayoutRowMajor>;
+                                                             LayoutRowMajor, float, LayoutRowMajor>;
     using BlockMmadPart6Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
-                                                          DataType, void, TileCopyPart6Tiled>;
+                                                          float, void, TileCopyPart6Tiled>;
     using TileCopyPart7Tiled = Gemm::Tile::PackedTileCopyTla<ArchTag, DataType, LayoutColMajor, DataType,
-                                                             LayoutRowMajor, DataType, LayoutRowMajor>;
+                                                             LayoutRowMajor, float, LayoutRowMajor>;
     using BlockMmadPart7Tiled = Gemm::Block::BlockMmadTla<DispatchPolicy, L1TileShape, L0TileShape, DataType, DataType,
-                                                          DataType, void, TileCopyPart7Tiled>;
+                                                          float, void, TileCopyPart7Tiled>;
     using MatmulKernelTiled =
         Kernel::ChunkBwdDqkwgTla<BlockMmadPart1Tiled, BlockMmadPart2Tiled, BlockMmadPart3Tiled, BlockMmadPart4Tiled,
                                  BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled, WIDE_SCHEDULE, IS_BSND>;
@@ -633,7 +641,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, IS_BSND>::Proce
     typename MatmulKernelTiled::Params params(ptrQ, ptrK, ptrV, ptrH, ptrDo, ptrDh, ptrDv, ptrCuSeqLen,
                                                 ptrChunkIndices, ptrDq, ptrDk, ptrDw, ptrWorkspace, B, HV, HK, T, K, V, BT,
                                                 numChunks, n_ratio, isVarLen, wsMm3Offset, wsMm4Offset, wsMm6Offset,
-                                                wsMm5Offset, wsMm7Offset, wsDsTempOffset);
+                                                wsMm5Offset, wsMm7Offset, wsDsRawOffset, wsDsTempOffset);
     params.layout = layout_;
     params.aicCoreNum = aicCoreNum;
     params.hkPartitions = hkPartitions;

@@ -18,8 +18,8 @@ recompute_w_u_fwd(k, v, beta, A, g, cu_seqlens) -> w, u
 chunk_bwd_dv_local(q, k, d_o, g, scale, cu_seqlens, chunk_size) -> dv_local
 ```
 
-本节 SoC 目标以 A5（Ascend 950）为准。A2/A3（Ascend 910B/910C）走同一 arch22 路径，
-A6（Ascend 960DT）走第 3 节所述的 arch92 路径。
+本节 SoC 目标以 A5（Ascend 950）为准。A2/A3（Ascend 910B/910C）走第 4 节所述的
+arch22 路径，A6（Ascend 960DT）走第 3 节所述的 arch92 路径。
 模型 case 为 `B=1`、`HK=16`、`HV=32`、`T=11K`、
 `K=V=128`、`chunk_size=64`。该 case 在 H20 上的设备耗时为 300 us；融合算子的性能
 目标是达到 H20 性能的 0.8 倍，即 A5 设备耗时不超过 `300 us / 0.8 = 375 us`。
@@ -55,7 +55,8 @@ dtype。`g/beta` 进入 Vector 计算后统一转 FP32。上述 W/U 变换来自
 
 ## 2. Stage 0--2 完整详设
 
-本节的半片布局和流水以 A5 实现为基准。A6 的整片布局和调度见第 3 节。
+本节的半片布局和流水以 A5 实现为基准。A6 的整片布局和调度见第 3 节，A2/A3 的
+GM 交接布局与 BF16 延迟舍入见第 4 节。
 
 下文所有计算均针对输入中的一个 chunk 和一个 value head `hv`。`q/k` 通过
 `hk=floor(hv/G)` 读取；A、v、g、beta、d_o 使用当前 `hv`。无效行按 `M` 屏蔽，
@@ -499,3 +500,25 @@ C0 与 V1 间的 Score 使用 mode 4 flag `0–2`，
 V1 与 C2 间的共享 L1 使用 mode 4 flag `8–10`。每槽按 ready / free 循环回收。
 核内各 pipe 使用逐槽 HardEvent，Q/K 槽在同一 leader 的最后一次 W 装载完成后归还。
 Score 和 V1 的中间量均在片上交接，A6 workspace 仅包含平台系统开销。
+
+## 4. A2/A3（arch22）实现与 BF16 延迟舍入
+
+Cube 用主 dtype 的 `K/Q` 计算分数 `S = K @ Q^T`，以 FP32 累加。BF16 路径保留 FP32
+的 `S` 供 Vector 使用，乘门控和 scale 后才将 `D` 转回 BF16，交给 Cube 计算
+`D @ d_o`。FP16 路径仍将 `S` 以 FP16 写入 workspace，并由 Vector 转为 FP32。
+`w/u/dv_local` 的 dtype、W/U 计算及公开接口沿用原实现。
+
+Host 与 Device 共用 `WorkspaceLayout<scoreBytes>`。每个 core 的每个 CG 槽按字节保存
+以下数据。
+
+| 区间 | 张量 | 存储 dtype |
+| --- | --- | --- |
+| `[0,16384)` | `K_bg[64,128]` | 主 dtype |
+| `[16384,32768)` | `V_beta[64,128]` | 主 dtype |
+| `[32768,40960)` | `D[64,64]` | 主 dtype |
+| `[40960,40960+4096*scoreBytes)` | `S[64,64]` | BF16 路径为 FP32，FP16 路径为 FP16 |
+
+BF16 每槽由 49,152 增至 57,344 字节，Intra workspace 增加 `blockDim*CG*8192` 字节，
+FP16 每槽仍为 49,152 字节。每个 AIV 复用原行系数的 UB 保存 FP32 半片，
+峰值仍为 97 KiB。Cube 发布 leader 的 Score 后，两个 AIV 按原顺序等待。
+每个 AIV 只加载自己的有效行，屏蔽下三角和尾列，并将无效 D 写零。
