@@ -10,8 +10,8 @@ from atk.tasks.api_execute.base_api import BaseApi
 suite = json.loads(os.environ["FLA_ATK_SUITE"])
 op = suite["op"]
 group = suite["group"]
-reference_root = Path(os.environ["FLA_ATK_REFERENCE"])
-reference_dir = suite["reference"]
+reference_root = Path(__file__).resolve().parent / "cases"
+operator_dir = reference_root / op
 repo_root = Path(__file__).resolve().parents[3]
 helpers = Path(__file__).resolve().parent / "helpers"
 sys.path.insert(0, str(helpers))
@@ -26,43 +26,24 @@ def load(p, name):
 
 
 sys.path[:0] = [
-    str(reference_root / reference_dir),
+    str(operator_dir),
     str(reference_root / "common"),
     str(reference_root),
 ]
-reference_file = reference_root / reference_dir / ("executor_" + reference_dir + ".py")
-if op == "chunk_kda_fwd_finalize":
-    reference_file = (
-        reference_root / reference_dir / "executor_chunk_kda_fwd_finalize.py"
-    )
-if op == "chunk_kda_fwd":
-    reference_file = reference_root / reference_dir / "executor_chunk_kda_fwd_v2.py"
-if op == "chunk_kda_fwd_fused":
-    reference_file = reference_root / reference_dir / "executor_chunk_kda_fwd.py"
-if op == "recurrent_gated_delta_rule":
-    reference_file = (
-        reference_root
-        / reference_dir
-        / "rgdn_A5/executor_recurrent_gated_delta_rule.py"
-    )
-if op == "chunk_kda_bwd_recompute":
-    reference_file = (
-        reference_root / reference_dir / "executor_chunk_kda_bwd_recompute_10k.py"
-    )
-audited_kda = op in ("chunk_kda_bwd", "chunk_kda_bwd_prepare", "chunk_kda_bwd_finalize")
-if audited_kda:
-    reference_file = helpers / "executor_kda_audit.py"
-if op == "chunk_gated_delta_rule_fwd_h" and not group.endswith("generated"):
-    reference_file = reference_root / reference_dir / "executor_gdn_fwd_h_state.py"
+reference_file = operator_dir / suite["reference"]
 reference = load(reference_file, "verified_smoke_reference")
 executor_base = getattr(reference, "StateApi", None) or getattr(
     reference, "FunctionApi", BaseApi
 )
+kda_backward_profile = op in (
+    "chunk_kda_bwd",
+    "chunk_kda_bwd_finalize",
+    "chunk_kda_bwd_prepare",
+)
+if kda_backward_profile:
+    executor_base = BaseApi
 if op == "chunk_kda_fwd":
     executor_base = reference.PublicForwardApi
-if audited_kda:
-    reference.ROOT = reference_root
-    executor_base = reference.KdaAudit
 if op == "chunk_kda_fwd_fused":
     executor_base = reference.ChunkKdaFwdApi
 uses_case_spec = op in (
@@ -99,7 +80,12 @@ class Smoke(executor_base):
         case = self.task_result.case_config
         if uses_case_spec:
             spec = json.loads(case.get_input_data_config(name="case_spec").range_values)
-        if op == "chunk_gated_delta_rule_bwd":
+        if kda_backward_profile:
+            from executor_kda_audit import run_kda_profile
+
+            spec = json.loads(case.get_input_data_config(name="case_spec").range_values)
+            out = run_kda_profile(op, reference, spec, input_data, cpu, high)
+        elif op == "chunk_gated_delta_rule_bwd":
             if cpu:
                 spec = json.loads(
                     case.get_input_data_config(name="case_spec").range_values
@@ -186,9 +172,7 @@ class Smoke(executor_base):
                 ),
             )
             if cpu:
-                from chunk_gated_delta_rule_bwd.scripts.fwd_h_cpu import _reference
-
-                out = _reference(
+                out = reference._reference(
                     x,
                     output_final_state=spec["output_final_state"],
                     use_exp2=spec["use_exp2"],

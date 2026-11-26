@@ -1,25 +1,9 @@
-"""ATK adapters using the pinned work_tool CPU equations and FLA public NPU APIs."""
-
-import os
-import importlib
-import json
-import sys
-from pathlib import Path
+"""Adapt the KDA case profiles to the bundled CPU references and public NPU APIs."""
 
 import torch
-from atk.tasks.api_execute import register
-from atk.tasks.api_execute.base_api import BaseApi
-
-ROOT = Path(os.environ["FLA_ATK_REFERENCE"])
-sys.path.insert(0, str(ROOT / "common"))
 
 
-def load_reference(folder, module):
-    sys.path.insert(0, str(ROOT / folder))
-    return importlib.import_module(module)
-
-
-def finalize_device(module, inputs, spec, cu, chunks, device):
+def finalize_device(inputs, spec, cu, chunks, device):
     from fla_npu.ops.ascendc import npu_chunk_kda_bwd_finalize
 
     dev = {}
@@ -53,45 +37,28 @@ def finalize_device(module, inputs, spec, cu, chunks, device):
     )
 
 
-@register("executor_kda_audit")
-class KdaAudit(BaseApi):
-    def __call__(self, input_data, with_output=False):
-        field = self.task_result.case_config.get_input_data_config(name="case_spec")
-        s = json.loads(field.range_values)
-        device = next(
-            x.device for x in input_data.kwargs.values() if torch.is_tensor(x)
+def run_kda_profile(op, reference, spec, input_data, cpu, high):
+    if op == "chunk_kda_bwd_prepare":
+        return (
+            reference.run_cpu(spec, high_precision=high)
+            if cpu
+            else reference.run_npu(spec, input_data)
         )
-        cpu = self.device == "cpu"
-        high = cpu and bool(self.task_result.is_benchmark_task)
-        if "beta_mode" in s and "output_layout" in s:
-            m = load_reference(
-                "chunk_kda_bwd_finalize", "executor_chunk_kda_bwd_finalize"
-            )
-            inputs, cu, chunks = m.build_inputs(s, s["seed"])
-            out = (
-                m.reference(inputs, s, chunks, high)
-                if cpu
-                else finalize_device(m, inputs, s, cu, chunks, device)
-            )
-        elif s.get("op") == "chunk_kda_bwd_prepare":
-            m = load_reference(
-                "chunk_kda_bwd_prepare_a3", "executor_chunk_kda_bwd_prepare_a3"
-            )
-            out = m.run_cpu(s, high_precision=high) if cpu else m.run_npu(s, input_data)
-        elif s.get("op") == "chunk_kda_bwd":
-            m = load_reference("chunk_kda_bwd", "executor_chunk_kda_bwd_A2")
-            inputs = m.build_inputs(s)
-            if cpu:
-                out = m.cpu_reference(inputs, s, high_precision=high)
-                if not high:
-                    out = m._cast_cpu_outputs_to_abi(out, s)
-            else:
-                from fla_npu.ops.ascendc import chunk_kda_bwd
 
-                out = chunk_kda_bwd(**m.npu_inputs(inputs, s, device))
-            out = m._finite_outputs(out, probe_device=not cpu)
-        else:
-            raise ValueError(f"Unknown KDA profile {s}")
-        if not out or any(not torch.isfinite(t).all().item() for t in out):
-            raise ValueError("Missing or non-finite KDA result")
-        return tuple(out)
+    device = next(x.device for x in input_data.kwargs.values() if torch.is_tensor(x))
+    if op == "chunk_kda_bwd_finalize":
+        inputs, cu, chunks = reference.build_inputs(spec, spec["seed"])
+        if cpu:
+            return reference.reference(inputs, spec, chunks, high)
+        return finalize_device(inputs, spec, cu, chunks, device)
+
+    inputs = reference.build_inputs(spec)
+    if cpu:
+        outputs = reference.cpu_reference(inputs, spec, high_precision=high)
+        if not high:
+            outputs = reference._cast_cpu_outputs_to_abi(outputs, spec)
+    else:
+        from fla_npu.ops.ascendc import chunk_kda_bwd
+
+        outputs = chunk_kda_bwd(**reference.npu_inputs(inputs, spec, device))
+    return reference._finite_outputs(outputs, probe_device=not cpu)

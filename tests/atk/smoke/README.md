@@ -19,21 +19,25 @@ echo "matrix=$(python3 tests/atk/smoke/run.py matrix)" >> "$GITHUB_OUTPUT"
 
 容器需要已启用 CANN、已安装待测 FLA wheel、torch、torch_npu，以及支持 `cv_fused_double_benchmark` 的 ATK。基线使用 CANN 9.2.1，A2 为 ATK 26.7.8，A5 为 26.9.24。A2 的 XLSX 报告读取需要 openpyxl。
 
-在能访问 GitCode 的环境准备一次标杆 checkout，把它挂入各 runner。只需检出 `FLA_ATK`。运行入口会核对提交和该目录的已跟踪文件。
+每个算子的 CPU 标杆放在 `cases/<算子>/executor_*.py`，A2、A5 共用。每个来源组在 `suites.json` 的 `reference` 字段指定实际文件。公共模块位于 `cases/common/`，算子专用的参考函数和输入生成器随算子存放。运行时直接使用仓内文件。
 
-```bash
-REF_DIR="$PWD/atk-work-tool"
-git init -q "$REF_DIR"
-git -C "$REF_DIR" sparse-checkout set --no-cone '/FLA_ATK/'
-git -C "$REF_DIR" fetch --filter=blob:none --depth=1 https://gitcode.com/chen-linxin4/work_tool.git 72d372032214b8866cd6073431b0d478e7744ba5
-git -C "$REF_DIR" checkout --detach FETCH_HEAD
-```
+标杆取自 [work_tool 的固定提交 72d3720](https://gitcode.com/chen-linxin4/work_tool/tree/72d372032214b8866cd6073431b0d478e7744ba5/FLA_ATK)。以下目录映射便于与上游核对。
+
+| 冒烟算子 | 上游 FLA_ATK 路径 |
+|---|---|
+| `chunk_fwd_h` | `chunk_gated_delta_rule_bwd/scripts/fwd_h_cpu.py`，以 `executor_chunk_fwd_h.py` 存放 |
+| `chunk_kda_fwd`、`chunk_kda_fwd_fused` | `chunk_kda_fwd/executor_chunk_kda_fwd_v2.py`、`chunk_kda_fwd/executor_chunk_kda_fwd.py` |
+| `chunk_kda_fwd_prepare`、`chunk_kda_fwd_finalize` | `chunk_kda_fwd_prepare_a2/`、`chunk_fwd_finalize/` |
+| `chunk_kda_bwd_prepare` | `chunk_kda_bwd_prepare_a3/` |
+| `recurrent_gated_delta_rule` | `recurrent_gated_delta_rule/rgdn_A5/` |
+
+其余标杆保留上游算子目录名和文件名。`chunk_gated_delta_rule_fwd_h` 的 generated 组和状态用例组分别使用 `executor_chunk_gated_delta_rule_fwd_h.py` 和 `executor_gdn_fwd_h_state.py`。KDA Forward V2 和 GDN 反向整链的导入路径已适配仓内布局。
 
 从 FLA 仓库根目录执行。CI 将 `--op` 和 `--platform` 替换为矩阵值，将 `--device` 替换为容器内分配的逻辑卡号。
 
 ```bash
 python3 tests/atk/smoke/run.py run --op chunk_fwd_o --platform A2 \
-  --device 0 --reference "$REF_DIR" --output atk-results
+  --device 0 --output atk-results
 ```
 
 每个来源组单独启动 ATK，运行 NPU、CPU 同精度和 CPU 升精度三路。任一用例超差、缺少输出或缺少报告都会让命令返回非零。日志和原生报告写入独立的 `atk-results/<算子>-<平台>-*/<组名>/`。加 `--group <组名>` 可重跑指定组。

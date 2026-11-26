@@ -4,7 +4,7 @@
     "platform": "A2",
     "group": "causal_conv1d-A2-generated",
     "count": 48,
-    "reference": "causal_conv1d",
+    "reference": "executor_causal_conv1d.py",
     "output": "fp32"
   },
   {
@@ -12,7 +12,7 @@
     "platform": "A2",
     "group": "causal_conv1d-A2-prior-200",
     "count": 200,
-    "reference": "causal_conv1d",
+    "reference": "executor_causal_conv1d.py",
     "output": "fp32"
   },
   {
@@ -20,7 +20,7 @@
     "platform": "A2",
     "group": "causal_conv1d-A2-prior-gaps",
     "count": 6,
-    "reference": "causal_conv1d",
+    "reference": "executor_causal_conv1d.py",
     "output": "fp32"
   },
   {
@@ -28,7 +28,7 @@
     "platform": "A5",
     "group": "causal_conv1d-A5-generated",
     "count": 48,
-    "reference": "causal_conv1d",
+    "reference": "executor_causal_conv1d.py",
     "output": "fp32"
   },
   {
@@ -36,7 +36,7 @@
     "platform": "A5",
     "group": "causal_conv1d-A5-prior-200",
     "count": 200,
-    "reference": "causal_conv1d",
+    "reference": "executor_causal_conv1d.py",
     "output": "fp32"
   },
   {
@@ -44,7 +44,7 @@
     "platform": "A5",
     "group": "causal_conv1d-A5-prior-gaps",
     "count": 6,
-    "reference": "causal_conv1d",
+    "reference": "executor_causal_conv1d.py",
     "output": "fp32"
   },
   {
@@ -52,7 +52,7 @@
     "platform": "A2",
     "group": "causal_conv1d_bwd-A2-functional-defined",
     "count": 54,
-    "reference": "causal_conv1d_bwd",
+    "reference": "executor_causal_conv1d_bwd.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_conv_backward.py"
   },
@@ -61,7 +61,7 @@
     "platform": "A2",
     "group": "causal_conv1d_bwd-A2-generated",
     "count": 200,
-    "reference": "causal_conv1d_bwd",
+    "reference": "executor_causal_conv1d_bwd.py",
     "output": "fp32"
   },
   {
@@ -69,7 +69,7 @@
     "platform": "A5",
     "group": "causal_conv1d_bwd-A5-functional-defined",
     "count": 54,
-    "reference": "causal_conv1d_bwd",
+    "reference": "executor_causal_conv1d_bwd.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_conv_backward.py"
   },
@@ -78,7 +78,7 @@
     "platform": "A5",
     "group": "causal_conv1d_bwd-A5-generated",
     "count": 200,
-    "reference": "causal_conv1d_bwd",
+    "reference": "executor_causal_conv1d_bwd.py",
     "output": "fp32"
   },
   {
@@ -86,7 +86,7 @@
     "platform": "A2",
     "group": "chunk_fwd_h-A2-generated",
     "count": 152,
-    "reference": "chunk_gated_delta_rule_fwd_h",
+    "reference": "executor_chunk_fwd_h.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_fwd_h/executor_chunk_fwd_h.py"
   },
@@ -95,7 +95,7 @@
     "platform": "A5",
     "group": "chunk_fwd_h-A5-generated",
     "count": 200,
-    "reference": "chunk_gated_delta_rule_fwd_h",
+    "reference": "executor_chunk_fwd_h.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_fwd_h/executor_chunk_fwd_h.py"
   },
@@ -104,7 +104,7 @@
     "platform": "A2",
     "group": "chunk_fwd_o-A2-compat",
     "count": 173,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -112,7 +112,7 @@
     "platform": "A2",
     "group": "chunk_fwd_o-A2-generated",
     "count": 23,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -120,7 +120,7 @@
     "platform": "A2",
     "group": "chunk_fwd_o-A2-prior-gaps",
     "count": 11,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -128,7 +128,7 @@
     "platform": "A2",
     "group": "pr51-common-A2-0",
     "count": 150,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -136,7 +136,7 @@
     "platform": "A2",
     "group": "pr51-common-A2-150",
     "count": 72,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -144,7 +144,7 @@
     "platform": "A5",
     "group": "chunk_fwd_o-A5-generated-bf16",
     "count": 114,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -152,7 +152,7 @@
     "platform": "A5",
     "group": "chunk_fwd_o-A5-prior-200-bf16",
     "count": 165,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -160,7 +160,7 @@
     "platform": "A5",
     "group": "chunk_fwd_o-A5-prior-gaps",
     "count": 11,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -168,7 +168,7 @@
     "platform": "A5",
     "group": "pr51-common-A5-0",
     "count": 150,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -176,7 +176,7 @@
     "platform": "A5",
     "group": "pr51-common-A5-150",
     "count": 72,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native"
   },
   {
@@ -184,7 +184,7 @@
     "platform": "A5",
     "group": "pr51-opt-A5-0",
     "count": 25,
-    "reference": "chunk_fwd_o",
+    "reference": "executor_chunk_fwd_o.py",
     "output": "native",
     "mode": "opt"
   },
@@ -193,7 +193,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_bwd-A5-generated",
     "count": 186,
-    "reference": "chunk_gated_delta_rule_bwd",
+    "reference": "executor_chunk_gated_delta_rule_bwd.py",
     "output": "native",
     "plugin": "tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py"
   },
@@ -202,7 +202,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_bwd-A5-prior-200",
     "count": 198,
-    "reference": "chunk_gated_delta_rule_bwd",
+    "reference": "executor_chunk_gated_delta_rule_bwd.py",
     "output": "native",
     "plugin": "tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py"
   },
@@ -211,7 +211,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_bwd_dhu-A5-gate-base",
     "count": 96,
-    "reference": "chunk_gated_delta_rule_bwd_dhu",
+    "reference": "executor_chunk_gated_delta_rule_bwd_dhu.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_dhu_exp.py"
   },
@@ -220,7 +220,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_bwd_dhu-A5-generated",
     "count": 200,
-    "reference": "chunk_gated_delta_rule_bwd_dhu",
+    "reference": "executor_chunk_gated_delta_rule_bwd_dhu.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_gated_delta_rule_bwd_dhu/executor_chunk_gated_delta_rule_bwd_dhu.py"
   },
@@ -229,7 +229,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_bwd_finalize-A5-generated",
     "count": 200,
-    "reference": "chunk_gated_delta_rule_bwd_finalize",
+    "reference": "executor_chunk_gated_delta_rule_bwd_finalize.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_gated_delta_rule_bwd_finalize/executor_chunk_gated_delta_rule_bwd_finalize.py"
   },
@@ -238,7 +238,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_fwd_h-A5-gate-state",
     "count": 138,
-    "reference": "chunk_gated_delta_rule_fwd_h",
+    "reference": "executor_gdn_fwd_h_state.py",
     "output": "native"
   },
   {
@@ -246,7 +246,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_fwd_h-A5-generated",
     "count": 200,
-    "reference": "chunk_gated_delta_rule_fwd_h",
+    "reference": "executor_chunk_gated_delta_rule_fwd_h.py",
     "output": "native"
   },
   {
@@ -254,7 +254,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_fwd_h-A5-joint-contract",
     "count": 169,
-    "reference": "chunk_gated_delta_rule_fwd_h",
+    "reference": "executor_gdn_fwd_h_state.py",
     "output": "native"
   },
   {
@@ -262,7 +262,7 @@
     "platform": "A5",
     "group": "pr50-gate-A5-0",
     "count": 2,
-    "reference": "chunk_gated_delta_rule_fwd_h",
+    "reference": "executor_gdn_fwd_h_state.py",
     "output": "native"
   },
   {
@@ -270,7 +270,7 @@
     "platform": "A5",
     "group": "chunk_gdn_bwd_intra-A5-generated",
     "count": 200,
-    "reference": "chunk_gdn_bwd_intra",
+    "reference": "executor_chunk_gdn_bwd_intra.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_gdn_bwd_intra/executor_chunk_gdn_bwd_intra.py"
   },
@@ -279,7 +279,7 @@
     "platform": "A5",
     "group": "chunk_gdn_bwd_intra-A5-prior-200",
     "count": 200,
-    "reference": "chunk_gdn_bwd_intra",
+    "reference": "executor_chunk_gdn_bwd_intra.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_gdn_bwd_intra/executor_chunk_gdn_bwd_intra.py"
   },
@@ -288,7 +288,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd-A2-public-arch22",
     "count": 200,
-    "reference": "chunk_kda_bwd",
+    "reference": "executor_chunk_kda_bwd_A2.py",
     "output": "fp32"
   },
   {
@@ -296,7 +296,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd-A5-regression",
     "count": 46,
-    "reference": "chunk_kda_bwd",
+    "reference": "executor_chunk_kda_bwd_A2.py",
     "output": "fp32"
   },
   {
@@ -304,7 +304,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd-A5-worktool",
     "count": 190,
-    "reference": "chunk_kda_bwd",
+    "reference": "executor_chunk_kda_bwd_A2.py",
     "output": "fp32"
   },
   {
@@ -312,7 +312,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_finalize-A2-worktool",
     "count": 195,
-    "reference": "chunk_kda_bwd_finalize",
+    "reference": "executor_chunk_kda_bwd_finalize.py",
     "output": "fp32"
   },
   {
@@ -320,7 +320,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_finalize-A5-regression",
     "count": 19,
-    "reference": "chunk_kda_bwd_finalize",
+    "reference": "executor_chunk_kda_bwd_finalize.py",
     "output": "fp32"
   },
   {
@@ -328,7 +328,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_finalize-A5-worktool",
     "count": 126,
-    "reference": "chunk_kda_bwd_finalize",
+    "reference": "executor_chunk_kda_bwd_finalize.py",
     "output": "fp32"
   },
   {
@@ -336,7 +336,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_prepare-A2-worktool",
     "count": 200,
-    "reference": "chunk_kda_bwd_prepare_a3",
+    "reference": "executor_chunk_kda_bwd_prepare_a3.py",
     "output": "fp32"
   },
   {
@@ -344,7 +344,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_prepare-A5-worktool",
     "count": 200,
-    "reference": "chunk_kda_bwd_prepare_a3",
+    "reference": "executor_chunk_kda_bwd_prepare_a3.py",
     "output": "fp32"
   },
   {
@@ -352,7 +352,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_recompute-A2-checkpoint",
     "count": 96,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_kda_checkpoint.py"
   },
@@ -361,7 +361,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_recompute-A2-generated",
     "count": 27,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_kda_bwd_recompute/executor_chunk_kda_bwd_recompute.py"
   },
@@ -370,7 +370,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_recompute-A2-packed-ntd",
     "count": 48,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_kda_checkpoint.py"
   },
@@ -379,7 +379,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_recompute-A2-prior-200",
     "count": 200,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_kda_bwd_recompute/executor_chunk_kda_bwd_recompute.py"
   },
@@ -388,7 +388,7 @@
     "platform": "A2",
     "group": "chunk_kda_bwd_recompute-A2-prior-gaps",
     "count": 8,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_kda_bwd_recompute/executor_chunk_kda_bwd_recompute.py"
   },
@@ -397,7 +397,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_recompute-A5-boundaries",
     "count": 392,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_kda_bwd_recompute/executor_chunk_kda_bwd_recompute.py"
   },
@@ -406,7 +406,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_recompute-A5-checkpoint",
     "count": 56,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_kda_checkpoint.py"
   },
@@ -415,7 +415,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_recompute-A5-generated",
     "count": 4,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_kda_bwd_recompute/executor_chunk_kda_bwd_recompute.py"
   },
@@ -424,7 +424,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_recompute-A5-packed-ntd",
     "count": 28,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/smoke/helpers/executor_kda_checkpoint.py"
   },
@@ -433,7 +433,7 @@
     "platform": "A5",
     "group": "chunk_kda_bwd_recompute-A5-prior-200",
     "count": 31,
-    "reference": "chunk_kda_bwd_recompute",
+    "reference": "executor_chunk_kda_bwd_recompute_10k.py",
     "output": "fp32",
     "plugin": "tests/atk/chunk_kda_bwd_recompute/executor_chunk_kda_bwd_recompute.py"
   },
@@ -442,7 +442,7 @@
     "platform": "A2",
     "group": "chunk_kda_fwd-A2-output-only",
     "count": 48,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd_v2.py",
     "output": "native"
   },
   {
@@ -450,7 +450,7 @@
     "platform": "A2",
     "group": "chunk_kda_fwd-A2-v2",
     "count": 200,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd_v2.py",
     "output": "native"
   },
   {
@@ -458,7 +458,7 @@
     "platform": "A2",
     "group": "pr48-v2-A2-0",
     "count": 3,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd_v2.py",
     "output": "native"
   },
   {
@@ -466,7 +466,7 @@
     "platform": "A5",
     "group": "chunk_kda_fwd-A5-output-only",
     "count": 48,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd_v2.py",
     "output": "native"
   },
   {
@@ -474,7 +474,7 @@
     "platform": "A5",
     "group": "chunk_kda_fwd-A5-v2",
     "count": 200,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd_v2.py",
     "output": "native"
   },
   {
@@ -482,7 +482,7 @@
     "platform": "A5",
     "group": "pr48-v2-A5-0",
     "count": 3,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd_v2.py",
     "output": "native"
   },
   {
@@ -490,7 +490,7 @@
     "platform": "A2",
     "group": "chunk_kda_fwd_finalize-A2-generated",
     "count": 200,
-    "reference": "chunk_fwd_finalize",
+    "reference": "executor_chunk_kda_fwd_finalize.py",
     "output": "fp32"
   },
   {
@@ -498,7 +498,7 @@
     "platform": "A5",
     "group": "chunk_kda_fwd_finalize-A5-generated",
     "count": 200,
-    "reference": "chunk_fwd_finalize",
+    "reference": "executor_chunk_kda_fwd_finalize.py",
     "output": "fp32"
   },
   {
@@ -506,7 +506,7 @@
     "platform": "A5",
     "group": "chunk_kda_fwd_fused-A5-boundaries",
     "count": 143,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native"
   },
   {
@@ -514,7 +514,7 @@
     "platform": "A5",
     "group": "chunk_kda_fwd_fused-A5-generated",
     "count": 196,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native"
   },
   {
@@ -522,7 +522,7 @@
     "platform": "A5",
     "group": "pr45-A5-0",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -531,7 +531,7 @@
     "platform": "A5",
     "group": "pr45-A5-1050",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -540,7 +540,7 @@
     "platform": "A5",
     "group": "pr45-A5-1200",
     "count": 148,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -549,7 +549,7 @@
     "platform": "A5",
     "group": "pr45-A5-1350",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -558,7 +558,7 @@
     "platform": "A5",
     "group": "pr45-A5-150",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -567,7 +567,7 @@
     "platform": "A5",
     "group": "pr45-A5-1500",
     "count": 148,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -576,7 +576,7 @@
     "platform": "A5",
     "group": "pr45-A5-1650",
     "count": 148,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -585,7 +585,7 @@
     "platform": "A5",
     "group": "pr45-A5-1800",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -594,7 +594,7 @@
     "platform": "A5",
     "group": "pr45-A5-1950",
     "count": 148,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -603,7 +603,7 @@
     "platform": "A5",
     "group": "pr45-A5-2100",
     "count": 148,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -612,7 +612,7 @@
     "platform": "A5",
     "group": "pr45-A5-2250",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -621,7 +621,7 @@
     "platform": "A5",
     "group": "pr45-A5-2400",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -630,7 +630,7 @@
     "platform": "A5",
     "group": "pr45-A5-2550",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -639,7 +639,7 @@
     "platform": "A5",
     "group": "pr45-A5-2700",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -648,7 +648,7 @@
     "platform": "A5",
     "group": "pr45-A5-2850",
     "count": 150,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -657,7 +657,7 @@
     "platform": "A5",
     "group": "pr45-A5-300",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -666,7 +666,7 @@
     "platform": "A5",
     "group": "pr45-A5-450",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -675,7 +675,7 @@
     "platform": "A5",
     "group": "pr45-A5-600",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -684,7 +684,7 @@
     "platform": "A5",
     "group": "pr45-A5-750",
     "count": 148,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -693,7 +693,7 @@
     "platform": "A5",
     "group": "pr45-A5-900",
     "count": 149,
-    "reference": "chunk_kda_fwd",
+    "reference": "executor_chunk_kda_fwd.py",
     "output": "native",
     "mode": "state"
   },
@@ -702,7 +702,7 @@
     "platform": "A2",
     "group": "chunk_kda_fwd_prepare-A2-generated",
     "count": 200,
-    "reference": "chunk_kda_fwd_prepare_a2",
+    "reference": "executor_chunk_kda_fwd_prepare_a2.py",
     "output": "fp32"
   },
   {
@@ -710,7 +710,7 @@
     "platform": "A5",
     "group": "chunk_kda_fwd_prepare-A5-generated",
     "count": 200,
-    "reference": "chunk_kda_fwd_prepare_a2",
+    "reference": "executor_chunk_kda_fwd_prepare_a2.py",
     "output": "fp32"
   },
   {
@@ -718,7 +718,7 @@
     "platform": "A2",
     "group": "merge_fwd_bwd_kernel-A2-boundaries",
     "count": 48,
-    "reference": "merge_fwd_bwd_kernel",
+    "reference": "executor_merge_fwd_bwd_kernel.py",
     "output": "fp32",
     "plugin": "tests/atk/merge_fwd_bwd_kernel/executor_merge_fwd_bwd_kernel.py"
   },
@@ -727,7 +727,7 @@
     "platform": "A2",
     "group": "merge_fwd_bwd_kernel-A2-prior-200",
     "count": 200,
-    "reference": "merge_fwd_bwd_kernel",
+    "reference": "executor_merge_fwd_bwd_kernel.py",
     "output": "fp32",
     "plugin": "tests/atk/merge_fwd_bwd_kernel/executor_merge_fwd_bwd_kernel.py"
   },
@@ -736,7 +736,7 @@
     "platform": "A2",
     "group": "merge_fwd_bwd_kernel-A2-prior-gaps",
     "count": 8,
-    "reference": "merge_fwd_bwd_kernel",
+    "reference": "executor_merge_fwd_bwd_kernel.py",
     "output": "fp32",
     "plugin": "tests/atk/merge_fwd_bwd_kernel/executor_merge_fwd_bwd_kernel.py"
   },
@@ -745,7 +745,7 @@
     "platform": "A5",
     "group": "merge_fwd_bwd_kernel-A5-boundaries",
     "count": 47,
-    "reference": "merge_fwd_bwd_kernel",
+    "reference": "executor_merge_fwd_bwd_kernel.py",
     "output": "fp32",
     "plugin": "tests/atk/merge_fwd_bwd_kernel/executor_merge_fwd_bwd_kernel.py"
   },
@@ -754,7 +754,7 @@
     "platform": "A5",
     "group": "merge_fwd_bwd_kernel-A5-prior-200",
     "count": 199,
-    "reference": "merge_fwd_bwd_kernel",
+    "reference": "executor_merge_fwd_bwd_kernel.py",
     "output": "fp32",
     "plugin": "tests/atk/merge_fwd_bwd_kernel/executor_merge_fwd_bwd_kernel.py"
   },
@@ -763,7 +763,7 @@
     "platform": "A5",
     "group": "merge_fwd_bwd_kernel-A5-prior-gaps",
     "count": 8,
-    "reference": "merge_fwd_bwd_kernel",
+    "reference": "executor_merge_fwd_bwd_kernel.py",
     "output": "fp32",
     "plugin": "tests/atk/merge_fwd_bwd_kernel/executor_merge_fwd_bwd_kernel.py"
   },
@@ -772,7 +772,7 @@
     "platform": "A2",
     "group": "pre_process_bwd_kernel_merged-A2-prior-200",
     "count": 200,
-    "reference": "pre_process_bwd_kernel_merged",
+    "reference": "executor_pre_process_bwd_kernel_merged.py",
     "output": "fp32",
     "plugin": "tests/atk/pre_process_bwd_kernel_merged/executor_pre_process_bwd_kernel_merged.py"
   },
@@ -781,7 +781,7 @@
     "platform": "A2",
     "group": "pre_process_bwd_kernel_merged-A2-prior-gaps",
     "count": 3,
-    "reference": "pre_process_bwd_kernel_merged",
+    "reference": "executor_pre_process_bwd_kernel_merged.py",
     "output": "fp32",
     "plugin": "tests/atk/pre_process_bwd_kernel_merged/executor_pre_process_bwd_kernel_merged.py"
   },
@@ -790,7 +790,7 @@
     "platform": "A5",
     "group": "pre_process_bwd_kernel_merged-A5-prior-200",
     "count": 200,
-    "reference": "pre_process_bwd_kernel_merged",
+    "reference": "executor_pre_process_bwd_kernel_merged.py",
     "output": "fp32",
     "plugin": "tests/atk/pre_process_bwd_kernel_merged/executor_pre_process_bwd_kernel_merged.py"
   },
@@ -799,7 +799,7 @@
     "platform": "A5",
     "group": "pre_process_bwd_kernel_merged-A5-prior-gaps",
     "count": 3,
-    "reference": "pre_process_bwd_kernel_merged",
+    "reference": "executor_pre_process_bwd_kernel_merged.py",
     "output": "fp32",
     "plugin": "tests/atk/pre_process_bwd_kernel_merged/executor_pre_process_bwd_kernel_merged.py"
   },
@@ -808,7 +808,7 @@
     "platform": "A2",
     "group": "pre_process_fwd_kernel_merged-A2-prior-200",
     "count": 200,
-    "reference": "pre_process_fwd_kernel_merged",
+    "reference": "executor_pre_process_fwd_kernel_merged.py",
     "output": "fp32"
   },
   {
@@ -816,7 +816,7 @@
     "platform": "A2",
     "group": "pre_process_fwd_kernel_merged-A2-prior-gaps",
     "count": 6,
-    "reference": "pre_process_fwd_kernel_merged",
+    "reference": "executor_pre_process_fwd_kernel_merged.py",
     "output": "fp32"
   },
   {
@@ -824,7 +824,7 @@
     "platform": "A5",
     "group": "pre_process_fwd_kernel_merged-A5-prior-200",
     "count": 200,
-    "reference": "pre_process_fwd_kernel_merged",
+    "reference": "executor_pre_process_fwd_kernel_merged.py",
     "output": "fp32"
   },
   {
@@ -832,7 +832,7 @@
     "platform": "A5",
     "group": "pre_process_fwd_kernel_merged-A5-prior-gaps",
     "count": 6,
-    "reference": "pre_process_fwd_kernel_merged",
+    "reference": "executor_pre_process_fwd_kernel_merged.py",
     "output": "fp32"
   },
   {
@@ -840,7 +840,7 @@
     "platform": "A2",
     "group": "recurrent_gated_delta_rule-A2-generated",
     "count": 190,
-    "reference": "recurrent_gated_delta_rule",
+    "reference": "executor_recurrent_gated_delta_rule.py",
     "output": "fp32"
   },
   {
@@ -848,7 +848,7 @@
     "platform": "A5",
     "group": "recurrent_gated_delta_rule-A5-generated",
     "count": 192,
-    "reference": "recurrent_gated_delta_rule",
+    "reference": "executor_recurrent_gated_delta_rule.py",
     "output": "fp32"
   },
   {
@@ -856,7 +856,7 @@
     "platform": "A2",
     "group": "recurrent_kda-A2-corpus",
     "count": 65,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -864,7 +864,7 @@
     "platform": "A2",
     "group": "recurrent_kda-A2-extended",
     "count": 24,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -872,7 +872,7 @@
     "platform": "A2",
     "group": "recurrent_kda-A2-extra",
     "count": 32,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -880,7 +880,7 @@
     "platform": "A2",
     "group": "recurrent_kda-A2-fixed",
     "count": 28,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -888,7 +888,7 @@
     "platform": "A5",
     "group": "recurrent_kda-A5-corpus",
     "count": 57,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -896,7 +896,7 @@
     "platform": "A5",
     "group": "recurrent_kda-A5-extended",
     "count": 12,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -904,7 +904,7 @@
     "platform": "A5",
     "group": "recurrent_kda-A5-extra",
     "count": 15,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   },
   {
@@ -912,7 +912,7 @@
     "platform": "A5",
     "group": "recurrent_kda-A5-fixed",
     "count": 22,
-    "reference": "recurrent_kda",
+    "reference": "executor_recurrent_kda.py",
     "output": "native"
   }
 ]

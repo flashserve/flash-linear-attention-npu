@@ -39,7 +39,7 @@ def cases_for(suite):
     return cases
 
 
-def reference_path(path):
+def verify_upstream_checkout(path):
     path = path.resolve()
     commit = subprocess.check_output(
         ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
@@ -51,7 +51,6 @@ def reference_path(path):
     )
     if not (path / "FLA_ATK/common").is_dir():
         raise ValueError("work_tool checkout must include FLA_ATK")
-    return path / "FLA_ATK"
 
 
 def check_report(folder, cases):
@@ -139,7 +138,7 @@ def check_report(folder, cases):
         )
 
 
-def run_suite(suite, reference, output, device):
+def run_suite(suite, output, device):
     cases = cases_for(suite)
     folder = output / suite["group"]
     folder.mkdir()
@@ -151,7 +150,6 @@ def run_suite(suite, reference, output, device):
     ):
         env.pop(flag, None)
     env.update(
-        FLA_ATK_REFERENCE=str(reference),
         FLA_ATK_SUITE=json.dumps(suite),
         FLA_ATK_TRACE=str(folder / "events"),
         GDN_ATK_BENCHMARK_ARCH="arch22" if suite["platform"] == "A2" else "arch35",
@@ -219,7 +217,9 @@ def main():
     run.add_argument("--op", required=True)
     run.add_argument("--platform", choices=("A2", "A5"), required=True)
     run.add_argument(
-        "--reference", type=Path, required=True, help="Pinned work_tool checkout"
+        "--reference",
+        type=Path,
+        help="Optionally verify the pinned upstream checkout; execution uses the bundled references",
     )
     run.add_argument(
         "--device", type=int, default=0, help="Logical NPU in the CI container"
@@ -228,6 +228,16 @@ def main():
     run.add_argument("--group", help="Run a single suite for local reproduction")
     args = parser.parse_args()
     suites = read(ROOT / "suites.json")
+    for suite in suites:
+        name = suite["reference"]
+        if (
+            Path(name).name != name
+            or not name.startswith("executor_")
+            or not name.endswith(".py")
+        ):
+            raise ValueError(f"Invalid reference filename for {suite['group']}: {name}")
+        if not (ROOT / "cases" / suite["op"] / name).is_file():
+            raise ValueError(f"Missing bundled reference for {suite['group']}: {name}")
     indexed = {case_path(s) for s in suites}
     if len(indexed) != len(suites) or indexed != set(
         (ROOT / "cases").glob("*/*/*.json")
@@ -257,7 +267,8 @@ def main():
         ]
         if not selected:
             parser.error("No passing cases are registered for this selection")
-        reference = reference_path(args.reference)
+        if args.reference is not None:
+            verify_upstream_checkout(args.reference)
         args.output.mkdir(parents=True, exist_ok=True)
         output = Path(
             tempfile.mkdtemp(
@@ -265,7 +276,7 @@ def main():
             )
         )
         for suite in selected:
-            run_suite(suite, reference, output, args.device)
+            run_suite(suite, output, args.device)
 
 
 if __name__ == "__main__":
