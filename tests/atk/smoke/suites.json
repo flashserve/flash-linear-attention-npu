@@ -253,7 +253,7 @@
     "op": "chunk_gated_delta_rule_fwd_h",
     "platform": "A5",
     "group": "chunk_gated_delta_rule_fwd_h-A5-joint-contract",
-    "count": 169,
+    "count": 166,
     "reference": "executor_gdn_fwd_h_state.py",
     "output": "native"
   },
