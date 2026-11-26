@@ -36,6 +36,29 @@ def vendor(path, scalar="double", exports=None, *, name="Demo"):
 
 
 class ContractTest(unittest.TestCase):
+    def test_generated_inner_only_and_mixed_vendors(self):
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed), tempfile.TemporaryDirectory() as tmp:
+                root = vendor(Path(tmp), name="InnerDemo")
+                inner = root / abi.INNER_INCLUDE / "aclnnInner_demo.h"
+                inner.parent.mkdir(parents=True)
+                (root / abi.INCLUDE / "aclnn_innerdemo.h").rename(inner)
+                exports = {"aclnnInnerDemo", "aclnnInnerDemoGetWorkspaceSize"}
+                if mixed:
+                    exports.update(("aclnnPublic", "aclnnPublicGetWorkspaceSize"))
+                    vendor(root, name="Public", exports=exports)
+                with mock.patch.object(abi, "exported_symbols", return_value=exports):
+                    abi.write_manifest(root)
+                self.assertEqual(set(abi.validated_contracts(root, require_manifest=True)), exports)
+                self.assertIn(str(inner.relative_to(root).as_posix()),
+                              json.loads((root / abi.MANIFEST_NAME).read_text())["files"])
+                with mock.patch.object(abi, "exported_symbols", return_value=exports - {"aclnnInnerDemo"}):
+                    with self.assertRaisesRegex(RuntimeError, "aclnnInnerDemo"):
+                        abi.write_manifest(root)
+                inner.write_text(inner.read_text().replace("double scale", "float scale"))
+                with self.assertRaisesRegex(RuntimeError, "hashes differ"):
+                    abi.validated_contracts(root, require_manifest=True)
+
     def test_elf_reader_supports_classes_and_byte_orders(self):
         for bits in (32, 64):
             for byteorder in ("<", ">"):

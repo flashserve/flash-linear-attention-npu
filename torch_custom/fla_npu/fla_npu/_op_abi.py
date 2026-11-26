@@ -31,6 +31,7 @@ _EXECUTE_SIGNATURE = ("void*", "uint64", "executor*", "stream")
 MANIFEST_NAME = "abi_manifest.json"
 LIBRARY = "op_api/lib/libcust_opapi.so"
 INCLUDE = "op_api/include/aclnnop"
+INNER_INCLUDE = "op_api/abi/inner"
 # Explicit, source-audited legacy contract. The public header contains only
 # l0op::SolveTri; the C entry definitions live in op_api/aclnn_solve_tri.cpp.
 KNOWN_CONTRACTS = {
@@ -120,8 +121,12 @@ def parameter_kind(param: str) -> str:
 
 
 def public_prototypes(include_dir: Path, wanted: set[str] | None = None) -> dict[str, tuple[str, ...]]:
+    return _header_prototypes(sorted(include_dir.glob("aclnn_*.h")), wanted)
+
+
+def _header_prototypes(headers, wanted=None) -> dict[str, tuple[str, ...]]:
     signatures: dict[str, tuple[str, ...]] = {}
-    for header in sorted(include_dir.glob("aclnn_*.h")):
+    for header in headers:
         text = strip_comments(header.read_text(encoding="utf-8"))
         for match in _FUNCTION.finditer(text):
             symbol = match[1]
@@ -129,7 +134,7 @@ def public_prototypes(include_dir: Path, wanted: set[str] | None = None) -> dict
                 continue
             signature = tuple(parameter_kind(p) for p in split_params(match[2]))
             if symbol in signatures and signatures[symbol] != signature:
-                raise RuntimeError(f"Conflicting public prototypes for {symbol}")
+                raise RuntimeError(f"Conflicting ACLNN prototypes for {symbol}")
             signatures[symbol] = signature
     return signatures
 
@@ -139,7 +144,8 @@ def parse_aclnn_signatures(include_dir: Path, wanted: set[str] | None = None) ->
 
     symbols = None if wanted is None else {s + "GetWorkspaceSize" for s in wanted}
     signatures = {}
-    for symbol, params in public_prototypes(include_dir, symbols).items():
+    headers = sorted(include_dir.glob("aclnn_*.h")) + sorted(include_dir.glob("aclnnInner_*.h"))
+    for symbol, params in _header_prototypes(headers, symbols).items():
         if not symbol.endswith("GetWorkspaceSize"):
             continue
         if params[-2:] != _WORKSPACE_TAIL:
@@ -234,10 +240,14 @@ def elf_exported_symbols(library: Path) -> set[str]:
     return exports
 
 
+def _vendor_headers(vendor: Path) -> list[Path]:
+    return sorted((vendor / INCLUDE).glob("aclnn_*.h")) + sorted((vendor / INNER_INCLUDE).glob("aclnnInner_*.h"))
+
+
 def _file_hashes(vendor: Path) -> dict[str, str]:
-    paths = [vendor / LIBRARY, *sorted((vendor / INCLUDE).glob("aclnn_*.h"))]
+    paths = [vendor / LIBRARY, *_vendor_headers(vendor)]
     if len(paths) < 2:
-        raise RuntimeError(f"Missing public aclnn headers under {vendor / INCLUDE}")
+        raise RuntimeError(f"Missing ACLNN ABI headers under {vendor}")
     hashes = {}
     for path in paths:
         if not path.is_file() or not path.resolve().is_relative_to(vendor.resolve()):
@@ -247,7 +257,7 @@ def _file_hashes(vendor: Path) -> dict[str, str]:
 
 
 def _contracts(vendor: Path) -> dict[str, tuple[str, ...]]:
-    contracts = public_prototypes(vendor / INCLUDE)
+    contracts = _header_prototypes(_vendor_headers(vendor))
     # Apply only the explicitly audited gap, and only to its own existing header.
     if (vendor / INCLUDE / "aclnn_solve_tri.h").is_file():
         for symbol, signature in KNOWN_CONTRACTS.items():
@@ -258,6 +268,9 @@ def _contracts(vendor: Path) -> dict[str, tuple[str, ...]]:
 def _validate_exports(exports: set[str], contracts: dict[str, tuple[str, ...]]) -> None:
     if not exports:
         raise RuntimeError("No public aclnn exports to validate")
+    missing_inner = {name for name in contracts if name.startswith("aclnnInner")} - exports
+    if missing_inner:
+        raise RuntimeError(f"Missing generated Inner exports: {sorted(missing_inner)}")
     missing = exports - contracts.keys()
     if missing:
         raise RuntimeError(f"Missing public aclnn contracts: {sorted(missing)}")
@@ -323,8 +336,9 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
             f"missing exports={sorted(exports - contracts.keys())}, "
             f"unexported contracts={sorted(contracts.keys() - exports)}"
         )
+    _validate_exports(exports, actual)
     if any(actual.get(s) != sig for s, sig in contracts.items()):
-        raise RuntimeError(f"ABI manifest disagrees with public headers: {path}")
+        raise RuntimeError(f"ABI manifest disagrees with ABI headers: {path}")
     return contracts
 
 
