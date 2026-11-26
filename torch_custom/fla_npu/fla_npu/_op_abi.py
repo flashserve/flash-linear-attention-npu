@@ -124,7 +124,7 @@ def public_prototypes(include_dir: Path, wanted: set[str] | None = None) -> dict
     return _header_prototypes(sorted(include_dir.glob("aclnn_*.h")), wanted)
 
 
-def _header_prototypes(headers, wanted=None) -> dict[str, tuple[str, ...]]:
+def _header_prototypes(headers, wanted=None, *, inner_symbols=None) -> dict[str, tuple[str, ...]]:
     signatures: dict[str, tuple[str, ...]] = {}
     for header in headers:
         text = strip_comments(header.read_text(encoding="utf-8"))
@@ -136,16 +136,20 @@ def _header_prototypes(headers, wanted=None) -> dict[str, tuple[str, ...]]:
             if symbol in signatures and signatures[symbol] != signature:
                 raise RuntimeError(f"Conflicting ACLNN prototypes for {symbol}")
             signatures[symbol] = signature
+            if (inner_symbols is not None and header.name.startswith("aclnnInner_")
+                    and symbol.endswith("GetWorkspaceSize")):
+                inner_symbols.add(symbol.removesuffix("GetWorkspaceSize"))
     return signatures
 
 
-def parse_aclnn_signatures(include_dir: Path, wanted: set[str] | None = None) -> dict[str, tuple[str, ...]]:
-    """Read ``symbol -> parameter kinds`` from public GetWorkspaceSize headers."""
+def parse_aclnn_signatures(include_dir: Path, wanted: set[str] | None = None, *,
+                           inner_symbols: set[str] | None = None) -> dict[str, tuple[str, ...]]:
+    """Read workspace argument kinds and optionally identify symbols from generated Inner headers."""
 
     symbols = None if wanted is None else {s + "GetWorkspaceSize" for s in wanted}
     signatures = {}
     headers = sorted(include_dir.glob("aclnn_*.h")) + sorted(include_dir.glob("aclnnInner_*.h"))
-    for symbol, params in _header_prototypes(headers, symbols).items():
+    for symbol, params in _header_prototypes(headers, symbols, inner_symbols=inner_symbols).items():
         if not symbol.endswith("GetWorkspaceSize"):
             continue
         if params[-2:] != _WORKSPACE_TAIL:

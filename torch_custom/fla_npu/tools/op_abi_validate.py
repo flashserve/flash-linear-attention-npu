@@ -59,14 +59,14 @@ INTERNAL_OP_ABI_OWNERS = {
 }
 
 
-def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
-    signatures = _abi.parse_aclnn_signatures(include_dir, wanted)
+def parse_headers(include_dir: Path, wanted: set[str], *, inner_symbols=None) -> dict[str, list[str]]:
+    signatures = _abi.parse_aclnn_signatures(include_dir, wanted, inner_symbols=inner_symbols)
     if (include_dir / "aclnn_solve_tri.h").is_file() and "aclnnSolveTri" in wanted:
         signatures.setdefault("aclnnSolveTri", _abi.KNOWN_CONTRACTS["aclnnSolveTriGetWorkspaceSize"][:-2])
     return {s: list(kinds) for s, kinds in signatures.items()}
 
 
-_EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
+_EXEC_CALL = re.compile(r'\bFLA_STABLE_EXEC\s*\(\s*"(\w+)"\s*,(.*?)\)\s*;', re.S)
 
 _TENSOR_HOLDERS = {
     "TensorArg",
@@ -147,26 +147,36 @@ def _enclosing_params(text: str, position: int) -> dict[str, str]:
     return params
 
 
+_SCALAR_TYPES = {
+    "bool": "bool", "float": "float", "double": "double",
+    "int32_t": "int32", "int64_t": "int64", "uint32_t": "uint32", "uint64_t": "uint64",
+    "size_t": "uint64",  # Supported Linux targets are LP64.
+}
+_FLOAT_LITERAL = re.compile(r"[-+]?(?:(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+[eE][-+]?\d+)[fF]?")
+
+
 def _scalar_kind(expression: str, params: dict[str, str]) -> str:
     expression = expression.strip()
-    declared = params.get(expression, "")
-    for token, kind in (("bool", "bool"), ("double", "double"),
-                        ("float", "float"), ("int64_t", "int64"),
-                        ("size_t", "int64"), ("int32_t", "int32")):
-        if token in declared:
-            return kind
-    cast = re.match(r"(?:static_cast\s*<\s*|[\(])(\w+_t|bool|double|float)",
-                    expression)
+    declared = re.sub(r"\b(?:const|volatile)\b", "", params.get(expression, "")).strip()
+    if declared in _SCALAR_TYPES:
+        return _SCALAR_TYPES[declared]
+    # Only accept casts covering the whole expression. A trailing operation can
+    # promote the cast result, e.g. static_cast<float>(scale) + 1.0.
+    cast = re.fullmatch(r"static_cast\s*<\s*(\w+)\s*>\s*\([^()]*\)", expression)
+    if not cast:
+        cast = re.fullmatch(r"\(\s*(\w+)\s*\)\s*(?:[A-Za-z_]\w*|[-+]?\d+(?:\.\d*)?)", expression)
     if cast:
-        return {"int64_t": "int64", "int32_t": "int32", "size_t": "int64",
-                "bool": "bool", "double": "double", "float": "float"}.get(
-                    cast.group(1), WILDCARD)
+        return _SCALAR_TYPES.get(cast[1], WILDCARD)
     if re.fullmatch(r"true|false", expression):
         return "bool"
-    if re.fullmatch(r"[-+]?\d+", expression):
-        return "int64"
-    if re.fullmatch(r"[-+]?[\d.]+(?:[eE][-+]?\d+)?[fF]?", expression):
-        return "double"
+    if re.fullmatch(r"[-+]?(?:0|[1-9][0-9]{0,18})", expression):
+        magnitude = abs(int(expression))
+        if magnitude < 2**31:
+            return "int32"
+        if magnitude < 2**63:
+            return "int64"
+    if _FLOAT_LITERAL.fullmatch(expression):
+        return "float" if expression.endswith(("f", "F")) else "double"
     return WILDCARD
 
 
@@ -238,12 +248,15 @@ def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     return calls
 
 
-def compare(expected: list[str], actual: list[str]) -> list[str]:
+def compare(expected: list[str], actual: list[str], *, require_known: bool = False) -> list[str]:
     problems: list[str] = []
     if len(expected) != len(actual):
         problems.append(
             f"parameter count {len(actual)} != header {len(expected)}")
     for index, (want, got) in enumerate(zip(expected, actual)):
+        if require_known and got == WILDCARD:
+            problems.append(f"param {index}: cannot determine call-site type (header {want})")
+            continue
         if WILDCARD in (want, got) or want == got:
             continue
         problems.append(f"param {index}: header {want} != call site {got}")
@@ -300,8 +313,9 @@ def main() -> int:
     wanted = set(adapters)
 
     headers: dict[str, list[str]] = {}
+    inner_symbols: set[str] = set()
     for include_dir in args.opp_include:
-        for symbol, kinds in parse_headers(Path(include_dir), wanted).items():
+        for symbol, kinds in parse_headers(Path(include_dir), wanted, inner_symbols=inner_symbols).items():
             headers.setdefault(symbol, kinds)
 
     report: dict[str, dict] = {}
@@ -319,7 +333,7 @@ def main() -> int:
             if symbol not in KNOWN_HEADER_GAPS:
                 failures += 1
             continue
-        problems = compare(headers[symbol], kinds)
+        problems = compare(headers[symbol], kinds, require_known=symbol in inner_symbols)
         report[f"adapter:{symbol}"] = {
             "source": source_name,
             "status": "ok" if not problems else "mismatch",
