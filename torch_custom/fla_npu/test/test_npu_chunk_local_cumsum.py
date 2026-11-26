@@ -1,6 +1,7 @@
 import math
 import os
 from typing import List, Optional, Tuple
+from unittest import TestCase
 
 import torch
 import torch_npu
@@ -140,7 +141,30 @@ def run_case(
     )
 
 
+def check_output_dtype_aliases() -> None:
+    g_cpu = torch.tensor([[[1, 2, -1, 4, 5]]], dtype=torch.float16)
+    g_npu = g_cpu.npu()
+    expected_fp32 = reference_impl(g_cpu, 4, False, 1.0)
+    cases = (
+        (None, torch.float32),
+        ("", torch.float32),
+        ("torch.float32", torch.float32),
+        ("half", torch.float16),
+        (torch.float16, torch.float16),
+        ("bf16", torch.bfloat16),
+        ("same", torch.float16),
+        ("input", torch.float16),
+        ("none", torch.float16),
+    )
+    for spelling, expected_dtype in cases:
+        actual = chunk_local_cumsum(g_npu, 4, output_dtype=spelling).cpu()
+        torch.testing.assert_close(actual, expected_fp32.to(expected_dtype), rtol=0, atol=0)
+    with TestCase().assertRaisesRegex(RuntimeError, "output_dtype.*float64"):
+        chunk_local_cumsum(g_npu, 4, output_dtype="float64")
+
+
 if __name__ == "__main__":
+    check_output_dtype_aliases()
     for dtype in (torch.float32, torch.float16, torch.bfloat16):
         suffix = DTYPE_LABELS[dtype]
         for output_dtype in OUTPUT_DTYPE_SPECS:

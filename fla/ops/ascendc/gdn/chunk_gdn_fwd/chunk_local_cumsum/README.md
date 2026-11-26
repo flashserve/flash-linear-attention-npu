@@ -71,6 +71,8 @@ aclnnStatus aclnnChunkLocalCumsum(
 | head_first | bool | 否 | 当前实现仅支持 `true` |
 | output_dtype | string | 否 | 默认 `float32`；支持 `float32`/`torch.float32`、`float16`/`half`、`bfloat16`/`bf16`，以及 `same`/`input`/`none` 跟随输入 dtype |
 
+通过 Python 入口调用时，`output_dtype=None` 等同于省略该参数，输出 FP32；字符串 `"none"` 则跟随输入 dtype。也可传入 `torch.float32`、`torch.float16` 或 `torch.bfloat16` dtype 对象。
+
 ---
 
 ## 4. 输入约束
