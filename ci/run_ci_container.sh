@@ -297,6 +297,7 @@ docker run --rm \
     -e CI_SEED_THIRD_PARTY="${CI_SEED_THIRD_PARTY:-true}" \
     -e CI_BUILD_TORCH_CUSTOM="${CI_BUILD_TORCH_CUSTOM:-false}" \
     -e CI_RUN_TORCH_TESTS="${CI_RUN_TORCH_TESTS:-false}" \
+    -e CI_GDN_A5_MODELS="${CI_GDN_A5_MODELS:-false}" \
     -e CI_RUN_EXAMPLE_ST="${CI_RUN_EXAMPLE_ST:-true}" \
     -e CI_RUN_WHEEL_API_CHECK="${CI_RUN_WHEEL_API_CHECK:-false}" \
     -e CI_CHECK_TRITON_API="${CI_CHECK_TRITON_API:-false}" \
