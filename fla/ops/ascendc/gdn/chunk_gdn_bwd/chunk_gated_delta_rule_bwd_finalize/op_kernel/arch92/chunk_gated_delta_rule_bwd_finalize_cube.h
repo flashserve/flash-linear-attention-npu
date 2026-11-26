@@ -240,10 +240,7 @@ public:
                     ProcessStage3Head(
                         aL1, duL1, kbgL1, dw0L1, l0A, l0B, l0C, dvbCv, dAw0Cv,
                         chunk, hvBase + headOffset, headOffset);
-                    for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
-                        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[slot]);
-                        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[slot]);
-                    }
+                    // Publish readiness on FIX after all S3 copies for this head.
                     SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
                 }
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {

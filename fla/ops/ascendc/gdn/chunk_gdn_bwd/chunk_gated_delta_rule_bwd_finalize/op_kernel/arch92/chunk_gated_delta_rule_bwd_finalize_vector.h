@@ -125,6 +125,7 @@ public:
                 stage12Mte3ToMte2_[eventIndex]);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
+        stage12VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         stage15VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
@@ -220,6 +221,7 @@ public:
             const int64_t windowCount = tiling_->headRatio > HEAD_COUNT ?
                 (tiling_->headRatio + HEAD_COUNT - 1) / HEAD_COUNT : 1;
             for (int64_t window = 0; window < windowCount; ++window) {
+                const bool isLastWindow = (window + 1 == windowCount);
                 hvBase = tiling_->headRatio > HEAD_COUNT ?
                     headGroupIdx * tiling_->headRatio + window * HEAD_COUNT :
                     headGroupIdx * tiling_->taskGroupSize;
@@ -451,6 +453,10 @@ public:
                             {false, 0, 0, 0});
                     }
                     WaitReady<PIPE_V>(CUBE_TO_VEC_FLAG);
+                    // Keep flag 3 ordered on V and forward readiness to the GM reads on MTE2.
+                    // The MTE2_V wait below completes this handshake before the next head.
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
                     AscendC::DataCopy(
                         dkb_[streamSlot_], dkbInGm_[workspaceVectorOffset], chunk.chunkLen * K_SIZE_128);
                     AscendC::DataCopy(
@@ -563,15 +569,18 @@ public:
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
                 SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
-                for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
+                // Only the last window runs S15. The next S0 consumes the events in other windows.
+                if (isLastWindow) {
+                    for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
+                        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
+                    }
                 }
 
                 if constexpr (GVA_GT4) {
-                    if (window + 1 == windowCount) {
+                    if (isLastWindow) {
                         MergeGvaAccumulators(chunk, headGroupIdx);
                     }
-                } else if (tiling_->headRatio != 4 || window + 1 == windowCount) {
+                } else if (isLastWindow) {
                     const int64_t reduceHvBase = tiling_->headRatio == 4 ?
                         headGroupIdx * tiling_->headRatio : hvBase;
                     stage15Begin = 0;
@@ -683,8 +692,10 @@ public:
                         stage12Mte3ToMte2_[slot]);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[slot]);
                 }
-                for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
+                if (isLastWindow) {
+                    for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
+                        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
+                    }
                 }
                 ++windowBank;
             }
@@ -704,6 +715,7 @@ public:
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
 
@@ -910,6 +922,7 @@ private:
     AscendC::TEventID mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stage12Mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stateVToMte2_[SLOT_COUNT];
+    AscendC::TEventID stage12VToMte2_;
     AscendC::TEventID stage15VToMte2_;
     int64_t stateChunkNum_ = 0;
 };

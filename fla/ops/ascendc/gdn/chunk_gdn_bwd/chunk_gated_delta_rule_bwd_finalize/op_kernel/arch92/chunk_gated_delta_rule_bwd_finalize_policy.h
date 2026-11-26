@@ -20,7 +20,7 @@ constexpr uint32_t L1_TOTAL_BYTES = 0x72000;
 // Reuse the same closed event for stage aliases, rather than allocating per alias.
 constexpr uint32_t L1_EVENT_COUNT = 2 * HEAD_COUNT;
 constexpr uint32_t MTE3_MTE2_EVENT_COUNT = 2 * SLOT_COUNT;
-constexpr uint32_t V_MTE2_EVENT_COUNT = SLOT_COUNT + 1;
+constexpr uint32_t V_MTE2_EVENT_COUNT = SLOT_COUNT + 2;
 constexpr uint32_t REQUIRED_EVENT_CAPACITY = 8;
 constexpr uint16_t VEC_TO_CUBE_FLAG = 1;
 constexpr uint16_t CUBE_TO_VEC_FLAG = 3;
