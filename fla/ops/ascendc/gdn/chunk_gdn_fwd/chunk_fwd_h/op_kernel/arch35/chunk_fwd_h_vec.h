@@ -916,6 +916,22 @@ private:
         h.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(args_.h));
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(IoDoneEvent(slot));
+        if constexpr (CompilePolicy::STATE_FP32) {
+            if (args_.checkpointOffsets != nullptr) {
+                AscendC::GlobalTensor<int32_t> offsets;
+                offsets.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(args_.checkpointOffsets));
+                const int32_t offset = offsets.GetValue(unit.sequence.sequence);
+                if (offset > 0 && static_cast<uint32_t>(offset) < unit.sequence.length &&
+                    static_cast<uint32_t>(offset) == (chunk.chunk + 1) * FWD_H_CHUNK) {
+                    AscendC::GlobalTensor<float> checkpoint;
+                    checkpoint.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(args_.checkpointState));
+                    const uint64_t stateOffset = FwdHStateOffset<STATE_V_FIRST>(
+                        args_.tiling, unit.sequence.sequence, head.hv, 0, 0);
+                    AscendC::DataCopy(checkpoint[stateOffset], StateFp32(stateSlot), FWD_H_K * FWD_H_V);
+                    WaitStateWritebackBeforeVectorReuse(slot);
+                }
+            }
+        }
         if constexpr (WRITE_H) {
             if constexpr (CompilePolicy::STATE_FP32) {
                 if constexpr (!RESIDENT_FP32_STATE) {

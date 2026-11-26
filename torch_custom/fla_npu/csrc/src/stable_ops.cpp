@@ -106,6 +106,7 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_chunk_kda_bwd_finalize);
   m.def(kSchema_chunk_kda_bwd_recompute);
   m.def(kSchema_chunk_kda_fwd);
+  m.def(kSchema_chunk_kda_fwd_checkpoint);
   m.def(kSchema_chunk_kda_fwd_finalize);
   m.def(kSchema_chunk_kda_fwd_prepare);
   m.def(kSchema_chunk_bwd_dv_local);
@@ -161,6 +162,8 @@ static void register_implementations(StableLibrary& m) {
              run_npu_chunk_kda_bwd_recompute>);
   m.impl("npu_chunk_kda_fwd",
          &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_fwd>);
+  m.impl("npu_chunk_kda_fwd_checkpoint",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_fwd_checkpoint>);
   m.impl("npu_chunk_kda_fwd_finalize",
          &fla_npu_stable::stable::boxed_adapter<
              run_npu_chunk_kda_fwd_finalize>);

@@ -73,6 +73,11 @@ public:
             .DataType(indexTypes).Format(formats).UnknownShapeFormat(formats)
             .AutoContiguous();
 
+        this->Input("checkpoint_offsets")
+            .ParamType(OPTIONAL)
+            .DataType({ge::DT_INT32, ge::DT_INT32, ge::DT_INT32, ge::DT_INT32})
+            .Format(formats).UnknownShapeFormat(formats).AutoContiguous();
+
         this->Output("h")
             .ParamType(REQUIRED)
             .DataType(dataTypes).Format(formats).UnknownShapeFormat(formats);
@@ -84,6 +89,11 @@ public:
         this->Output("final_state")
             .ParamType(OPTIONAL)
             .DataType(stateTypes).Format(formats).UnknownShapeFormat(formats);
+
+        this->Output("checkpoint_state")
+            .ParamType(REQUIRED)
+            .DataType({ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT})
+            .Format(formats).UnknownShapeFormat(formats);
 
         this->Attr("output_final_state").AttrType(REQUIRED).Bool(false);
         this->Attr("chunk_size").AttrType(REQUIRED).Int(64);

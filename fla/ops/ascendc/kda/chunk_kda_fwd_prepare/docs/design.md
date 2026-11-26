@@ -92,6 +92,11 @@ save:
 workspace 并供 C4/C5/C7 使用；V6 仍生成 UB 中的 `qg`，再基于其 BF16 舍入值计算
 `qg_scaled`。因此三档的公式、UB/L1/workspace 布局、VF 调用数和同步协议一致。
 
+A5 的公开 `Akk` 按象限划分写入所有权：V3 只写 q00/q01/q11，C5 独占 q10。
+V3 不再先向公开 q10 写入零占位；其完整的补零 64x64 workspace 副本保持不变。
+q11 使用 32 个 BF16 元素一行的二维搬运，源、目标行间跳过 32 个元素；只搬有效行。
+这保持最终 `Akk` 数值和既有 MTE3 payload 握手不变，避免公开 GM 的跨核重复写入。
+
 算子 IR 和 kernel ABI 固定保留 13 个 `REQUIRED` 输出槽位。L2 未请求的槽位传
 `nullptr`，L0 用不会被当前编译实例写入的合法 descriptor 占位，防止 launcher 压缩参数。
 

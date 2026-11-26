@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -11,7 +13,7 @@ from pathlib import Path
 import re
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import torch
@@ -56,6 +58,7 @@ _OUTPUT_NAMES = (
     "v_new",
     "h",
     "initial_state_out",
+    "checkpoint_state",
 )
 _REFERENCE_WORKERS = int(os.environ.get("KDA_ATK_REFERENCE_WORKERS", "48"))
 _REFERENCE_CACHE: OrderedDict[str, tuple] = OrderedDict()
@@ -823,15 +826,29 @@ def _run_positive_npu(inputs: _PreparedInputs, spec: dict):
         inputs.q, inputs.k, inputs.v, inputs.g, inputs.beta,
         float(spec["scale"]), int(spec["chunk_size"]),
     )
+    kwargs = _public_kwargs(inputs, spec)
+    checkpoint = None
+    if "checkpoint_offsets" in spec:
+        checkpoint = _checkpoint_buffer(inputs, spec, torch.float32)
+        kwargs.update(
+            checkpoint_offsets=torch.tensor(
+                spec["checkpoint_offsets"], dtype=torch.int32, device=inputs.q.device
+            ),
+            checkpoint_state=checkpoint,
+        )
     if route == "ascendc":
         from fla_npu.ops.ascendc import chunk_kda_fwd
 
-        return chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
+        outputs = chunk_kda_fwd(*args, **kwargs)
+        return outputs if checkpoint is None else (*outputs, checkpoint)
     if route == "aclnn":
         from fla_npu.ops.ascendc._stable import npu_chunk_kda_fwd
 
-        return npu_chunk_kda_fwd(*args, **_public_kwargs(inputs, spec))
+        outputs = npu_chunk_kda_fwd(*args, **kwargs)
+        return outputs if checkpoint is None else (*outputs, checkpoint)
     if route == "direct_launch":
+        if checkpoint is not None:
+            raise ValueError("checkpoint cases require the stable public route")
         import ascend_ops  # noqa: F401
 
         gk = _gate_cumsum(inputs, spec).permute(0, 2, 1, 3).contiguous()
@@ -851,6 +868,161 @@ def _run_positive_npu(inputs: _PreparedInputs, spec: dict):
         outputs[10] = outputs[10].permute(0, 2, 1, 3, 4).contiguous()
         return _apply_output_policy(tuple(outputs) + (inputs.initial_state,), spec)
     raise ValueError(f"unsupported route: {route}")
+
+
+def _checkpoint_buffer(inputs: _PreparedInputs, spec: dict, dtype: torch.dtype):
+    rows = len(inputs.cu_seqlens) - 1 if inputs.cu_seqlens is not None else int(spec["B"])
+    k_dim, v_dim = int(spec["K"]), int(spec["V"])
+    shape = (v_dim, k_dim) if _as_bool(spec["state_v_first"]) else (k_dim, v_dim)
+    return torch.full(
+        (rows, int(spec["HV"]), *shape), 19.0, dtype=dtype, device=inputs.q.device
+    )
+
+
+def _checkpoint_fp64_golden(inputs: _PreparedInputs, spec: dict):
+    """Independently evaluate each selected prefix with the existing FP64 golden."""
+    checkpoint = _checkpoint_buffer(inputs, spec, torch.float64)
+    layout = str(spec["layout"])
+    token_inputs = [
+        _layout_to_bsnd(getattr(inputs, name), layout, beta=name == "beta")
+        for name in ("q", "k", "v", "g", "beta")
+    ]
+    starts = inputs.cu_seqlens
+    for row, offset in enumerate(spec["checkpoint_offsets"]):
+        batch = 0 if starts is not None else row
+        start, end = starts[row : row + 2] if starts is not None else (0, int(spec["T"]))
+        if offset <= 0 or offset % int(spec["chunk_size"]) or offset >= end - start:
+            continue
+        prefix = replace(
+            inputs,
+            **{
+                name: tensor[batch : batch + 1, start : start + offset].contiguous()
+                for name, tensor in zip(("q", "k", "v", "g", "beta"), token_inputs)
+            },
+            initial_state=None if inputs.initial_state is None else inputs.initial_state[row : row + 1],
+            cu_seqlens=None,
+            chunk_indices=None,
+        )
+        prefix_spec = dict(
+            spec, B=1, T=offset, layout="BSND", output_final_state=True,
+            disable_recompute=False, return_intermediate_states=False,
+            checkpoint_prefix_row=row,
+        )
+        checkpoint[row] = _torch_fp64_golden(prefix, prefix_spec)[1][0]
+    return checkpoint
+
+
+def _checkpoint_input_fingerprints(inputs: _PreparedInputs) -> dict:
+    return {
+        name: hashlib.sha256(
+            value.detach().cpu().float().contiguous().numpy().tobytes()
+        ).hexdigest()
+        for name, value in vars(inputs).items()
+        if isinstance(value, torch.Tensor)
+    }
+
+
+def _checkpoint_fixture_path(spec: dict) -> Path:
+    directory = os.environ.get("KDA_ATK_CHECKPOINT_INPUT_DIR")
+    if not directory:
+        raise RuntimeError(
+            "checkpoint export reference requires prepared inputs; use tests/atk/run_test_cpu.sh"
+        )
+    key = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+    return Path(directory) / (key + ".pt")
+
+
+def _checkpoint_export_fp64_reference(inputs: _PreparedInputs, spec: dict):
+    """Check FwdH/export independently; shared Prepare tensors are inputs."""
+    data = torch.load(
+        _checkpoint_fixture_path(spec), map_location="cpu", weights_only=True
+    )
+    if data["spec"] != spec or data[
+        "input_fingerprints"
+    ] != _checkpoint_input_fingerprints(inputs):
+        raise RuntimeError(
+            "checkpoint reference inputs do not match this DUT input and seed"
+        )
+    path = Path(__file__).with_name("checkpoint_reference.py")
+    module_spec = importlib.util.spec_from_file_location(
+        "_checkpoint_fp64_reference", path
+    )
+    module = importlib.util.module_from_spec(module_spec)
+    sys.modules[module_spec.name] = module
+    module_spec.loader.exec_module(module)
+    prepared = [data[name] for name in ("kg", "w", "u", "gk")]
+    prepared = [value.unsqueeze(0) if value.ndim == 3 else value for value in prepared]
+    return module._fwd_h_fp64_reference(
+        *prepared,
+        inputs.initial_state,
+        inputs.cu_seqlens,
+        spec["checkpoint_offsets"],
+        _as_bool(spec["state_v_first"]),
+    )
+
+
+def _prepare_checkpoint_reference_inputs(
+    case_file: Path, start: int, end: int | None, device: int
+):
+    """Freeze only shared inputs; never store DUT final/checkpoint outputs."""
+    cases = json.loads(case_file.read_text(encoding="utf-8"))[start:end]
+    specs = [
+        json.loads(
+            next(
+                value["range_values"]
+                for value in case["inputs"]
+                if value["name"] == "case_spec"
+            )
+        )
+        for case in cases
+    ]
+    specs = [spec for spec in specs if "checkpoint_offsets" in spec]
+    if not specs:
+        return
+    import torch_npu  # noqa: F401
+
+    torch.npu.set_device(device)
+    for spec in specs:
+        path = _checkpoint_fixture_path(spec)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        low = _prepare_inputs(
+            spec, torch.zeros(1, dtype=torch.bfloat16), torch.zeros(1)
+        )
+        npu_inputs = replace(
+            low,
+            **{
+                name: value.to(f"npu:{device}")
+                for name, value in vars(low).items()
+                if isinstance(value, torch.Tensor)
+            },
+        )
+
+        def fresh():
+            return replace(
+                npu_inputs,
+                initial_state=None
+                if npu_inputs.initial_state is None
+                else npu_inputs.initial_state.clone(),
+            )
+
+        actual = _run_positive_npu(fresh(), spec)
+        saved = _run_positive_npu(
+            fresh(), dict(spec, disable_recompute=True, return_intermediate_states=True)
+        )
+        for index in (0, 1):
+            torch.testing.assert_close(actual[index], saved[index], rtol=0, atol=0)
+        data = {"spec": spec, "input_fingerprints": _checkpoint_input_fingerprints(low)}
+        data.update(
+            {
+                name: saved[index].cpu()
+                for name, index in (("kg", 8), ("w", 5), ("u", 6), ("gk", 2))
+            }
+        )
+        torch.save(data, path)
+    print(
+        f"Prepared {len(specs)} shared-input FP64 FwdH/export cases; no DUT state saved",
+        flush=True,
+    )
 
 
 def _recent_aclnn_error() -> str:
@@ -1143,6 +1315,13 @@ class ChunkKdaFwdApi(BaseApi):
             return _run_negative_aclnn(self.inputs, self.spec)
         if self.device == "cpu":
             outputs = _torch_fp64_golden(self.inputs, self.spec)
+            if "checkpoint_offsets" in self.spec:
+                if os.environ.get("KDA_ATK_CHECKPOINT_REFERENCE", "export") == "math":
+                    outputs = (*outputs, _checkpoint_fp64_golden(self.inputs, self.spec))
+                else:
+                    final, checkpoint = _checkpoint_export_fp64_reference(self.inputs, self.spec)
+                    outputs = (outputs[0], final if _as_bool(self.spec["output_final_state"]) else None,
+                               *outputs[2:], checkpoint)
         elif self.device == "npu":
             outputs = _run_positive_npu(self.inputs, self.spec)
         else:
@@ -1189,4 +1368,22 @@ class ChunkKdaFwdApi(BaseApi):
             "K": int(self.spec["K"]),
             "V": int(self.spec["V"]),
             "chunk_size": int(self.spec["chunk_size"]),
+            "checkpoint_reference": (os.environ.get("KDA_ATK_CHECKPOINT_REFERENCE", "export")
+                                     if "checkpoint_offsets" in self.spec else "not_applicable"),
         }
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Prepare shared input tensors for FP64 checkpoint-export acceptance"
+    )
+    parser.add_argument("--prepare-checkpoint-inputs", type=Path, required=True)
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("-s", "--start", type=int, default=0)
+    parser.add_argument("-e", "--end", type=int)
+    args = parser.parse_args()
+    _prepare_checkpoint_reference_inputs(
+        args.prepare_checkpoint_inputs, args.start, args.end, args.device
+    )

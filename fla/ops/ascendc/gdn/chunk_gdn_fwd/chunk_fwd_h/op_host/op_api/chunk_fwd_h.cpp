@@ -57,7 +57,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     const aclTensor *vNewOut,
     const aclTensor *finalStateOut,
     aclOpExecutor *executor,
-    const char *layout)
+    const char *layout,
+    const aclTensor *checkpointOffsets,
+    const aclTensor *checkpointState)
 {
     if (layout == nullptr ||
         (std::strcmp(layout, "BNSD") != 0 && std::strcmp(layout, "BSND") != 0 &&
@@ -139,9 +141,16 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
         ? executor->AllocIntArray(&emptySeqChunkCounts, 0)
         : executor->AllocIntArray(seqChunkCounts.data(), seqChunkCounts.size());
 
+    const aclTensor *checkpointStateKernel = checkpointState;
+    if (checkpointStateKernel == nullptr) {
+        checkpointStateKernel = executor->AllocTensor(MakeShape({0}), DataType::DT_FLOAT, Format::FORMAT_ND);
+        if (checkpointStateKernel == nullptr) {
+            return {nullptr, nullptr, nullptr};
+        }
+    }
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkFwdH,
-        OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
-        OP_OUTPUT(hOut, vNewOut, finalStateOutKernel),
+        OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices, checkpointOffsets),
+        OP_OUTPUT(hOut, vNewOut, finalStateOutKernel, checkpointStateKernel),
         OP_ATTR(outputFinalState, chunkSize, saveNewValue, useExp2, stateVFirst,
                 logicalBatch, logicalSeqlen,
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr,

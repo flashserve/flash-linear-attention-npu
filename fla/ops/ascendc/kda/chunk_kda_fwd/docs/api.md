@@ -1,5 +1,9 @@
 # ChunkKdaFwd API
 
+Optional native FP32 prefill exports are described in
+[Internal prefill checkpoints](#internal-fp32-prefill-checkpoints). The existing return slots and
+default V1/V2 interfaces remain unchanged.
+
 ## Python 主入口
 
 `from fla_npu.ops.ascendc import chunk_kda_fwd`（同一实现也以 `npu_chunk_kda_fwd` 暴露，
@@ -391,3 +395,64 @@ assert final_state.shape == (B, H, K, V)
 ## V2 chunk64 多序列验证范围
 
 移除通用 L2 的 1024 条逻辑序列限制；本次在 A2 上专项验证 BF16、K=V=128、chunk64 的 V2 三算子路径，序列数 1024–4096。chunk32 保留其独立的 1024 条限制。本次 20 个 case 均运行和精度通过，逐 case 记录随任务报告独立归档。
+
+## Internal FP32 prefill checkpoints
+
+The optional `checkpoint_offsets` and `checkpoint_state` keyword arguments to
+`fla_npu.ops.ascendc.chunk_kda_fwd` export selected recurrent states while the
+packed forward continues. The existing twelve return slots are unchanged.
+Calls without these arguments retain the existing Stable dispatcher schema
+and ACLNN V1/V2 ABI. The opt-in path uses a separate dispatcher entry and
+`aclnnChunkKdaFwdV3`; V3 delegates to the existing three-stage composition.
+
+### Contract
+
+- Both arguments must be supplied together. The initial implementation
+  supports Ascend950, chunk64, BF16 Q/K/V, and K=V=128.
+- `checkpoint_offsets` is a contiguous device INT32 tensor of shape `[N]`.
+  Offsets are relative to each row of `cu_seqlens`, rather than the packed
+  token axis. A valid offset is a positive multiple of 64 strictly before
+  that row's end. Zero disables export for that row. Invalid offsets do not
+  select a chunk and leave that output row untouched.
+- `checkpoint_state` is a separate contiguous FP32 device buffer of shape
+  `[N,HV,V,K]` with `state_v_first=True`, otherwise `[N,HV,K,V]`. It must not
+  alias input tensors or the running state. Initial recurrent state, when
+  supplied, must be FP32. Shapes, dtype and the supported SoC are checked
+  before the composed operator is launched.
+- The caller owns the buffer's lifetime. Unselected rows have no generated
+  state; a cache exporter must also mask invalid/NULL cache destinations.
+- Checkpoint selection does not change the meaning or optionality of `h`,
+  `final_state`, `initial_state`, or backward saved values. Existing `h`
+  remains BF16. This extension retains the composition's recurrence arithmetic.
+  Checkpoints always use the three-stage composition; calls without them keep
+  the existing workload-based V1/V2 selection. Small workloads may therefore
+  use a different implementation when opting in, and require caller-level
+  accuracy and performance comparisons against their original dispatch.
+
+### Native export and synchronization
+
+`ChunkKdaFwdPrepare -> ChunkFwdH -> ChunkKdaFwdFinalize` runs once for the
+whole batch. After an eligible ChunkFwdH Stage3 update, its FP32 state bank
+contains the state following exactly `(chunk + 1) * 64` input tokens. The
+A5 vector owner writes that bank directly to the selected output row, before
+the public BF16 `h` becomes the next chunk's matrix operand. No BF16 state
+is upcast to manufacture a checkpoint and no prefix is recomputed.
+
+The checkpoint uses the existing state layout and per-head ownership. Each
+selected head adds a `128 * 128 * 4` byte GM write and no additional UB
+allocation. The existing V-to-MTE3 fence precedes the copy; a paired
+MTE3-to-V event completes it before the FP32 bank can be overwritten. Existing
+cross-core H/D credits retain their ordering. Device offsets are read on the
+NPU; the wrapper performs no device-to-host value read for checkpoint selection.
+
+### Validation
+
+`torch_custom/fla_npu/test/test_npu_kda_checkpoints.py` covers both state
+layouts, cold/continuation states, packed lengths, mixed offsets, an untouched
+disabled row, prefix-state equality, resumed tails, input preservation, and
+alias rejection. The selected state is compared to the independent prefix
+call's FP32 final state. Existing ATK reference mathematics are unchanged;
+the new output is that same recurrent state at an earlier token boundary.
+
+Operator correctness does not establish model accuracy, PCP/PD ordering or
+end-to-end performance. These remain separate integration checks.

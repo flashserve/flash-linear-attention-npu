@@ -88,6 +88,7 @@ MUTATED_ARGUMENTS = {
     "npu_causal_conv1d_fn": ("conv_states",),
     "npu_causal_conv1d_update": ("conv_state",),
     "npu_recurrent_kda": ("initial_state",),
+    "npu_chunk_kda_fwd": ("checkpoint_state",),
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
     "npu_merge_fwd_bwd_kernel": ("h",),
