@@ -125,12 +125,6 @@ ATK 用例和执行说明位于
 [`tests/atk/chunk_gated_delta_rule_fwd`](../../../../../../tests/atk/chunk_gated_delta_rule_fwd/README.md)。
 精度双标杆分别使用融合算子、上述公开算子链和 FP64 recurrence，并在相同冻结输入上比较结果。
 
-ACLNN ABI 合同可通过以下命令检查：
-
-```bash
-python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
-```
-
 ## 归一化结果导出与反向复用
 
 归一化沿用 prepare 的公式：`rstd = rsqrt(sum(x**2, dim=-1) + 1e-6)`，
