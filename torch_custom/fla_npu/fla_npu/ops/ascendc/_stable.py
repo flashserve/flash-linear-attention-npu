@@ -560,6 +560,39 @@ def _op(name: str):
     return op
 
 
+def npu_gdn_recoverssm_commit(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens, *, spec_query_len,
+        align_mode):
+    """Compose accepted replay records into paged GDN checkpoints."""
+
+    return _op("npu_gdn_recoverssm_commit")(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens,
+        int(spec_query_len), bool(align_mode), _current_stream_ptr(),
+    )
+
+
+def npu_compact_conv_state(
+        conv_state, conv_state_base_addrs, conv_state_block_strides,
+        conv_state_dim_strides, conv_state_token_strides, state_indices,
+        commit_lens, final_state_indices, boundary_state_indices,
+        boundary_recovery_lens, *, conv_history_len, align_mode,
+        dim_stride=-1, null_block_id=0):
+    """Copy accepted convolution histories into planned cache pages."""
+
+    return _op("npu_compact_conv_state")(
+        conv_state, conv_state_base_addrs, conv_state_block_strides,
+        conv_state_dim_strides, conv_state_token_strides, state_indices,
+        commit_lens, final_state_indices, boundary_state_indices,
+        boundary_recovery_lens, int(conv_history_len), bool(align_mode),
+        -1 if dim_stride is None else int(dim_stride), int(null_block_id),
+        _current_stream_ptr(),
+    )
+
+
 def _bound_op(name: str):
     """Op handle for a hot path: one dict lookup, resolved on the first call.
 
@@ -2377,4 +2410,22 @@ def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
         _host_ints(cu_seqlens),
         64 if chunk_size is None else int(chunk_size),
         _current_stream_ptr(),
+    )
+
+def npu_gdn_recoverssm_verify(
+    A_log, a, b, dt_bias, q, k, v, checkpoint_state, replay_cache,
+    query_start_loc, state_indices, *, scale=None, softplus_beta=1.0,
+    softplus_threshold=20.0, use_qk_l2norm_in_kernel=True, out=None
+):
+    """Recover the GDN SSM state of one chunk and write the replay cache.
+
+    ``replay_cache`` is written in place; ``out`` defaults to a new tensor.
+    """
+
+    scale_value = k.shape[-1] ** -0.5 if scale is None else float(scale)
+    return _op("npu_gdn_recoverssm_verify")(
+        A_log, a, b, dt_bias, q, k, v, checkpoint_state, replay_cache,
+        query_start_loc, state_indices,
+        scale_value, float(softplus_beta), float(softplus_threshold),
+        bool(use_qk_l2norm_in_kernel), out, _current_stream_ptr(),
     )

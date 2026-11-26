@@ -43,6 +43,7 @@
 #include "stable_fast_gelu_custom.cpp"
 #include "stable_fast_gelu_custom_backward.cpp"
 #include "stable_kda_gate_cumsum.cpp"
+#include "stable_gdn_recoverssm_verify.cpp"
 #include "stable_merge_fwd_bwd_kernel.cpp"
 #include "stable_pre_process_fwd_kernel_merged.cpp"
 #include "stable_prepare_wy_repr_bwd.cpp"
@@ -52,6 +53,8 @@
 #include "stable_recurrent_gated_delta_rule.cpp"
 #include "stable_recurrent_kda.cpp"
 #include "stable_solve_tri.cpp"
+#include "stable_gdn_recoverssm_commit.cpp"
+#include "stable_compact_conv_state.cpp"
 
 // Build stamp: the md5 of the adapter sources this library was compiled from,
 // injected by csrc/build_stable.py.  fla_npu/ops/ascendc/_stable.py
@@ -101,6 +104,7 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_npu_fast_gelu_custom);
   m.def(kSchema_npu_fast_gelu_custom_backward);
   m.def(kSchema_kda_gate_cumsum);
+  m.def(kSchema_gdn_recoverssm_verify);
   m.def(kSchema_chunk_kda_bwd_intra);
   m.def(kSchema_chunk_kda_bwd_prepare);
   m.def(kSchema_chunk_kda_bwd_finalize);
@@ -134,6 +138,8 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_merge_fwd_bwd_kernel);
   m.def(kSchema_pre_process_fwd_kernel_merged);
   m.def(kSchema_pre_process_bwd_kernel_merged);
+  m.def(kSchemaGdnRecoverssmCommit);
+  m.def(kSchemaCompactConvState);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.def("_stream_probe(int device_index) -> (int, int)");
 #endif
@@ -150,6 +156,8 @@ static void register_implementations(StableLibrary& m) {
              run_npu_fast_gelu_custom_backward>);
   m.impl("npu_kda_gate_cumsum",
          &fla_npu_stable::stable::boxed_adapter<run_npu_kda_gate_cumsum>);
+  m.impl("npu_gdn_recoverssm_verify",
+         &fla_npu_stable::stable::boxed_adapter<run_npu_gdn_recoverssm_verify>);
   m.impl("npu_chunk_kda_bwd_intra",
          &fla_npu_stable::stable::boxed_adapter<run_npu_chunk_kda_bwd_intra>);
   m.impl("npu_chunk_kda_bwd_prepare",
@@ -234,6 +242,12 @@ static void register_implementations(StableLibrary& m) {
       "npu_pre_process_bwd_kernel_merged",
       &fla_npu_stable::stable::boxed_adapter<
           run_npu_pre_process_bwd_kernel_merged>);
+  m.impl("npu_gdn_recoverssm_commit",
+         &fla_npu_stable::stable::boxed_adapter<
+             run_gdn_recoverssm_commit>);
+  m.impl("npu_compact_conv_state",
+         &fla_npu_stable::stable::boxed_adapter<
+             run_compact_conv_state>);
 #ifndef FLA_STABLE_NO_DEBUG_PROBE
   m.impl("_stream_probe", &boxed_stream_probe);
 #endif

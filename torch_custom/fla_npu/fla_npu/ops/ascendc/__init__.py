@@ -67,6 +67,9 @@ _ASCENDC_OPS = (
     "npu_merge_fwd_bwd_kernel",
     "npu_kda_gate_cumsum",
     "npu_recurrent_kda",
+    "npu_compact_conv_state",
+    "npu_gdn_recoverssm_commit",
+    "npu_gdn_recoverssm_verify",
 )
 
 BACKWARD_OPS = {
@@ -91,6 +94,9 @@ MUTATED_ARGUMENTS = {
     "recurrent_gated_delta_rule": ("state",),
     "npu_recurrent_gated_delta_rule": ("state",),
     "npu_merge_fwd_bwd_kernel": ("h",),
+    "npu_compact_conv_state": ("conv_state",),
+    "npu_gdn_recoverssm_commit": ("state",),
+    "npu_gdn_recoverssm_verify": ("replay_cache",),
 }
 
 # Some mutable operators only write the state tensor for some argument values,
@@ -584,6 +590,45 @@ FALLBACKS: dict[str, int] = {}
 for _name in _ASCENDC_OPS:
     globals()[_name] = _make_raw_wrapper(_name)
     globals().setdefault(_strip_npu_prefix(_name), globals()[_name])
+
+
+def gdn_recoverssm_commit(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens, *,
+        spec_query_len, align_mode):
+    """Commit accepted GDN replay records in place.
+
+    The public reference contract returns ``None``; inspect ``state`` for the
+    committed checkpoints.
+    """
+
+    _get_direct_op("npu_gdn_recoverssm_commit")(
+        state, replay, state_commit_cache_address_stride_table,
+        state_indices, commit_lens, final_state_indices,
+        boundary_state_indices, boundary_recovery_lens,
+        spec_query_len=int(spec_query_len), align_mode=bool(align_mode),
+    )
+
+
+def compact_conv_state(
+        conv_state_ref, conv_state_base_addrs, conv_state_block_strides,
+        conv_state_dim_strides, conv_state_token_strides, state_indices,
+        commit_lens, final_state_indices, boundary_state_indices,
+        boundary_recovery_lens, *, conv_history_len, align_mode,
+        dim_stride=None, null_block_id=0):
+    """Compact accepted convolution histories in place."""
+
+    _get_direct_op("npu_compact_conv_state")(
+        conv_state_ref, conv_state_base_addrs, conv_state_block_strides,
+        conv_state_dim_strides, conv_state_token_strides, state_indices,
+        commit_lens, final_state_indices, boundary_state_indices,
+        boundary_recovery_lens, conv_history_len=int(conv_history_len),
+        align_mode=bool(align_mode),
+        dim_stride=-1 if dim_stride is None else int(dim_stride),
+        null_block_id=int(null_block_id),
+    )
+
 
 validate_backend_environment()
 _prepare_direct_runtime(raise_on_error=False)

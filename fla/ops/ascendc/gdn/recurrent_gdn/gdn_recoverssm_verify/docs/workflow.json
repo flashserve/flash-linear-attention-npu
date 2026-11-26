@@ -1,0 +1,6 @@
+{
+  "algorithm_family": "linear_attention",
+  "target_architecture": "ascend950",
+  "stage": "implementation",
+  "issue_type": null
+}

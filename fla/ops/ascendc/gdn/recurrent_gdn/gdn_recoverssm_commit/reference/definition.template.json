@@ -1,0 +1,19 @@
+{
+  "name": "GdnRecoverssmCommit",
+  "public_entry": "gdn_recoverssm_commit",
+  "attributes": {
+    "spec_query_len": 5,
+    "align_mode": true
+  },
+  "inputs": [
+    "state",
+    "replay",
+    "state_commit_cache_address_stride_table",
+    "state_indices",
+    "commit_lens",
+    "final_state_indices",
+    "boundary_state_indices",
+    "boundary_recovery_lens"
+  ],
+  "mutation": ["state"]
+}
