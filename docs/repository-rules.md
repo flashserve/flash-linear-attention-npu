@@ -61,6 +61,8 @@ required Code Owners review 保证每个 PR 至少获得一名 Code Owner approv
 
 ## NPU CI 门禁
 
+需要验证模型时，在 PR 评论中使用 `/run-npu-ci models`，或在 NPU CI 的手动入口勾选 `model_cases`。A2、A5 各验证 39 条 KDA 正反向模型用例和 5 条 GDN 前向模型用例，结果在独立的 Actions 任务展示。[用例、标杆与复现](../ci/model_cases/README.md)
+
 检查项的 context 名称、顺序和阶段映射统一维护在 `.github/scripts/npu_ci_checks.json`；触发、默认状态、结果发布、异常收敛和分支保护配置均读取这份定义。非默认目标分支按固定 base commit 读取其定义，尚未迁移的旧分支兼容读取原 workflow 中的 context。默认状态检查或写入异常时，workflow 失败，并尽力将当前及历史 NPU 状态写为 failure，使旧成功结果失效。
 
 NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自动执行。发生这些事件时，默认状态 workflow 会给当前 head commit 写入以下 6 个 pending 状态，描述为“未执行”，并在 PR 评论区提示可请求 CI 触发名单中的账号触发：

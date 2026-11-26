@@ -301,6 +301,7 @@ docker run --rm \
     -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
+    -e CI_MODEL_DATE="${CI_MODEL_DATE:-}" \
     -e CI_ATK_SMOKE_OPS="$atk_smoke_ops" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \

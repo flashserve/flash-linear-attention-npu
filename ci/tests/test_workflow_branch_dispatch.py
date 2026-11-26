@@ -46,7 +46,7 @@ class WorkflowBranchDispatchTest(unittest.TestCase):
         self.assertEqual(list(triggers), ["workflow_dispatch"])
         self.assertNotIn("issue_comment:", self.ci_text)
         self.assertEqual(set(triggers["workflow_dispatch"]["inputs"]), {
-            "pr_number", "ci_mode", "debug", "ops", "requested_by", "expected_head_sha",
+            "pr_number", "ci_mode", "debug", "model_cases", "ops", "requested_by", "expected_head_sha",
             "expected_base_ref", "expected_base_sha", "expected_workflow_sha",
         })
         self.assertIn("${{ github.ref_name }}", self.ci_text)
@@ -142,6 +142,18 @@ globalThis.core = {{
             )
             records = json.loads(record_file.read_text(encoding="utf-8"))
         return completed, records
+
+    def test_optional_models_dispatch(self):
+        for comment, expected in [("/run-npu-ci quick", None), ("/run-npu-ci models", "true"),
+                                  ("/run-npu-ci full models debug", "true")]:
+            completed, records = self._run_dispatch(comment)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            dispatch, = (r["payload"]["inputs"] for r in records if r["kind"] == "dispatch")
+            self.assertEqual(dispatch.get("model_cases"), expected)
+        for comment in ("/run-npu-ci models models", "/run-npu-ci models ops=chunk_fwd_h"):
+            _, records = self._run_dispatch(comment)
+            self.assertTrue(any(r["kind"] == "failed" for r in records))
+            self.assertFalse(any(r["kind"] == "dispatch" for r in records))
 
     def test_comment_defaults_to_pull_request_base_branch(self):
         completed, records = self._run_dispatch("/run-npu-ci quick")

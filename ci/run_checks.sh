@@ -184,6 +184,16 @@ PY
 }
 
 classify_changed_files
+if [[ -n "${CI_MODEL_DATE:-}" ]]; then
+    if [[ -n "${CI_OPS:-}" || "${CI_STAGE:-all}" != "all" ]]; then
+        echo "[CI][ERROR] Model cases require the full PR runtime." >&2
+        exit 2
+    fi
+    # Model chains span several operators. Build the merged PR wheel once for both suites.
+    change_scope=full
+    ci_ops=""
+    export CI_CHANGE_SCOPE=full CI_CHANGE_OPS=""
+fi
 if [[ "$change_scope" == "docs-only" && -n "${CI_ATK_SMOKE_OPS:-}" ]]; then
     # A document under a guarded operator still exercises its smoke suites.
     change_scope=tests-only
@@ -1020,4 +1030,14 @@ run_pipeline_stage \
 
 stage_report_status=0
 python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize || stage_report_status=$?
+if (( stage_report_status == 0 )) && [[ -n "${CI_MODEL_DATE:-}" ]]; then
+    configure_installed_fla_npu_opp
+    # The optional job evaluates both platform reports. Keep the ordinary stage statuses independent.
+    export ATK_TASK_OUTPUT_PATH="${CI_TMPDIR:-$TMPDIR}/model-atk"
+    mkdir -p "$ATK_TASK_OUTPUT_PATH"
+    ATEN_CPU_CAPABILITY=default OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 KDA_BWD_ATK_CPU_THREADS=1 \
+        python3 ci/model_cases/run.py --date "$CI_MODEL_DATE" --platform "$CI_ACCURACY_PLATFORM" \
+        --device "$ci_test_device" --report-dir "${CI_TMPDIR:-$TMPDIR}/model-cases" || \
+        echo "[CI][MODELS] See the KDA / GDN model job for failures." >&2
+fi
 exit "$stage_report_status"

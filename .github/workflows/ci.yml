@@ -10,7 +10,7 @@
 
 name: NPU CI
 
-run-name: "NPU CI · PR #${{ inputs.pr_number }}${{ inputs.debug && ' · debug' || '' }}"
+run-name: "NPU CI · PR #${{ inputs.pr_number }}${{ inputs.model_cases && ' · models' || '' }}${{ inputs.debug && ' · debug' || '' }}"
 
 on:
   workflow_dispatch:
@@ -22,6 +22,11 @@ on:
         description: "CI mode: quick or full"
         required: false
         default: quick
+      model_cases:
+        description: "Run KDA (39 forward/backward) and GDN (5 forward) model cases on A2 and A5"
+        type: boolean
+        required: false
+        default: false
       debug:
         description: "Save existing complete build logs for this run"
         type: boolean
@@ -75,6 +80,7 @@ jobs:
       head_repo: ${{ steps.prepare.outputs.head_repo }}
       head_sha: ${{ steps.prepare.outputs.head_sha }}
       ci_mode: ${{ steps.prepare.outputs.ci_mode }}
+      model_date: ${{ steps.prepare.outputs.model_date }}
       debug: ${{ steps.prepare.outputs.debug }}
       ops: ${{ steps.prepare.outputs.ops }}
       comment_id: ${{ steps.prepare.outputs.comment_id }}
@@ -184,6 +190,7 @@ jobs:
                     run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
                     run.repository?.full_name?.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) return null;
                 // An ordinary run cannot satisfy a request to collect debug logs.
+                if (modelCases && !run.display_title?.includes(' · models')) return null;
                 if (debug && !run.display_title?.endsWith(' · debug')) return null;
                 return run;
               } catch (error) {
@@ -195,6 +202,11 @@ jobs:
             prNumber = Number(workflowInputs.pr_number);
             ciMode = workflowInputs.ci_mode || 'quick';
             ops = workflowInputs.ops || '';
+            const modelCases = String(workflowInputs.model_cases ?? 'false') === 'true';
+            if (modelCases && ops.trim()) {
+              core.setFailed('models 与仅编译的 ops= 不能同时使用。');
+              return;
+            }
             const debugValue = String(workflowInputs.debug ?? 'false');
             if (!['true', 'false'].includes(debugValue)) {
               core.setFailed('debug 参数必须为 true 或 false。');
@@ -293,7 +305,7 @@ jobs:
             );
             // Debug requests must create fresh logs even after a successful run.
             if (!debug && isInitialWorkflowAttempt &&
-                matchingExecutionRun && latestExecutionCi.state === 'success' &&
+                !modelCases && matchingExecutionRun && latestExecutionCi.state === 'success' &&
                 allContextsPassedInSameRun) {
               core.notice(`${pr.head.sha} 已经通过本次 NPU CI 请求，跳过重复运行。`);
               commentId = await upsertComment(
@@ -353,6 +365,12 @@ jobs:
             }
 
             const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            if (modelCases) {
+              // Anchor the daily plan to the original dispatch, including retries after midnight.
+              const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: context.runId });
+              const day = new Date(new Date(run.created_at).getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+              core.setOutput('model_date', day);
+            }
             const pendingResults = await Promise.allSettled(checkContexts.map(([statusContext, label]) =>
               github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
@@ -374,6 +392,7 @@ jobs:
                 `NPU CI 已开始验证 \`${pr.head.sha}\`。`,
                 '',
                 `- 模式：\`${ciMode}\``,
+                modelCases ? '- 模型回归：A2、A5 各执行 39 条 KDA 和 5 条 GDN' : '',
                 debug ? '- 调试日志：开启；完整日志作为独立 artifact 保存 7 天' : '',
                 `- 触发人：@${requestedBy}`,
                 `- CI 定义分支：\`${workflowRef}\``,
@@ -424,7 +443,7 @@ jobs:
             dockerfile: ci/Dockerfile.ascend950
             require_preloaded_image: 'true'
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
-    timeout-minutes: 240
+    timeout-minutes: ${{ inputs.model_cases && 720 || 240 }}
     permissions:
       contents: read
     env:
@@ -436,6 +455,7 @@ jobs:
       CI_STAGE: ${{ needs.prepare.outputs.ops == '' && 'all' || 'opp-package' }}
       CI_SOC: ${{ matrix.soc }}
       FLA_NPU_SOC: ${{ matrix.soc }}
+      CI_MODEL_DATE: ${{ needs.prepare.outputs.model_date }}
       CI_RUN_EXAMPLE_ST: 'true'
       CI_RUN_STANDALONE_WHEEL_LAYOUT_CHECK: 'true'
       CI_ACCURACY_PLATFORM: ${{ matrix.platform }}
@@ -823,6 +843,16 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+      - name: 保存 ${{ matrix.name }} KDA / GDN 模型逐条结果
+        if: always() && inputs.model_cases && steps.npu_ci.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: model-cases-${{ matrix.platform }}-${{ github.run_id }}
+          path: ${{ env.CI_HOST_TMPDIR }}/model-cases/*.json
+          overwrite: true
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: 保存 ${{ matrix.name }} 命中算子的 ATK 冒烟报告
         if: always() && steps.npu_ci.outcome != 'skipped'
         uses: actions/upload-artifact@v6
@@ -902,6 +932,35 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
+
+  model-cases:
+    name: KDA / GDN 模型用例（A2 + A5）
+    needs: [prepare, ascend-npu]
+    if: always() && !cancelled() && inputs.model_cases && needs.prepare.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: ci/model_cases
+          persist-credentials: false
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: model-cases-*-${{ github.run_id }}
+          path: reports
+      - name: 核对两个平台的逐条结果
+        env:
+          MODEL_DATE: ${{ needs.prepare.outputs.model_date }}
+          PR_HEAD: ${{ needs.prepare.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          python3 ci/model_cases/verdict.py reports "$MODEL_DATE" "$PR_HEAD" "$GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: 检查两个平台的执行状态
+        if: needs.ascend-npu.result != 'success'
+        run: exit 1
 
   finalize:
     name: 校验并发布 A2 + A5 分项状态

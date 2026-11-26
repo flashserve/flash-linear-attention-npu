@@ -94,7 +94,7 @@ const github = {
         }
         record('dispatch',payload);
       },
-      getWorkflowRun:async () => ({data:{status:'in_progress'}})},
+      getWorkflowRun:async () => ({data:{status:'in_progress',created_at:'2026-11-26T17:00:00Z'}})},
   },
 };
 const core = {notice:(payload) => record('notice',payload),warning:(payload) => record('warning',payload),
@@ -422,6 +422,14 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                     self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
                 else:
                     self.assertTrue(self.records(result, "info"))
+
+    def test_models_prepare_pins_beijing_dispatch_date(self):
+        result = self.run_entry("prepare", inputs={"model_cases": "true"})
+        self.assertNotIn("error", result)
+        self.assertIn({"name": "model_date", "value": "2026-11-27"}, self.records(result, "output"))
+        invalid = self.run_entry("prepare", inputs={"model_cases": "true", "ops": "chunk_fwd_h"})
+        self.assertTrue(self.records(invalid, "failed"))
+        self.assertFalse(self.records(invalid, "status"))
 
     def test_manual_rerun_without_head_or_target_snapshot_refuses_new_prepare(self):
         snapshot = {"expected_head_sha":"a"*40, "expected_base_ref":"main",
