@@ -443,7 +443,7 @@ jobs:
             dockerfile: ci/Dockerfile.ascend950
             require_preloaded_image: 'true'
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
-    timeout-minutes: ${{ inputs.model_cases && 720 || 240 }}
+    timeout-minutes: ${{ inputs.model_cases && 960 || 240 }}
     permissions:
       contents: read
     env:
@@ -850,7 +850,7 @@ jobs:
           name: model-cases-${{ matrix.platform }}-${{ github.run_id }}
           path: ${{ env.CI_HOST_TMPDIR }}/model-cases/*.json
           overwrite: true
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: 保存 ${{ matrix.name }} 命中算子的 ATK 冒烟报告
