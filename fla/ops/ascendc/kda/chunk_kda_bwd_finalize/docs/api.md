@@ -3,7 +3,9 @@
 沿用现有 Python/ACLNN 签名及七个返回值顺序 `(dq, dk, dv, db, dg, dA, dbias)`。
 输入 shape、可选属性和数学语义不变；参数 dtype 支持范围见下文。
 
-`output_layout` 在 A2/A3/A5 统一控制 dq/dk/dv/dg/db；db 省略末尾 D 维。
+`output_layout` 在 A2/A3/A5/A6 统一控制 dq/dk/dv/dg/db；db 省略末尾 D 维。
+A6 沿用 A5 的属性、shape 和 dtype 契约；当前为源码实现，设备验证状态见
+[validation.md](validation.md)。
 
 | output_layout | dq/dk/dv/dg | db |
 | --- | --- | --- |
@@ -21,7 +23,7 @@ dA/dbias 不受 output_layout 控制。非法布局、rank 或输出 shape 在 H
 
 ## Gate parameter dtype contract
 
-On A2/A3 and A5 V2/direct Finalize, raw_g and beta independently accept BF16 or
+On A2/A3 and A5/A6 direct Finalize, raw_g and beta independently accept BF16 or
 FP32 (four combinations); dg/db follow their respective input dtypes.
 A_log/dt_bias and their gradients are always FP32.
 This is an intentional gradient dtype change; layouts and return ordering stay

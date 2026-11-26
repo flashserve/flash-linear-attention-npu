@@ -3,7 +3,7 @@
 ## 功能
 
 KDA 反向优化链路的最后阶段，合并 Prepare 和 Dhu 的结果，输出 Q/K/V、
-beta、Gate 与参数梯度。A5 可融合 Q/K L2 归一化反向；A2/A3 复用原整体 Bwd 的
+beta、Gate 与参数梯度。A5/A6 可融合 Q/K L2 归一化反向；A2/A3 复用原整体 Bwd 的
 WY/Intra 计算，并在同一次 launch 中完成可选 GatePost。
 
 A2/A3 的 Python `npu_chunk_kda_bwd` 和 `aclnnChunkKdaBwd` 接口保持不变，
@@ -14,12 +14,14 @@ A2/A3 的 Python `npu_chunk_kda_bwd` 和 `aclnnChunkKdaBwd` 接口保持不变�
 
 - 支持 Ascend910B、Ascend910_93 和 Ascend950 上已注册的 Finalize 路径；输入须连续，
   Hq=Hv、K=V=128、chunk_size=64，支持定长及变长序列。
+- 新增 Ascend960DT（DAV_9201）源码路径，沿用 A5 的接口限制；目前仅完成本地源码检查，
+  A6 编译、设备精度和性能尚未验证，详见 [开发验证记录](docs/validation.md)。
 - q/k/v 及 dq/dk/dv 为 BF16；raw_g 与 beta 独立支持 BF16/FP32，dg/db 分别跟随
   raw_g/beta 的 dtype；A_log/dt_bias 及 dA/dbias 固定 FP32。
 - safe_gate、use_gate_in_kernel、use_exp2 必须为 True，state_v_first=False；
   lower_bound 范围为 `[-5,0)`。
 - q_rstd/k_rstd 必须成对提供。A2/A3 支持融合 beta sigmoid 反向，计算输入为前向保存的
-  FP32 beta_eff；A5 当前要求 `use_beta_sigmoid_in_kernel=False` 且
+  FP32 beta_eff；A5/A6 当前要求 `use_beta_sigmoid_in_kernel=False` 且
   `allow_neg_eigval=False`。
 - 总接口重计算路径保留 H≤256 且 H 为 8 的倍数的限制；保存路径不受该限制。
   独立 Finalize 的边界场景以其接口校验为准。
@@ -87,14 +89,16 @@ PR993 总接口只有一个公开 `layout`，合法值为 `BSND/BNSD/TND/NTD`。
 
 ## Raw tiling
 
-A5 `ChunkKdaBwdFinalizeTilingData` 的逻辑结构大小为 **184 字节**。host 将 raw tiling
+A5/A6 `ChunkKdaBwdFinalizeTilingData` 的逻辑结构大小为 **184 字节**。host 将 raw tiling
 size 设为 `sizeof(TilingData)+8`，即 **192 字节**，与设备侧 `opParaSize` 对齐；
 Arch22 使用自身 tiling 路径，不套用该 A5 大小。host 测试读取 raw size 后再使用 typed
 getter 检查字段，避免 typed getter 重置 raw size 后造成误判。
 
 ## 实现
 
-采用 MIX_AIC_1_2，矩阵计算与向量处理协同执行；末阶段同步后归约参数梯度。
+A5 采用 MIX_AIC_1_2；A6 采用 MIX_AIC_1_1，保留 CG=2 的相邻 head 分组，
+单个 AIV 依序处理两个 head。A6 的共享 UB 为 144 KiB，每个 head 常驻区为
+112 KiB，总计 368 KiB；L1 保持 448 KiB。两者均在末阶段同步后归约参数梯度。
 Tiling key 1/2 对应定长/变长，3/4 为对应的归一化反向版本。
 A2/A3 使用 tiling key 101，归一化反向版本使用 102，支持 dense batch、尾块及 packed 元数据；
 公开 Python 入口保留原有尾块和奇数 head 适配。

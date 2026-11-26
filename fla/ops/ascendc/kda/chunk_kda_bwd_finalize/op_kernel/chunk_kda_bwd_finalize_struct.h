@@ -9,7 +9,7 @@
 
 namespace KDA {
 
-// Shared A5 Host/device tiling for the complete finalize kernel.
+// Shared A5/A6 Host/device tiling for the complete finalize kernel.
 struct ChunkKdaBwdFinalizeTilingData {
     int64_t B;
     int64_t NQ;

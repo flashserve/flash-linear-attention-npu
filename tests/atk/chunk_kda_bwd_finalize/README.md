@@ -10,7 +10,7 @@ NPU-versus-CPU results as accuracy acceptance, calibration or performance eviden
 
 Input token tensors are always head-major `[B,H,T,D]` / `[H,T,D]`.
 q/k/v/v_new/dv_scan use BF16 and D=128; akk uses BF16 and D=64.
-gk/raw_g/dq_raw use FP32 and D=128; d_aqk uses FP32 and D=64.
+gk/dq_raw use FP32 and D=128; raw_g supports BF16/FP32; d_aqk uses FP32 and D=64.
 h/dh are BF16 NT-first `[B,Nc,H,128,128]` / `[Nc,H,128,128]`.
 beta is `[B,H,T]` / `[H,T]`, BF16 or FP32. a_log is FP32 `[H]`,
 dt_bias is FP32 `[H,128]`. Optional q_rstd/k_rstd are FP32 and match beta
@@ -21,8 +21,8 @@ Ordered outputs are:
 | Output | Shape | dtype |
 | --- | --- | --- |
 | dq, dk, dv | `[B,H,T,128]` for BNSD; `[B,T,H,128]` for BSND; `[H,T,128]` for NTD; `[T,H,128]` for TND | BF16 |
-| d_beta | **always** `[B,T,H]` / `[T,H]` | same as beta |
-| d_g | **always** `[B,T,H,128]` / `[T,H,128]` | FP32 |
+| d_beta | `[B,H,T]` / `[B,T,H]` / `[H,T]` / `[T,H]`, following output_layout | same as beta |
+| d_g | same layout and shape as dq/dk/dv | same as raw_g |
 | d_a_log | same shape as a_log | FP32 |
 | d_dt_bias | same shape as dt_bias | FP32 |
 
@@ -33,8 +33,8 @@ Ordered outputs are:
 | NQ=NV; K=V128; positive B/H/T; NT-first h/dh and Nc | op_tiling/chunk_kda_bwd_finalize_tiling_processor.h::Process | generator shared shapes, state shape |
 | raw_g/gk shape, beta/rstd shape, a_log H elements, dt_bias H*128 | tiling.cpp::ValidateFinalize | generator dependent shapes |
 | rstd pair; canonical packed metadata; B=1 in packed mode | ACLNN; op_api/chunk_kda_bwd_finalize.cpp; tiling processor | executor optional pair and canonical metadata |
-| Output rank/layout, token-major d_beta/d_g, preserved a_log/bias shapes | ValidateFinalize; torch_custom/fla_npu/csrc/src/stable_chunk_kda_bwd_finalize.cpp | CPU output contract |
-| allow_neg_eigval requires beta-sigmoid; A5 beta-sigmoid unavailable | ACLNN and ValidateFinalize | both attrs false in portable YAML |
+| Output rank/layout, output_layout controls all five token gradients, preserved a_log/bias shapes | ValidateFinalize; torch_custom/fla_npu/csrc/src/stable_chunk_kda_bwd_finalize.cpp | source ABI; archived scaffold must be rechecked before acceptance |
+| allow_neg_eigval requires beta-sigmoid; A5/A6 beta-sigmoid unavailable | ACLNN and ValidateFinalize | both attrs false in portable YAML |
 | Overflow/row-stride guards | tiling.cpp::ValidateFinalize and Tiling4ChunkKdaBwdFinalize | bounded candidates; no address-space stress cases |
 
 The portable matrix uses beta-sigmoid=false, allow_neg_eigval=false and FP32
@@ -124,3 +124,41 @@ no NPU comparison or numerical accuracy conclusion was made.
 This project uses the `api_type` Python executor for CPU/NPU dispatch. It does
 not implement a direct `pyaclnn` executor: test-control attrs and canonical host
 metadata must be processed by `executor_chunk_kda_bwd_finalize.py` before dispatch.
+
+## A6 development checks
+
+The A6 source uses CG=2 with one AIV, 368 KiB UB and the existing 448 KiB L1
+layout. The following tools are separate from the original zero-golden ATK
+scaffold. Run them from the repository root:
+
+```bash
+python tests/atk/chunk_kda_bwd_finalize/scripts/a6_reference.py
+python tests/atk/chunk_kda_bwd_finalize/scripts/finalize_a6_smoke.py --cpu-only --heads 3 --tokens 65 --rstd
+```
+
+- `scripts/a6_reference.py` supplies a nonzero CPU FP64 development reference
+  and checks its seven gradients against an independent autograd derivation.
+  Its saturated-gate check also compares the raw/parameter gradients at
+  `x=-80/-40/0/40/80` with a separate log-sigmoid derivative formulation.
+- `scripts/finalize_a6_smoke.py` builds consistent saved inputs, computes that
+  reference, launches the installed public operator twice and reports errors
+  and repeatability. `--cpu-only` skips NPU imports and launches. It does not
+  claim numerical acceptance from uncalibrated default tolerances.
+
+After building and installing the A6 run package in a configured environment:
+
+```bash
+python -u tests/atk/chunk_kda_bwd_finalize/scripts/finalize_a6_smoke.py
+```
+
+Device compilation, intermediate Stage capture, calibrated value ranges,
+three-seed ATK acceptance and performance remain pending. See the operator's
+[validation record](../../../fla/ops/ascendc/kda/chunk_kda_bwd_finalize/docs/validation.md)
+for the exact local checks and remaining device work. The original ATK CPU
+placeholder remains unchanged and must not be used to accept A6 accuracy.
+
+The A6 Local path follows the rebased A5 FP32 NZ implementation: causal K
+ranges are padded to eight rows, and wide transposed products hold both L0B
+slots. The state/WY path still uses BF16 high/residual corrections. Device
+regression must cover both row bands and the L0B boundary at M=32/33, in
+addition to all four tiling keys and the dtype/layout combinations above.
