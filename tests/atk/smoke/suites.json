@@ -190,33 +190,6 @@
   },
   {
     "op": "chunk_gated_delta_rule_bwd",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_bwd-A2-boundaries",
-    "count": 41,
-    "reference": "chunk_gated_delta_rule_bwd",
-    "output": "native",
-    "plugin": "tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py"
-  },
-  {
-    "op": "chunk_gated_delta_rule_bwd",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_bwd-A2-generated",
-    "count": 192,
-    "reference": "chunk_gated_delta_rule_bwd",
-    "output": "native",
-    "plugin": "tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py"
-  },
-  {
-    "op": "chunk_gated_delta_rule_bwd",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_bwd-A2-prior-gaps",
-    "count": 8,
-    "reference": "chunk_gated_delta_rule_bwd",
-    "output": "native",
-    "plugin": "tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py"
-  },
-  {
-    "op": "chunk_gated_delta_rule_bwd",
     "platform": "A5",
     "group": "chunk_gated_delta_rule_bwd-A5-generated",
     "count": 186,
@@ -232,24 +205,6 @@
     "reference": "chunk_gated_delta_rule_bwd",
     "output": "native",
     "plugin": "tests/atk/chunk_gated_delta_rule_bwd/executor_chunk_gated_delta_rule_bwd.py"
-  },
-  {
-    "op": "chunk_gated_delta_rule_bwd_dhu",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_bwd_dhu-A2-gate-base",
-    "count": 96,
-    "reference": "chunk_gated_delta_rule_bwd_dhu",
-    "output": "fp32",
-    "plugin": "tests/atk/smoke/helpers/executor_dhu_exp.py"
-  },
-  {
-    "op": "chunk_gated_delta_rule_bwd_dhu",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_bwd_dhu-A2-generated",
-    "count": 200,
-    "reference": "chunk_gated_delta_rule_bwd_dhu",
-    "output": "fp32",
-    "plugin": "tests/atk/chunk_gated_delta_rule_bwd_dhu/executor_chunk_gated_delta_rule_bwd_dhu.py"
   },
   {
     "op": "chunk_gated_delta_rule_bwd_dhu",
@@ -277,46 +232,6 @@
     "reference": "chunk_gated_delta_rule_bwd_finalize",
     "output": "fp32",
     "plugin": "tests/atk/chunk_gated_delta_rule_bwd_finalize/executor_chunk_gated_delta_rule_bwd_finalize.py"
-  },
-  {
-    "op": "chunk_gated_delta_rule_fwd_h",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_fwd_h-A2-gate-state",
-    "count": 138,
-    "reference": "chunk_gated_delta_rule_fwd_h",
-    "output": "native"
-  },
-  {
-    "op": "chunk_gated_delta_rule_fwd_h",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_fwd_h-A2-generated",
-    "count": 200,
-    "reference": "chunk_gated_delta_rule_fwd_h",
-    "output": "native"
-  },
-  {
-    "op": "chunk_gated_delta_rule_fwd_h",
-    "platform": "A2",
-    "group": "chunk_gated_delta_rule_fwd_h-A2-joint-contract",
-    "count": 192,
-    "reference": "chunk_gated_delta_rule_fwd_h",
-    "output": "native"
-  },
-  {
-    "op": "chunk_gated_delta_rule_fwd_h",
-    "platform": "A2",
-    "group": "pr50-gate-A2-0",
-    "count": 2,
-    "reference": "chunk_gated_delta_rule_fwd_h",
-    "output": "native"
-  },
-  {
-    "op": "chunk_gated_delta_rule_fwd_h",
-    "platform": "A2",
-    "group": "pr50-joint-A2-0",
-    "count": 4,
-    "reference": "chunk_gated_delta_rule_fwd_h",
-    "output": "native"
   },
   {
     "op": "chunk_gated_delta_rule_fwd_h",
@@ -349,33 +264,6 @@
     "count": 2,
     "reference": "chunk_gated_delta_rule_fwd_h",
     "output": "native"
-  },
-  {
-    "op": "chunk_gdn_bwd_intra",
-    "platform": "A2",
-    "group": "chunk_gdn_bwd_intra-A2-generated",
-    "count": 72,
-    "reference": "chunk_gdn_bwd_intra",
-    "output": "fp32",
-    "plugin": "tests/atk/chunk_gdn_bwd_intra/executor_chunk_gdn_bwd_intra.py"
-  },
-  {
-    "op": "chunk_gdn_bwd_intra",
-    "platform": "A2",
-    "group": "chunk_gdn_bwd_intra-A2-prior-200",
-    "count": 192,
-    "reference": "chunk_gdn_bwd_intra",
-    "output": "fp32",
-    "plugin": "tests/atk/chunk_gdn_bwd_intra/executor_chunk_gdn_bwd_intra.py"
-  },
-  {
-    "op": "chunk_gdn_bwd_intra",
-    "platform": "A2",
-    "group": "chunk_gdn_bwd_intra-A2-prior-gaps",
-    "count": 10,
-    "reference": "chunk_gdn_bwd_intra",
-    "output": "fp32",
-    "plugin": "tests/atk/chunk_gdn_bwd_intra/executor_chunk_gdn_bwd_intra.py"
   },
   {
     "op": "chunk_gdn_bwd_intra",
