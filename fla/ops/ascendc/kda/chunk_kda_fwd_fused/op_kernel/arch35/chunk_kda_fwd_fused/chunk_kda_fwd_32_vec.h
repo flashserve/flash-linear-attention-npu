@@ -211,9 +211,18 @@ template <typename T, bool IsVarlen, bool HasTail>
 		AscendC::LocalTensor<float> stage(AscendC::TPosition::VECCALC, KdaAddrV(istate_ub), state_half_elems);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(0);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(1);
-		AscendC::DataCopy(stage, istate_gm[0], state_half_elems);   // 一次连续 32KB(ND 行主序)
+		if (state_v_first) {
+			AscendC::NdDmaLoopInfo<2> loopInfo{
+				{1, key_dim}, {value_dim, 1}, {state_k_half, value_dim}, {0, 0}, {0, 0}};
+			AscendC::NdDmaParams<float, 2> params{loopInfo, 0.0f};
+			AscendC::NdDmaDci();
+			AscendC::DataCopy<float, 2>(stage, istate_gm[0], params);
+		} else {
+			AscendC::DataCopy(stage, istate_gm[0], state_half_elems);
+		}
 		AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(6);
 		AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(6);
+		// NDDMA 已将 V-first [V,K] 转成 K-first [K,V]，后续统一走 K-first NZ 装载。
 		LoadStateNdScatter(s_ub, (__ubuf__ void *)stage.GetPhyAddr());
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(0);
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(1);
@@ -243,7 +252,7 @@ template <typename T, bool IsVarlen, bool HasTail>
 		StoreStateGatherCast((__ubuf__ void *)stage.GetPhyAddr(), s_ub);
 		AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(0);
 		AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(0);
-		AscendC::DataCopy(fstate_gm[0], stage, state_half_elems);   // 一次连续 32KB(ND 行主序)
+		AscendC::DataCopy(fstate_gm[0], stage, state_half_elems);
 		// 多任务执行时必须自排干:stage 借用 g_ub[0],MTE3 读未完成时下一任务
 		// 的 MTE2 装载会冲掉它(单任务靠 kernel 退出隐式排干,多任务无此保障)
 		AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(0);
@@ -439,10 +448,12 @@ template <typename T, bool IsVarlen, bool HasTail>
 		tmp_gm.SetGlobalBuffer((__gm__ T *)tmp_base + ((uint64_t)tok0*hv + head)*value_dim);
 		o_gm.SetGlobalBuffer((__gm__ T *)o_base + ((uint64_t)tok0*hv + head)*value_dim);
 		if (has_istate) {
-			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*(state_v_first ? 1 : value_dim));
 		}
 		if (out_fstate) {
-			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*value_dim);
 		}
 		a = a_gm.GetValue(head);
 		a = -a;
@@ -498,12 +509,14 @@ template<bool varlen>
 		dt_gm.SetGlobalBuffer((__gm__ float *)dt_base + key_dim*bias_head);  // 每头 key_dim 个 dt_bias(按通道跳,不是按 token 组)
 		tmp_gm.SetGlobalBuffer((__gm__ T *)tmp_base + seq_len*value_dim*fh);
 		o_gm.SetGlobalBuffer((__gm__ T *)o_base + seq_len*value_dim*fh);
-		// state GM 按任务 + k 半幅寻址:[B*HV,K,V] fp32,本 AIV 取 k∈[subid*64,+64)
+		// state GM 按任务寻址;K-first 取 k 半幅行,V-first 取 k 半幅列。
 		if (has_istate) {
-			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			istate_gm.SetGlobalBuffer((__gm__ float *)istate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*(state_v_first ? 1 : value_dim));
 		}
 		if (out_fstate) {
-			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh + (uint64_t)subid*(key_dim/2)*value_dim);
+			fstate_gm.SetGlobalBuffer((__gm__ float *)fstate_base + key_dim*value_dim*fh +
+				(uint64_t)subid*state_k_half*value_dim);
 		}
 		a = a_gm.GetValue(bias_head);
 		a = -a;

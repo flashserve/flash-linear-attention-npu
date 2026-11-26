@@ -566,6 +566,7 @@ public:
 	// 落到 GM(attr 打包,免 H2D);逐任务解析 (token_begin, len)。
 	// 任务空头 = len<=0:不进流水,仅在请求时写 final=initial(或 0)。
 	uint64_t is_varlen = 0, nheads_qk = 0, total_tokens = 0;  // total_tokens = varlen 的 T_total(beta 头连续行距)
+	uint64_t state_v_first = 0;    // GM initial state=[N,HV,V,K];内部仍使用 K-first NZ
 	uint64_t cu_base = 0;          // tiling GM 上 cu_seqlens 数组的裸地址
 	uint64_t task_empty = 0;       // BindTask 产出:本任务是否空序列
 	uint64_t task_tokens = 0;      // 本任务 token 起点(packed 空间)
@@ -593,7 +594,8 @@ public:
 	// 行 r 从 r*16 聚 8 块 32B(块距 64×32B=2048B=fv 步长)
 	// 得 128 bf16 线性序,cast 后 INTLV 存出 128 fp32 连续行。
 	__aicore__ inline void StoreStateGatherCast(__ubuf__ void *stage_f32, __ubuf__ void *s_ub);
-	// initial_state 装载:GM fp32 ND [64k,128v](本 AIV 半幅)→ s_ub bf16 NZ。
+	// initial_state 装载:GM fp32 ND 的本 AIV 半幅(K-first [64k,128v] 或
+	// V-first [128v,64k])→ s_ub bf16 NZ。
 	// V_MTE2(0/1) 是输入区首个使用者的预支信号量:先消费再归还,借用期间
 	// prologue 的装数自然被挡在墙外。
 	__aicore__ inline void LoadInitState(__ubuf__ void *s_ub);
@@ -1123,6 +1125,7 @@ __aicore__ inline void Run(
                         td->varlenMode,
                         (uint64_t)((__gm__ uint8_t *)tiling + offsetof(KdaFd32TilingData, cuData)),
                         td->epsilonBits, td->gateFlags);
+        kda.state_v_first = td->stateVFirst;
         kda.Process((int)td->nChunks);
     } else if (td->varlenMode == 0) {
         Kernel<bfloat16_t, false, true> kda;
@@ -1133,6 +1136,7 @@ __aicore__ inline void Run(
                         td->varlenMode,
                         (uint64_t)((__gm__ uint8_t *)tiling + offsetof(KdaFd32TilingData, cuData)),
                         td->epsilonBits, td->gateFlags);
+        kda.state_v_first = td->stateVFirst;
         kda.Process((int)td->nChunks);
     } else {
         Kernel<bfloat16_t, true, true> kda;
@@ -1143,6 +1147,7 @@ __aicore__ inline void Run(
                         td->varlenMode,
                         (uint64_t)((__gm__ uint8_t *)tiling + offsetof(KdaFd32TilingData, cuData)),
                         td->epsilonBits, td->gateFlags);
+        kda.state_v_first = td->stateVFirst;
         kda.Process((int)td->nChunks);
     }
 #endif

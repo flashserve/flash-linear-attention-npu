@@ -28,7 +28,7 @@ const aclTensor *KdaChunkForwardFused(
     const aclTensor *beta, const aclTensor *aLog, const aclTensor *dtBias,
     const aclTensor *initialState, double scale, double lowerBound,
     const aclTensor *o, const aclTensor *finalState, const aclIntArray *cuSeqlens,
-    aclOpExecutor *executor, const char *layout)
+    aclOpExecutor *executor, const char *layout, bool stateVFirst)
 {
     L0_DFX(KdaChunkForwardFused, q, k, v, g, beta, aLog, dtBias, initialState,
            scale, lowerBound, o, finalState);
@@ -54,7 +54,7 @@ const aclTensor *KdaChunkForwardFused(
         ChunkKdaFwdFused,
         OP_INPUT(q, k, v, g, beta, aLogExp, dtBias, initialState, actualCuSeqlens),
         OP_OUTPUT(o, finalState),
-        OP_ATTR(layout, scale, static_cast<float>(lowerBound)));
+        OP_ATTR(layout, scale, static_cast<float>(lowerBound), stateVFirst));
     if (ret != ACLNN_SUCCESS) {
         OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwdFused failed.");
         return nullptr;

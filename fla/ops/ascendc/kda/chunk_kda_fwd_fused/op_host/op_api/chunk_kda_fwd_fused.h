@@ -20,7 +20,7 @@ const aclTensor *KdaChunkForwardFused(
     const aclTensor *beta, const aclTensor *aLog, const aclTensor *dtBias,
     const aclTensor *initialState, double scale, double lowerBound,
     const aclTensor *o, const aclTensor *finalState, const aclIntArray *cuSeqlens,
-    aclOpExecutor *executor, const char *layout = "TND");
+    aclOpExecutor *executor, const char *layout = "TND", bool stateVFirst = false);
 
 } // namespace l0op
 

@@ -245,9 +245,9 @@ state `score_delta` 采用 FP32 NoQuant fixpipe；attention out 与 k@state scor
 每个任务开始，AIV 将公开的 FP32 ND initial state 转为 BF16 NZ，或在未提供时清零；每个
 AIV subcore 的 `64x128` 半幅常驻 UB slot 23。state 在 group 间复用，并通过 UB→L1 提供给
 AIC；末组完成后才聚集、转回 FP32 ND 并写 final state。final state 的暂存借用输入 UB 区，
-写回后以 MTE3→V 自排干，避免下一任务装载覆盖暂存区。公开 state 仍是
-`[N,HV,K,V]` FP32；Python 的 `state_v_first=true` 在进入 L2 前后转置，fused L2/L0 只接收
-K-first。
+写回后以 MTE3→V 自排干，避免下一任务装载覆盖暂存区。公开 state 支持
+`[N,HV,K,V]` 与 `state_v_first=true` 的 `[N,HV,V,K]`；后者按 V 行跨步搬运，在同一个
+32 KiB 暂存区与内部 K-first NZ 之间直接转换，不增加 UB，也不需要 Python/host 转置。
 
 生产路径不需要 GM workspace：`chunk_kda_fwd_fused_tiling.cpp` 将 workspace size 置 0。kernel ABI
 中的 `workspace` 仅接到 `tmp_gm` 供已注释的 debug dump 使用，正常 Stage 不通过它交换
@@ -281,7 +281,7 @@ AIC 向两个 AIV 分别 set 基础 id 与 id+16，并在反向等待两个 id�
 | dtype | q/k/v/o BF16；公开 V2 的 g/beta 各自可为 BF16/FP32，任一 FP32 时 host 将两者统一上转 FP32；A_log/dt_bias/state FP32。 |
 | layout | dense BSND/BNSD；varlen BSND(B=1)/TND/NTD；NTD 原生 head-major 寻址，输出仍 TND。 |
 | shape | K=V=128，T>0，128-token group 尾块，GVA `HV%H==0`；varlen 最多 1024 序列并覆盖空序列。 |
-| state | 无 state、initial/final state、dense/varlen state；Python 覆盖 K-first/V-first 适配。 |
+| state | 无 state、initial/final state、dense/varlen state；K-first/V-first 原生 state IO。 |
 | gate/norm | safe gate、核内 gate/L2 norm/beta sigmoid、BF16 与 FP32 g/beta；chunk32 epsilon 固定为 `1e-6`。 |
 | ATK 用例 | accuracy 135（id 0–134，覆盖 layout/长序列/尾块/state、FP32 g/beta+GVA、TND/NTD varlen/空序列）；performance 2；mss 5。 |
 
