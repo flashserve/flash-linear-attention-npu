@@ -1,0 +1,112 @@
+{
+  "name": "gdn_recoverssm_verify",
+  "inputs": [
+    {
+      "name": "A_log",
+      "shape": [
+        "HV"
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "a",
+      "shape": [
+        "T",
+        "HV"
+      ],
+      "dtype": "bfloat16"
+    },
+    {
+      "name": "b",
+      "shape": [
+        "T",
+        "HV"
+      ],
+      "dtype": "bfloat16"
+    },
+    {
+      "name": "dt_bias",
+      "shape": [
+        "HV"
+      ],
+      "dtype": "float32"
+    },
+    {
+      "name": "q",
+      "shape": [
+        "1",
+        "T",
+        "HK",
+        "K"
+      ],
+      "dtype": "bfloat16"
+    },
+    {
+      "name": "k",
+      "shape": [
+        "1",
+        "T",
+        "HK",
+        "K"
+      ],
+      "dtype": "bfloat16"
+    },
+    {
+      "name": "v",
+      "shape": [
+        "1",
+        "T",
+        "HV",
+        "V"
+      ],
+      "dtype": "bfloat16"
+    },
+    {
+      "name": "checkpoint_state",
+      "shape": [
+        "P",
+        "HV",
+        "V",
+        "K"
+      ],
+      "dtype": "bfloat16|float32"
+    },
+    {
+      "name": "query_start_loc",
+      "shape": [
+        "B+1"
+      ],
+      "dtype": "int32|int64"
+    },
+    {
+      "name": "state_indices",
+      "shape": [
+        "B"
+      ],
+      "dtype": "int32|int64"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "shape": [
+        "1",
+        "T",
+        "HV",
+        "V"
+      ],
+      "dtype": "bfloat16"
+    },
+    {
+      "name": "replay_cache",
+      "shape": [
+        "P",
+        "HV",
+        "L",
+        "V+K+1"
+      ],
+      "dtype": "float32"
+    }
+  ],
+  "reference": "\"\"\"Independent CPU golden for ``gdn_recoverssm_verify``.\n\nThe implementation follows the frozen recurrence one token at a time in\nfloat64. It intentionally does not import the NPU runtime or kernel sources.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport math\n\nimport torch\n\n\nQK_L2_NORM_EPS = 1.0e-6\n\n\ndef _require_cpu(name: str, tensor: torch.Tensor) -> None:\n    if tensor.device.type != \"cpu\":\n        raise ValueError(f\"{name} must be a CPU tensor, got {tensor.device}\")\n\n\ndef _require_layout(name: str, tensor: torch.Tensor) -> None:\n    if any(step <= 0 for step in tensor.stride()):\n        raise ValueError(f\"{name} must have positive strides\")\n\n\ndef _logical(tensor: torch.Tensor) -> torch.Tensor:\n    return tensor.detach().to(device=\"cpu\", dtype=torch.float64).contiguous()\n\n\ndef _softplus(x: torch.Tensor, beta: float, threshold: float) -> torch.Tensor:\n    scaled = beta * x\n    return torch.where(\n        scaled <= threshold,\n        torch.log1p(torch.exp(scaled.clamp_max(80.0))) / beta,\n        x,\n    )\n\n\ndef gdn_recoverssm_verify_reference(\n    A_log: torch.Tensor,\n    a: torch.Tensor,\n    b: torch.Tensor,\n    dt_bias: torch.Tensor,\n    q: torch.Tensor,\n    k: torch.Tensor,\n    v: torch.Tensor,\n    checkpoint_state: torch.Tensor,\n    replay_cache: torch.Tensor,\n    query_start_loc: torch.Tensor,\n    state_indices: torch.Tensor,\n    spec_query_len: int,\n    scale: float | None = None,\n    softplus_beta: float = 1.0,\n    softplus_threshold: float = 20.0,\n    use_qk_l2norm_in_kernel: bool = True,\n) -> tuple[torch.Tensor, torch.Tensor]:\n    \"\"\"Return ``(out, replay_cache_after)`` using FP64 CPU arithmetic.\"\"\"\n\n    tensors = {\n        \"A_log\": A_log,\n        \"a\": a,\n        \"b\": b,\n        \"dt_bias\": dt_bias,\n        \"q\": q,\n        \"k\": k,\n        \"v\": v,\n        \"checkpoint_state\": checkpoint_state,\n        \"replay_cache\": replay_cache,\n        \"query_start_loc\": query_start_loc,\n        \"state_indices\": state_indices,\n    }\n    for name, tensor in tensors.items():\n        _require_cpu(name, tensor)\n        _require_layout(name, tensor)\n\n    if q.ndim != 4 or q.shape[0] != 1 or k.shape != q.shape:\n        raise ValueError(\"q and k must have matching [1,T,HK,K] shapes\")\n    total_tokens, hk, key_dim = q.shape[1:]\n    if v.ndim != 4 or v.shape[:2] != (1, total_tokens):\n        raise ValueError(\"v must have shape [1,T,HV,V]\")\n    hv, value_dim = v.shape[2:]\n    if hk <= 0 or hv % hk != 0 or hv // hk > 16:\n        raise ValueError(\"HV/HK must be an integer in [1,16]\")\n    if not (1 <= key_dim <= 128 and 1 <= value_dim <= 128):\n        raise ValueError(\"K and V must be in [1,128]\")\n    if not 1 <= spec_query_len <= 32:\n        raise ValueError(\"spec_query_len must be in [1,32]\")\n    if A_log.shape != (hv,) or dt_bias.shape != (hv,):\n        raise ValueError(\"A_log and dt_bias must be [HV]\")\n    if a.numel() != total_tokens * hv or b.numel() != total_tokens * hv:\n        raise ValueError(\"a and b must contain T*HV elements\")\n    if checkpoint_state.ndim != 4 or checkpoint_state.shape[1:] != (\n        hv,\n        value_dim,\n        key_dim,\n    ):\n        raise ValueError(\"checkpoint_state must be [P,HV,V,K]\")\n    if replay_cache.ndim != 4 or replay_cache.shape[1:] != (\n        hv,\n        spec_query_len,\n        value_dim + key_dim + 1,\n    ):\n        raise ValueError(\"replay_cache must be [P,HV,L,V+K+1]\")\n    if query_start_loc.ndim != 1 or query_start_loc.numel() < 1:\n        raise ValueError(\"query_start_loc must be a non-empty vector\")\n    rows = state_indices.numel()\n    if state_indices.ndim != 1 or query_start_loc.numel() != rows + 1:\n        raise ValueError(\"query_start_loc must have B+1 entries\")\n    if not math.isfinite(float(scale if scale is not None else key_dim**-0.5)):\n        raise ValueError(\"scale must be finite\")\n    if not math.isfinite(softplus_beta) or softplus_beta <= 0:\n        raise ValueError(\"softplus_beta must be finite and positive\")\n    if not math.isfinite(softplus_threshold):\n        raise ValueError(\"softplus_threshold must be finite\")\n\n    offsets = [int(value) for value in query_start_loc.tolist()]\n    pages = [int(value) for value in state_indices.tolist()]\n    if offsets[0] != 0 or offsets[-1] != total_tokens:\n        raise ValueError(\"query_start_loc must start at 0 and end at T\")\n    if any(offsets[index] > offsets[index + 1] for index in range(rows)):\n        raise ValueError(\"query_start_loc must be nondecreasing\")\n    if any(offsets[row + 1] - offsets[row] > spec_query_len for row in range(rows)):\n        raise ValueError(\"a request span exceeds spec_query_len\")\n    positive_pages = [page for page in pages if page > 0]\n    if any(page >= replay_cache.shape[0] for page in positive_pages):\n        raise ValueError(\"positive state_indices must be in range\")\n    if len(set(positive_pages)) != len(positive_pages):\n        raise ValueError(\"positive state_indices must be unique\")\n\n    a64 = _logical(a).reshape(total_tokens, hv)\n    b64 = _logical(b).reshape(total_tokens, hv)\n    alog64 = _logical(A_log)\n    bias64 = _logical(dt_bias)\n    q64 = _logical(q)[0]\n    k64 = _logical(k)[0]\n    v64 = _logical(v)[0]\n    state64 = _logical(checkpoint_state)\n    replay64 = _logical(replay_cache)\n\n    if use_qk_l2norm_in_kernel:\n        q64 = q64 * torch.rsqrt(q64.square().sum(dim=-1, keepdim=True) + QK_L2_NORM_EPS)\n        k64 = k64 * torch.rsqrt(k64.square().sum(dim=-1, keepdim=True) + QK_L2_NORM_EPS)\n    query_scale = key_dim**-0.5 if scale is None else float(scale)\n    q64 = q64 * query_scale\n\n    ratio = hv // hk\n    q64 = q64.repeat_interleave(ratio, dim=1)\n    k64 = k64.repeat_interleave(ratio, dim=1)\n    x = a64 + bias64\n    decay = torch.exp(-torch.exp(alog64) * _softplus(x, softplus_beta, softplus_threshold))\n    beta = torch.sigmoid(b64)\n\n    out64 = torch.zeros_like(v64)\n    for row, page in enumerate(pages):\n        if page <= 0:\n            continue\n        state = state64[page].clone()\n        for token in range(offsets[row], offsets[row + 1]):\n            key = k64[token]\n            state = state * decay[token, :, None, None]\n            correction = beta[token, :, None] * (\n                v64[token] - torch.einsum(\"hvk,hk->hv\", state, key)\n            )\n            state = state + correction[:, :, None] * key[:, None, :]\n            out64[token] = torch.einsum(\"hvk,hk->hv\", state, q64[token])\n            position = token - offsets[row]\n            replay64[page, :, position, :value_dim] = correction\n            replay64[page, :, position, value_dim : value_dim + key_dim] = key\n            replay64[page, :, position, value_dim + key_dim] = decay[token]\n\n    return out64.unsqueeze(0), replay64\n\n\n__all__ = [\"gdn_recoverssm_verify_reference\"]\n"
+}

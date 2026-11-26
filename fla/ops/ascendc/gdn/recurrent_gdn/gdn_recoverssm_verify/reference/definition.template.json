@@ -1,0 +1,20 @@
+{
+  "name": "gdn_recoverssm_verify",
+  "inputs": [
+    {"name": "A_log", "shape": ["HV"], "dtype": "float32"},
+    {"name": "a", "shape": ["T", "HV"], "dtype": "bfloat16"},
+    {"name": "b", "shape": ["T", "HV"], "dtype": "bfloat16"},
+    {"name": "dt_bias", "shape": ["HV"], "dtype": "float32"},
+    {"name": "q", "shape": ["1", "T", "HK", "K"], "dtype": "bfloat16"},
+    {"name": "k", "shape": ["1", "T", "HK", "K"], "dtype": "bfloat16"},
+    {"name": "v", "shape": ["1", "T", "HV", "V"], "dtype": "bfloat16"},
+    {"name": "checkpoint_state", "shape": ["P", "HV", "V", "K"], "dtype": "bfloat16|float32"},
+    {"name": "query_start_loc", "shape": ["B+1"], "dtype": "int32|int64"},
+    {"name": "state_indices", "shape": ["B"], "dtype": "int32|int64"}
+  ],
+  "outputs": [
+    {"name": "out", "shape": ["1", "T", "HV", "V"], "dtype": "bfloat16"},
+    {"name": "replay_cache", "shape": ["P", "HV", "L", "V+K+1"], "dtype": "float32"}
+  ],
+  "reference": ""
+}
